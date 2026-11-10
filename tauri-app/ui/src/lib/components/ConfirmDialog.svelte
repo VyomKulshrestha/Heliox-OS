@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PlanAction, PlanChecks as PlanChecksData } from "../stores/session";
-  import PlanChecks from "./PlanChecks.svelte";
+  import PlanChecks, { criticRaised, findingsForStep } from "./PlanChecks.svelte";
+  import { ShieldAlert } from "@lucide/svelte";
   import { describeAction } from "../utils/actionDetails";
   import { _ } from "svelte-i18n";
   import { onMount, tick, untrack } from "svelte";
@@ -46,6 +47,14 @@
 
   let approved = $state<boolean[]>([]);
   let anyApproved = $derived(approved.some((v) => v));
+
+  // The safety review numbers plan steps from 1; `index` is the action's place in the plan.
+  const planStep = (action: PlanAction, i: number) => (action.index ?? i) + 1;
+  let stepFindings = $derived(actions.map((action, i) => findingsForStep(checks?.critic, planStep(action, i))));
+  let stepsWithFindings = $derived(
+    actions.map((action, i) => planStep(action, i)).filter((_step, i) => stepFindings[i].length > 0),
+  );
+  let criticWarns = $derived(criticRaised(checks?.critic));
 
   $effect(() => {
     if (approved.length !== actions.length) {
@@ -214,6 +223,8 @@
       {checks}
       hideWorldModel={Boolean(riskAssessment)}
       hideGnomon={Boolean(gnomon?.escalate || checks?.gnomon?.escalate)}
+      stepsShownElsewhere={stepsWithFindings}
+      compact
     />
 
     <ul class="confirm-list">
@@ -221,7 +232,13 @@
         <li>
           <div class="confirm-row">
             <label class="confirm-checkbox">
-              <input type="checkbox" checked={approved[i]} disabled={submitting} onchange={() => toggle(i)} />
+              <input
+                type="checkbox"
+                checked={approved[i]}
+                disabled={submitting}
+                aria-describedby={stepFindings[i]?.length ? `${titleId}-review-${i}` : undefined}
+                onchange={() => toggle(i)}
+              />
             </label>
             <strong>{action.action_type}</strong> on
             <code>{action.target}</code>
@@ -240,6 +257,16 @@
               <span class="undo-tag" title={action.undo.reason}>{$_("undo.badge_not_undoable")}</span>
             {/if}
           </div>
+          {#if stepFindings[i]?.length}
+            <ul class="step-review" class:warns={criticWarns} id={`${titleId}-review-${i}`}>
+              {#each stepFindings[i] as finding, j (j)}
+                <li>
+                  <ShieldAlert size={12} aria-hidden="true" />
+                  <span><span class="step-review-name">Safety review:</span> {finding.text}</span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
           {#each describeAction(action) as detail (detail.label)}
             <div class="action-detail">
               <span class="detail-label">{detail.label}</span>
@@ -414,6 +441,43 @@
   .undo-tag.can-undo {
     background: color-mix(in srgb, var(--success) 12%, transparent);
     color: var(--success);
+  }
+
+  .step-review {
+    display: grid;
+    gap: 4px;
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+  }
+
+  .step-review li {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 0;
+    margin: 0;
+    background: none;
+    font-size: inherit;
+    overflow-wrap: anywhere;
+  }
+
+  .step-review :global(svg) {
+    flex: none;
+    margin-top: 2px;
+    color: var(--text-muted);
+  }
+
+  .step-review.warns :global(svg),
+  .step-review.warns .step-review-name {
+    color: var(--warning);
+  }
+
+  .step-review-name {
+    font-weight: 600;
   }
 
   .confirm-checkbox {

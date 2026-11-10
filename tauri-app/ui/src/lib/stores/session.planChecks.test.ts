@@ -62,4 +62,124 @@ describe("plan checks in the session", () => {
     notify!("gnomon_review", { plan_id: "other", state: "loading" });
     expect(plan()?.checks).toBeUndefined();
   });
+
+  it("attaches the safety review with only the critic's own text", async () => {
+    const { plan } = await planCard("p-4");
+    notify!("critic_verdict", {
+      plan_id: "p-4",
+      verdict: "WARN",
+      risk_score: 0.42,
+      issues: ["Step 1 overwrites todo.txt.", "A daemon note."],
+      findings: [
+        { step: 1, severity: "high", text: "Step 1 overwrites todo.txt." },
+        { step: "two", severity: "urgent", text: "Odd fields." },
+        { step: null, severity: "low", text: "" },
+      ],
+      recommendation: "Check todo.txt first.",
+      ran: true,
+      world_model: { predictions: [] },
+    });
+    expect(plan()?.checks?.critic).toEqual({
+      verdict: "WARN",
+      ran: true,
+      downgraded: false,
+      findings: [
+        { step: 1, severity: "high", text: "Step 1 overwrites todo.txt." },
+        { step: null, severity: null, text: "Odd fields." },
+      ],
+      recommendation: "Check todo.txt first.",
+    });
+  });
+
+  it("keeps a skipped or failed review free of other components' text", async () => {
+    const { plan } = await planCard("p-5");
+    notify!("critic_verdict", {
+      plan_id: "p-5",
+      verdict: "SKIPPED",
+      issues: ["predicted disk usage 96% exceeds the safe threshold"],
+      recommendation: "Low-risk heuristic, LLM safety review was skipped.",
+      critic_skipped: "low_risk_heuristic",
+    });
+    expect(plan()?.checks?.critic).toEqual({
+      verdict: "SKIPPED",
+      ran: false,
+      skipped: "low_risk_heuristic",
+      findings: [],
+      recommendation: "",
+    });
+    notify!("critic_verdict", {
+      plan_id: "p-5",
+      verdict: "WARN",
+      issues: ["Critic agent encountered an error: timed out"],
+      recommendation: "The safety review could not run.",
+      ran: false,
+    });
+    expect(plan()?.checks?.critic).toMatchObject({ verdict: "WARN", ran: false, findings: [], recommendation: "" });
+  });
+
+  it("drops a verdict that names no plan", async () => {
+    const { plan } = await planCard("p-6");
+    notify!("critic_verdict", { verdict: "APPROVE", findings: [], recommendation: "" });
+    expect(plan()?.checks).toBeUndefined();
+  });
+
+  it("attaches the safety review with only the critic's own text", async () => {
+    const { plan } = await planCard("p-4");
+    notify!("critic_verdict", {
+      plan_id: "p-4",
+      verdict: "WARN",
+      risk_score: 0.42,
+      issues: ["Step 1 overwrites todo.txt.", "A daemon note."],
+      findings: [
+        { step: 1, severity: "high", text: "Step 1 overwrites todo.txt." },
+        { step: "two", severity: "urgent", text: "Odd fields." },
+        { step: null, severity: "low", text: "" },
+      ],
+      recommendation: "Check todo.txt first.",
+      ran: true,
+      world_model: { predictions: [] },
+    });
+    expect(plan()?.checks?.critic).toEqual({
+      verdict: "WARN",
+      ran: true,
+      downgraded: false,
+      findings: [
+        { step: 1, severity: "high", text: "Step 1 overwrites todo.txt." },
+        { step: null, severity: null, text: "Odd fields." },
+      ],
+      recommendation: "Check todo.txt first.",
+    });
+  });
+
+  it("keeps a skipped or failed review free of other components' text", async () => {
+    const { plan } = await planCard("p-5");
+    notify!("critic_verdict", {
+      plan_id: "p-5",
+      verdict: "SKIPPED",
+      issues: ["predicted disk usage 96% exceeds the safe threshold"],
+      recommendation: "Low-risk heuristic, LLM safety review was skipped.",
+      critic_skipped: "low_risk_heuristic",
+    });
+    expect(plan()?.checks?.critic).toEqual({
+      verdict: "SKIPPED",
+      ran: false,
+      skipped: "low_risk_heuristic",
+      findings: [],
+      recommendation: "",
+    });
+    notify!("critic_verdict", {
+      plan_id: "p-5",
+      verdict: "WARN",
+      issues: ["Critic agent encountered an error: timed out"],
+      recommendation: "The safety review could not run.",
+      ran: false,
+    });
+    expect(plan()?.checks?.critic).toMatchObject({ verdict: "WARN", ran: false, findings: [], recommendation: "" });
+  });
+
+  it("drops a verdict that names no plan", async () => {
+    const { plan } = await planCard("p-6");
+    notify!("critic_verdict", { verdict: "APPROVE", findings: [], recommendation: "" });
+    expect(plan()?.checks).toBeUndefined();
+  });
 });

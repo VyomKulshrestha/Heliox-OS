@@ -134,11 +134,89 @@ export interface GnomonCheck {
   scores?: Record<string, number>;
   reason?: string;
   review_seconds?: number;
+  /** False when scope was not judged (a request with several parts); `notes` says why. */
+  scope_reviewed?: boolean;
+  /** Plain sentences from the daemon, for example why scope was not reviewed or which deletes undo covers. */
+  notes?: string[];
+  /** False when the review ran out of time part-way; `scores` holds what it found so far. */
+  complete?: boolean;
+}
+
+/** One concern from the safety review, as the critic wrote it. */
+export interface CriticFinding {
+  /** The plan step (1-based) the critic tied it to, or null. */
+  step: number | null;
+  /** The critic's own rating; null when it gave none. "low" marks a process note. */
+  severity: "high" | "medium" | "low" | null;
+  text: string;
+}
+
+/** The daemon's `critic_verdict` for a direct request. */
+export interface CriticCheck {
+  /** "APPROVE", "WARN", "BLOCK", or "SKIPPED" when the review did not run. */
+  verdict: string;
+  /** False when the review was skipped or its model call failed. */
+  ran: boolean;
+  /** Why the review was skipped (`critic_skipped`), when it was. */
+  skipped?: string;
+  /** The daemon lowered the critic's BLOCK to WARN; its recommendation is the daemon's, not the critic's. */
+  downgraded?: boolean;
+  findings: CriticFinding[];
+  recommendation: string;
 }
 
 export interface PlanChecks {
   worldModel?: WorldModelCheck;
   gnomon?: GnomonCheck;
+  critic?: CriticCheck;
+}
+
+const SEVERITIES = new Set(["high", "medium", "low"]);
+
+/** Reads a `critic_verdict` payload; only text the critic sent is kept. */
+export function criticCheck(p: Record<string, unknown>): CriticCheck | null {
+  const verdict = typeof p.verdict === "string" ? p.verdict.toUpperCase() : "";
+  if (!verdict) return null;
+  if (verdict === "SKIPPED") {
+    // A skipped review's `issues` are the world model's reasons, not the critic's.
+    return {
+      verdict,
+      ran: false,
+      skipped: typeof p.critic_skipped === "string" ? p.critic_skipped : "",
+      findings: [],
+      recommendation: "",
+    };
+  }
+  const ran = p.ran !== false;
+  const findings: CriticFinding[] = [];
+  if (ran && Array.isArray(p.findings)) {
+    for (const item of p.findings) {
+      if (!item || typeof item !== "object") continue;
+      const finding = item as Record<string, unknown>;
+      const text = typeof finding.text === "string" ? finding.text.trim() : "";
+      if (!text) continue;
+      const step = finding.step;
+      const severity = finding.severity;
+      findings.push({
+        step: typeof step === "number" && Number.isInteger(step) && step > 0 ? step : null,
+        severity:
+          typeof severity === "string" && SEVERITIES.has(severity) ? (severity as CriticFinding["severity"]) : null,
+        text,
+      });
+    }
+  } else if (ran && Array.isArray(p.issues)) {
+    // An older daemon sends plain issues only.
+    for (const issue of p.issues) {
+      if (typeof issue === "string" && issue.trim()) findings.push({ step: null, severity: null, text: issue.trim() });
+    }
+  }
+  return {
+    verdict,
+    ran,
+    downgraded: p.downgraded === true,
+    findings,
+    recommendation: ran && typeof p.recommendation === "string" ? p.recommendation.trim() : "",
+  };
 }
 
 export interface GitConflictBlock {
@@ -575,7 +653,7 @@ function createSession() {
     };
   }
 
-  /** Attach a world-model or Gnomon report to the plan card (and current plan) it was sent for. */
+  /** Attach a world-model, Gnomon or safety review report to the plan card (and current plan) it was sent for. */
   function withPlanChecks(s: SessionState, planId: string, patch: PlanChecks): SessionState {
     if (!planId) return s;
     const merge = (plan: Plan): Plan => ({ ...plan, checks: { ...plan.checks, ...patch } });
@@ -854,6 +932,13 @@ function createSession() {
         if (typeof p.state === "string" && p.state) {
           update((s) => withPlanChecks(s, String(p.plan_id ?? ""), { gnomon: p as unknown as GnomonCheck }));
         }
+        break;
+      }
+
+      case "critic_verdict": {
+        // Sent before `confirm_required`; without a plan_id (an older daemon) it has no plan to attach to.
+        const critic = criticCheck(p);
+        if (critic) update((s) => withPlanChecks(s, String(p.plan_id ?? ""), { critic }));
         break;
       }
 

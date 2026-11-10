@@ -3203,7 +3203,7 @@ Sent for a direct request after `plan_preview` when the risk gate is enabled. It
   "reasons": [],
   "sources": [],
   "observed": { "disk_usage_fraction": 0.72, "process_count": 350 },
-  "predicted": { "disk_usage_fraction": 0.72, "process_count": 351 },
+  "predicted": { "disk_usage_fraction": null, "process_count": 351 },
   "measured_sizes": [
     {
       "path_label": "Photos",
@@ -3219,10 +3219,19 @@ Sent for a direct request after `plan_preview` when the risk gate is enabled. It
 ```
 
 `observed` is the machine state the first step was predicted from, `predicted` the state the
-world model predicted after the last step; either is `null` without predictions, and a value
-the model did not produce (for example a process count that "requires observation") is `null`.
+world model has grounds to predict after the last step; either is `null` without predictions.
+`predicted` carries only grounded values:
+
+- `disk_usage_fraction` is always `null`. The gate's per-step disk value mixes in the rule
+  table's fixed per-action guess (for example +2% of the drive for any unmeasured file write)
+  and does not say which source it came from. Disk figures come from `measured_sizes` only.
+- `process_count` is the observed count plus the starts and stops the world model's process
+  lifecycle contract predicts. It is `null` when no step starts or stops a process, or when a
+  step's process effect "requires observation" (shell commands, scripts).
+
 `measured_sizes` lists copies and writes the gate measured, with their volume's usage before and
-after. `unavailable` is true when the evaluation failed (`model_version: "evaluation-error"`);
+after. `usage_before` and `usage_after` are `null` for a size measured after a step the rule
+table or the learned model covers, because the gate's disk ledger may then include a guess. `unavailable` is true when the evaluation failed (`model_version: "evaluation-error"`);
 `raised` mirrors `requires_confirmation`. Autonomous rounds send `world_model_assessment` without
 `summary`.
 
@@ -3266,14 +3275,53 @@ Sent when a Tier 4 (root-critical), Tier 3 (destructive), or irreversible-flagge
 
 ```json
 {
+  "plan_id": "63ac5129",
   "verdict": "WARN",
-  "risk_score": 0.55,
-  "issues": ["Plan requests root access broader than the stated task needs"],
-  "safe_actions": ["file_delete"],
-  "flagged_actions": ["service_restart"],
-  "recommendation": "Proceed with caution — root scope is wider than necessary."
+  "risk_score": 0.42,
+  "issues": ["Step 3 deletes launch\\drafts, which holds draft-final-FINAL.md, possibly a newer final post."],
+  "findings": [
+    {
+      "step": 3,
+      "severity": "high",
+      "text": "Step 3 deletes launch\\drafts, which holds draft-final-FINAL.md, possibly a newer final post."
+    }
+  ],
+  "safe_actions": ["file_copy"],
+  "flagged_actions": ["file_delete"],
+  "recommendation": "Confirm draft-final-FINAL.md is not your real final post before approving; Heliox can undo the deletes for 7 days.",
+  "ran": true,
+  "downgraded": false,
+  "world_model": { "...": "the plan's risk assessment" }
 }
 ```
+
+`plan_id` is the plan from `plan_preview` (direct requests). `findings` are the critic's own
+concerns: `step` is the 1-based plan step it named (`null` for the whole plan or a step the plan
+does not have), `severity` is the critic's rating (`"high"`: something the person wants could be
+lost, or a change cannot be undone; `"medium"`: a step could fail or give a result the person did
+not ask for; `"low"`: a process note such as privilege level or step order; `null` when the
+critic gave none), and `text` is its sentence. A critic that answers with plain `issues` gets one
+finding per issue, `severity: null`, and a `step` only from a leading "Step N" it wrote. `issues`
+keeps the finding texts plus any note the daemon adds, for the audit log. `ran` is `false` when
+the critic's model call failed and the verdict is the fail-safe `WARN`. `downgraded` is `true`
+when the daemon lowered a `BLOCK` to `WARN` because the plan has no destructive, root-critical or
+irreversible action; the `recommendation` is then the daemon's.
+
+The critic's prompt carries an `undo:` line for each action, decided like the `undo` badge of
+`confirm_required` and already resolved for the plan's size. Before the review the critic measures,
+with a 1.5 s budget, what the undo journal would keep a copy of: deleted items, files a write
+replaces, and files a copy or move lands on (new copies keep nothing). An undoable action then reads:
+
+- "Heliox can undo this for N days" (`[undo] retention_days`) when that measurement finished and is
+  at most half of `[undo] max_task_mb`;
+- "may not be undoable: this task may change more than M MB" when it is larger, or the walk stopped
+  before finishing.
+
+Other actions read "Heliox cannot undo this; treat it as permanent", "undo is turned off in
+Settings, so Heliox cannot undo this; treat it as permanent" or "only reads, nothing to undo". One
+"Undo size:" line after the actions gives the measured total against the limit. The critic is told
+to state the undo fact at most once, in the `recommendation` rather than in each finding, and not
+to ask the person to check sizes Heliox measured.
 
 `verdict` is `"APPROVE"`, `"WARN"`, or `"BLOCK"`. A low-risk Tier 3 plan (no Tier 4 actions, heuristic risk score below threshold) skips the LLM round-trip entirely; in that case the payload instead looks like:
 
@@ -3288,6 +3336,9 @@ Sent when a Tier 4 (root-critical), Tier 3 (destructive), or irreversible-flagge
   "critic_skipped": "low_risk_heuristic"
 }
 ```
+
+A skipped payload also carries `plan_id`. Its `issues` are the world model's reasons, not the
+critic's; the UI does not show them as safety review concerns.
 
 ---
 

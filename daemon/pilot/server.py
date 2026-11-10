@@ -1381,7 +1381,7 @@ class PilotServer:
         # Destructive Critic Agent — secondary safety reviewer for Tier 4 plans.
         from pilot.agents.destructive_critic import DestructiveCriticAgent
 
-        self._destructive_critic = DestructiveCriticAgent(model_router)
+        self._destructive_critic = DestructiveCriticAgent(model_router, undo_config=lambda: self.config.undo)
         from pilot.agents.execution_companion import ExecutionCompanion
 
         self._execution_companion = ExecutionCompanion(
@@ -3818,7 +3818,7 @@ class PilotServer:
                 verdict = constrain_verdict_to_plan_authority(plan, verdict)
                 critic_verdict_payload = verdict.to_dict()
                 critic_verdict_payload["world_model"] = risk_assessment.to_dict()
-                await ws.send(_notification("critic_verdict", critic_verdict_payload))
+                await ws.send(_notification("critic_verdict", {"plan_id": plan_id, **critic_verdict_payload}))
 
                 if cancel_event.is_set() and self._live_correction:
                     revised = await _restart_with_live_correction()
@@ -3893,7 +3893,7 @@ class PilotServer:
                     "critic_skipped": critic_skipped_reason,
                     "world_model": risk_assessment.to_dict(),
                 }
-                await ws.send(_notification("critic_verdict", critic_verdict_payload))
+                await ws.send(_notification("critic_verdict", {"plan_id": plan_id, **critic_verdict_payload}))
 
             mcp_requires_visible_approval = str(params.get("source") or "").strip().lower() == "mcp"
             gnomon_interrupt, gnomon_reasons = False, []

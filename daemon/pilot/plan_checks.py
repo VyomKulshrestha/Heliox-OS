@@ -2,6 +2,20 @@
 
 Everything here is read from the real evaluation that ``assess_plan_risk`` returned; nothing is
 estimated. A value the evaluation did not produce is ``None`` so the UI can leave it out.
+
+Only figures the model has grounds for are passed on:
+
+- Disk: the measured sizes (``size_estimates``). The per-step ``predicted_state`` disk value is
+  never passed on, because the gate carries the rule table's fixed per-action guess into it
+  (``risk_model._DISK_DELTA_RULES``, for example +2% of the drive for any unmeasured file write)
+  and takes the larger of that and the learned model, without saying which one the value came
+  from. For the same reason a measured size keeps its volume's usage before and after only when no
+  earlier step could have added such a guess to the gate's disk ledger (an action type the rule
+  table or the learned model covers).
+- Processes: the observed count plus the starts and stops the world model's process lifecycle
+  contract predicts. The per-step ``predicted_state`` count is not used, because the gate carries
+  the rule table's fixed +1 per shell command into the next step's input. A step whose process
+  effect "requires observation" (a shell command, a script) makes the count unknown.
 """
 
 from __future__ import annotations
@@ -41,19 +55,40 @@ def _observed_state(first: Mapping[str, Any]) -> dict[str, Any] | None:
     return {"disk_usage_fraction": _fraction(system.get("disk_usage_fraction")), "process_count": processes}
 
 
-def _predicted_state(last: Mapping[str, Any]) -> dict[str, Any]:
-    """What the world model predicted for the machine after the plan's last step."""
-    system = _system(last)
+def _predicted_process_count(predictions: list[Mapping[str, Any]], observed: int | None) -> int | None:
+    """The observed count moved by every start and stop the process contract predicts; ``None``
+    when no step starts or stops a process, or when any step's effect is not a known count."""
+    if observed is None:
+        return None
+    delta = 0
+    any_effect = False
+    for prediction in predictions:
+        for effect in prediction.get("expected_effects") or []:
+            if not isinstance(effect, Mapping) or effect.get("domain") != "process":
+                continue
+            before, after = _count(effect.get("before")), _count(effect.get("after"))
+            if before is None or after is None:
+                return None
+            delta += after - before
+            any_effect = True
+    return observed + delta if any_effect else None
+
+
+def _predicted_state(predictions: list[Mapping[str, Any]], observed: Mapping[str, Any] | None) -> dict[str, Any]:
+    """What the world model has grounds to predict for the machine after the plan (see module doc)."""
     return {
-        "disk_usage_fraction": _fraction(system.get("disk_usage_fraction")),
-        "process_count": _count(system.get("process_count")),
+        "disk_usage_fraction": None,
+        "process_count": _predicted_process_count(predictions, observed.get("process_count") if observed else None),
     }
 
 
 def _measured_sizes(predictions: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
     from pilot.security.risk_gate import _format_bytes  # same wording as the gate's own reasons
+    from pilot.security.risk_model import LEARNABLE_ACTION_TYPES
 
+    guessed_types = {action_type.value for action_type in LEARNABLE_ACTION_TYPES}
     sizes: list[dict[str, Any]] = []
+    usage_grounded = True
     for prediction in predictions:
         for record in prediction.get("size_estimates") or []:
             if not isinstance(record, Mapping) or _count(record.get("bytes")) is None:
@@ -66,16 +101,19 @@ def _measured_sizes(predictions: list[Mapping[str, Any]]) -> list[dict[str, Any]
                     "size_text": f"{'about' if exact else 'at least'} {_format_bytes(record['bytes'])}",
                     "size_is_exact": exact,
                     "volume": str(record.get("volume") or ""),
-                    "usage_before": _fraction(record.get("usage_before")),
-                    "usage_after": _fraction(record.get("usage_after")),
+                    "usage_before": _fraction(record.get("usage_before")) if usage_grounded else None,
+                    "usage_after": _fraction(record.get("usage_after")) if usage_grounded else None,
                 }
             )
+        if str(prediction.get("action_type") or "") in guessed_types:
+            usage_grounded = False
     return sizes
 
 
 def world_model_summary(assessment: Mapping[str, Any]) -> dict[str, Any]:
     """Summary of ``PlanRiskAssessment.to_dict()`` for one plan (the gate was enabled)."""
     predictions = [item for item in assessment.get("predictions") or [] if isinstance(item, Mapping)]
+    observed = _observed_state(predictions[0]) if predictions else None
     return {
         "enabled": True,
         "unavailable": assessment.get("model_version") == "evaluation-error",
@@ -83,7 +121,7 @@ def world_model_summary(assessment: Mapping[str, Any]) -> dict[str, Any]:
         "score": _fraction(assessment.get("world_model_score")) or 0.0,
         "reasons": [str(reason) for reason in assessment.get("reasons") or []],
         "sources": [str(source) for source in assessment.get("prediction_sources") or []],
-        "observed": _observed_state(predictions[0]) if predictions else None,
-        "predicted": _predicted_state(predictions[-1]) if predictions else None,
+        "observed": observed,
+        "predicted": _predicted_state(predictions, observed) if predictions else None,
         "measured_sizes": _measured_sizes(predictions),
     }
