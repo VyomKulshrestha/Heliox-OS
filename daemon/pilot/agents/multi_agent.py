@@ -7,6 +7,7 @@ specialized agent (or a combination of agents) for execution.
 from __future__ import annotations
 
 import logging
+import re
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -137,7 +138,22 @@ ROLE_KEYWORDS: dict[AgentRole, list[str]] = {
         "lock",
         "settings",
         "environment",
+        "mute",
+        "unmute",
+        "clipboard",
+        "window",
     ],
+}
+
+
+def _keyword_pattern(keyword: str) -> re.Pattern[str]:
+    # Whole words only, with common endings: "test" matches "tests" but not "latest",
+    # "log" matches "logs" but not "logo", "ram" does not match "program".
+    return re.compile(r"\b" + re.escape(keyword) + r"(?:s|es|d|ed|ing|er|ers)?\b")
+
+
+_KEYWORD_PATTERNS: dict[AgentRole, list[re.Pattern[str]]] = {
+    role: [_keyword_pattern(keyword) for keyword in keywords] for role, keywords in ROLE_KEYWORDS.items()
 }
 
 # Specialized system prompts for each agent role
@@ -148,7 +164,8 @@ ROLE_PROMPTS: dict[AgentRole, str] = {
         "copying, deleting files and directories. You understand permissions, "
         "file formats, and directory structures deeply. Use the typed file actions "
         "(file_copy, file_move, file_delete, file_write), which Heliox can undo, "
-        "instead of shell commands for the same job."
+        "instead of shell commands or code for the same job. To add text to a file "
+        "that exists, file_read it and file_write it back with the old text kept."
     ),
     AgentRole.CODE_AGENT: (
         "You are the Code Execution Specialist for Heliox OS. "
@@ -179,7 +196,9 @@ ROLE_PROMPTS: dict[AgentRole, str] = {
         "You are the System Administration Specialist for Heliox OS. "
         "You handle package management, service control, registry editing, "
         "volume/brightness control, network settings, and power management. "
-        "Always check current state before making changes."
+        "Set a level or the clipboard in one typed step (volume_set, brightness_set, "
+        "clipboard_write): Heliox records the old value so the change can be undone, "
+        "so there is no need to read it first."
     ),
     AgentRole.FORENSICS_AGENT: (
         "You are the Forensics and Log Analysis Specialist for Heliox OS. "
@@ -202,8 +221,8 @@ class MultiAgentRouter:
         input_lower = user_input.lower()
         scores: dict[AgentRole, int] = {}
 
-        for role, keywords in ROLE_KEYWORDS.items():
-            score = sum(1 for kw in keywords if kw in input_lower)
+        for role, patterns in _KEYWORD_PATTERNS.items():
+            score = sum(1 for pattern in patterns if pattern.search(input_lower))
             if score > 0:
                 scores[role] = score
 

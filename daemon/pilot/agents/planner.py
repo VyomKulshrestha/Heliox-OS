@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+from pathlib import PurePath
 from typing import TYPE_CHECKING
 
 from pilot.actions import (
@@ -62,6 +63,7 @@ from pilot.actions import (
     WifiParams,
     WindowParams,
 )
+from pilot.agents.request_folders import is_strictly_inside
 from pilot.memory import session_recall
 from pilot.memory.session_recall import EARLIER_TURNS_LOOKED_AT, earlier_turns
 from pilot.memory.sliding_window import build_sliding_context, fit_messages_to_token_budget
@@ -105,7 +107,7 @@ You are fully capable of managing files, navigating the web, writing and running
 - Fulfill the user's request using all the tools available to you.
 - You are part of an Agentic Loop: You evaluate memory, determine tool calls, execute them, and feed results back into your reasoning loop.
 - When encountering difficulties, DO NOT guess or hallucinate. Take time to gather information using search/read/shell commands before concluding a root cause.
-- NEVER assume that a given library, CLI tool, or file exists without verifying. Use shell commands or file searches to check the state of the system first.
+- NEVER assume that a given library, CLI tool, or file exists without verifying. When you do not know where a file is, look first with file_search or file_list. When the request or the folder listing gives the path, act on it directly.
 - When making changes to files, first understand the file's code conventions. Mimic code style, use existing libraries, and follow existing patterns.
 - If you cannot find some information, use your browser automation tools to find missing context from online sources.
 - Multi-step pipelines are your superpower. Chain actions in order. Each action's output is available to the next.
@@ -189,7 +191,17 @@ API INTEGRATION, MESSAGING & WEBHOOKS (OpenClaw-style Hub):
 
 FILE OPERATIONS:
 - file_read — Params: {{"path": "C:\\path\\file.txt"}}
-- file_write — Params: {{"path": "C:\\path\\file.txt", "content": "exact content"}}
+- file_write — Params: {{"path": "C:\\path\\file.txt", "content": "exact content"}}. It replaces the
+  whole file, so one file_write makes a new file or replaces all of a file's text.
+- EDITING A FILE THAT EXISTS: file_write alone would erase the old text, so never write only the new
+  text to it. To add a line at the end: file_read {{"path": P}}, then file_write {{"path": P,
+  "content": "{{PREV_OUTPUT}}\\nnew line"}} with "use_previous_output": true. To add a line at the
+  top: "content": "new line\\n{{PREV_OUTPUT}}". Heliox puts the text the file_read returned where
+  {{PREV_OUTPUT}} stands, so the file_read must come directly before its file_write. That is two
+  typed steps and the write can be undone; do not use code_execute to join the text. Only when the change needs
+  logic (remove or change a line, sort, find and replace) put a code_execute between them that
+  prints the new text from PREV_OUTPUT and touches no file, and let the file_write save it.
+- Rename a file or folder with file_move to the new name in the same folder.
 - file_delete — Params: {{"path": "C:\\path\\file.txt"}}. For a folder add "recursive": true.
 - file_move, file_copy — Params: {{"path": "C:\\source.txt", "destination": "C:\\destination.txt"}}.
   To copy a folder add "recursive": true. Both create missing parent folders, so copying into a new
@@ -197,8 +209,10 @@ FILE OPERATIONS:
 - Heliox can undo file_write, file_delete, file_move and file_copy: it keeps what it needs to put
   things back. It cannot undo shell_command, shell_script or code_execute. So create, copy, move and
   delete files and folders only with these typed actions, never with Remove-Item, del, rm, rmdir,
-  Copy-Item, Move-Item, robocopy, xcopy or mkdir. Use a shell command only for a job no typed action
-  does, such as making a zip, and keep that command to that one job. On Windows shell_command runs
+  Copy-Item, Move-Item, robocopy or xcopy. Use a shell command only for a job no typed action
+  does, such as making a zip or an empty folder, and keep that command to that one job. An empty
+  folder is {{"command": "mkdir", "args": ["C:\\path\\new folder"]}} in shell_command; a folder
+  that will hold a file you write or copy needs no step of its own. On Windows shell_command runs
   through cmd.exe, so a PowerShell cmdlet needs shell_script with "interpreter": "powershell", for
   example {{"script": "Compress-Archive -Path 'C:\\folder' -DestinationPath 'C:\\folder.zip'",
   "interpreter": "powershell"}}.
@@ -247,6 +261,16 @@ OPEN URL / APP / NOTIFY:
   signing in, passwords, 2FA codes, CAPTCHAs, payments, or a genuinely ambiguous choice.
   Params: {{"help_needed": "Sign in to Outlook", "instructions": "Close the window when done"}}.
   The task pauses until the person hands control back, then observes the screen again.
+
+EVERYDAY CONTROLS (one typed step each):
+- volume_set {{"level": 30}} (0 to 100); volume_mute {{"mute": true}}, or {{"mute": false}} to unmute
+- brightness_set {{"level": 40}} (0 to 100)
+- clipboard_write {{"content": "text to paste later"}}; clipboard_read {{}}
+- window_focus, window_minimize, window_maximize, window_close {{"title": "part of the window title"}}
+  or {{"process_name": "chrome.exe"}}; window_list {{}}
+- process_kill {{"name": "spotify.exe"}} quits an app; package_install {{"name": "vlc"}}
+- Heliox can undo volume_set, brightness_set and clipboard_write, so set a level with these, never
+  with a shell command or code.
 
 DOWNLOAD:
 - download_file Params: {{"url": "https://example.com/file.zip", "output_path": "/path/to/save", "overwrite": false}}
@@ -320,6 +344,18 @@ Output STRICT JSON (no markdown, no explanation outside JSON):
     Heliox measures each step (sizes, free disk space), reviews it, and shows an approval dialog where
     the person can untick any single step and keep the rest. Ask instead only when you cannot tell
     which files, folders or items the person means.
+19b. SMALLEST CORRECT PLAN: Return the fewest steps that do exactly what was asked, each the most
+    specific typed action above. Add no step nobody asked for: no file_read or file_list to check a
+    file before you move, copy, rename or delete it, no file_read after a write to check it, no
+    notify at the end. Heliox checks the result of every step itself. When you cannot tell where a
+    file or folder the person names is, and no folder listing shows it, ask where it is (no actions,
+    the question in "explanation") instead of returning a plan that only searches.
+19c. CODE AND SHELL ARE THE LAST RESORT: code_execute, code_generate_and_run, shell_command and
+    shell_script always stop for the person's approval and cannot be undone. Use one only for a job
+    no typed action does (a zip, an empty folder, logic over data or text). Never use one to build
+    text that a file_write can hold, to set a level, or to copy, move or delete.
+19d. STEP ORDER: Steps run in the order you list them. A step that uses another step's output comes
+    directly after that step, and a step that needs a file comes after the step that makes it.
 20. You are POWERFUL — you can do ANYTHING the user asks. You have TIER 1 desktop automation!
 21. When writing Python code inside JSON, escape double quotes and newlines. Prefer single quotes in Python code.
 22. For browser_extract: ALWAYS use selector "p" with "multiple": true to extract article text. NEVER use "#content" or "body" — those return the ENTIRE page including navigation and menus. The "p" selector gives clean paragraphs.
@@ -407,6 +443,101 @@ IMPORTANT RULES:
 - Each action must have: "action_type", "target", and "parameters" keys.
 - Wrap your JSON in ```json code blocks if needed.
 """
+
+
+_PLACEHOLDER_MARK = "{PREV_OUTPUT}"
+_APPEND_TYPES = {"file_append", "append_file", "append_to_file", "file_append_line"}
+_PREPEND_TYPES = {"file_prepend", "prepend_file", "prepend_to_file"}
+
+
+def _feeds_next_step(actions: list[Action], index: int) -> bool:
+    """True when the step after ``index`` uses ``index``'s output."""
+    if index + 1 >= len(actions):
+        return False
+    following = actions[index + 1]
+    if following.use_previous_output:
+        return True
+    for name in ("content", "code"):
+        value = getattr(following.parameters, name, None)
+        if isinstance(value, str) and "PREV_OUTPUT" in value:
+            return True
+    return False
+
+
+def _strictly_inside(path: str, folder: str, flavour: type[PurePath] | None = None) -> bool:
+    """True when ``path`` lies inside ``folder`` (not equal to it), for paths as the model wrote them."""
+    if not path or not folder:
+        return False
+    return is_strictly_inside(path, folder, flavour)
+
+
+def _embedded_plan_object(text: str) -> dict[str, Any] | None:
+    """The first JSON object in ``text`` that has an "actions" list, when prose surrounds it."""
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start != -1:
+        try:
+            value, _end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            value = None
+        if isinstance(value, dict) and isinstance(value.get("actions"), list):
+            return value
+        start = text.find("{", start + 1)
+    return None
+
+
+def _expand_text_edits(raw_actions: list[Any]) -> list[Any]:
+    """Turn an append or prepend the model wrote as one step into file_read then file_write.
+
+    The catalog has no append mode: FileParams drops a "mode" key, so ``file_write`` with
+    ``"mode": "append"`` would replace the whole file with the new line. The safe typed form reads
+    the file and writes it back with the new text added around ``{PREV_OUTPUT}``.
+    """
+    expanded: list[Any] = []
+    for raw in raw_actions:
+        if not isinstance(raw, dict):
+            expanded.append(raw)
+            continue
+        try:
+            action = Planner._canonical_action_keys(raw)
+        except ValueError:
+            expanded.append(raw)
+            continue
+        kind = str(action.get("action_type", "")).strip().lower()
+        params = dict(action.get("parameters") or {})
+        for key in ("mode", "append", "prepend", "position"):
+            if key in action and key not in params:
+                params[key] = action[key]
+        mode = str(params.get("mode") or params.get("position") or "").strip().lower()
+        prepend = kind in _PREPEND_TYPES or mode in {"prepend", "top", "start"} or params.get("prepend") is True
+        append = kind in _APPEND_TYPES or mode in {"append", "a", "end", "bottom"} or params.get("append") is True
+        if kind not in {"file_write"} | _APPEND_TYPES | _PREPEND_TYPES or not (append or prepend):
+            expanded.append(raw)
+            continue
+        path = str(params.get("path") or action.get("target") or "")
+        text = str(params.get("content") or params.get("text") or "")
+        if not path or _PLACEHOLDER_MARK in text:
+            expanded.append(raw)
+            continue
+        previous = expanded[-1] if expanded else None
+        already_read = (
+            isinstance(previous, dict)
+            and str(previous.get("action_type", "")).lower() == "file_read"
+            and str((previous.get("parameters") or {}).get("path") or previous.get("target") or "") == path
+        )
+        if not already_read:
+            expanded.append({"action_type": "file_read", "target": path, "parameters": {"path": path}})
+        content = f"{text}\n{_PLACEHOLDER_MARK}" if prepend else f"{_PLACEHOLDER_MARK}\n{text}"
+        expanded.append(
+            {
+                "action_type": "file_write",
+                "target": path,
+                "parameters": {"path": path, "content": content},
+                "use_previous_output": True,
+            }
+        )
+        logger.info("Plan: expanded a one-step %s of %s into file_read then file_write", kind, path)
+    return expanded
 
 
 def _mcp_tool_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -1239,14 +1370,17 @@ class Planner:
         try:
             data = json.loads(clean_raw)
         except json.JSONDecodeError as e:
-            return ActionPlan(
-                error="JSON PARSING FAILED: "
-                + str(e)
-                + "\n\nThe LLM response was not valid JSON. Raw response:\n"
-                + clean_raw[:800]
-                + '\n\nIMPORTANT: Output ONLY a JSON object with this exact format: {"explanation": "...", "actions": [{"action_type": "...", "target": "...", "parameters": {}}]}',
-                raw_input=user_input,
-            )
+            # A model sometimes writes a sentence before the JSON plan; use the plan object itself.
+            data = _embedded_plan_object(clean_raw)
+            if data is None:
+                return ActionPlan(
+                    error="JSON PARSING FAILED: "
+                    + str(e)
+                    + "\n\nThe LLM response was not valid JSON. Raw response:\n"
+                    + clean_raw[:800]
+                    + '\n\nIMPORTANT: Output ONLY a JSON object with this exact format: {"explanation": "...", "actions": [{"action_type": "...", "target": "...", "parameters": {}}]}',
+                    raw_input=user_input,
+                )
 
         if not isinstance(data, dict):
             expected = '{"explanation": "...", "actions": [{"action_type": "...", "target": "...", "parameters": {}}]}'
@@ -1284,6 +1418,7 @@ class Planner:
                 raw_input=user_input,
             )
 
+        raw_actions = _expand_text_edits(raw_actions)
         actions: list[Action] = []
         for i, raw_action in enumerate(raw_actions):
             try:
@@ -1505,11 +1640,19 @@ class Planner:
                     and not any(fixed[j].action_type in _DATA_PRODUCERS for j in range(i))
                     and any(fixed[j].action_type in _DATA_PRODUCERS for j in range(i + 1, len(fixed)))
                 )
-                # Case c: file_read on a directory path that will be created by later file_write
+                # Case c: file_read on a directory path that will be created by later file_write.
+                # Only a folder that contains the written path counts: reading the very file a
+                # later step writes is a read-modify-write (an append), and the write needs it.
                 read_path = getattr(fixed[i].parameters, "path", "") or fixed[i].target or ""
-                is_dir_check = i == 0 and any(
-                    a.action_type in _FILE_CREATORS and (getattr(a.parameters, "path", "") or "").startswith(read_path)
-                    for a in fixed[i + 1 :]
+                is_dir_check = (
+                    i == 0
+                    and bool(read_path)
+                    and not _feeds_next_step(fixed, i)
+                    and any(
+                        a.action_type in _FILE_CREATORS
+                        and _strictly_inside(getattr(a.parameters, "path", "") or "", read_path)
+                        for a in fixed[i + 1 :]
+                    )
                 )
                 if is_between or is_premature or is_dir_check:
                     logger.info(

@@ -1,0 +1,496 @@
+{
+ "name": "planner_everyday_v1",
+ "purpose": "Everyday requests and what a correct planner answer looks like, checked by benchmarks/planner_everyday.py. The first 28 requests are the correct cases of gnomon_everyday_review_v1.json; the rest were written on 10 November 2026 around the launch folder on the Desktop (checklist.txt, README.txt, post-final.md, drafts/, build/, screenshots/). Paths use {home} for the person's home folder. Requests that do not say where a file is allow the planner to ask (allow_ask) or look first (allow_lookup).",
+ "license": "MIT (authored in this repository)",
+ "rules": "types, params, order, max_steps, no_code, undo: see the module docstring of benchmarks/planner_everyday.py",
+ "cases": [
+  {
+   "id": "g01_rename_report",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Rename report.txt to report-final.txt",
+   "max_steps": 2,
+   "allow_ask": true,
+   "allow_lookup": true,
+   "steps": [
+    {"type": "file_move", "params": {"path": {"endswith": "report.txt"}, "destination": {"endswith": "report-final.txt", "same_dir_as": "path"}}}
+   ]
+  },
+  {
+   "id": "g02_copy_logo",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Copy the logo into the website folder",
+   "max_steps": 2,
+   "allow_ask": true,
+   "allow_lookup": true,
+   "steps": [
+    {"type": "file_copy", "params": {"path": {"contains": "logo"}, "destination": {"contains": "site"}}}
+   ]
+  },
+  {
+   "id": "g03_append_todo",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Add 'buy milk' to my todo file",
+   "max_steps": 3,
+   "allow_ask": true,
+   "allow_lookup": true,
+   "steps": [
+    {"type": "file_read", "params": {"path": {"contains": "todo"}}},
+    {"type": "file_write", "label": "file_write keeping the old text", "params": {"path": {"contains": "todo"}, "content": {"contains": "buy milk", "has_placeholder": true}}}
+   ]
+  },
+  {
+   "id": "g04_volume_30",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Set the volume to 30 percent",
+   "max_steps": 1,
+   "steps": [{"type": "volume_set", "params": {"level": 30}}]
+  },
+  {
+   "id": "g05_close_spotify",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Close Spotify",
+   "max_steps": 2,
+   "allow_lookup": true,
+   "not_undoable_ok": ["process_kill", "window_close"],
+   "steps": [{"type": "process_kill", "params": {"name": {"contains": "spotify"}}}],
+   "alternatives": [[{"type": "window_close", "params": {"target": {"contains": "spotify"}}}]]
+  },
+  {
+   "id": "g06_download_python",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Download the Python 3.12 installer",
+   "max_steps": 2,
+   "not_undoable_ok": ["download_file", "open_url", "browser_navigate"],
+   "steps": [{"type": "download_file", "params": {"url": {"regex": "python\\.org.*3\\.12"}}}],
+   "alternatives": [[{"type": ["open_url", "browser_navigate"], "params": {"url": {"contains": "python.org"}}}]]
+  },
+  {
+   "id": "g07_install_vlc",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Install VLC",
+   "max_steps": 1,
+   "not_undoable_ok": ["package_install"],
+   "steps": [{"type": "package_install", "params": {"name": {"contains": "vlc"}}}]
+  },
+  {
+   "id": "g08_open_python_docs",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Open the Python docs",
+   "max_steps": 1,
+   "not_undoable_ok": ["open_url", "browser_navigate"],
+   "steps": [{"type": ["open_url", "browser_navigate"], "params": {"url": {"contains": "docs.python.org"}}}]
+  },
+  {
+   "id": "g09_copy_address",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Copy my address to the clipboard",
+   "max_steps": 2,
+   "allow_ask": true,
+      "steps": [{"type": "clipboard_write", "params": {"content": {"present": true}}}]
+  },
+  {
+   "id": "g10_delete_two_screenshots",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Delete the two screenshots on my desktop",
+   "max_steps": 3,
+   "allow_ask": true,
+   "allow_lookup": true,
+   "steps": [
+    {"type": "file_delete", "params": {"path": {"regex": "desktop[\\\\/].+\\.(png|jpe?g)$"}}},
+    {"type": "file_delete", "params": {"path": {"regex": "desktop[\\\\/].+\\.(png|jpe?g)$"}}}
+   ]
+  },
+  {
+   "id": "g11_move_invoices",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Move the invoices from Downloads into the Invoices folder",
+   "max_steps": 6,
+   "allow_ask": true,
+   "allow_lookup": true,
+   "steps": [{"type": "file_move", "params": {"path": {"contains": "downloads"}, "destination": {"contains": "invoices"}}}]
+  },
+  {
+   "id": "g12_type_email",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Type my email address into the form",
+   "max_steps": 2,
+   "allow_ask": true,
+   "allowed": ["mouse_click", "screen_find_text", "screen_accessibility_snapshot"],
+   "not_undoable_ok": ["keyboard_type", "mouse_click"],
+   "steps": [{"type": "keyboard_type", "params": {"text": {"present": true}}}]
+  },
+  {
+   "id": "g13_rename_holiday",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Rename holiday.jpg to beach-2026.jpg",
+   "max_steps": 2,
+   "allow_ask": true,
+   "allow_lookup": true,
+   "steps": [
+    {"type": "file_move", "params": {"path": {"endswith": "holiday.jpg"}, "destination": {"endswith": "beach-2026.jpg", "same_dir_as": "path"}}}
+   ]
+  },
+  {
+   "id": "g14_contract_to_legal",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Put the contract PDF in my Legal folder",
+   "max_steps": 2,
+   "allow_ask": true,
+   "allow_lookup": true,
+   "steps": [{"type": "file_move", "params": {"path": {"regex": "contract.*\\.pdf$"}, "destination": {"contains": "legal"}}}]
+  },
+  {
+   "id": "g15_backup_notes_usb",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Back up notes.md to the USB drive",
+   "max_steps": 3,
+   "allow_ask": true,
+   "allow_lookup": true,
+   "allowed": ["disk_list"],
+   "steps": [{"type": "file_copy", "params": {"path": {"endswith": "notes.md"}, "destination": {"present": true}}}]
+  },
+  {
+   "id": "g16_brightness_40",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Turn the brightness down to 40",
+   "max_steps": 1,
+   "steps": [{"type": "brightness_set", "params": {"level": 40}}]
+  },
+  {
+   "id": "g17_mute",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Mute the sound",
+   "max_steps": 1,
+   "not_undoable_ok": ["volume_mute"],
+   "steps": [{"type": "volume_mute"}],
+   "alternatives": [[{"type": "volume_set", "params": {"level": 0}}]]
+  },
+  {
+   "id": "g18_quit_chrome",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Quit Chrome",
+   "max_steps": 2,
+   "allow_lookup": true,
+   "not_undoable_ok": ["process_kill", "window_close"],
+   "steps": [{"type": "process_kill", "params": {"name": {"contains": "chrome"}}}],
+   "alternatives": [[{"type": "window_close", "params": {"target": {"contains": "chrome"}}}]]
+  },
+  {
+   "id": "g19_close_calculator",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Close the Calculator window",
+   "max_steps": 2,
+   "allow_lookup": true,
+   "not_undoable_ok": ["process_kill", "window_close"],
+   "steps": [{"type": "window_close", "params": {"target": {"contains": "calc"}}}],
+   "alternatives": [[{"type": "process_kill", "params": {"name": {"contains": "calc"}}}]]
+  },
+  {
+   "id": "g20_install_7zip",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Install 7-Zip",
+   "max_steps": 1,
+   "not_undoable_ok": ["package_install"],
+   "steps": [{"type": "package_install", "params": {"name": {"regex": "7[- .]?zip"}}}]
+  },
+  {
+   "id": "g21_node_lts",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Get the latest Node LTS installer",
+   "max_steps": 2,
+   "not_undoable_ok": ["download_file", "open_url", "browser_navigate"],
+   "steps": [{"type": "download_file", "params": {"url": {"contains": "nodejs.org"}}}],
+   "alternatives": [[{"type": ["open_url", "browser_navigate"], "params": {"url": {"contains": "nodejs.org"}}}]]
+  },
+  {
+   "id": "g22_open_github",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Open GitHub",
+   "max_steps": 1,
+   "not_undoable_ok": ["open_url", "browser_navigate", "open_application"],
+   "steps": [{"type": ["open_url", "browser_navigate"], "params": {"url": {"contains": "github.com"}}}],
+   "alternatives": [[{"type": "open_application", "params": {"name": {"contains": "github"}}}]]
+  },
+  {
+   "id": "g23_copy_meeting_link",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Copy the meeting link so I can paste it",
+   "max_steps": 3,
+   "allow_ask": true,
+   "allowed": ["screen_ocr", "screen_analyze", "browser_page_info", "calendar_list_events", "calendar_fetch", "email_fetch"],
+   "steps": [{"type": "clipboard_write", "params": {"content": {"present": true}}}]
+  },
+  {
+   "id": "g24_note_plumber",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Note that the plumber comes Tuesday",
+   "max_steps": 2,
+   "allow_lookup": true,
+   "allow_ask": true,
+   "steps": [{"type": "file_write", "params": {"content": {"contains": ["plumber", "tuesday"]}}}]
+  },
+  {
+   "id": "g25_type_see_you",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Type 'see you at 5' in the chat box",
+   "max_steps": 3,
+   "allowed": ["mouse_click", "screen_find_text", "screen_accessibility_snapshot", "screen_detect_elements", "window_focus"],
+   "not_undoable_ok": ["keyboard_type", "mouse_click", "window_focus"],
+   "steps": [{"type": "keyboard_type", "params": {"text": {"contains": "see you at 5"}}}]
+  },
+  {
+   "id": "g26_open_spotify",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Open Spotify",
+   "max_steps": 1,
+   "not_undoable_ok": ["open_application"],
+   "steps": [{"type": "open_application", "params": {"name": {"contains": "spotify"}}}]
+  },
+  {
+   "id": "g27_rename_drafts_folder",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Rename the folder Drafts to Old Drafts",
+   "max_steps": 2,
+   "allow_ask": true,
+   "allow_lookup": true,
+   "steps": [
+    {"type": "file_move", "params": {"path": {"endswith": "drafts"}, "destination": {"endswith": "old drafts", "same_dir_as": "path"}}}
+   ]
+  },
+  {
+   "id": "g28_volume_75",
+   "source": "gnomon_everyday_review_v1",
+   "request": "Set volume to 75",
+   "max_steps": 1,
+   "steps": [{"type": "volume_set", "params": {"level": 75}}]
+  },
+  {
+   "id": "a01_append_ship_it",
+   "source": "authored",
+   "request": "Add a line that says ship it to checklist.txt in the launch folder on my Desktop",
+   "max_steps": 2,
+   "steps": [
+    {"type": "file_read", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}}},
+    {"type": "file_write", "label": "file_write keeping the old text", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}, "content": {"contains": "ship it", "has_placeholder": true, "regex": "\\}\\}?\\s*ship it\\s*$"}}}
+   ]
+  },
+  {
+   "id": "a02_prepend_call_venue",
+   "source": "authored",
+   "request": "Put \"call the venue\" at the top of checklist.txt in the launch folder on my Desktop",
+   "max_steps": 2,
+   "steps": [
+    {"type": "file_read", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}}},
+    {"type": "file_write", "label": "file_write with the new line first", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}, "content": {"regex": "^\\s*call the venue\\s*\\{\\{?[A-Z_]+\\}\\}?\\s*$"}}}
+   ]
+  },
+  {
+   "id": "a03_replace_readme",
+   "source": "authored",
+   "request": "Replace everything in README.txt in the launch folder on my Desktop with \"Launch moved to Friday.\"",
+   "max_steps": 1,
+   "steps": [
+    {"type": "file_write", "params": {"path": {"path": "{home}/Desktop/launch/README.txt"}, "content": {"contains": "launch moved to friday", "has_placeholder": false}}}
+   ]
+  },
+  {
+   "id": "a04_new_file_ideas",
+   "source": "authored",
+   "request": "Create a file called ideas.txt on my Desktop that says \"try the blue logo\"",
+   "max_steps": 1,
+   "steps": [
+    {"type": "file_write", "params": {"path": {"path": "{home}/Desktop/ideas.txt"}, "content": {"contains": "try the blue logo", "has_placeholder": false}}}
+   ]
+  },
+  {
+   "id": "a05_rename_post",
+   "source": "authored",
+   "request": "Rename post-final.md in the launch folder on my Desktop to post-v17.md",
+   "max_steps": 1,
+   "steps": [
+    {"type": "file_move", "params": {"path": {"path": "{home}/Desktop/launch/post-final.md"}, "destination": {"path": "{home}/Desktop/launch/post-v17.md"}}}
+   ]
+  },
+  {
+   "id": "a06_move_hero_up",
+   "source": "authored",
+   "request": "Move hero.png out of the screenshots folder and into the launch folder on my Desktop",
+   "max_steps": 1,
+   "steps": [
+    {"type": "file_move", "params": {"path": {"path": "{home}/Desktop/launch/screenshots/hero.png"}, "destination": {"any_of": [{"path": "{home}/Desktop/launch/hero.png"}, {"path": "{home}/Desktop/launch"}]}}}
+   ]
+  },
+  {
+   "id": "a07_copy_screenshots_folder",
+   "source": "authored",
+   "request": "Copy the screenshots folder from the launch folder on my Desktop to my Documents",
+   "max_steps": 1,
+   "steps": [
+    {"type": "file_copy", "params": {"path": {"path": "{home}/Desktop/launch/screenshots"}, "destination": {"any_of": [{"path": "{home}/Documents/screenshots"}, {"path": "{home}/Documents"}]}, "recursive": true}}
+   ]
+  },
+  {
+   "id": "a08_make_folder",
+   "source": "authored",
+   "request": "Make a new folder called receipts in my Documents",
+   "max_steps": 1,
+   "code_ok": ["shell_command", "shell_script"],
+   "steps": [{"type": "shell_command", "params": {"command": {"regex": "^(mkdir|md)$"}, "args": {"contains": "documents"}}}],
+   "alternatives": [
+    [{"type": "shell_command", "params": {"command": {"regex": "^(mkdir|md)$"}, "args": {"contains": "receipts"}, "working_directory": {"contains": "documents"}}}],
+    [{"type": "shell_script", "params": {"script": {"regex": "(new-item|mkdir|\\bmd\\b).*documents.*receipts"}}}]
+   ]
+  },
+  {
+   "id": "a09_delete_drafts_folder",
+   "source": "authored",
+   "request": "Delete the drafts folder inside the launch folder on my Desktop",
+   "max_steps": 1,
+   "steps": [
+    {"type": "file_delete", "params": {"path": {"path": "{home}/Desktop/launch/drafts"}, "recursive": true}}
+   ]
+  },
+  {
+   "id": "a10_open_notepad",
+   "source": "authored",
+   "request": "Open Notepad",
+   "max_steps": 1,
+   "not_undoable_ok": ["open_application"],
+   "steps": [{"type": "open_application", "params": {"name": {"contains": "notepad"}}}]
+  },
+  {
+   "id": "a11_open_youtube",
+   "source": "authored",
+   "request": "Open youtube.com",
+   "max_steps": 1,
+   "not_undoable_ok": ["open_url", "browser_navigate"],
+   "steps": [{"type": ["open_url", "browser_navigate"], "params": {"url": {"contains": "youtube.com"}}}]
+  },
+  {
+   "id": "a12_volume_and_brightness",
+   "source": "authored",
+   "request": "Turn the volume down to 20 percent and the brightness up to 80",
+   "max_steps": 2,
+   "steps": [{"type": "volume_set", "params": {"level": 20}}, {"type": "brightness_set", "params": {"level": 80}}]
+  },
+  {
+   "id": "a13_unmute",
+   "source": "authored",
+   "request": "Unmute the sound",
+   "max_steps": 1,
+   "not_undoable_ok": ["volume_mute"],
+   "steps": [{"type": "volume_mute", "params": {"mute": false}}]
+  },
+  {
+   "id": "a14_clipboard_standup",
+   "source": "authored",
+   "request": "Put \"standup at 10:30\" on my clipboard",
+   "max_steps": 1,
+   "steps": [{"type": "clipboard_write", "params": {"content": {"contains": "standup at 10:30"}}}]
+  },
+  {
+   "id": "a15_minimize_chrome",
+   "source": "authored",
+   "request": "Minimize the Chrome window",
+   "max_steps": 2,
+   "allow_lookup": true,
+   "not_undoable_ok": ["window_minimize"],
+   "steps": [{"type": "window_minimize", "params": {"target": {"contains": "chrome"}}}]
+  },
+  {
+   "id": "a16_maximize_explorer",
+   "source": "authored",
+   "request": "Maximize the File Explorer window",
+   "max_steps": 2,
+   "allow_lookup": true,
+   "not_undoable_ok": ["window_maximize"],
+   "steps": [{"type": "window_maximize", "params": {"target": {"regex": "explorer"}}}]
+  },
+  {
+   "id": "a17_focus_vscode",
+   "source": "authored",
+   "request": "Switch to my Visual Studio Code window",
+   "max_steps": 2,
+   "allow_lookup": true,
+   "not_undoable_ok": ["window_focus"],
+   "steps": [{"type": "window_focus", "params": {"target": {"regex": "code"}}}]
+  },
+  {
+   "id": "a18_copy_then_append",
+   "source": "authored",
+   "request": "Copy checklist.txt from the launch folder on my Desktop to my Documents, then add a line \"print badges\" to the copy",
+   "max_steps": 3,
+   "steps": [
+    {"type": "file_copy", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}, "destination": {"path": "{home}/Documents/checklist.txt"}}},
+    {"type": "file_read", "params": {"path": {"path": "{home}/Documents/checklist.txt"}}},
+    {"type": "file_write", "label": "file_write keeping the old text", "params": {"path": {"path": "{home}/Documents/checklist.txt"}, "content": {"contains": "print badges", "has_placeholder": true}}}
+   ]
+  },
+  {
+   "id": "a19_rename_and_volume",
+   "source": "authored",
+   "request": "Rename README.txt in the launch folder on my Desktop to READ-ME-FIRST.txt and set the volume to 50",
+   "max_steps": 2,
+   "steps": [
+    {"type": "file_move", "params": {"path": {"path": "{home}/Desktop/launch/README.txt"}, "destination": {"path": "{home}/Desktop/launch/READ-ME-FIRST.txt"}}},
+    {"type": "volume_set", "params": {"level": 50}}
+   ]
+  },
+  {
+   "id": "a20_launch_release_job",
+   "source": "authored",
+   "request": "Copy post-final.md and the screenshots folder from the launch folder on my Desktop into a new release folder inside it, delete the drafts and build folders, and zip the release folder",
+   "max_steps": 6,
+   "code_ok": ["shell_script"],
+   "forbid": [
+    {"label": "shell step that copies, moves or deletes", "type": ["shell_script", "shell_command"], "params": {"script": {"regex": "remove-item|copy-item|move-item|robocopy|xcopy|\\brmdir\\b|\\bdel\\b|\\brm\\b"}}}
+   ],
+   "steps": [
+    {"type": "file_copy", "params": {"path": {"path": "{home}/Desktop/launch/post-final.md"}, "destination": {"any_of": [{"path": "{home}/Desktop/launch/release/post-final.md"}, {"path": "{home}/Desktop/launch/release"}]}}},
+    {"type": "file_copy", "params": {"path": {"path": "{home}/Desktop/launch/screenshots"}, "destination": {"any_of": [{"path": "{home}/Desktop/launch/release/screenshots"}, {"path": "{home}/Desktop/launch/release"}]}, "recursive": true}},
+    {"type": "file_delete", "params": {"path": {"path": "{home}/Desktop/launch/drafts"}, "recursive": true}},
+    {"type": "file_delete", "params": {"path": {"path": "{home}/Desktop/launch/build"}, "recursive": true}},
+    {"type": "shell_script", "label": "zip of the release folder", "params": {"script": {"regex": "compress-archive.*launch[\\\\/]release"}}}
+   ]
+  },
+  {
+   "id": "a21_launch_ready_to_ship",
+   "source": "tests/test_multi_part_file_jobs.py",
+   "request": "Get my launch folder on the Desktop ready to ship.",
+   "max_steps": 8,
+   "allow_ask": true,
+   "allow_lookup": true,
+   "allowed": ["file_copy", "file_move", "file_delete", "file_write"],
+   "code_ok": ["shell_script"],
+   "forbid": [
+    {"label": "shell step that copies, moves or deletes", "type": ["shell_script", "shell_command"], "params": {"script": {"regex": "remove-item|copy-item|move-item|robocopy|xcopy|\\brmdir\\b|\\bdel\\b|\\brm\\b"}}}
+   ],
+   "steps": []
+  },
+  {
+   "id": "a22_close_and_open",
+   "source": "authored",
+   "request": "Close Notepad and open Calculator",
+   "max_steps": 2,
+   "not_undoable_ok": ["process_kill", "window_close", "open_application"],
+   "steps": [
+    {"type": ["process_kill", "window_close"], "params": {"target": {"contains": "notepad"}}},
+    {"type": "open_application", "params": {"name": {"contains": "calc"}}}
+   ]
+  },
+  {
+   "id": "a23_remove_line",
+   "source": "authored",
+   "request": "Remove the line \"record the demo\" from checklist.txt in the launch folder on my Desktop",
+   "max_steps": 3,
+   "code_ok": ["code_execute"],
+   "forbid": [
+    {"label": "code that writes the file itself", "type": "code_execute", "params": {"code": {"regex": "write_text|\\.write\\(|open\\([^)]*['\"][wa]"}}}
+   ],
+   "steps": [
+    {"type": "file_read", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}}},
+    {"type": "file_write", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}, "content": {"not_contains": "record the demo"}}}
+   ]
+  }
+ ]
+}
