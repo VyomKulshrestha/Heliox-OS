@@ -9,7 +9,7 @@ Updated for the expanded action set with cross-platform support.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pilot.actions import (
     Action,
@@ -32,6 +32,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.agents.verifier")
 MAX_COPY_CONTENT_VERIFY_BYTES = 64 * 1024 * 1024
+MAX_COPY_TREE_VERIFY_FILES = 20_000
+
+
+def _tree_listing(root: Any) -> dict[str, int] | None:
+    """Relative path to size for every file under ``root``, or None past the file limit."""
+    import os
+    from pathlib import Path
+
+    listing: dict[str, int] = {}
+    for dirpath, _dirs, names in os.walk(root):
+        for name in names:
+            path = Path(dirpath) / name
+            try:
+                listing[path.relative_to(root).as_posix()] = path.stat().st_size
+            except OSError:
+                continue
+            if len(listing) > MAX_COPY_TREE_VERIFY_FILES:
+                return None
+    return listing
 
 
 # Public evidence generation imports this registry so the catalog cannot claim
@@ -313,7 +332,21 @@ class Verifier:
             matches = await asyncio.to_thread(contents_match)
             return matches, "Copy content matches source" if matches else "Copy destination content mismatch", True
         if source.is_dir() and destination.is_dir():
-            return True, "Copy destination exists; directory contents were not compared", False
+            source_files, destination_files = await asyncio.gather(
+                asyncio.to_thread(_tree_listing, source), asyncio.to_thread(_tree_listing, destination)
+            )
+            if source_files is None or destination_files is None:
+                return True, "Copy destination exists; the folder is too large to compare file by file", False
+            if not source_files:
+                return True, "Copy destination exists; the source folder has no files to compare", False
+            missing = sorted(set(source_files) - set(destination_files))
+            if missing:
+                return False, f"Copy is missing {len(missing)} file(s), for example {missing[0]}", True
+            different = sorted(name for name, size in source_files.items() if destination_files[name] != size)
+            if different:
+                return False, f"Copied file size differs for {len(different)} file(s), for example {different[0]}", True
+            total = sum(source_files.values())
+            return True, f"Copy has all {len(source_files)} files of the source ({total} bytes), sizes match", True
         return False, "Copy destination type does not match source", True
 
     async def _verify_file_move(self, params: FileParams) -> tuple[bool, str]:

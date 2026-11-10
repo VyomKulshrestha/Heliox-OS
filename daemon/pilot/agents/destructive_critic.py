@@ -378,7 +378,7 @@ class DestructiveCriticAgent:
                 verdict="WARN",
                 risk_score=0.5,
                 issues=[f"Critic agent encountered an error: {exc}"],
-                recommendation="Critic review failed â€” proceed with extra caution.",
+                recommendation="The safety review could not run, so check this plan carefully before approving.",
                 raw_response=raw,
             )
 

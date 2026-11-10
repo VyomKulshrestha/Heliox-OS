@@ -413,6 +413,17 @@ class AutonomousExecutor:
         except Exception:
             logger.warning("Could not persist autonomous working memory", exc_info=True)
 
+    @staticmethod
+    async def _request_folder_context(goal: str) -> str:
+        """A listing of the folders the person's request names, for the planner; read only."""
+        from pilot.agents.request_folders import describe_request_folders
+
+        try:
+            return await asyncio.to_thread(describe_request_folders, goal)
+        except Exception:
+            logger.debug("Could not list the folders named in the goal", exc_info=True)
+            return ""
+
     def _dry_run_now(self) -> bool:
         config = getattr(self._executor, "_config", None)
         return bool(getattr(getattr(config, "security", None), "dry_run", False))
@@ -1083,6 +1094,10 @@ class AutonomousExecutor:
                 }
                 if specialist_context:
                     planner_kwargs["specialist_context"] = specialist_context
+                # Read fresh each round, so later rounds see what earlier ones changed.
+                folder_context = await self._request_folder_context(job.goal)
+                if folder_context:
+                    planner_kwargs["screen_context"] = f"{planner_kwargs['screen_context']}\n\n{folder_context}"
                 plan = await self._planner.plan(goal, **planner_kwargs)
                 if plan.error:
                     step.error = plan.error

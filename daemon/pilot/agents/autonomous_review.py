@@ -14,6 +14,7 @@ which can only send the loop back to work.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -111,7 +112,11 @@ class AutonomousReviewer:
     ) -> PlanReview:
         from pilot.agents.destructive_critic import assess_plan_risk
 
-        assessment = assess_plan_risk(plan, self._config_getter(), source=getattr(source, "value", str(source)))
+        # Off the event loop, as in the interactive path: sizing a copy may walk folders, and on the
+        # loop the gate only gets a short scan budget, so a large copy would be judged unmeasured.
+        assessment = await asyncio.to_thread(
+            assess_plan_risk, plan, self._config_getter(), source=getattr(source, "value", str(source))
+        )
         review = PlanReview()
         if assessment.requires_confirmation:
             review.requires_approval = True

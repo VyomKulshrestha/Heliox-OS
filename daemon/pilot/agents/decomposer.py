@@ -137,6 +137,10 @@ Given a user goal, determine if it requires multiple steps and break it down.
 
 User Goal: {goal}
 
+Every subtask must be work Heliox does on this computer ({os}). Do not add steps that ask the
+person to confirm, choose or review: subtasks cannot talk to the person, and Heliox already shows
+an approval dialog before any step that changes or deletes something. Keep the person's own order.
+
 If simple (1-2 actions), respond:
 {{"is_complex": false, "subtasks": []}}
 
@@ -159,6 +163,12 @@ Respond with ONLY valid JSON:
 """
 
 
+def _platform_name() -> str:
+    import sys
+
+    return {"win32": "Windows", "darwin": "macOS"}.get(sys.platform, "Linux")
+
+
 class TaskDecomposer:
     """Decomposes complex goals into ordered, dependency-aware subtasks."""
 
@@ -170,7 +180,7 @@ class TaskDecomposer:
         decomposition = TaskDecomposition(goal=goal)
 
         try:
-            prompt = DECOMPOSITION_PROMPT.format(goal=goal)
+            prompt = DECOMPOSITION_PROMPT.format(goal=goal, os=_platform_name())
             response = await self._model.generate(prompt)
             data = json.loads(response)
             if not isinstance(data, dict):

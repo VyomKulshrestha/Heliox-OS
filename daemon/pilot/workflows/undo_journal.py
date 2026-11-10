@@ -614,7 +614,7 @@ class UndoJournal:
             effects[source] = entry.get("post")
             description = f"Move {final_name} back to {Path(source).parent}."
         else:
-            description = f"Remove the copy {final_name}."
+            description = f"Remove the copied {final_name} from {Path(final).parent}."
         if entry.get("pre_final") is not None:
             description += " The file it replaced comes back."
         return "ready", description, effects

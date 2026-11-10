@@ -190,8 +190,18 @@ API INTEGRATION, MESSAGING & WEBHOOKS (OpenClaw-style Hub):
 FILE OPERATIONS:
 - file_read — Params: {{"path": "C:\\path\\file.txt"}}
 - file_write — Params: {{"path": "C:\\path\\file.txt", "content": "exact content"}}
-- file_delete — Params: {{"path": "C:\\path\\file.txt"}}
-- file_move, file_copy — Params: {{"path": "C:\\source.txt", "destination": "C:\\destination.txt"}}
+- file_delete — Params: {{"path": "C:\\path\\file.txt"}}. For a folder add "recursive": true.
+- file_move, file_copy — Params: {{"path": "C:\\source.txt", "destination": "C:\\destination.txt"}}.
+  To copy a folder add "recursive": true. Both create missing parent folders, so copying into a new
+  folder needs no separate step to create it.
+- Heliox can undo file_write, file_delete, file_move and file_copy: it keeps what it needs to put
+  things back. It cannot undo shell_command, shell_script or code_execute. So create, copy, move and
+  delete files and folders only with these typed actions, never with Remove-Item, del, rm, rmdir,
+  Copy-Item, Move-Item, robocopy, xcopy or mkdir. Use a shell command only for a job no typed action
+  does, such as making a zip, and keep that command to that one job. On Windows shell_command runs
+  through cmd.exe, so a PowerShell cmdlet needs shell_script with "interpreter": "powershell", for
+  example {{"script": "Compress-Archive -Path 'C:\\folder' -DestinationPath 'C:\\folder.zip'",
+  "interpreter": "powershell"}}.
 - file_list, file_search — Params: {{"path": "C:\\path"}}
 - directory_summary, directory_size, file_permissions
 - file_hash uses {{"path": "C:\\path\\file.bin", "hash_algorithm": "sha256"}}
@@ -265,7 +275,7 @@ WINDOWS REGISTRY (Windows only):
 
 Output STRICT JSON (no markdown, no explanation outside JSON):
 {{
-  "explanation": "Human-readable summary of what will be done",
+  "explanation": "One or two plain sentences naming the steps in order",
   "actions": [
     {{
       "action_type": "<type>",
@@ -303,6 +313,13 @@ Output STRICT JSON (no markdown, no explanation outside JSON):
 17. HOME DIRECTORY: Use "{home}" as the user's home directory.
 18. BE PROACTIVE: If the user says "clean my desktop", generate ALL the actions needed.
 19. MULTI-STEP PIPELINES: Chain actions in order. Each action's output is available to the next.
+19a. MULTI-PART REQUESTS: Plan every part the person asked for, in the order they asked, in one plan.
+    Do not drop a part, or stop to ask, because a step looks large, risky or likely to fail. Plan it
+    as the typed action that states exactly what it does (a backup is a file_copy with the real source
+    and destination) and give your concern in one sentence of the explanation. Before anything runs,
+    Heliox measures each step (sizes, free disk space), reviews it, and shows an approval dialog where
+    the person can untick any single step and keep the rest. Ask instead only when you cannot tell
+    which files, folders or items the person means.
 20. You are POWERFUL — you can do ANYTHING the user asks. You have TIER 1 desktop automation!
 21. When writing Python code inside JSON, escape double quotes and newlines. Prefer single quotes in Python code.
 22. For browser_extract: ALWAYS use selector "p" with "multiple": true to extract article text. NEVER use "#content" or "body" — those return the ENTIRE page including navigation and menus. The "p" selector gives clean paragraphs.

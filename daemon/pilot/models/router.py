@@ -382,10 +382,8 @@ class ModelRouter:
                 return response
 
             except asyncio.CancelledError:
-                self._open_cloud_circuit(
-                    f"{self._config.model.cloud_provider.title()} API advisory request timed out.",
-                    seconds=30.0,
-                )
+                # The caller gave up (an advisory review's own time limit, or Stop). That says nothing
+                # about the provider, so it must not block the safety critic or the next plan.
                 raise
             except Exception as e:
                 safe_error = safe_provider_error(e, self._config.model.cloud_provider)
@@ -524,10 +522,8 @@ class ModelRouter:
                 )
                 self._clear_cloud_circuit()
             except asyncio.CancelledError:
-                self._open_cloud_circuit(
-                    f"{self._config.model.cloud_provider.title()} API advisory request timed out.",
-                    seconds=30.0,
-                )
+                # The caller gave up (an advisory review's own time limit, or Stop). That says nothing
+                # about the provider, so it must not block the safety critic or the next plan.
                 raise
             except Exception as e:
                 safe_error = safe_provider_error(e, self._config.model.cloud_provider)

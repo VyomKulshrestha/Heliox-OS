@@ -70,6 +70,8 @@ if TYPE_CHECKING:
 # without claiming a fill the gate cannot prove; a proven fill scores
 # DISK_USAGE_RISK_WEIGHT (0.8).
 UNMEASURED_SIZE_RISK = 0.5
+# Other deterministic findings on the riskiest action at least this strong are reported next to the top one.
+SUPPORTING_REASON_FLOOR = 0.5
 # Same 1e-6 fraction risk_safety uses to decide a prediction "added" disk
 # usage: about 1 MB on a 1 TB drive. Smaller writes never flag.
 _MATERIAL_FRACTION = 1e-6
@@ -418,6 +420,33 @@ class _PlanDiskLookahead:
         return (used_before + write.bytes + remaining) / total <= DISK_USAGE_RISK_THRESHOLD
 
 
+def _with_supporting_reasons(reasons: list[str], prediction: dict[str, Any]) -> list[str]:
+    """Add the riskiest action's other strong deterministic findings after its top reason.
+
+    Only the single strongest reason used to reach the person, so a generic one ("Action
+    requests root privileges") could hide a measured one ("copying C: (about 692 GB) needs
+    more than the 260 GB free on C:"). This only adds wording; the score is unchanged.
+    """
+    combined = list(reasons)
+    evidence = prediction.get("risk_evidence") or []
+    ranked = sorted(
+        (item for item in evidence if isinstance(item, dict)),
+        key=lambda item: -float(item.get("score") or 0.0),
+    )
+    for item in ranked:
+        reason = str(item.get("reason") or "").strip()
+        score = item.get("score")
+        if (
+            reason
+            and item.get("deterministic") is True
+            and isinstance(score, (int, float))
+            and score >= SUPPORTING_REASON_FLOOR
+            and reason not in combined
+        ):
+            combined.append(reason)
+    return combined
+
+
 def _highest_risk_evidence(prediction: WorldPrediction) -> RiskEvidence | None:
     """Return the strongest well-formed advisory evidence from a predictor."""
     highest: RiskEvidence | None = None
@@ -611,11 +640,13 @@ class RiskGate:
         world_predictions: list[dict[str, object]] = []
         rollout_ui = ui_observation
         rollout_browser: dict[str, Any] = {}
+        worst_step: int | None = None
         for step_index, action in enumerate(plan.actions):
             contract_prediction = self._world_model.predict(
                 WorldState.from_os_snapshot(simulated, ui=rollout_ui, browser=rollout_browser),
                 action,
             )
+            worst_before_step = (worst_risk, worst_action_type)
             contract_evidence = _highest_risk_evidence(contract_prediction)
             rollout_ui = dict(contract_prediction.predicted_state.ui)
             rollout_browser = dict(contract_prediction.predicted_state.browser)
@@ -784,6 +815,8 @@ class RiskGate:
                 for reason in transition_reasons
             )
             world_predictions.append(contract_payload)
+            if (worst_risk, worst_action_type) != worst_before_step:
+                worst_step = step_index
 
             # The lookahead never lowers predicted usage: freed space is not
             # credited, so a delete cannot hide a later fill in the plan.
@@ -800,6 +833,8 @@ class RiskGate:
                 ),
             )
 
+        if worst_step is not None and worst_reasons:
+            worst_reasons = _with_supporting_reasons(worst_reasons, world_predictions[worst_step])
         self._last_evaluation = {
             "evaluated_at": datetime.now(UTC).isoformat(),
             "action_count": len(plan.actions),

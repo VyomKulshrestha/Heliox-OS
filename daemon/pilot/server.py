@@ -3547,6 +3547,16 @@ class PilotServer:
                 recent_companion_context = self._recent_companion_context_by_session.get(chat_session_id, "")
                 if recent_companion_context:
                     _screen_ctx = (f"{_screen_ctx}\n\n[RECENT COMPANION CONTEXT]\n{recent_companion_context}").strip()
+                # A request that names a folder is planned with its real contents, in one pass.
+                try:
+                    from pilot.agents.request_folders import describe_request_folders
+
+                    folder_ctx = await asyncio.to_thread(describe_request_folders, str(user_input))
+                except Exception:
+                    logger.debug("Could not list the folders named in the request", exc_info=True)
+                    folder_ctx = ""
+                if folder_ctx:
+                    _screen_ctx = f"{_screen_ctx}\n\n{folder_ctx}".strip()
                 if improvement_ctx:
                     _screen_ctx = (
                         f"{_screen_ctx}\n\n[PRIOR VERIFIED IMPROVEMENT CONTEXT]\n"

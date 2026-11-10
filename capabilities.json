@@ -23,7 +23,7 @@
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
-      "sha256": "8bb9946f7a7e0c29abd2adaa41268f155f2d5ebb532d9d2aacdeff2062b33c8a"
+      "sha256": "0bb49152c0607df10c095cc19b8a290e0a3ee8dc51678e5e1dd0a223901881d7"
     },
     "plugin_manifests": [
       {

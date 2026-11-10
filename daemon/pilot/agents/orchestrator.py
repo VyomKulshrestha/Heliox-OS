@@ -34,7 +34,7 @@ from pilot.agents.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerOpenError,
 )
-from pilot.intelligence.experience import experience_scope
+from pilot.intelligence.experience import experience_scope, get_experience_context
 from pilot.models.budget_tracker import (
     ActionBudgetExceededError,
     BudgetExceededError,
@@ -602,8 +602,10 @@ class AgentOrchestrator:
                             contract.budget.max_tokens_per_task,
                         )
                 try:
+                    # The caller's task id wins: undo and receipts are filed under it, and the
+                    # finished task looks them up by it. ``task_id`` here is the plan id.
                     with experience_scope(
-                        task_id=task_id,
+                        task_id=get_experience_context().task_id or task_id,
                         plan_id=task_id,
                         action_index_offset=indices[0],
                     ):
