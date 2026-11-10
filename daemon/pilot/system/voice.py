@@ -326,11 +326,17 @@ def fade_block(block: Any, fade_left: int, fade_total: int) -> Any:
     return out * ramp[:, None] if out.ndim == 2 else out * ramp
 
 
-async def _play_local_tts_file(path: Path) -> None:
-    """Play a synthesized WAV without importing the model runtime. Cancelling it (barge-in) cuts it at once."""
+def _read_audio_file(path: Path) -> tuple[Any, int]:
+    """A WAV as float32 samples and its rate (soundfile, an optional audio package, is imported only here)."""
     import soundfile
 
-    audio, sample_rate = await asyncio.to_thread(soundfile.read, path, dtype="float32")
+    audio, sample_rate = soundfile.read(path, dtype="float32")
+    return audio, int(sample_rate)
+
+
+async def _play_local_tts_file(path: Path) -> None:
+    """Play a synthesized WAV without importing the model runtime. Cancelling it (barge-in) cuts it at once."""
+    audio, sample_rate = await asyncio.to_thread(_read_audio_file, path)
     playback = _Playback(audio, sample_rate)
     try:
         await asyncio.to_thread(playback.play)

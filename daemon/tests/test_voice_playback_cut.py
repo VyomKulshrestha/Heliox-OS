@@ -1,5 +1,8 @@
 """Barge-in cuts Heliox's voice at once: a few milliseconds of fade, then the output stream is aborted instead of
-draining what the device has buffered (sd.stop() took 175 to 200 ms)."""
+draining what the device has buffered (sd.stop() took 175 to 200 ms).
+
+The audio packages (sounddevice, soundfile) are optional and absent in CI, so the device and the file reader are
+fakes here; the one test against a real file is skipped when soundfile is not installed."""
 
 from __future__ import annotations
 
@@ -56,12 +59,14 @@ class FakeStream:
         self._stop.set()
 
 
+def fake_audio(monkeypatch, samples: int) -> None:
+    monkeypatch.setattr(voice, "_read_audio_file", lambda _path: (np.full(samples, 0.5, dtype=np.float32), 48000))
+
+
 @pytest.mark.asyncio
 async def test_cutting_heliox_off_fades_and_aborts_within_tens_of_milliseconds(tmp_path, monkeypatch):
-    import soundfile
-
     path = tmp_path / "speech.wav"
-    soundfile.write(str(path), np.full(48000 * 3, 0.5, dtype=np.float32), 48000)
+    fake_audio(monkeypatch, 48000 * 3)
     FakeStream.instances.clear()
     monkeypatch.setitem(sys.modules, "sounddevice", SimpleNamespace(OutputStream=FakeStream))
     task = asyncio.ensure_future(voice._play_local_tts_file(path))
@@ -80,10 +85,8 @@ async def test_cutting_heliox_off_fades_and_aborts_within_tens_of_milliseconds(t
 
 @pytest.mark.asyncio
 async def test_an_uninterrupted_line_plays_to_the_end(tmp_path, monkeypatch):
-    import soundfile
-
     path = tmp_path / "speech.wav"
-    soundfile.write(str(path), np.full(4800, 0.5, dtype=np.float32), 48000)
+    fake_audio(monkeypatch, 4800)
     FakeStream.instances.clear()
     monkeypatch.setitem(sys.modules, "sounddevice", SimpleNamespace(OutputStream=FakeStream))
     await voice._play_local_tts_file(path)
@@ -91,3 +94,11 @@ async def test_an_uninterrupted_line_plays_to_the_end(tmp_path, monkeypatch):
     assert stream.aborted_at is None
     played = np.concatenate(stream.blocks)
     assert (played > 0.4).sum() == 4800
+
+
+def test_a_real_wav_is_read_as_float_samples(tmp_path):
+    soundfile = pytest.importorskip("soundfile")
+    path = tmp_path / "speech.wav"
+    soundfile.write(str(path), np.full(480, 0.25, dtype=np.float32), 24000)
+    audio, rate = voice._read_audio_file(path)
+    assert rate == 24000 and audio.dtype == np.float32 and abs(float(audio[0]) - 0.25) < 1e-3
