@@ -14,6 +14,7 @@ own text, so it happens right away, like pressing Copy.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import math
 import re
@@ -166,6 +167,7 @@ class ClipboardHistory:
         self._clock = clock
         self._items: list[dict[str, Any]] = []  # newest first
         self._last_seen: str | None = None
+        self._never_keep: dict[str, float] = {}  # sha256 of text Heliox put on the clipboard itself -> expiry
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -177,6 +179,20 @@ class ClipboardHistory:
         self._items = [item for item in self._items if item["at"] >= cutoff]
         return [dict(item) for item in self._items]
 
+    def never_keep(self, text: str) -> None:
+        """Never keep ``text``: Heliox generated it (a password) and put it on the clipboard itself.
+
+        Only a SHA-256 hash is held, in memory, and it expires after ``KEEP_SECONDS``.
+        """
+        now = self._clock()
+        self._never_keep = {key: until for key, until in self._never_keep.items() if until > now}
+        self._never_keep[hashlib.sha256(text.encode("utf-8")).hexdigest()] = now + KEEP_SECONDS
+        self._items = [item for item in self._items if item["text"] != text]
+
+    def _is_never_kept(self, text: str) -> bool:
+        until = self._never_keep.get(hashlib.sha256(text.encode("utf-8")).hexdigest())
+        return until is not None and until > self._clock()
+
     def clear(self) -> int:
         removed = len(self._items)
         self._items = []
@@ -186,7 +202,7 @@ class ClipboardHistory:
         """Keep ``text`` as the newest item, unless it is empty, too long, private or secret."""
         if not self.enabled or not text.strip() or len(text) > MAX_TEXT:
             return False
-        if self._excluded(app, title) or looks_secret(text):
+        if self._is_never_kept(text) or self._excluded(app, title) or looks_secret(text):
             return False
         self._items = [item for item in self._items if item["text"] != text]
         self._items.insert(0, {"id": uuid.uuid4().hex[:10], "text": text, "at": self._clock(), "app": app})

@@ -72,6 +72,10 @@ def test_secrets_are_recognized(text):
         r"C:\Users\Jane\Documents\Report-2026.docx",
         "hello",
         "1234 5678",
+        "Quarterly",
+        "ABC123",
+        "aaaaaaaaaaaa",
+        "Project Phoenix kickoff",
     ],
 )
 def test_ordinary_text_is_kept(text):
@@ -121,6 +125,18 @@ async def test_skips_secrets_private_windows_and_huge_text(board, history, state
     board.text = "x" * 10_001
     assert await history.check() is False
     assert history.list() == []
+
+
+@pytest.mark.asyncio
+async def test_text_heliox_put_on_the_clipboard_is_never_kept(board, history, state):
+    generated = "lp*Fccc*lZU5"  # a generated password; looks_secret said False for it (see test_day_helpers)
+    history.never_keep(generated)
+    board.text = generated
+    assert await history.check() is False
+    assert history.list() == []
+    assert generated not in repr(history._never_keep) and generated not in repr(history._items)  # only a hash
+    state["now"] += KEEP_SECONDS + 1  # the entry expires
+    assert history.remember(generated) is True
 
 
 @pytest.mark.asyncio

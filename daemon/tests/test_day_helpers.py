@@ -25,9 +25,55 @@ GB = 1024**3
 
 def test_passwords_are_strong_and_secret():
     for length in (12, 20, 64):
+        for _ in range(3000):
+            password = make_password(length)
+            assert len(password) == length
+            assert looks_secret(password)  # so anything that copies it around treats it as a secret
+            assert any(c.islower() for c in password) and any(c.isupper() for c in password)
+            assert any(c.isdigit() for c in password) and any(not c.isalnum() for c in password)
+
+
+def test_password_fallback_is_strong_and_secret(monkeypatch):
+    from pilot.workflows import generators
+
+    monkeypatch.setattr(generators, "looks_secret", lambda text: False)  # every random draw is rejected
+    for length in (12, 20, 64):
         password = make_password(length)
-        assert len(password) == length
-        assert looks_secret(password)  # so clipboard history never keeps one
+        assert len(password) == length and len(set(password)) == length
+        assert any(c.islower() for c in password) and any(c.isupper() for c in password)
+        assert any(c.isdigit() for c in password) and any(not c.isalnum() for c in password)
+    from pilot.workflows.clipboard_history import looks_secret as real
+
+    assert all(real(make_password(12)) for _ in range(50))
+
+
+@pytest.mark.asyncio
+async def test_generated_password_is_never_kept_by_clipboard_history():
+    # CI run 42760620562 generated 'lp*Fccc*lZU5': 12 characters with 'c' three times, so its
+    # entropy (about 2.9 bits) is under looks_secret's 3.0 and it returned False. Clipboard history
+    # would have kept it. make_password no longer returns such values, and the history is also told
+    # about every generated password before it is written, so it is never kept either way.
+    from pilot.workflows.clipboard_history import ClipboardHistory
+
+    assert looks_secret("lp*Fccc*lZU5") is False  # still False: looks_secret was not loosened
+    clipboard = {"text": "(clipboard is empty)"}
+
+    async def read():
+        return clipboard["text"]
+
+    async def write(text):
+        clipboard["text"] = text
+
+    history = ClipboardHistory(enabled=lambda: True, read=read, write=write, foreground=lambda: ("app", "title"))
+    helpers = Generators(write=write, on_password=history.never_keep)
+    failing = "lp*Fccc*lZU5"
+    from unittest.mock import patch
+
+    with patch("pilot.workflows.generators.make_password", return_value=failing):
+        await helpers.answer_async("generate a 12 character password")
+    assert clipboard["text"] == failing
+    assert await history.check() is False
+    assert history.list() == []
 
 
 @pytest.mark.asyncio

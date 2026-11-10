@@ -2,7 +2,8 @@
 
 "Generate a password" makes one with the operating system's secure random source and
 puts it on the clipboard. It is never spoken, shown in chat, written to disk or kept in
-clipboard history (which skips anything that looks like a password). "Flip a coin",
+clipboard history (which is told about each password before it is copied, and also skips
+anything that looks like one). "Flip a coin",
 "roll a die", "pick a number between 1 and 100", "choose between pizza and sushi" and
 "start a stopwatch" are answered in code.
 """
@@ -15,6 +16,8 @@ import string
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
+
+from pilot.workflows.clipboard_history import looks_secret
 
 PASSWORD_REQUEST = re.compile(
     r"^(?:please )?(?:generate|make|create|give) (?:me )?(?:a |an )?(?:new )?(?:(?P<length>\d{1,3})(?: |-)?(?:character|char|letter) )?"
@@ -43,18 +46,37 @@ def _normalize(text: str) -> str:
     return " ".join(re.sub(r"[^\w\s-]", " ", text.casefold()).split())
 
 
+_ATTEMPTS = 32
+
+
+def _has_every_class(password: str) -> bool:
+    return (
+        any(char.islower() for char in password)
+        and any(char.isupper() for char in password)
+        and any(char.isdigit() for char in password)
+        and any(char in _SYMBOLS for char in password)
+    )
+
+
 def make_password(length: int = 20) -> str:
-    """A password with upper and lower case letters, digits and symbols, from ``secrets``."""
+    """A password with upper and lower case letters, digits and symbols, from ``secrets``.
+
+    Only returns passwords that clipboard history's ``looks_secret`` accepts, so anything
+    that copies one around also treats it as a secret. A random draw misses that check
+    (too many repeated characters) in about 1 of 300 at 12 characters, so it redraws, a
+    bounded number of times. The fallback uses no repeated character, which always passes.
+    """
     alphabet = string.ascii_letters + string.digits + _SYMBOLS
-    while True:
+    for _ in range(_ATTEMPTS):
         password = "".join(secrets.choice(alphabet) for _ in range(length))
-        if (
-            any(char.islower() for char in password)
-            and any(char.isupper() for char in password)
-            and any(char.isdigit() for char in password)
-            and any(char in _SYMBOLS for char in password)
-        ):
+        if _has_every_class(password) and looks_secret(password):
             return password
+    rng = secrets.SystemRandom()
+    picks = [rng.choice(group) for group in (string.ascii_lowercase, string.ascii_uppercase, string.digits, _SYMBOLS)]
+    rest = [char for char in alphabet if char not in picks]
+    picks += rng.sample(rest, length - len(picks))
+    rng.shuffle(picks)
+    return "".join(picks)
 
 
 def _elapsed(seconds: float) -> str:
@@ -78,10 +100,12 @@ class Generators:
         self,
         *,
         write: Callable[[str], Awaitable[Any]] | None = None,
+        on_password: Callable[[str], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         rng: Any = None,
     ) -> None:
         self._write = write
+        self._on_password = on_password
         self._clock = clock
         self._rng = rng or secrets.SystemRandom()
         self._stopwatch: float | None = None
@@ -95,7 +119,10 @@ class Generators:
                 return "A password can be 12 to 64 characters long."
             if self._write is None:
                 return None
-            await self._write(make_password(length))
+            generated = make_password(length)
+            if self._on_password is not None:
+                self._on_password(generated)  # before the write, so a clipboard poll can never see it first
+            await self._write(generated)
             return (
                 f"I put a new {length}-character password on the clipboard. Paste it where you need it; "
                 "I didn't keep a copy, and it isn't in your clipboard history."

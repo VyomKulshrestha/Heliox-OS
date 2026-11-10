@@ -1289,7 +1289,7 @@ class PilotServer:
         from pilot.workflows.generators import Generators
         from pilot.workflows.habits import HabitStore
 
-        self._generators = Generators(write=clipboard_write)
+        self._generators = Generators(write=clipboard_write, on_password=self._clipboard_history.never_keep)
         self._focus_log = FocusLog(DATA_DIR / "focus_history.json")
         self._habits = HabitStore(DATA_DIR / "habits.json")
         from pilot.workflows.user_profile import UserProfile
