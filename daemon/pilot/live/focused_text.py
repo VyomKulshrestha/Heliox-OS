@@ -8,7 +8,9 @@ an article or a chat transcript on screen is never treated as what the person ty
 read either: UI Automation marks those and the helper refuses them before touching their value. Nothing it
 returns is logged or stored.
 
-This is the live layer's privacy boundary on Windows. Other platforms return nothing here.
+This is the live layer's privacy boundary on Windows. macOS and Linux have their own readers beside this module
+(``focused_text_macos``, ``focused_text_linux``); all three satisfy ``FocusedTextSource`` and pass every element
+through the same decision, ``focused_text_policy.admit``. ``create_reader`` picks the one for this system.
 """
 
 from __future__ import annotations
@@ -21,14 +23,15 @@ import logging
 import os
 import subprocess
 import time
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
+from pilot.live.focused_text_policy import MAX_CHARS, ElementFacts, FocusedText, ReaderStatus, admit
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform
+
+__all__ = ["FocusedText", "FocusedTextReader", "FocusedTextSource", "create_reader", "parse_reply"]
 
 logger = logging.getLogger("pilot.live.focused_text")
 
-MAX_CHARS = 6000
 READ_TIMEOUT_SECONDS = 1.5
 STARTUP_TIMEOUT_SECONDS = 12.0  # PowerShell start plus loading the UI Automation assemblies
 RESTART_BACKOFF_SECONDS = (2.0, 5.0, 15.0, 60.0)
@@ -113,16 +116,16 @@ while ($true) {{
 """
 
 
-@dataclass(frozen=True)
-class FocusedText:
-    text: str
-    control_type: str
-    pid: int
-    password: bool
-    # True only when the focused element is a writable text field, document or terminal; text is empty otherwise.
-    editable: bool = False
-    kind: str = ""  # "field", "terminal", or "" when not editable
-    field: str = ""  # UI Automation runtime id: a new id means a different field, even in the same window
+class FocusedTextSource(Protocol):
+    """What Live needs from a platform reader. ``read`` answers None when nothing can be read right now."""
+
+    available: bool
+
+    async def read(self) -> FocusedText | None: ...
+
+    def status(self) -> ReaderStatus: ...
+
+    async def close(self) -> None: ...
 
 
 def window_handle(field: str) -> int | None:
@@ -157,21 +160,19 @@ def parse_reply(data: dict[str, Any]) -> FocusedText | None:
     """The helper's answer for one read. Text is kept only for a writable, non-password element."""
     if not data.get("ok"):
         return None
-    password = bool(data.get("password"))
-    kind = str(data.get("kind") or "")
-    editable = bool(data.get("editable")) and not password and kind in ("field", "terminal")
-    return FocusedText(
-        text=str(data.get("text") or "") if editable else "",
-        control_type=str(data.get("type") or "").removeprefix("ControlType."),
-        pid=int(data.get("pid") or 0),
-        password=password,
-        editable=editable,
-        kind=kind if editable else "",
-        field=str(data.get("field") or "") if editable else "",
+    return admit(
+        ElementFacts(
+            role=str(data.get("type") or "").removeprefix("ControlType."),
+            pid=int(data.get("pid") or 0),
+            secure=bool(data.get("password")),
+            kind=str(data.get("kind") or "") if data.get("editable") else "",
+            field=str(data.get("field") or ""),
+            text=str(data.get("text") or ""),
+        )
     )
 
 
-class FocusedTextReader:
+class WindowsFocusedTextReader:
     """A long-lived UI Automation helper. Safe to construct anywhere; it starts on the first read."""
 
     def __init__(self) -> None:
@@ -181,6 +182,11 @@ class FocusedTextReader:
         self._retry_at = 0.0
         self._fresh = False
         self.available = CURRENT_PLATFORM == Platform.WINDOWS
+
+    def status(self) -> ReaderStatus:
+        if not self.available:
+            return ReaderStatus("unavailable", "Reading the focused field uses UI Automation, which is Windows only.")
+        return ReaderStatus("ready")
 
     async def read(self) -> FocusedText | None:
         if not self.available or time.monotonic() < self._retry_at:
@@ -244,3 +250,20 @@ class FocusedTextReader:
         if proc.returncode is None:
             with contextlib.suppress(Exception):
                 proc.kill()
+
+
+# The Windows reader under its original name.
+FocusedTextReader = WindowsFocusedTextReader
+
+
+def create_reader() -> FocusedTextSource:
+    """The focused-text reader for this system. Never raises: a missing binding gives a reader that explains."""
+    if CURRENT_PLATFORM == Platform.MACOS:
+        from pilot.live.focused_text_macos import MacFocusedTextReader
+
+        return MacFocusedTextReader()
+    if CURRENT_PLATFORM == Platform.LINUX:
+        from pilot.live.focused_text_linux import LinuxFocusedTextReader
+
+        return LinuxFocusedTextReader()
+    return WindowsFocusedTextReader()

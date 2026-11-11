@@ -462,6 +462,7 @@ fn main() {
             commands::open_logs_folder,
             commands::apply_git_conflict_resolution,
             commands::get_hotkey,
+            commands::get_hotkey_status,
             commands::set_hotkey,
             commands::get_auth_token,
             commands::extract_file_text,

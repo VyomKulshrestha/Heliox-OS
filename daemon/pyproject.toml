@@ -85,6 +85,20 @@ documents = [
     "beautifulsoup4>=4.12",
 ]
 
+# Platform readers for Heliox Live (see docs/PLATFORM_SUPPORT.md). Each is a
+# no-op install on the other systems. macOS: the Accessibility API, the app
+# and window in front, and the window list, through pyobjc's prebuilt wheels.
+# Linux: AT-SPI, the desktop accessibility bus, through jeepney, a pure-Python
+# D-Bus client (no compiler, no GObject introspection).
+macos = [
+    "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+]
+linux = [
+    "jeepney>=0.8; sys_platform == 'linux'",
+]
+
 # User Manual Supervision (opt-in global keyboard/mouse hook, see
 # pilot.system.input_hook) -- kept as its own extras group since it's a much
 # bigger privacy surface than anything else in `all`.
@@ -140,7 +154,7 @@ typed-decision = [
 
 # Everything installable from PyPI.
 all = [
-    "pilot-daemon[full,automation,vision,browser,documents,ssh,network,wasm,supervision,voice,neural]",
+    "pilot-daemon[full,automation,vision,browser,documents,ssh,network,wasm,supervision,voice,neural,macos,linux]",
 ]
 
 dev = [

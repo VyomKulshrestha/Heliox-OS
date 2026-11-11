@@ -9,7 +9,17 @@ from __future__ import annotations
 import subprocess
 from unittest.mock import call, patch
 
+import pytest
+
 from pilot.agents.screen_vision import _get_active_window_linux
+
+
+@pytest.fixture(autouse=True)
+def _no_atspi(monkeypatch):
+    """These tests cover the xdotool route, which runs when AT-SPI cannot tell."""
+    from pilot.live import focused_text_linux
+
+    monkeypatch.setattr(focused_text_linux, "foreground_window", lambda: None)
 
 
 def _make_completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess:

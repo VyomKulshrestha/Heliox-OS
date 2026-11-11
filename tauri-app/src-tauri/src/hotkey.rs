@@ -1,6 +1,34 @@
 use std::fs;
+use std::sync::Mutex;
 use tauri::{App, AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+/// Why the active shortcut could not be registered, so the app can say so instead of printing to stderr.
+static REGISTRATION_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+/// The shortcut used when the person has not chosen one: free on a stock install of each system.
+/// macOS: Cmd+Space opens Spotlight and Ctrl+Space switches input sources, so Option+Space ("Alt+Space").
+/// Windows and Linux: Ctrl+Space (GNOME switches input sources with Super+Space; KDE's KRunner uses Alt+Space).
+pub fn default_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Alt+Space"
+    } else {
+        "Ctrl+Space"
+    }
+}
+
+pub fn registration_error() -> Option<String> {
+    REGISTRATION_ERROR
+        .lock()
+        .ok()
+        .and_then(|error| error.clone())
+}
+
+fn set_registration_error(error: Option<String>) {
+    if let Ok(mut slot) = REGISTRATION_ERROR.lock() {
+        *slot = error;
+    }
+}
 
 fn get_shortcut_path(_app: &AppHandle) -> std::path::PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
@@ -12,11 +40,7 @@ pub fn load_saved_shortcut(app: &AppHandle) -> String {
     let saved = fs::read_to_string(path).unwrap_or_default();
     let trimmed = saved.trim();
     if trimmed.is_empty() {
-        // Use platform-appropriate default shortcut
-        #[cfg(target_os = "macos")]
-        return "Cmd+Space".to_string();
-        #[cfg(not(target_os = "macos"))]
-        return "Ctrl+Space".to_string();
+        return default_shortcut().to_string();
     }
     trimmed.to_string()
 }
@@ -33,11 +57,15 @@ fn save_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
 pub fn register_hotkey(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.handle().clone();
     let shortcut = load_saved_shortcut(&app_handle);
-    if let Err(e) = do_register(&app_handle, &shortcut) {
-        eprintln!(
-            "[Heliox OS] Warning: Failed to register hotkey {}: {}",
-            shortcut, e
-        );
+    match do_register(&app_handle, &shortcut) {
+        Ok(()) => set_registration_error(None),
+        Err(e) => {
+            eprintln!(
+                "[Heliox OS] Warning: Failed to register hotkey {}: {}",
+                shortcut, e
+            );
+            set_registration_error(Some(e.to_string()));
+        }
     }
     Ok(())
 }
@@ -89,5 +117,6 @@ pub fn update_shortcut(app: &AppHandle, new_shortcut: &str) -> Result<(), String
         return Err(error);
     }
 
+    set_registration_error(None);
     Ok(())
 }

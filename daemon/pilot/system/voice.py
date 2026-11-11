@@ -775,7 +775,13 @@ async def _tts_linux(
     rate: int,
     output_file: str | None,
 ) -> str:
-    cmd = ["espeak"]
+    from pilot.system.linux_voice import espeak_program, no_voice_message
+
+    program = espeak_program()
+    if program is None:
+        # Neither espeak-ng nor espeak is installed: say so once in the log and carry on in text.
+        return no_voice_message()
+    cmd = [program]
 
     if voice:
         cmd.extend(["-v", voice])
@@ -838,6 +844,9 @@ async def _tts_macos(
         # than leaving it running after this await appears cancelled.
         proc.kill()
         raise
+
+    if proc.returncode:
+        return f"TTS failed: {program} exited with code {proc.returncode}"
 
     if output_file:
         return f"Speech saved to {output_file}"

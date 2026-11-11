@@ -787,6 +787,16 @@ pub fn get_hotkey(app: AppHandle) -> String {
     crate::hotkey::load_saved_shortcut(&app)
 }
 
+// 5b. The active shortcut and, when it could not be registered at startup, why
+#[tauri::command]
+pub fn get_hotkey_status(app: AppHandle) -> serde_json::Value {
+    serde_json::json!({
+        "shortcut": crate::hotkey::load_saved_shortcut(&app),
+        "default": crate::hotkey::default_shortcut(),
+        "error": crate::hotkey::registration_error(),
+    })
+}
+
 // 6. Update the global shortcut from the frontend settings panel
 #[tauri::command]
 pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {

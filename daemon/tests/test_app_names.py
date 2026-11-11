@@ -43,7 +43,7 @@ def test_an_unknown_process_keeps_its_name_unless_windows_has_a_real_one():
     assert display_name("", "") == ""
 
 
-def test_describe_says_nothing_off_windows(monkeypatch):
+def test_describe_says_nothing_for_an_unknown_program(monkeypatch):
     monkeypatch.setattr(app_names.os, "name", "posix")
     app_names.describe.cache_clear()
     assert app_names.describe("anything") == ""

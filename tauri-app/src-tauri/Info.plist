@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Merged into the app bundle by Tauri. Without it macOS refuses the microphone to Heliox and the daemon it
+       starts: the input stream opens and delivers only zeros. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Heliox listens for "Hey Heliox" and for what you say to it. Speech is recognised on this computer.</string>
+  <!-- Asked before Heliox sends its first Apple Event: window actions (move, focus, close) still go through
+       System Events. Accessibility and Screen Recording have no usage key; they are granted in System Settings. -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Heliox moves, focuses and closes windows when you ask it to, through System Events.</string>
+</dict>
+</plist>

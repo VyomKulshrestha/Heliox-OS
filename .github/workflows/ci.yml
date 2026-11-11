@@ -290,3 +290,80 @@ jobs:
       - name: Cargo tests
         working-directory: tauri-app/src-tauri
         run: cargo test --all-targets
+
+  # ── Real platform readers (experimental, non-blocking) ──
+  # Exercises the macOS and Linux focused-text readers against real accessibility stacks on hosted runners.
+  # The unit tests for the same code run in the `python` job on every system. This job is allowed to fail while
+  # the runner setups are being proved; make it required once it has passed on three consecutive pushes to main.
+  platform-readers:
+    name: Platform readers (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    defaults:
+      run:
+        working-directory: daemon
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the daemon with its platform extra
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then pip install -e ".[linux]"; else pip install -e ".[macos]"; fi
+          pip list 2>/dev/null | grep -iE "jeepney|pyobjc-framework-(ApplicationServices|Cocoa|Quartz)" || true
+
+      - name: Install the Linux accessibility stack (AT-SPI, GTK 3, Xvfb, xdotool, Weston)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            xvfb xdotool dbus dbus-x11 at-spi2-core libatk-adaptor \
+            python3-gi gir1.2-gtk-3.0 weston
+          ls /usr/share/dbus-1/services/ | grep -i a11y || echo "no org.a11y.Bus service file"
+
+      - name: Linux, X11 session - type into a GTK field and read it through AT-SPI
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -c '
+            Xvfb :99 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
+            export DISPLAY=:99 GTK_A11Y=atspi
+            sleep 2
+            python tests/platform_real/linux_atspi_check.py --python /usr/bin/python3
+          '
+
+      - name: Linux, Wayland session (Weston headless) - the same checks without X
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          dbus-run-session -- bash -c '
+            export XDG_RUNTIME_DIR=$(mktemp -d) && chmod 700 "$XDG_RUNTIME_DIR"
+            (weston --backend=headless --socket=wayland-heliox --idle-time=0 || weston --backend=headless-backend.so --socket=wayland-heliox --idle-time=0) >/tmp/weston.log 2>&1 &
+            sleep 3
+            unset DISPLAY
+            export WAYLAND_DISPLAY=wayland-heliox GDK_BACKEND=wayland
+            python tests/platform_real/linux_atspi_check.py --wayland --python /usr/bin/python3
+            status=$?
+            tail -20 /tmp/weston.log
+            exit $status
+          '
+
+      - name: macOS - permissions, frontmost app and the Accessibility reader
+        if: runner.os == 'macOS'
+        run: |
+          sw_vers
+          python tests/platform_real/macos_ax_check.py
+
+      - name: Unit tests for the readers on this runner
+        run: |
+          pip install pytest pytest-asyncio pytest-timeout
+          pytest tests/test_platform_readers.py tests/test_platform_quiet_failures.py -q --timeout=120

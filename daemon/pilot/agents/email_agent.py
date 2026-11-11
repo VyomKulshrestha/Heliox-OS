@@ -639,7 +639,9 @@ def _send_os_notification(title: str, body: str) -> None:
                 check=False,
             )
         elif system == "Darwin":
-            script = f'display notification "{body}" with title "{title}"'
+            from pilot.system.notify import applescript_quoted
+
+            script = f"display notification {applescript_quoted(body)} with title {applescript_quoted(title)}"
             subprocess.run(["osascript", "-e", script], timeout=5, check=False)
         elif system == "Windows":
             # Windows Forms balloon tip — no extra packages required

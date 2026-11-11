@@ -17,6 +17,9 @@ export async function invoke<T = any>(command: string, args?: any): Promise<T> {
   if (command === "get_hotkey") {
     return "Ctrl+Space" as unknown as T;
   }
+  if (command === "get_hotkey_status") {
+    return { shortcut: "Ctrl+Space", default: "Ctrl+Space", error: null } as unknown as T;
+  }
   if (command === "set_hotkey") {
     throw new Error("Global hotkeys are only available in the Heliox desktop app.");
   }

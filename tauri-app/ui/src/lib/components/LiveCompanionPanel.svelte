@@ -21,10 +21,12 @@
     held_back: { id: string; problems: string[] }[];
   };
   type Catches = { packs: Pack[]; rules: number; held_back: number };
+  type ReaderState = { state: string; message: string; settings_url: string };
   type Status = {
     status: string;
     kinds?: Kind[];
     reads_focused_text?: boolean;
+    focused_text?: ReaderState;
     timing?: Timing;
     catches?: Catches;
   };
@@ -33,6 +35,7 @@
   let timing = $state<Timing | null>(null);
   let catches = $state<Catches | null>(null);
   let readsFocusedText = $state(true);
+  let reader = $state<ReaderState | null>(null);
   let error = $state("");
   let saving = $state(false);
 
@@ -95,6 +98,16 @@
     if (!result.ok) error = result.message;
   }
 
+  // macOS only: shows the system's Accessibility prompt (at most once per run) and reports the new state.
+  async function askPermission() {
+    try {
+      const status = await call<Status>("live_set", { request_permission: true });
+      if (status.status === "ok") reader = status.focused_text ?? reader;
+    } catch {
+      /* the note above still says where to turn it on */
+    }
+  }
+
   function toggleKind(kind: string, on: boolean) {
     const muted = new Set(cfg.muted_kinds ?? []);
     if (on) muted.delete(kind);
@@ -108,6 +121,7 @@
       if (status.status === "ok") {
         kinds = status.kinds ?? [];
         readsFocusedText = status.reads_focused_text !== false;
+        reader = status.focused_text ?? null;
         timing = status.timing ?? null;
         catches = status.catches ?? null;
       }
@@ -193,10 +207,18 @@
         onchange={(e) => save({ read_focused_text: (e.currentTarget as HTMLInputElement).checked })}
       />
       <span
-        >The text field you're typing in{readsFocusedText ? "" : " (Windows only)"}. Never password fields, password
-        managers, Heliox itself, or apps you excluded from the timeline.</span
+        >The text field you're typing in{readsFocusedText ? "" : " (not available on this system)"}. Never password
+        fields, password managers, Heliox itself, or apps you excluded from the timeline.</span
       >
     </label>
+    {#if cfg.read_focused_text && reader?.message}
+      <p class="reader-note">
+        {reader.message}
+        {#if reader.state === "needs_permission"}
+          <button type="button" class="link" onclick={askPermission}>Ask macOS for access</button>
+        {/if}
+      </p>
+    {/if}
     <label class="check">
       <input
         type="checkbox"
@@ -288,6 +310,20 @@
     color: var(--text-secondary);
     font-size: var(--text-sm);
     line-height: 1.5;
+  }
+
+  .reader-note {
+    padding-left: 26px;
+  }
+
+  .reader-note .link {
+    padding: 0;
+    border: 0;
+    color: var(--accent);
+    background: none;
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
 
   .message {

@@ -1884,29 +1884,12 @@ class Executor:
 
     async def _exec_notify(self, action: Action) -> str:
         params: NotifyParams = action.parameters  # type: ignore[assignment]
-        from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
+        from pilot.system.notify import notification_command, notification_result
+        from pilot.system.platform_detect import CURRENT_PLATFORM, run_command
 
-        if CURRENT_PLATFORM == Platform.WINDOWS:
-            code, _, err = await run_powershell(
-                f"[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; "
-                f"$notify = New-Object System.Windows.Forms.NotifyIcon; "
-                f"$notify.Icon = [System.Drawing.SystemIcons]::Information; "
-                f"$notify.Visible = $true; "
-                f"$notify.ShowBalloonTip(5000, '{params.summary}', '{params.body}', "
-                f"[System.Windows.Forms.ToolTipIcon]::Info); "
-                f"Start-Sleep -Seconds 3; $notify.Dispose()"
-            )
-            if code != 0:
-                return f"Notification: {params.summary} — {params.body}"
-            return f"Notification sent: {params.summary}"
-        elif CURRENT_PLATFORM == Platform.MACOS:
-            code, _, err = await run_command(
-                ["osascript", "-e", f'display notification "{params.body}" with title "{params.summary}"']
-            )
-        else:
-            code, _, err = await run_command(["notify-send", params.summary, params.body or ""])
-
-        return f"Notification sent: {params.summary}"
+        command = notification_command(CURRENT_PLATFORM.value, params.summary, params.body or "")
+        code, _, err = await run_command(command)
+        return notification_result(CURRENT_PLATFORM.value, code, err, params.summary, params.body or "")
 
     # ======================================================================
     # PROCESS MANAGEMENT

@@ -56,16 +56,18 @@ def inside_heliox_private_dirs(path: str) -> bool:
     """True when ``path`` resolves into a folder that actions must never read or change."""
     if not path:
         return False
+    from pilot.security.path_rules import path_within
+
     try:
-        resolved = os.path.normcase(os.path.realpath(os.path.expanduser(path)))
+        resolved = os.path.realpath(os.path.expanduser(path))
     except (OSError, ValueError):
         return False
     for root in heliox_private_dirs():
         try:
-            base = os.path.normcase(os.path.realpath(str(root)))
+            base = os.path.realpath(str(root))
         except (OSError, ValueError):
             continue
-        if resolved == base or resolved.startswith(base.rstrip("\\/") + os.sep):
+        if path_within(resolved, base):  # case-insensitive on Windows and macOS, as their file systems are
             return True
     return False
 
@@ -364,6 +366,8 @@ class ActionValidator:
                         "which actions may not read or change",
                     )
 
+            from pilot.security.path_rules import path_within
+
             try:
                 resolved_path = os.path.realpath(action.parameters.path)
             except Exception:
@@ -375,7 +379,7 @@ class ActionValidator:
                 except Exception:
                     resolved_protected = protected
 
-                if resolved_path.startswith(resolved_protected):
+                if path_within(resolved_path, resolved_protected):
                     raise ValidationError(idx, f"Path {action.parameters.path} is in protected folder {protected}")
 
         if isinstance(action.parameters, PackageParams) and action.action_type == ActionType.PACKAGE_REMOVE:

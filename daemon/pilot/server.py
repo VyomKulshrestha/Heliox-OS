@@ -1370,9 +1370,9 @@ class PilotServer:
         )
         self._suggestions.start()
         from pilot.live.engine import LiveCompanion
-        from pilot.live.focused_text import FocusedTextReader
+        from pilot.live.focused_text import create_reader
 
-        self._live_reader = FocusedTextReader()
+        self._live_reader = create_reader()
         from pilot.live.catches import BUILT_IN_DIR, CatchBook, install
 
         install(CatchBook([BUILT_IN_DIR, DATA_DIR / "live_catches"]))
@@ -6946,21 +6946,15 @@ class PilotServer:
     async def _live_observe(self) -> Any:
         """One look at what the person is typing, for the live layer. The text never leaves this process."""
         from pilot.agents.screen_vision import _get_active_window
-        from pilot.live.detectors import _PASSWORD_MANAGERS
         from pilot.live.engine import Observation
+        from pilot.live.focused_text_policy import never_read
         from pilot.workflows.manual_workflow_hook import _is_heliox_window_title
 
         cfg = self.config.live
         app, title = await asyncio.to_thread(_get_active_window)
         if not app and not title:
             return None
-        where = f"{app} {title}".casefold()
-        excluded = [name.casefold() for name in self.config.timeline.excluded_apps if name.strip()]
-        if (
-            _is_heliox_window_title(title)
-            or any(name in where for name in _PASSWORD_MANAGERS)
-            or any(name in where for name in excluded)
-        ):
+        if never_read(app, title, self.config.timeline.excluded_apps, is_heliox=_is_heliox_window_title(title)):
             return None  # Heliox's own window, password managers, and apps the person excluded are never read
         reading = None
         if cfg.read_focused_text and self._live_reader is not None:
@@ -7032,6 +7026,10 @@ class PilotServer:
         status = self._live.status()
         status["kinds"] = [{"kind": kind, "label": label} for kind, label in KIND_LABELS.items()]
         status["reads_focused_text"] = bool(self._live_reader is not None and self._live_reader.available)
+        reader_status = getattr(self._live_reader, "status", None)
+        if callable(reader_status):
+            # What the platform reader needs from the person, if anything (a macOS permission, a Linux package).
+            status["focused_text"] = reader_status().as_dict()
         from pilot.live.catches import book
 
         status["catches"] = await asyncio.to_thread(book().summary)
@@ -7055,6 +7053,9 @@ class PilotServer:
             "grounded_model",
         )
         values = {key: params[key] for key in (*keys, "muted_kinds") if key in params}
+        request = getattr(self._live_reader, "request_permission", None)
+        if params.get("request_permission") is True and callable(request):
+            request()  # macOS: the system's Accessibility prompt, at most once per run, on the person's action
         if values:
             result = await self._handle_update_config({"section": "live", "values": values}, None)
             if result.get("status") != "ok":

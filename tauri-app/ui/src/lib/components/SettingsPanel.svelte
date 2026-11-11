@@ -38,7 +38,13 @@
   import NeuralControlPanel from "./NeuralControlPanel.svelte";
   import { getSharedGestureCalibrationStore } from "../gesture/calibration";
   import { gazeRuntime, resetGazeRuntime } from "../stores/gazeRuntime";
-  import { defaultHotkey, isNativeTauriRuntime, normalizeHotkeyValue } from "../hotkey";
+  import {
+    defaultHotkey,
+    hotkeyFailureMessage,
+    isNativeTauriRuntime,
+    normalizeHotkeyValue,
+    type HotkeyStatus,
+  } from "../hotkey";
   import { companion } from "../stores/companion";
 
   let {
@@ -248,6 +254,17 @@
       hotkeyInput = defaultHotkey();
       hotkeyError = "Could not read the active system shortcut.";
     });
+  // A shortcut that failed to register at startup (taken by another app) is said here, not only on stderr.
+  if (hotkeySupported) {
+    invoke<HotkeyStatus>("get_hotkey_status")
+      .then((status) => {
+        const failure = hotkeyFailureMessage(status);
+        if (failure) hotkeyError = failure;
+      })
+      .catch(() => {
+        /* older desktop builds have no status command */
+      });
+  }
 
   async function saveHotkey() {
     hotkeyError = "";

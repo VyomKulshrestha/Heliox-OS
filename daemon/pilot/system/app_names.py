@@ -1,8 +1,12 @@
 """Apps as people name them: "Windows Terminal", not "WindowsTerminal"; "Word", not "WINWORD".
 
 ``display_name`` is pure: a small table for process names that are not what people say, then the program's own
-description when Windows has a real one, then the process name unchanged. Unknown names are never split or
+description when the system has a real one, then the process name unchanged. Unknown names are never split or
 re-cased by rule, since that would mangle names that are already right.
+
+The description comes from the program itself on each system: the file description on Windows, the bundle's
+display name (``CFBundleDisplayName``, else ``CFBundleName``) on macOS, and the desktop entry's ``Name`` on Linux.
+The lookups are pure functions over a path or a file's text, tested on every system.
 """
 
 from __future__ import annotations
@@ -10,6 +14,10 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import plistlib
+import sys
+from collections.abc import Callable, Iterable
+from pathlib import Path
 
 logger = logging.getLogger("pilot.system.app_names")
 
@@ -73,23 +81,131 @@ def display_name(process: str, description: str = "") -> str:
     return _real_description(description) or bare
 
 
+def bundle_display_name(exe: str, read: Callable[[Path], bytes] = Path.read_bytes) -> str:
+    """The name a macOS app bundle gives itself, from the path of its executable ("" when not in a bundle)."""
+    parts = Path(exe).parts
+    for index in range(len(parts) - 1, -1, -1):
+        if parts[index].endswith(".app"):
+            try:
+                info = plistlib.loads(read(Path(*parts[: index + 1]) / "Contents" / "Info.plist"))
+            except Exception:
+                return ""
+            return str(info.get("CFBundleDisplayName") or info.get("CFBundleName") or "").strip()
+    return ""
+
+
+def parse_desktop_entry(text: str) -> dict[str, str]:
+    """The keys of a desktop entry's [Desktop Entry] group (unlocalised values only)."""
+    keys: dict[str, str] = {}
+    group = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            group = line[1:-1]
+            continue
+        if group == "Desktop Entry" and "=" in line:
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if "[" not in key:
+                keys.setdefault(key, value.strip())
+    return keys
+
+
+def _exec_name(command: str) -> str:
+    """The program an Exec line starts, skipping ``env VAR=value`` prefixes."""
+    words = command.split()
+    if words and Path(words[0].strip('"')).name == "env":
+        words = [word for word in words[1:] if "=" not in word]
+    return Path(words[0].strip('"')).name if words else ""
+
+
+def desktop_entry_name(process: str, entries: Iterable[tuple[str, str]]) -> str:
+    """The ``Name`` of the desktop entry that launches ``process``, from (file stem, file text) pairs.
+
+    An entry matches by its file name (whole, or its last dotted part: "org.gnome.Nautilus" for "nautilus"), by
+    the program its ``Exec`` starts, or by ``StartupWMClass``. A visible entry wins over a hidden one.
+    """
+    wanted = _bare(process).casefold()
+    if not wanted:
+        return ""
+    hidden = ""
+    for stem, text in entries:
+        keys = parse_desktop_entry(text)
+        if keys.get("Type", "Application") != "Application" or not keys.get("Name"):
+            continue
+        names = {
+            stem.casefold(),
+            stem.rsplit(".", 1)[-1].casefold(),
+            _exec_name(keys.get("Exec", "")).casefold(),
+            keys.get("StartupWMClass", "").casefold(),
+        }
+        if wanted in names:
+            if keys.get("NoDisplay", "").lower() != "true" and keys.get("Hidden", "").lower() != "true":
+                return keys["Name"]
+            hidden = hidden or keys["Name"]
+    return hidden
+
+
+def _desktop_dirs() -> list[Path]:
+    home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    data = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    dirs = [home, *(Path(d) for d in data.split(":") if d)]
+    dirs += [Path("/var/lib/flatpak/exports/share"), home / "flatpak" / "exports" / "share"]
+    folders = [d / "applications" for d in dirs]
+    return [*folders, Path("/var/lib/snapd/desktop/applications")]
+
+
+@functools.lru_cache(maxsize=1)
+def _desktop_entries() -> tuple[tuple[str, str], ...]:
+    found: list[tuple[str, str]] = []
+    for folder in _desktop_dirs():
+        try:
+            files = sorted(folder.glob("*.desktop"))
+        except OSError:
+            continue
+        for path in files[:2000]:
+            try:
+                found.append((path.stem, path.read_text(encoding="utf-8", errors="replace")))
+            except OSError:
+                continue
+    return tuple(found)
+
+
+def _process_exe(process: str) -> str:
+    import psutil
+
+    wanted = _bare(process).casefold()
+    for proc in psutil.process_iter(["name", "exe"]):
+        name = proc.info.get("name") or ""
+        if _bare(name).casefold() == wanted and proc.info.get("exe"):
+            return str(proc.info["exe"])
+    return ""
+
+
 @functools.lru_cache(maxsize=128)
 def describe(process: str) -> str:
-    """The file description Windows reports for a running process with this name, or "" (always "" off Windows)."""
-    if os.name != "nt" or not process:
+    """What the system calls the program behind a running process, or "".
+
+    Windows: the file description. macOS: the app bundle's display name. Linux: the desktop entry's name.
+    """
+    if not process:
         return ""
     try:
-        import psutil
-        import win32api
+        if os.name == "nt":
+            import win32api
 
-        wanted = _bare(process).casefold()
-        for proc in psutil.process_iter(["name", "exe"]):
-            name = proc.info.get("name") or ""
-            if _bare(name).casefold() != wanted or not proc.info.get("exe"):
-                continue
-            exe = proc.info["exe"]
+            exe = _process_exe(process)
+            if not exe:
+                return ""
             (lang, page), *_ = win32api.GetFileVersionInfo(exe, "\\VarFileInfo\\Translation")
             return str(win32api.GetFileVersionInfo(exe, f"\\StringFileInfo\\{lang:04x}{page:04x}\\FileDescription"))
+        if sys.platform == "darwin":
+            exe = _process_exe(process)
+            return bundle_display_name(exe) if exe else ""
+        if sys.platform.startswith("linux"):
+            return desktop_entry_name(process, _desktop_entries())
     except Exception:
         logger.debug("No description for %s", process, exc_info=True)
     return ""

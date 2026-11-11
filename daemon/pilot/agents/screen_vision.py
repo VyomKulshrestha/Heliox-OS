@@ -695,7 +695,22 @@ def _get_active_window_windows() -> tuple[str, str]:
 
 
 def _get_active_window_macos() -> tuple[str, str]:
-    """macOS: Get active window via AppleScript."""
+    """macOS: the Accessibility API and the Quartz window list (pyobjc, the ``macos`` extra), no AppleScript.
+
+    Only when pyobjc is not installed does this fall back to AppleScript through System Events, which needs the
+    Automation permission as well as Accessibility.
+    """
+    from pilot.live import focused_text_macos
+
+    found = focused_text_macos.foreground_window()
+    if found is not None:
+        return found
+    if focused_text_macos.shared() is not None:
+        return ("Unknown", "Unknown")
+    return _get_active_window_applescript()
+
+
+def _get_active_window_applescript() -> tuple[str, str]:
     script = """
     tell application "System Events"
         set frontApp to name of first application process whose frontmost is true
@@ -721,7 +736,17 @@ def _get_active_window_macos() -> tuple[str, str]:
 
 
 def _get_active_window_linux() -> tuple[str, str]:
-    """Linux: Get active window via xdotool."""
+    """Linux: the AT-SPI focus Live follows (X11 and Wayland, for applications on the accessibility bus), then
+    xdotool (X11 only)."""
+    from pilot.live import focused_text_linux
+
+    found = focused_text_linux.foreground_window()
+    if found is not None:
+        return found
+    return _get_active_window_xdotool()
+
+
+def _get_active_window_xdotool() -> tuple[str, str]:
     try:
         wid = subprocess.run(
             ["xdotool", "getactivewindow"],
