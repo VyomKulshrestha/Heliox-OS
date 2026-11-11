@@ -556,6 +556,22 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
             task.add_done_callback(_manager._background.discard)
 
 
+def local_voice_state(voice_config: Any) -> dict[str, bool]:
+    """``voice_loaded``: Heliox can speak now without loading its voice. ``voice_loading``: a load is under way.
+
+    The system voice (``os_native``) needs no load. A local voice that failed counts as not loaded: Heliox would
+    speak with the system voice until it recovers.
+    """
+    engine = str(getattr(voice_config, "tts_engine", ""))
+    if engine not in LOCAL_ENGINES:
+        return {"voice_loaded": True, "voice_loading": False}
+    worker = _manager
+    same = worker.running and worker.engine == engine
+    loaded = bool(same and worker.loaded and worker._failed_until is None)
+    loading = bool(same and not loaded and worker._load_task is not None and not worker._load_task.done())
+    return {"voice_loaded": loaded, "voice_loading": loading}
+
+
 def prewarm_local_voice(voice_config: Any) -> None:
     """The person is talking to Heliox: load the configured local voice now. Safe to call often; never blocks."""
     _manager.prewarm(str(getattr(voice_config, "tts_engine", "")), str(getattr(voice_config, "tts_voice", "")))

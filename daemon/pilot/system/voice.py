@@ -354,11 +354,113 @@ _current_speech_task: asyncio.Task[str] | None = None
 FADE_SECONDS = 0.008  # a cut-off voice ramps down this fast: no click, and nothing left to drain
 
 
-class _Playback:
-    """Plays one buffer through its own output stream, so a cut-off can fade and abort instead of draining.
+OUTPUT_LINE_IDLE_SECONDS = 300.0  # as long as the local voice stays loaded (tts_keep_loaded_seconds' default)
 
-    ``sd.stop()`` waits for audio already queued in the device to play out (175 to 200 ms measured); aborting
-    the stream drops it at once (5 to 10 ms). The callback ramps the voice down over FADE_SECONDS first.
+
+class _OutputLine:
+    """One output stream kept open between Heliox's sentences, playing silence when nothing is being said.
+
+    Opening a stream on the owner's machine took 1.0 to 1.1 s before the first sample reached the device (3.2 s for
+    the first open after a while; MME, WASAPI and DirectSound alike, Realtek speakers). Opened per sentence, that
+    put a 3 s pause before "Okay, stopped." after the person cut Heliox off, although the words were ready. The line
+    opens when listening starts or Heliox is about to speak, stays open while a conversation is plausible, and
+    closes after OUTPUT_LINE_IDLE_SECONDS of silence.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()  # opening and closing
+        self._current_lock = threading.Lock()
+        self.stream: Any = None
+        self.rate = 0
+        self.channels = 0
+        self.current: _Playback | None = None
+        self.last_used = time.monotonic()
+        self._idle_timer: threading.Timer | None = None
+
+    def callback(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
+        with self._current_lock:
+            current = self.current
+        if current is None:
+            outdata.fill(0)
+            return
+        current.callback(outdata, frames, time_info, status)
+
+    def ensure(self, rate: int, channels: int) -> Any:
+        """The open stream for this format, opening (or reopening for another format) when needed."""
+        with self._lock:
+            if self.stream is not None and self.rate == rate and self.channels == channels:
+                return self.stream
+            self._close_locked()
+            import sounddevice as sd
+
+            stream = sd.OutputStream(
+                samplerate=rate, channels=channels, dtype="float32", callback=self.callback, latency="low"
+            )
+            stream.start()
+            self.stream, self.rate, self.channels = stream, rate, channels
+            self._touch_locked()
+            return stream
+
+    def attach(self, playback: _Playback) -> None:
+        with self._current_lock:
+            self.current = playback
+
+    def detach(self, playback: _Playback) -> None:
+        with self._current_lock:
+            if self.current is playback:
+                self.current = None
+        with self._lock:
+            self._touch_locked()
+
+    def _touch_locked(self) -> None:
+        self.last_used = time.monotonic()
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+        self._idle_timer = threading.Timer(OUTPUT_LINE_IDLE_SECONDS, self._close_if_idle)
+        self._idle_timer.daemon = True
+        self._idle_timer.start()
+
+    def _close_if_idle(self) -> None:
+        with self._lock:
+            if self.current is None and time.monotonic() - self.last_used >= OUTPUT_LINE_IDLE_SECONDS - 0.5:
+                self._close_locked()
+
+    def _close_locked(self) -> None:
+        stream, self.stream, self.rate, self.channels = self.stream, None, 0, 0
+        if stream is not None:
+            with contextlib.suppress(Exception):
+                stream.abort()
+            with contextlib.suppress(Exception):
+                stream.close()
+
+    def close(self) -> None:
+        with self._lock:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+            self._close_locked()
+
+
+_output_line = _OutputLine()
+LOCAL_VOICE_RATE = 24000  # Kokoro's output; another rate reopens the line
+
+
+def warm_output_line(rate: int = LOCAL_VOICE_RATE) -> None:
+    """Open the output line in the background, so Heliox's next words do not wait for the device. Never blocks."""
+
+    def open_line() -> None:
+        try:
+            _output_line.ensure(rate, 1)
+        except Exception:
+            logger.debug("Could not open the output line ahead of speech", exc_info=True)
+
+    threading.Thread(target=open_line, name="heliox-output-line", daemon=True).start()
+
+
+class _Playback:
+    """Plays one buffer on the shared output line, so a cut-off can fade out at once instead of draining.
+
+    The callback ramps the voice down over FADE_SECONDS; after that the line plays silence, and only what the
+    device had already buffered (its "low" latency, about 90 ms here) is still heard.
     """
 
     def __init__(self, audio: Any, sample_rate: int) -> None:
@@ -388,25 +490,21 @@ class _Playback:
             self.finished.set()
 
     def play(self) -> None:
-        import sounddevice as sd
-
-        self.stream = sd.OutputStream(
-            samplerate=self.sample_rate, channels=self.audio.shape[1], dtype="float32", callback=self.callback
-        )
-        with self.stream:
+        self.stream = _output_line.ensure(self.sample_rate, self.audio.shape[1])
+        _output_line.attach(self)
+        try:
             self.finished.wait()
             if self.fade_left is None:
-                # Let the last block reach the speaker before closing the stream.
+                # Let the last block reach the speaker before the next sentence takes the line.
                 time.sleep(max(0.0, float(getattr(self.stream, "latency", 0.0) or 0.0)))
+        finally:
+            _output_line.detach(self)
 
     def cut(self) -> None:
-        """Fade out and drop whatever is still buffered."""
+        """Fade out; the line plays silence from the next block."""
         self.fade_left = int(self.sample_rate * FADE_SECONDS)
         self.faded.wait(0.05)
-        stream = self.stream
-        if stream is not None:
-            with contextlib.suppress(Exception):
-                stream.abort()
+        _output_line.detach(self)
         self.finished.set()
 
 
@@ -2710,6 +2808,7 @@ class ContinuousVoiceListener:
             "last_turn_probability": self._recorder.last_turn_probability,
             "last_endpoint_reason": self._recorder.last_endpoint_reason,
             "last_endpoint_ms": self._recorder.last_endpoint_ms,
+            "last_voiced_seconds": self._recorder.last_voiced_seconds,
             "vad_recorder_active": self._recorder.is_active,
             "input_device": self._recorder.input_device,
             "input_device_name": self._recorder.input_device_name,

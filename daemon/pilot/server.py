@@ -13239,9 +13239,7 @@ def handle_tool(tool_name, params):
 
     async def _voice_partial(self, text: str) -> None:
         """A live caption of the words so far, while the person is still talking (streaming engine)."""
-        from pilot.system.local_tts_worker import prewarm_local_voice
-
-        prewarm_local_voice(self.config.voice)  # load the voice while they talk, so the reply is not silent
+        self._prewarm_voice()  # load the voice while they talk, so the reply is not silent
         await self._broadcast_notification("voice_partial", {"text": text})
 
     async def _voice_turn_hold(self) -> None:
@@ -13274,6 +13272,16 @@ def handle_tool(tool_name, params):
             listener.end_interruption()
         logger.info("Started a new voice conversation (%d earlier turns set aside)", hidden)
         return {"status": "ok", "earlier_turns": hidden}
+
+    def _prewarm_voice(self) -> None:
+        """Load the local voice and open the output line, so Heliox's next words wait for neither."""
+        from pilot.system.local_tts_worker import LOCAL_ENGINES, prewarm_local_voice
+
+        prewarm_local_voice(self.config.voice)
+        if self.config.voice.tts_engine in LOCAL_ENGINES:
+            from pilot.system.voice import warm_output_line
+
+            warm_output_line()
 
     def _voice_task_open(self) -> bool:
         """A task the person started is running or an approval waits: their replies need no wake word."""
@@ -13628,9 +13636,7 @@ def handle_tool(tool_name, params):
             data: Additional status data.
         """
         if status in {"wake_detected", "follow_up_detected"}:
-            from pilot.system.local_tts_worker import prewarm_local_voice
-
-            prewarm_local_voice(self.config.voice)  # load the voice now, so the reply is not silent
+            self._prewarm_voice()  # load the voice now, so the reply is not silent
         await self._broadcast_notification("voice_status", {"status": status, **data})
         phase_map = {
             "wake_detected": InteractionPhase.UNDERSTANDING,
@@ -13709,11 +13715,9 @@ def handle_tool(tool_name, params):
         if not self._voice_listener.is_running:
             self._voice_listener = None
             return {"status": "error", "message": result}
-        from pilot.system.local_tts_worker import prewarm_local_voice
-
         # Loading the local voice can take most of a minute when memory is short; start it with listening, not
         # at the first sentence, so the first answer is not held at "Getting my voice ready...".
-        prewarm_local_voice(self.config.voice)
+        self._prewarm_voice()
         await self._interaction_runtime.transition(
             InteractionPhase.LISTENING,
             message="Listening for your wake word",
@@ -13750,9 +13754,12 @@ def handle_tool(tool_name, params):
         Returns:
             A dict with voice listener statistics.
         """
+        from pilot.system.local_tts_worker import local_voice_state
+
+        voice_state = local_voice_state(self.config.voice)
         if not self._voice_listener:
-            return {"running": False, "message": "Voice listener not initialized"}
-        return self._voice_listener.get_stats()
+            return {"running": False, "message": "Voice listener not initialized", **voice_state}
+        return {**self._voice_listener.get_stats(), **voice_state}
 
     async def _handle_voice_recognition_test(self, params: dict, ws: ServerConnection) -> dict:
         """Capture one utterance and return its transcript without executing it."""

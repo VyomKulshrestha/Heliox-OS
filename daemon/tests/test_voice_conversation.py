@@ -740,3 +740,11 @@ async def test_a_cut_off_waits_for_no_recogniser():
     listener.note_interruption()
     assert await listener._record_and_transcribe(duration=3, timeout=None, keep_backlog=True) == "(cut off)"
     listener._transcribe_path.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_listener_stats_say_whether_the_voice_is_loaded():
+    server = PilotServer(PilotConfig())
+    server.config.voice.tts_engine = "os_native"
+    stats = await server._handle_voice_listener_stats({}, None)
+    assert stats["voice_loaded"] is True and stats["voice_loading"] is False and stats["running"] is False

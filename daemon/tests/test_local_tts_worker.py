@@ -255,3 +255,28 @@ def test_worker_reports_a_failed_load_without_exiting(monkeypatch: pytest.Monkey
 
     reply = json.loads(capsys.readouterr().out)
     assert reply["status"] == "error" and "kokoro" in reply["error"]
+
+
+def test_voice_state_says_when_heliox_can_speak_without_a_load(monkeypatch):
+    import asyncio as _asyncio
+    from types import SimpleNamespace
+
+    from pilot.system import local_tts_worker as ltw
+
+    kokoro = SimpleNamespace(tts_engine="kokoro_tts")
+    assert ltw.local_voice_state(SimpleNamespace(tts_engine="os_native")) == {
+        "voice_loaded": True,
+        "voice_loading": False,
+    }
+    loop = _asyncio.new_event_loop()
+    pending = loop.create_future()
+    worker = SimpleNamespace(running=True, engine="kokoro_tts", loaded=False, _failed_until=None, _load_task=pending)
+    monkeypatch.setattr(ltw, "_manager", worker)
+    assert ltw.local_voice_state(kokoro) == {"voice_loaded": False, "voice_loading": True}
+    worker.loaded, worker._load_task = True, None
+    assert ltw.local_voice_state(kokoro) == {"voice_loaded": True, "voice_loading": False}
+    worker._failed_until = 10.0  # failed: Heliox would use the system voice until it recovers
+    assert ltw.local_voice_state(kokoro)["voice_loaded"] is False
+    worker.running = False
+    assert ltw.local_voice_state(kokoro) == {"voice_loaded": False, "voice_loading": False}
+    loop.close()

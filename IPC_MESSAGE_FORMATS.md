@@ -1829,7 +1829,11 @@ Return voice listener statistics.
 `last_endpoint_reason` (`smart_turn`, `silence` or `max_duration`), `last_endpoint_ms` (the silence that ended
 the last turn), `streaming_ready`, `streaming_error` and `last_transcription_engine` (`streaming`, `whisper` or
 `parakeet`). `final_pass` is the recogniser whose words are acted on (`whisper` or `parakeet`), and
-`final_pass_notice` says why Parakeet is not in use when `voice.final_pass` asks for it.
+`final_pass_notice` says why Parakeet is not in use when `voice.final_pass` asks for it. `voice_loaded` is true
+only when Heliox can speak now without loading its voice (always true for the system voice; false while a local
+voice failed and the system voice stands in), and `voice_loading` while a load is under way. Both are present
+when the listener is off too. `last_voiced_seconds` is the voice in the last utterance, without pre-roll or
+trailing silence.
 
 #### `voice_listen_now`
 The microphone button while always-listening is on: the next sentence (within `seconds`, default 10) is taken

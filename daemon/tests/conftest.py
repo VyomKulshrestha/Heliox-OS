@@ -35,6 +35,12 @@ def pytest_sessionfinish(session, exitstatus):
     t.start()
 
 
+@pytest.fixture(autouse=True)
+def _no_real_output_line(monkeypatch):
+    """Warming Heliox's voice opens the real output device in the daemon; never in tests."""
+    monkeypatch.setattr("pilot.system.voice.warm_output_line", lambda *_args, **_kwargs: None)
+
+
 @pytest.fixture
 def smtp_mock(monkeypatch):
     """Mocks smtplib.SMTP for testing without real network calls."""
