@@ -231,6 +231,14 @@
   // The local voice is loading (up to ~25 s from cold): say a spoken reply is coming instead of going silent.
   let preparingVoice = $state("");
   let inCall = $state("");
+  // The microphone or speakers failed or changed: what Heliox is doing about it (cleared when sound flows again).
+  let deviceNotice = $state("");
+  let deviceTimer: ReturnType<typeof setTimeout> | null = null;
+  function showDeviceNotice(text: string, clearAfterMs = 0) {
+    deviceNotice = text;
+    if (deviceTimer) clearTimeout(deviceTimer);
+    deviceTimer = clearAfterMs ? setTimeout(() => (deviceNotice = ""), clearAfterMs) : null;
+  }
   let preparingTimer: ReturnType<typeof setTimeout> | null = null;
   let captionTimer: ReturnType<typeof setTimeout> | null = null;
   function showCaption(text: string) {
@@ -259,6 +267,7 @@
     if (status === "voice_loading") {
       preparingVoice = String(payload.message ?? "") || "Getting my voice ready…";
       if (preparingTimer) clearTimeout(preparingTimer);
+      if (deviceTimer) clearTimeout(deviceTimer);
       preparingTimer = setTimeout(() => (preparingVoice = ""), 90000);
       return;
     }
@@ -268,6 +277,14 @@
     }
     if (status === "call_ended") {
       inCall = "";
+      return;
+    }
+    if (status === "microphone_problem") {
+      showDeviceNotice(String(payload.message ?? "") || "The microphone stopped; reopening it.");
+      return;
+    }
+    if (status === "microphone_recovered" || status === "speaker_changed") {
+      showDeviceNotice(String(payload.message ?? ""), 6000);
       return;
     }
     if (status === "voice_ready" || status === "voice_unavailable") {
@@ -320,6 +337,7 @@
   onDestroy(() => {
     if (captionTimer) clearTimeout(captionTimer);
     if (preparingTimer) clearTimeout(preparingTimer);
+    if (deviceTimer) clearTimeout(deviceTimer);
     offNotification(voiceStatusHandler);
     window.removeEventListener("heliox:voice-command-request", handleVoiceCommandRequest);
     if (listenerHealthTimer) clearInterval(listenerHealthTimer);
@@ -508,7 +526,7 @@
   {/if}
 
   <!-- Transcript Preview -->
-  {#if interimTranscript || transcript || holding || preparingVoice || inCall}
+  {#if interimTranscript || transcript || holding || preparingVoice || inCall || deviceNotice}
     <div class="transcript-preview" aria-live="polite">
       {#if transcript}
         <span class="final">{transcript}</span>
@@ -524,6 +542,9 @@
       {/if}
       {#if inCall}
         <span class="holding">{inCall}</span>
+      {/if}
+      {#if deviceNotice}
+        <span class="holding">{deviceNotice}</span>
       {/if}
     </div>
   {/if}

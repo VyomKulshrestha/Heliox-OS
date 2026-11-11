@@ -376,6 +376,11 @@ class _OutputLine:
         self.current: _Playback | None = None
         self.last_used = time.monotonic()
         self._idle_timer: threading.Timer | None = None
+        # The system default output when the line opened ("" when it cannot be read), and whether the next open
+        # must refresh PortAudio's device list first (it is read once, so a new default is otherwise not seen).
+        self.device_name = ""
+        self._stale_devices = False
+        self.notice = ""
 
     def callback(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
         with self._current_lock:
@@ -384,6 +389,11 @@ class _OutputLine:
             outdata.fill(0)
             return
         current.callback(outdata, frames, time_info, status)
+        if current.fade_left == 0:
+            # The cut-off has faded to nothing: silence from the next block.
+            with self._current_lock:
+                if self.current is current:
+                    self.current = None
 
     def ensure(self, rate: int, channels: int) -> Any:
         """The open stream for this format, opening (or reopening for another format) when needed."""
@@ -393,6 +403,12 @@ class _OutputLine:
             self._close_locked()
             import sounddevice as sd
 
+            if self._stale_devices:
+                self._stale_devices = False
+                _refresh_portaudio_devices(sd)
+            from pilot.system.audio_health import default_speaker_name
+
+            self.device_name = default_speaker_name()
             stream = sd.OutputStream(
                 samplerate=rate, channels=channels, dtype="float32", callback=self.callback, latency="low"
             )
@@ -439,7 +455,60 @@ class _OutputLine:
                 self._idle_timer.cancel()
             self._close_locked()
 
+    def device_lost(self, reason: str) -> None:
+        """The stream stopped playing (device removed): close it; the next sentence reopens on the current default."""
+        logger.warning("Speaker output lost (%s); reopening on the current default device", reason)
+        self.notice = f"The speaker output stopped ({reason}); switched to the current default device."
+        with self._current_lock:
+            self.current = None
+        with self._lock:
+            self._stale_devices = True
+            self._close_locked()
 
+    def check_device(self, default_name: str) -> bool:
+        """Follow the system default output (headphones unplugged, another device chosen) while idle. Returns True
+        when the line was closed to be reopened on the new device."""
+        with self._lock:
+            if self.stream is None or self.current is not None:
+                return False
+            moved = bool(default_name and self.device_name and default_name != self.device_name)
+            stopped = getattr(self.stream, "active", True) is False
+            if not (moved or stopped):
+                return False
+            self.notice = f"Speaking on {default_name} now." if moved else "The speaker output stopped; reopening it."
+            logger.info("Output line: %s", self.notice)
+            self._stale_devices = True
+            self._close_locked()
+        rate = self.rate or LOCAL_VOICE_RATE
+        warm_output_line(rate)
+        return True
+
+
+def _refresh_audio_devices() -> None:
+    """Re-read PortAudio's device list between streams; the output line is closed first when it is idle."""
+    if _output_line.current is not None:
+        return
+    try:
+        import sounddevice as sd
+    except Exception:
+        return
+    _output_line.close()
+    _refresh_portaudio_devices(sd)
+
+
+def _refresh_portaudio_devices(sd: Any) -> None:
+    """Re-read the device list, so a new default output is used. Only when no PortAudio input is open: the
+    microphone on Windows is captured through WASAPI (soundcard), not PortAudio."""
+    if _portaudio_inputs_open:
+        return  # re-initialising would close the microphone stream
+    try:
+        sd._terminate()
+        sd._initialize()
+    except Exception:
+        logger.debug("Could not refresh the audio device list", exc_info=True)
+
+
+_portaudio_inputs_open = 0  # microphone streams opened through PortAudio (the non-Windows path)
 _output_line = _OutputLine()
 LOCAL_VOICE_RATE = 24000  # Kokoro's output; another rate reopens the line
 
@@ -492,19 +561,21 @@ class _Playback:
     def play(self) -> None:
         self.stream = _output_line.ensure(self.sample_rate, self.audio.shape[1])
         _output_line.attach(self)
-        try:
-            self.finished.wait()
-            if self.fade_left is None:
-                # Let the last block reach the speaker before the next sentence takes the line.
-                time.sleep(max(0.0, float(getattr(self.stream, "latency", 0.0) or 0.0)))
-        finally:
-            _output_line.detach(self)
+        # The device can disappear mid-sentence (headphones unplugged): its callbacks stop, and without a limit
+        # Heliox would wait for the end of a sentence that never plays.
+        if not self.finished.wait(len(self.audio) / max(1, self.sample_rate) + 2.0):
+            _output_line.device_lost("no audio played for longer than the sentence")
+            return
+        if self.fade_left is not None:
+            return  # cut off: the line's callback finishes the fade and then plays silence
+        # Let the last block reach the speaker before the next sentence takes the line.
+        time.sleep(max(0.0, float(getattr(self.stream, "latency", 0.0) or 0.0)))
+        _output_line.detach(self)
 
     def cut(self) -> None:
-        """Fade out; the line plays silence from the next block."""
+        """Fade out over the next block; the line plays silence after it. Returns at once: nothing here waits on
+        the audio device, so a slow machine cannot turn the fade into a click."""
         self.fade_left = int(self.sample_rate * FADE_SECONDS)
-        self.faded.wait(0.05)
-        _output_line.detach(self)
         self.finished.set()
 
 
@@ -807,6 +878,9 @@ async def _tts_linux(
         proc.kill()
         raise
 
+    if proc.returncode:
+        return f"TTS failed: {program} exited with code {proc.returncode}"
+
     if output_file:
         return f"Speech saved to {output_file}"
 
@@ -844,9 +918,6 @@ async def _tts_macos(
         # than leaving it running after this await appears cancelled.
         proc.kill()
         raise
-
-    if proc.returncode:
-        return f"TTS failed: {program} exited with code {proc.returncode}"
 
     if output_file:
         return f"Speech saved to {output_file}"
@@ -1481,6 +1552,8 @@ class _ContinuousRecorder:
         # When the current or last utterance's speech was confirmed (time.monotonic()); None before any.
         self.speech_started_at: float | None = None
         self.capture_backend = ""
+        # When the current run of exact digital zeros began (time.monotonic()); None while there is any signal.
+        self._zeros_since: float | None = None
         # Semantic turn-taking (pilot.system.turn_detector): asked after a short silence whether the person is
         # done. Done ends the turn at once; not done keeps listening for up to turn_hold_frames of silence.
         self.turn_detector: Any = None
@@ -1526,7 +1599,11 @@ class _ContinuousRecorder:
         self.input_device_notice = ""
         self._loop = asyncio.get_event_loop()
         self._queue = asyncio.Queue()
+        return self._open_capture()
 
+    def _open_capture(self) -> bool:
+        """Open the capture backend; frames go to the existing queue. Safe to call from a worker thread."""
+        self._zeros_since = None
         if CURRENT_PLATFORM == Platform.WINDOWS:
             try:
                 if self._start_windows_wasapi():
@@ -1584,6 +1661,8 @@ class _ContinuousRecorder:
                 device=self.input_device,
             )
             self._stream.start()
+            global _portaudio_inputs_open
+            _portaudio_inputs_open += 1
             self.capture_backend = "portaudio"
             self.last_error = ""
             return True
@@ -1593,8 +1672,19 @@ class _ContinuousRecorder:
             self._stream = None
             return False
 
+    @property
+    def zero_seconds(self) -> float:
+        """How long every frame has been exact digital zeros (a muted or captured device); 0 while there is signal."""
+        since = self._zeros_since
+        return 0.0 if since is None else max(0.0, time.monotonic() - since)
+
     def _publish_audio_block(self, block: Any) -> None:
         signal_rms = frame_rms(block)
+        if signal_rms == 0.0:
+            if self._zeros_since is None:
+                self._zeros_since = time.monotonic()
+        else:
+            self._zeros_since = None
         self.frames_received += 1
         self.last_frame_rms = signal_rms
         self.peak_frame_rms = max(self.peak_frame_rms, signal_rms)
@@ -1689,7 +1779,25 @@ class _ContinuousRecorder:
         self._soundcard_thread.start()
         return True
 
+    def reopen(self) -> bool:
+        """Close the capture backend and open it again on the current device, keeping the frame queue, so an
+        utterance being waited for carries on with the new stream. Blocking: call from a worker thread."""
+        portaudio = self.capture_backend == "portaudio"
+        self._close_capture()
+        self.last_error = ""
+        if portaudio:
+            # PortAudio (macOS, Linux, and Windows when WASAPI capture is unavailable) reads the device list once:
+            # without a refresh a new default microphone, or one plugged back in, is not seen.
+            _refresh_audio_devices()
+        return self._open_capture()
+
     def stop(self) -> None:
+        self._close_capture()
+        if self._queue is not None:
+            self._queue.put_nowait(_RECORDER_STOP)
+        self._queue = None
+
+    def _close_capture(self) -> None:
         if self._soundcard_stop is not None:
             self._soundcard_stop.set()
         if self._soundcard_thread is not None:
@@ -1709,9 +1817,8 @@ class _ContinuousRecorder:
             except Exception:
                 pass
             self._stream = None
-        if self._queue is not None:
-            self._queue.put_nowait(_RECORDER_STOP)
-        self._queue = None
+            global _portaudio_inputs_open
+            _portaudio_inputs_open = max(0, _portaudio_inputs_open - 1)
 
     @property
     def is_active(self) -> bool:
@@ -1985,6 +2092,10 @@ class ContinuousVoiceListener:
         # The call app the person is in a call with ("" when none), kept up to date while listening.
         self.in_call = ""
         self._call_watch_task: asyncio.Task[None] | None = None
+        # Keeps the microphone open through device changes and failures (pilot.system.audio_health).
+        self._capture_watch_task: asyncio.Task[None] | None = None
+        self._capture_watchdog: Any = None
+        self.capture_notice = ""
         self._turn_detector: Any = None
         self._streaming: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -2206,6 +2317,7 @@ class ContinuousVoiceListener:
         self._task = asyncio.create_task(self._listen_loop())
         self._transcriber_warmup_task = asyncio.create_task(self._warm_transcriber())
         self._call_watch_task = asyncio.create_task(self._watch_calls())
+        self._capture_watch_task = asyncio.create_task(self._watch_capture())
 
         logger.info(
             "Continuous voice listener started (wake words: %s, vad_recorder=%s)",
@@ -2295,6 +2407,114 @@ class ContinuousVoiceListener:
                         logger.debug("Call status callback failed", exc_info=True)
             await asyncio.sleep(every_seconds)
 
+    async def _watch_capture(self, every_seconds: float = 1.0) -> None:
+        """Reopen the microphone when it fails, stalls, goes silent or the default device changes, and say so."""
+        from pilot.system.audio_health import (
+            CaptureState,
+            CaptureWatchdog,
+            default_microphone_name,
+            default_speaker_name,
+            microphone_present,
+        )
+
+        recorder = self._recorder
+        configured = str(getattr(recorder, "preferred_device", "auto") or "auto").strip()
+        auto = configured.casefold() in {"", "auto"}
+        configured_name = "" if auto else configured.rsplit("::", 1)[-1].strip()
+        # The device probes read the system default live on all three systems (WASAPI, CoreAudio, PulseAudio or
+        # PipeWire through soundcard) and answer "" when they cannot tell, which turns the default checks off.
+        live_devices = True
+
+        async def default_name() -> str:
+            return await asyncio.to_thread(default_microphone_name) if live_devices else ""
+
+        watchdog = self._capture_watchdog = CaptureWatchdog()
+        watchdog.opened(await default_name(), recorder.last_error)
+        permission_checked_at = -1e9
+        await self._check_microphone_permission()  # macOS: a refused permission is said at once, not after 30 s
+        while self._running:
+            await asyncio.sleep(every_seconds)
+            if not self._running:
+                return
+            fallback = bool(recorder.using_fallback_input)
+            state = CaptureState(
+                frames=int(recorder.frames_received),
+                error=str(recorder.last_error or ""),
+                zero_seconds=float(recorder.zero_seconds),
+                active=bool(recorder.is_active),
+                default_name=await default_name(),
+                auto=auto,
+                configured_available=bool(
+                    fallback and live_devices and await asyncio.to_thread(microphone_present, configured_name)
+                ),
+                using_fallback=fallback,
+            )
+            if (
+                state.zero_seconds >= 2.0
+                and not self.capture_notice
+                and time.monotonic() - permission_checked_at >= 10.0
+            ):
+                # Pure zeros from the start of listening is also what a refused macOS permission looks like.
+                permission_checked_at = time.monotonic()
+                await self._check_microphone_permission()
+            if watchdog.recovered(state):
+                self.capture_notice = ""
+                logger.info("Microphone working again (%s)", recorder.input_device_name)
+                await self._capture_status("microphone_recovered", "", f"Listening on {recorder.input_device_name}.")
+            decision = watchdog.check(state)
+            if decision.action == "notice":
+                self.capture_notice = decision.message
+                logger.warning("Microphone: %s", decision.message)
+                await self._capture_status("microphone_problem", decision.reason, decision.message)
+            elif decision.action == "reopen":
+                self.capture_notice = decision.message
+                logger.warning("Microphone: %s", decision.message)
+                await self._capture_status("microphone_problem", decision.reason, decision.message)
+                try:
+                    opened = await asyncio.to_thread(recorder.reopen)
+                except Exception as error:
+                    recorder.last_error = str(error)
+                    opened = False
+                if opened:
+                    watchdog.reopen_succeeded(await default_name(), recorder.last_error)
+                else:
+                    watchdog.reopen_failed()
+                    logger.warning("Microphone could not be reopened: %s", recorder.last_error or "no device")
+            if live_devices:
+                # The speakers too: follow a new default output (headphones unplugged) while Heliox is not talking.
+                speaker = await asyncio.to_thread(default_speaker_name)
+                if await asyncio.to_thread(_output_line.check_device, speaker):
+                    await self._capture_status("speaker_changed", "", _output_line.notice)
+
+    async def _check_microphone_permission(self) -> bool:
+        """On macOS, say at once when the microphone permission was refused or not yet granted (it never prompts).
+        Returns True when it reported a problem; elsewhere the check answers "cannot tell" and nothing is said."""
+        try:
+            from pilot.system.macos_permissions import PermissionState, microphone_state, report
+
+            state = await asyncio.to_thread(microphone_state)
+        except Exception:
+            logger.debug("Microphone permission check failed", exc_info=True)
+            return False
+        if state not in (PermissionState.DENIED, PermissionState.NOT_ASKED):
+            return False
+        message = report("microphone", state).message
+        if message and message != self.capture_notice:
+            self.capture_notice = message
+            if self._capture_watchdog is not None:
+                self._capture_watchdog.report_problem("permission")
+            logger.warning("Microphone: %s", message)
+            await self._capture_status("microphone_problem", "permission", message)
+        return True
+
+    async def _capture_status(self, status: str, reason: str, message: str) -> None:
+        if not self._on_status:
+            return
+        try:
+            await self._on_status(status, {"reason": reason, "message": message})
+        except Exception:
+            logger.debug("Microphone status callback failed", exc_info=True)
+
     async def _warm_transcriber(self) -> None:
         """Load the configured local recognizer before the first utterance."""
 
@@ -2356,6 +2576,10 @@ class ContinuousVoiceListener:
             self._call_watch_task.cancel()
             await asyncio.gather(self._call_watch_task, return_exceptions=True)
         self._call_watch_task = None
+        if self._capture_watch_task and not self._capture_watch_task.done():
+            self._capture_watch_task.cancel()
+            await asyncio.gather(self._capture_watch_task, return_exceptions=True)
+        self._capture_watch_task = None
 
         if self._transcriber_warmup_task and not self._transcriber_warmup_task.done():
             self._transcriber_warmup_task.cancel()
@@ -2825,6 +3049,9 @@ class ContinuousVoiceListener:
             "using_fallback_input": self._recorder.using_fallback_input,
             "input_device_notice": self._recorder.input_device_notice,
             "input_error": self._recorder.last_error,
+            # What is wrong with the microphone now ("" when it works), and what Heliox told the person.
+            "capture_problem": getattr(self._capture_watchdog, "problem", "") if self._capture_watchdog else "",
+            "capture_notice": self.capture_notice,
             "capture_backend": self._recorder.capture_backend,
             "energy_threshold": self._recorder.energy_threshold,
             "adaptive_threshold_enabled": self._recorder.adaptive_threshold_enabled,

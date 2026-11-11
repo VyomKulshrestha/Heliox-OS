@@ -81,4 +81,19 @@ describe("VoiceControl live captions", () => {
     await tick();
     expect(screen.queryByText("Quiet while you're in a call")).toBeNull();
   });
+
+  it("says when the microphone stops and when it works again", async () => {
+    render(VoiceControl);
+    emit("voice_status", {
+      status: "microphone_problem",
+      reason: "no_audio",
+      message: "The microphone stopped sending sound; reopening it.",
+    });
+    await tick();
+    expect(screen.getByText("The microphone stopped sending sound; reopening it.")).toBeTruthy();
+    emit("voice_status", { status: "microphone_recovered", message: "Listening on Microphone (USBAudio1.0)." });
+    await tick();
+    expect(screen.queryByText("The microphone stopped sending sound; reopening it.")).toBeNull();
+    expect(screen.getByText("Listening on Microphone (USBAudio1.0).")).toBeTruthy();
+  });
 });
