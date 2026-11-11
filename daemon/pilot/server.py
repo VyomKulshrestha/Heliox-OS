@@ -1723,10 +1723,12 @@ class PilotServer:
             from pilot.agents.autonomous import AutonomousExecutor
             from pilot.agents.autonomous_review import AutonomousReviewer
             from pilot.intelligence.gnomon_reviewer import GnomonReviewer
+            from pilot.system.gpu_arbiter import arbiter as gpu_arbiter
             from pilot.workflows.autonomous_jobs import AutonomousJobStore
 
             # Gnomon loads in the background and only ever adds caution. With it switched on, it is loaded
             # shortly after start-up, so reviewing a request never waits on the load.
+            gpu_arbiter().configure(self.config.gpu)
             self._gnomon_reviewer = GnomonReviewer(self._typed_decision_model)
             if self.config.typed_decision.enabled and self.config.typed_decision.review_requests:
                 asyncio.get_running_loop().call_later(GNOMON_WARM_AFTER_SECONDS, self._gnomon_reviewer.warm)
@@ -4936,11 +4938,27 @@ class PilotServer:
             config.max_length,
             config.temperature,
         )
+        if not getattr(config, "worker_process", True):
+            engine_key = (*engine_key, "in_process")
         if self._typed_decision_engine_key != engine_key:
             previous = self._typed_decision_engine
             if previous is not None:
                 threading.Thread(target=previous.unload, name="gnomon-unload", daemon=True).start()
-            if config.scoring_mode == "native_next_token":
+            if getattr(config, "worker_process", True):
+                # In its own supervised process: a CUDA fault there costs a review, not the daemon.
+                from pilot.intelligence.gnomon_worker import GnomonWorkerEngine
+
+                self._typed_decision_engine = GnomonWorkerEngine(
+                    {
+                        "scoring_mode": config.scoring_mode,
+                        "artifact_dir": artifact_dir,
+                        "report_path": report_path,
+                        "model_id": config.model_id,
+                        "max_length": config.max_length,
+                        "temperature": config.temperature,
+                    }
+                )
+            elif config.scoring_mode == "native_next_token":
                 from pilot.intelligence.native_typed_decision import LocalNextTokenTypedDecisionModel
 
                 self._typed_decision_engine = LocalNextTokenTypedDecisionModel(
@@ -9088,6 +9106,7 @@ class PilotServer:
                 self.config.typed_decision.model_id,
                 self.config.typed_decision.max_length,
                 self.config.typed_decision.temperature,
+                *(() if getattr(self.config.typed_decision, "worker_process", True) else ("in_process",)),
             )
             if not self.config.typed_decision.enabled or current_key != self._typed_decision_engine_key:
                 try:
@@ -10278,10 +10297,25 @@ class PilotServer:
     async def _handle_autonomy_review_status(self, params: dict, ws: ServerConnection) -> dict:
         """Whether the world model and Gnomon are taking part in autonomous decisions right now."""
         gnomon = self._gnomon_reviewer.status() if self._gnomon_reviewer is not None else {"state": "disabled"}
+        from pilot.system import gpu_arbiter, local_tts_worker, model_health
+
+        arbiter = gpu_arbiter.arbiter()
+        listener = self._voice_listener
+        # Every local model: loaded / loading / unavailable and why, its device and its last fault.
+        local_models = await asyncio.to_thread(
+            model_health.local_models,
+            gnomon_status=gnomon,
+            voice_config=self.config.voice,
+            voice_manager=local_tts_worker.manager(),
+            listener_stats=listener.get_stats() if listener else None,
+            arbiter=arbiter,
+        )
         return {
             "status": "ok",
             "world_model": {"enabled": bool(self.config.gateway.enabled and self.config.gateway.risk_gate_enabled)},
             "gnomon": gnomon,
+            "local_models": local_models,
+            "gpu": await asyncio.to_thread(arbiter.status),
         }
 
     async def _handle_neural_status(self, params: dict, ws: ServerConnection) -> dict:

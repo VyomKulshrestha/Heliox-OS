@@ -424,6 +424,46 @@ def _release_easyocr_gpu_cache() -> None:
         logger.debug("Could not release EasyOCR GPU cache", exc_info=True)
 
 
+EASYOCR_GPU_BYTES = 3 * 1024**3  # weights, CUDA context and torch's cache for a 1920x1080 read (10 Nov 2026)
+
+
+def _easyocr_read(easyocr_module, image) -> list:
+    """One on-demand EasyOCR read: on the GPU only when the GPU arbiter allows it, otherwise on the CPU.
+
+    The GPU path runs inside the daemon process, so it is taken only when the card is cool, has room, is not held
+    by another Heliox process and has not been switched off for the session; it holds the GPU lease for the read
+    and drops the GPU reader afterwards. A CUDA error is counted as a GPU fault and the read is repeated on the CPU.
+    """
+    from pilot.system.gpu_arbiter import GpuLease, Needs, arbiter
+
+    lease = None
+    try:
+        if arbiter().check("ocr", Needs(gpu_bytes=EASYOCR_GPU_BYTES, default_device_only=True)).use_gpu:
+            candidate = GpuLease()
+            if candidate.try_acquire("ocr"):
+                lease = candidate
+    except Exception:
+        logger.debug("GPU check for EasyOCR failed; reading on the CPU", exc_info=True)
+    if lease is None:
+        return _easyocr_reader(easyocr_module, "en", gpu=False).readtext(image)
+    try:
+        return _easyocr_reader(easyocr_module, "en", gpu=True).readtext(image)
+    except RuntimeError as error:
+        if "cuda" not in str(error).lower():
+            raise
+        arbiter().record_fault("ocr", str(error)[:300])
+        logger.warning("EasyOCR failed on the GPU; reading on the CPU: %s", str(error)[:200])
+        return _easyocr_reader(easyocr_module, "en", gpu=False).readtext(image)
+    finally:
+        # Keep no GPU reader between reads: its weights would hold graphics memory for the daemon's lifetime.
+        for name in [
+            name for name in vars(_ocr_easyocr) if name.startswith("_easyocr_reader_") and name.endswith("_gpu")
+        ]:
+            delattr(_ocr_easyocr, name)
+        _release_easyocr_gpu_cache()
+        lease.release()
+
+
 async def _ocr_easyocr(img_bytes: bytes, language: str) -> str:
     from io import BytesIO
 
@@ -495,13 +535,8 @@ async def screen_find_text(
         from PIL import Image
 
         def _do():
-            # On-demand tool: GPU when available, cached blocks released after the read.
-            reader = _easyocr_reader(easyocr, "en", gpu=True)
-            img = Image.open(BytesIO(img_bytes))
-            try:
-                results = reader.readtext(np.array(img))
-            finally:
-                _release_easyocr_gpu_cache()
+            # On-demand tool: the GPU only when the arbiter allows it (see _easyocr_read), otherwise the CPU.
+            results = _easyocr_read(easyocr, np.array(Image.open(BytesIO(img_bytes))))
             matches = []
             for bbox, text, conf in results:
                 if target_text.lower() in text.lower():
@@ -894,13 +929,8 @@ async def screen_element_map(
         from PIL import Image
 
         def _do():
-            # On-demand tool: GPU when available, cached blocks released after the read.
-            reader = _easyocr_reader(easyocr, "en", gpu=True)
-            img = Image.open(BytesIO(img_bytes))
-            try:
-                results = reader.readtext(np.array(img))
-            finally:
-                _release_easyocr_gpu_cache()
+            # On-demand tool: the GPU only when the arbiter allows it (see _easyocr_read), otherwise the CPU.
+            results = _easyocr_read(easyocr, np.array(Image.open(BytesIO(img_bytes))))
             elements = []
             for i, (bbox, text, conf) in enumerate(results):
                 if conf < 0.3 or not text.strip():

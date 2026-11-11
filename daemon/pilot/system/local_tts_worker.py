@@ -75,7 +75,23 @@ def _load(engine: str, voice: str) -> None:
         asyncio.run(module.warmup(voice))
 
 
-def _serve(engine: str, device: str = "auto") -> int:
+def _take_gpu_lease(device: str) -> tuple[str, Any]:
+    """The daemon let this worker use the GPU: hold Heliox's GPU lease for the worker's life, or use the CPU."""
+    from pilot.system.gpu_arbiter import GpuLease
+
+    lease = GpuLease()
+    try:
+        if lease.try_acquire("voice"):
+            return device, lease
+    except OSError:
+        pass
+    return "cpu", None
+
+
+def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
+    lease = None
+    if gpu_lease and device != "cpu":
+        device, lease = _take_gpu_lease(device)
     if engine == "kokoro_tts":
         from pilot.system import kokoro_tts
 
@@ -95,6 +111,8 @@ def _serve(engine: str, device: str = "auto") -> int:
         except Exception as exc:
             response = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
         print(json.dumps(response), flush=True)
+    if lease is not None:
+        lease.release()
     return 0
 
 
@@ -102,9 +120,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve bounded Heliox local-TTS synthesis")
     parser.add_argument("--engine", choices=sorted(LOCAL_ENGINES), required=True)
     parser.add_argument("--device", choices=DEVICES, default="auto")
+    parser.add_argument("--gpu-lease", action="store_true", help="hold Heliox's GPU lease while on the GPU")
     parser.add_argument("--serve", action="store_true", required=True)
     args = parser.parse_args(argv)
-    return _serve(args.engine, args.device)
+    return _serve(args.engine, args.device, args.gpu_lease)
 
 
 # ── Daemon side ──────────────────────────────────────────────────────
@@ -143,7 +162,7 @@ def split_for_speech(text: str) -> list[str]:
     return merged or ([text] if text.strip() else [])
 
 
-def _default_spawn(engine: str, device: str) -> Any:
+def _default_spawn(engine: str, device: str, gpu_lease: bool = False) -> Any:
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     command = [
         sys.executable,
@@ -151,6 +170,7 @@ def _default_spawn(engine: str, device: str) -> Any:
         "pilot.system.local_tts_worker",
         "--device",
         device,
+        *(["--gpu-lease"] if gpu_lease else []),
         "--engine",
         engine,
         "--serve",
@@ -220,6 +240,11 @@ class LocalTTSWorkerManager:
         self.process: Any = None
         self.engine: str | None = None
         self.process_device: str | None = None
+        # Where the running worker was actually started: the configured device, or the CPU when the GPU arbiter
+        # reported the card hot, busy or switched off (``choose_device``).
+        self.effective_device: str | None = None
+        self.choose_device: Callable[[str], tuple[str, bool]] | None = None
+        self.on_gpu_fault: Callable[[str, str], Any] | None = None
         self.loaded = False
         self._spawn_lock = asyncio.Lock()
         self._io_lock = asyncio.Lock()
@@ -299,14 +324,24 @@ class LocalTTSWorkerManager:
                 return self.process
             if self.process is not None:
                 await self._close(self.process)
+            device, gpu_lease = self.device, False
+            if self.choose_device is not None:
+                try:
+                    device, gpu_lease = await asyncio.to_thread(self.choose_device, self.device)
+                except Exception:
+                    logger.debug("GPU check for the local voice failed; using the configured device", exc_info=True)
             try:
-                process = await asyncio.to_thread(self._spawn, engine, self.device)
+                if gpu_lease:
+                    process = await asyncio.to_thread(self._spawn, engine, device, True)
+                else:
+                    process = await asyncio.to_thread(self._spawn, engine, device)
             except Exception as exc:
                 self._mark_failed(engine, f"could not start: {exc}")
                 raise LocalTTSUnavailable(f"{engine} worker could not start: {exc}") from exc
             self.process = process
             self.engine = engine
             self.process_device = self.device
+            self.effective_device = device
             self.loaded = False
             self._load_task = None
             self.note_activity()
@@ -372,6 +407,10 @@ class LocalTTSWorkerManager:
 
     async def _fail(self, process: Any, engine: str, reason: str) -> LocalTTSUnavailable:
         self._mark_failed(engine, reason)
+        if self.on_gpu_fault is not None and process is self.process and self.effective_device not in {None, "cpu"}:
+            # A voice worker on the GPU that died or hung counts toward switching the GPU off for the session.
+            with contextlib.suppress(Exception):
+                self.on_gpu_fault("voice", reason)
         if process is self.process or process.poll() is None:
             await self._close(process)
         return LocalTTSUnavailable(f"{engine} worker failed: {reason}")
@@ -548,6 +587,11 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
     )
     if on_status is not None:
         _manager.on_status = on_status
+    # One GPU user at a time: the voice starts on the CPU when the card is hot, busy or switched off.
+    from pilot.system import gpu_arbiter
+
+    _manager.choose_device = gpu_arbiter.voice_device
+    _manager.on_gpu_fault = gpu_arbiter.arbiter().record_fault
     engine = str(getattr(voice_config, "tts_engine", ""))
     if _manager.running and (_manager.engine != engine or _manager.process_device != _manager.device):
         with contextlib.suppress(RuntimeError):

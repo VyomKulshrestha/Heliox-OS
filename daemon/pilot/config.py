@@ -685,6 +685,23 @@ class TypedDecisionConfig:
     # On by default since Gnomon v7 passed the everyday-plan gate G6 on 10 November 2026: 1 false alarm on 27
     # correct plans and no miss on 12 bad ones (v4.1: 6 false alarms). See docs/GNOMON_TRAINING.md.
     review_requests: bool = True
+    # Load and run Gnomon in a separate process the daemon supervises. A CUDA fault, an out-of-memory error or a
+    # kill there answers the pending review as "not reviewed" and restarts the worker; in-process, the same fault
+    # ended the whole daemon on 10 November 2026. Costs one Python process.
+    worker_process: bool = True
+
+
+@dataclass
+class GpuConfig:
+    """Limits for Heliox's own GPU work (Gnomon, the local voice, on-demand OCR); see pilot.system.gpu_arbiter."""
+
+    # No model starts on the card at or above this temperature; the voice and OCR use the CPU instead.
+    max_temperature_c: float = 83.0
+    # Free graphics memory a model needs beyond its own size before it may load.
+    vram_headroom_mb: int = 512
+    # This many GPU faults (worker crashes, CUDA errors, hangs) within the window switch the GPU off until restart.
+    fault_limit: int = 3
+    fault_window_seconds: float = 600.0
 
 
 @dataclass
@@ -796,6 +813,7 @@ class PilotConfig:
     redis: RedisConfig = field(default_factory=RedisConfig)
     cognitive: CognitiveConfig = field(default_factory=CognitiveConfig)
     typed_decision: TypedDecisionConfig = field(default_factory=TypedDecisionConfig)
+    gpu: GpuConfig = field(default_factory=GpuConfig)
 
     @classmethod
     def load(cls) -> PilotConfig:
@@ -1285,6 +1303,13 @@ def _validate_config_types(raw: dict) -> None:
             "max_length": int,
             "temperature": (int, float),
             "review_requests": bool,
+            "worker_process": bool,
+        },
+        "gpu": {
+            "max_temperature_c": (int, float),
+            "vram_headroom_mb": int,
+            "fault_limit": int,
+            "fault_window_seconds": (int, float),
         },
         "proxy": {
             "http": str,
@@ -1682,6 +1707,11 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["typed_decision"].items():
             if hasattr(config.typed_decision, k):
                 setattr(config.typed_decision, k, v)
+
+    if "gpu" in raw and isinstance(raw["gpu"], dict):
+        for k, v in raw["gpu"].items():
+            if hasattr(config.gpu, k):
+                setattr(config.gpu, k, v)
 
     if "proxy" in raw and isinstance(raw["proxy"], dict):
         for k, v in raw["proxy"].items():

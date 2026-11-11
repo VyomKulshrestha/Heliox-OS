@@ -21,6 +21,11 @@ use, never on the voice path itself, and unloaded after a quiet period. When a
 load fails for lack of memory, the reviewer checks free memory every minute
 (psutil, plus the CUDA query only if CUDA is already set up) and loads again on
 its own once there is room, backing off after each failed attempt.
+
+By default the engine is ``gnomon_worker.GnomonWorkerEngine``: the model lives in a supervised worker process. When
+that worker dies, hangs, answers garbage or hits a CUDA driver error mid-review, the review counts as not done (an
+escalation already found still stands), the worker is restarted after a back-off, and after repeated faults the GPU
+arbiter switches the GPU off for the session and the status says so.
 """
 
 from __future__ import annotations
@@ -135,6 +140,22 @@ def is_driver_error(error: BaseException) -> bool:
     """True when a load failure says the CUDA context is unrecoverable (not a memory shortage)."""
     lowered = str(error).lower()
     return any(marker in lowered for marker in _DRIVER_ERROR_MARKERS)
+
+
+# Gnomon in its own process (gnomon_worker.GnomonWorkerEngine): what the person reads after the worker faulted.
+_FAULT_WORDS = {
+    "exit": "Gnomon's process stopped",
+    "hang": "Gnomon's process stopped answering",
+    "garbage": "Gnomon's process answered garbage",
+    "driver": "The graphics driver reported an error in Gnomon's process",
+    "start": "Gnomon's process could not start",
+}
+STOPPED_DURING_REVIEW = "Gnomon's process stopped during this review, so some checks did not run."
+GPU_OFF_SUFFIX = " Gnomon needs the graphics card, so it does not review plans until then."
+
+
+def is_worker_fault(error: BaseException) -> bool:
+    return bool(getattr(error, "worker_fault", False))
 
 
 def _free_host_memory() -> int | None:
@@ -363,10 +384,27 @@ class GnomonReviewer:
         self._driver_error = False  # the CUDA context is broken; only a restart helps
         self._closed = False
         self._question_times: list[tuple[str, float, float]] = []  # (question, waited, answered) in seconds
+        # Worker supervision (an engine in its own process): the last fault, a pending restart, the GPU switched
+        # off for the session, or a card that is hot or busy right now.
+        self._faults_seen = 0
+        self._fault_kind = ""
+        self._restart_pending = False
+        self._restart_handle: asyncio.TimerHandle | None = None
+        self._restart_at = 0.0
+        self._gpu_off = False
+        self._unsupported = False  # not supported on this system (no CUDA): said once, never retried
+        self._gpu_wait_reason = ""
 
     # -- lifecycle -------------------------------------------------------
 
     def status(self) -> dict[str, Any]:
+        loaded = self._loaded_engine
+        if self._state == "ready" and loaded is not None and getattr(loaded, "alive", True) is False:
+            # The worker died while nobody was asking (killed, or a GPU reset): notice it here, not mid-review.
+            note_exit = getattr(loaded, "note_exit", None)
+            fault = note_exit() if callable(note_exit) else None
+            if fault is not None:
+                self._on_worker_fault(fault)
         state = self._state
         current = self._engine_provider()
         if state == "ready" and current is not self._loaded_engine:
@@ -395,8 +433,27 @@ class GnomonReviewer:
             status["retrying"] = retrying
         elif state == "unavailable" and self._driver_error:
             status["reason"] = DRIVER_ERROR_REASON
+        elif state == "unavailable" and self._gpu_off:
+            status["reason"] = self._last_error + ("" if self._unsupported else GPU_OFF_SUFFIX)
+        elif state == "unavailable" and self._fault_kind:
+            wait = max(0.0, self._restart_at - time.monotonic())
+            restart = f" Restarting it in {wait:.0f} s." if self._restart_pending else ""
+            status["reason"] = _FAULT_WORDS.get(self._fault_kind, "Gnomon's process failed") + "." + restart
+            status["retrying"] = self._restart_pending
+        elif state == "unavailable" and self._gpu_wait_reason:
+            status["reason"] = self._gpu_wait_reason + (" Tries again on its own." if self._restart_pending else "")
+            status["retrying"] = self._restart_pending
         elif state == "unavailable":
             status["reason"] = f"Could not load: {self._last_error}" if self._last_error else "Could not load."
+        engine = current if current is not None else loaded
+        worker_status = getattr(engine, "worker_status", None)
+        worker = worker_status() if callable(worker_status) else None
+        status["device"] = "cuda" if state == "ready" else None
+        status["process"] = worker["process"] if worker else "daemon"
+        status["worker"] = worker
+        status["last_fault"] = worker.get("last_fault") if worker else None
+        status["gpu_disabled"] = self._gpu_off and not self._unsupported
+        status["supported"] = not self._unsupported
         return status
 
     def warm(self) -> None:
@@ -406,6 +463,8 @@ class GnomonReviewer:
         if self._state == "unavailable":
             if self._driver_error:
                 return  # a broken graphics driver context cannot recover inside this process
+            if self._gpu_off or self._restart_pending:
+                return  # GPU off for the session, or the worker's restart is already scheduled
             if self._resource_task is not None and not self._resource_task.done():
                 return  # the memory watch owns retries while memory is short
             if time.monotonic() - self._failed_at < RETRY_AFTER_FAILURE_SECONDS:
@@ -430,6 +489,9 @@ class GnomonReviewer:
         try:
             engine.load()
         except Exception as error:  # out of memory, no CUDA, missing artifacts
+            if is_worker_fault(error) or getattr(error, "gpu_unavailable", False):
+                self._load_refused(engine, error)
+                return
             shortage = classify_resource_shortage(error)
             if shortage is not None:
                 shortage.free_bytes = _free_host_memory() if shortage.resource == "memory" else _free_gpu_memory()
@@ -452,6 +514,9 @@ class GnomonReviewer:
             try:
                 engine.score(state, kind, question, options)
             except Exception as error:
+                if is_worker_fault(error):  # the worker died while warming up: not loaded after all
+                    self._load_refused(engine, error)
+                    return
                 logger.info("Gnomon warm-up call failed: %s", str(error)[:200] or type(error).__name__)
                 break
         self._loaded_engine = engine
@@ -460,8 +525,89 @@ class GnomonReviewer:
         self._driver_error = False
         self._resource_failures = 0
         self._last_error = ""
+        self._fault_kind = ""
+        self._gpu_wait_reason = ""
         self._state = "ready"
         logger.info("Gnomon loaded for autonomous review")
+
+    # -- a worker process that faulted, or a card that is not usable now --------
+
+    def _load_refused(self, engine: Any, error: BaseException) -> None:
+        """Loader thread: the worker faulted while loading, or the GPU arbiter said no."""
+        self._shortage = None
+        self._driver_error = False
+        self._last_error = str(error)[:300] or type(error).__name__
+        self._failed_at = time.monotonic()
+        if is_worker_fault(error):
+            self._on_worker_fault(error, engine)
+            return
+        self._fault_kind = ""
+        self._gpu_wait_reason = str(error)
+        retry = getattr(error, "retry_seconds", None)
+        self._state = "unavailable"
+        if retry is None:
+            self._gpu_off = True
+            self._unsupported = getattr(error, "code", "") == "unsupported"
+            logger.info("Gnomon unavailable for this session: %s", self._last_error)
+        else:
+            logger.info("Gnomon waits for the graphics card: %s", self._last_error)
+            self._schedule_restart(float(retry))
+
+    def _on_worker_fault(self, error: BaseException, engine: Any = None) -> None:
+        """The worker died, hung, answered garbage or hit a driver error; the engine has already killed it.
+
+        The pending review answers "not reviewed"; the worker is restarted after the engine's back-off unless the
+        arbiter has switched the GPU off for this session.
+        """
+        engine = engine if engine is not None else self._loaded_engine
+        take_fault = getattr(engine, "take_fault", None)
+        if callable(take_fault):
+            take_fault()
+        self._faults_seen += 1
+        self._loaded_engine = None
+        self._state = "unavailable"
+        self._fault_kind = str(getattr(error, "kind", "") or "exit")
+        self._last_error = str(error)[:300] or type(error).__name__
+        self._failed_at = time.monotonic()
+        if engine is not None and getattr(engine, "gpu_disabled", False):
+            self._gpu_off = True
+            self._last_error = str(getattr(engine, "gpu_disabled_reason", "") or self._last_error)
+            self._restart_pending = False
+            logger.warning("Gnomon stopped for this session: %s", self._last_error)
+            return
+        restart_delay = getattr(engine, "restart_delay", None)
+        delay = float(restart_delay()) if callable(restart_delay) else RETRY_AFTER_FAILURE_SECONDS
+        self._schedule_restart(delay)
+
+    def _schedule_restart(self, delay: float) -> None:
+        """From any thread: load again after ``delay`` seconds."""
+        loop = self._loop
+        if loop is None or self._closed:
+            return
+        self._restart_pending = True
+        self._restart_at = time.monotonic() + delay
+        try:
+            loop.call_soon_threadsafe(self._arm_restart, delay)
+        except RuntimeError:  # the loop has shut down
+            self._restart_pending = False
+
+    def _arm_restart(self, delay: float) -> None:
+        if self._closed:
+            return
+        if self._restart_handle is not None:
+            self._restart_handle.cancel()
+        self._restart_handle = asyncio.get_running_loop().call_later(delay, self._restart_now)
+
+    def _restart_now(self) -> None:
+        self._restart_handle = None
+        self._restart_pending = False
+        if self._closed or self._state != "unavailable" or self._gpu_off:
+            return
+        if self._engine_provider() is None:
+            self._state = "disabled"
+            return
+        logger.info("Starting Gnomon again")
+        self._start_load()
 
     # -- waiting for memory ------------------------------------------------
 
@@ -553,6 +699,9 @@ class GnomonReviewer:
 
     async def close(self) -> None:
         self._closed = True
+        if self._restart_handle is not None:
+            self._restart_handle.cancel()
+            self._restart_handle = None
         if self._idle_task is not None:
             self._idle_task.cancel()
             await asyncio.gather(self._idle_task, return_exceptions=True)
@@ -580,6 +729,8 @@ class GnomonReviewer:
                 )
             except Exception as error:
                 logger.info("Gnomon review skipped: %s", str(error)[:200] or type(error).__name__)
+                if is_worker_fault(error) and engine is self._loaded_engine:
+                    self._on_worker_fault(error, engine)
                 return None
             finally:
                 self._last_used = time.monotonic()
@@ -614,6 +765,7 @@ class GnomonReviewer:
             self.warm()
             return None
         deadline = time.monotonic() + time_budget if time_budget is not None else None
+        faults_before = self._faults_seen
         del self._question_times[:-50]  # bounded; this review's questions follow index asked_before
         asked_before = len(self._question_times)
         proposed = describe_plan(plan)
@@ -679,6 +831,16 @@ class GnomonReviewer:
             f"{name} {answered:.2f} s (waited {waited:.2f} s)"
             for name, waited, answered in self._question_times[asked_before:]
         )
+        if self._faults_seen != faults_before:
+            # The worker died mid-review. A review that did not happen must never read as a pass: without an
+            # escalation the whole review counts as not done (the dialog says Gnomon did not review this plan);
+            # an escalation already found still adds its approval, marked incomplete.
+            logger.info("Gnomon's process stopped during a review: %s", timings or "no question finished")
+            if not verdict.escalate:
+                return None
+            verdict.complete = False
+            verdict.notes.append(STOPPED_DURING_REVIEW)
+            return verdict
         if not verdict.complete:
             verdict.notes.append("Gnomon ran out of time before every check, so this review is incomplete.")
             logger.info(

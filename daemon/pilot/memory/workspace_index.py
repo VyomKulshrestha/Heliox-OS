@@ -64,7 +64,9 @@ class WorkspaceIndex:
         try:
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer("all-MiniLM-L6-v2")
+            # On the CPU: a 22M-parameter model needs no GPU, and on CUDA it would put a context in the daemon
+            # process, where a GPU fault or reset could take the daemon down.
+            self._model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
             logger.info("Embedding model loaded: all-MiniLM-L6-v2")
             return True
         except ImportError:
