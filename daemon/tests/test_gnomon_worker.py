@@ -481,13 +481,23 @@ def test_a_worker_whose_daemon_dies_exits_on_its_own(tmp_path):
     parent.stdout.close()
     import psutil
 
-    deadline = time.monotonic() + 15
+    def gone() -> bool:
+        try:
+            return psutil.Process(worker_pid).status() == psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:  # also when it exits between two looks
+            return True
+
+    # An upper limit only: a worker still importing on a loaded machine notices its dead parent once it is up.
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
-        if not psutil.pid_exists(worker_pid) or psutil.Process(worker_pid).status() == psutil.STATUS_ZOMBIE:
+        if gone():
             break
         time.sleep(0.1)
     else:
-        psutil.Process(worker_pid).kill()
+        try:
+            psutil.Process(worker_pid).kill()
+        except psutil.NoSuchProcess:
+            pass
         pytest.fail("the worker outlived its daemon")
 
 
