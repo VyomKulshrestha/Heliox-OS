@@ -21,7 +21,12 @@ class Driver(NSObject):
         app = AppKit.NSApplication.sharedApplication()
         app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
         rect = AppKit.NSMakeRect(200, 200, 420, 140)
-        style = AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable
+        style = (
+            AppKit.NSWindowStyleMaskTitled
+            | AppKit.NSWindowStyleMaskClosable
+            | AppKit.NSWindowStyleMaskMiniaturizable
+            | AppKit.NSWindowStyleMaskResizable
+        )
         self.window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect, style, AppKit.NSBackingStoreBuffered, False
         )

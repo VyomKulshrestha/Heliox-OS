@@ -147,6 +147,7 @@ async def test_macos_application_launch_uses_launch_services(monkeypatch):
     run_command = AsyncMock(return_value=(0, "", ""))
     monkeypatch.setattr(platform_detect, "CURRENT_PLATFORM", platform_detect.Platform.MACOS)
     monkeypatch.setattr(platform_detect, "run_command", run_command)
+    monkeypatch.setattr(applications, "mac_application_bundles", lambda: [])
 
     result = await applications.launch_application("Hermes", ["--safe"])
 
@@ -158,8 +159,11 @@ async def test_macos_application_launch_uses_launch_services(monkeypatch):
 async def test_linux_missing_application_fails_before_invoking_missing_launcher(monkeypatch):
     monkeypatch.setattr(platform_detect, "CURRENT_PLATFORM", platform_detect.Platform.LINUX)
     monkeypatch.setattr(applications.shutil, "which", lambda _name: None)
+    from pilot.system import app_names
 
-    with pytest.raises(applications.ApplicationResolutionError, match="gtk-launch is unavailable"):
+    monkeypatch.setattr(app_names, "_desktop_entries", lambda: ())
+
+    with pytest.raises(applications.ApplicationResolutionError, match="among the installed applications"):
         await applications.launch_application("Missing App")
 
 

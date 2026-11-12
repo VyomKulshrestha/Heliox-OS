@@ -253,8 +253,107 @@ async def launch_windows_application(name: str, args: list[str] | None = None) -
     return f"Launched {target.display_name} (resolved via {target.source})."
 
 
+def _mac_application_dirs() -> list[Path]:
+    home = Path.home()
+    return [
+        Path("/Applications"),
+        Path("/Applications/Utilities"),
+        Path("/System/Applications"),
+        Path("/System/Applications/Utilities"),
+        home / "Applications",
+    ]
+
+
+def mac_application_bundles(dirs: list[Path] | None = None) -> list[_NamedTarget]:
+    """Installed macOS app bundles, labelled by bundle file name and by the name the bundle gives itself."""
+    from pilot.system.app_names import bundle_display_name
+
+    found: list[_NamedTarget] = []
+    for folder in dirs if dirs is not None else _mac_application_dirs():
+        try:
+            bundles = sorted(folder.glob("*.app"))
+        except OSError:
+            continue
+        for bundle in bundles:
+            found.append(_NamedTarget(label=bundle.stem, value=str(bundle)))
+            shown = bundle_display_name(str(bundle / "Contents" / "MacOS" / "x"))
+            if shown and shown.casefold() != bundle.stem.casefold():
+                found.append(_NamedTarget(label=shown, value=str(bundle)))
+    return found
+
+
+def resolve_mac_application(name: str, bundles: list[_NamedTarget]) -> str | None:
+    """The bundle path for ``name``, None when no installed bundle matches (Launch Services may still know it).
+
+    Raises when two different bundles match equally well, rather than opening the wrong one.
+    """
+    matches = _best_matches(name, bundles)
+    if len(matches) > 1:
+        raise _ambiguous_error(name, matches)
+    return matches[0].value if matches else None
+
+
+def resolve_linux_desktop_app(name: str, apps: list) -> object | None:
+    """The desktop application for ``name`` among ``desktop_entry.DesktopApp`` items, matched on its shown name
+    and its desktop id (whole, or the last part of a reverse-DNS id: "org.gnome.Nautilus" for "nautilus").
+    Visible entries are preferred; an entry hidden from menus matches only by exact id."""
+    by_id = {app.desktop_id: app for app in apps}
+    candidates: list[_NamedTarget] = []
+    for app in apps:
+        if not app.hidden:
+            candidates.append(_NamedTarget(label=app.name, value=app.desktop_id))
+            candidates.append(_NamedTarget(label=app.desktop_id.rsplit(".", 1)[-1], value=app.desktop_id))
+    matches = _best_matches(name, candidates)
+    if len(matches) > 1:
+        raise _ambiguous_error(name, [_NamedTarget(by_id[m.value].name, m.value) for m in matches])
+    if matches:
+        return by_id[matches[0].value]
+    exact = by_id.get(name.strip())
+    return exact
+
+
+async def _launch_linux(requested: str, arguments: list[str]) -> str:
+    from pilot.system import app_names
+    from pilot.system.desktop_entry import ExecError, desktop_apps, expand_exec
+
+    explicit = Path(requested).expanduser()
+    if explicit.is_file() and os.access(explicit, os.X_OK):
+        await _start_and_check([str(explicit), *arguments], explicit.name)
+        return f"Launched {explicit.name} (file path)."
+
+    binary = shutil.which(requested)
+    if binary:
+        await _start_and_check([binary, *arguments], requested)
+        return f"Launched {requested} (resolved via PATH)."
+
+    app = resolve_linux_desktop_app(requested, desktop_apps(app_names._desktop_entries(), which=shutil.which))
+    if app is None:
+        raise ApplicationResolutionError(
+            f"Application {requested!r} was not found in PATH or among the installed applications (desktop entries)."
+        )
+    try:
+        argv = expand_exec(app.entry, arguments)
+    except ExecError as exc:
+        raise ApplicationLaunchError(f"{app.name}'s desktop entry cannot be started: {exc}.") from exc
+    if not shutil.which(argv[0]):
+        raise ApplicationLaunchError(f"{app.name} is listed, but its program {argv[0]!r} is not installed.")
+    if app.terminal:
+        terminal = shutil.which("x-terminal-emulator") or shutil.which("gnome-terminal")
+        if not terminal:
+            raise ApplicationLaunchError(f"{app.name} runs in a terminal, and no terminal program was found.")
+        argv = [terminal, "--", *argv] if terminal.endswith("gnome-terminal") else [terminal, "-e", *argv]
+    await _start_and_check(argv, app.name)
+    return f"Launched {app.name} (resolved via its desktop entry {app.desktop_id})."
+
+
 async def launch_application(name: str, args: list[str] | None = None) -> str:
-    """Resolve and launch an installed application on the current platform."""
+    """Resolve and launch an installed application on the current platform.
+
+    Windows: Start menu shortcuts, PATH, then the Store app registry. macOS: installed app bundles matched by
+    name, then Launch Services (``open -a``), with arguments after ``--args``. Linux: a path, PATH, then the
+    desktop entries the menus show, started from their ``Exec`` line with arguments in place of its file and URL
+    field codes. Each fails with a reason rather than claiming a launch.
+    """
 
     from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
@@ -267,31 +366,16 @@ async def launch_application(name: str, args: list[str] | None = None) -> str:
         return await launch_windows_application(requested, arguments)
 
     if CURRENT_PLATFORM == Platform.MACOS:
-        command = ["open", "-a", requested]
+        bundle = resolve_mac_application(requested, mac_application_bundles())
+        command = ["open", "-a", bundle or requested]
         if arguments:
             command.extend(["--args", *arguments])
         code, _, stderr = await run_command(command)
         if code != 0:
             detail = stderr.strip() or "application is not registered with Launch Services"
             raise ApplicationResolutionError(f"Application {requested!r} was not found: {detail}")
+        if bundle:
+            return f"Launched {Path(bundle).stem} (resolved via {bundle})."
         return f"Launched {requested} (resolved via macOS Launch Services)."
 
-    binary = shutil.which(requested)
-    if binary:
-        await _start_and_check([binary, *arguments], requested)
-        return f"Launched {requested} (resolved via PATH)."
-
-    desktop_launcher = shutil.which("gtk-launch")
-    if not desktop_launcher:
-        raise ApplicationResolutionError(
-            f"Application {requested!r} was not found in PATH and gtk-launch is unavailable."
-        )
-    if arguments:
-        raise ApplicationLaunchError(
-            f"Arguments cannot be passed to desktop application {requested!r} through gtk-launch."
-        )
-    code, _, stderr = await run_command([desktop_launcher, requested])
-    if code != 0:
-        detail = stderr.strip() or "desktop application is not registered"
-        raise ApplicationResolutionError(f"Application {requested!r} was not found: {detail}")
-    return f"Launched {requested} (resolved via Linux desktop registry)."
+    return await _launch_linux(requested, arguments)

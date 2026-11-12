@@ -55,7 +55,10 @@
     },
     "linux": {
       "deb": {
-        "depends": ["python3 (>= 3.11)", "python3-pip"]
+        "depends": ["python3 (>= 3.11)", "python3-pip", "python3-venv", "libportaudio2", "at-spi2-core"]
+      },
+      "rpm": {
+        "depends": ["python3 >= 3.11", "python3-pip", "portaudio", "at-spi2-core"]
       }
     }
   }

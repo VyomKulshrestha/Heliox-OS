@@ -11,15 +11,16 @@ Heliox runs on Windows, macOS and Linux. This page says what each part of the co
 | Application display names | Works: file description | Works: bundle display name | Works: desktop entry `Name` | `daemon/pilot/system/app_names.py` | Nothing | Windows: real run. macOS and Linux: fakes (pure parsers over a path or file text) |
 | Activity timeline | Works | Works as far as the foreground row | Works as far as the foreground row | `daemon/pilot/workflows/activity_timeline.py` | Nothing more | Fakes on all three, plus the foreground row |
 | macOS permissions status | Not applicable | Works: microphone, Accessibility, Screen Recording and Automation read without a prompt | Not applicable | `daemon/pilot/system/macos_permissions.py` | Nothing | macOS: CI run (states read, no prompt); messages with fakes |
-| Reading the screen (OCR) | Works: Windows OCR | Partly: Vision framework through `swift` (needs Xcode command-line tools), else tesseract or EasyOCR; without Screen Recording the capture shows only the wallpaper, now reported by the permission status | Partly: tesseract, EasyOCR, pytesseract; capture by `pyautogui`, `gnome-screenshot` or `scrot`; Wayland not handled | `daemon/pilot/system/vision.py`, `daemon/pilot/system/screen.py` | macOS Screen Recording. Linux: tesseract | Fakes off Windows |
+| Reading the screen (OCR) | Works: Windows OCR | Works with the `macos` extra: the Vision framework in process (pyobjc), no developer tools needed; without pyobjc, Vision through `swift` (needs the Xcode command-line tools), else tesseract or EasyOCR. Without Screen Recording the capture shows only the wallpaper, reported by the permission status | Partly: tesseract, EasyOCR, pytesseract; capture by `pyautogui`, `gnome-screenshot` or `scrot`; Wayland not handled | `daemon/pilot/system/vision.py`, `daemon/pilot/system/macos_vision_ocr.py`, `daemon/pilot/system/screen.py` | macOS Screen Recording. Linux: tesseract | Windows: real run. macOS: CI run of Vision on a rendered line of text; reading order with fakes. Linux: fakes |
 | Call detection | Works | No-op (being built in another workstream) | No-op (same) | `daemon/pilot/system/call_detection.py` | None on Windows | Fakes |
 | Speech capture and playback | Works: WASAPI, then PortAudio | Partly: PortAudio; the bundle now declares the microphone use, and `microphone_state()` tells the audio side whether it was granted | Partly: PortAudio over ALSA, PulseAudio or PipeWire; needs `libportaudio2` | `daemon/pilot/system/voice.py`, `daemon/pilot/system/audio_health.py` | macOS Microphone (asked by the system on first use). Linux: PortAudio | Fakes off Windows |
 | Wake phrase | Works | As far as capture works | As far as capture works | `daemon/pilot/system/voice.py` | As for capture | Fakes off Windows |
 | Speaking | Works: Kokoro or Pocket TTS, then System.Speech | Works: same local engines, then `say` | Works: same local engines, then `espeak-ng` or `espeak`; with neither, Heliox says once in the log that no voice is available and carries on in text | `daemon/pilot/system/voice.py`, `daemon/pilot/system/linux_voice.py` | Linux: `espeak-ng` for the fallback voice | Fakes off Windows |
 | Notifications and cards | Works: in-app cards; OS toasts through the Tauri plugin; the `notify` action shows a balloon | Partly: cards work; toasts may not appear for an unsigned app; the `notify` action now reports failure instead of "sent" | Partly: cards work; toasts need a notification daemon; `notify` reports a missing `notify-send` | `daemon/pilot/system/notify.py`, `daemon/pilot/agents/executor.py` | Notification permission (asked by the app) | Fakes for command and result; Windows: real run before this change |
 | Global hotkey | Works: Ctrl+Space | Works: new default Option+Space (Cmd+Space is Spotlight's); Settings shows shortcuts in the Mac's key names (Option, Command, Control) and accepts either spelling; a failed registration is shown in Settings | Partly: Ctrl+Space works on X11; Wayland has no global shortcuts for apps | `tauri-app/src-tauri/src/hotkey.rs` | Nothing | Rust compiled and linted by the CI `rust` job; key names and both spellings with vitest; registration not exercised on macOS or Linux |
+| Window actions (list, focus, minimise, maximise, close) | Works: user32 and UI Automation | Works with the `macos` extra: Accessibility API (focus needs no permission; the rest need Accessibility); close closes that window, not the app. Without pyobjc, AppleScript through System Events | Partly: `wmctrl` and `xdotool`, X11 only | `daemon/pilot/system/window_mgr.py`, `daemon/pilot/system/macos_windows.py` | macOS: Accessibility | Windows: real run. macOS: CI run on a real AppKit window; fakes for the rest. Linux: fakes |
 | Undo and protected folders | Works | Works: folder checks now ignore case, as APFS does | Works: case-sensitive, as Linux file systems are | `daemon/pilot/security/path_rules.py`, `daemon/pilot/security/validator.py`, `daemon/pilot/workflows/undo_journal.py` | Nothing | Both rule sets with fakes on every system |
-| Launching apps (simple actions) | Works | Works: `open -a` | Partly: PATH, then `gtk-launch` with the desktop id; no arguments | `daemon/pilot/system/applications.py` | Nothing | Fakes off Windows |
+| Launching apps (simple actions) | Works: Start menu shortcuts, PATH, Store apps | Works: installed bundles matched by file name and the bundle's own name, then `open -a`; arguments after `--args` | Works: a path, PATH, then desktop entries by shown name or id, started from their `Exec` line with arguments in place of `%f %F %u %U`; terminal apps open in the system terminal; ambiguous names fail closed | `daemon/pilot/system/applications.py`, `daemon/pilot/system/desktop_entry.py` | Nothing | Windows: real run. macOS and Linux: fakes (Exec parsing, matching, the command started) |
 
 ## Reading the focused field
 
@@ -88,14 +89,35 @@ The `platform-readers` job in `.github/workflows/ci.yml` runs the real readers a
 
 Make the job required once it has passed on three consecutive pushes to main. Before then, a broken runner image cannot turn CI red.
 
+## First run on macOS and Linux
+
+What a brand-new install meets, in the order the person meets it, with no speech models, no permissions granted, no espeak and no AT-SPI. "Fixed" items now explain themselves; the rest are open.
+
+macOS:
+
+1. Open: the app creates the daemon's environment with `python3 -m venv`. A stock Mac has no Python 3.11 or later: `/usr/bin/python3` is a stub that opens the system's "install command line developer tools" dialog, and the Python it then installs is 3.9, below the daemon's minimum. The failure is printed only to the app's stderr and the window stays on "Connecting". Open; the fix is to bundle a Python (python-build-standalone) or check the version and show a setup screen: 1 to 2 days, Rust and UI.
+2. Open: the same setup installs `pilot-daemon[all]` in the background without asking, including the speech models' libraries and Chromium (several GB). This breaks the program's first-run rule that every optional download is offered with its size and started by the person. Open, for the owner to decide: 1 to 2 days for an opt-in download screen.
+3. Microphone: the bundle declares why Heliox uses it, so macOS asks on first capture; `microphone_state()` lets the audio side say what to turn on (audio workstream).
+4. Fixed: Live's field reading names the Accessibility setting and offers the system prompt once.
+5. Fixed: reading the screen without Screen Recording used to read the wallpaper and find nothing; it now says what to turn on. The first capture is what makes macOS show its prompt.
+6. Fixed: window actions without Accessibility say what to turn on; focus works without it.
+7. Fixed: the default shortcut no longer collides with Spotlight, and a failed registration is shown in Settings.
+8. Open: an unsigned download is quarantined by Gatekeeper ("damaged" or "cannot be opened") and notifications may not appear for an unsigned app. Signing and notarisation are a release task.
+
+Linux:
+
+1. Fixed for the .deb: `python3 -m venv` fails on Debian and Ubuntu without `python3-venv`, and microphone capture fails without `libportaudio2`; both are now package dependencies, with `at-spi2-core` (the .rpm gets `portaudio` and `at-spi2-core`). Open for the AppImage, which cannot declare dependencies: the setup failure is still printed only to stderr.
+2. Open: the same unasked background install of `pilot-daemon[all]` as on macOS.
+3. Fixed: Live says when the accessibility bus is missing or toolkit accessibility is off.
+4. Fixed: without espeak, speech logs one "no voice available" message and answers in text; whether the app shows that sentence is up to the audio workstream.
+5. Fixed: the `notify` action says when `notify-send` is missing instead of claiming success.
+6. Open: on Wayland the global shortcut and the X11 window tools (`wmctrl`, `xdotool`) do nothing or fail with an X11-only hint, and screen capture falls back to `gnome-screenshot`; see the gaps below.
+
 ## Gaps that remain
 
 | Gap | Documented route | What the person grants | Estimate |
 |---|---|---|---|
 | Screen capture and OCR on Wayland | `org.freedesktop.portal.Screenshot` (one image, consent per call or a remembered grant on GNOME 46 and later) or `org.freedesktop.portal.ScreenCast` with PipeWire for repeated capture, over D-Bus with jeepney | A portal consent dialog, once per session for ScreenCast with `persist_mode` | 3 to 4 days, with a CI run under Weston plus `xdg-desktop-portal` with a stub backend |
-| macOS OCR without developer tools | The Vision framework called in process through pyobjc (`pyobjc-framework-Vision`) instead of compiling Swift with `swift` | Screen Recording (already reported) | 1 to 2 days |
 | Global hotkey on Wayland | `org.freedesktop.portal.GlobalShortcuts` (GNOME 48 and later, KDE Plasma 5.27 and later); elsewhere ask the person to bind a desktop shortcut to `heliox --toggle` | The portal's confirmation dialog | 2 to 3 days, Rust side |
-| Launching apps with arguments on Linux | Parse the desktop entry's `Exec` with its field codes (`%f %F %u %U`) per the Desktop Entry Specification and spawn it, or `gio launch` with files | Nothing | 1 day |
 | Call detection on macOS and Linux | Owned by another workstream | | |
 | Microphone permission on macOS before first capture | Owned by the audio workstream; it uses `microphone_state()` | Microphone | |
-| Window actions on macOS through System Events | Replace AppleScript with Accessibility (`AXRaise`, `AXMinimized`, `AXPosition`) so Automation is no longer needed | Accessibility (already needed) | 2 days |

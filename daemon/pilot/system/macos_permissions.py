@@ -222,3 +222,16 @@ def snapshot() -> list[PermissionReport]:
     if not _is_mac():
         return []
     return [report(name, check()) for name, check in CHECKS.items()]
+
+
+def screen_reading_blocked() -> str:
+    """The sentence to say instead of reading the screen when macOS only hands over the wallpaper, or "".
+
+    Without Screen Recording, macOS still lets an app capture the screen but shows it only the desktop picture and
+    its own windows, so OCR would silently find nothing. The first capture attempt is what makes macOS show its
+    prompt, so callers capture first and check after.
+    """
+    state = screen_recording_state()
+    if state in (PermissionState.GRANTED, PermissionState.CANNOT_TELL):
+        return ""
+    return report("screen_recording", state).message

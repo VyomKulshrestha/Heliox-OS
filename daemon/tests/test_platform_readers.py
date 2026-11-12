@@ -561,3 +561,65 @@ def test_macos_window_list_skips_transparent_windows():
         {"kCGWindowLayer": 0, "kCGWindowOwnerName": "Mail", "kCGWindowAlpha": 1.0},
     ]
     assert M.front_window_owner(windows) == "Mail"
+
+
+def test_vision_ocr_lines_come_out_in_reading_order():
+    from pilot.system.macos_vision_ocr import reading_order
+
+    # Bottom-left origin: a larger y is higher on the page.
+    boxes = [
+        ("world", 0.5, 0.800, 0.05),
+        ("second line", 0.1, 0.600, 0.05),
+        ("Hello", 0.1, 0.805, 0.05),
+        ("", 0.1, 0.2, 0.05),
+    ]
+    assert reading_order(boxes) == ["Hello world", "second line"]
+    assert reading_order([]) == []
+
+
+def test_macos_ocr_without_pyobjc_uses_the_swift_route(monkeypatch):
+    import asyncio
+    import sys
+
+    from pilot.system import vision
+
+    monkeypatch.setitem(sys.modules, "pilot.system.macos_vision_ocr", None)  # import fails like a missing extra
+    calls = []
+
+    async def run(args, **_kw):
+        calls.append(args)
+        return (0, "from swift\n", "")
+
+    monkeypatch.setattr(vision, "run_command", run)
+    assert asyncio.run(vision._ocr_macos_native(b"png")) == "from swift"
+    assert calls and calls[0][0] == "swift"
+
+
+def test_macos_screen_ocr_says_screen_recording_is_missing(monkeypatch):
+    import asyncio
+
+    from pilot.system import macos_permissions as mp
+    from pilot.system import vision
+    from pilot.system.platform_detect import Platform
+
+    async def capture(_region):
+        return b"wallpaper"
+
+    async def must_not_ocr(_img):
+        raise AssertionError("the wallpaper must not be read")
+
+    monkeypatch.setattr(vision, "CURRENT_PLATFORM", Platform.MACOS)
+    monkeypatch.setattr(vision, "_capture_screenshot_bytes", capture)
+    monkeypatch.setattr(vision, "_ocr_macos_native", must_not_ocr)
+    monkeypatch.setattr(mp, "screen_recording_state", lambda: mp.PermissionState.NOT_ASKED)
+    answer = asyncio.run(vision.screen_ocr())
+    assert answer.startswith("[OCR unavailable:") and "Screen & System Audio Recording" in answer
+    with pytest.raises(vision.OCRUnavailableError, match="Screen"):
+        asyncio.run(vision.screen_ocr(allow_slow_fallback=False))
+    monkeypatch.setattr(mp, "screen_recording_state", lambda: mp.PermissionState.CANNOT_TELL)
+
+    async def ocr(_img):
+        return "text"
+
+    monkeypatch.setattr(vision, "_ocr_macos_native", ocr)
+    assert asyncio.run(vision.screen_ocr()) == "text"

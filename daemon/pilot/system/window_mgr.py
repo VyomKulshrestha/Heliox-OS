@@ -1,17 +1,39 @@
 """Window management — list, focus, close, minimize, maximize windows.
 
 Cross-platform: Windows (PowerShell/user32), Linux (wmctrl/xdotool),
-macOS (osascript/AppleScript).
+macOS (the Accessibility API through pilot.system.macos_windows; AppleScript
+through System Events only when pyobjc is not installed).
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
+from typing import Any
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
 
 logger = logging.getLogger("pilot.system.windows")
+
+_NOT_HANDLED = object()
+
+
+async def _mac_accessibility(action: str, process_name: str | None, title: str | None) -> Any:
+    """Run a window action through the Accessibility API on macOS; ``_NOT_HANDLED`` when pyobjc is missing."""
+    from pilot.system import macos_windows
+
+    windows = macos_windows.available()
+    if windows is None:
+        return _NOT_HANDLED
+
+    def run() -> Any:
+        if action == "list":
+            return windows.list()
+        app = process_name or windows.owner_of(title or "")
+        return getattr(windows, action)(app, title)
+
+    return await asyncio.to_thread(run)
 
 
 def _powershell_literal(value: str) -> str:
@@ -154,6 +176,9 @@ async def window_list() -> str:
             raise RuntimeError(f"Window list failed: {err.strip()}")
         return out.strip()
     elif CURRENT_PLATFORM == Platform.MACOS:
+        rows = await _mac_accessibility("list", None, None)
+        if rows is not _NOT_HANDLED:
+            return "\n".join(f"{app} - {title}" if title else app for app, title in rows)
         code, out, err = await run_command(
             [
                 "osascript",
@@ -205,6 +230,9 @@ async def window_exists(
         return out.strip() == "present"
 
     if CURRENT_PLATFORM == Platform.MACOS:
+        present = await _mac_accessibility("exists", process_name, None if process_name else title)
+        if present is not _NOT_HANDLED:
+            return bool(present)
         target = process_name or title or ""
         literal = target.replace('"', '\\"')
         script = (
@@ -276,6 +304,8 @@ async def window_focus(window_id: str | None = None, title: str | None = None, p
             raise ValueError("Provide process_name or title to focus a window")
 
     elif CURRENT_PLATFORM == Platform.MACOS:
+        if await _mac_accessibility("focus", process_name, title) is not _NOT_HANDLED:
+            return f"Focused window: {title or process_name or window_id}"
         target = process_name or title or ""
         code, out, err = await run_command(["osascript", "-e", f'tell application "{target}" to activate'])
 
@@ -310,6 +340,9 @@ async def window_close(window_id: str | None = None, title: str | None = None, p
             raise ValueError("Provide process_name or title")
 
     elif CURRENT_PLATFORM == Platform.MACOS:
+        # Closes the window, as its close button does; the AppleScript fallback can only quit the app.
+        if await _mac_accessibility("close", process_name, title) is not _NOT_HANDLED:
+            return f"Closed window: {title or process_name or window_id}"
         target = process_name or title or ""
         code, out, err = await run_command(["osascript", "-e", f'tell application "{target}" to quit'])
 
@@ -339,6 +372,8 @@ async def window_minimize(title: str | None = None, process_name: str | None = N
             f"}}"
         )
     elif CURRENT_PLATFORM == Platform.MACOS:
+        if await _mac_accessibility("minimize", process_name, title) is not _NOT_HANDLED:
+            return f"Minimized window: {title or process_name}"
         target = process_name or title or ""
         code, out, err = await run_command(
             [
@@ -372,6 +407,8 @@ async def window_maximize(title: str | None = None, process_name: str | None = N
             f"}}"
         )
     elif CURRENT_PLATFORM == Platform.MACOS:
+        if await _mac_accessibility("maximize", process_name, title) is not _NOT_HANDLED:
+            return f"Maximized window: {title or process_name}"
         target = process_name or title or ""
         code, out, err = await run_command(
             [

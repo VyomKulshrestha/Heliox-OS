@@ -96,6 +96,8 @@ macos = [
     "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    # Text recognition in process instead of compiling Swift (needs no Xcode tools).
+    "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
 ]
 linux = [
     "jeepney>=0.8; sys_platform == 'linux'",

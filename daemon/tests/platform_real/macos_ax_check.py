@@ -39,6 +39,97 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
+OCR_TEXT = "Heliox reads this line"
+
+
+def rendered_text_png(text: str) -> bytes:
+    """A PNG of ``text`` in black Helvetica on white, drawn with AppKit."""
+    import AppKit
+
+    width, height = 900, 160
+    image = AppKit.NSImage.alloc().initWithSize_((width, height))
+    image.lockFocus()
+    AppKit.NSColor.whiteColor().set()
+    AppKit.NSRectFill(((0, 0), (width, height)))
+    attributes = {
+        AppKit.NSFontAttributeName: AppKit.NSFont.fontWithName_size_("Helvetica", 56),
+        AppKit.NSForegroundColorAttributeName: AppKit.NSColor.blackColor(),
+    }
+    AppKit.NSString.stringWithString_(text).drawAtPoint_withAttributes_((30, 50), attributes)
+    image.unlockFocus()
+    rep = AppKit.NSBitmapImageRep.imageRepWithData_(image.TIFFRepresentation())
+    return bytes(rep.representationUsingType_properties_(AppKit.NSBitmapImageFileTypePNG, {}))
+
+
+def ocr_checks() -> None:
+    import asyncio
+
+    from pilot.system import vision
+    from pilot.system.macos_vision_ocr import recognize_text
+
+    png = rendered_text_png(OCR_TEXT)
+    start = time.perf_counter()
+    found = recognize_text(png)
+    took = (time.perf_counter() - start) * 1000
+    normal = " ".join(found.split()).casefold()
+    check("macos/ocr-vision-in-process", OCR_TEXT.casefold() in normal, f"{found!r} in {took:.0f} ms")
+    start = time.perf_counter()
+    through = asyncio.run(vision._ocr_macos_native(png))
+    took = (time.perf_counter() - start) * 1000
+    check(
+        "macos/ocr-through-vision-module", OCR_TEXT.casefold() in " ".join(through.split()).casefold(), f"{took:.0f} ms"
+    )
+
+
+def window_checks(pid: int) -> None:
+    """Window actions through the Accessibility API on the fixture's window (the AppleScript route is not used)."""
+    from pilot.system.macos_windows import MacWindows, match_apps
+
+    windows = MacWindows()
+    apps = [app for app in windows.b.running_apps() if app.pid == pid]
+    if not check("macos/windows-fixture-is-a-regular-app", bool(apps), repr(apps)):
+        return
+    name = apps[0].name
+    print(
+        f"fixture app as macOS names it: {apps[0]!r}; matches by name: {len(match_apps(name, windows.b.running_apps()))}"
+    )
+    listing = windows.list()
+    check(
+        "macos/windows-list-has-fixture", any(title == "Draft - edited" for _app, title in listing), repr(listing[:10])
+    )
+    windows.focus(name, "Draft")
+    check("macos/windows-focus", M.launch_services_front_app().casefold().startswith("python"))
+    windows.maximize(name, "Draft")
+    time.sleep(0.5)
+    window = windows._window(apps[0], "Draft")
+    size = windows.b.get(window, "AXSize")
+    frame = windows.b.visible_frame()
+    print(f"after maximise: AXSize {size!r}, visible frame {frame!r}")
+    check(
+        "macos/windows-maximize",
+        size is not None and "w:" + str(int(frame[2])) in str(size).replace(" ", ""),
+        str(size),
+    )
+    windows.minimize(name, "Draft")
+    time.sleep(0.8)
+    check("macos/windows-minimize", bool(windows.b.get(window, "AXMinimized")))
+    windows.b.set_bool(window, "AXMinimized", False)
+    time.sleep(0.5)
+    windows.close(name, "Draft")
+    time.sleep(0.8)
+    check("macos/windows-close-closes-the-window-only", not windows.exists(name, "Draft") and fixture_alive(pid))
+
+
+def fixture_alive(pid: int) -> bool:
+    import os
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def main() -> int:
     try:
         import AppKit  # noqa: F401
@@ -49,6 +140,11 @@ def main() -> int:
     except ImportError as exc:
         check("macos/pyobjc-imports", False, str(exc))
         return failures
+
+    try:
+        ocr_checks()
+    except Exception as exc:
+        check("macos/ocr-vision-in-process", False, f"{type(exc).__name__}: {exc}")
 
     start = time.perf_counter()
     reports = mp.snapshot()
@@ -119,6 +215,10 @@ def main() -> int:
         send("insert s3cret")
         secret = read_until(lambda r: r.password)
         check("macos/secure-field-refused", secret is not None and secret.password and secret.text == "", repr(secret))
+        try:
+            window_checks(fixture.pid)
+        except Exception as exc:
+            check("macos/windows-actions", False, f"{type(exc).__name__}: {exc}")
         timings = []
         for _ in range(30):
             start = time.perf_counter()

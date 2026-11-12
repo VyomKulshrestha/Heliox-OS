@@ -105,6 +105,16 @@ async def screen_ocr(
     every tick); if neither works, OCRUnavailableError is raised.
     """
     img_bytes = await _capture_screenshot_bytes(region)
+    if CURRENT_PLATFORM == Platform.MACOS:
+        # Without Screen Recording macOS hands over only the wallpaper (the capture above is what makes it show
+        # its prompt the first time): say so instead of finding no text.
+        from pilot.system.macos_permissions import screen_reading_blocked
+
+        blocked = screen_reading_blocked()
+        if blocked:
+            if not allow_slow_fallback:
+                raise OCRUnavailableError(blocked)
+            return f"[OCR unavailable: {blocked}]"
     errors: list[str] = []
 
     # ── Platform-native OCR ──────────────────────────────────────────
@@ -295,7 +305,18 @@ try {{
 
 
 async def _ocr_macos_native(img_bytes: bytes) -> str:
-    """Use macOS Vision framework for OCR (macOS 10.15+)."""
+    """Use macOS Vision framework for OCR (macOS 10.15+).
+
+    In process through pyobjc when the ``macos`` extra is installed (no developer tools needed); otherwise a
+    Swift script run with ``swift``, which needs the Xcode command-line tools.
+    """
+    try:
+        from pilot.system.macos_vision_ocr import recognize_text
+
+        return await asyncio.to_thread(recognize_text, img_bytes)
+    except ImportError:
+        logger.debug("pyobjc Vision not installed; using the swift route")
+
     tmp_img = os.path.join(tempfile.gettempdir(), f"pilot_ocr_{os.getpid()}.png")
     Path(tmp_img).write_bytes(img_bytes)
 
