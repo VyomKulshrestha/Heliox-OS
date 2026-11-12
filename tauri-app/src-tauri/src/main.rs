@@ -502,6 +502,7 @@ fn stop_daemon(state: &DaemonProcess) {
     }
 }
 mod instance;
+mod not_answering;
 
 fn main() {
     // One copy of the app per person: a second launch brings the first window forward and exits, before it starts
@@ -512,7 +513,9 @@ fn main() {
             if instance::ask_first_to_show(&get_app_data_dir()) {
                 println!("[Heliox OS] Heliox is already open; brought its window forward");
             } else {
-                eprintln!("[Heliox OS] Heliox is already open but did not answer; not opening a second copy");
+                // The first copy holds the lock but does not answer (hung, or with no window): say so in a window
+                // of this launch's own, with how to close it; never end the other copy from here.
+                not_answering::tell_the_person();
             }
             return;
         }

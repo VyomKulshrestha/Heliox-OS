@@ -438,7 +438,7 @@ Check every stored receipt's signature and its link to the previous one.
 How big Heliox's data folder is, and each store Heliox never prunes on its own. Saying this is also when the
 once-per-crossing warning for `storage.data_folder_warn_gb` is checked (it then arrives as a `storage_problem`
 notification with `kind: "size"`).
-**Result:** `{"status": "ok", "folder": "...", "total_bytes": 6442450944, "warn_gb": 5, "over": true, "stores": [{"name": "Audit log", "bytes": 3221225472}, {"name": "Audit log archives", "bytes": 0}, {"name": "Durable tasks", "bytes": 1048576}, {"name": "Checkpoints", "bytes": 409600}, {"name": "Experience ledger", "bytes": 2359296}]}`.
+**Result:** `{"status": "ok", "folder": "...", "total_bytes": 6442450944, "warn_gb": 5, "over": true, "stores": [{"name": "Audit log", "bytes": 3221225472}, {"name": "Audit log archives", "bytes": 0}, {"name": "Durable tasks", "bytes": 1048576}, {"name": "Checkpoints", "bytes": 409600}, {"name": "Experience ledger", "bytes": 2359296, "note": "Grows about 11.8 KB per request: above about 245 requests a day that passes 1 GB a year. Heliox does not delete it on its own."}]}`. Each store also has `"note"` (empty when there is nothing to add).
 
 #### `audit_archive`
 Started by the person only. Moves audit log entries dated before `older_than` to a dated file beside the audit log

@@ -32,6 +32,15 @@ STORES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+# Said beside a store's size, from daemon/benchmarks/store_growth.py (a scripted day of 200 requests; RELIABILITY.md).
+GROWTH_NOTES = {
+    "Experience ledger": (
+        "Grows about 11.8 KB per request: above about 245 requests a day that passes 1 GB a year. "
+        "Heliox does not delete it on its own."
+    ),
+}
+
+
 def folder_bytes(folder: Path) -> int:
     """Total size of every file under ``folder``; files that vanish or cannot be read meanwhile count as 0."""
     total = 0
@@ -61,7 +70,10 @@ def sizes(folder: Path) -> dict[str, Any]:
     return {
         "folder": str(folder),
         "total_bytes": folder_bytes(folder) if folder.exists() else 0,
-        "stores": [{"name": name, "bytes": store_bytes(folder, patterns)} for name, patterns in STORES],
+        "stores": [
+            {"name": name, "bytes": store_bytes(folder, patterns), "note": GROWTH_NOTES.get(name, "")}
+            for name, patterns in STORES
+        ],
     }
 
 

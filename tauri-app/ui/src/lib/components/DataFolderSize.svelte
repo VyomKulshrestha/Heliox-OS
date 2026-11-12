@@ -3,7 +3,7 @@
   import { call } from "../api/daemon";
   import { settings } from "../stores/settings";
 
-  type Store = { name: string; bytes: number };
+  type Store = { name: string; bytes: number; note?: string };
   type Sizes = {
     status: string;
     message?: string;
@@ -114,7 +114,10 @@
     </p>
     <ul class="rows">
       {#each sizes.stores ?? [] as store (store.name)}
-        <li><span>{store.name}</span><small>{readable(store.bytes)}</small></li>
+        <li>
+          <span>{store.name}</span><small>{readable(store.bytes)}</small>
+          {#if store.note}<small class="store-note">{store.note}</small>{/if}
+        </li>
       {/each}
     </ul>
   {/if}
@@ -169,6 +172,7 @@
   }
   .rows li {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     gap: 12px;
     font-size: 12px;
@@ -181,6 +185,10 @@
     gap: 8px;
     margin: 6px 0;
     font-size: 12px;
+  }
+  .store-note {
+    flex-basis: 100%;
+    margin: 2px 0 0;
   }
   input[type="number"] {
     width: 5em;

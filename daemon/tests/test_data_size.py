@@ -34,6 +34,13 @@ def test_each_store_and_the_whole_folder_are_measured(tmp_path):
         "Experience ledger": 11,
     }
     assert found["total_bytes"] == 196
+    notes = {store["name"]: store["note"] for store in found["stores"]}
+    # A heavy user learns this from Settings, not from the docs.
+    assert notes["Experience ledger"] == (
+        "Grows about 11.8 KB per request: above about 245 requests a day that passes 1 GB a year. "
+        "Heliox does not delete it on its own."
+    )
+    assert all(note == "" for name, note in notes.items() if name != "Experience ledger")
 
 
 def test_a_missing_folder_is_zero_not_an_error(tmp_path):

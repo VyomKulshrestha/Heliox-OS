@@ -25,7 +25,11 @@ const sizes = {
   over: true,
   stores: [
     { name: "Audit log", bytes: 3 * GB },
-    { name: "Experience ledger", bytes: 200 * 1024 ** 2 },
+    {
+      name: "Experience ledger",
+      bytes: 200 * 1024 ** 2,
+      note: "Grows about 11.8 KB per request: above about 245 requests a day that passes 1 GB a year.",
+    },
   ],
 };
 
@@ -47,6 +51,7 @@ describe("DataFolderSize", () => {
     expect(screen.getByText(/over 5 GB/)).toBeTruthy();
     expect(screen.getByText("Audit log")).toBeTruthy();
     expect(screen.getByText("200 MB")).toBeTruthy();
+    expect(screen.getByText(/above about 245 requests a day that passes 1 GB a year/)).toBeTruthy();
     expect((screen.getByLabelText("Size limit in GB") as HTMLInputElement).value).toBe("5");
   });
 
