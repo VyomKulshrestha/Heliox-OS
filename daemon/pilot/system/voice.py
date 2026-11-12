@@ -1703,10 +1703,14 @@ class _ContinuousRecorder:
         configured = (self.preferred_device or "auto").strip() or "auto"
         if configured.casefold() != "auto" or not self.headset_input_choices:
             return configured
-        from pilot.system.audio_health import default_microphone_name
+        return self.headset_input_choices.get(self.device_key(), configured)
 
-        default = default_microphone_name() or self.input_device_name
-        return self.headset_input_choices.get(default, configured)
+    def device_key(self) -> str:
+        """The stable key of the microphone in use with "auto": the system default's (pulse source name on Linux,
+        device name elsewhere), else the name of the device the listener opened."""
+        from pilot.system.audio_health import default_microphone_key
+
+        return default_microphone_key() or self.input_device_name
 
     def _open_capture(self) -> bool:
         """Open the capture backend; frames go to the existing queue. Safe to call from a worker thread."""
@@ -1734,6 +1738,14 @@ class _ContinuousRecorder:
             block = indata[:, 0].copy()
             self._publish_audio_block(block)
 
+        preferred = self._opening_preferred
+        if preferred.startswith("pulse::"):
+            # A PulseAudio/PipeWire source chosen by its stable name: PortAudio cannot name Pulse sources, but its
+            # ALSA "pulse" device opens whatever PULSE_SOURCE names when the stream starts.
+            os.environ["PULSE_SOURCE"] = preferred.split("::", 1)[1]
+            preferred = "auto"
+        else:
+            os.environ.pop("PULSE_SOURCE", None)
         try:
             self.using_fallback_input = False
             self.input_device_notice = ""
@@ -1742,12 +1754,12 @@ class _ContinuousRecorder:
                 sample_rate=self.sample_rate,
                 channels=1,
                 dtype="int16",
-                preferred_device=self._opening_preferred,
+                preferred_device=preferred,
                 allow_preferred_fallback=True,
             )
             device_info = sd.query_devices(self.input_device)
             self.input_device_name = str(device_info.get("name", self.input_device))
-            configured = self._opening_preferred.strip()
+            configured = preferred.strip()
             if configured and configured.casefold() != "auto":
                 try:
                     hostapi = str(sd.query_hostapis(int(device_info.get("hostapi", -1))).get("name", "Unknown"))
@@ -3294,7 +3306,7 @@ class ContinuousVoiceListener:
             if verdict and verdict != "ok":
                 from pilot.system.mic_quality import MESSAGES
 
-                headset = self._recorder.input_device_name
+                headset = await asyncio.to_thread(self._recorder.device_key)
                 logger.warning("Microphone %s: %s", headset, MESSAGES[verdict])
                 offer = await asyncio.to_thread(self._other_input_for, headset) if verdict == "narrowband" else None
                 if self._on_status:
@@ -3318,9 +3330,12 @@ class ContinuousVoiceListener:
         try:
             import sounddevice as sd
 
+            from pilot.system.audio_health import pulse_sources
             from pilot.system.mic_quality import suggest_input
 
-            return suggest_input(list_audio_input_devices(sd), headset, sys.platform)
+            # Linux: the PulseAudio/PipeWire sources by their stable names (PortAudio only sees "pulse" there).
+            devices = pulse_sources() or list_audio_input_devices(sd)
+            return suggest_input(devices, headset, sys.platform)
         except Exception:
             logger.debug("Could not list other microphones", exc_info=True)
             return None

@@ -336,11 +336,14 @@ jobs:
         # Its own failure must not stop the accessibility checks below.
         continue-on-error: true
         run: |
-          pip install pytest pytest-asyncio pytest-timeout
-          sudo apt-get install -y -q --no-install-recommends pulseaudio pulseaudio-utils
+          pip install pytest pytest-asyncio pytest-timeout sounddevice soundcard
+          sudo apt-get install -y -q --no-install-recommends pulseaudio pulseaudio-utils libportaudio2 libasound2-plugins
           pulseaudio --start --exit-idle-time=-1
           pactl load-module module-null-source source_name=heliox_mic
-          HELIOX_REAL_PULSE=1 pytest tests/test_call_detection_mac_linux.py -q --timeout=120
+          pactl load-module module-null-source source_name=heliox_headset
+          pactl set-default-source heliox_headset
+          HELIOX_REAL_PULSE=1 pytest tests/test_call_detection_mac_linux.py tests/test_audio_health.py -q --timeout=120 \
+            -k "real"
 
       - name: Linux, X11 session - type into a GTK field and read it through AT-SPI
         if: runner.os == 'Linux'

@@ -381,3 +381,46 @@ async def test_a_wasapi_stream_invalidated_by_a_call_app_is_reopened(monkeypatch
     assert statuses[0][0] == "microphone_problem" and statuses[0][1]["reason"] == "stream_failed"
     assert "0x88890004" in statuses[0][1]["message"]
     assert card.opened == 2 and any(name == "microphone_recovered" for name, _data in statuses)
+
+
+def test_the_default_microphone_key_is_the_pulse_source_name_on_linux_and_the_name_elsewhere(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    mic = SimpleNamespace(id="bluez_input.F4_4E.headset-head-unit", name="Rockerz 415")
+    monkeypatch.setitem(sys.modules, "soundcard", SimpleNamespace(default_microphone=lambda: mic))
+    assert audio_health.default_microphone_key("linux") == "bluez_input.F4_4E.headset-head-unit"
+    assert audio_health.default_microphone_key("darwin") == "Rockerz 415"  # CoreAudio ids change on replug
+    assert audio_health.default_microphone_key("win32") == "Rockerz 415"
+
+
+@pytest.mark.skipif(not __import__("os").environ.get("HELIOX_REAL_PULSE"), reason="needs PulseAudio; opt-in (CI)")
+def test_real_pulseaudio_names_and_opening_a_chosen_source():
+    """CI, Linux platform readers: null sources "heliox_headset" (the default) and "heliox_mic". soundcard names
+    the default by its source name; PortAudio's "pulse" device opens the source PULSE_SOURCE names."""
+    import os
+    import subprocess
+    import time
+
+    pytest.importorskip("sounddevice")
+    from pilot.system import voice
+
+    assert audio_health.default_microphone_key() == "heliox_headset"
+    assert subprocess.run(["pactl", "get-default-source"], capture_output=True, text=True).stdout.strip() == (
+        "heliox_headset"
+    )
+    sources = {entry["id"] for entry in audio_health.pulse_sources()}
+    assert {"pulse::heliox_headset", "pulse::heliox_mic"} <= sources
+    recorder = voice._ContinuousRecorder(preferred_device="auto")
+    recorder.headset_input_choices = {"heliox_headset": "pulse::heliox_mic"}
+    recorder._loop = None
+    assert recorder._open_capture(), recorder.last_error
+    try:
+        time.sleep(1.0)
+        short = subprocess.run(["pactl", "list", "short", "sources"], capture_output=True, text=True).stdout
+        mic_index = next(line.split("\t")[0] for line in short.splitlines() if "\theliox_mic\t" in line)
+        outputs = subprocess.run(["pactl", "list", "source-outputs"], capture_output=True, text=True).stdout
+        assert f"Source: {mic_index}" in outputs, outputs
+        assert os.environ.get("PULSE_SOURCE") == "heliox_mic"
+    finally:
+        recorder._close_capture()

@@ -100,7 +100,10 @@ def hands_free_name(device_name: str) -> bool:
     """The device name says call mode (Windows: "Headset (... Hands-Free AG Audio)"; Linux: "headset_head_unit",
     "handsfree"; macOS shows the plain headset name, so there the sound decides alone)."""
     name = device_name.casefold()
-    return any(word in name for word in ("hands-free", "handsfree", "headset_head_unit", "head unit"))
+    return any(
+        word in name
+        for word in ("hands-free", "handsfree", "headset_head_unit", "headset-head-unit", "head-unit", "head unit")
+    )
 
 
 # Names that are not microphones a person speaks into: recordings of what is played, and virtual devices.
@@ -108,7 +111,7 @@ NOT_A_MICROPHONE = ("stereo mix", "what u hear", "loopback", "monitor of", ".mon
                     "cable output", "blackhole", "soundflower")  # fmt: skip
 BUILT_IN = ("microphone array", "internal", "built-in", "macbook", "realtek", "intel", "digital microphone")
 # The host API each system's capture uses, so the id names a device the listener can open.
-PREFERRED_HOSTAPI = {"win32": "Windows WASAPI", "darwin": "Core Audio", "linux": "ALSA"}
+PREFERRED_HOSTAPI = {"win32": "Windows WASAPI", "darwin": "Core Audio", "linux": "PulseAudio"}
 
 
 def _product(name: str) -> str:
@@ -130,10 +133,15 @@ def suggest_input(devices: list[dict[str, Any]], headset: str, platform: str) ->
     candidates = []
     for device in devices:
         name = str(device.get("name", ""))
+        ident = str(device.get("id", ""))
         folded = name.casefold()
-        if not name or folded == headset.casefold() or hands_free_name(name):
+        if not name or headset.casefold() in {folded, ident.casefold(), ident.split("::")[-1].casefold()}:
+            continue  # the headset itself, by name or (Linux) by its PulseAudio source name
+        if hands_free_name(name) or hands_free_name(ident):
             continue
-        if any(word in folded for word in NOT_A_MICROPHONE) or (product and product in folded):
+        if any(word in folded or word in ident.casefold() for word in NOT_A_MICROPHONE):
+            continue
+        if product and product in folded:
             continue
         score = 2 * any(word in folded for word in BUILT_IN) + (device.get("hostapi") == hostapi)
         candidates.append((score, name, device))

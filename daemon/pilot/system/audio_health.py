@@ -166,6 +166,47 @@ def default_microphone_name() -> str:
         return ""
 
 
+def default_microphone_key(platform: str | None = None) -> str:
+    """A stable identifier of the system default microphone ("" when unavailable).
+
+    soundcard's own documentation and source give: on PulseAudio/PipeWire (Linux) ``id`` is the source name
+    ("bluez_input.XX_XX.headset-head-unit"), stable across restarts, and ``name`` its description, which two
+    devices can share; on CoreAudio (macOS) ``id`` is the AudioObjectID, which changes when the device is plugged
+    in again, and ``name`` is kAudioObjectPropertyName, which is also the name PortAudio's Core Audio host API
+    gives the device; on WASAPI (Windows) ``name`` is the endpoint's friendly name, the one the listener opens.
+    So: the source name on Linux, the name elsewhere.
+    """
+    import sys
+
+    try:
+        import soundcard as sc
+
+        microphone = sc.default_microphone()
+    except Exception:
+        return ""
+    if (platform or sys.platform).startswith("linux"):
+        return str(getattr(microphone, "id", "") or "")
+    return str(getattr(microphone, "name", "") or "")
+
+
+def pulse_sources() -> list[dict[str, str]]:
+    """Linux: the PulseAudio/PipeWire inputs (monitors excluded) as list_audio_input_devices-like entries whose id
+    is "pulse::<source name>"; [] elsewhere or when unavailable."""
+    import sys
+
+    if not sys.platform.startswith("linux"):
+        return []
+    try:
+        import soundcard as sc
+
+        return [
+            {"id": f"pulse::{mic.id}", "name": str(mic.name), "hostapi": "PulseAudio"}
+            for mic in sc.all_microphones(include_loopback=False)
+        ]
+    except Exception:
+        return []
+
+
 def microphone_present(name: str) -> bool:
     if not name:
         return False

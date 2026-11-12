@@ -129,11 +129,13 @@ def test_the_offer_is_the_built_in_microphone_never_the_headset_or_a_recording_o
         {"id": "Core Audio::BlackHole 2ch", "name": "BlackHole 2ch", "hostapi": "Core Audio"},
     ]
     assert suggest_input(mac, "AirPods Pro", "darwin")["name"] == "MacBook Pro Microphone"
-    linux = [
-        {"id": "ALSA::pulse", "name": "pulse", "hostapi": "ALSA"},
-        {"id": "ALSA::bluez_input.headset_head_unit", "name": "bluez_input.headset_head_unit", "hostapi": "ALSA"},
-    ]
-    assert suggest_input(linux, "bluez_input.headset_head_unit", "linux")["name"] == "pulse"
+    linux = [  # PulseAudio/PipeWire sources by their stable names, as audio_health.pulse_sources lists them
+        {"id": "pulse::bluez_input.F4_4E.headset-head-unit", "name": "Rockerz 415", "hostapi": "PulseAudio"},
+        {"id": "pulse::alsa_input.pci-0000_00_1f.3.analog-stereo", "name": "Built-in Audio Analog Stereo",
+         "hostapi": "PulseAudio"},
+    ]  # fmt: skip
+    offer = suggest_input(linux, "bluez_input.F4_4E.headset-head-unit", "linux")
+    assert offer == {"id": "pulse::alsa_input.pci-0000_00_1f.3.analog-stereo", "name": "Built-in Audio Analog Stereo"}
     assert suggest_input(WINDOWS_DEVICES[:3], "Headset (Rockerz 415 Hands-Free AG Audio)", "win32") is None
 
 
@@ -143,12 +145,12 @@ def test_a_headset_the_person_chose_another_microphone_for_listens_with_that_one
 
     recorder = _ContinuousRecorder()
     recorder.headset_input_choices = {"Headset (Rockerz)": "Windows WASAPI::Microphone Array (Realtek)"}
-    monkeypatch.setattr(audio_health, "default_microphone_name", lambda: "Headset (Rockerz)")
+    monkeypatch.setattr(audio_health, "default_microphone_key", lambda: "Headset (Rockerz)")
     assert recorder.effective_preferred_device() == "Windows WASAPI::Microphone Array (Realtek)"
-    monkeypatch.setattr(audio_health, "default_microphone_name", lambda: "Microphone (USBAudio1.0)")
+    monkeypatch.setattr(audio_health, "default_microphone_key", lambda: "Microphone (USBAudio1.0)")
     assert recorder.effective_preferred_device() == "auto"  # another default: the choice does not apply
     recorder.preferred_device = "MME::Microphone (USBAudio1.0)"
-    monkeypatch.setattr(audio_health, "default_microphone_name", lambda: "Headset (Rockerz)")
+    monkeypatch.setattr(audio_health, "default_microphone_key", lambda: "Headset (Rockerz)")
     assert recorder.effective_preferred_device() == "MME::Microphone (USBAudio1.0)"  # a fixed choice wins
 
 
@@ -194,3 +196,38 @@ async def test_the_setting_is_validated_and_reopens_the_microphone():
         {"section": "voice", "values": {"headset_input_choices": {"Headset (Rockerz)": "W::Mic"}}}, None
     )
     assert good["status"] == "ok" and server.config.voice.headset_input_choices == {"Headset (Rockerz)": "W::Mic"}
+
+
+def test_a_pulse_source_is_opened_through_the_pulse_device_by_its_stable_name(monkeypatch):
+    import os
+    import sys
+    from types import SimpleNamespace
+
+    from pilot.system import voice
+
+    opened = {}
+
+    class Stream:
+        def __init__(self, **kwargs):
+            opened.update(kwargs, source=os.environ.get("PULSE_SOURCE"))
+
+        def start(self):
+            pass
+
+    fake_sd = SimpleNamespace(
+        InputStream=Stream,
+        query_devices=lambda device=None: {"name": "pulse", "hostapi": 0},
+        query_hostapis=lambda index: {"name": "ALSA"},
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    monkeypatch.setattr(voice, "CURRENT_PLATFORM", voice.Platform.LINUX)
+    monkeypatch.setattr(voice, "_resolve_input_device", lambda sd, **kwargs: 3)
+    monkeypatch.delenv("PULSE_SOURCE", raising=False)
+    recorder = voice._ContinuousRecorder(preferred_device="auto")
+    recorder.headset_input_choices = {"bluez_input.F4_4E.headset-head-unit": "pulse::alsa_input.analog-stereo"}
+    monkeypatch.setattr(recorder, "device_key", lambda: "bluez_input.F4_4E.headset-head-unit")
+    assert recorder._open_capture()
+    assert opened["source"] == "alsa_input.analog-stereo" and opened["device"] == 3
+    recorder._stream = None
+    monkeypatch.setattr(recorder, "device_key", lambda: "alsa_input.usb-mic")  # another default: no choice applies
+    assert recorder._open_capture() and opened["source"] is None

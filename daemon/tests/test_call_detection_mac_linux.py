@@ -134,19 +134,40 @@ def test_the_real_reader_on_this_system_answers():
 
 
 @pytest.mark.skipif(not os.environ.get("HELIOX_REAL_PULSE"), reason="needs a running PulseAudio/PipeWire; opt-in")
-def test_real_pulseaudio_sees_another_app_recording():
-    """CI (platform readers, Linux): a null source stands in for a microphone and parecord for a call app."""
+def test_real_pulseaudio_sees_another_app_recording(monkeypatch):
+    """CI (platform readers, Linux): a null source stands in for a microphone and parecord for a call app.
+
+    parecord is started by this test, so it is a child of the test process; Heliox excludes its own children
+    (its speech worker) from call detection, so here only the test's own PID counts as Heliox's."""
     import time
 
-    recorder = subprocess.Popen(["parecord", "--device=heliox_mic", "--raw", "/dev/null"])
+    recorder = subprocess.Popen(
+        ["parecord", "--device=heliox_mic", "--raw", "/dev/null"], stderr=subprocess.PIPE, text=True
+    )
+    monkeypatch.setattr(call_detection, "_own_pids", lambda: {os.getpid()})
+    users = None
     try:
         for _ in range(50):
-            users = call_detection._mic_users_linux(call_detection._own_pids())
+            users = call_detection._mic_users_linux({os.getpid()})
             if users:
                 break
             time.sleep(0.1)
-        assert users is not None, "pactl did not answer"
-        assert any(user.pid == recorder.pid for user in users), users
-        assert call_detection.current_call() != ""
+
+        def evidence() -> str:
+            def run(*args: str) -> str:
+                done = subprocess.run(["pactl", *args], capture_output=True, text=True)
+                return done.stdout + done.stderr
+
+            alive = recorder.poll()
+            stderr = "" if alive is None else (recorder.stderr.read() if recorder.stderr else "")
+            return (
+                f"\nparecord pid {recorder.pid}, exit {alive}, stderr: {stderr!r}\nusers: {users!r}"
+                f"\n--- pactl list short sources ---\n{run('list', 'short', 'sources')}"
+                f"--- pactl list source-outputs ---\n{run('list', 'source-outputs')}"
+            )
+
+        assert users is not None, "pactl did not answer" + evidence()
+        assert any(user.pid == recorder.pid for user in users), evidence()
+        assert call_detection.current_call() != "", evidence()
     finally:
         recorder.terminate()
