@@ -2185,6 +2185,8 @@ class PilotServer:
             "companion_speech_status": self._handle_companion_speech_status,
             "reset_wake_calibration": self._handle_reset_wake_calibration,
             "list_wake_variants": self._handle_list_wake_variants,
+            "voice_wake_teach": self._handle_voice_wake_teach,
+            "remove_wake_variant": self._handle_remove_wake_variant,
             "autonomous_submit": self._handle_autonomous_submit,
             "autonomous_cancel": self._handle_autonomous_cancel,
             "autonomous_resume": self._handle_autonomous_resume,
@@ -13917,6 +13919,15 @@ def handle_tool(tool_name, params):
         """Parakeet downloaded at the person's request becomes the final pass, unless they pointed it elsewhere;
         Whisper small, the recommendation for other languages, replaces base unless another size was chosen."""
         voice = self.config.voice
+        if model_id == "whisper-base":
+            from pilot.system.model_presence import whisper_present
+
+            if not whisper_present(str(voice.whisper_model)):
+                # The settings default ("small") is not here and base now is: use it, so the wake check runs.
+                voice.whisper_model = "base"
+                self.config.save()
+                await self._broadcast_notification("config_updated", {"method": "voice", "section": "voice"})
+            return
         if model_id == "whisper-small" and voice.whisper_model == "base":
             voice.whisper_model = "small"
             self.config.save()
@@ -14658,6 +14669,39 @@ def handle_tool(tool_name, params):
 
             VoiceCalibrationStore().reset()
         return {"status": "ok"}
+
+    async def _handle_voice_wake_teach(self, params: dict, ws: ServerConnection) -> dict:
+        """Teach Heliox how this person's recogniser writes its name: they say the wake phrase alone a few times.
+        Progress arrives as voice_status "wake_teach" ({try, of, heard}); nothing is dispatched or sent anywhere."""
+        listener = self._voice_listener
+        if listener is None or not listener.is_running:
+            return {"status": "error", "message": "Turn on always listening first, then try again."}
+        try:
+            tries = max(2, min(int(params.get("tries", 4)), 8))
+        except (TypeError, ValueError):
+            tries = 4
+
+        async def progress(n: int, of: int, heard: str) -> None:
+            await self._broadcast_notification(
+                "voice_status", {"status": "wake_teach", "try": n, "of": of, "heard": heard}
+            )
+
+        try:
+            result = await listener.teach_wake(tries, on_progress=progress)
+        except RuntimeError as error:  # a recognition test already running
+            return {"status": "error", "message": str(error)}
+        return {"status": "ok", **result}
+
+    async def _handle_remove_wake_variant(self, params: dict, ws: ServerConnection) -> dict:
+        """Remove one learned or taught spelling of the name; it no longer wakes Heliox."""
+        text = str(params.get("text", "")).strip()
+        if self._voice_listener:
+            removed = self._voice_listener._wake_calibrator.remove(text)
+        else:
+            from pilot.system.voice_calibration import VoiceCalibrationStore, WakeWordCalibrator
+
+            removed = WakeWordCalibrator([], VoiceCalibrationStore()).remove(text)
+        return {"status": "ok" if removed else "not_found", "text": text}
 
     async def _handle_list_wake_variants(self, params: dict, ws: ServerConnection) -> dict:
         """List learned wake-word variants for the Settings transparency view.

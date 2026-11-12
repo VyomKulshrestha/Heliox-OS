@@ -198,6 +198,14 @@ def is_cut_off_stop(voiced_seconds: float | None) -> bool:
     return voiced_seconds is not None and voiced_seconds <= SHORT_CUT_OFF_SECONDS
 
 
+def vocative_wake_exact(text: str) -> bool:
+    """The wake phrase with the exact name at the start of ``text`` ("Hey Heliox", "Heliox,")."""
+    from pilot.system.addressing import vocative_wake
+
+    wake = vocative_wake(text)
+    return bool(wake and wake.exact)
+
+
 def early_wake_agrees(opening_text: str, final_text: str) -> bool:
     """The wake phrase read from the opening counts only when the first word Whisper heard after it is among
     Parakeet's first five words: both recognisers then heard the same sentence start, and the opening is not a
@@ -286,6 +294,11 @@ class BargeInGate:
     picked up while Heliox was talking before it (``echo_factor`` times that level).
     """
 
+    # Below this level (-50 dBFS) the microphone does not hear Heliox at all (a noise-gated desk microphone gave
+    # digital silence while Heliox talked through the speakers): open speakers then need no longer hold than a
+    # headset, and the echo comparison still applies.
+    INAUDIBLE_ECHO = 0.003
+
     def __init__(
         self,
         *,
@@ -294,9 +307,12 @@ class BargeInGate:
         open_hold_seconds: float = 0.4,
         echo_factor: float = 2.5,
         baseline_seconds: float = 0.5,
+        adapt_to_echo: bool = True,
     ) -> None:
         self.echo_free = echo_free
         self.hold = hold_seconds if echo_free else open_hold_seconds
+        self.headset_hold = hold_seconds
+        self.adapt_to_echo = adapt_to_echo
         self.echo_factor = echo_factor
         self.baseline_seconds = baseline_seconds
         self._started: float | None = None
@@ -313,15 +329,19 @@ class BargeInGate:
             return False
         if self._started is None:
             self._started = now
-        if now - self._started < self.hold:
+        held = now - self._started
+        if held < min(self.hold, self.headset_hold):
             return False
         if self.echo_free:
-            return True
+            return held >= self.hold
         before = [lvl for when, lvl in self._samples if when < self._started]
         if not before or self._started - self._first < self.baseline_seconds:
             return False  # no idea yet how loud Heliox itself is in the microphone
-        during = sorted(lvl for when, lvl in self._samples if when >= self._started)
         echo = sorted(before)[len(before) // 2]
+        hold = self.headset_hold if self.adapt_to_echo and echo < self.INAUDIBLE_ECHO else self.hold
+        if held < hold:
+            return False
+        during = sorted(lvl for when, lvl in self._samples if when >= self._started)
         return during[len(during) // 2] >= self.echo_factor * max(echo, 1e-4)
 
 
@@ -2460,6 +2480,17 @@ class ContinuousVoiceListener:
         self._wake_calibrator.tick()
         return decision, heard
 
+    def _whisper_model(self) -> str:
+        """The Whisper size to load: the configured one, or another that is on this computer
+        (model_presence.usable_whisper_model)."""
+        from pilot.system.model_presence import usable_whisper_model
+
+        configured = str(self.config.voice.whisper_model)
+        try:
+            return usable_whisper_model(configured)
+        except Exception:
+            return configured
+
     def _canonical_wake(self, text: str) -> str:
         """A configured wake phrase other than the name ("hey pilot") or a variant the person's own voice taught
         the calibrator, at the very start, written as "Hey Heliox" so one rule judges it."""
@@ -2474,9 +2505,13 @@ class ContinuousVoiceListener:
             if not after or not after.isalnum():
                 return "Hey Heliox" + text[offset + len(phrase) :]
         if self.config.adaptive_calibration.voice_wake_word_enabled:
-            variant = self._wake_calibrator.match_promoted_variant(folded)
-            if isinstance(variant, str) and variant and folded.startswith(variant):
-                return "Hey Heliox" + text[offset + len(variant) :]
+            # Compared word by word, so "Hey, Helios! Open my mail" matches the taught "hey helios".
+            words = list(re.finditer(r"[A-Za-z']+", text[offset:]))
+            spoken = [w.group(0).lower() for w in words]
+            for variant in self._wake_calibrator.promoted():
+                wanted = variant.split()
+                if wanted and spoken[: len(wanted)] == wanted:
+                    return "Hey Heliox" + text[offset + words[len(wanted) - 1].end() :]
         return text
 
     def _overheard_ok(self, decision: Any) -> bool:
@@ -2906,15 +2941,15 @@ class ContinuousVoiceListener:
             logger.info("Turn-taking models unavailable: %s", error)
         try:
             if self.config.voice.transcription_engine in {"auto", "faster_whisper", "streaming"}:
-                await asyncio.to_thread(_get_faster_whisper_model, self.config.voice.whisper_model)
+                await asyncio.to_thread(_get_faster_whisper_model, self._whisper_model())
             else:
-                await asyncio.to_thread(_get_whisper_model, self.config.voice.whisper_model)
+                await asyncio.to_thread(_get_whisper_model, self._whisper_model())
             parakeet = self._parakeet()
             if parakeet is not None:
                 await asyncio.to_thread(parakeet.load)  # about 4 s; otherwise the first sentence pays for it
             logger.info(
                 "Voice recognizer warmup completed (model=%s, duration_ms=%.0f)",
-                self.config.voice.whisper_model,
+                self._whisper_model(),
                 (time.perf_counter() - started) * 1000,
             )
         except asyncio.CancelledError:
@@ -2992,6 +3027,33 @@ class ContinuousVoiceListener:
             if self._diagnostic_waiter is waiter:
                 self._diagnostic_waiter = None
 
+    async def teach_wake(
+        self, tries: int = 4, on_progress: Any = None, timeout_seconds: float = 10.0
+    ) -> dict[str, Any]:
+        """The teach step: the person says the wake phrase alone ``tries`` times; the spellings the wake check's
+        recogniser wrote at least twice, and that are not ordinary words, become theirs (voice_calibration.teach).
+        Nothing is dispatched; nothing leaves the computer. ``on_progress(n, tries, heard)`` after each try."""
+        from pilot.system.voice_calibration import teach
+
+        heard: list[str] = []
+        for n in range(1, max(2, min(int(tries), 8)) + 1):
+            try:
+                result = await self.capture_diagnostic(timeout_seconds)
+            except TimeoutError:
+                result = {}
+            words = str(result.get("whisper") or result.get("transcript") or "").strip()
+            heard.append(words)
+            if on_progress is not None:
+                await on_progress(n, tries, words)
+        keep, refused = teach([h for h in heard if h])
+        kept = (
+            self._wake_calibrator.add_taught(keep)
+            if keep
+            else [v.text for v in self._wake_calibrator.get_variants() if getattr(v, "taught", False)]
+        )
+        already = sum(1 for h in heard if vocative_wake_exact(h))
+        return {"heard": heard, "added": keep, "refused": refused, "taught": kept, "already_heliox": already}
+
     async def _listen_loop(self) -> None:
         while self._running:
             try:
@@ -3024,6 +3086,9 @@ class ContinuousVoiceListener:
                             "transcript": self.last_transcript,
                             "language": self.last_detected_language,
                             "latency_ms": round(self.last_transcription_ms),
+                            # Each recogniser's own words, before the wake phrase is merged in (the teach step).
+                            "whisper": getattr(self, "_last_wake_text", "") or "",
+                            "parakeet": getattr(self, "_last_parakeet_text", "") or "",
                         }
                     )
                     logger.info("Recognition test captured an utterance without dispatching it")
@@ -3255,7 +3320,7 @@ class ContinuousVoiceListener:
             result = await _transcribe_speech(
                 audio_path,
                 language or self.config.voice.language,
-                self.config.voice.whisper_model,
+                self._whisper_model(),
                 # The streaming engine falls back to the automatic Whisper path when it has no text.
                 "auto"
                 if self.config.voice.transcription_engine == "streaming"

@@ -74,6 +74,18 @@ def whisper_present(model_name: str) -> bool:
     return faster_whisper_source(model_name) is not None or openai_whisper_cached(model_name) is not None
 
 
+FALLBACK_ORDER = ("base", "small", "tiny", "medium")
+
+
+def usable_whisper_model(configured: str) -> str:
+    """The configured Whisper size when it is on this computer, else the first size in FALLBACK_ORDER that is (the
+    settings default is "small", the recommended English set brings "base"), else the configured one (and loading
+    it says it is missing)."""
+    if whisper_present(configured):
+        return configured
+    return next((size for size in FALLBACK_ORDER if size != configured and whisper_present(size)), configured)
+
+
 def parakeet_present(folder: Path) -> bool:
     from pilot.system.parakeet_asr import missing_files
 
@@ -83,7 +95,7 @@ def parakeet_present(folder: Path) -> bool:
 def recognisers(whisper_model: str, parakeet_folder: Path | None, final_pass: str) -> dict[str, bool]:
     """Which recognisers can run now: {"whisper": ..., "parakeet": ...} (Parakeet only when chosen)."""
     return {
-        "whisper": whisper_present(whisper_model),
+        "whisper": whisper_present(usable_whisper_model(whisper_model)),
         "parakeet": final_pass == "parakeet" and parakeet_folder is not None and parakeet_present(parakeet_folder),
     }
 

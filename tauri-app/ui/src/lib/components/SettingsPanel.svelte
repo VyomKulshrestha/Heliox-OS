@@ -2,6 +2,7 @@
   import { ShieldAlert, ShieldCheck } from "@lucide/svelte";
   import { settings, settingsLoadErrors, type SettingsSaveResult } from "../stores/settings";
   import SpeechModels from "./SpeechModels.svelte";
+  import WakeTeach from "./WakeTeach.svelte";
   import { _, locale } from "svelte-i18n";
   import { session } from "../stores/session";
   import { call, requireOkResult, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
@@ -1879,6 +1880,7 @@
         >{$_("settings.voice_calibration_reset")}</button
       >
     </div>
+    <WakeTeach />
   </section>
 
   <section class="settings-group">

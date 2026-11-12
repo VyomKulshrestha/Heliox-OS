@@ -20,15 +20,20 @@ SAMPLE_RATE = 16000
 FRAME = 512
 MIN_VOICED_SECONDS = 4.0
 # Energy 4.5-7.5 kHz over 0.3-3.4 kHz, pooled: owner's headset in call mode 3.7e-7, desk microphone 5.6e-3.
+# Word error rate on the owner's wake sentences, both recognisers merged as the listener does: 0.42 through the
+# headset in call mode, 0.04 on the desk microphone. Whisper small instead of base (0.47), a telephone-band filter
+# (0.57) or louder input (0.40) did not change that; for Whisper alone a round trip through 8 kHz helped (0.74 to
+# 0.49 on four sentences), too few to ship.
 NARROWBAND_RATIO = 1e-4
 QUIET_DBFS = -48.0  # median voiced level; the owner's microphones sat at -35 to -44 dBFS
 CLIPPING_SHARE = 0.005  # share of voiced samples at full scale
 
 MESSAGES = {
     "narrowband": (
-        "This microphone is in Bluetooth call mode: it cuts the sound above 3.4 kHz, so Heliox will mishear "
-        "words. For better recognition, use the computer's own microphone for input and keep the headset for "
-        "listening (Settings, Voice, Microphone)."
+        "This microphone is in Bluetooth call mode: it cuts the sound above 3.4 kHz, and Heliox gets four to seven "
+        "words in ten wrong through it (fewer than one in twenty on a desk microphone). Use the computer's own "
+        "microphone for input and keep the headset for listening (Settings, Voice, Microphone), or switch the "
+        "headset to its stereo or music profile when you are not in a call."
     ),
     "quiet": (
         "Your voice reaches Heliox very quietly, so it may miss words. Move the microphone closer or raise its "

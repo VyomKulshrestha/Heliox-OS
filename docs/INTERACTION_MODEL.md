@@ -516,6 +516,34 @@ microphone 4 of 4, Bluetooth headset 3 of 5 (in the two misses neither recognise
 "Wait, stop." cut-offs over Heliox stop it. Still to measure: the whole hour and the control words at audio level,
 and a real follow-up recording.
 
+**A new person** (from the code, 2026-11-12). Nothing assumes the owner's voice, accent or microphone except the
+numbers each part was tuned on, listed here so they can be revisited:
+- *Wake phrase.* Whisper is prompted with "Hey Heliox" and its proper names, so it usually writes the name exactly,
+  and the exact name needs one recogniser. A spelling close to it ("Heliocs", "Helios", "Hilliox", anything matching
+  `h[ei]l{1,2}[iy]` plus up to five letters) counts only when Parakeet heard the same next word. Any other spelling
+  ("Hey Lux", "Dear Yorks") never wakes Heliox. A voice the recogniser writes differently every time is not helped
+  by anything below; the microphone button always works.
+- *Learning from near-misses* (`voice_calibration.py`, on by default): a near-miss (within two letters of "hey
+  heliox") followed within two utterances by an exact hit counts once; five make it the person's. A person whose
+  "Heliox" is never written exactly never reaches it. It now ignores punctuation ("Hey Heliocs, open" was three
+  letters away because of the comma).
+- *Teaching the name* (Settings, Voice, "Teach Heliox how you say its name"): the person says "Hey Heliox" four
+  times; a spelling the wake check wrote at least twice is kept as theirs, at most five, listed there and removable.
+  Refused: spellings made only of ordinary words (Whisper's own 24,000 whole-word vocabulary plus a list of names
+  and near-words such as "Alex", "Helix", "Hello"), shorter than four letters, or more than four letters from
+  "heliox". Of the 5,868 opening phrases (one to three words) of the 981 utterances not addressed to Heliox, as
+  either recogniser wrote them, the guard refuses every one, so none could ever be taught. Only the spellings are
+  stored, on this computer.
+- *Whisper size.* The settings default is "small"; the recommended English download brings "base". The listener now
+  uses the size that is on the computer, and downloading Whisper base switches the setting when "small" is absent
+  (before, a new person who took the recommended set had no wake check at all).
+- *End of turn.* Smart Turn ends the turn at 0.85 after 400 ms of quiet (set on the owner's headset, where pauses
+  inside a sentence scored 0.71 to 0.83), holding up to 2.5 s otherwise. Same for everyone.
+- *Speech level.* The VAD starts at 0.02 RMS and then follows the room: 2.5 times the 20th percentile of recent
+  levels outside speech, kept between a quarter and four times the start. A quiet voice on a quiet microphone is
+  heard once the room is learned (about half a second of frames); the voice bar warns when the voice is below
+  -48 dBFS, clips, or comes through a narrow-band headset.
+
 **Not done: whose voice.** Nothing checks that a follow-up comes from the person who said the wake phrase. The
 cheapest evidence is the speech level of the follow-up against the wake utterance that opened the conversation: the
 same person at the same distance from a desk microphone should be within a few decibels, a television or someone
@@ -523,6 +551,35 @@ across the room usually not. None of the installed recognisers gives a speaker e
 needs a download. Measuring the level rule needs recordings that do not exist yet: two people taking turns at one
 desk microphone (one addressing Heliox, the other talking to them), and a television or video playing in the room
 while the owner talks to Heliox, each on a desk microphone and a headset.
+
+**Talking over Heliox (barge-in), where the time goes.** On the owner's four recorded "Wait, stop." cuts, fed
+through the listener's recorder and `BargeInGate` on the audio clock with the 2 s before each cut as Heliox's
+speech:
+
+| part | open speakers, before | open speakers, mic does not hear Heliox (now) | headset | ours to shorten |
+|---|---|---|---|---|
+| first sound to "the person is speaking" (VAD, two 50 ms frames) | 0.08-0.09 s | same | same | yes, at the cost of clicks |
+| speaking to the gate firing (hold) | 0.45 s | 0.25 s | 0.25 s | yes |
+| gate polling | up to 20 ms | same | same | yes |
+| fade-out | 8 ms | same | same | yes |
+| audio already in the output device | not measured (silent sink) | | | partly: see below |
+| first sound to stop decided | 0.53-0.54 s | 0.33-0.34 s | 0.33-0.34 s | |
+
+The open-speaker hold (0.4 s) is there because the microphone hears Heliox. When it does not (a noise-gated desk
+microphone gave digital silence while Heliox talked through the speakers), the gate now uses the headset's 0.25 s:
+the echo comparison still applies, a cough (about 0.15 s) still does not stop Heliox, and a microphone that hears
+Heliox at -50 dBFS or louder keeps the 0.4 s. The output stream is opened with PortAudio's default host API, which on
+Windows is MME, whose low output latency is 90 ms (WASAPI 3 ms, DirectSound 120 ms on the same Realtek speakers, as
+PortAudio reports them): up to 90 ms of Heliox's voice is already in the device when the stop is decided. Moving the
+output to WASAPI on Windows is ours to do but needs an audible test before it ships. macOS (Core Audio) and Linux
+(PulseAudio or PipeWire through ALSA) report their own low latencies; not measured here.
+
+**A headset in call mode.** On the owner's wake sentences, word error rate with both recognisers merged as the
+listener does: 0.42 through a Bluetooth headset in call mode, 0.04 on the desk microphone. Whisper small instead of
+base (0.47), a telephone-band filter (0.57) or louder input (0.40) did not help; for Whisper alone a round trip through
+8 kHz did (0.74 to 0.49), on four sentences, too few to ship. The voice bar's warning for this microphone now says
+how much worse it is and offers the two fixes: the computer's own microphone for input, or the headset's stereo
+profile outside calls.
 
 ## 6. Ending the turn early (`early_turn_threshold`): measured and left off
 
@@ -565,5 +622,11 @@ sentence, on the 49 synthetic addressed sentences and 159 corpus lines:
 
 The narrow list fixes 8 of the 23 cuts and costs 600 ms (one more Smart Turn check) on one long finished sentence in
 five, never on a sentence under 2 s. The cost comes from the streaming recogniser's words lagging the audio: at the
-400 ms check its last word is often one before the real last word. Not adopted; the next thing to measure is the same
-hold on the recogniser's flushed words at the check.
+400 ms check its last word is often one before the real last word.
+
+Measured next on the recogniser's flushed words (the whole utterance so far decoded to the end at the moment Smart
+Turn would end the turn, so no lag), the same narrow list fixes none of the 23 cuts and delays nothing: 0 addressed
+split, 23 corpus lines split, 0 of 181 finished sentences later. The 8 "fixes" above came from the lag itself, holding
+at the wrong word. The cuts are at commas after a complete clause ("Close Chrome, | it's eating all the memory."),
+where the words so far are a finished sentence; no word list can see that the person is going on. Not adopted. The
+flush also cost a median 361 ms of computing per check on a busy machine.

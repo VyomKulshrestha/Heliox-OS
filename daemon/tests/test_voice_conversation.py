@@ -58,6 +58,23 @@ def test_with_open_speakers_only_voice_clearly_louder_than_heliox_itself_stops_i
     assert feed(early, frames(0.0, 2.0, True, 0.3)) is None
 
 
+def test_with_open_speakers_the_microphone_does_not_hear_a_headset_hold_is_enough():
+    # A noise-gated desk microphone gave digital silence while Heliox talked through the speakers (the owner's
+    # recorded cuts): nothing to mistake for the person, so the headset's quarter second applies.
+    gated = BargeInGate(echo_free=False)
+    stopped = feed(gated, frames(0.0, 1.0, False, 0.0) + frames(1.0, 3.0, True, 0.05))
+    assert stopped is not None and 1.24 <= stopped <= 1.3
+    # A cough is still shorter than that.
+    cough = BargeInGate(echo_free=False)
+    assert (
+        feed(cough, frames(0.0, 1.0, False, 0.0) + frames(1.0, 1.15, True, 0.2) + frames(1.15, 2.0, False, 0.0)) is None
+    )
+    # Where the microphone hears Heliox, the open-speaker hold stays.
+    heard = BargeInGate(echo_free=False)
+    stopped = feed(heard, frames(0.0, 1.0, False, 0.02) + frames(1.0, 3.0, True, 0.08))
+    assert stopped is not None and 1.39 <= stopped <= 1.45
+
+
 def test_echo_free_outputs_are_headsets_and_headphones():
     assert echo_free_output("Headphones (Rockerz Prime 415)")
     assert echo_free_output("Headset Earphone (Jabra Evolve2)")
