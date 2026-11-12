@@ -41,7 +41,7 @@ faults" CI job (ubuntu, macOS, Windows, a fresh home for each step, never blocki
 | A request arrives while the daemon builds its parts (before ready) or in the first seconds after ready | The heavy imports run in worker threads (start-up's own list, the learner's numerical libraries, neural input's), so the event loop keeps answering. After ready no step of Heliox's uses 100 ms or more of the processor (before this, importing the learner's libraries held the loop 1.6 s right after ready), and the learner's replay hands the loop back every 50 events (a page of a thousand was learned in one step). Before ready, the constructors initialize() runs between its awaits still hold it for up to about 0.3 s at a time on the development laptop (spread over many small parts, none over 30 ms when sampled): a `ping` or `startup_status` sent then waits that long. | Nothing: the badge says "Starting: <stage>". | Nothing to do. | **Run for real:** a real start over a seeded ledger, every step of the loop timed with the loop thread's processor time and named, on all three systems (processor time, because a busy machine made any step look slow in wall time). A step that waits on the disk uses no processor time and is not counted there; the non-blocking CI step "Event-loop steps over 100 ms" prints every step over 100 ms of wall time with its test. The 0.3 s before ready was measured on the development laptop only. | `test_start_loop_steps.py` |
 | The config file is half written, has a key from a newer version, or cannot be opened | Heliox starts on the defaults and keeps a copy of the file. It never rewrites your file: saving is refused until you fix it or choose Reset to defaults. | Settings shows "config.toml could not be read (<what was wrong>). A copy was kept at <path>." | Fix the file and restart Heliox, or choose Reset to defaults. | **Fakes only** (all three systems). | `test_settings_safety.py` |
 | Logs over a long day | `pilot.log` rolls over at 10 MB and keeps three old files (40 MB at most). The Gnomon worker's log rolls over at 5 MB and keeps one old file (10 MB). | Nothing. | Not needed. | **Fakes only:** rotation at small sizes (all three systems); the totals are arithmetic. | `test_log_bounds.py` |
-| Hours of use | No list or dictionary reachable from the server grew without bound. A thread blocked on the voice worker, which kept the process alive 300 s after stop, was fixed. | Nothing. | Not needed. | **Fakes only:** a soak script with simulated time (two hours at ten times the density of real use), run once on the development laptop (Windows). Real check: the weekly soak runs a real daemon for two hours on all three systems and samples memory, threads, open files, child processes and event-loop tasks: result to come. | `soak_check.py` |
+| Hours of use | No list or dictionary reachable from the server grew without bound. A thread blocked on the voice worker, which kept the process alive 300 s after stop, was fixed. | Nothing. | Not needed. | **Run for real:** the soak workflow, run 43247942400 (12 November 2026), a real daemon for two hours on each system, all checks passed. Windows: 6,892 rounds, 49,624 requests, 95th percentile 0.02 s, slowest 0.2 s, no failures; memory 241 MB after warm-up and at most 149 MB in the last third; event-loop tasks 31 and 31; threads 49, then at most 46; handles 1,325, then at most 1,300; no child processes. macOS: 6,848 rounds, 49,306 requests, 0.02 s and 0.19 s; memory 275 MB, then at most 240 MB; tasks 31 and 31; threads 37, then at most 42; open files 75 and 75. Ubuntu: 6,972 rounds, 50,200 requests, 0.01 s and 0.59 s; memory 285 MB, then at most 297 MB (12 MB more); tasks 31 and 31; threads 46 and 46; open files 73 and 73. The runs had no language model, no voice, no screen reading or Live, no card and no sleep or wake, so they say nothing about the workers and caches those bring, or about more than two hours. The simulated soak (two hours at ten times the density of real use, development laptop): fakes only. | `soak_check.py` |
 
 ### How long start-up takes
 
@@ -115,7 +115,8 @@ None of scipy, sklearn, pandas, river or torch is loaded at ready, on any of the
 - The activity timeline keeps 7 days by default.
 - In memory: the conversation keeps its last 6 turns and the last 20 turn results; Live keeps its last 20 remarks;
   notifications held for a window that is not connected are capped (`MAX_ATTENTION_NOTIFICATION_BUFFER`).
-  The simulated soak found nothing else growing; the weekly real soak's result is to come.
+  The simulated soak found nothing else growing, and the real soak (run 43247942400, two hours on each system)
+  ended with the same event-loop tasks it had after warm-up (the Hours of use row above).
 - Never pruned by Heliox on its own: the audit log, the durable task and checkpoint tables, and the experience
   ledger. Their sizes and the warning are in the Disk and storage table above.
 
@@ -134,6 +135,17 @@ At ten times the requests (2,000) each store costs the same bytes per request, w
 durable tasks 4,997 and 4,954; checkpoints 2,048 and 2,087; experience ledger 12,902 and 12,947), so the growth is
 linear and the yearly figures hold as far as that shows. Same machine and day;
 the weekly soak workflow repeats it on all three systems (`store_growth_check.py`).
+
+**Run for real** on all three systems in the soak workflow, run 43247942400 (12 November 2026): the audit log, the
+durable tasks and the experience ledger cost the same bytes per request at 200 and 2,000 requests on Windows, macOS
+and Ubuntu. Checkpoints did too on Windows and Ubuntu (2,048, then 2,087 and 2,089), but on macOS they cost 3,072
+bytes per request at 200 requests and 4,037 at 2,000. That is the benchmark, not growth with size. Its checkpoint
+rows sit near half of a 4,096-byte SQLite page, and the sandbox path inside each row is longest under macOS's
+temporary folder: there, from "request 100" on, one more digit made each row too long to share a page. A temporary
+folder of 43 characters reproduces 3,072 at 200 requests on the development laptop, and 45 or more gives 4,096.
+The benchmark now numbers requests with a fixed width, so both runs measure the same row. On a Mac with rows
+like these a checkpoint costs one page, about 4 KB a request: 800 KB a day and 285 MB a year at 200 requests a
+day, against 143 MB on the other two systems. A person's own rows vary in length; that mix has not been measured.
 
 None passes 1 GB a year at that rate, so the size warning is the answer for now. The experience ledger is the one to
 watch: it passes 1 GB a year above about 230 requests a day, or with plans of more steps than this mix.
