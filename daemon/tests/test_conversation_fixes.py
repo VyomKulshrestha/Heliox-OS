@@ -171,7 +171,12 @@ async def test_an_act_for_a_how_to_question_asks_first_and_a_yes_takes_it():
     asked = await layer.take("How do I open the registry editor?")
     assert asked.done and layer._sink.said == ["Do you want me to open the registry editor?"]
     yes = await layer.take("Yes, please.")
-    assert not yes.done and yes.planner_input == "Open the registry editor"
+    # The request stays the person's own words; the offer they said yes to reaches the planner as context.
+    assert not yes.done and yes.planner_input == "How do I open the registry editor?"
+    planner = yes.context.for_planner()
+    assert "Heliox: Do you want me to open the registry editor?" in planner and "The person: Yes, please." in planner
+    assert "Heliox understood the request as: Open the registry editor" in planner
+    assert "Do you want me" not in yes.context.for_reviewers()
 
 
 @pytest.mark.asyncio
@@ -219,7 +224,9 @@ async def test_yes_after_an_offer_starts_the_request_through_the_normal_road():
     server._handle_execute.assert_not_awaited()
     await server._voice_command_dispatch("yes")
     server._handle_execute.assert_awaited_once()
-    assert server._handle_execute.await_args.args[0]["input"] == "Open the registry editor"
+    sent = server._handle_execute.await_args.args[0]
+    assert sent["input"] == "How do I open the registry editor?"
+    assert "Open the registry editor" in sent["_conversation_context"].for_planner()
 
 
 @pytest.mark.asyncio

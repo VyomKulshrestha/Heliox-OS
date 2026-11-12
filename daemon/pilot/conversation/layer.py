@@ -37,6 +37,8 @@ from pilot.conversation.handover import (
     intent_from_route,
     keep_company,
 )
+from pilot.conversation.planner_context import HandoverContext, build_context
+from pilot.conversation.promises import act_start_held, declined, hedges, late_act_at, promised_action
 from pilot.conversation.quick import (
     QuickPlan,
     from_model,
@@ -56,7 +58,6 @@ from pilot.conversation.style import (
     drop_action_claims,
     looks_like_act,
     parse_act,
-    promised_action,
 )
 
 logger = logging.getLogger("pilot.conversation")
@@ -116,6 +117,7 @@ YES = frozenset(
 _QUESTION_WORDS = re.compile(r"^(?:how|what|why|when|where|which|who|whats|what's|hows|how's)\b")
 _ASKS_TO_ACT = re.compile(r"^(?:can|could|would|will) you\b|^please\b")
 DOUBTFUL = "doubtful_follow_up"
+ASK_WHAT = "Which ones do you mean?"
 SORRY = "Sorry?"
 LOST_MID_REPLY = "I lost the connection there."
 # No text from a cloud model by then: it is treated as not answering. A local model may be loading into memory.
@@ -140,6 +142,9 @@ class TurnResult:
     target: HandoverTarget = HandoverTarget.FULL_PLANNER
     source: str = "voice"  # "voice" or "typed"
     understood: bool = True  # False: the turn was not understood and opens nothing (the listener is told)
+    # The conversation before a hand-over, for the planner (and the person's own lines for the reviewers).
+    context: HandoverContext | None = None
+    _before: list[Any] = field(default_factory=list)
     _sink: Any = None  # the sink for this turn when it is not the layer's own (typed chat)
     quick: QuickPlan | None = None  # the one-action plan for the quick road, when there is one
     route: Route | None = None
@@ -155,8 +160,14 @@ class TurnResult:
         return self._company
 
     def execute_params(self) -> dict[str, Any]:
-        """What the server adds to the planner call: the quick plan, used once and only as an object."""
-        return {"_quick_plan": self.quick.plan} if self.quick is not None else {}
+        """What the server adds to the planner call, each only as an object (never text a client could send): the
+        quick plan, used once, and the conversation before the request."""
+        params: dict[str, Any] = {}
+        if self.quick is not None:
+            params["_quick_plan"] = self.quick.plan
+        if self.context is not None:
+            params["_conversation_context"] = self.context
+        return params
 
     def spoken_result(self, result: str, status: str = "success") -> str:
         """The quick road's result in a sentence ("" leaves the server's own wording): a state read in words, a
@@ -190,6 +201,7 @@ class ConversationLayer:
         not_understood: Callable[[], None] = lambda: None,
         search_url: Callable[[], str] = lambda: "",
         turn_ended: Callable[[], float | None] = lambda: None,
+        screen_text_ok: Callable[[], bool] = lambda: False,
     ) -> None:
         self._sink = sink
         self._model = model
@@ -217,6 +229,10 @@ class ConversationLayer:
         self._not_understood = not_understood
         self._sorry_said = False
         self._search_url = search_url
+        # Whether the planner's model may be given screen text (conversation.share_screen_text), and whether the
+        # fast model was shown some in this conversation (then Heliox's lines may repeat it).
+        self._screen_text_ok = screen_text_ok
+        self._saw_screen_text = False
         self._turn_ended = turn_ended
         self._last_ack = ""
         self.last_result = ""
@@ -256,6 +272,7 @@ class ConversationLayer:
         self.interrupt()
         self.memory.clear()
         self._sorry_said = False
+        self._saw_screen_text = False
         self.last_result = ""
 
     async def take(self, text: str, *, source: str = "voice", sink: Sink | None = None) -> TurnResult | None:
@@ -265,6 +282,9 @@ class ConversationLayer:
         started = self._clock()
         decided = route(text, conversation_open=self.memory.open)
         result = TurnResult(done=False, planner_input=text, route=decided, _layer=self, source=source, _sink=sink)
+        if not self.memory.open:
+            self._saw_screen_text = False
+        result._before = self.memory.recent()  # the turns before this one, for the planner's context
         result.timings["routed_ms"] = (self._clock() - started) * 1000
         try:
             ended = self._turn_ended()
@@ -282,6 +302,7 @@ class ConversationLayer:
             # its reviews and approvals. It is never an approval of a pending plan: with one pending, the server
             # refuses a spoken yes before this layer is asked.
             self.memory.add_user(text)
+            result._before = self.memory.recent()  # with Heliox's offer and this yes; the request is the person's own
             return self._hand_over(result, offer[1], quick=offer[2])
         if decided.kind is not TurnKind.CONTROL and source == "voice" and self._how_addressed() == DOUBTFUL:
             # A follow-up the listener doubted was meant for Heliox: probably speech that was not addressed to it.
@@ -346,6 +367,8 @@ class ConversationLayer:
                 screen = None  # not available here, or too slow to wait for
         else:
             screen = self.sources.screen()
+        if screen is not None and getattr(screen, "excerpt", ""):
+            self._saw_screen_text = True
         messages = build_messages(text, self.sources, self.memory, budget=self._context_chars, screen=screen)
         self.memory.add_user(text)
 
@@ -353,11 +376,15 @@ class ConversationLayer:
         act_text: list[str] = []
         failure: list[str] = []
         promised: list[str] = []
+        late_act: list[
+            bool
+        ] = []  # an ACT line came after words: never spoken, and it hands over only if nothing held back
 
         async def produce() -> None:
             splitter: Any = TextChunker() if typed else SentenceSplitter()
             mode: bool | None = None  # True: an ACT line, False: words to speak, None: too early to tell
             head = ""
+            tail = ""  # the end of the words when it could start an ACT line ("AC"), held until the next piece
             count = 0
             stream = model.stream(TYPED_SYSTEM_PROMPT if typed else SYSTEM_PROMPT, messages)
             # A cloud model that has said nothing by the deadline is not answering; a local one may be loading.
@@ -379,6 +406,16 @@ class ConversationLayer:
                         if mode:
                             act_text.append(fragment)
                             continue
+                        tail += fragment
+                        at = late_act_at(tail)
+                        if at >= 0:
+                            fragment, mode = tail[:at], True
+                            act_text.append(tail[at:])
+                            late_act.append(True)
+                            tail = ""
+                        else:
+                            held = act_start_held(tail)
+                            fragment, tail = (tail[:-held], tail[-held:]) if held else (tail, "")
                         for sentence in splitter.feed(fragment):
                             count += 1
                             await queue.put(sentence)
@@ -392,7 +429,7 @@ class ConversationLayer:
                         for sentence in splitter.feed(head):
                             await queue.put(sentence)
                 if not mode:
-                    for sentence in splitter.flush():
+                    for sentence in [*splitter.feed(tail), *splitter.flush()]:
                         await queue.put(sentence)
             except FastModelUnavailable as error:
                 failure.append(error.reason)
@@ -486,6 +523,15 @@ class ConversationLayer:
 
         if act_text:
             act = parse_act("".join(act_text))
+            if act is not None and declined(said, say=act.say):
+                # The reply held back ("I can't tell which ones you mean") and wrote an ACT line anyway: the decline
+                # wins and nothing is handed over. What it said stands; if it said nothing, its own sentence or a
+                # short question is said.
+                logger.info("The reply declined and also wrote an ACT line: nothing handed over (%r)", act.request)
+                if not said:
+                    await self._say_one(result, act.say if hedges(act.say) else ASK_WHAT, started)
+                result.done = True
+                return result
             if act is not None:
                 intent = HandoverIntent(
                     verb=act.verb, object=act.object, words=text, request=act.request, source="model", say=act.say
@@ -497,6 +543,10 @@ class ConversationLayer:
                     return result
                 return self._hand_over(result, intent, quick=quick)
             failure.append("unparsed_act")
+        elif promised and not failure and declined(said):
+            # "I can't tell which files you mean, so I won't delete anything yet" with a promise elsewhere in the
+            # reply: holding back wins; what was said stands and nothing is handed over.
+            logger.info("The reply promised and also held back: nothing handed over")
         elif promised and not failure:
             # The model said in words that it would act but wrote no ACT line. The person is not left with a
             # promise and nothing done: what they said goes to the full planner, which reviews it as always.
@@ -620,7 +670,20 @@ class ConversationLayer:
         result.intent = intent
         result.quick = quick
         result.target = choose_target(intent, quick=quick is not None)
-        result.planner_input = intent.request or intent.words
+        # The planner's request is always the person's own words; the model's reading of them, and the turns before,
+        # travel separately as context (never what the reviewers judge the plan against).
+        result.planner_input = intent.words or intent.request
+        try:
+            result.context = build_context(
+                result._before,
+                words=result.planner_input,
+                understood_as=intent.request if intent.source == "model" else "",
+                screen_text_ok=bool(self._screen_text_ok()),
+                heliox_saw_screen_text=self._saw_screen_text,
+            )
+        except Exception:
+            logger.debug("No conversation context for the planner", exc_info=True)
+            result.context = None
         result.done = False
         logger.info(
             "Handing over to the %s: verb=%r object=%r (%s)",

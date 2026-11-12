@@ -236,7 +236,9 @@ async def test_the_model_can_hand_over_with_what_it_understood():
     layer.memory.add_heliox("It's launch-notes.md.")
     result = await layer.take("open it")
     assert not result.done
-    assert result.planner_input == "Open launch-notes.md in Notepad"
+    assert result.planner_input == "open it"  # the person's words; the model's reading is context
+    assert "Heliox understood the request as: Open launch-notes.md in Notepad" in result.context.for_planner()
+    assert "Heliox: It's launch-notes.md." in result.context.for_planner()
     assert result.intent.source == "model" and result.intent.words == "open it"
     assert sink.texts == []  # nothing of the ACT line is read aloud
     company = result.keep_company()

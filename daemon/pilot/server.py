@@ -3193,6 +3193,11 @@ class PilotServer:
         )
         review_request = task_request.words
         review_corrections = len(task_request.corrections)
+        # The conversation before a spoken or typed request: the planner reads it as context; the reviewers get only
+        # the person's own earlier lines, labelled. Taken only as the layer's object, never as text from a client.
+        from pilot.conversation.planner_context import CONVERSATION_MARKER, context_from_params
+
+        conversation_context = context_from_params(params)
         request_text = task_request.display()  # what is stored and shown as this task's request
 
         if attachments:
@@ -3595,6 +3600,7 @@ class PilotServer:
                 return typed.response
             if typed is not None:
                 user_input, quick_plan = typed.planner_input, typed.quick_plan or quick_plan
+                conversation_context = typed.context or conversation_context
 
         mem_phase = ""
         await ws.send(_notification("status", {"phase": "recalling memory"}))
@@ -3724,6 +3730,9 @@ class PilotServer:
                 recent_companion_context = self._recent_companion_context_by_session.get(chat_session_id, "")
                 if recent_companion_context:
                     _screen_ctx = (f"{_screen_ctx}\n\n[RECENT COMPANION CONTEXT]\n{recent_companion_context}").strip()
+                conversation_text = conversation_context.for_planner() if conversation_context is not None else ""
+                if conversation_text:
+                    _screen_ctx = f"{_screen_ctx}\n\n{CONVERSATION_MARKER}\n{conversation_text}".strip()
                 # A request that names a folder is planned with its real contents, in one pass.
                 try:
                     from pilot.agents.request_folders import describe_request_folders
@@ -3946,8 +3955,11 @@ class PilotServer:
                 )
             # The critic and the companion read the person's words and what they said since, not the planner's
             # revision prompt; attached files reach them as before.
-            reviewer_request = task_request.for_reviewers() + (
-                ATTACHED_CONTEXT_MARKER + review_attachments if review_attachments else ""
+            earlier_lines = conversation_context.for_reviewers() if conversation_context is not None else ""
+            reviewer_request = (
+                task_request.for_reviewers()
+                + (f"\n\n{earlier_lines}" if earlier_lines else "")
+                + (ATTACHED_CONTEXT_MARKER + review_attachments if review_attachments else "")
             )
             reviews: list[tuple[str, str, Any]] = []
             if run_companion and companion_review is None:
@@ -3963,7 +3975,9 @@ class PilotServer:
                     ("critic", "safety review", functools.partial(self._critic_plan_review, reviewer_request, plan))
                 )
             if not dry_run and not quick_attempt:
-                review_context = "\n\n".join(part for part in (review_attachments, review_screen_context) if part)
+                review_context = "\n\n".join(
+                    part for part in (review_attachments, review_screen_context, earlier_lines) if part
+                )
                 reviews.append(
                     (
                         "gnomon",

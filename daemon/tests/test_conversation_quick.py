@@ -195,7 +195,8 @@ async def test_the_layer_picks_the_quick_road_for_a_plain_request():
     plan = result.execute_params()["_quick_plan"]
     assert isinstance(plan, ActionPlan) and plan.actions[0].action_type is ActionType.OPEN_APPLICATION
     complex_result = await layer.take("Delete the old backups in my downloads")
-    assert complex_result.target is HandoverTarget.FULL_PLANNER and complex_result.execute_params() == {}
+    assert complex_result.target is HandoverTarget.FULL_PLANNER
+    assert "_quick_plan" not in complex_result.execute_params()
 
 
 @pytest.mark.asyncio
@@ -217,7 +218,8 @@ async def test_the_layer_takes_a_model_proposal_only_from_the_allow_list():
     layer = ConversationLayer(sink=Sink(), model=lambda: Model(bad))
     layer.memory.add_user("there is a file notes.txt")
     refused = await layer.take("delete it")
-    assert refused.target is HandoverTarget.FULL_PLANNER and refused.planner_input == "Delete notes.txt"
+    assert refused.target is HandoverTarget.FULL_PLANNER and refused.planner_input == "delete it"
+    assert "Delete notes.txt" in refused.context.for_planner()
 
 
 @pytest.mark.asyncio

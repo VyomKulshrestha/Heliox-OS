@@ -67,6 +67,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     from pilot.conversation.context import ContextSources, Screen
     from pilot.conversation.fast_model import build_fast_model
     from pilot.conversation.layer import ConversationLayer
+    from pilot.conversation.planner_context import planner_sees
     from pilot.models.budget_tracker import BudgetTracker
     from pilot.security.vault import KeyVault
 
@@ -118,7 +119,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 done=result.done,
                 spoken=[s for s in spoken],
                 raw=model.raw[-1] if len(model.raw) > calls_before else "",
-                planner_input="" if result.done else result.planner_input,
+                planner_input="" if result.done else planner_sees(result),
                 quick_types=[a.action_type.value for a in result.quick.plan.actions] if result.quick else [],
                 first_sentence_s=(result.timings.get("first_sentence_ms") or 0) / 1000 or None,
             )

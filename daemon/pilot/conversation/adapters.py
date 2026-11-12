@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pilot.conversation.context import SCREEN_CHARS, ContextSources, Screen
+from pilot.conversation.planner_context import screen_text_ok_for_planner
 
 logger = logging.getLogger("pilot.conversation.adapters")
 
@@ -303,6 +304,7 @@ def layer_for(server: Any) -> Any:
         search_url=lambda: str(getattr(settings(), "search_url", "") or ""),
         addressed=_turn_addressed,
         not_understood=lambda: _not_understood(server),
+        screen_text_ok=lambda: screen_text_ok_for_planner(server.config),
     )
     server._conversation = layer
     return layer
@@ -319,6 +321,7 @@ class TypedTurn:
     response: dict[str, Any] | None = None
     planner_input: str = ""
     quick_plan: Any = None
+    context: Any = None  # the conversation before the request (planner_context.HandoverContext)
 
 
 async def typed_turn(server: Any, text: str, ws: Any, notify: Any) -> TypedTurn | None:
@@ -353,4 +356,5 @@ async def typed_turn(server: Any, text: str, ws: Any, notify: Any) -> TypedTurn 
         done=False,
         planner_input=turn.planner_input or text,
         quick_plan=turn.quick.plan if turn.quick is not None else None,
+        context=turn.context,
     )

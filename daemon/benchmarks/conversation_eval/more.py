@@ -189,6 +189,7 @@ async def run_conversations(
 ) -> list[tuple[str, TurnRecord, list[Outcome]]]:
     from pilot.conversation.context import ContextSources, Screen
     from pilot.conversation.layer import ConversationLayer
+    from pilot.conversation.planner_context import planner_sees
 
     results: list[tuple[str, TurnRecord, list[Outcome]]] = []
     for conversation in conversations:
@@ -218,7 +219,7 @@ async def run_conversations(
                 done=result.done,
                 spoken=list(spoken),
                 raw="",
-                planner_input="" if result.done else result.planner_input,
+                planner_input="" if result.done else planner_sees(result),
                 quick_types=[a.action_type.value for a in result.quick.plan.actions] if result.quick else [],
             )
             outcomes = check_turn(record, spec, previous)
