@@ -6,6 +6,15 @@ name: "Conversation Bench — timing (synthetic voice, CPU only)"
 
 on:
   workflow_dispatch:
+    inputs:
+      settings:
+        description: 'Settings to compare inside this job, for example "parakeet_threads=2,3,4" (empty: the usual run)'
+        required: false
+        default: ""
+      repeats:
+        description: "Repeats of every setting (0: 3 when comparing, 1 otherwise)"
+        required: false
+        default: "0"
   schedule:
     - cron: "17 3 * * 1" # Mondays 03:17 UTC
 
@@ -84,9 +93,14 @@ jobs:
       - name: Timing lines (load-checked before every scenario)
         env:
           HF_HUB_OFFLINE: "1"
+          # The two inputs go through the environment, never pasted into the command: they are typed text. On
+          # the weekly schedule both are empty and the run is the usual one.
+          COMPARE_SETTINGS: ${{ inputs.settings }}
+          COMPARE_REPEATS: ${{ inputs.repeats || '0' }}
         run: >-
           python -m benchmarks.conversation_bench.ci_timing --audio "$BENCH_AUDIO"
           --results "$RUNNER_TEMP/conversation-timing" --summary "$GITHUB_STEP_SUMMARY"
+          --settings "$COMPARE_SETTINGS" --repeats "${COMPARE_REPEATS:-0}"
 
       - name: Upload timelines
         if: always()
