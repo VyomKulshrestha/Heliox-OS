@@ -248,7 +248,7 @@ def table_rows(folder: Path) -> dict[str, int]:
 
 
 # Tables that change on their own while the daemon runs, not because of what was heard.
-NOT_STORAGE = ("crashes.db", "llm_cache.db", "permission_audit.db", "agent_gateway_audit.db", "audit")
+NOT_STORAGE = ("llm_cache.db", "permission_audit.db", "agent_gateway_audit.db", "audit")
 
 
 def stored_delta(before: dict[str, int], after: dict[str, int]) -> dict[str, int]:

@@ -424,7 +424,7 @@ def test_the_run_log_takes_any_data_field_name():
     log = Log()
     log(tl.DISPATCH, "open it", kind="meeting", detail_extra=1)  # "kind" once broke the dispatch hook
     assert log.events[0].data["kind"] == "meeting" and log.since(0)[0].detail == "open it"
-    assert stored_delta({"a.db:t": 1}, {"a.db:t": 3, "crashes.db:c": 9}) == {"a.db:t": 2}
+    assert stored_delta({"a.db:t": 1}, {"a.db:t": 3, "llm_cache.db:c": 9}) == {"a.db:t": 2}
     np = pytest.importorskip("numpy")
     x = np.zeros(16000, np.float32)
     x[4000:8000] = 0.5
