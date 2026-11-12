@@ -410,7 +410,7 @@ jobs:
             dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_RUNTIME_DIR
             # No systemd user session on the runner: start PipeWire, the wlr backend and the portal here, in that
             # order, with their logs. The backend initialises screen casting at start and exits when it cannot reach
-            # PipeWire (CI, 12 November: "pipewire: couldn't connect to context"), taking Screenshot with it; the
+            # PipeWire (CI, 12 November: "pipewire could not connect to context"), taking Screenshot with it; the
             # front end only uses backends that are on the bus when it starts.
             pipewire >/tmp/pipewire.log 2>&1 &
             sleep 1
