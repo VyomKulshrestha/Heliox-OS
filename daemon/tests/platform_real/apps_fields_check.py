@@ -182,4 +182,7 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    from ci_only import require_runner
+
+    require_runner("changes the toolkit-accessibility setting and types into Chrome, Electron and Qt windows it opens")
     sys.exit(main(sys.argv[1:]))
