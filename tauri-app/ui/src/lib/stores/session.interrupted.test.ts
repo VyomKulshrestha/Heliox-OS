@@ -57,6 +57,15 @@ function savedTask() {
   localStorage.setItem("heliox_active_chat_session", "chat-1");
 }
 
+/** The daemon's answers to resume_task, in order. Every other request gets a plain answer of its own: the window
+ * asks more than resume_task when it connects (startup_status, for the last run's notice), and a real daemon answers
+ * each request by its id, not in the order the test queued them. */
+function answerResume(...answers: unknown[]) {
+  daemonMocks.call.mockImplementation(async (method: string) =>
+    method === "resume_task" ? answers.shift() : { status: "ok", state: "ready" },
+  );
+}
+
 function resumeCalls() {
   return daemonMocks.call.mock.calls.filter(([method]) => method === "resume_task").map(([, params]) => params);
 }
@@ -87,7 +96,7 @@ describe("a task Heliox stopped under", () => {
   });
 
   it("continues only from the Continue button, with the explicit flag", async () => {
-    daemonMocks.call.mockResolvedValueOnce(OFFER).mockResolvedValueOnce({ status: "success", message: "Sent." });
+    answerResume(OFFER, { status: "success", message: "Sent." });
     const { session } = await import("./session");
     connection!(true);
     await vi.waitFor(() => expect(get(session).interruptedTask).not.toBeNull());
@@ -100,7 +109,7 @@ describe("a task Heliox stopped under", () => {
   });
 
   it("leaves the task with Leave it, and nothing more runs", async () => {
-    daemonMocks.call.mockResolvedValueOnce(OFFER).mockResolvedValueOnce({
+    answerResume(OFFER, {
       status: "cancelled",
       task_id: "task-1",
       message: "Left as it was after Heliox stopped.",
