@@ -158,6 +158,64 @@ async def gtk4_never_read(python: str, folder: Path) -> None:
             proc.wait(timeout=5)
 
 
+# ── 1c. an app Live cannot see into: said once, quietly ──
+
+
+async def blind_spot(python: str, folder: Path) -> None:
+    """A GTK window started with NO_AT_BRIDGE=1 stays off the accessibility bus: the reader cannot see its field, and
+    the window's app and title come only from the window manager (openbox in this step). Live must say so once, in its
+    status and the pill's note, never as a card. The check shortens the 45 s Live waits to 15 s."""
+    prefix = "x11-blind"
+    env = dict(os.environ, NO_AT_BRIDGE="1")
+    proc = subprocess.Popen(
+        [python, str(HERE / "gtk_fixture.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+    try:
+        if not check(f"{prefix}/window-started", proc.stdout.readline().startswith("ready")):
+            return
+        threading.Thread(target=lambda: list(proc.stdout), daemon=True).start()
+        if shutil.which("xdotool"):
+            subprocess.run(
+                ["xdotool", "search", "--sync", "--name", "Heliox AT-SPI fixture", "windowactivate"],
+                timeout=15,
+                capture_output=True,
+            )
+        live = E.Live(folder / "blind")
+        live.server._live = live.engine  # the daemon's observe tells Live what it could not read
+        live.engine.blind.after = 15.0
+        seen = await live.engine._observe()
+        if getattr(seen, "source", "") == "focused_field":
+            skip(f"{prefix}/live-says-once-it-cannot-see-into-the-app", "the reader saw this window after all")
+            return
+
+        def notes():
+            return [p.get("blind_note") for e, p in live.events if e == "live_state" and p.get("blind_note")]
+
+        await live.run(30.0, until=lambda: bool(live.engine.blind.notices()))
+        await live.run(10.0)  # and nothing more after it
+        told = live.engine.blind.notices()
+        check(
+            f"{prefix}/live-says-once-it-cannot-see-into-the-app",
+            len(told) == 1 and told[0]["sentence"].startswith("Live can't see what you type in"),
+            repr(told),
+        )
+        check(
+            f"{prefix}/said-quietly-never-as-a-card",
+            len(set(notes())) == 1 and not live.cards(),
+            f"notes {notes()!r}; cards {live.cards()!r}",
+        )
+    finally:
+        try:
+            proc.stdin.close()
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
 # ── 2. an error on screen ──
 
 
@@ -348,6 +406,9 @@ async def run(args: Any, folder: Path) -> None:
         skip("macos/live-back-and-forth", "nothing on the runner can give another process's window focus")
         return
     await linux_never_read(args.wayland, args.python, folder)
+    if args.only == "blind-spot":
+        await blind_spot(args.python, folder)
+        return
     if args.only == "gtk4-never-read":
         await gtk4_never_read(args.python, folder)
         return
@@ -366,14 +427,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--wayland", action="store_true")
     parser.add_argument("--python", default="/usr/bin/python3")
-    parser.add_argument("--only", choices=("all", "error-on-screen", "gtk4-never-read"), default="all")
+    parser.add_argument("--only", choices=("all", "error-on-screen", "gtk4-never-read", "blind-spot"), default="all")
     args = parser.parse_args()
     if not (sys.platform == "darwin" or sys.platform.startswith("linux")):
         skip("live-more", "macOS and Linux only")
         return 0
     with tempfile.TemporaryDirectory(prefix="hlx-live-", dir="/tmp") as folder:
         root = Path(folder)
-        for name in ("never", "ocr", "switch", "gtk4"):
+        for name in ("never", "ocr", "switch", "gtk4", "blind"):
             (root / name).mkdir()
         asyncio.run(run(args, root))
     return failures

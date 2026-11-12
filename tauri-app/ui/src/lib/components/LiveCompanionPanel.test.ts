@@ -97,3 +97,27 @@ describe("LiveCompanionPanel timing", () => {
     expect(mocks.updateSectionDetailed).toHaveBeenCalledWith("live", { grounded_checks: true });
   });
 });
+
+describe("LiveCompanionPanel, apps Live cannot see into", () => {
+  beforeEach(() => mocks.call.mockReset());
+
+  it("lists the one sentence per app, and nothing when there is none", async () => {
+    const sentence =
+      "Live can't see what you type in Slack: start it with ACCESSIBILITY_ENABLED=1 set, then it can be read.";
+    mocks.call.mockResolvedValue({ status: "ok", kinds: [], blind_spots: [{ app: "slack", sentence }] });
+    render(LiveCompanionPanel);
+    const list = await screen.findByTestId("live-blind-spots");
+    expect(list.textContent).toContain(sentence);
+  });
+
+  it.each([
+    ["no list", { status: "ok", kinds: [] }],
+    ["an empty list", { status: "ok", kinds: [], blind_spots: [] }],
+    ["not a list", { status: "ok", kinds: [], blind_spots: "slack" }],
+  ])("shows nothing with %s", async (_label, answer) => {
+    mocks.call.mockResolvedValue(answer);
+    render(LiveCompanionPanel);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByTestId("live-blind-spots")).toBeNull();
+  });
+});

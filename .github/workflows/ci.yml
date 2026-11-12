@@ -437,6 +437,8 @@ jobs:
             python tests/platform_real/toolkit_check.py gtk4 --python /usr/bin/python3 || failed=$((failed + 1))
             # Live: a GTK 4 window titled like a password manager or like Heliox is never read (needs GTK 4, here).
             python tests/platform_real/live_more_checks.py --only gtk4-never-read --python /usr/bin/python3 || failed=$((failed + 1))
+            # Live: an app it cannot see into (a GTK window kept off the accessibility bus) is named once, quietly.
+            python tests/platform_real/live_more_checks.py --only blind-spot --python /usr/bin/python3 || failed=$((failed + 1))
             python tests/platform_real/toolkit_check.py firefox || failed=$((failed + 1))
             python tests/platform_real/click_hang_check.py --python /usr/bin/python3 || failed=$((failed + 1))
             exit $failed

@@ -68,6 +68,31 @@ window, password managers and excluded apps: **Run for real** behind a first rea
 excluded app, and windows titled "Bitwarden - My Vault" and "Heliox-OS"; `platform-readers`, run 43228789151 on e8bf67c for macOS). The body of a web page:
 **Not tested**.
 
+**When Live cannot see where you type, it says so once** (`daemon/pilot/live/blind_spots.py`). An app that has been
+the window in front for 45 s in all with the reader giving nothing for it, and that has never given a field in this
+run, gets one sentence naming it and what would let Live see there, or saying there is nothing to turn on for it
+yet: in the Live pill's tooltip the first time, then as a standing line in Live's settings. Never spoken, never a
+card; remembered across restarts; dropped as soon as Live does see a field there. Nothing new is captured: only the
+foreground app's name, whether the reader gave anything, and the reader's own status. Windows the never-read rules
+cover (Heliox, password managers, excluded apps) are never counted, nor windows nobody types in (file managers,
+media players, the desktop). The sentences come from a table per system and toolkit that the platform checks fill
+in; what each says so far:
+
+| App | What the sentence says | Shown by |
+|---|---|---|
+| Any app on macOS while Accessibility is not granted | Turn on Accessibility for Heliox-OS in System Settings, Privacy & Security, Accessibility | **Fakes only** |
+| Chromium, Electron, Qt or Firefox apps on Linux while the session reports toolkit accessibility off | Turn on accessibility for apps (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`), then restart it | **Fakes only** |
+| Chromium browsers on Linux (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | Start it with `--force-renderer-accessibility` | **Not tested**; the platform checks will say |
+| Electron apps on Linux (Slack, Discord, VS Code, Teams, Signal, Obsidian and others) | Start it with `ACCESSIBILITY_ENABLED=1` set | **Not tested**; the platform checks will say |
+| Qt apps on Linux | Start it with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` set | **Not tested**; the platform checks will say |
+| kitty | Turn on its remote control, or add the zsh or fish terminal check | kitty read directly: **Run for real** (above) |
+| Other terminals that expose nothing (Alacritty, foot, xterm, Ghostty and others) | Add the zsh or fish terminal check | The terminal check: **Run for real** (above) |
+| Anything else | Live does not work in this app yet | |
+
+The rule itself (when, how often, never for never-read windows, a terminal Live reads directly counted as seen into):
+**Fakes only** (`tests/test_live_blind_spots.py`); a real check runs in the `platform-readers` X11 step with a window
+manager, on a GTK window kept off the accessibility bus (`live_more_checks.py --only blind-spot`, first run pending).
+
 **Terminals that expose nothing (the Live terminal check).** On Windows the console and Windows Terminal are meant
 to be read through UI Automation (**Not tested** by a recorded check; mintty, used by Git Bash, and ConEmu: **Not
 tested**). On Linux kitty, Alacritty, WezTerm, foot and xterm expose no text, and on macOS only Terminal.app and

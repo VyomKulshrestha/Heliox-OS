@@ -6,9 +6,11 @@
   let hint = $derived(
     $live.paused
       ? "Live companion paused. Click to resume."
-      : $live.watching
-        ? `Live companion is with you in ${$live.watching}. It speaks up at your pauses. Click to pause.`
-        : "Live companion is on. Click to pause.",
+      : $live.blindNote
+        ? `${$live.blindNote} Click to pause.`
+        : $live.watching
+          ? `Live companion is with you in ${$live.watching}. It speaks up at your pauses. Click to pause.`
+          : "Live companion is on. Click to pause.",
   );
 </script>
 

@@ -7416,6 +7416,9 @@ class PilotServer:
         reading = None
         if cfg.read_focused_text and self._live_reader is not None:
             focused = await self._live_reader.read()
+            from pilot.personal.wiring import live_blind_note
+
+            live_blind_note(self, app, focused)  # nothing at all for this window: Live may be blind in this app
             if focused is not None and not focused.password:
                 if focused.editable and focused.text.strip():
                     return Observation(

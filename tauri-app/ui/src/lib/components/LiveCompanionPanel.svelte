@@ -31,13 +31,17 @@
     timing?: Timing;
     catches?: Catches;
     held_back?: HeldKind[];
+    blind_spots?: BlindSpot[];
   };
+  /** An app Live cannot see into, with the one sentence that says what would let it (pilot.live.blind_spots). */
+  type BlindSpot = { app: string; sentence: string };
   type HeldKind = { kind: string; label: string; sentence: string; seconds_left: number };
 
   let kinds = $state<Kind[]>([]);
   let timing = $state<Timing | null>(null);
   let catches = $state<Catches | null>(null);
   let notNowHolds = $state<HeldKind[]>([]);
+  let blindSpots = $state<BlindSpot[]>([]);
 
   function timeLeft(seconds: number): string {
     const minutes = Math.max(1, Math.round(seconds / 60));
@@ -156,6 +160,7 @@
         timing = status.timing ?? null;
         catches = status.catches ?? null;
         notNowHolds = status.held_back ?? [];
+        blindSpots = Array.isArray(status.blind_spots) ? status.blind_spots : [];
       }
     } catch {
       /* shown without the per-kind list until the daemon answers */
@@ -250,6 +255,13 @@
           <button type="button" class="link" onclick={askPermission}>Ask macOS for access</button>
         {/if}
       </p>
+    {/if}
+    {#if cfg.read_focused_text && blindSpots.length}
+      <div data-testid="live-blind-spots">
+        {#each blindSpots as spot (spot.app)}
+          <p class="reader-note">{spot.sentence}</p>
+        {/each}
+      </div>
     {/if}
     <label class="check">
       <input

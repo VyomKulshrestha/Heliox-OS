@@ -628,7 +628,9 @@ Every 200 ms it decides, per correction it has noticed, whether to wait, show a 
   `grounded` reports the checks against the person's own data (`pilot.live.grounded`): `{enabled, checks,
   model_calls, found, rejected, last_verdict, error}`, where `error` is the last local-model failure, if any.
   `catches` lists the installed catch packs (`pilot.live.catches`, see `docs/LIVE_CATCHES.md`): `{packs: [{name,
-  path, ok, problems, admitted, held_back: [{id, problems}]}], rules, held_back}`.
+  path, ok, problems, admitted, held_back: [{id, problems}]}], rules, held_back}`. `blind_spots` lists the apps
+  Live has found it cannot see into, `[{app, sentence}]`, one plain sentence each naming what would let it
+  (`pilot.live.blind_spots`), and `blind_note` is that sentence for the app in front the first time it is found.
 - `live_set` takes any of `enabled`, `paused` (this session only), `level` (`quiet`, `balanced`, `proactive`),
   `read_focused_text`, `ocr_fallback`, `listen_to_speech`, `personal_timing`, `grounded_checks`, `grounded_model`
   (an Ollama model name), `muted_kinds`, `reset_timing: true` (forget the learned pauses) and `unsnooze: <kind>`
@@ -644,8 +646,9 @@ Every 200 ms it decides, per correction it has noticed, whether to wait, show a 
 Notifications: `live_interjection {id, kind, title, message, detail, evidence, fix, fix_kind, urgency, spoken,
 source, app}`, where `fix_kind` is `replace` (corrected text), `command` (a safer command) or `ask` (a request to
 hand to the planner); `live_interjection_withdrawn {id, reason}` with `fixed` (the evidence left the window it
-was found in), `expired`, `off` or a feedback verdict; and `live_state {enabled, paused, watching, user_state}`
-on change. The text Heliox reads never appears in a notification: only the short evidence span a card quotes,
+was found in), `expired`, `off` or a feedback verdict; and `live_state {enabled, paused, watching, user_state, blind_note}`
+on change (`blind_note`: the first time Live finds it cannot see into the app in front, the sentence for the Live
+pill's tooltip; otherwise ""). The text Heliox reads never appears in a notification: only the short evidence span a card quotes,
 with keys redacted to their first and last four characters.
 
 #### `suggestion_now` (and `[suggestions]`, no RPC for the loop)

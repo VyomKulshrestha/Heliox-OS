@@ -481,6 +481,35 @@ def start_shell_lines(server: Any) -> None:
     shell_server_for(server).start()  # a no-op on Windows, where consoles are read directly
 
 
+def live_blind_note(server: Any, app: str, focused: Any) -> None:
+    """Tell Live whether the reader gave anything for the window in front, so it can say once, quietly, when it
+    cannot see into an app (pilot.live.blind_spots). A terminal Live reads directly counts as seen into."""
+    live = getattr(server, "_live", None)
+    note = getattr(live, "note_foreground", None)
+    if not callable(note):
+        return
+    readable = focused is not None
+    if not readable:
+        from pilot.live.terminal_text import which_terminal
+
+        terminal = which_terminal(app)
+        if terminal:
+            ready = terminal_text_for(server).status().get(terminal, {})
+            readable = bool(ready.get("ready", ready.get("found", False)) and not ready.get("needs"))
+    state, message = "ready", ""
+    reader_status = getattr(getattr(server, "_live_reader", None), "status", None)
+    if callable(reader_status):
+        try:
+            current = reader_status()
+            state, message = str(current.state), str(current.message)
+        except Exception:
+            logger.debug("Reader status failed", exc_info=True)
+    try:
+        note(app, readable, state, message)
+    except Exception:
+        logger.debug("Live could not note the window in front", exc_info=True)
+
+
 def terminal_text_for(server: Any) -> Any:
     found = getattr(server, "_terminal_text", None)
     if found is None:

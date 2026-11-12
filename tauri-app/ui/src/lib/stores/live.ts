@@ -32,6 +32,8 @@ export interface LiveState {
   paused: boolean;
   watching: string;
   userState: string;
+  /** The first time Live finds it cannot see into the app in front, one sentence (shown, never spoken). */
+  blindNote: string;
   cards: LiveCard[];
   /** "why?" answers fetched for a card, by card id. */
   explanations: Record<string, string>;
@@ -52,6 +54,7 @@ const INITIAL: LiveState = {
   paused: false,
   watching: "",
   userState: "off",
+  blindNote: "",
   cards: [],
   explanations: {},
   notes: {},
@@ -108,6 +111,7 @@ function createLiveStore() {
         paused: Boolean(p.paused),
         watching: String(p.watching ?? ""),
         userState: String(p.user_state ?? "off"),
+        blindNote: typeof p.blind_note === "string" ? p.blind_note : "",
         cards: p.enabled ? s.cards : [],
       }));
     }
@@ -123,6 +127,7 @@ function createLiveStore() {
         paused: Boolean(status.paused),
         watching: String(status.watching ?? ""),
         userState: String(status.user_state ?? "off"),
+        blindNote: typeof status.blind_note === "string" ? status.blind_note : "",
         cards: (status.visible as LiveCard[] | undefined) ?? s.cards,
       }));
     } catch {

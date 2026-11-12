@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from pilot.live import focused_text, spoken
+from pilot.live.blind_spots import BlindSpots
 from pilot.live.commitments import KIND as COMMITMENT
 from pilot.live.commitments import find_commitments
 from pilot.live.crosscheck import KIND as SAID_VS_TYPED
@@ -373,6 +374,8 @@ class LiveCompanion:
         self._snooze_path = relevance_path.with_name("live_snoozed.json") if relevance_path else None
         self.timing = PersonalTiming(timing_path)
         self.stuck = StuckWatcher(clock)
+        # Apps Live cannot see into, said once each (pilot.live.blind_spots); kept beside the relevance file.
+        self.blind = BlindSpots(relevance_path.with_name("live_blind_spots.json") if relevance_path else None, clock)
         self.grounded = grounded  # pilot.live.grounded.GroundedChecker, or None
         self._grounded_task: asyncio.Task[None] | None = None
         self._grounded_hash = ""
@@ -1222,6 +1225,14 @@ class LiveCompanion:
             return "away"
         return "typing" if now - self._last_text_change < 1.2 else "paused"
 
+    def note_foreground(self, app: str, readable: bool, reader_state: str = "ready", reader_message: str = "") -> str:
+        """The window in front (past the never-read rules) and whether the reader gave anything for it. Returns the
+        sentence when Live finds, for the first time, that it cannot see into this app; it is shown, never spoken."""
+        cfg = self._config()
+        if not getattr(cfg, "enabled", False) or self._paused:
+            return ""
+        return self.blind.note(app, readable, reader_state=reader_state, reader_message=reader_message)
+
     def status(self) -> dict[str, Any]:
         cfg = self._config()
         now = self._clock()
@@ -1240,6 +1251,8 @@ class LiveCompanion:
             "muted_kinds": list(getattr(cfg, "muted_kinds", []) or []),
             "personal_timing": self._personal_timing(),
             "held_back": self.held_back(),
+            "blind_spots": self.blind.notices(),
+            "blind_note": self.blind.current,
             "grounded": {"enabled": self._grounding(), **(self.grounded.stats() if self.grounded else {})},
             "timing": self.timing.snapshot(LEVELS.get(getattr(cfg, "level", ""), LEVELS[DEFAULT_LEVEL]).pause_seconds),
         }
@@ -1260,6 +1273,8 @@ class LiveCompanion:
             "paused": self._paused,
             "watching": app_label(self._last_obs.app) if self._last_obs and getattr(cfg, "enabled", False) else "",
             "user_state": self._user_state(now) if getattr(cfg, "enabled", False) else "off",
+            # The first time Live finds it cannot see into the app in front, one sentence for the pill's tooltip.
+            "blind_note": self.blind.current if getattr(cfg, "enabled", False) and not self._paused else "",
         }
         if state != self._state:
             self._state = state
