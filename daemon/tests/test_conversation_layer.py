@@ -313,7 +313,7 @@ async def test_with_no_model_set_up_the_person_is_told_where_to_set_one():
     sink = FakeSink()
     layer = ConversationLayer(sink=sink, model=lambda: None)
     await layer.take("How are you?")
-    assert "Settings" in sink.texts[0] and "Ollama" in sink.texts[0]
+    assert "Settings" in sink.texts[0] and "local model" in sink.texts[0]
     await layer.take("Hello?")
     assert "Settings" not in sink.texts[1]
     # A request to act still goes to the planner with no model at all.

@@ -101,8 +101,9 @@ async def test_an_action_then_again_runs_the_action_road_and_says_nothing_twice(
     await server._voice_command_dispatch(said)
     server._handle_execute.assert_awaited_once()
     sent = server._handle_execute.await_args.args[0]
-    assert sent["input"] == "do that again"  # expanded to the last task inside the execute road
-    assert "_quick_plan" not in sent  # no shortcut around the planner and its reviews
+    # The last request, taken again by the road it took the first time: one allow-listed step goes by the quick
+    # road with its own checks, anything else by the planner with its reviews and approvals.
+    assert sent["input"] == "turn the volume up"
     assert REPORT not in said_aloud(server)
     assert server._last_turn_kind == "action"
 
@@ -119,7 +120,7 @@ async def test_an_answer_then_again_repeats_the_words_and_runs_nothing():
 async def test_repeat_that_nine_seconds_later_is_the_task_as_before():
     server = voice_server("answer", ANSWER, 9.0)
     await server._voice_command_dispatch("Repeat that.")
-    assert server._handle_execute.await_args.args[0]["input"] == "do that again"
+    assert server._handle_execute.await_args.args[0]["input"] == "turn the volume up"
     nothing = voice_server("answer", ANSWER, 9.0, task=None)
     await nothing._voice_command_dispatch("Repeat that.")
     nothing._handle_execute.assert_not_awaited()
@@ -220,3 +221,12 @@ async def test_a_content_follow_up_reaches_the_model_with_the_quick_answer_in_me
     asked.finish("success", ANSWER)
     reply = await layer.take("And tomorrow?")
     assert reply.done and calls and "80 percent" in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_again_after_a_planned_task_goes_back_through_the_planner_road():
+    server = voice_server("action", REPORT, 3.0, task="delete the old installers in my Downloads folder")
+    await server._voice_command_dispatch("Again.")
+    sent = server._handle_execute.await_args.args[0]
+    assert sent["input"] == "delete the old installers in my Downloads folder"
+    assert "_quick_plan" not in sent  # not an allow-listed step: the planner, its reviews and approvals

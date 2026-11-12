@@ -404,3 +404,51 @@ def route(text: str, *, conversation_open: bool = False) -> Route:
         return Route(TurnKind.UNCLEAR, "too short to tell")
     # A statement that is neither a request nor a question ("the build failed again"): talk about it.
     return Route(TurnKind.CONVERSATION, "statement")
+
+
+# Right after the wake phrase or the button, a command verb with no subject in the past or -s form is the command,
+# misheard: the recogniser turns "open Notepad" into "opened Notepad" and "mute" into "muted". Only then: "I opened
+# Notepad earlier" has a subject and stays a remark, and words nobody addressed to Heliox never reach this.
+_MISHEARD_VERBS = {
+    "opened": "open",
+    "opens": "open",
+    "closed": "close",
+    "closes": "close",
+    "launched": "launch",
+    "launches": "launch",
+    "played": "play",
+    "plays": "play",
+    "paused": "pause",
+    "pauses": "pause",
+    "muted": "mute",
+    "mutes": "mute",
+    "unmuted": "unmute",
+    "unmutes": "unmute",
+    "skipped": "skip",
+    "skips": "skip",
+    "searched": "search",
+    "searches": "search",
+}
+_NEEDS_NO_OBJECT = {"mute", "unmute", "pause", "play", "skip"}
+_MISHEARD_ADDRESSING = {"wake", "button"}
+
+
+def misheard_command(text: str, *, addressed: str) -> str | None:
+    """The imperative a subjectless "opened Notepad" stands for, when the turn was addressed by the wake phrase or the
+    button; None otherwise (or when the words are not that shape)."""
+    if addressed not in _MISHEARD_ADDRESSING:
+        return None
+    words = normalize(text).split()
+    if not words or words[0] not in _MISHEARD_VERBS:
+        return None
+    verb = _MISHEARD_VERBS[words[0]]
+    rest = words[1:]
+    if not rest and verb not in _NEEDS_NO_OBJECT:
+        return None
+    if rest and rest[0] in {"it", "that", "this", "them", "and", "but", "so", "because", "earlier", "yesterday"}:
+        return None  # "opened it earlier", "closed and ...": a remark about something already done
+    if len(rest) > 6:
+        return None  # a long sentence is talk, not a misheard command
+    original = text.strip().split(maxsplit=1)
+    tail = original[1] if len(original) > 1 else ""
+    return f"{verb.capitalize()} {tail}".strip()

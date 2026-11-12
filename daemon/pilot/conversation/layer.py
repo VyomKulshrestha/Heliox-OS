@@ -47,7 +47,7 @@ from pilot.conversation.quick import (
     quick_result_sentence,
     valid_search_url,
 )
-from pilot.conversation.router import Route, TurnKind, normalize, route
+from pilot.conversation.router import Route, TurnKind, misheard_command, normalize, route
 from pilot.conversation.style import (
     SYSTEM_PROMPT,
     TYPED_SYSTEM_PROMPT,
@@ -69,10 +69,7 @@ HEARD = frozenset({"spoken"})
 STOPPED = frozenset({"interrupted", "cancelled", "superseded"})
 MAX_SENTENCES = 5
 
-SETUP_HINT = (
-    "In Settings, under Model, you can run a local model with Ollama, which keeps everything on this computer, "
-    "or add a cloud key."
-)
+SETUP_HINT = "You can add a local model or a cloud key in Settings, under Model."
 FALLBACK = {
     "offline": "I can't reach the language model right now, so I can only do what I handle myself, like "
     "reminders, to-dos, timers and undo.",
@@ -86,7 +83,7 @@ FALLBACK = {
     "slow": "The language model isn't answering right now, so I can only do what I handle myself for the moment.",
     "refused": "I can't help with that one.",
     "error": "Something went wrong reaching the language model. I can still do what I handle myself.",
-    "none": "Talking things through needs a language model, and none is set up. " + SETUP_HINT,
+    "none": "That needs a language model, and none is set up. " + SETUP_HINT,  # under 25 words, said once
     "local_down": "Talking things through needs a language model, and the local one isn't running. "
     "Start Ollama, or choose another model in Settings, under Model.",
     "local_missing": "The local model named in Settings isn't installed. Pull it in Ollama, or choose another "
@@ -281,6 +278,11 @@ class ConversationLayer:
         if not self._enabled():
             return None
         started = self._clock()
+        if source == "voice":
+            fixed = misheard_command(text, addressed=self._how_addressed())
+            if fixed is not None:
+                logger.info("Read %r, said right after the wake phrase, as the command %r", text, fixed)
+                text = fixed
         decided = route(text, conversation_open=self.memory.open)
         result = TurnResult(done=False, planner_input=text, route=decided, _layer=self, source=source, _sink=sink)
         if not self.memory.open:
@@ -628,6 +630,11 @@ class ConversationLayer:
     ) -> None:
         """No model: say why in one sentence, once per session; later turns get a short line."""
         logger.info("Fast model unavailable (%s); answering from local rules", reason)
+        if self._user_speaking():
+            # The person is still talking (the turn was cut at a pause): nothing is said over them, and the reason
+            # is kept for the turn they finish.
+            result.done = True
+            return
         if reason == "unparsed_act" or (decided.kind is TurnKind.UNCLEAR and reason in self._explained):
             sentence = UNCLEAR_OFFLINE
         elif reason in self._explained:

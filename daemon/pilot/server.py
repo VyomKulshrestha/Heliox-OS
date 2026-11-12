@@ -1031,6 +1031,7 @@ class PilotServer:
         self._quiet_hours: Any = None
         self._last_spoken = ""
         self._last_spoken_at = float("-inf")  # monotonic: when it was said, for follow-ups on it
+        self._last_spoken_reply = ""  # the conversation reply _last_spoken belongs to, when it is one
         # What the last voice turn was, from what the server saw happen: "action" (an action ran), "answer" (Heliox
         # only spoke), "" (not known). Decides whether "again" means the words or the action.
         self._last_turn_kind = ""
@@ -13749,7 +13750,14 @@ def handle_tool(tool_name, params):
         ):
             return SpeechOutcome("suppressed", SpeechChannel(str(channel)), "Held during a focus session")
         if str(channel) in REPEATABLE_SPEECH and text.strip():
-            self._last_spoken = text.strip()
+            # A reply the conversation layer speaks sentence by sentence ("conv:<turn>:<n>") is kept whole, so "say
+            # that again" and "shorter" are about all of it, not its last sentence.
+            reply = dedupe_key.rsplit(":", 1)[0] if dedupe_key.startswith("conv:") else ""
+            if reply and reply == self._last_spoken_reply:
+                self._last_spoken = f"{self._last_spoken} {text.strip()}"
+            else:
+                self._last_spoken = text.strip()
+            self._last_spoken_reply = reply
             self._last_spoken_at = time.monotonic()
         # The continuous listener is the sole microphone consumer. It keeps
         # capturing wake-word commands while work and speech continue, then
@@ -14093,18 +14101,21 @@ def handle_tool(tool_name, params):
         from pilot.conversation.followups import repeat_meaning
 
         again_action = False
-        if (
-            not self._interactive_request_active
+        repeated = (
+            await self._expand_request("do that again")
+            if not self._interactive_request_active
             and repeat_meaning(
                 command_text, last_turn=self._last_turn_kind, seconds_since=time.monotonic() - self._last_spoken_at
             )
             == "action"
-            and await self._expand_request("do that again") is not None
-        ):
-            # "Again" right after an action, or "do that again": the last task as a new request through the normal
-            # road (planner, reviews, approvals), never a shortcut around them.
+            else None
+        )
+        if repeated is not None:
+            # "Again" right after an action, or "do that again": the last request, taken again by the same road it
+            # took the first time (the quick road for one allow-listed step, else the planner with its reviews and
+            # approvals), never a shortcut around them.
             again_action = True
-            command_text = "do that again"
+            command_text = repeated[0]
         if not self._interactive_request_active and not again_action:
             timeline_answer = await self._control_reply(command_text)
             if timeline_answer is not None:
@@ -14202,8 +14213,13 @@ def handle_tool(tool_name, params):
             )
             # "Wait", "hold on", "that's enough", or a bare "no" / "not that" while the task runs: stop it. Taken as a
             # correction, the planner would get "wait" as the change to make and carry on. Voice can always stop.
+            # "Undo that" while it runs: the task stops first, then the undo is offered and said, in one sentence.
+            # As a correction it went to the planner as the change to make and nothing was said back.
+            undo_now = not is_question and bool(
+                UNDO_ONE_REQUEST.match(normalized_command) or UNDO_MANY_REQUEST.match(normalized_command)
+            )
             stop_now = not is_question and (
-                normalized_command in VOICE_STOP_PHRASES or normalized_command in VOICE_DENIALS
+                normalized_command in VOICE_STOP_PHRASES or normalized_command in VOICE_DENIALS or undo_now
             )
             if not is_question and not stop_now:
                 await self._interaction_runtime.transition(
@@ -14229,6 +14245,14 @@ def handle_tool(tool_name, params):
                     str(result.get("message") or "")[:350],
                     channel=SpeechChannel.FINAL_ANSWER,
                     dedupe_key=f"voice-in-task-question:{uuid.uuid4()}",
+                )
+            if undo_now:
+                undone = await self._undo_request(command_text) or "There is nothing I can undo right now."
+                await self._broadcast_notification(
+                    "voice_result", {"command": command_text, "status": "answered", "message": undone}
+                )
+                await self._speak_voice_response(
+                    undone, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-undo:{uuid.uuid4()}"
                 )
             return
 
@@ -14261,7 +14285,7 @@ def handle_tool(tool_name, params):
             )
 
         # The fast layer answers talk itself (streamed) and hands requests to act on to the planner below.
-        turn = await conversation.take(command_text) if proactive_decision is None and not again_action else None
+        turn = await conversation.take(command_text) if proactive_decision is None else None
         if turn is not None and turn.done:
             self._last_turn_kind = "answer"
             message = " ".join(turn.spoken)
