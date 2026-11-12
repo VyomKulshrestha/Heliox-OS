@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { invoke } from "./invoke";
+import { noteStorageError, noteStorageNotification, noteStorageResult } from "../stores/storageNotice";
 
 /**
  * WebSocket client for communicating with the Heliox OS Python daemon.
@@ -12,7 +13,7 @@ const DAEMON_URL = "ws://127.0.0.1:8785";
 type JsonRpcResponse = {
   jsonrpc: "2.0";
   result?: unknown;
-  error?: { code: number; message: string };
+  error?: { code: number; message: string; data?: { storage_problem?: boolean; kind?: string } };
   id: string | number | null;
 };
 
@@ -45,7 +46,7 @@ export function requireOkResult<T extends DaemonStatusResult>(result: T, fallbac
 
 let ws: WebSocket | null = null;
 let messageId = 0;
-const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; method?: string }>();
 const notificationHandlers: NotificationHandler[] = [];
 const connectionHandlers: ConnectionHandler[] = [];
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -163,15 +164,20 @@ export async function connect(): Promise<boolean> {
           const data: JsonRpcResponse = JSON.parse(event.data);
 
           if (data.id != null && pending.has(Number(data.id))) {
-            const { resolve, reject } = pending.get(Number(data.id))!;
+            const { resolve, reject, method = "" } = pending.get(Number(data.id))!;
             pending.delete(Number(data.id));
+            // A full disk or a read-only data folder reaches the person in one place whatever panel asked
+            // (stores/storageNotice.ts); the caller still gets its answer or rejection as before.
             if (data.error) {
+              noteStorageError(method, data.error);
               reject(new Error(data.error.message));
             } else {
+              noteStorageResult(method, data.result);
               resolve(data.result);
             }
           } else if (!data.id && "method" in data) {
             const notification = data as unknown as { method: string; params: unknown };
+            if (notification.method === "storage_problem") noteStorageNotification(notification.params);
             for (const handler of notificationHandlers) {
               handler(notification.method, notification.params);
             }
@@ -256,6 +262,7 @@ export async function call<T = unknown>(method: string, params: Record<string, u
     pending.set(id, {
       resolve: resolve as (v: unknown) => void,
       reject,
+      method,
     });
 
     ws!.send(JSON.stringify(request));

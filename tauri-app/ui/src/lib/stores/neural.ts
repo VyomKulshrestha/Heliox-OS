@@ -1,6 +1,7 @@
 import { get, writable } from "svelte/store";
 import { call, offNotification, onNotification, requireResultStatus } from "../api/daemon";
 import { invoke } from "../api/invoke";
+import { lateRetry, startingMessage } from "../api/lateParts";
 
 export type NeuralSessionState =
   | "disconnected"
@@ -91,6 +92,8 @@ export interface NeuralState {
   preview: NeuralPreview | null;
   lastResult: Record<string, unknown> | null;
   busy: boolean;
+  /** Neural input starts after Heliox is ready: until it has, the daemon's sentence saying so (not an error). */
+  waiting: string;
   error: string;
 }
 
@@ -120,6 +123,7 @@ const DEFAULT_STATE: NeuralState = {
   preview: null,
   lastResult: null,
   busy: false,
+  waiting: "",
   error: "",
 };
 
@@ -156,8 +160,21 @@ function createNeuralControl() {
       focusedCommandId: String(payload.focused_command_id ?? current.focusedCommandId),
       safeGoals: (payload.safe_goals as NeuralSafeGoal[] | undefined) ?? current.safeGoals,
       stagedTasks: (payload.staged_tasks as NeuralStagedTask[] | undefined) ?? current.stagedTasks,
+      waiting: "",
       error: "",
     }));
+  }
+
+  const retry = lateRetry();
+
+  /** A reply that says neural input is still starting: show its sentence as a waiting state (not in the error
+   * field) and ask again when the daemon says the part is ready, or after a short interval. True when it was. */
+  function stillStarting(result: unknown): boolean {
+    const message = startingMessage(result);
+    if (!message) return false;
+    store.update((current) => ({ ...current, waiting: message, error: "" }));
+    retry.schedule(() => void refresh());
+    return true;
   }
 
   async function commitPreview(worldModelApproved: boolean) {
@@ -235,7 +252,9 @@ function createNeuralControl() {
   async function refresh() {
     try {
       const payload = (await call("neural_status")) as Record<string, unknown>;
-      if (payload.status === "unavailable") {
+      if (stillStarting(payload)) {
+        store.update((current) => ({ ...current, connected: false })); // asked again once the part is ready
+      } else if (payload.status === "unavailable") {
         applyStatus(payload);
         store.update((current) => ({
           ...current,
@@ -302,6 +321,7 @@ function createNeuralControl() {
         string,
         unknown
       >;
+      if (stillStarting(result)) return;
       requireResultStatus(result, "ok", "The daemon did not begin neural calibration.");
       applyStatus(result);
     } catch (cause) {
@@ -321,6 +341,7 @@ function createNeuralControl() {
         scope,
         user_authorized: true,
       })) as Record<string, unknown>;
+      if (stillStarting(result)) return;
       requireResultStatus(result, "ok", "The daemon did not arm neural control.");
       applyStatus(result);
     } catch (cause) {
@@ -334,6 +355,7 @@ function createNeuralControl() {
     clearAutoCommit();
     try {
       const result = (await call("neural_disarm", { reason })) as Record<string, unknown>;
+      if (stillStarting(result)) return;
       requireResultStatus(result, "ok", "The daemon did not confirm neural disarm.");
       applyStatus(result);
       store.update((current) => ({ ...current, preview: null }));
@@ -376,6 +398,7 @@ function createNeuralControl() {
         goal,
         session_id: sessionId,
       })) as Record<string, unknown>;
+      if (stillStarting(result)) return false;
       requireResultStatus(result, "ok", "The daemon did not stage the neural task.");
       applyStatus(result);
       return true;
@@ -391,6 +414,7 @@ function createNeuralControl() {
     store.update((current) => ({ ...current, busy: true, error: "" }));
     try {
       const result = (await call("neural_remove_staged_task", { task_id: taskId })) as Record<string, unknown>;
+      if (stillStarting(result)) return false;
       requireResultStatus(result, "ok", "The daemon did not remove the staged neural task.");
       applyStatus(result);
       return true;

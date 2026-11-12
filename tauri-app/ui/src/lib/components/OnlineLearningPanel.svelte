@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { call, requireOkResult, type DaemonStatusResult } from "../api/daemon";
+  import { lateRetry, startingMessage } from "../api/lateParts";
 
   interface LearnerStatus {
     enabled: boolean;
@@ -41,17 +42,24 @@
   let resetting = $state(false);
   let confirmingReset = $state(false);
   let error = $state("");
+  /** The learner loads after Heliox is ready: until it has, the daemon's sentence saying so (api/lateParts.ts). */
+  let waiting = $state("");
+  const retry = lateRetry();
 
   onMount(loadStatus);
+  onDestroy(retry.cancel);
 
   async function loadStatus() {
     loading = true;
     error = "";
     try {
-      const result = requireOkResult(
-        (await call("online_learning_status")) as LearnerStatus & DaemonStatusResult,
-        "Verified online learning is unavailable.",
-      );
+      const reply = (await call("online_learning_status")) as LearnerStatus & DaemonStatusResult;
+      waiting = startingMessage(reply);
+      if (waiting) {
+        retry.schedule(loadStatus);
+        return;
+      }
+      const result = requireOkResult(reply, "Verified online learning is unavailable.");
       if (!result.enabled) {
         throw new Error("Verified online learning is unavailable.");
       }
@@ -114,8 +122,8 @@
     browses merely to collect training data.
   </p>
 
-  {#if loading}
-    <div class="empty">Loading verified learning status...</div>
+  {#if loading || waiting}
+    <div class="empty" role={waiting ? "status" : undefined}>{waiting || "Loading verified learning status..."}</div>
   {:else if error && !status}
     <div class="unavailable" role="alert">
       <strong>Learning status unavailable</strong>

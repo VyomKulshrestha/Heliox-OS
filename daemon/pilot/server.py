@@ -10985,6 +10985,8 @@ class PilotServer:
 
             late = self._late_starts = heliox_parts()
             late.mark("online_learning", "starting")  # loaded by _after_ready, not by run()
+            # Every change reaches the window: a panel told "starting" asks again when its part is ready.
+            late.on_change = lambda states: self._spawn_notification("late_parts", {"late_parts": states})
         return late
 
     def _startup_timings(self) -> Any:

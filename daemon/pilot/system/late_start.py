@@ -39,6 +39,16 @@ class LateStarts:
     pause: float = PAUSE_BETWEEN_SECONDS
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep
     parts: dict[str, LatePart] = field(default_factory=dict)
+    # Told every part's state whenever one changes; the server sends it to the window as a ``late_parts``
+    # notification, so a panel that was told "starting" asks again once its part is ready.
+    on_change: Callable[[dict[str, str]], None] | None = None
+
+    def _changed(self) -> None:
+        if self.on_change is not None:
+            try:
+                self.on_change(self.snapshot())
+            except Exception:
+                logger.debug("Could not announce the late parts' states", exc_info=True)
 
     def add(
         self,
@@ -67,6 +77,7 @@ class LateStarts:
     def mark(self, name: str, state: str, reason: str = "") -> None:
         part = self.parts[name]
         part.state, part.reason = state, reason
+        self._changed()
 
     def waiting_reply(self, method: str) -> dict[str, Any] | None:
         """For a request that needs a part which has not started (yet): the plain answer. None: go ahead."""
@@ -93,8 +104,10 @@ class LateStarts:
             first = False
             if part.start is None:
                 part.state = "ready"
+                self._changed()
                 continue
             part.state = "starting"
+            self._changed()
             try:
                 await part.start()
             except asyncio.CancelledError:
@@ -103,8 +116,10 @@ class LateStarts:
             except Exception as error:
                 part.state, part.reason = "failed", f"{type(error).__name__}: {str(error)[:120]}"
                 logger.warning("%s did not start after ready", name, exc_info=True)
+                self._changed()
                 continue
             part.state = "ready"
+            self._changed()
             logger.info("Started after ready: %s", name)
 
     def snapshot(self) -> dict[str, str]:

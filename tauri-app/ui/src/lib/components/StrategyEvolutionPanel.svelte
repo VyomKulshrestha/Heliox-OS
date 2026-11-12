@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { call, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
+  import { lateRetry, startingMessage } from "../api/lateParts";
 
   type Stage = "candidate" | "replay_passed" | "shadow" | "canary" | "promoted" | "rejected" | "rolled_back";
 
@@ -64,7 +65,12 @@
   let content = $state("");
   let rationale = $state("");
 
+  /** This part starts after Heliox is ready: until it has, the daemon's sentence saying so (api/lateParts.ts). */
+  let waiting = $state("");
+  const retry = lateRetry();
+
   onMount(load);
+  onDestroy(retry.cancel);
 
   async function load() {
     loading = true;
@@ -74,6 +80,11 @@
         call("strategy_evolution_status") as Promise<StrategyStatus>,
         call("strategy_candidates", { include_content: true, limit: 50 }) as Promise<{ candidates: Candidate[] }>,
       ]);
+      waiting = startingMessage(statusResult);
+      if (waiting) {
+        retry.schedule(load);
+        return;
+      }
       if (!statusResult?.candidate_counts || !Array.isArray(statusResult.pareto_front)) {
         throw new Error(
           (statusResult as { message?: string })?.message || "The strategy evolution status is incomplete.",
@@ -189,8 +200,8 @@
     </div>
   {/if}
 
-  {#if loading}
-    <div class="empty">Loading strategy archive...</div>
+  {#if loading || waiting}
+    <div class="empty" role={waiting ? "status" : undefined}>{waiting || "Loading strategy archive..."}</div>
   {:else if error && !status}
     <div class="unavailable" role="alert">
       <strong>Strategy archive unavailable</strong>

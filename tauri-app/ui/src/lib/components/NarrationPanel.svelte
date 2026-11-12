@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { _ } from "svelte-i18n";
   import { call, requireOkResult, type DaemonStatusResult } from "../api/daemon";
   import { changedFields, onConfigChange } from "../api/configSync";
+  import { lateRetry, startingMessage } from "../api/lateParts";
 
   let enabled = $state(false);
   let narrateSteps = $state(true);
@@ -41,6 +42,10 @@
   }
 
   const dirty = $derived(savedValues !== null && Object.keys(changedFields(savedValues, formValues())).length > 0);
+
+  // Proactive learning starts after Heliox is ready: its counters are asked for again once it has (api/lateParts.ts).
+  const learningRetry = lateRetry();
+  onDestroy(learningRetry.cancel);
 
   onMount(() => {
     void loadStatus();
@@ -116,6 +121,10 @@
         error?: string;
         patterns?: Record<string, { shown?: number; accepted?: number; dismissed?: number }>;
       };
+      if (startingMessage(result)) {
+        learningRetry.schedule(() => void loadLearningStatus());
+        return;
+      }
       requireOkResult(result, "Proactive learning status is unavailable.");
       const patterns = Object.values(result.patterns ?? {});
       learnedPatternCount = patterns.length;

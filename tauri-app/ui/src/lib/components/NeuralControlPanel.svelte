@@ -390,6 +390,7 @@
     {/each}
   </div>
 
+  {#if $neural.waiting}<div class="waiting" role="status">{$neural.waiting}</div>{/if}
   {#if $neural.error}<div class="error" role="alert">{$neural.error}</div>{/if}
 </div>
 
@@ -592,6 +593,12 @@
     font-size: 11px;
     text-overflow: ellipsis;
     text-transform: capitalize;
+  }
+  .waiting {
+    padding: 10px 14px;
+    color: var(--text-secondary);
+    background: var(--warning-bg);
+    font-size: 11px;
   }
   .artifact-warning,
   .error {

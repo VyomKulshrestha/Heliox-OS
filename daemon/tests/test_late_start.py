@@ -221,3 +221,34 @@ async def test_after_ready_the_first_request_is_answered_while_the_learner_still
         after_ready.cancel()
         await asyncio.gather(after_ready, return_exceptions=True)
         get_risk_gate().set_online_learner(gate_learner_before)  # the gate is process-wide
+
+
+async def test_every_change_of_a_late_part_is_announced_so_the_window_can_ask_again():
+    """A panel told "starting" asks again when its part is ready: the server sends each change as ``late_parts``."""
+    from pilot.system.late_start import LateStarts
+
+    seen: list[dict[str, str]] = []
+
+    async def no_pause(_seconds):
+        return None
+
+    async def fails():
+        raise RuntimeError("no device")
+
+    async def starts():
+        return None
+
+    late = LateStarts(sleep=no_pause, pause=0.0, on_change=seen.append)
+    late.add("one", "One", "One is starting.", ("one_status",), starts)
+    late.add("two", "Two", "Two is starting.", ("two_status",), fails)
+    await late.run()
+    assert seen[0] == {"one": "starting", "two": "waiting"}
+    assert seen[-1] == {"one": "ready", "two": "failed"}
+    assert {"one": "ready", "two": "starting"} in seen
+
+    server = PilotServer(PilotConfig())
+    sent: list[tuple[str, dict]] = []
+    server._spawn_notification = lambda method, params: sent.append((method, params))
+    server._late_parts().mark("neural", "ready")
+    assert sent == [("late_parts", {"late_parts": server._late_parts().snapshot()})]
+    assert sent[0][1]["late_parts"]["neural"] == "ready"

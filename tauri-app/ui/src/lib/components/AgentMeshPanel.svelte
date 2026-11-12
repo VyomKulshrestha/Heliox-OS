@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { call, requireOkResult, type DaemonStatusResult } from "../api/daemon";
+  import { lateRetry, startingMessage } from "../api/lateParts";
 
   interface Specialist {
     agent_key: string;
@@ -87,16 +88,24 @@
     (status?.specialists ?? []).filter((specialist) => sourceFilter === "all" || specialist.source === sourceFilter),
   );
 
+  /** This part starts after Heliox is ready: until it has, the daemon's sentence saying so (api/lateParts.ts). */
+  let waiting = $state("");
+  const retry = lateRetry();
+
   onMount(load);
+  onDestroy(retry.cancel);
 
   async function load() {
     loading = true;
     error = "";
     try {
-      const result = requireOkResult(
-        (await call("agent_mesh_status")) as MeshStatus & DaemonStatusResult,
-        "The daemon did not return the specialist mesh.",
-      );
+      const reply = (await call("agent_mesh_status")) as MeshStatus & DaemonStatusResult;
+      waiting = startingMessage(reply);
+      if (waiting) {
+        retry.schedule(load);
+        return;
+      }
+      const result = requireOkResult(reply, "The daemon did not return the specialist mesh.");
       if (!result.delegation || !result.sources || !Array.isArray(result.uncovered_action_types)) {
         throw new Error("The daemon's specialist mesh status is incomplete.");
       }
@@ -171,8 +180,8 @@
     results, never an uncontrolled copy of the full chat.
   </p>
 
-  {#if loading}
-    <div class="empty">Discovering specialist contracts...</div>
+  {#if loading || waiting}
+    <div class="empty" role={waiting ? "status" : undefined}>{waiting || "Discovering specialist contracts..."}</div>
   {:else if error && !status}
     <div class="error" role="alert">{error}</div>
   {:else if status}

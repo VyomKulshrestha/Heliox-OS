@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { call, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
+  import { lateRetry, startingMessage } from "../api/lateParts";
 
   type RunState = "collecting" | "evaluating" | "evaluated" | "promotion_requested" | "rejected";
   type CandidateState = "proposed" | "eligible" | "rejected";
@@ -60,7 +61,12 @@
   let selectedRun = $derived(runs.find((run) => run.run_id === selectedRunId) ?? null);
   let selectedCandidates = $derived(candidates.filter((candidate) => candidate.run_id === selectedRunId));
 
+  /** This part starts after Heliox is ready: until it has, the daemon's sentence saying so (api/lateParts.ts). */
+  let waiting = $state("");
+  const retry = lateRetry();
+
   onMount(load);
+  onDestroy(retry.cancel);
 
   async function load() {
     loading = true;
@@ -70,6 +76,11 @@
         call("evolution_status") as Promise<HarnessStatus>,
         call("evolution_runs", { limit: 50 }) as Promise<{ runs: EvolutionRun[] }>,
       ]);
+      waiting = startingMessage(statusResult);
+      if (waiting) {
+        retry.schedule(load);
+        return;
+      }
       if (!statusResult?.runner) {
         throw new Error((statusResult as { message?: string })?.message || "The evolution status is incomplete.");
       }
@@ -222,8 +233,10 @@
     push, release, or promote them automatically.
   </p>
 
-  {#if loading}
-    <div class="empty">Checking the isolation engine and archive...</div>
+  {#if loading || waiting}
+    <div class="empty" role={waiting ? "status" : undefined}>
+      {waiting || "Checking the isolation engine and archive..."}
+    </div>
   {:else if error && !status}
     <div class="error" role="alert">{error}</div>
   {:else if status}

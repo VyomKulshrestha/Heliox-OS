@@ -45,6 +45,7 @@
   import { shouldFollowLatest } from "./lib/utils/scrollPolicy";
   import { selectActiveModal } from "./lib/utils/modalPriority";
   import ConnectionBadge from "./lib/components/ConnectionBadge.svelte";
+  import StorageNotice from "./lib/components/StorageNotice.svelte";
   import LivePresence from "./lib/components/LivePresence.svelte";
   import LiveCards from "./lib/components/LiveCards.svelte";
   import { live } from "./lib/stores/live";
@@ -363,6 +364,7 @@
       <AmbientHUD />
     </div>
   </header>
+  <StorageNotice />
 
   <div class="content">
     <svelte:boundary>

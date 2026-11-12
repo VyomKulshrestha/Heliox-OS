@@ -42,10 +42,19 @@ contract.
 
 Standard JSON-RPC error codes: `-32700` parse error, `-32600` invalid request, `-32601` method not found, `-32603` internal error.
 `-32000`: Heliox could not finish starting (the message says why), or a request waited ten minutes for start-up.
+`-32010`: the disk is full or the data folder is read-only. The message is the plain sentence to show, and `data` is
+`{ "storage_problem": true, "kind": "full" | "read_only" }`. `execute` and `resume_task` answer such a failure in
+their result instead: `{ "status": "error", "message": ..., "explanation": ..., "storage_problem": true }`.
 
 **While the daemon starts** it already listens: `ping`, `health`, `ready` and `startup_status` are answered at
 once, and every other request waits until start-up has finished and is then answered as usual (never refused for
 "not ready yet"). Each stage is announced with the `startup_status` notification (same fields as the RPC).
+
+**Parts that start after ready** (neural input, agent mesh, strategy evolution and the others in
+`pilot.system.late_start`): a request that needs one before it has started is answered
+`{ "status": "starting", "message": "<what it is waiting for, in words>" }`, never an error. Each change of their
+states is announced with the `late_parts` notification, `{ "late_parts": { "<part>": "waiting" | "starting" |
+"ready" | "failed" } }`, so a window told "starting" can ask again once the part is ready.
 
 ---
 
