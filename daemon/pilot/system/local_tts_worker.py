@@ -153,7 +153,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", choices=DEVICES, default="auto")
     parser.add_argument("--gpu-lease", action="store_true", help="hold Heliox's GPU lease while on the GPU")
     parser.add_argument("--serve", action="store_true", required=True)
+    parser.add_argument("--parent-pid", type=int, default=0, help="end when this process (the daemon) is gone")
     args = parser.parse_args(argv)
+    if args.parent_pid > 0:
+        # A killed daemon closes this worker's stdin, but a worker busy importing torch and Kokoro, loading weights or
+        # synthesising reads that only when it is done, holding memory (and the card) meanwhile. The same watch as
+        # Gnomon's worker: Windows waits on the parent's process handle; macOS and Linux see the parent id change.
+        from pilot.intelligence.gnomon_worker import watch_parent
+
+        watch_parent(args.parent_pid, lambda: os._exit(0))
     return _serve(args.engine, args.device, args.gpu_lease)
 
 
@@ -415,6 +423,8 @@ def _default_spawn(engine: str, device: str, gpu_lease: bool = False) -> Any:
         "--device",
         device,
         *(["--gpu-lease"] if gpu_lease else []),
+        "--parent-pid",
+        str(os.getpid()),
         "--engine",
         engine,
         "--serve",

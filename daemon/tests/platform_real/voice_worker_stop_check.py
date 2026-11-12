@@ -1,10 +1,11 @@
 """A real daemon stopped, or killed, while its local voice worker runs (CI runner with Kokoro and its weights).
 
 The local voice (Kokoro) runs in a worker process the daemon starts on the first sentence it speaks
-(pilot.system.local_tts_worker). The worker has no parent watch: it ends when its stdin closes. stop() closes it on
-purpose; a hard kill of the daemon closes it with the process. A worker busy importing torch and Kokoro, loading
-weights or synthesising reads that end only when it is done. This check measures how long the worker outlives the
-daemon in four cases:
+(pilot.system.local_tts_worker). It ends when its stdin closes (stop() closes it on purpose; a hard kill of the
+daemon closes it with the process), and it watches the daemon's process: a worker busy importing torch and Kokoro,
+loading weights or synthesising reads its stdin only when it is done, so the watch ends it when the daemon is gone
+(Windows: a wait on the daemon's process handle; macOS and Linux: its parent id, looked at every second). This check
+measures how long the worker outlives the daemon in four cases:
 
 1. stopped (daemon_stop) while the worker is still loading;
 2. stopped while the worker is loaded and idle;
@@ -12,8 +13,9 @@ daemon in four cases:
 4. killed hard while the worker is still loading.
 
 CHECK lines say how long the daemon took to exit and how long the worker lived after it. Bounds: the stop's own 30 s
-for a clean stop, 10 s for a worker that was idle, and 120 s for one that was busy loading (beyond that it would hold
-memory long after Heliox was gone). Every process it started is ended at the end, whatever happened.
+for the daemon to exit, and 10 s for the worker after that, loading or idle: the watch notices within a second, the
+rest is room for a slow runner (as kill_checks.py's WORKER_BOUND for Gnomon's worker). Before the watch, a busy worker
+was allowed 120 s. Every process it started is ended at the end, whatever happened.
 
     HELIOX_BENCH_ROOT=<root with the models> python daemon/tests/platform_real/voice_worker_stop_check.py
 
@@ -50,8 +52,8 @@ import psutil  # noqa: E402
 import real_daemon  # noqa: E402
 
 STOP_BOUND = 30.0
-IDLE_BOUND = 10.0
-BUSY_BOUND = 120.0
+WORKER_BOUND = 10.0  # after the daemon is gone, loading or idle (the parent watch)
+GIVE_UP = 150.0  # how long it looks before calling the worker left behind
 WORKER_MARK = "pilot.system.local_tts_worker"
 results: list[bool] = []
 started: list[int] = []
@@ -121,12 +123,12 @@ async def case(name: str, *, loaded: bool, clean: bool) -> None:
         await session.close()
     exited = time.monotonic() - began
     speaking.cancel()
-    after = gone_after(pids, BUSY_BOUND + 30)
-    bound = BUSY_BOUND if not loaded else (IDLE_BOUND if not clean else STOP_BOUND)
+    after = gone_after(pids, GIVE_UP)
+    bound = WORKER_BOUND
     ok = after is not None and after <= bound and (not clean or exited <= STOP_BOUND + 5)
     state = "loaded and idle" if loaded else "still loading"
     how = "stopped (daemon_stop)" if clean else "killed hard"
-    worker_text = f"gone {after:.1f} s later" if after is not None else f"still running {BUSY_BOUND + 30:.0f} s later"
+    worker_text = f"gone {after:.1f} s later" if after is not None else f"still running {GIVE_UP:.0f} s later"
     check(
         name,
         ok,

@@ -310,3 +310,61 @@ async def test_a_sentence_prepared_while_the_last_one_plays_is_not_synthesised_a
         assert len(played) == 2 and not played[1].exists()  # the prepared file is removed once spoken
         local_tts_worker.prepare_local_speech(SimpleNamespace(tts_engine="os_native", tts_voice=""), "Hi.")  # no-op
         await voice._shutdown_local_tts_worker()
+
+
+def test_the_daemon_gives_its_voice_worker_its_own_process_id_to_watch() -> None:
+    import os
+
+    from pilot.system import local_tts_worker
+
+    with patch.object(local_tts_worker.subprocess, "Popen") as spawn:
+        local_tts_worker._default_spawn("kokoro_tts", "cpu")
+    command = spawn.call_args.args[0]
+    assert command[command.index("--parent-pid") + 1] == str(os.getpid())
+    assert command[-3:] == ["--engine", "kokoro_tts", "--serve"]
+
+
+def test_a_voice_worker_whose_daemon_is_killed_ends_even_with_its_input_still_open(tmp_path: Path) -> None:
+    """The worker's stdin is held open by another process, as a worker busy loading never reads its end: only the
+    parent watch can end it, on every system."""
+    import subprocess
+    import sys
+    import time
+
+    import psutil
+
+    daemon = (
+        "import os, subprocess, sys, time\n"
+        "read, write = os.pipe()\n"
+        "os.set_inheritable(write, True)\n"
+        "holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'], close_fds=False)\n"
+        "worker = subprocess.Popen([sys.executable, '-m', 'pilot.system.local_tts_worker', '--device', 'cpu',"
+        " '--parent-pid', str(os.getpid()), '--engine', 'pocket_tts', '--serve'], stdin=read)\n"
+        "print(worker.pid, holder.pid, flush=True)\n"
+        "time.sleep(120)\n"
+    )
+    parent = subprocess.Popen([sys.executable, "-c", daemon], stdout=subprocess.PIPE, text=True)
+    worker_pid, holder_pid = (int(part) for part in parent.stdout.readline().split())
+    try:
+        time.sleep(1.5)  # the worker is up and watching
+        assert psutil.pid_exists(worker_pid)
+        parent.kill()
+        parent.wait(timeout=10)
+
+        def gone() -> bool:
+            try:
+                return psutil.Process(worker_pid).status() == psutil.STATUS_ZOMBIE
+            except psutil.NoSuchProcess:
+                return True
+
+        deadline = time.monotonic() + 30  # the watch looks every second; the rest is room for a slow machine
+        while time.monotonic() < deadline and not gone():
+            time.sleep(0.1)
+        assert gone(), "the voice worker outlived its daemon"
+    finally:
+        parent.stdout.close()
+        for pid in (worker_pid, holder_pid):
+            try:
+                psutil.Process(pid).kill()
+            except psutil.NoSuchProcess:
+                pass
