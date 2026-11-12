@@ -1,4 +1,4 @@
-"""A real full disk and a real read-only data folder under a running daemon (Linux CI runner, passwordless sudo).
+"""A real full disk and a real read-only data folder under a running daemon (CI runners: Linux, macOS, Windows).
 
 Heliox's data folder (XDG_DATA_HOME) is put on a file system made for the check, three times, each with a fresh
 daemon:
@@ -14,13 +14,19 @@ daemon:
    errors=remount-ro, and ext4's own ``trigger_fs_error`` makes the kernel remount it read-only, as it does when a
    drive fails. The note must be answered with the read-only sentence and the daemon must keep answering.
 
+The file system: Linux, a tmpfs (cases 1 and 2) and an ext4 image (case 3), with passwordless sudo. macOS, an HFS+
+disk image attached with hdiutil, made read-only and writable again with mount -u (sudo). Windows, a small VHD made,
+attached and mounted on an empty NTFS folder with diskpart (the runner is an administrator), made read-only and
+writable with diskpart's volume attributes. Cases 1 and 2 run on all three; case 3 (the kernel stopping a failing
+file system) on Linux only.
+
 Run with the environment's Python and a fresh HOME, from the repository root:
 
     python daemon/tests/platform_real/storage_faults_check.py
 
 What this cannot show: a disk filled slowly by other programs over days, real hardware failing, network or removable
 drives, recovery after a kernel remount (that needs the drive unmounted and checked, which a person does), the
-window drawing the sentence, and Windows or macOS (no tmpfs; their disk-full errors are covered by fakes).
+window drawing the sentence, and a failing drive on macOS and Windows.
 Prints CHECK lines; exit code 1 if one fails.
 Off a CI runner it changes nothing and exits with 3 (ci_only.py).
 """
@@ -38,10 +44,10 @@ from pathlib import Path
 
 from ci_only import require_runner
 
-require_runner("mounts file systems with sudo and makes the kernel remount one read-only")
+require_runner("mounts file systems (sudo, hdiutil or diskpart) and makes the kernel remount one read-only")
 
 HERE = Path(__file__).resolve().parent
-BASE = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "heliox-storage-check"
+BASE = Path(os.environ.get("RUNNER_TEMP") or "/tmp") / "heliox-storage-check"
 MOUNT = BASE / "data"
 IMAGE = BASE / "data.ext4"
 RECHECK = 30.0  # STORAGE_RECHECK_SECONDS in pilot.server
@@ -77,19 +83,93 @@ def ids() -> str:
     return f"uid={os.getuid()},gid={os.getgid()}"
 
 
+IS_MAC = sys.platform == "darwin"
+IS_WINDOWS = sys.platform == "win32"
+DMG = BASE / "data.dmg"
+VHD = BASE / "data.vhdx"
+
+
+def diskpart(*lines: str) -> str:
+    script = BASE / "diskpart.txt"
+    script.write_text("\n".join(lines) + "\n", encoding="ascii")
+    done = subprocess.run(["diskpart", "/s", str(script)], capture_output=True, text=True, timeout=180, check=False)
+    output = (done.stdout + done.stderr).strip()
+    if done.returncode != 0:
+        raise RuntimeError(f"diskpart failed ({done.returncode}): {output[-600:]}")
+    return output
+
+
 def mount_tmpfs(size: str, read_only: bool = False) -> None:
+    """A small file system of ``size`` ("16m", "48m") on MOUNT, read-only if asked: a tmpfs on Linux, an HFS+ disk
+    image on macOS, a VHD on Windows."""
     MOUNT.mkdir(parents=True, exist_ok=True)
-    sudo("mount", "-t", "tmpfs", "-o", f"size={size},mode=0700,{ids()}", "tmpfs", str(MOUNT))
+    megabytes = int(size.rstrip("m"))
+    if IS_MAC:
+        DMG.unlink(missing_ok=True)
+        subprocess.run(
+            ["hdiutil", "create", "-size", f"{megabytes}m", "-fs", "HFS+", "-volname", "HelioxData", "-layout", "NONE",
+             str(DMG)],
+            check=True, capture_output=True, timeout=120,
+        )  # fmt: skip
+        subprocess.run(
+            ["hdiutil", "attach", "-nobrowse", "-mountpoint", str(MOUNT), str(DMG)],
+            check=True, capture_output=True, timeout=120,
+        )  # fmt: skip
+    elif IS_WINDOWS:
+        VHD.unlink(missing_ok=True)
+        diskpart(
+            f'create vdisk file="{VHD}" maximum={max(megabytes, 16)} type=fixed',
+            f'select vdisk file="{VHD}"',
+            "attach vdisk",
+            "create partition primary",
+            "format fs=ntfs quick label=HelioxData",
+            f'assign mount="{MOUNT}"',
+        )
+    else:
+        sudo("mount", "-t", "tmpfs", "-o", f"size={size},mode=0700,{ids()}", "tmpfs", str(MOUNT))
     if read_only:
+        make_read_only()
+
+
+def make_read_only() -> None:
+    if IS_MAC:
+        sudo("mount", "-u", "-r", str(MOUNT))
+    elif IS_WINDOWS:
+        diskpart(f'select volume="{MOUNT}"', "attributes volume set readonly")
+    else:
         sudo("mount", "-o", "remount,ro", str(MOUNT))
 
 
+def make_writable() -> None:
+    if IS_MAC:
+        sudo("mount", "-u", "-w", str(MOUNT))
+    elif IS_WINDOWS:
+        diskpart(f'select volume="{MOUNT}"', "attributes volume clear readonly")
+    else:
+        sudo("mount", "-o", "remount,rw", str(MOUNT))
+
+
 def unmount() -> None:
-    with contextlib.suppress(RuntimeError):
-        sudo("umount", "-l", str(MOUNT))
+    with contextlib.suppress(RuntimeError, OSError, subprocess.SubprocessError):
+        if IS_MAC:
+            subprocess.run(["hdiutil", "detach", "-force", str(MOUNT)], capture_output=True, timeout=120, check=False)
+            DMG.unlink(missing_ok=True)
+        elif IS_WINDOWS:
+            diskpart(f'select vdisk file="{VHD}"', "detach vdisk")
+            VHD.unlink(missing_ok=True)
+        else:
+            sudo("umount", "-l", str(MOUNT))
 
 
 def options() -> str:
+    if IS_MAC:
+        done = subprocess.run(["mount"], capture_output=True, text=True, check=False)
+        return next((line for line in done.stdout.splitlines() if str(MOUNT) in line), "not mounted")
+    if IS_WINDOWS:
+        try:
+            return " | ".join(diskpart(f'select volume="{MOUNT}"', "attributes volume").splitlines()[-6:])
+        except RuntimeError as error:
+            return str(error)
     done = subprocess.run(["findmnt", "-no", "OPTIONS", str(MOUNT)], capture_output=True, text=True, check=False)
     return done.stdout.strip()
 
@@ -170,7 +250,7 @@ async def read_only_at_start() -> None:
             startup.get("state") == "waiting_for_storage" and READ_ONLY_WORDS in str(startup.get("reason")),
             f"startup state={startup.get('state')!r}, reason={startup.get('reason')!r}",
         )
-        sudo("mount", "-o", "remount,rw", str(MOUNT))
+        make_writable()
         began = time.monotonic()
         ready, status = await session.wait_ready(RECHECK + MARGIN + 60)
         took = time.monotonic() - began
@@ -308,10 +388,11 @@ async def remounted_read_only() -> None:
 
 
 async def run() -> int:
-    if not sys.platform.startswith("linux"):
-        print("CHECK storage/linux-only: FAIL - this check mounts file systems and runs on Linux only")
-        return 1
-    for case in (read_only_at_start, full_while_running, remounted_read_only):
+    cases = [read_only_at_start, full_while_running]
+    if sys.platform.startswith("linux"):
+        cases.append(remounted_read_only)  # the kernel stopping a failing ext4: Linux only
+    BASE.mkdir(parents=True, exist_ok=True)
+    for case in cases:
         print(f"INFO --- {case.__name__.replace('_', ' ')} ---", flush=True)
         try:
             await case()

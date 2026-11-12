@@ -1214,11 +1214,10 @@ jobs:
           mkdir -p "$HOME"
           python daemon/tests/platform_real/run_record_check.py
 
-      - name: A full disk and a read-only data folder (tmpfs and an ext4 image)
-        if: runner.os == 'Linux'
+      - name: A full disk and a read-only data folder (Linux tmpfs and ext4, a macOS disk image, a Windows VHD)
         continue-on-error: true
         run: |
-          export HOME="$RUNNER_TEMP/disk"
+          export HOME="$RUNNER_TEMP/disk" USERPROFILE="$RUNNER_TEMP/disk" LOCALAPPDATA="$RUNNER_TEMP/disk/AppData/Local"
           mkdir -p "$HOME"
           python daemon/tests/platform_real/storage_faults_check.py
 
