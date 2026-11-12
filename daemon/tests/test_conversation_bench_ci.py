@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -90,7 +91,9 @@ def test_the_workflow_is_manual_and_weekly_never_on_push_and_never_blocking():
     assert "push:" not in text and "pull_request" not in text
     assert "continue-on-error: true" in text
     assert "ci_prefetch" in text and "ci_timing" in text and "upload-artifact" in text
-    assert "real/" not in text  # no real recording is ever referenced
+    # No real recording is ever referenced: no path part that is exactly "real" (bench_audio/real/...). A folder
+    # whose name only ends in it (tests/platform_real/, where the machine checks live) is not a recording.
+    assert not re.search(r"(?<![A-Za-z0-9_])real/", text)
 
 
 # ── Settings compared inside one job ──
