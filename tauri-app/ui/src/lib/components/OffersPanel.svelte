@@ -31,10 +31,11 @@
     busy = true;
     try {
       const result = await action();
-      if (result.status === "ok") {
-        status = result;
+      if (result.status === "ok" && typeof result.mode === "string") {
+        // A daemon that answers without the list (an older one) must not break Settings.
+        status = { ...result, silenced: Array.isArray(result.silenced) ? result.silenced : [] };
         error = "";
-      } else {
+      } else if (result.status !== "ok") {
         error = result.message || "That did not work.";
       }
     } catch (err) {
