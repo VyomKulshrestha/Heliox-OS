@@ -13,7 +13,7 @@ import pytest
 
 from pilot.live import spoken
 from pilot.live.engine import LiveCompanion, Observation
-from pilot.live.held import Turns, hold_for, resolve, words_to_number
+from pilot.live.held import Turns, hold_for, is_answer, resolve, words_to_number
 
 TODAY = date(2026, 11, 12)  # a Thursday
 
@@ -61,6 +61,11 @@ def cards(events):
     [
         (
             "put the review in for Monday the 19th at 10.",
+            "The nineteenth is a Thursday. Monday the sixteenth, or Thursday the nineteenth?",
+        ),
+        (
+            # as the recogniser wrote it in the conversation bench's audio run (0db01d9): no full stop
+            "put the review in for Monday the 19th at 10",
             "The nineteenth is a Thursday. Monday the sixteenth, or Thursday the nineteenth?",
         ),
         (
@@ -247,3 +252,43 @@ async def test_the_bench_slips_four_of_four_and_the_colleague_case_silent(tmp_pa
     live.offer_speech("the invoice is due on the thirty first of November", addressed=False)  # said to a colleague
     await settle()
     assert len(cards(events)) == 4
+
+
+# ── a new request while a question is pending is not its answer ──
+
+
+@pytest.mark.parametrize(
+    "said",
+    ["Thursday", "the nineteenth please", "the second one", "never mind", "2,400", "two thousand four hundred",
+     "oh sorry, Thursday the nineteenth please", "make it Monday", "pizza"],
+)  # fmt: skip
+def test_answers_are_answers(said):
+    assert is_answer(said)
+
+
+@pytest.mark.parametrize(
+    "said",
+    ["put the review in for Monday the 19th at 10", "remind me to call the bank tomorrow",
+     "Hey Heliox, what's on my calendar", "send the deck to Sam on Thursday the nineteenth please and copy Ana"],
+)  # fmt: skip
+def test_a_new_request_is_not_an_answer(said):
+    assert not is_answer(said)
+
+
+@pytest.mark.asyncio
+async def test_the_bench_order_a_slip_then_another_request_naming_an_option(tmp_path):
+    """The audio run (0db01d9): the weekday slip was held, and the next scenario's request, which names "the 19th",
+    was taken as the answer, so the report reminder went on and the meeting got no card. Now the new request is its
+    own turn: the old question is dropped (nothing acts on it) and the new slip gets its own question."""
+    live, clock, events, said, _ = build(tmp_path)
+    first = live.hold("remind me on Tuesday the 19th to send the report.")
+    assert first.proceed is None
+    clock.t += 20  # the next scenario, well inside the 60 s a question waits
+    second = live.hold("put the review in for Monday the 19th at 10")
+    assert second is not None and second.proceed is None
+    assert second.say == "The nineteenth is a Thursday. Monday the sixteenth, or Thursday the nineteenth?"
+    await settle()
+    first_card, second_card = cards(events)
+    withdrawn = [p for e, p in events if e == "live_interjection_withdrawn"]
+    assert withdrawn == [{"id": first_card["id"], "reason": "expired"}]
+    assert live.hold("Thursday").proceed == "put the review in for Thursday 19 November at 10"

@@ -43,7 +43,7 @@ from pilot.live.detectors import (
     TextContext,
     detect,
 )
-from pilot.live.held import HOLD_SECONDS, Held, Turns, hold_for, resolve
+from pilot.live.held import HOLD_SECONDS, Held, Turns, hold_for, is_answer, resolve
 from pilot.live.policy import (
     DEFAULT_LEVEL,
     DROP,
@@ -700,6 +700,12 @@ class LiveCompanion:
         held = self._held
         if held is not None and now - held.at > HOLD_SECONDS:
             held = self._held = None
+        if held is not None and not is_answer(text):
+            # Something new, not an answer: the question is dropped (its request is not acted on) and the new turn is
+            # checked on its own.
+            self._held = None
+            asyncio.ensure_future(self._emit("live_interjection_withdrawn", {"id": held.card_id, "reason": "expired"}))
+            held = None
         if held is not None:
             answer = resolve(held, text)
             if answer.kind == "again":

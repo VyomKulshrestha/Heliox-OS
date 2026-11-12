@@ -249,6 +249,30 @@ class Resolution:
     request: str = ""
 
 
+ANSWER_MAX_WORDS = 8  # "oh sorry, Thursday the nineteenth please" is an answer; a whole new request is longer
+# How a new request starts, as opposed to an answer ("Thursday", "the second one", "make it 2,400").
+_REQUEST_START = re.compile(
+    r"^(?:hey heliox[,.]?\s*)?(?:please\s+)?(?:remind|put|book|schedule|send|email|add|create|open|move|call|text|"
+    r"message|start|write|tell|find|show|what|when|where|who|how|can you|could you|would you|will you)\b",
+    re.IGNORECASE,
+)
+
+
+def is_answer(text: str) -> bool:
+    """Whether a turn that comes while a question is pending answers it, or is something new.
+
+    A new request is never taken as the answer, even when it happens to name one of the options ("put the review in
+    for Monday the 19th at 10" while "Tuesday the seventeenth, or Thursday the nineteenth?" is pending): the person
+    moved on, and acting on the old request with a version they never chose would be the worse slip.
+    """
+    said = sp.to_written(text).strip()
+    if _CANCEL.match(said.casefold().strip(" .!?")):
+        return True
+    if len(re.findall(r"[\w'’,.-]+", said)) > ANSWER_MAX_WORDS:
+        return False
+    return not _REQUEST_START.match(said)
+
+
 def resolve(held: Held, answer: str) -> Resolution:
     """What the person's answer decides."""
     text = sp.to_written(answer).casefold().strip(" .!?")
@@ -495,6 +519,7 @@ __all__ = [
     "Resolution",
     "Turns",
     "amounts",
+    "is_answer",
     "hold_for",
     "impossible_hold",
     "resolve",
