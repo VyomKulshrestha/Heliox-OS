@@ -4,15 +4,22 @@
 
   let error = $state("");
   let saving = $state(false);
+  // Settings may not have loaded yet, or may come back without a memory section: the default (on) applies.
   const on = $derived(
-    (($settings as unknown as { memory?: { passing_notes?: boolean } }).memory?.passing_notes ?? true) !== false,
+    (($settings as unknown as { memory?: { passing_notes?: boolean } } | null)?.memory?.passing_notes ?? true) !==
+      false,
   );
 
   async function toggle(value: boolean) {
     saving = true;
-    const result = await settings.updateSectionDetailed("memory", { passing_notes: value });
-    saving = false;
-    error = result.ok ? "" : result.message;
+    try {
+      const result = await settings.updateSectionDetailed("memory", { passing_notes: value });
+      error = result?.ok ? "" : result?.message || "The setting was not saved.";
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Heliox is not connected, so the setting was not saved.";
+    } finally {
+      saving = false;
+    }
   }
 </script>
 
