@@ -1526,35 +1526,13 @@ class PilotServer:
         # Neural input owns a separate signing/session authority. Its fixed
         # goals still converge on the same Executor, Agent Gateway, world
         # model, permissions, validator, and audit path as other actions.
-        from pilot import config as config_module
         from pilot.multimodal.fusion import MultimodalFusionEngine
-        from pilot.neural.audit import NeuralAuditStore
-        from pilot.neural.controller import NeuralController
-        from pilot.neural.gate import NeuralIntentGate, NeuralIntentSigner
-        from pilot.neural.goals import NeuralGoalRegistry
 
-        neural_goals = NeuralGoalRegistry()
         self._fusion = MultimodalFusionEngine()
         self._fusion.set_broadcast(self._broadcast_notification)
-        neural_signer = NeuralIntentSigner(derive_neural_signing_key(self._neural_auth_token))
-        neural_gate = NeuralIntentGate(
-            signer=neural_signer,
-            safe_goals={command_id: command_id for command_id in neural_goals.command_ids},
-        )
-        neural_audit = NeuralAuditStore(
-            config_module.DATA_DIR / "neural_intent_audit.db",
-            config_module.DATA_DIR / "neural_intent_audit.key",
-        )
-        await neural_audit.initialize()
-        self._neural_controller = NeuralController(
-            config=self.config,
-            gate=neural_gate,
-            executor=self._executor,
-            goals=neural_goals,
-            broadcast=self._broadcast_notification,
-            audit_store=neural_audit,
-            fusion_snapshot=self._fusion.context_snapshot,
-        )
+        # Neural input starts after ready (pilot.system.late_start): pilot.neural brings in about 1,250 modules (its
+        # decoder's numerical stack), and no first request needs it. Its RPCs say so meanwhile.
+        self._late_parts().set_start("neural", self._start_neural_input)
 
         # Advanced agent components
         self._reflector = Reflector(model_router, memory_store=self._memory)
@@ -1830,8 +1808,7 @@ class PilotServer:
             self._autonomous.set_broadcast(self._autonomous_broadcast)
             self._autonomous.set_speech(self._speak_companion_text)
             self._autonomous.set_approval_handler(self._wait_for_autonomous_confirmation)
-            if self._neural_controller is not None:
-                self._neural_controller.set_task_dispatcher(self._dispatch_neural_staged_task)
+            # Neural input starts after ready and connects its staged tasks to this executor then.
             logger.info("AutonomousExecutor initialized")
         except Exception:
             logger.warning("AutonomousExecutor init failed (non-critical)", exc_info=True)
@@ -10714,6 +10691,39 @@ class PilotServer:
         logger.info("Stopping on request (%s)", reason or "no reason given")
         asyncio.get_running_loop().call_later(0.2, self.stop_requested.set)
         return {"status": "ok", "message": "Heliox's background service is stopping."}
+
+    async def _start_neural_input(self) -> None:
+        """Neural input owns a separate signing/session authority. Its fixed goals still converge on the same
+        Executor, Agent Gateway, world model, permissions, validator, and audit path as other actions."""
+        from pilot import config as config_module
+        from pilot.neural.audit import NeuralAuditStore
+        from pilot.neural.controller import NeuralController
+        from pilot.neural.gate import NeuralIntentGate, NeuralIntentSigner
+        from pilot.neural.goals import NeuralGoalRegistry
+
+        neural_goals = NeuralGoalRegistry()
+        neural_signer = NeuralIntentSigner(derive_neural_signing_key(self._neural_auth_token))
+        neural_gate = NeuralIntentGate(
+            signer=neural_signer,
+            safe_goals={command_id: command_id for command_id in neural_goals.command_ids},
+        )
+        neural_audit = NeuralAuditStore(
+            config_module.DATA_DIR / "neural_intent_audit.db",
+            config_module.DATA_DIR / "neural_intent_audit.key",
+        )
+        await neural_audit.initialize()
+        controller = NeuralController(
+            config=self.config,
+            gate=neural_gate,
+            executor=self._executor,
+            goals=neural_goals,
+            broadcast=self._broadcast_notification,
+            audit_store=neural_audit,
+            fusion_snapshot=self._fusion.context_snapshot if self._fusion is not None else None,
+        )
+        if self._autonomous is not None:
+            controller.set_task_dispatcher(self._dispatch_neural_staged_task)
+        self._neural_controller = controller
 
     def _late_parts(self) -> Any:
         """The parts that start after ready (pilot.system.late_start), made on first use."""

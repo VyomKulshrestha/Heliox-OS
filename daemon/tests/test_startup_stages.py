@@ -48,6 +48,11 @@ def test_no_stage_before_ready_reads_the_experience_ledger_or_starts_the_late_pa
         "self._subconscious.start",
         "self._screen_vision.start",
         "self._proactive.start",
+        "neural_audit.initialize",
     ):
         assert not any(call.startswith(late) for call in awaited), late
     assert not any("list_events" in call for call in awaited)
+    imports = [module for stage in startup_stages.stages() for module in stage.imports]
+    # Neither the learner's model library nor neural input's numerical stack is imported before ready.
+    assert "pilot.intelligence.online_learning" not in imports
+    assert not any(module.startswith("pilot.neural") for module in imports)
