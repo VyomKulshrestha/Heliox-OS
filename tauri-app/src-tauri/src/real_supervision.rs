@@ -25,14 +25,33 @@ daemon = subprocess.Popen([sys.executable, "-m", "pilot.server"])
 with open(control / "daemons.txt", "a", encoding="utf-8") as pids:
     pids.write(f"{daemon.pid}\n")
 order = control / "order"
+
+
+def tree():
+    """The daemon and everything under it: on Windows a virtual environment's python.exe is a launcher, and the
+    interpreter that serves is its child, so freezing the launcher alone froze nothing that answers."""
+    try:
+        root = psutil.Process(daemon.pid)
+        return [root, *root.children(recursive=True)]
+    except psutil.Error:
+        return []
+
+
+seen = set()
 while daemon.poll() is None:
+    new = [process.pid for process in tree()[1:] if process.pid not in seen]
+    if new:
+        seen.update(new)
+        with open(control / "children.txt", "a", encoding="utf-8") as pids:  # for the clean-up, whatever happens
+            pids.write("".join(f"{pid}\n" for pid in new))
     if order.exists():
         what = order.read_text(encoding="utf-8").strip()
         order.unlink()
         if what == "crash":
             daemon.kill()
         elif what == "freeze":
-            psutil.Process(daemon.pid).suspend()
+            for process in tree():
+                process.suspend()
     time.sleep(0.1)
 sys.exit(daemon.returncode or 70)
 "#;
@@ -180,7 +199,8 @@ fn end_everything(host: &CheckHost) {
             let _ = child.wait();
         }
     }
-    let pids = std::fs::read_to_string(host.control.join("daemons.txt")).unwrap_or_default();
+    let pids = std::fs::read_to_string(host.control.join("daemons.txt")).unwrap_or_default()
+        + &std::fs::read_to_string(host.control.join("children.txt")).unwrap_or_default();
     let mut system = sysinfo::System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     for pid in pids

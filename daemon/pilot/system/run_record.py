@@ -1,4 +1,5 @@
-"""Whether the daemon's last run ended cleanly, kept as one small file in the data folder (``run_state.json``).
+"""Whether the daemon's last run ended cleanly, kept as one small file in the state folder (``run_state.json``,
+beside the log): it is Heliox's own state, not the person's data, and changes on every start and stop.
 
 At start (after the port is claimed and the data folder checked) the daemon reads what the last run left and writes a
 marker for this one: its process id, version and start time. A clean end marks it so: stop() (a signal, daemon_stop,
@@ -56,8 +57,12 @@ class RunRecord:
         clock: Callable[[], float] = time.time,
         boot_time: Callable[[], float | None] = _boot_time,
         previous_exit: str | None = None,
+        legacy: Path | None = None,
     ) -> None:
         self._path = Path(path)
+        # Where versions before 13 November 2026 kept it (the data folder): read once if there is no record in
+        # the state folder yet, then removed, so an unclean end just before an update is still said.
+        self._legacy = Path(legacy) if legacy is not None else None
         self._version = version
         self._pid = os.getpid() if pid is None else pid
         self._clock = clock
@@ -107,8 +112,11 @@ class RunRecord:
         return self.last_run
 
     def _read(self) -> tuple[dict[str, Any] | None, bool]:
+        source = self._path
+        if not source.exists() and self._legacy is not None and self._legacy.exists():
+            source = self._legacy
         try:
-            text = self._path.read_text(encoding="utf-8")
+            text = source.read_text(encoding="utf-8")
         except FileNotFoundError:
             return None, True
         except OSError:
@@ -153,12 +161,18 @@ class RunRecord:
 
     def _write(self, data: dict[str, Any]) -> bool:
         try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self._path.with_name(self._path.name + ".tmp")
             temporary.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
             os.replace(temporary, self._path)
-            return True
         except OSError:
             return False
+        if self._legacy is not None:
+            try:
+                self._legacy.unlink(missing_ok=True)  # read once above; the state folder holds it from now on
+            except OSError:
+                pass
+        return True
 
     # ── end ──
 

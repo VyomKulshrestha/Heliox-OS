@@ -10571,7 +10571,7 @@ class PilotServer:
         """Read whether the last run ended cleanly and mark this one as running (pilot.system.run_record)."""
         from pilot.system.run_record import FILE_NAME, RunRecord
 
-        record = RunRecord(DATA_DIR / FILE_NAME, version=__version__)
+        record = RunRecord(STATE_DIR / FILE_NAME, version=__version__, legacy=DATA_DIR / FILE_NAME)
         self._run_record = record
         replaced = self.__dict__.get("_replaced_pid")  # main(): --replace-pid, an update replacing the old copy
         await asyncio.to_thread(record.begin, folder_writable=folder_writable, replaced_pid=replaced)

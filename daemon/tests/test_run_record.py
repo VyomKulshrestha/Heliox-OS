@@ -131,13 +131,18 @@ def test_a_failure_inside_never_reaches_the_start(tmp_path, monkeypatch):
     assert run.begin() is None
 
 
-async def test_the_server_marks_its_run_and_says_the_last_one_in_its_status(tmp_path, monkeypatch):
+async def test_the_server_keeps_its_run_record_in_the_state_folder_and_says_the_last_one(tmp_path, monkeypatch):
+    """State, not the person's data: beside the log, so a repair or "keep my data" never counts it as theirs. A record
+    an earlier version left in the data folder is read once and removed."""
     from pilot.config import PilotConfig
     from pilot.server import PilotServer
     from pilot.system import run_record
 
-    monkeypatch.setattr("pilot.server.DATA_DIR", tmp_path)
-    (tmp_path / run_record.FILE_NAME).write_text(
+    data, state = tmp_path / "data", tmp_path / "state"
+    data.mkdir()
+    monkeypatch.setattr("pilot.server.DATA_DIR", data)
+    monkeypatch.setattr("pilot.server.STATE_DIR", state)
+    (data / run_record.FILE_NAME).write_text(
         json.dumps({"pid": 1, "version": "0.15.0", "started_at": time.time() - 1, "ended": None, "history": []}),
         encoding="utf-8",
     )
@@ -146,5 +151,23 @@ async def test_the_server_marks_its_run_and_says_the_last_one_in_its_status(tmp_
 
     health = await server._handle_health({}, None)
     assert health["last_run"]["ended"] == "did not end cleanly" and health["last_run"]["version"] == "0.15.0"
+    assert not (data / run_record.FILE_NAME).exists()  # the data folder holds nothing of it now
     server._run_record.end_cleanly("stopped")
-    assert json.loads((tmp_path / run_record.FILE_NAME).read_text(encoding="utf-8"))["ended"] == "clean"
+    assert json.loads((state / run_record.FILE_NAME).read_text(encoding="utf-8"))["ended"] == "clean"
+    assert sorted(path.name for path in data.iterdir()) == []
+
+
+def test_a_record_in_the_state_folder_wins_over_an_old_one_in_the_data_folder(tmp_path):
+    old, new = tmp_path / "data" / "run_state.json", tmp_path / "state" / "run_state.json"
+    old.parent.mkdir()
+    new.parent.mkdir()
+    old.write_text(json.dumps({"pid": 1, "started_at": START, "ended": None}), encoding="utf-8")
+    new.write_text(json.dumps({"pid": 2, "started_at": START, "ended": "clean"}), encoding="utf-8")
+
+    assert (
+        RunRecord(
+            new, version="x", clock=lambda: START + 9, boot_time=lambda: 0.0, previous_exit="", legacy=old
+        ).begin()
+        is None
+    )
+    assert not old.exists()

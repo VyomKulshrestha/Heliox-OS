@@ -1234,8 +1234,8 @@ Whether Heliox has finished starting, and what it is doing meanwhile, in plain w
 **Params:** `{}`
 **Result:** `{ "status": "ok", "state": "starting" | "waiting_for_storage" | "ready" | "failed", "stage": "opening Heliox's records", "reason": "", "stages_done": ["checking the data folder", ...] }`
 
-`last_run` appears only when Heliox's last run did not end cleanly (`pilot.system.run_record`, the data folder's
-`run_state.json`):
+`last_run` appears only when Heliox's last run did not end cleanly (`pilot.system.run_record`, `run_state.json`
+in the state folder beside the log; versions before 13 November 2026 kept it in the data folder, read once):
 
 ```json
 "last_run": {

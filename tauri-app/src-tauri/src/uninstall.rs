@@ -264,7 +264,7 @@ pub fn locations(dirs: &SystemDirs) -> Vec<Place> {
         Data,
         Folder,
     ));
-    out.push(place(state, "Logs", App, Folder));
+    out.push(place(state, "Logs and the run record", App, Folder));
     // "heliox" under .cache and ".heliox": Heliox's name (cognitive caches, persona, plugins, quarantine).
     out.push(place(
         home.join(".cache").join("heliox"),
