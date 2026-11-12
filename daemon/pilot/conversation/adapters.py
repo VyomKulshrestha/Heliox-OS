@@ -220,6 +220,28 @@ def _not_understood(server: Any) -> None:
         listener.note_not_understood()
 
 
+async def offer_to_live(server: Any, text: str) -> Any:
+    """Offer an addressed turn to Heliox Live before any road takes it (pilot.personal.wiring.live_hold). None: go on
+    with the words as they are. Otherwise ``say`` is said now and ``proceed`` is the request to go on with, or None.
+
+    A held turn runs nothing: Live's one short question ends in "?", so the follow-up window opens as for any
+    question Heliox asks, and the person's answer comes back through here as the next turn. Never raises.
+    """
+    from pilot.personal.wiring import live_hold
+
+    return await live_hold(server, text)
+
+
+def drop_live_hold(server: Any) -> None:
+    """A new conversation: Live forgets a question it was waiting on and the turns it compared against."""
+    drop = getattr(getattr(server, "_live", None), "drop_held", None)
+    if callable(drop):
+        try:
+            drop()
+        except Exception:
+            logger.debug("Live could not drop its held turn", exc_info=True)
+
+
 def layer_for(server: Any) -> Any:
     """The server's conversation layer, built on first use from what the server already has."""
     existing = getattr(server, "_conversation", None)

@@ -24,6 +24,7 @@ import json
 import re
 import sys
 import tempfile
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -34,8 +35,6 @@ KINDS = ("claude", "openai", "local", "none")
 NOW = datetime(2026, 11, 12, 9, 0)  # a Thursday
 WORDS_PER_SECOND = 2.5
 DEFAULT_GAP = 1.0
-TURN_WAIT_SECONDS = 4.0  # real time a dispatch may take before it is taken to be waiting (an approval)
-APPROVAL_SENTENCE_WAIT_SECONDS = 5.0  # for the spoken request for approval to be recorded in its own turn
 REPLY_WORD_LIMIT = 25
 DEFAULT_OUTPUTS = {
     "battery_info": "=== Battery ===\n  Charge: 80%\n  Status: Charging",
@@ -85,12 +84,27 @@ class Record:
     taken: dict[int, str] = field(default_factory=dict)  # turn -> why it was taken
     not_taken: dict[int, str] = field(default_factory=dict)
     model_calls: dict[int, int] = field(default_factory=dict)
+    withdrawals: dict[int, str] = field(default_factory=dict)  # a continuation turn -> what the server said to it
+    ended: dict[int, float] = field(default_factory=dict)  # when the person stopped talking, per taken turn
+    tasks: dict[int, set[Any]] = field(default_factory=dict)  # every asyncio task a turn spawned, by that turn
     seq: int = 0
     turn: int = -1
 
     def next(self) -> int:
         self.seq += 1
         return self.seq
+
+
+# The turn a piece of work belongs to. Set in the turn's dispatch task; asyncio copies it into every task that one
+# spawns (speech said later, Live's end-of-turn delivery, an acknowledgement), so what is said or shown is the turn's
+# by origin, not by when it happens to run. -1: outside any turn.
+SESSION_TURN: ContextVar[int] = ContextVar("session_turn", default=-1)
+SETTLE_SECONDS = 8.0  # real time a turn's own tasks may take to finish (a delayed acknowledgement waits 2.5 s)
+
+
+def _turn_of(record: Record) -> int:
+    turn = SESSION_TURN.get()
+    return turn if turn >= 0 else record.turn
 
 
 class Clock:
@@ -157,7 +171,13 @@ class Speaker:
 
         resolved = SpeechChannel(str(channel))
         self.record.said.append(
-            Said(self.record.next(), self.record.turn, text.strip(), resolved.value, self.listener.user_is_speaking)
+            Said(
+                self.record.next(),
+                _turn_of(self.record),
+                text.strip(),
+                resolved.value,
+                self.listener.user_is_speaking,
+            )
         )
         self.clock.t += max(0.4, len(text.split()) / WORDS_PER_SECOND)
         return SpeechOutcome("spoken", resolved, "")
@@ -201,8 +221,9 @@ def fast_model(kind: str, replies: dict[str, Any], record: Record) -> Any:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/count_tokens"):
             return httpx.Response(200, json={"input_tokens": 1})
-        record.model_calls[record.turn] = record.model_calls.get(record.turn, 0) + 1
-        reply = replies.get(record.turn)
+        turn = _turn_of(record)
+        record.model_calls[turn] = record.model_calls.get(turn, 0) + 1
+        reply = replies.get(turn)
         text = reply if isinstance(reply, str) else "Okay."
         return httpx.Response(200, content=_wire(provider, text), headers={"content-type": "text/event-stream"})
 
@@ -261,7 +282,7 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     server._speech_coordinator = Speaker(record, clock, listener)
 
     async def broadcast(method: str, params: Any = None) -> None:
-        record.shown.append(Shown(record.next(), record.turn, method, dict(params or {})))
+        record.shown.append(Shown(record.next(), _turn_of(record), method, dict(params or {})))
 
     server._broadcast_notification = broadcast
     server._model_router = object()  # the model stack is up (the layer is on); which model is the kind's own
@@ -297,7 +318,7 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
         results = []
         for action in run_plan.actions:
             kind_of = action.action_type.value
-            record.ran.append(Ran(record.turn, kind_of, str(action.target or "")))
+            record.ran.append(Ran(_turn_of(record), kind_of, str(action.target or "")))
             results.append(ActionResult(action=action, success=True, output=outputs.get(kind_of, "Done")))
         return results
 
@@ -357,6 +378,7 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     model = fast_model(kind, {i: t.get("model") for i, t in enumerate(session["turns"])}, record)
     layer._model = lambda: model
     layer._prepare = lambda text: None  # no speech synthesis is prepared: there is no voice here, and no audio
+    server._voice_turns._clock = clock  # the withdraw window runs on the session's clock
     return server
 
 
@@ -369,17 +391,22 @@ def _words(text: str) -> int:
 
 async def run_session(session: dict[str, Any], kind: str) -> tuple[Record, list[str]]:
     from pilot.system.addressing import Heard
-    from pilot.system.voice import voice_turn_addressed
+    from pilot.system.voice import voice_turn_addressed, voice_turn_id
 
     record = Record()
     clock = Clock()
     with tempfile.TemporaryDirectory(prefix="heliox-session-") as tmp:
         folder = Path(tmp)
-        patches = _isolate(folder)
+        patches = [*_isolate(folder), _track_tasks(record)]
         try:
             server = await build_server(kind, session, folder, record, clock)
             listener: Listener = server._voice_listener
             pending: list[asyncio.Task[Any]] = []
+
+            def winding_down() -> bool:
+                """A task is ending (stopped or denied by this turn) and has not yet given the floor back."""
+                return bool(server._interactive_request_active and not server._pending_confirms)
+
             for index, turn in enumerate(session["turns"]):
                 record.turn = index
                 event = turn.get("event")
@@ -394,9 +421,60 @@ async def run_session(session: dict[str, Any], kind: str) -> tuple[Record, list[
                 if server._last_spoken_at != float("-inf"):
                     server._last_spoken_at -= gap  # the server's own clock is real; age what it last said instead
                 text = turn["say"]
+                if turn.get("continues"):
+                    # The listener heard the rest of a sentence it had ended at a pause: it asks the server to
+                    # withdraw the first half's dispatch for the joined sentence, and dispatches the rest alone
+                    # when that is too late or unknown (pilot.system.voice, ContinuousVoiceListener._withdraw).
+                    first = index - 1
+                    joined = f"{session['turns'][first]['say'].rstrip(' ,.')} {text.lstrip()}"
+                    joined = joined.removeprefix("Hey Heliox, ").removeprefix("Hey Heliox ")
+                    record.taken[index] = "continuation"
+                    asked_before = set(server._pending_confirms)
+                    # The listener joins only words that start within seconds of the end of the person's own turn:
+                    # the gap counts from there, while Heliox, if it had begun to answer, yields at once.
+                    after_first = clock.t
+                    clock.t = record.ended.get(first, clock.t) + gap
+                    token = SESSION_TURN.set(index)
+                    try:
+                        result = await server.withdraw_voice_turn(f"v{first}", joined)
+                    finally:
+                        SESSION_TURN.reset(token)
+                    clock.t = max(clock.t, after_first)
+                    record.withdrawals[index] = result.status
+                    if result.status != "withdrawn":
+
+                        async def rest(words: str = text, turn_index: int = index) -> None:
+                            SESSION_TURN.set(turn_index)
+                            voice_turn_addressed.set("follow_up")
+                            voice_turn_id.set(f"v{turn_index}")
+                            await server._voice_command_dispatch(words.strip(" \t,.:;!?-"))
+
+                        token = SESSION_TURN.set(index)
+                        try:
+                            task = asyncio.ensure_future(rest())
+                        finally:
+                            SESSION_TURN.reset(token)
+                        await _settle(
+                            record,
+                            index,
+                            task,
+                            lambda before=asked_before: set(server._pending_confirms) - before,
+                            winding_down,
+                        )
+                        (task.result() if task.done() else pending.append(task))
+                    else:
+                        await _settle(
+                            record,
+                            index,
+                            None,
+                            lambda before=asked_before: set(server._pending_confirms) - before,
+                            winding_down,
+                        )
+                    continue
                 voiced = float(turn.get("voiced", max(0.6, _words(text) / WORDS_PER_SECOND)))
                 started = clock.t
                 clock.t += voiced
+                record.ended[index] = clock.t
                 listener.addressing.task_open = bool(server._interactive_request_active or server._pending_confirms)
                 decision = listener.addressing.decide(
                     Heard(
@@ -422,31 +500,29 @@ async def run_session(session: dict[str, Any], kind: str) -> tuple[Record, list[
                 command = decision.command if decision.act else text.strip(" \t,.:;!?-")
                 listener.user_is_speaking = bool(turn.get("still_talking"))
 
-                async def dispatch(words: str = command, how: str = addressed) -> None:
+                async def dispatch(words: str = command, how: str = addressed, turn_index: int = index) -> None:
+                    SESSION_TURN.set(turn_index)
                     voice_turn_addressed.set(how)
+                    voice_turn_id.set(f"v{turn_index}")  # the listener numbers its dispatches the same way
                     await server._voice_command_dispatch(words)
 
-                said_before = len(record.said)
-                task = asyncio.ensure_future(dispatch())
-                waited = 0.0
                 asked_before = set(server._pending_confirms)
-                while not task.done() and waited < TURN_WAIT_SECONDS:
-                    if set(server._pending_confirms) - asked_before:
-                        break  # waiting on the visible approval dialog, which nobody presses here
-                    await asyncio.sleep(0.02)
-                    waited += 0.02
+                token = SESSION_TURN.set(index)
+                try:
+                    task = asyncio.ensure_future(dispatch())
+                finally:
+                    SESSION_TURN.reset(token)
+                await _settle(
+                    record,
+                    index,
+                    task,
+                    lambda before=asked_before: set(server._pending_confirms) - before,
+                    winding_down,
+                )
                 if task.done():
                     task.result()
                 else:
-                    pending.append(task)
-                    # The sentence that asks for the approval is spoken by a task of its own. On a slow machine it
-                    # had not run by the time the next turn began and was counted there (Windows CI, 12 November:
-                    # "33 words said" in the turn after). Wait until this turn has said something, within a bound.
-                    waited = 0.0
-                    while len(record.said) == said_before and waited < APPROVAL_SENTENCE_WAIT_SECONDS:
-                        await asyncio.sleep(0.02)
-                        waited += 0.02
-                await asyncio.sleep(0.05)  # Live's end-of-turn delivery and spawned speech get their turn
+                    pending.append(task)  # waiting on the visible approval dialog, which nobody presses here
             record.turn = len(session["turns"])
             for task in pending:
                 task.cancel()
@@ -456,6 +532,38 @@ async def run_session(session: dict[str, Any], kind: str) -> tuple[Record, list[
             for undo in patches:
                 undo()
     return record, check_session(session, kind, record)
+
+
+async def _settle(record: Record, index: int, dispatch: Any, asked: Any, winding_down: Any = lambda: False) -> None:
+    """Wait until everything turn ``index`` set going has finished, or is waiting on the approval dialog after
+    saying so, and no earlier task this turn ended is still winding down. Decided by the turns' own tasks and the
+    server's state, never by a fixed sleep."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + SETTLE_SECONDS
+    while loop.time() < deadline:
+        running = {task for task in record.tasks.get(index, set()) if not task.done()}
+        if not running and not winding_down():
+            return
+        if asked() and any(s.turn == index and "approv" in s.text.casefold() for s in record.said):
+            return  # the plan waits for the person's click; the rest of this turn waits with it
+        await asyncio.sleep(0.005)
+
+
+def _track_tasks(record: Record) -> Any:
+    """Record every task by the turn it was created in (the context it starts with); gives back how to undo it."""
+    loop = asyncio.get_running_loop()
+    before = loop.get_task_factory()
+
+    def factory(loop: Any, coro: Any, **kwargs: Any) -> Any:
+        task = before(loop, coro, **kwargs) if before is not None else asyncio.Task(coro, loop=loop, **kwargs)
+        context = kwargs.get("context")
+        turn = context.get(SESSION_TURN, -1) if context is not None else SESSION_TURN.get()
+        if turn >= 0:
+            record.tasks.setdefault(turn, set()).add(task)
+        return task
+
+    loop.set_task_factory(factory)
+    return lambda: loop.set_task_factory(before)
 
 
 def _isolate(folder: Path) -> list[Any]:
@@ -524,12 +632,26 @@ def check_session(session: dict[str, Any], kind: str, record: Record) -> list[st
         asked = any(s.method == "confirm_required" and s.turn == index for s in record.shown)
         if "approval" in expect and asked != expect["approval"]:
             failures.append(f"{where}: approval {'asked' if asked else 'not asked'}; expected the opposite")
+        if "withdrawal" in expect and record.withdrawals.get(index) != expect["withdrawal"]:
+            failures.append(
+                f"{where}: the first half was {record.withdrawals.get(index, 'not asked')}; "
+                f"expected {expect['withdrawal']}"
+            )
         if "model" in expect:
             called = record.model_calls.get(index, 0) > 0
             if called != expect["model"]:
                 failures.append(f"{where}: the model was {'called' if called else 'not called'}; expected the opposite")
         if not turn.get("detail") and _words(heard) > REPLY_WORD_LIMIT:
             failures.append(f"{where}: {_words(heard)} words said without being asked for detail: {heard!r}")
+    everything = [line.text.casefold() for line in record.said]
+    for phrase in session.get("said_once", []):
+        times = sum(phrase.casefold() in line for line in everything)
+        if times != 1:
+            failures.append(f"session: {phrase!r} said {times} times; expected once")
+    for action, times in session.get("runs_count", {}).items():
+        ran = sum(r.action_type == action for r in record.ran)
+        if ran != times:
+            failures.append(f"session: {action} ran {ran} times; expected {times}")
     for action in session.get("never_runs", []):
         ran = [r for r in record.ran if r.action_type == action]
         if ran:
@@ -542,12 +664,19 @@ def check_session(session: dict[str, Any], kind: str, record: Record) -> list[st
         if previous is not None and line.text == previous.text and STOCK.match(line.text) and not repeat_ok:
             failures.append(f"turn {line.turn + 1}: the stock phrase {line.text!r} said twice running")
         previous = line
-    order = [(item.seq, item.turn) for item in [*record.said, *record.shown]]
-    order.sort()
-    turns = [turn for _, turn in order]
-    if turns != sorted(turns):
-        late = next(i for i in range(1, len(turns)) if turns[i] < turns[i - 1])
-        failures.append(f"output order: something from turn {turns[late] + 1} came after turn {turns[late - 1] + 1}")
+    # Spoken: once a later turn has been answered aloud, an earlier turn says nothing more (the person would hear
+    # the end of an old request after the answer to a new one). Shown: each turn's items keep their own order. A
+    # turn's work is the turn's by its id (SESSION_TURN), so a task that ends during a later turn stays its own.
+    latest = -1
+    for line in sorted(record.said, key=lambda item: item.seq):
+        if line.turn < latest:
+            failures.append(f"output order: turn {line.turn + 1} spoke after turn {latest + 1}: {line.text!r}")
+            break
+        latest = max(latest, line.turn)
+    for turn in {item.turn for item in record.shown}:
+        seqs = [item.seq for item in record.shown if item.turn == turn]
+        if seqs != sorted(seqs):
+            failures.append(f"output order: turn {turn + 1}'s screen updates came out of order")
     return failures
 
 

@@ -151,10 +151,13 @@ class TurnResult:
     _layer: Any = None
     _company: asyncio.Task[None] | None = None
 
-    def keep_company(self) -> asyncio.Task[None]:
-        """Start the acknowledgement and progress speech; the server cancels it when the planner returns."""
+    def keep_company(self, *, acknowledge: bool = True) -> asyncio.Task[None]:
+        """Start the acknowledgement and progress speech; the server cancels it when the planner returns.
+
+        ``acknowledge=False``: the acknowledgement was already said for this request (the first half of a sentence
+        split at a pause); progress and the approval pointer are said as usual."""
         assert self._layer is not None and self.intent is not None
-        self._company = self._layer._start_company(self)
+        self._company = self._layer._start_company(self, acknowledge=acknowledge)
         return self._company
 
     def execute_params(self) -> dict[str, Any]:
@@ -715,8 +718,12 @@ class ConversationLayer:
         )
         return ack or "Working on it."
 
-    def _start_company(self, result: TurnResult) -> asyncio.Task[None]:
+    def _start_company(self, result: TurnResult, *, acknowledge: bool = True) -> asyncio.Task[None]:
         assert result.intent is not None
+        if not acknowledge:
+            return asyncio.ensure_future(
+                keep_company(acknowledgement_text="", speak=self._sink, status=self._task_status)
+            )
         ack = (quick_acknowledgement(result.quick, result.intent.words) if result.quick is not None else "") or (
             acknowledgement(result.intent, last=self._last_ack) if result.intent.verb or result.intent.say else ""
         )

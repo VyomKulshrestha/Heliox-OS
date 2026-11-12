@@ -535,11 +535,14 @@
      "gap": 1.5,
      "expect": {
       "taken": true,
-      "runs_nothing": true
+      "runs_nothing": true,
+      "not": [
+       "Cancelled before execution"
+      ]
      },
      "expect_model": {
       "has": [
-       "won't run"
+       "dropped"
       ]
      }
     },
@@ -1275,7 +1278,10 @@
       "taken": true,
       "runs_nothing": true,
       "has": [
-       "undo"
+       "dropped|undo"
+      ],
+      "not": [
+       "stopped before planning"
       ]
      }
     },
@@ -1305,6 +1311,263 @@
       "has": [
        "undo"
       ],
+      "runs_nothing": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "slips said to Heliox, held and answered",
+   "turns": [
+    {
+     "say": "Hey Heliox, remind me on Tuesday the nineteenth to send the report.",
+     "expect": {
+      "taken": true,
+      "has": [
+       "thursday"
+      ],
+      "runs_nothing": true,
+      "model": false
+     }
+    },
+    {
+     "say": "Thursday.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "has": [
+       "remind"
+      ],
+      "runs_nothing": true,
+      "model": false
+     }
+    },
+    {
+     "say": "Hey Heliox, put the review in for Monday the nineteenth at ten.",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "thursday|monday"
+      ],
+      "runs_nothing": true,
+      "model": false
+     }
+    },
+    {
+     "say": "Never mind.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true,
+      "model": false,
+      "not": [
+       "language model"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, remind me that the invoice is due on the thirty-first of November.",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "november"
+      ],
+      "runs_nothing": true,
+      "model": false
+     }
+    },
+    {
+     "say": "What time is it?",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true,
+      "model": false
+     }
+    },
+    {
+     "say": "Never mind that.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true,
+      "model": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "an amount said twice",
+   "plans": {
+    "invoice": [
+     {
+      "action_type": "file_list",
+      "target": "C:/Users/me/Documents",
+      "parameters": {
+       "path": "C:/Users/me/Documents"
+      }
+     }
+    ]
+   },
+   "turns": [
+    {
+     "say": "Hey Heliox, the invoice for Acme is two thousand four hundred.",
+     "model": "Noted.",
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     }
+    },
+    {
+     "say": "Hey Heliox, email the Acme invoice for four thousand two hundred.",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "2,400|two thousand four hundred"
+      ],
+      "runs_nothing": true,
+      "model": false
+     }
+    },
+    {
+     "say": "Two thousand four hundred.",
+     "gap": 1.5,
+     "model": "Okay.",
+     "expect": {
+      "taken": true
+     }
+    },
+    {
+     "say": "Thanks.",
+     "gap": 1.0,
+     "model": "Sure.",
+     "expect": {
+      "taken": true
+     }
+    },
+    {
+     "say": "Hey Heliox, what time is it?",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "9|nine"
+      ]
+     }
+    },
+    {
+     "say": "Thanks.",
+     "gap": 1.0,
+     "model": "Sure.",
+     "expect": {
+      "taken": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "a sentence split at a pause",
+   "plans": {
+    "screenshots": [
+     {
+      "action_type": "file_delete",
+      "target": "C:/Users/me/Downloads/screenshots",
+      "parameters": {
+       "path": "C:/Users/me/Downloads/screenshots"
+      }
+     }
+    ]
+   },
+   "never_runs": [
+    "file_delete"
+   ],
+   "said_once": [
+    "deleting the screenshots"
+   ],
+   "runs_count": {
+    "open_application": 2
+   },
+   "turns": [
+    {
+     "say": "Hey Heliox, delete the screenshots",
+     "voiced": 1.6,
+     "expect": {
+      "taken": true,
+      "approval": true,
+      "runs_nothing": true
+     },
+     "expect_none": {
+      "approval": false
+     }
+    },
+    {
+     "say": "please.",
+     "gap": 0.8,
+     "continues": true,
+     "expect": {
+      "withdrawal": "withdrawn",
+      "runs_nothing": true,
+      "approval": true
+     },
+     "expect_none": {
+      "approval": false
+     }
+    },
+    {
+     "say": "No.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     }
+    },
+    {
+     "say": "Hey Heliox, open Notepad",
+     "gap": 3,
+     "voiced": 1.2,
+     "expect": {
+      "taken": true,
+      "runs": [
+       "open_application"
+      ]
+     }
+    },
+    {
+     "say": "and Spotify.",
+     "gap": 0.8,
+     "continues": true,
+     "model": "Okay.",
+     "expect": {
+      "withdrawal": "too_late",
+      "has": [
+       "already opened notepad",
+       "spotify"
+      ],
+      "runs": [
+       "open_application"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, what time is it?",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "9|nine"
+      ]
+     }
+    },
+    {
+     "say": "o'clock please.",
+     "gap": 9,
+     "continues": true,
+     "model": "It's nine.",
+     "expect": {
+      "withdrawal": "unknown",
       "runs_nothing": true
      }
     }

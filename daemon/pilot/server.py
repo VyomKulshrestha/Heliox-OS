@@ -1037,9 +1037,19 @@ class PilotServer:
         self._last_spoken = ""
         self._last_spoken_at = float("-inf")  # monotonic: when it was said, for follow-ups on it
         self._last_spoken_reply = ""  # the conversation reply _last_spoken belongs to, when it is one
+        from pilot.conversation.turns import TurnLog
+
+        # Recent voice turns and what each has done, so a sentence split at a pause can be withdrawn and joined.
+        self._voice_turns = TurnLog()
+        self.last_voice_turn_id = ""
+        self._withdrawn_signature = ""  # what a withdrawn first half led to: its acknowledgement is not said twice
         # What the last voice turn was, from what the server saw happen: "action" (an action ran), "answer" (Heliox
         # only spoke), "" (not known). Decides whether "again" means the words or the action.
         self._last_turn_kind = ""
+        # The request a voice task is carrying out, and whether the person ended it by voice and was already told
+        # so ("Okay, I've dropped that: ..."): then the task's own ending is not said a second time.
+        self._voice_request = ""
+        self._voice_end_said = False
         # When the person last cut Heliox's voice off: "Wait, stop." right after it is acknowledged aloud.
         self._voice_cut_off_at = 0.0
         self._workspaces: Any = None
@@ -2813,7 +2823,73 @@ class PilotServer:
         action-command handler, git-conflict-resolution) are single quick
         actions outside the "Stop button" scope and are left untouched.
         """
+        self._voice_turns.note_executing(plan)  # from here the voice turn that asked for it cannot be withdrawn
         return await self._await_execution_tracked(self._executor.execute(plan, **kwargs))
+
+    def _dropped_sentence(self) -> str:
+        """What the person hears when they drop a plan that was waiting for their approval: what, in their words."""
+        words = " ".join(self._voice_request.split()).rstrip(".!?")
+        if not words:
+            return "Okay, I've dropped that. Nothing ran."
+        short = " ".join(words.split()[:10])
+        return f"Okay, I've dropped that: {short[:1].lower() + short[1:]}. Nothing ran."
+
+    def _kept_fingerprint(self) -> tuple[int, int, int]:
+        """How many reminders, to-dos and notes are kept: a change means a handler kept something."""
+
+        def count(store: Any, method: str) -> int:
+            try:
+                return len(getattr(store, method)()) if store is not None else 0
+            except Exception:
+                return 0
+
+        return (
+            count(self._reminders, "list"),
+            count(self._todos, "open_items"),
+            count(getattr(self, "_notes", None), "list"),
+        )
+
+    async def withdraw_voice_turn(self, turn_id: str, joined: str) -> Any:
+        """The listener heard the rest of a sentence it had split at a pause (conv_interfaces.md, section b).
+
+        "withdrawn": nothing irreversible had run; the first half is stopped and ``joined`` is dispatched in its
+        place, with the same addressing. "too_late": something ran or was kept; ``said`` is spoken here, and the
+        listener dispatches only the second half, as a new turn. "unknown": no such recent turn; the same."""
+        from pilot.conversation.turns import Withdrawal
+
+        state = self._voice_turns.get(turn_id)
+        signature = state.signature if state is not None else ""
+        addressed = state.addressed if state is not None else ""
+
+        async def deny_quietly(plan_id: str) -> None:
+            await self._resolve_pending_denied(plan_id, resolution_path="withdrawn")
+
+        result: Withdrawal = await self._voice_turns.withdraw(
+            turn_id, deny_quietly=deny_quietly, pending=lambda: list(self._pending_confirms)
+        )
+        if result.status == "withdrawn":
+            from pilot.conversation import layer_for
+
+            layer_for(self).interrupt()
+            self._withdrawn_signature = signature
+
+            async def joined_turn() -> None:
+                from pilot.conversation.turns import voice_turn_id
+                from pilot.system.voice import voice_turn_addressed
+
+                voice_turn_addressed.set(addressed or "follow_up")  # addressed as the first half was
+                voice_turn_id.set(f"{turn_id}+")
+                await self._voice_turn(joined)
+
+            task = asyncio.ensure_future(joined_turn())
+            self._background_dispatches = getattr(self, "_background_dispatches", set())
+            self._background_dispatches.add(task)
+            task.add_done_callback(self._background_dispatches.discard)
+        elif result.status == "too_late" and result.said:
+            await self._speak_voice_response(
+                result.said, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-withdraw:{turn_id}"
+            )
+        return result
 
     async def _finalize_durable_task(self, task_id: str, response: dict[str, Any]) -> None:
         """Persist one terminal response so duplicate requests can replay it."""
@@ -3626,8 +3702,25 @@ class PilotServer:
         # runs after the request is recorded and the first status is sent, so an answered turn ends like the
         # planner's conversational reply: stored in the session history, the reply sent, the task completed.
         if not attachments and review_inputs is None and expansion is None and self._conversation_ready():
-            from pilot.conversation.adapters import TYPED_SOURCES, typed_turn
+            from pilot.conversation.adapters import TYPED_SOURCES, offer_to_live, typed_turn
 
+            held = await offer_to_live(self, str(user_input)) if interaction_source in TYPED_SOURCES else None
+            if held is not None:
+                # Live asked about a slip in what was typed (or the answer dropped the request): its sentence is the
+                # reply, and nothing runs unless the person's answer chose the version to go on with.
+                if held.say:
+                    await ws.send(_notification("conversation_response", {"explanation": held.say}))
+                if held.proceed is None:
+                    await _emit_task_complete("success", held.say)
+                    return {
+                        "status": "success",
+                        "conversational": True,
+                        "dry_run": False,
+                        "results": [],
+                        "message": held.say,
+                        "explanation": held.say,
+                    }
+                user_input = held.proceed
             typed = (
                 await typed_turn(self, str(user_input), ws, _notification)
                 if interaction_source in TYPED_SOURCES
@@ -14188,6 +14281,9 @@ def handle_tool(tool_name, params):
         from pilot.conversation import layer_for
 
         layer_for(self).clear()
+        from pilot.conversation.adapters import drop_live_hold
+
+        drop_live_hold(self)
         logger.info("Started a new voice conversation (%d earlier turns set aside)", hidden)
         return {"status": "ok", "earlier_turns": hidden}
 
@@ -14239,11 +14335,11 @@ def handle_tool(tool_name, params):
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Run voice through the same safe interaction path as typed input."""
         logger.info("Voice command received: '%s'", command_text)
-        if self._live is not None:
-            # The live layer hears what the person says to Heliox too, and answers a slip at the end of the turn.
-            self._live.offer_speech(command_text)
         from pilot.conversation import layer_for
 
+        command_text = self._voice_turns.rest_of_split(command_text)  # "and Spotify" after "open Notepad"
+        voice_turn = self._voice_turns.begin(self._pending_confirms)
+        self.last_voice_turn_id = voice_turn.turn_id
         conversation = layer_for(self)
         conversation.interrupt()  # a new utterance ends a reply still being written or spoken
 
@@ -14291,15 +14387,25 @@ def handle_tool(tool_name, params):
             )
             return
         if pending_approval is not None and normalized_command in VOICE_DENIALS:
-            # Denying is always safe, so it works by voice; approving still needs the visible dialog.
+            # Denying is always safe, so it works by voice; approving still needs the visible dialog. Marked before the
+            # denial lands: the task it ends runs on at once and must not say its own ending as well.
+            ours = self._interactive_request_active and bool(self._voice_request)  # read before the task ends
+            told_before, self._voice_end_said = self._voice_end_said, self._interactive_request_active
             result = await self._handle_confirm(
                 {"plan_id": pending_plan_id, "confirmed": False, "input_channel": "voice_deny"}, None
             )
+            denied = result.get("status") == "ok"
             message = (
-                "Okay, I won't run that."
-                if result.get("status") == "ok"
+                (
+                    self._dropped_sentence()
+                    if ours
+                    else "Okay, I won't run that."  # a background job's approval: not the request just said
+                )
+                if denied
                 else "That approval was already answered, so nothing was denied. Say or press Stop to cancel the task."
             )
+            if not denied:
+                self._voice_end_said = told_before
             await self._broadcast_notification(
                 "voice_result",
                 {"command": command_text, "status": "answered", "message": message, "plan_id": pending_plan_id},
@@ -14308,6 +14414,30 @@ def handle_tool(tool_name, params):
                 message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-deny:{pending_plan_id}"
             )
             return
+
+        # Heliox Live sees every addressed turn before any road takes it (denials and approvals of a waiting plan,
+        # corrections during a task and a turn the listener doubted were handled above and never go to it). A slip
+        # ("Monday the nineteenth", a number unlike the one said a moment ago) is asked about in one short question,
+        # and nothing runs until the person's answer, which comes back through here as the next turn; "never mind"
+        # or "stop" then drops it. A stop with no question waiting is never held and goes on to stop.
+        from pilot.conversation.adapters import offer_to_live
+        from pilot.system.voice import voice_turn_addressed
+
+        if not self._interactive_request_active and voice_turn_addressed.get() != "doubtful_follow_up":
+            held = await offer_to_live(self, command_text)
+            if held is not None:
+                if held.say:
+                    self._last_turn_kind = "answer"
+                    await self._broadcast_notification(
+                        "voice_result", {"command": command_text, "status": "answered", "message": held.say}
+                    )
+                    await self._speak_voice_response(
+                        held.say, channel=SpeechChannel.FINAL_ANSWER, dedupe_key=f"live-hold:{uuid.uuid4()}"
+                    )
+                if held.proceed is None:
+                    return  # waiting for the person's answer, or dropped: nothing runs
+                command_text = held.proceed
+                normalized_command = _normalize_spoken_phrase(command_text)
 
         from pilot.conversation.followups import repeat_meaning
 
@@ -14328,9 +14458,12 @@ def handle_tool(tool_name, params):
             again_action = True
             command_text = repeated[0]
         if not self._interactive_request_active and not again_action:
+            kept_before = self._kept_fingerprint()
             timeline_answer = await self._control_reply(command_text)
             if timeline_answer is not None:
                 self._last_turn_kind = "answer"
+                if self._kept_fingerprint() != kept_before:
+                    self._voice_turns.note_kept()  # a reminder, note or to-do was kept: too late to withdraw
                 await self._broadcast_notification(
                     "voice_result", {"command": command_text, "status": "answered", "message": timeline_answer}
                 )
@@ -14437,6 +14570,15 @@ def handle_tool(tool_name, params):
                     InteractionPhase.CORRECTING,
                     message="Applying your spoken correction",
                 )
+            # Stop, undo or no before the task has run anything (planning, or its plan waiting for approval): one
+            # sentence saying what was dropped, from this turn; the task's own ending ("Cancelled before execution",
+            # "Execution was stopped before planning") and the undo offer are not said as well.
+            task_turn = getattr(self, "_voice_task_turn", None)
+            dropping = stop_now and (
+                bool(self._interactive_pending_confirmation()) or (task_turn is not None and not task_turn.ran)
+            )
+            if dropping:
+                self._voice_end_said = True  # before the stop lands: the task ends at once
             mode = {"mode": "ask"} if is_question else {"mode": "stop"} if stop_now else {}
             result = await self._handle_interject(
                 {"input": question_text if is_question else command_text, **mode},
@@ -14457,7 +14599,15 @@ def handle_tool(tool_name, params):
                     channel=SpeechChannel.FINAL_ANSWER,
                     dedupe_key=f"voice-in-task-question:{uuid.uuid4()}",
                 )
-            if undo_now:
+            if dropping:
+                dropped = self._dropped_sentence()
+                await self._broadcast_notification(
+                    "voice_result", {"command": command_text, "status": "answered", "message": dropped}
+                )
+                await self._speak_voice_response(
+                    dropped, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-dropped:{uuid.uuid4()}"
+                )
+            elif undo_now:
                 undone = await self._undo_request(command_text) or "There is nothing I can undo right now."
                 await self._broadcast_notification(
                     "voice_result", {"command": command_text, "status": "answered", "message": undone}
@@ -14521,8 +14671,16 @@ def handle_tool(tool_name, params):
                 "proactive_decision": proactive_decision,
             },
         )
+        from pilot.conversation.turns import signature_of
+
+        voice_turn.signature = signature_of(turn) if turn is not None else ""
+        voice_turn.verb = turn.intent.verb if turn is not None and turn.intent is not None else ""
+        same_as_withdrawn = bool(voice_turn.signature) and voice_turn.signature == self._withdrawn_signature
+        self._withdrawn_signature = ""
         acknowledgement_task = (
-            turn.keep_company()  # a specific sentence now, progress if planning runs long, the approval pointer
+            # A specific sentence now, progress if planning runs long, the approval pointer. When the joined sentence
+            # leads where its withdrawn first half did, that half's acknowledgement stands and is not said again.
+            turn.keep_company(acknowledge=not same_as_withdrawn)
             if turn is not None
             else self._spawn_interaction_speech(
                 acknowledgement_for(command_text),
@@ -14538,6 +14696,8 @@ def handle_tool(tool_name, params):
                 message="Planning the safest useful action",
                 interaction_id=interaction_id,
             )
+            self._voice_request, self._voice_end_said = command_text, False
+            self._voice_task_turn = voice_turn  # what this task has run so far: a stop before anything ran drops it
             try:
                 response = await self._handle_execute(
                     {
@@ -14592,15 +14752,17 @@ def handle_tool(tool_name, params):
                 turn.finish(status, result_text)  # the next question can refer to what was done
             spoken = result_text[:300] if len(result_text) < 300 else result_text[:297] + "..."
             spoken = (turn.spoken_result(result_text, status) if turn is not None else "") or spoken
-            await self._speak_voice_response(
-                spoken,
-                channel=(
-                    SpeechChannel.FINAL_ANSWER
-                    if terminal_phase == InteractionPhase.COMPLETED
-                    else SpeechChannel.TASK_FAILURE
-                ),
-                dedupe_key=f"voice-result:{spoken_command.casefold()}",
-            )
+            told, self._voice_end_said = self._voice_end_said and status != "success", False
+            if not told:  # the person ended it by voice and has heard what was dropped
+                await self._speak_voice_response(
+                    spoken,
+                    channel=(
+                        SpeechChannel.FINAL_ANSWER
+                        if terminal_phase == InteractionPhase.COMPLETED
+                        else SpeechChannel.TASK_FAILURE
+                    ),
+                    dedupe_key=f"voice-result:{spoken_command.casefold()}",
+                )
             if await self._arm_voice_follow_up():
                 await self._interaction_runtime.transition(
                     InteractionPhase.LISTENING,
@@ -14681,6 +14843,7 @@ def handle_tool(tool_name, params):
             on_overheard=self._voice_overheard,
         )
         replacement.task_open = self._voice_task_open
+        replacement.withdraw_turn = self.withdraw_voice_turn  # a sentence it split at a pause (conv_interfaces.md b)
         self._voice_listener = replacement
         result = await replacement.start()
         if not replacement.is_running:
@@ -14717,6 +14880,7 @@ def handle_tool(tool_name, params):
             on_overheard=self._voice_overheard,
         )
         self._voice_listener.task_open = self._voice_task_open
+        self._voice_listener.withdraw_turn = self.withdraw_voice_turn  # a sentence split at a pause
         result = await self._voice_listener.start()
         if not self._voice_listener.is_running:
             self._voice_listener = None
