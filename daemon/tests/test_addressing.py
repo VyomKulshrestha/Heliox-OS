@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from pilot.system.addressing import Addressing, Heard, plausibly_addressed, vocative_wake
+from pilot.system.addressing import CONFIDENT, Addressing, Heard, plausibly_addressed, vocative_wake
 
 
 class Clock:
@@ -399,3 +399,31 @@ def test_over_live_s_voice_a_short_cut_off_is_still_stop_and_a_sentence_is_not_a
     rule2, clock2 = live_rule()
     long = rule2.decide(Heard("Why?", clock2.now - 1.0, clock2.now + 1.5, 2.5, heliox_was_speaking=True))
     assert not long.act
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Forget that I'm a founder.",
+        "Forget that.",
+        "Please forget what I said about the budget.",
+        "Forget my address.",
+        "Don't keep that.",
+        "Remember that.",
+    ],  # fmt: skip
+)
+def test_a_command_about_what_heliox_keeps_is_a_follow_up(text):
+    assert plausibly_addressed(text, question_open=False) in CONFIDENT
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Forget it.",
+        "Forget about it, we can do it tomorrow.",
+        "Remember that the meeting moved to Friday.",
+        "Remember to save your work before you close the editor.",
+    ],  # fmt: skip
+)
+def test_the_same_verbs_said_to_someone_else_are_not(text):
+    assert plausibly_addressed(text, question_open=False) not in CONFIDENT

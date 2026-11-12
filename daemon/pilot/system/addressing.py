@@ -184,6 +184,8 @@ def plausibly_addressed(text: str, *, question_open: bool, elliptical: bool = Tr
         return "elliptical"  # taken only right after Heliox's answer (Addressing.decide); otherwise talk
     if question_open and len(words) <= 12:
         return "reply"
+    if MEMORY_COMMAND.match(SOFTENER.sub("", normalized)) and len(words) <= 12:
+        return "request"  # "Forget that I'm a founder." right after Heliox spoke: about what Heliox keeps
     if NARRATION.match(normalized):
         return "talk"
     if IMPERATIVE_START.match(SOFTENER.sub("", normalized)):
@@ -194,6 +196,17 @@ def plausibly_addressed(text: str, *, question_open: bool, elliptical: bool = Tr
         return "unclear"  # might be said to Heliox, might not
     return "talk"
 
+
+# What Heliox keeps about the person, said right after it spoke: "Forget that I'm a founder.", "Forget what I said.",
+# "Don't keep that.", "Remember that." Only these shapes. "Forget it." and "Forget about it, ..." are said to other
+# people too, so "forget" counts only before that, this, what, my or everything; and "Remember to save your work
+# before you close the editor." is in the unaddressed corpus, so "remember" counts only as "remember that/this/it"
+# alone.
+MEMORY_COMMAND = re.compile(
+    r"^(?:please\s+)?(?:forget\s+(?:that|this|what|my|everything)\b|"
+    r"don'?t\s+(?:keep|remember|store|save)\s+(?:that|it|this)\b|remember\s+(?:that|this|it)\s*$)",
+    re.I,
+)
 
 CONFIDENT = {"control", "reply", "request", "question"}
 

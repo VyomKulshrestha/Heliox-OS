@@ -21,11 +21,7 @@ from pilot.workflows.user_profile import UserProfile
 
 SESSIONS = load_pack(PERSONAL_PACK)
 
-_EVERYONE = {
-    "forgotten: a fact, the forget said as a follow-up": (
-        'the addressing rule (pilot.system.addressing) does not take "Forget that I\'m a founder." as a follow-up'
-    ),
-}
+_EVERYONE: dict[str, str] = {}
 KNOWN: dict[tuple[str, str], str] = {(name, kind): cause for name, cause in _EVERYONE.items() for kind in KINDS}
 
 
