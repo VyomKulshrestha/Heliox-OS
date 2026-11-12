@@ -85,15 +85,18 @@ class SwarmManager:
             "gpu_vram_gb": 0,
         }
 
-        try:
-            import torch
+        # nvidia-smi through the GPU arbiter, never torch: torch.cuda.get_device_properties would open a CUDA context
+        # in the daemon process, which a GPU fault or reset can take down. Apple Silicon and machines without an
+        # NVIDIA card report no GPU here, as before.
+        from pilot.system.gpu_arbiter import arbiter
 
-            if torch.cuda.is_available():
-                hardware["has_gpu"] = True
-                hardware["gpu_name"] = torch.cuda.get_device_name(0)
-                hardware["gpu_vram_gb"] = round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2)
-        except ImportError:
-            pass
+        reading = await asyncio.to_thread(arbiter().reading)
+        if reading.kind == "nvidia" and reading.gpus:
+            card = reading.gpus[0]
+            hardware["has_gpu"] = True
+            hardware["gpu_name"] = card.name or None
+            if card.total_bytes is not None:
+                hardware["gpu_vram_gb"] = round(card.total_bytes / (1024**3), 2)
 
         return hardware
 

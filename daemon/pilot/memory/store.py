@@ -74,6 +74,21 @@ CREATE INDEX IF NOT EXISTS idx_prefs_key ON user_preferences(key);
 """
 
 
+def _cpu_embedding_function() -> Any:
+    """Chroma's default embedding model, pinned to the CPU.
+
+    Left alone, Chroma runs it on every ONNX Runtime provider it finds, so with onnxruntime-gpu installed it would
+    open a CUDA context inside the daemon process, where a GPU fault or reset could take the daemon down. The
+    model is small (all-MiniLM-L6-v2); the CPU is fast enough. None (Chroma's own default) when it cannot be built.
+    """
+    try:
+        from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
+
+        return ONNXMiniLM_L6_V2(preferred_providers=["CPUExecutionProvider"])
+    except Exception:
+        return None
+
+
 class MemoryStore:
     """Persistent memory with action history and semantic preference learning."""
 
@@ -177,6 +192,7 @@ class MemoryStore:
             self._chroma_collection = client.get_or_create_collection(
                 name="pilot_memory",
                 metadata={"hnsw:space": "cosine"},
+                embedding_function=_cpu_embedding_function(),
             )
 
             logger.info("ChromaDB initialized at %s", chroma_dir)
