@@ -42,6 +42,7 @@ GUARDED = (
     "notify_check.py",
     "ocr_check.py",
     "toolkit_check.py",
+    "windows_fields_check.py",
 )
 
 

@@ -305,7 +305,8 @@ jobs:
         run: cargo test --all-targets
 
   # ── Real platform readers (experimental, non-blocking) ──
-  # Exercises the macOS and Linux focused-text readers against real accessibility stacks on hosted runners.
+  # Exercises the focused-text readers against real accessibility stacks on hosted runners: AT-SPI on Linux,
+  # the Accessibility API on macOS, UI Automation on Windows.
   # The unit tests for the same code run in the `python` job on every system. This job is allowed to fail while
   # the runner setups are being proved; make it required once it has passed on three consecutive pushes to main.
   platform-readers:
@@ -316,7 +317,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     defaults:
       run:
         working-directory: daemon
@@ -332,7 +333,12 @@ jobs:
 
       - name: Install the daemon with its platform extra
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then pip install -e ".[linux]"; else pip install -e ".[macos]"; fi
+          # Windows needs no extra: its reader is a PowerShell helper over UI Automation.
+          case "$RUNNER_OS" in
+            Linux) pip install -e ".[linux]" ;;
+            macOS) pip install -e ".[macos]" ;;
+            *) pip install -e . ;;
+          esac
           pip list 2>/dev/null | grep -iE "jeepney|pyobjc-framework-(ApplicationServices|Cocoa|Quartz)" || true
 
       - name: Install the Linux accessibility stack (AT-SPI, GTK 3, Xvfb, xdotool)
@@ -636,7 +642,7 @@ jobs:
           exit $failed
 
       - name: Live terminal check in real zsh and fish sessions
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get install -y -q --no-install-recommends zsh fish netcat-openbsd
@@ -662,6 +668,17 @@ jobs:
             sleep 2
             python tests/platform_real/terminal_text_check.py
           '
+
+      # Where people type on Windows: Edge and Chrome, each showing a text field and a password field, read by
+      # the UI Automation reader Live uses. The default setup of each is an ANSWER; with
+      # --force-renderer-accessibility Chrome must read the field; the password field must be refused wherever
+      # the text field was read.
+      - name: Windows - fields in Edge and Chrome, read through UI Automation
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        continue-on-error: true
+        run: |
+          pip install -q pyautogui
+          python tests/platform_real/windows_fields_check.py edge-default chrome-default chrome-forced
 
       - name: Unit tests for the readers on this runner
         if: ${{ !cancelled() }}
