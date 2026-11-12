@@ -3,8 +3,10 @@
 Hosted macOS runners decide whether a process may use the Accessibility API; nothing here prompts. The script
 reports what the runner allows and checks the furthest honest thing:
 
-- always: pyobjc imports, every permission reads without a prompt, the frontmost app is named from the Quartz
-  window list (no permission needed), and the reader's status is consistent with the Accessibility state;
+- always: pyobjc imports, every permission reads without a prompt, and the reader's status is consistent with
+  the Accessibility state; what the window list and LaunchServices say before any test window opens is printed;
+- with a window of ours in front: the frontmost app is named without any permission, by LaunchServices and by
+  the Quartz window list separately;
 - without Accessibility: reads return nothing quickly, the status says what to grant and where, and no prompt
   was asked;
 - with Accessibility: an AppKit window with a text field and a secure text field (``macos_fixture.py``) is read:
@@ -55,8 +57,10 @@ def main() -> int:
         print(f"permission {report.name}: {report.state.value} | {report.message}")
     check("macos/permissions-read-without-prompt", len(reports) == 4, f"{took:.0f} ms")
 
-    owner = M.frontmost_app_name()
-    check("macos/frontmost-app-from-window-list", bool(owner), repr(owner))
+    windows = M.window_list()
+    normal = [(w.get("kCGWindowOwnerName"), w.get("kCGWindowAlpha")) for w in windows if w.get("kCGWindowLayer") == 0]
+    print(f"before any test window: {len(windows)} on-screen windows, layer 0: {normal[:8]}")
+    print(f"before any test window: LaunchServices front app {M.launch_services_front_app()!r}")
 
     reader = M.MacFocusedTextReader()
     status = reader.status()
@@ -98,6 +102,11 @@ def main() -> int:
 
     try:
         check("macos/fixture-started", fixture.stdout.readline().startswith("ready"))
+        time.sleep(1.0)
+        front = M.launch_services_front_app()
+        check("macos/frontmost-app-from-launch-services", front.casefold().startswith("python"), repr(front))
+        owner = M.front_window_owner(M.window_list())
+        check("macos/frontmost-app-from-window-list", owner.casefold().startswith("python"), repr(owner))
         send("insert hello from ci")
         typed = read_until(lambda r: r.text == "hello from ci")
         check("macos/reads-typed-text", typed is not None and typed.text == "hello from ci", repr(typed))

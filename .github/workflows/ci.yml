@@ -322,13 +322,13 @@ jobs:
           if [ "$RUNNER_OS" = "Linux" ]; then pip install -e ".[linux]"; else pip install -e ".[macos]"; fi
           pip list 2>/dev/null | grep -iE "jeepney|pyobjc-framework-(ApplicationServices|Cocoa|Quartz)" || true
 
-      - name: Install the Linux accessibility stack (AT-SPI, GTK 3, Xvfb, xdotool, Weston)
+      - name: Install the Linux accessibility stack (AT-SPI, GTK 3, Xvfb, xdotool)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends \
             xvfb xdotool dbus dbus-x11 at-spi2-core libatk-adaptor \
-            python3-gi gir1.2-gtk-3.0 weston
+            python3-gi gir1.2-gtk-3.0
           ls /usr/share/dbus-1/services/ | grep -i a11y || echo "no org.a11y.Bus service file"
 
       - name: Linux, X11 session - type into a GTK field and read it through AT-SPI
@@ -341,19 +341,30 @@ jobs:
             python tests/platform_real/linux_atspi_check.py --python /usr/bin/python3
           '
 
-      - name: Linux, Wayland session (Weston headless) - the same checks without X
+      # Weston's headless backend has no seat, so nothing can take keyboard focus there (first run: GTK logged
+      # gdk_seat_get_keyboard assertions and no element was ever focused). Sway on wlroots' headless backend
+      # always has a seat, focuses new windows, and accepts keys from wtype through the virtual-keyboard protocol.
+      - name: Linux, Wayland session (sway headless) - the same checks without X
         if: runner.os == 'Linux'
         continue-on-error: true
         run: |
+          sudo apt-get install -y -q --no-install-recommends sway wtype
           dbus-run-session -- bash -c '
             export XDG_RUNTIME_DIR=$(mktemp -d) && chmod 700 "$XDG_RUNTIME_DIR"
-            (weston --backend=headless --socket=wayland-heliox --idle-time=0 || weston --backend=headless-backend.so --socket=wayland-heliox --idle-time=0) >/tmp/weston.log 2>&1 &
-            sleep 3
+            printf "output HEADLESS-1 resolution 1280x800\n" > /tmp/sway.conf
+            WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman sway -c /tmp/sway.conf >/tmp/sway.log 2>&1 &
+            sock=""
+            for i in $(seq 1 50); do
+              sock=$(ls "$XDG_RUNTIME_DIR" | grep -E "^wayland-[0-9]+$" | head -1)
+              [ -n "$sock" ] && break
+              sleep 0.2
+            done
+            echo "sway socket: ${sock:-none}"
             unset DISPLAY
-            export WAYLAND_DISPLAY=wayland-heliox GDK_BACKEND=wayland
+            export WAYLAND_DISPLAY=$sock GDK_BACKEND=wayland
             python tests/platform_real/linux_atspi_check.py --wayland --python /usr/bin/python3
             status=$?
-            tail -20 /tmp/weston.log
+            tail -20 /tmp/sway.log
             exit $status
           '
 

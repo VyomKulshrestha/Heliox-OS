@@ -40,9 +40,11 @@
   import { gazeRuntime, resetGazeRuntime } from "../stores/gazeRuntime";
   import {
     defaultHotkey,
+    displayHotkey,
     hotkeyFailureMessage,
     isNativeTauriRuntime,
     normalizeHotkeyValue,
+    toTauriHotkey,
     type HotkeyStatus,
   } from "../hotkey";
   import { companion } from "../stores/companion";
@@ -189,6 +191,8 @@
   });
 
   let hotkeyInput = $state("");
+  // The registered shortcut in Tauri's spelling; the input and labels show it in this system's key names.
+  let activeHotkey = $state("");
   let hotkeySaved = $state(false);
   let hotkeyError = $state("");
   const hotkeySupported = isNativeTauriRuntime();
@@ -248,10 +252,11 @@
   // Load the current hotkey when component mounts
   invoke("get_hotkey")
     .then((val) => {
-      hotkeyInput = normalizeHotkeyValue(val);
+      activeHotkey = normalizeHotkeyValue(val);
+      hotkeyInput = displayHotkey(activeHotkey);
     })
     .catch(() => {
-      hotkeyInput = defaultHotkey();
+      hotkeyInput = displayHotkey(defaultHotkey());
       hotkeyError = "Could not read the active system shortcut.";
     });
   // A shortcut that failed to register at startup (taken by another app) is said here, not only on stderr.
@@ -272,20 +277,23 @@
       hotkeyError = "Open Heliox as the desktop app to register a system-wide shortcut.";
       return;
     }
-    const trimmed = hotkeyInput.trim();
+    const trimmed = toTauriHotkey(hotkeyInput);
     if (!trimmed) {
-      hotkeyError = "Enter a shortcut such as Ctrl+Space or Alt+H.";
+      hotkeyError = `Enter a shortcut such as ${displayHotkey(defaultHotkey())} or ${displayHotkey("Alt+H")}.`;
       return;
     }
     try {
       await invoke("set_hotkey", { shortcut: trimmed });
       await settings.updateSection("", { hotkey: trimmed });
-      hotkeyInput = trimmed;
+      activeHotkey = trimmed;
+      hotkeyInput = displayHotkey(trimmed);
       hotkeySaved = true;
       setTimeout(() => (hotkeySaved = false), 3000);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      hotkeyError = detail ? `Shortcut was not changed: ${detail}` : "Invalid shortcut. Try Ctrl+Space or Alt+H.";
+      hotkeyError = detail
+        ? `Shortcut was not changed: ${detail}`
+        : `Invalid shortcut. Try ${displayHotkey(defaultHotkey())} or ${displayHotkey("Alt+H")}.`;
     }
   }
 
@@ -1205,10 +1213,10 @@
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">Global Hotkey</span>
-        <span class="setting-desc">Summon Heliox from anywhere (default: {defaultHotkey()})</span>
+        <span class="setting-desc">Summon Heliox from anywhere (default: {displayHotkey(defaultHotkey())})</span>
         <span class="hotkey-status" class:unsupported={!hotkeySupported}>
           {hotkeySupported
-            ? `Active system shortcut: ${hotkeyInput || defaultHotkey()}`
+            ? `Active system shortcut: ${displayHotkey(activeHotkey || defaultHotkey())}`
             : "Desktop app required — browsers cannot register system-wide shortcuts."}
         </span>
       </div>
@@ -1217,7 +1225,7 @@
           type="text"
           class="input-md"
           bind:value={hotkeyInput}
-          placeholder="Ctrl+Space"
+          placeholder={displayHotkey(defaultHotkey())}
           aria-label="Global hotkey"
           disabled={!hotkeySupported}
         />

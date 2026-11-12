@@ -211,28 +211,81 @@ def shared() -> MacReader | None:
 
 
 def front_window_owner(windows: list[dict]) -> str:
-    """The app owning the frontmost normal window, from CGWindowListCopyWindowInfo's front-to-back list. Pure."""
+    """The app owning the frontmost normal window, from CGWindowListCopyWindowInfo's front-to-back list. Pure.
+
+    Layer 0 is where app windows live; the menu bar, Dock, Control Centre and overlays sit on other layers. A
+    window with no owner name (some system processes) or fully transparent is skipped.
+    """
     for info in windows:
-        if int(info.get("kCGWindowLayer", 1) or 0) == 0 and info.get("kCGWindowOwnerName"):
+        if int(info.get("kCGWindowLayer", 1) or 0) != 0:
+            continue
+        if float(info.get("kCGWindowAlpha", 1.0) or 0.0) <= 0.0:
+            continue
+        if info.get("kCGWindowOwnerName"):
             return str(info["kCGWindowOwnerName"])
     return ""
 
 
-def frontmost_app_name() -> str:
-    """The frontmost app's name without any permission (Quartz window list); "" when it cannot be told.
+def parse_lsappinfo_front(output: str) -> str:
+    """The application serial number ``lsappinfo front`` prints ("ASN:0x0-0x2c02c:"), or "". Pure."""
+    text = output.strip()
+    return text if text.startswith("ASN:") else ""
 
-    NSWorkspace's frontmostApplication is not used: in a process without a running AppKit event loop, such as
-    the daemon, it keeps the value from when it was first asked.
+
+def parse_lsappinfo_name(output: str) -> str:
+    """The name in ``lsappinfo info -only name`` output ('"LSDisplayName"="Safari"'), or "". Pure."""
+    _, sep, value = output.strip().partition("=")
+    if not sep:
+        return ""
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        value = value[1:-1]
+    return "" if value in ("", "[ NULL ]", "NULL") else value
+
+
+def launch_services_front_app(run=None) -> str:
+    """The frontmost app as LaunchServices knows it, through /usr/bin/lsappinfo (no permission, no AppKit loop).
+
+    This is the app that owns the menu bar, which is what the person sees as "in front" even when it has no
+    window open. About 10 ms for the two calls.
     """
+    import subprocess
+
+    def default_run(args: list[str]) -> str:
+        done = subprocess.run(args, capture_output=True, text=True, timeout=1.0, check=False)
+        return done.stdout if done.returncode == 0 else ""
+
+    run = run or default_run
+    try:
+        asn = parse_lsappinfo_front(run(["/usr/bin/lsappinfo", "front"]))
+        return parse_lsappinfo_name(run(["/usr/bin/lsappinfo", "info", "-only", "name", asn])) if asn else ""
+    except Exception:
+        logger.debug("lsappinfo failed", exc_info=True)
+        return ""
+
+
+def window_list() -> list[dict]:
+    """On-screen windows front to back from Quartz, as plain dicts ([] when Quartz is not available)."""
     try:
         import Quartz
 
         options = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
-        windows = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or []
-        return front_window_owner([dict(info) for info in windows])
+        return [dict(info) for info in (Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or [])]
     except Exception:
         logger.debug("Quartz window list failed", exc_info=True)
-        return ""
+        return []
+
+
+def frontmost_app_name() -> str:
+    """The frontmost app's name without any permission; "" when it cannot be told.
+
+    LaunchServices first: it names the app that owns the menu bar, even one with no window open. The Quartz
+    window list is the fallback; on its own it answers "" when no app has a normal window on screen (a fresh
+    session, or a runner with nothing open), the likely reason the first CI run on macOS got "". NSWorkspace's
+    frontmostApplication is not used: in a process without a running AppKit event loop, such as the daemon, it
+    keeps the value from when it was first asked.
+    """
+    return launch_services_front_app() or front_window_owner(window_list())
 
 
 def foreground_window() -> tuple[str, str] | None:

@@ -537,3 +537,27 @@ def test_macos_permissions_are_inert_elsewhere():
     assert mp.snapshot() == []
     assert mp.microphone_state() == mp.PermissionState.CANNOT_TELL
     assert mp.accessibility_state() == mp.PermissionState.CANNOT_TELL
+
+
+def test_macos_launch_services_front_app_parsing():
+    assert M.parse_lsappinfo_front("ASN:0x0-0x2c02c:\n") == "ASN:0x0-0x2c02c:"
+    assert M.parse_lsappinfo_front("") == "" and M.parse_lsappinfo_front("error") == ""
+    assert M.parse_lsappinfo_name('"LSDisplayName"="Safari"\n') == "Safari"
+    assert M.parse_lsappinfo_name('"LSDisplayName"=[ NULL ]') == ""
+    assert M.parse_lsappinfo_name("") == ""
+    outputs = {"front": "ASN:0x0-0x1:\n", "info": '"LSDisplayName"="Visual Studio Code"\n'}
+    assert M.launch_services_front_app(lambda args: outputs[args[1]]) == "Visual Studio Code"
+    assert M.launch_services_front_app(lambda args: "") == ""
+
+    def broken(args):
+        raise OSError("no lsappinfo")
+
+    assert M.launch_services_front_app(broken) == ""
+
+
+def test_macos_window_list_skips_transparent_windows():
+    windows = [
+        {"kCGWindowLayer": 0, "kCGWindowOwnerName": "Overlay", "kCGWindowAlpha": 0.0},
+        {"kCGWindowLayer": 0, "kCGWindowOwnerName": "Mail", "kCGWindowAlpha": 1.0},
+    ]
+    assert M.front_window_owner(windows) == "Mail"

@@ -84,7 +84,7 @@ def read_until(predicate, timeout: float = 15.0):
 
 
 def typer(wayland: bool, fixture: Fixture):
-    """Real keystrokes through xdotool on X11; inside-the-app insertion where keys cannot be sent."""
+    """Real keystrokes: xdotool on X11, wtype on Wayland; inside-the-app insertion where neither can send keys."""
     if not wayland and shutil.which("xdotool"):
         found = subprocess.run(
             ["xdotool", "search", "--sync", "--name", "Heliox AT-SPI fixture"],
@@ -101,6 +101,14 @@ def typer(wayland: bool, fixture: Fixture):
                 time.sleep(0.4)
 
             return type_keys, "xdotool"
+    if wayland and shutil.which("wtype"):
+        # wtype sends keys through the compositor's virtual-keyboard protocol (sway supports it).
+
+        def type_wayland(text: str) -> None:
+            subprocess.run(["wtype", "-d", "20", text], timeout=30, check=False)
+            time.sleep(0.4)
+
+        return type_wayland, "wtype"
     return (lambda text: fixture.send(f"insert {text}")), "in-app insert"
 
 
