@@ -17,10 +17,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Install Rust stable
-        # Pinned: Rust 1.100.0 (12 November 2026) does not compile the screenshots crate on Linux (dbus's
-        # method_call no longer infers its reply type there). Back to stable once take_screenshot no longer
-        # depends on that crate.
-        uses: dtolnay/rust-toolchain@1.99.1
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2

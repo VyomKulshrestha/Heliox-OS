@@ -752,19 +752,6 @@ pub fn get_uptime() -> String {
     format!("{}d {}h {}m", days, hours, mins)
 }
 #[tauri::command]
-pub fn take_screenshot() -> Result<String, String> {
-    use screenshots::Screen;
-    let screens = Screen::all().map_err(|e| e.to_string())?;
-    if screens.is_empty() {
-        return Err("No active screens found".into());
-    }
-    let image = screens[0].capture().map_err(|e| e.to_string())?;
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let path = cwd.join(format!("screenshot_{}.png", System::uptime()));
-    image.save(&path).map_err(|e| e.to_string())?;
-    Ok(path.display().to_string())
-}
-#[tauri::command]
 pub fn get_dashboard_status() -> serde_json::Value {
     use sysinfo::System;
     let mut sys = System::new_all();

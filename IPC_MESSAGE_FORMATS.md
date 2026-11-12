@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **334 WebSocket RPC methods**. That is the API
+The daemon currently registers **335 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1848,6 +1848,15 @@ Start or stop the screen vision agent.
 
 **Params:** `{ "enabled": true, "interval_seconds": 3.0, "enable_describe": false }`
 **Result:** `{ "status": "ok", "enabled": true }`
+
+#### `take_screenshot`
+The Dashboard's "Take Screenshot": the whole screen, saved as a PNG in Pictures (Windows), on the Desktop (macOS)
+or in the home folder (Linux). On Wayland it goes through the desktop's Screenshot portal, then gnome-screenshot,
+then grim; on X11 gnome-screenshot, then scrot.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok", "path": "/home/sam/screenshot_20261113_101500.png" }`, or
+`{ "status": "error", "message": "..." }`
 
 ---
 

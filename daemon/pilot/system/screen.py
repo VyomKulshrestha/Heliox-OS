@@ -82,33 +82,40 @@ async def brightness_set(level: int) -> str:
     return f"Brightness set to {level}%"
 
 
+def default_screenshot_path() -> str:
+    """Where a screenshot goes when no path is given: Pictures on Windows, the Desktop on macOS (as the system's own
+    screenshots do), the home folder on Linux."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if CURRENT_PLATFORM == Platform.WINDOWS:
+        return os.path.join(os.path.expanduser("~"), "Pictures", f"screenshot_{timestamp}.png")
+    if CURRENT_PLATFORM == Platform.MACOS:
+        return os.path.join(os.path.expanduser("~"), "Desktop", f"screenshot_{timestamp}.png")
+    return os.path.join(os.path.expanduser("~"), f"screenshot_{timestamp}.png")
+
+
 async def screenshot(
     output_path: str | None = None,
     region: str | None = None,
 ) -> str:
     """Take a screenshot."""
     if output_path is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if CURRENT_PLATFORM == Platform.WINDOWS:
-            output_path = os.path.join(os.path.expanduser("~"), "Pictures", f"screenshot_{timestamp}.png")
-        elif CURRENT_PLATFORM == Platform.MACOS:
-            output_path = os.path.join(os.path.expanduser("~"), "Desktop", f"screenshot_{timestamp}.png")
-        else:
-            output_path = os.path.join(os.path.expanduser("~"), f"screenshot_{timestamp}.png")
+        output_path = default_screenshot_path()
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        # Use PowerShell with .NET
+        # Use PowerShell with .NET. The path sits in a single-quoted PowerShell string, where a quote is doubled:
+        # a home folder such as C:\Users\O'Brien would otherwise end the string and run the rest as code.
+        quoted = output_path.replace("'", "''")
         code, out, err = await run_powershell(
             f"Add-Type -AssemblyName System.Windows.Forms; "
             f"$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
             f"$bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height); "
             f"$graphics = [System.Drawing.Graphics]::FromImage($bitmap); "
             f"$graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size); "
-            f"$bitmap.Save('{output_path}'); "
+            f"$bitmap.Save('{quoted}'); "
             f"$graphics.Dispose(); $bitmap.Dispose(); "
-            f"'Screenshot saved to {output_path}'"
+            f"'Screenshot saved to {quoted}'"
         )
 
     elif CURRENT_PLATFORM == Platform.MACOS:
@@ -119,6 +126,19 @@ async def screenshot(
         code, out, err = await run_command(args)
 
     else:  # Linux
+        from pilot.system import portal
+
+        if portal.wayland_session():
+            # Wayland: only the desktop's Screenshot portal may read the screen; gnome-screenshot and scrot see
+            # nothing outside GNOME and X11. The portal gives the whole screen (it has no window or area choice
+            # without its interactive dialog), and asks the person once where the desktop wants that.
+            import asyncio
+
+            data = await asyncio.to_thread(portal.capture_png, None)
+            if data:
+                Path(output_path).write_bytes(data)
+                return f"Screenshot saved to {output_path}"
+            logger.info("The Screenshot portal gave no image; trying gnome-screenshot and grim")
         if region == "active_window":
             code, out, err = await run_command(["gnome-screenshot", "-w", "-f", output_path])
         elif region and region != "fullscreen":
@@ -127,8 +147,10 @@ async def screenshot(
         else:
             code, out, err = await run_command(["gnome-screenshot", "-f", output_path])
 
+        if code != 0 and portal.wayland_session():
+            code, out, err = await run_command(["grim", output_path])  # wlroots compositors (sway, Hyprland)
         if code != 0:
-            # Fallback to scrot
+            # Fallback to scrot (X11)
             code, out, err = await run_command(["scrot", output_path])
 
     if code != 0:

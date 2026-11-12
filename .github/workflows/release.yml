@@ -189,10 +189,7 @@ jobs:
             libayatana-appindicator3-dev
 
       - name: Install Rust stable
-        # Pinned: Rust 1.100.0 (12 November 2026) does not compile the screenshots crate on Linux (dbus's
-        # method_call no longer infers its reply type there). Back to stable once take_screenshot no longer
-        # depends on that crate.
-        uses: dtolnay/rust-toolchain@1.99.1
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 

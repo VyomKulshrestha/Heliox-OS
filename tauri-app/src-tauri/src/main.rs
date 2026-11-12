@@ -631,7 +631,6 @@ fn main() {
             commands::restart_agents,
             commands::system_scan,
             commands::get_uptime,
-            commands::take_screenshot,
             commands::get_dashboard_status,
             get_system_stats,
             system_info,

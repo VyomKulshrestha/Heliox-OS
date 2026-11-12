@@ -2302,6 +2302,7 @@ class PilotServer:
             "screen_current_app": self._handle_screen_current_app,
             "screen_vision_stats": self._handle_screen_vision_stats,
             "screen_vision_toggle": self._handle_screen_vision_toggle,
+            "take_screenshot": self._handle_take_screenshot,
             "cognitive_stats": self._handle_cognitive_stats,
             "cognitive_state": self._handle_cognitive_state,
             "attention_toggle": self._handle_attention_toggle,
@@ -13217,6 +13218,19 @@ def handle_tool(tool_name, params):
                 **self._screen_vision.get_context().to_dict(),
             }
         return {"error": "Screen vision not initialized"}
+
+    async def _handle_take_screenshot(self, params: dict, ws: ServerConnection) -> dict:
+        """The Dashboard's "Take Screenshot": the whole screen saved where the system keeps screenshots, through the
+        same capture as the screenshot action (the Screenshot portal on Wayland). It replaces the desktop app's own
+        Rust capture (the screenshots crate), which saved into whatever folder the app was started in."""
+        from pilot.system.screen import default_screenshot_path, screenshot
+
+        path = default_screenshot_path()
+        try:
+            await screenshot(path)
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "ok", "path": path}
 
     async def _handle_screen_current_app(self, params: dict, ws: ServerConnection) -> dict:
         """Return the currently active application.

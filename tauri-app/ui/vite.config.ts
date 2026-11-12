@@ -430,21 +430,6 @@ function daemonTokenDevPlugin(): Plugin {
               return;
             }
 
-            if (command === "take_screenshot") {
-              const shotPath = join(CONFIG_DIR, `screenshot_${Date.now()}.png`);
-              try {
-                const psCmd = `Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $bmp = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen(0,0,0,0,$bmp.Size); $bmp.Save('${shotPath.replace(/\\/g, "\\\\")}'); $g.Dispose(); $bmp.Dispose();`;
-                execSync(`powershell -NoProfile -Command "${psCmd}"`, { timeout: 4000 });
-              } catch (e) {
-                sendJson(res, 500, {
-                  error: `Screenshot capture failed: ${e instanceof Error ? e.message : String(e)}`,
-                });
-                return;
-              }
-              res.end(JSON.stringify(shotPath));
-              return;
-            }
-
             if (command === "get_agent_activity") {
               unavailable(res, command, "agent activity must come from the running daemon");
               return;

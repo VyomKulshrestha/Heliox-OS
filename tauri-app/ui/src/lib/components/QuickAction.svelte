@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Camera, Mic, Pin, RotateCw, ShieldCheck, SquareTerminal, Trash2 } from "@lucide/svelte";
   import { invoke } from "../api/invoke";
+  import { call, requireOkResult, type DaemonStatusResult } from "../api/daemon";
   import { onMount } from "svelte";
   import { pinnedWidgets } from "../stores/pinnedWidgets";
   let uptime = "Loading...";
@@ -84,8 +85,12 @@
           clearMessage = `System health scan\n\n${formatted}`;
           break;
         case "Take Screenshot":
-          const shotPath = await invoke("take_screenshot");
-          clearMessage = `Screenshot saved to ${shotPath}`;
+          // The daemon takes it, as it does for "take a screenshot" (the Screenshot portal on Wayland).
+          const shot = requireOkResult(
+            await call<DaemonStatusResult & { path?: string }>("take_screenshot"),
+            "The screenshot could not be taken.",
+          );
+          clearMessage = `Screenshot saved to ${shot.path}`;
           break;
         case "Voice Command":
           let voiceRequestHandled = false;
