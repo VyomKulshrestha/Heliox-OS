@@ -171,3 +171,18 @@ def test_a_record_in_the_state_folder_wins_over_an_old_one_in_the_data_folder(tm
         is None
     )
     assert not old.exists()
+
+
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="time.tzset: setting the zone of a running process (POSIX)")
+def test_the_daemon_says_the_start_in_its_own_computers_zone(monkeypatch):
+    """The daemon runs on the person's computer, so its local time is theirs (a runner's is UTC); the window then
+    shows the start in the person's own format (api/lastRun.ts)."""
+    from pilot.system import run_record
+
+    monkeypatch.setenv("TZ", "Asia/Kolkata")
+    time.tzset()
+    try:
+        assert run_record._clock_text(1794521400.0) == "03:40"  # 12 November 2026, 22:10 UTC
+    finally:
+        monkeypatch.undo()
+        time.tzset()

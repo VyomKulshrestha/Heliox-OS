@@ -53,3 +53,36 @@ describe("the last run's notice", () => {
     expect(lastRunLine(unclean, broken)).toBeNull();
   });
 });
+
+describe("the time in the last run's notice", () => {
+  beforeEach(() => resetLastRunForTests());
+
+  it("is the person's own time zone and format, not the daemon's", () => {
+    const zone = process.env.TZ;
+    process.env.TZ = "Asia/Kolkata"; // UTC+5:30: the daemon's 22:10 UTC is 03:40 the next morning here
+    try {
+      const reply = {
+        last_run: {
+          notice: "Heliox's last run (started 22:10) did not end cleanly. It is running again.",
+          id: "a",
+          started_at: Date.UTC(2026, 10, 12, 22, 10) / 1000,
+        },
+      };
+      expect(lastRunLine(reply, null, "en-GB")).toBe(
+        "Heliox's last run (started 03:40) did not end cleanly. It is running again.",
+      );
+      resetLastRunForTests();
+      expect(lastRunLine({ last_run: { ...reply.last_run, id: "b" } }, null, "en-US")).toBe(
+        "Heliox's last run (started 3:40 AM) did not end cleanly. It is running again.",
+      );
+    } finally {
+      if (zone === undefined) delete process.env.TZ;
+      else process.env.TZ = zone;
+    }
+  });
+
+  it("keeps the daemon's words when it sent no time", () => {
+    const reply = { last_run: { notice: "Heliox's last run did not end cleanly. It is running again.", id: "c" } };
+    expect(lastRunLine(reply, null)).toBe("Heliox's last run did not end cleanly. It is running again.");
+  });
+});
