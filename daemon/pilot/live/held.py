@@ -273,10 +273,17 @@ def is_answer(text: str) -> bool:
     return not _REQUEST_START.match(said)
 
 
+# Dropping the question outright, even when an option is also named ("never mind, Thursday" is not an answer).
+_DROP = re.compile(r"^(?:never ?mind|cancel|forget it|leave it|neither|none|stop)\b", re.IGNORECASE)
+# "Is it that, or 4,200?": yes, or "that", keeps what was said before.
+_THAT = re.compile(r"^(?:yes|yeah|yep|yup|that|that one|it is|it's that|the one i said|what i said)\b", re.IGNORECASE)
+
+
 def resolve(held: Held, answer: str) -> Resolution:
-    """What the person's answer decides."""
+    """What the person's answer decides. A version named in it wins, even after a "no" ("no, 4,200"); only words
+    that drop the question ("never mind", "cancel") drop it then. A bare "no" drops it too."""
     text = sp.to_written(answer).casefold().strip(" .!?")
-    if _CANCEL.match(text):
+    if _DROP.match(text):
         return Resolution("cancel", "Okay, I've left it.")
     picked = [i for i, option in enumerate(held.options) if any(_has(text, key) for key in option.keys)]
     if len(picked) != 1:
@@ -284,6 +291,10 @@ def resolve(held: Held, answer: str) -> Resolution:
             picked = [0]
         elif _SECOND.search(text) and not _FIRST.search(text):
             picked = [1]
+        elif held.kind == "said_vs_said" and _THAT.match(text):
+            picked = [0]
+    if len(picked) != 1 and _CANCEL.match(text):
+        return Resolution("cancel", "Okay, I've left it.")
     if len(picked) == 1:
         option = held.options[picked[0]]
         start, end = held.span
@@ -487,7 +498,8 @@ def _amount_hold(request: str, start: int, end: int, value: int, earlier: int, t
     b = Option(_fmt(value), (_fmt(value), str(value)), request[start:end].strip())
     return Held(
         "said_vs_said",
-        f"A moment ago you said {thing} is {_fmt(earlier)}. {_fmt(earlier)} or {_fmt(value)}?",
+        # Said once, then the choice, as a person would ask: no amount twice in a row, no sentence starting with one.
+        f"A moment ago you said {thing} is {_fmt(earlier)}. Is it that, or {_fmt(value)}?",
         request,
         (start, end),
         (a, b),

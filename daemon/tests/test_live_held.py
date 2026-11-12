@@ -88,7 +88,7 @@ def test_an_amount_said_a_moment_ago_against_the_one_in_the_request():
     turns = Turns(clock=lambda: clock[0])
     turns.add(spoken.to_written("the invoice for Acme is 2,400."))
     held = hold_for("email the Acme invoice for 4,200.", TODAY, turns)
-    assert held.question == "A moment ago you said the invoice for Acme is 2,400. 2,400 or 4,200?"
+    assert held.question == "A moment ago you said the invoice for Acme is 2,400. Is it that, or 4,200?"
     assert resolve(held, "two thousand four hundred").request == "email the Acme invoice for 2,400."
     clock[0] = 601  # a different conversation by now
     assert hold_for("email the Acme invoice for 4,200.", TODAY, turns) is None
@@ -118,17 +118,17 @@ def test_must_not_ask(said):
         (
             ["the invoice is 2,400."],
             "email it for 4,200.",
-            "A moment ago you said the invoice is 2,400. 2,400 or 4,200?",
+            "A moment ago you said the invoice is 2,400. Is it that, or 4,200?",
         ),
         (
             ["the invoice is 2,400."],
             "send that to Sam for 4,200.",
-            "A moment ago you said the invoice is 2,400. 2,400 or 4,200?",
+            "A moment ago you said the invoice is 2,400. Is it that, or 4,200?",
         ),
         (
             ["the invoice is two thousand four hundred."],
             "email it for four thousand two hundred.",
-            "A moment ago you said the invoice is 2,400. 2,400 or 4,200?",
+            "A moment ago you said the invoice is 2,400. Is it that, or 4,200?",
         ),
     ],
 )
@@ -197,7 +197,7 @@ async def test_an_amount_swap_across_two_turns_is_asked_about(tmp_path):
     assert live.hold("the invoice for Acme is 2,400.") is None
     clock.t += 15
     held = live.hold("email the Acme invoice for 4,200.")
-    assert held.say == "A moment ago you said the invoice for Acme is 2,400. 2,400 or 4,200?"
+    assert held.say == "A moment ago you said the invoice for Acme is 2,400. Is it that, or 4,200?"
     assert live.hold("2,400").proceed == "email the Acme invoice for 2,400."
 
 
@@ -292,3 +292,46 @@ async def test_the_bench_order_a_slip_then_another_request_naming_an_option(tmp_
     withdrawn = [p for e, p in events if e == "live_interjection_withdrawn"]
     assert withdrawn == [{"id": first_card["id"], "reason": "expired"}]
     assert live.hold("Thursday").proceed == "put the review in for Thursday 19 November at 10"
+
+
+# ── answering "Is it that, or 4,200?" ──
+
+
+@pytest.mark.parametrize(
+    ("answer", "kind", "goes_on"),
+    [
+        ("that", "proceed", "email the Acme invoice for 2,400."),
+        ("yes", "proceed", "email the Acme invoice for 2,400."),
+        ("yes, that one", "proceed", "email the Acme invoice for 2,400."),
+        ("no, 4,200", "proceed", "email the Acme invoice for 4,200."),  # the version named wins over the "no"
+        ("no, the second", "proceed", "email the Acme invoice for 4,200."),
+        ("four thousand two hundred", "proceed", "email the Acme invoice for 4,200."),
+        ("no", "cancel", ""),
+        ("never mind, 4,200", "cancel", ""),  # words that drop the question drop it
+    ],
+)
+def test_answers_to_the_amount_question(answer, kind, goes_on):
+    turns = Turns()
+    turns.add("the invoice for Acme is 2,400.")
+    held = hold_for("email the Acme invoice for 4,200.", TODAY, turns)
+    assert held.question == "A moment ago you said the invoice for Acme is 2,400. Is it that, or 4,200?"
+    result = resolve(held, answer)
+    assert result.kind == kind and result.request == goes_on
+
+
+def test_no_question_says_a_value_twice_in_a_row():
+    """Once numbers are spoken as words, each question still names each value once and starts no sentence with one."""
+    turns = Turns()
+    turns.add("the invoice for Acme is 2,400.")
+    questions = [
+        hold_for("email the Acme invoice for 4,200.", TODAY, turns).question,
+        hold_for("put the review in for Monday the 19th at 10", TODAY, Turns()).question,
+        hold_for("remind me that the invoice is due on the 31st of November", TODAY, Turns()).question,
+    ]
+    for question in questions:
+        sentences = [part.strip() for part in question.replace("?", ".").split(".") if part.strip()]
+        assert all(not sentence[0].isdigit() for sentence in sentences), question
+        assert question.count("2,400") <= 1 and question.count("4,200") <= 1, question
+    assert resolve(hold_for("put the review in for Monday the 19th at 10", TODAY, Turns()), "no, Thursday").request == (
+        "put the review in for Thursday 19 November at 10"
+    )
