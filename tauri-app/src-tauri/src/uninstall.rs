@@ -70,6 +70,40 @@ pub struct SystemDirs {
     /// settings, data and logs under them (pilot.config CONFIG_DIR, DATA_DIR, STATE_DIR) on every system, so
     /// removal looks there too; unset, they are ~/.config, ~/.local/share and ~/.local/state.
     pub xdg: Xdg,
+    /// Linux: the daemon's runtime folder (token files and the port lock) where commands::daemon_runtime_dir finds
+    /// it, only when it is this person's own and named as the daemon names it (runtime_folder_is_ours). The one place
+    /// removal touches outside the home folder; /run/user is cleared at logout, a $TMPDIR fallback may stay for days.
+    pub linux_runtime: Option<PathBuf>,
+}
+
+/// The daemon's runtime folder on Linux may be removed only when it is named as the daemon names it ("heliox-os"
+/// under /run/user/<uid> or $XDG_RUNTIME_DIR, "heliox-os-runtime-<uid>" under $TMPDIR) and owned by `uid`. Pure:
+/// `owner` is the folder's owner, None when it does not exist.
+#[cfg_attr(not(unix), allow(dead_code))] // on Windows only its tests use it
+pub fn runtime_folder_is_ours(path: &Path, uid: u32, owner: Option<u32>) -> bool {
+    let named = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "heliox-os" || name == format!("heliox-os-runtime-{uid}"));
+    named && owner == Some(uid) && safe_location(path)
+}
+
+#[cfg(unix)]
+fn linux_runtime_folder() -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let folder = crate::commands::daemon_runtime_dir()?;
+    // SAFETY: getuid has no preconditions and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let owner = std::fs::symlink_metadata(&folder)
+        .ok()
+        .filter(|meta| meta.is_dir())
+        .map(|meta| meta.uid());
+    runtime_folder_is_ours(&folder, uid, owner).then_some(folder)
+}
+
+#[cfg(not(unix))]
+fn linux_runtime_folder() -> Option<PathBuf> {
+    None
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -119,9 +153,17 @@ pub fn setup_folder(dirs: &SystemDirs) -> PathBuf {
 }
 
 /// Where removal may act: inside the home folder, or inside one of the XDG "heliox-os" folders, which may lie
-/// outside it when a variable points elsewhere. Never the XDG folder itself, never anything beside it.
+/// outside it when a variable points elsewhere, or (Linux) inside the daemon's own runtime folder as checked by
+/// runtime_folder_is_ours. Never the XDG folder itself, never anything beside it.
 pub fn within_allowed(path: &Path, dirs: &SystemDirs) -> bool {
     if path.starts_with(&dirs.home) {
+        return true;
+    }
+    if dirs
+        .linux_runtime
+        .as_ref()
+        .is_some_and(|runtime| path.starts_with(runtime))
+    {
         return true;
     }
     let (config, data, state) = heliox_folders(dirs);
@@ -288,6 +330,14 @@ pub fn locations(dirs: &SystemDirs) -> Vec<Place> {
                 App,
                 Folder,
             ));
+            if let Some(runtime) = &dirs.linux_runtime {
+                out.push(place(
+                    runtime.clone(),
+                    "Runtime files (the daemon's token files and port lock)",
+                    App,
+                    Folder,
+                ));
+            }
         }
     }
     out
@@ -388,6 +438,11 @@ pub fn dirs_from_home(home: Option<PathBuf>) -> Option<SystemDirs> {
             "linux"
         },
         xdg: Xdg::from_env(),
+        linux_runtime: if cfg!(any(target_os = "windows", target_os = "macos")) {
+            None // inside the home folder there, listed below
+        } else {
+            linux_runtime_folder()
+        },
     })
 }
 
@@ -732,7 +787,117 @@ mod tests {
             local_app_data: Some(home.join("AppData").join("Local")),
             os,
             xdg: Xdg::default(),
+            linux_runtime: None,
         }
+    }
+
+    /// The three Linux cases of daemon/tests/runtime_dir_cases.json whose folder is outside the home: /run/user
+    /// writable, the $TMPDIR fallback, and $XDG_RUNTIME_DIR.
+    #[cfg(unix)] // Linux paths: on Windows "/run/user/..." is not absolute, so safe_location refuses it there
+    #[test]
+    fn removal_takes_the_linux_runtime_folder_only_when_it_is_the_daemons_and_the_persons() {
+        let table: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../daemon/tests/runtime_dir_cases.json"
+        )))
+        .unwrap();
+        let mut seen = std::collections::BTreeSet::new();
+        for case in table["cases"].as_array().unwrap() {
+            if case["system"] != "linux" {
+                continue;
+            }
+            let env = case["env"].as_object().unwrap().clone();
+            let uid = case["uid"].as_u64().unwrap() as u32;
+            let writable = case["run_user_writable"].as_bool().unwrap();
+            let folder = crate::commands::runtime_dir_for(
+                "linux",
+                |name| env.get(name).and_then(|v| v.as_str()).map(str::to_string),
+                Some(PathBuf::from("/home/sam")),
+                uid,
+                |_| writable,
+            )
+            .unwrap();
+            let kind = if env.contains_key("XDG_RUNTIME_DIR")
+                && !env["XDG_RUNTIME_DIR"].as_str().unwrap().trim().is_empty()
+            {
+                "xdg"
+            } else if writable {
+                "run-user"
+            } else {
+                "tmpdir"
+            };
+            seen.insert(kind);
+            assert!(runtime_folder_is_ours(&folder, uid, Some(uid)), "{case}");
+            assert!(
+                !runtime_folder_is_ours(&folder, uid, Some(uid + 1)),
+                "another person's: {case}"
+            );
+            assert!(
+                !runtime_folder_is_ours(&folder, uid, None),
+                "not there: {case}"
+            );
+            let home = std::env::temp_dir().join("home-sam");
+            let dirs = SystemDirs {
+                linux_runtime: Some(folder.clone()),
+                ..dirs_for(&home, "linux")
+            };
+            let all = locations(&dirs);
+            let outside: Vec<_> = all.iter().filter(|p| !p.path.starts_with(&home)).collect();
+            assert_eq!(outside.len(), 1, "{case}");
+            assert_eq!(outside[0].path, folder);
+            assert_eq!(
+                (outside[0].kind, outside[0].target.clone()),
+                (Kind::App, Target::Folder)
+            );
+        }
+        assert_eq!(
+            seen.into_iter().collect::<Vec<_>>(),
+            vec!["run-user", "tmpdir", "xdg"]
+        );
+        // Never a folder named otherwise, wherever it is.
+        assert!(!runtime_folder_is_ours(
+            Path::new("/run/user/1001/other"),
+            1001,
+            Some(1001)
+        ));
+        assert!(!runtime_folder_is_ours(
+            Path::new("/tmp/heliox-os-runtime-1002"),
+            1001,
+            Some(1001)
+        ));
+        assert!(
+            !runtime_folder_is_ours(Path::new("/heliox-os"), 1001, Some(1001)),
+            "too shallow"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_real_runtime_folder_of_the_person_is_removed_and_nothing_beside_it() {
+        use std::os::unix::fs::MetadataExt;
+        let root =
+            std::env::temp_dir().join(format!("heliox-runtime-removal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // SAFETY: getuid has no preconditions and cannot fail.
+        let uid = unsafe { libc::getuid() };
+        let runtime = root.join(format!("heliox-os-runtime-{uid}"));
+        let beside = root.join("someone-elses");
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::fs::create_dir_all(&beside).unwrap();
+        std::fs::write(runtime.join("auth_token"), "t").unwrap();
+        let owner = std::fs::metadata(&runtime).ok().map(|meta| meta.uid());
+        assert!(runtime_folder_is_ours(&runtime, uid, owner));
+        let home = root.join("home");
+        let dirs = SystemDirs {
+            linux_runtime: Some(runtime.clone()),
+            ..dirs_for(&home, "linux")
+        };
+
+        let report = remove_files(&dirs, true, Credentials::default()); // even when the data is kept
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert!(!runtime.exists(), "the token files do not outlive Heliox");
+        assert!(beside.exists(), "nothing beside it");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

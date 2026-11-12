@@ -910,7 +910,7 @@ pub(crate) fn daemon_runtime_dir() -> Option<std::path::PathBuf> {
     )
 }
 
-fn runtime_dir_for(
+pub(crate) fn runtime_dir_for(
     system: &str,
     var: impl Fn(&str) -> Option<String>,
     home: Option<std::path::PathBuf>,
