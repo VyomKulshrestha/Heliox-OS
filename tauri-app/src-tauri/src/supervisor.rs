@@ -18,6 +18,49 @@
 use std::process::Child;
 use std::time::Duration;
 
+/// What the supervisor saw end the daemon it restarts, passed to the new one in this variable for its run record
+/// (pilot.system.run_record): an exit code, "signal" (ended by a signal) or "hung" (it stopped answering and was
+/// ended). Set once per restart and taken by the next launch.
+pub(crate) const PREVIOUS_EXIT_VARIABLE: &str = "HELIOX_PREVIOUS_EXIT";
+static PREVIOUS_EXIT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// How long a daemon asked to stop on purpose gets to end before it is ended (it marks its run clean at once).
+pub(crate) const STOP_ON_PURPOSE_WAIT: Duration = Duration::from_secs(5);
+
+pub(crate) fn note_previous_exit(code: Option<i32>) {
+    if code == Some(ANOTHER_COPY_EXIT_CODE) {
+        return; // not an end of the daemon this app ran
+    }
+    let seen = code.map_or_else(|| "signal".to_string(), |code| code.to_string());
+    if let Ok(mut slot) = PREVIOUS_EXIT.lock() {
+        *slot = Some(seen);
+    }
+}
+
+pub(crate) fn note_hung() {
+    if let Ok(mut slot) = PREVIOUS_EXIT.lock() {
+        *slot = Some("hung".to_string());
+    }
+}
+
+pub(crate) fn take_previous_exit() -> Option<String> {
+    PREVIOUS_EXIT.lock().ok().and_then(|mut slot| slot.take())
+}
+
+/// End the daemon this app started on purpose (quitting, an update, a repair, removal): ask it to stop first, so
+/// it marks its run as ended cleanly, give it STOP_ON_PURPOSE_WAIT, then end whatever is left.
+pub(crate) fn stop_on_purpose(child: &mut Child, reason: &str) {
+    if tauri::async_runtime::block_on(crate::commands::ask_daemon_to_stop(reason)) {
+        let waited = std::time::Instant::now();
+        while waited.elapsed() < STOP_ON_PURPOSE_WAIT {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    kill_tree(child);
+}
+
 pub(crate) const CHECK_EVERY: Duration = Duration::from_secs(5);
 /// First start-up can load speech models for well over a minute on a slow or busy machine.
 pub(crate) const STARTUP_GRACE: Duration = Duration::from_secs(300);
@@ -273,6 +316,24 @@ mod tests {
         // One answer in between starts the count again.
         watch.observe(Observation::Answered, CHECK_EVERY);
         assert_eq!(watch.observe(Observation::Silent, CHECK_EVERY), Step::Wait);
+    }
+
+    #[test]
+    fn the_next_daemon_learns_once_what_ended_the_last_one() {
+        let _ = take_previous_exit();
+        note_previous_exit(Some(ANOTHER_COPY_EXIT_CODE));
+        assert_eq!(
+            take_previous_exit(),
+            None,
+            "another copy serving is not an end of ours"
+        );
+        note_previous_exit(Some(1));
+        assert_eq!(take_previous_exit().as_deref(), Some("1"));
+        assert_eq!(take_previous_exit(), None, "taken once");
+        note_previous_exit(None);
+        assert_eq!(take_previous_exit().as_deref(), Some("signal"));
+        note_hung();
+        assert_eq!(take_previous_exit().as_deref(), Some("hung"));
     }
 
     #[test]

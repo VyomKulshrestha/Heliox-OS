@@ -647,6 +647,30 @@ async fn request_reply(
         .map_err(|_| "The daemon did not reply in time".to_string())?
 }
 
+/// Ask the daemon this app started to stop on purpose (daemon_stop), before the app ends it: the daemon then marks
+/// its run as ended cleanly (pilot.system.run_record), so quitting, updating or repairing is not reported as an
+/// unclean end next time. True when the daemon said it is stopping.
+pub(crate) async fn ask_daemon_to_stop(reason: &str) -> bool {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "daemon_stop",
+        "params": {"reason": reason},
+        "id": "native-stop"
+    });
+    let attempt = async {
+        let mut ws = connect_authenticated().await.ok()?;
+        request_reply(&mut ws, &request, std::time::Duration::from_secs(2))
+            .await
+            .ok()
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(3), attempt).await {
+        Ok(Some(reply)) => {
+            reply.get("result").and_then(|r| r.get("status")) == Some(&serde_json::json!("ok"))
+        }
+        _ => false,
+    }
+}
+
 fn version_of(reply: &serde_json::Value) -> String {
     reply
         .get("result")

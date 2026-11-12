@@ -693,7 +693,7 @@ pub fn heliox_files_remove(
     crate::setup::DAEMON_PAUSED.store(true, std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut guard) = app.state::<crate::DaemonProcess>().0.lock() {
         if let Some(mut child) = guard.take() {
-            crate::supervisor::kill_tree(&mut child);
+            crate::supervisor::stop_on_purpose(&mut child, "removal");
             let _ = child.wait();
         }
     }

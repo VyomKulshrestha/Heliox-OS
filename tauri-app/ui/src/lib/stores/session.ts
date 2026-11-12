@@ -1,6 +1,7 @@
 import { writable, get } from "svelte/store";
 import { _ } from "svelte-i18n";
 import { call, connect, isConnected, onConnectionState, onNotification, requireOkResult } from "../api/daemon";
+import { lastRunLine } from "../api/lastRun";
 import { classifyExecuteResponse, normalizeActionResult, repairLegacyPlanFallback } from "../utils/executeResponse";
 import {
   LEGACY_CHAT_HISTORY_KEY,
@@ -1489,7 +1490,18 @@ function createSession() {
       };
     });
     if (connected) void resumeDurableTask();
+    if (connected) void sayLastRunOnce();
   });
+
+  /** Once per unclean end of Heliox's last run, one quiet line (startup_status's last_run; see api/lastRun.ts). */
+  async function sayLastRunOnce() {
+    try {
+      const line = lastRunLine(await call<unknown>("startup_status"));
+      if (line) addSystemMessage(line);
+    } catch {
+      // an older daemon, or no answer: nothing to say
+    }
+  }
 
   /** Make the interactive dialog unanswerable while a correction or Stop that may withdraw it is in flight. */
   function holdApproval(): string {

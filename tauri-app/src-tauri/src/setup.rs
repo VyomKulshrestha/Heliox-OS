@@ -827,7 +827,7 @@ pub fn update_apply(app: AppHandle) -> Result<(), String> {
     DAEMON_PAUSED.store(true, Ordering::SeqCst);
     if let Ok(mut guard) = app.state::<crate::DaemonProcess>().0.lock() {
         if let Some(mut child) = guard.take() {
-            crate::supervisor::kill_tree(&mut child);
+            crate::supervisor::stop_on_purpose(&mut child, "an update");
             let _ = child.wait();
         }
     }
@@ -870,7 +870,7 @@ pub fn setup_repair(app: AppHandle) -> Result<(), String> {
     DAEMON_PAUSED.store(true, Ordering::SeqCst);
     if let Ok(mut guard) = app.state::<crate::DaemonProcess>().0.lock() {
         if let Some(mut child) = guard.take() {
-            crate::supervisor::kill_tree(&mut child);
+            crate::supervisor::stop_on_purpose(&mut child, "a repair");
             let _ = child.wait();
         }
     }

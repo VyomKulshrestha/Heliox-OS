@@ -10535,6 +10535,7 @@ class PilotServer:
             "active_connections": active_connections,
             "loaded_agents": loaded_agents,
             "event_loop_tasks": len(asyncio.all_tasks()),  # the weekly soak watches this for leaks
+            "last_run": self._last_run_summary(),  # None when the last run ended cleanly
         }
 
     async def _handle_ready(self, params: dict[str, Any], ws: ServerConnection) -> dict[str, Any]:
@@ -10566,6 +10567,19 @@ class PilotServer:
 
         return {"ready": True}
 
+    async def _begin_run_record(self, *, folder_writable: bool) -> None:
+        """Read whether the last run ended cleanly and mark this one as running (pilot.system.run_record)."""
+        from pilot.system.run_record import FILE_NAME, RunRecord
+
+        record = RunRecord(DATA_DIR / FILE_NAME, version=__version__)
+        self._run_record = record
+        replaced = self.__dict__.get("_replaced_pid")  # main(): --replace-pid, an update replacing the old copy
+        await asyncio.to_thread(record.begin, folder_writable=folder_writable, replaced_pid=replaced)
+
+    def _last_run_summary(self) -> dict[str, Any] | None:
+        record = self.__dict__.get("_run_record")
+        return record.summary() if record is not None else None
+
     async def _handle_startup_status(self, params: dict, ws: ServerConnection) -> dict:
         """Whether Heliox has finished starting, and which stage it is in ("opening Heliox's records")."""
         self._recheck_storage_now()  # the window asking (it does on every connect) checks a blocked folder at once
@@ -10573,6 +10587,9 @@ class PilotServer:
         if startup is None:
             return {"status": "ok", "state": "ready", "stage": "", "reason": "", "stages_done": []}
         reply = {"status": "ok", **startup.snapshot()}
+        last_run = self._last_run_summary()
+        if last_run is not None:
+            reply["last_run"] = last_run
         timings = self._startup_timings().snapshot()  # only with HELIOX_STARTUP_TIMINGS=1 (the first-run CI job)
         if timings is not None:
             reply["timings"] = timings
@@ -13406,6 +13423,7 @@ def handle_tool(tool_name, params):
             self._port_lock = hold_port_lock(RUNTIME_DIR, port)  # Linux: two copies in the same instant
             progress.begin("checking the data folder")
             blocked = await asyncio.to_thread(preflight, DATA_DIR)
+            await self._begin_run_record(folder_writable=blocked is None)
             self._write_token_files()
             self._server = await serve_claimed(
                 claimed,
@@ -13561,6 +13579,9 @@ def handle_tool(tool_name, params):
         """
         self._stop_deadline = time.monotonic() + STOP_TOTAL_SECONDS
         self._running = False
+        run_record = self.__dict__.get("_run_record")
+        if run_record is not None:  # first: a stop on purpose is a clean end even if it is cut short later
+            await self._bounded_stop_step("run record", asyncio.to_thread(run_record.end_cleanly, "stopped"))
         wake_task = self.__dict__.get("_wake_task")
         if wake_task is not None and not wake_task.done():
             wake_task.cancel()
@@ -16847,6 +16868,7 @@ def main() -> None:
         config.set_runtime_override("security", "dry_run", True)
         logger.info("Dry-run mode enabled via CLI flag")
     server = PilotServer(config)
+    server._replaced_pid = args.replace_pid  # the copy this one replaced on purpose ended cleanly
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

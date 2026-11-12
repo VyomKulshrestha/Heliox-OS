@@ -69,6 +69,10 @@ fn try_spawn_with(python: &std::path::Path) -> Option<Child> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
+    // What the supervisor saw end the last daemon, for its run record (pilot.system.run_record); once.
+    if let Some(seen) = supervisor::take_previous_exit() {
+        cmd.env(supervisor::PREVIOUS_EXIT_VARIABLE, seen);
+    }
     match cmd.spawn() {
         Ok(child) => Some(child),
         Err(e) => {
@@ -404,7 +408,10 @@ pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
                     Ok(mut guard) => match guard.as_mut() {
                         Some(child) => match child.try_wait() {
                             Ok(None) => None,
-                            Ok(Some(status)) => Some(supervisor::exit_observation(status.code())),
+                            Ok(Some(status)) => {
+                                supervisor::note_previous_exit(status.code());
+                                Some(supervisor::exit_observation(status.code()))
+                            }
                             Err(_) => Some(Observation::Exited),
                         },
                         // A restart that failed to launch: keep trying, unless it found another copy serving.
@@ -442,6 +449,7 @@ pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
                     if let Ok(mut guard) = state.0.lock() {
                         if let Some(child) = guard.as_mut() {
                             supervisor::kill_tree(child);
+                            supervisor::note_hung();
                         }
                     }
                 }
@@ -512,7 +520,7 @@ fn stop_daemon(state: &DaemonProcess) {
                     println!("[Heliox OS] Python daemon already exited");
                 }
                 Ok(None) => {
-                    supervisor::kill_tree(&mut child);
+                    supervisor::stop_on_purpose(&mut child, "the app quit");
                     println!("[Heliox OS] Python daemon stopped");
                 }
                 Err(e) => {

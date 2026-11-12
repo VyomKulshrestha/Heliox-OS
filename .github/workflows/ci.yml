@@ -1160,6 +1160,13 @@ jobs:
           mkdir -p "$HOME"
           python daemon/tests/platform_real/learner_key_reboot_check.py
 
+      - name: The last run, killed then stopped cleanly (startup_status says the unclean end once, the clean one never)
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/runrecord" USERPROFILE="$RUNNER_TEMP/runrecord" LOCALAPPDATA="$RUNNER_TEMP/runrecord/AppData/Local"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/run_record_check.py
+
       - name: A full disk and a read-only data folder (tmpfs and an ext4 image)
         if: runner.os == 'Linux'
         continue-on-error: true

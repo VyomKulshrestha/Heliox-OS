@@ -27,6 +27,7 @@ GUARDED = (
     "audio_check.py",
     "credential_store_check.py",
     "learner_key_reboot_check.py",
+    "run_record_check.py",
     # the desktop drivers: they open windows and type, click or show notifications
     "apps_check.py",
     "apps_fields_check.py",

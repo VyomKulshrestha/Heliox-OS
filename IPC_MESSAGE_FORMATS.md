@@ -1219,7 +1219,9 @@ Return daemon-process health: uptime, RSS memory, active WebSocket connections,
 loaded agent roles, and how many tasks the event loop holds (the weekly soak watches it for leaks).
 
 **Params:** `{}`
-**Result:** `{ "uptime": 42.1, "memory_usage_mb": 180.4, "active_connections": 1, "loaded_agents": [...], "event_loop_tasks": 57 }`
+**Result:** `{ "uptime": 42.1, "memory_usage_mb": 180.4, "active_connections": 1, "loaded_agents": [...], "event_loop_tasks": 57, "last_run": null }`
+
+`last_run` is `null` when the last run ended cleanly, as in `startup_status`.
 
 #### `ready`
 Return `{ "ready": true }` only when start-up has finished, the orchestrator has registered agents
@@ -1231,6 +1233,31 @@ Whether Heliox has finished starting, and what it is doing meanwhile, in plain w
 
 **Params:** `{}`
 **Result:** `{ "status": "ok", "state": "starting" | "waiting_for_storage" | "ready" | "failed", "stage": "opening Heliox's records", "reason": "", "stages_done": ["checking the data folder", ...] }`
+
+`last_run` appears only when Heliox's last run did not end cleanly (`pilot.system.run_record`, the data folder's
+`run_state.json`):
+
+```json
+"last_run": {
+  "ended": "did not end cleanly" | "stopped with exit code 1" | "stopped answering" | "computer restarted",
+  "started_at": 1763031720.5,
+  "version": "0.16.0",
+  "notice": "Heliox's last run (started 14:02) did not end cleanly. It is running again.",
+  "id": "1763031720.5",
+  "unclean_today": 1
+}
+```
+
+- A clean end (stop: a signal, `daemon_stop`, the app quitting, updating, repairing or removing Heliox, which ask
+  first) leaves no `last_run`. So does a copy replaced on purpose (`--replace-pid`).
+- An unclean end is never called a crash: sleep, a forced shutdown, a power cut and ending the process in the task
+  manager look the same.
+- `"computer restarted"`: the system booted after that run started. Its `notice` is `null`, and the window says
+  nothing.
+- An exit code or "stopped answering" is said only when the desktop app's supervisor restarted Heliox and passed
+  what it saw (`HELIOX_PREVIOUS_EXIT`).
+- The window shows `notice` once per `id`. A run record that could not be read is replaced and not reported.
+- `unclean_today` counts today's unclean ends, without computer restarts.
 
 #### `system_info`
 Return exact HUD metrics for CPU, memory, disk, hostname, and uptime.
