@@ -1182,6 +1182,13 @@ jobs:
           mkdir -p "$HOME"
           python daemon/tests/platform_real/network_drop_check.py
 
+      - name: A stand-in for sleep (the daemon frozen for 100 s, then let go)
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/frozen" USERPROFILE="$RUNNER_TEMP/frozen" LOCALAPPDATA="$RUNNER_TEMP/frozen/AppData/Local"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/frozen_daemon_check.py
+
       - name: The update path with the port held by something else
         continue-on-error: true
         run: |
