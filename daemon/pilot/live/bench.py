@@ -9,7 +9,9 @@ detectors, same policy, same personal timing model) against scripted sessions on
   to fix themselves;
 - **cut-offs**: moments Live spoke up while the person was still typing, thinking mid-sentence, or talking
   (two cards arriving together are one interruption, so they count once);
-- **wait**: seconds from the moment the person really stopped to the delivery (lower is better, when on time).
+- **wait**: seconds from the moment the person really stopped to the delivery (lower is better, when on time);
+- **over reply**: spoken deliveries while Heliox was answering the person (a ``converse`` step: the conversation
+  holds the floor, see ``pilot.live.floor``). Each one is a Live remark talking over, or cutting, a reply.
 
 Each scenario is typed by three personas with different rhythms (``quick``, ``steady``, ``thinker``), so a policy
 that works only for fast typists shows up. Before the scored scenarios each persona types a warm-up of plain
@@ -110,6 +112,7 @@ class Score:
     missed: int = 0
     false_alarms: int = 0
     cut_offs: int = 0
+    over_reply: int = 0
     deliveries: int = 0
     waits: list[float] = field(default_factory=list)
     learned_mid_sentence_seconds: float = 0.0
@@ -140,6 +143,7 @@ class Score:
             "missed": self.missed,
             "false_alarms": self.false_alarms,
             "cut_offs": self.cut_offs,
+            "over_reply": self.over_reply,
             "deliveries": self.deliveries,
             "precision": round(self.precision, 3),
             "recall": round(self.recall, 3),
@@ -175,7 +179,7 @@ def validate(scenario: dict[str, Any], where: str = "") -> None:
         raise ValueError(f"{where}: {name}: needs steps")
     allowed = {
         "type", "pause", "replace", "paste", "send", "say", "label", "seconds", "switch", "text", "delete", "notice",
-        "source",
+        "source", "converse",
     }  # fmt: skip
     for step in steps:
         if not isinstance(step, dict) or not set(step) <= allowed:
@@ -218,6 +222,10 @@ def expand(scenario: dict[str, Any], persona: Persona, rng: random.Random) -> li
             # Supervision matched a risk rule: {"notice": "credential_exposure", "source": "ocr" or "keystroke"}.
             script.append(Step(t, t, "idle", "notice", text=raw["notice"], old=raw.get("source", "ocr")))
             seconds = 0.0
+        elif "converse" in raw:
+            # Heliox is answering the person (they asked something just before): the conversation has the floor.
+            seconds = float(raw["converse"])
+            script.append(Step(t, t + seconds, "heliox", "pause", seconds=seconds))
         elif "say" in raw:
             seconds = float(raw.get("seconds", 2.5))
             script.append(Step(t, t + seconds, "speaking", "say", text=raw["say"], seconds=seconds))
@@ -364,6 +372,7 @@ async def run(
     *,
     level: str = "balanced",
     seed: int = 7,
+    floor: bool = True,
 ) -> Score:
     # Each scenario has its own seed, so adding a scenario never changes the pauses in another one.
     clock = {"t": 1000.0}
@@ -376,6 +385,10 @@ async def run(
         personal_timing=policy == "personal",
     )
     deliveries: list[tuple[dict[str, Any], float]] = []
+    from pilot.live.floor import Floor
+
+    shared = Floor(clock=lambda: clock["t"]) if floor else None
+    turn: dict[str, Any] = {"token": None}
 
     async def observe() -> Observation | None:
         session = state["session"]
@@ -410,6 +423,7 @@ async def run(
         people=people,
         clock=lambda: clock["t"],
         today=today,
+        floor=shared,
         # Wall-clock time for deadlines: 11:00 on the scenario's day, plus the simulated seconds.
         wallclock=lambda: (
             datetime.combine(today(), datetime.min.time()) + timedelta(hours=11, seconds=clock["t"] - 1000)
@@ -427,6 +441,14 @@ async def run(
         cut_moments: set[float] = set()
         while clock["t"] < session.end:
             session.advance(clock["t"])
+            if shared is not None:
+                answering = session.label(clock["t"]) == "heliox"
+                if answering and turn["token"] is None:
+                    turn["token"] = shared.open_turn()
+                    shared.heliox_spoke()
+                elif not answering and turn["token"] is not None:
+                    shared.close_turn(turn["token"])
+                    turn["token"] = None
             for text in session.said:
                 live.offer_speech(text)
             session.said.clear()
@@ -453,6 +475,8 @@ async def run(
                     if busy and at not in cut_moments:
                         cut_moments.add(at)
                         score.cut_offs += 1
+                    if label == "heliox" and payload.get("spoken"):
+                        score.over_reply += 1
                     wait = None if busy else round(at - session.stopped_at(at), 2)
                     if wait is not None and hit:
                         score.waits.append(wait)
@@ -495,25 +519,26 @@ async def run_all(
     personas: list[str] | None = None,
     policies: tuple[str, ...] = POLICIES,
     level: str = "balanced",
+    floor: bool = True,
 ) -> list[Score]:
     scenarios = scenarios if scenarios is not None else load_scenarios()
     results = []
     for policy in policies:
         for name in personas or list(PERSONAS):
-            results.append(await run(policy, PERSONAS[name], scenarios, level=level))
+            results.append(await run(policy, PERSONAS[name], scenarios, level=level, floor=floor))
     return results
 
 
 def table(scores: list[Score]) -> str:
     head = (
         f"{'policy':<9} {'persona':<8} {'caught':>7} {'missed':>6} {'false':>6} {'cut-offs':>8} "
-        f"{'precision':>9} {'recall':>6} {'wait s':>6}"
+        f"{'precision':>9} {'recall':>6} {'wait s':>6} {'over reply':>10}"
     )
     lines = [head, "-" * len(head)]
     for s in scores:
         lines.append(
             f"{s.policy:<9} {s.persona:<8} {s.catches:>3}/{s.expected:<3} {s.missed:>6} {s.false_alarms:>6} "
-            f"{s.cut_offs:>8} {s.precision:>9.2f} {s.recall:>6.2f} {s.median_wait:>6.2f}"
+            f"{s.cut_offs:>8} {s.precision:>9.2f} {s.recall:>6.2f} {s.median_wait:>6.2f} {s.over_reply:>10}"
         )
     return "\n".join(lines)
 
@@ -525,10 +550,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--policy", choices=POLICIES, action="append", help="only these policies")
     parser.add_argument("--level", choices=("quiet", "balanced", "proactive"), default="balanced")
     parser.add_argument("--json", type=Path, help="write the full results, every delivery included, here")
+    parser.add_argument("--no-floor", action="store_true", help="Live without the shared floor (the old behaviour)")
     args = parser.parse_args(argv)
     scenarios = load_scenarios(args.scenarios)
     scores = asyncio.run(
-        run_all(scenarios, personas=args.persona, policies=tuple(args.policy or POLICIES), level=args.level)
+        run_all(
+            scenarios,
+            personas=args.persona,
+            policies=tuple(args.policy or POLICIES),
+            level=args.level,
+            floor=not args.no_floor,
+        )
     )
     print(f"Heliox Live Bench: {len(scenarios)} scenarios, level {args.level}")
     print(table(scores))

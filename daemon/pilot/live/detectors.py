@@ -234,9 +234,80 @@ def weekday_date(text: str, ctx: TextContext) -> list[Correction]:
     if ctx.is_terminal or ctx.is_code_editor:
         return found  # code and logs are full of test dates, timestamps and ratios that are not claims
     found.extend(_impossible_dates(text, ctx, seen))
+    found.extend(_monthless_weekdays(text, ctx, seen))
     found.extend(_numeric_weekdays(text, ctx))
     found.extend(_relative_days(text, ctx))
     found.extend(_clock_times(text, ctx))
+    return found
+
+
+# ── A weekday with a day of the month and no month: "Tuesday the 12th" ──
+
+# The ordinal ending is required, so "Tuesday 12 people" or "Friday 3 pm" are never dates. A month right after it
+# belongs to the full-date patterns above.
+_MONTHLESS = re.compile(
+    rf"\b{_DAY_RE}\.?,?\s+(?:the\s+)?(?P<d>\d{{1,2}})(?:st|nd|rd|th)\b(?!\s+(?:of\s+)?{_MONTH_RE}\b)",
+    re.IGNORECASE,
+)
+
+
+def _occurrences(day: int, today: date) -> list[date]:
+    """The last time this day of the month came round, and the next two times it will."""
+    out: list[date] = []
+    year, month = today.year, today.month
+    for step in range(-1, 3):
+        m = month + step
+        y = year + (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        try:
+            out.append(date(y, m, day))
+        except ValueError:
+            continue
+    past = [d for d in out if d < today][-1:]
+    ahead = [d for d in out if d >= today][:2]
+    return past + ahead
+
+
+def _monthless_weekdays(text: str, ctx: TextContext, covered: set[tuple[int, int]]) -> list[Correction]:
+    """ "Tuesday the 12th" when no 12th near today, past or coming, is a Tuesday.
+
+    People leave the month out when they mean the nearest one, so the weekday is checked against the last 12th and
+    the next two. Only when it matches none of them is it a slip; the card names the coming one.
+    """
+    found: list[Correction] = []
+    for match in _MONTHLESS.finditer(text):
+        if any(match.start() < end and start < match.end() for start, end in covered):
+            continue
+        day = int(match["d"])
+        if not 1 <= day <= 31:
+            continue
+        stated = _weekday_number(match["wd"])
+        dates = _occurrences(day, ctx.today)
+        if not dates or any(d.weekday() == stated for d in dates):
+            continue
+        coming = next((d for d in dates if d >= ctx.today), dates[-1])
+        actual_name, stated_name = _DAYS[coming.weekday()].title(), _DAYS[stated].title()
+        offset = (stated - coming.weekday()) % 7
+        nearest = coming + timedelta(days=offset) if offset <= 3 else coming + timedelta(days=offset - 7)
+        evidence = match.group(0).strip()
+        found.append(
+            Correction(
+                kind="weekday_date",
+                key=f"weekday_date:{evidence.casefold()}",
+                title=_cap(f"{_on(coming.day, coming.month, ctx)} is a {actual_name}"),
+                message=f"You {_wrote(ctx)} {stated_name}.",
+                evidence=evidence,
+                detail=(
+                    f"If you meant {'' if ctx.is_speech else 'the '}{stated_name}, that's "
+                    f"{_on(nearest.day, nearest.month, ctx)}."
+                ),
+                fix=re.sub(re.escape(match["wd"]), _match_case(actual_name, match["wd"]), evidence, count=1),
+                fix_kind="replace",
+                urgency=NORMAL,
+                confidence=0.9,
+                trailing=_at_end(text, match.end()),
+            )
+        )
     return found
 
 

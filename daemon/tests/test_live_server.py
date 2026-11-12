@@ -93,7 +93,7 @@ async def test_spoken_replies_follow_the_last_correction_and_fix_it_hands_off(tm
     for _ in range(50):
         clock[0] += 0.2
         await server._live.tick()
-    assert "Port 3000" in await server._control_reply("why")
+    assert "port 3000 is already taken" in await server._control_reply("why")
     assert await server._control_reply("fix it") == "On it."
     import asyncio
 

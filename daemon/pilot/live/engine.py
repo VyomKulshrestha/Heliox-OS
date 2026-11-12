@@ -29,6 +29,7 @@ from pilot.live import focused_text, spoken
 from pilot.live.commitments import KIND as COMMITMENT
 from pilot.live.commitments import find_commitments
 from pilot.live.detectors import (
+    KIND_LABELS,
     KINDS,
     MODEL_KINDS,
     NORMAL,
@@ -91,6 +92,8 @@ REPLACED_MIN_CHARS = 8  # see replaced(): the least text that has to go at once 
 # an hour. An OCR match can be anywhere on screen and has no evidence the person could check.
 NOTICE_SOURCES = frozenset({"keystroke"})
 NOTICE_QUIET_SECONDS = 3600.0
+# "Not now" holds that kind of catch back this long (urgent risks still show). "Don't mention these" mutes it.
+SNOOZE_SECONDS = 1800.0
 
 
 @dataclass(frozen=True)
@@ -153,6 +156,77 @@ def say(title: str, message: str, source: str = "") -> str:
     return f"{title}{'' if title[-1] in '.?!' else '.'} {message}".strip()
 
 
+_COMMON_FIRST = frozenset(
+    [
+        "that",
+        "this",
+        "these",
+        "those",
+        "your",
+        "the",
+        "it",
+        "its",
+        "there",
+        "a",
+        "an",
+        "port",
+        "you",
+        "what",
+        "one",
+        "two",
+        "some",
+        "no",
+        "nothing",
+    ]
+)
+MAX_SPOKEN_QUOTE = 120
+
+
+def _lower_first(text: str) -> str:
+    first = text.split(" ", 1)[0]
+    return text[0].lower() + text[1:] if first.casefold() in _COMMON_FIRST else text
+
+
+def because(entry: dict[str, Any]) -> str:
+    """Why Live spoke up, as one or two spoken sentences built from what it noticed: where it was, the person's own
+    words it saw or heard, and what was wrong with them. Nothing is invented; every part comes from the card."""
+    title = " ".join(str(entry.get("title") or "").split()).rstrip(".!")
+    message = " ".join(str(entry.get("message") or "").split())
+    detail = " ".join(str(entry.get("detail") or "").split())
+    evidence = " ".join(str(entry.get("evidence") or "").split())
+    if len(evidence) > MAX_SPOKEN_QUOTE:
+        evidence = evidence[: MAX_SPOKEN_QUOTE - 3].rstrip() + "..."
+    source, kind, app = entry.get("source", ""), entry.get("kind", ""), entry.get("app", "")
+    where = f"In {app}, " if app and source not in ("speech", "notice") else ""
+
+    def join(*parts: str) -> str:
+        out = [p if p[-1] in ".?!" else p + "." for p in (part.strip() for part in parts) if p]
+        return " ".join(out)
+
+    if source == "notice" or not evidence:
+        label = KIND_LABELS.get(kind, "something risky").lower()
+        lead = (
+            f"I spoke up because what you just typed matched my check for {label}"
+            if source == "notice"
+            else "I spoke up because of this"
+        )
+        return join(lead, title, message, detail)
+    if title.endswith("?"):  # an offer: a promise without a reminder, or signs of being stuck
+        reason = message.rstrip(".")
+        if kind == COMMITMENT:
+            return join(f"I offered because {_lower_first(reason)}, and I didn't find a reminder for it")
+        return join(f'{where}I offered because {_lower_first(reason)}: "{evidence}"', detail)
+    if source == "speech":
+        verb = "you said"
+    elif kind == "error_on_screen":
+        verb = "the error was"
+    else:
+        verb = "you wrote"
+    lead = f"{where}{verb}" if where else verb[0].upper() + verb[1:]
+    extra = "" if message.startswith(("You wrote", "You said")) else message
+    return join(f'{lead} "{evidence}", and {_lower_first(title)}', extra, detail)
+
+
 @dataclass(frozen=True)
 class LiveReply:
     reply: str
@@ -176,9 +250,26 @@ _RISK_NOTICES = {
     ),
 }
 
-_THANKS = re.compile(r"^(?:thanks|thank you|got it|good catch|nice catch|nice one|okay thanks|ok thanks)$")
-_DISMISS = re.compile(r"^(?:not now|later|ignore (?:it|that)|i know|that'?s fine|it'?s fine|never mind|leave it)$")
-_WHY = re.compile(r"^(?:why|why is that|what do you mean|explain|explain that|what'?s wrong)$")
+_THANKS = re.compile(
+    r"^(?:thanks|thank you|thanks heliox|got it|good catch|nice catch|nice one|okay thanks|ok thanks"
+    r"|oh thanks|good spot|well spotted)$"
+)
+_DISMISS = re.compile(
+    r"^(?:not now|not right now|later|maybe later|ignore (?:it|that)|i know|i know that|that'?s fine|it'?s fine"
+    r"|never mind|leave it|not now thanks|no thanks)$"
+)
+_MUTE = re.compile(
+    r"^(?:please )?(?:don'?t|do not|never) (?:mention|point out|tell me about|bring up|flag) "
+    r"(?:these|those|this|that|it|them|that kind of thing|things like that)(?: again| any more| anymore)?"
+    r"(?: please)?$"
+    r"|^(?:please )?stop (?:mentioning|pointing out|flagging) (?:these|those|this|that|them)(?: please)?$"
+)
+_WHY = re.compile(
+    r"^(?:why|why is that|why not|how come|what do you mean|what did you mean|explain|explain that|what'?s wrong"
+    r"|what'?s wrong with (?:it|that)|why did you say (?:that|it)|why did you mention (?:that|it)"
+    r"|why are you telling me (?:that|this)|what was that|what was that about|what did you notice"
+    r"|what are you talking about|what do you mean by that)$"
+)
 _FIX = re.compile(r"^(?:fix it|fix that|do it|go ahead|go ahead and fix it|please fix it)$")
 
 
@@ -204,6 +295,7 @@ class LiveCompanion:
         wallclock: Callable[[], datetime] = datetime.now,
         reminders: Callable[[], list[dict[str, Any]]] = list,
         window_exists: Callable[[int], bool] = focused_text.window_exists,
+        floor: Any = None,
     ) -> None:
         self._settings = settings
         self._observe = observe
@@ -249,6 +341,9 @@ class LiveCompanion:
         self._field_text: OrderedDict[str, str] = OrderedDict()  # each field's text at the last look
         self._writing_seen = False  # a writable field has been seen since Live was turned on
         self._notices: dict[str, float] = {}  # supervision rule -> when it last raised a card
+        # pilot.live.floor.Floor shared with the conversation: Live does not start speaking while a turn holds it.
+        self.floor = floor
+        self._snoozed: dict[str, float] = {}  # kind -> until when "not now" holds it back
 
     # ── lifecycle ──
 
@@ -618,17 +713,24 @@ class LiveCompanion:
         cfg = self._config()
         level = LEVELS.get(getattr(cfg, "level", DEFAULT_LEVEL), LEVELS[DEFAULT_LEVEL])
         muted = frozenset(getattr(cfg, "muted_kinds", []) or [])
+        snoozed = self.snoozed_kinds(now)
         personal_pause = (
             self.timing.pause_for(self._last_text, level.pause_seconds) if self._personal_timing() else None
         )
         order = {URGENT: 0}
         verdicts = []
+        audio = self._heliox_speaking()
         for key, item in sorted(self._pending.items(), key=lambda kv: order.get(kv[1].correction.urgency, 1)):
+            if item.correction.kind in snoozed and item.correction.urgency != URGENT:
+                verdicts.append((key, item, DROP))  # "not now" for this kind: an urgent risk still gets through
+                continue
+            held = not self.may_speak(item)
             act = Activity(
                 now=now,
                 last_text_change=self._last_text_change,
                 user_speaking=self._user_speaking(),
-                heliox_speaking=self._heliox_speaking(),
+                heliox_speaking=audio or held,
+                floor_held=held,
                 focus_active=self._focus_active(),
                 visible_cards=len(self._visible) + sum(v in (SHOW, SPEAK) for _, _, v in verdicts),
                 # Everything due at this pause goes out together as one interruption, so the rate limits
@@ -701,6 +803,47 @@ class LiveCompanion:
             with contextlib.suppress(Exception):
                 await self._emit("live_interjection_withdrawn", {"id": correction_id, "reason": reason})
 
+    # ── sharing the floor with the conversation (pilot.live.floor) ──
+
+    def may_speak(self, item: Pending | None = None) -> bool:
+        """Whether Live may start speaking now: never while a conversation turn holds the floor, except a catch
+        about the words that opened the turn, before the turn has said anything."""
+        if self.floor is None:
+            return True
+        about = item is not None and item.source == "speech" and self.floor.about_this_turn(item.first_seen)
+        return bool(self.floor.live_may_speak(about_this_turn=about))
+
+    def snoozed_kinds(self, now: float | None = None) -> frozenset[str]:
+        now = self._clock() if now is None else now
+        self._snoozed = {kind: until for kind, until in self._snoozed.items() if until > now}
+        return frozenset(self._snoozed)
+
+    def snooze(self, kind: str, seconds: float = SNOOZE_SECONDS) -> None:
+        self._snoozed[kind] = self._clock() + seconds
+
+    def current_observation(self) -> Observation | None:
+        """Live's latest look at the focused window (already through Live's privacy gates), or None when Live is
+        off, paused or sees nothing. For the conversation layer's screen context."""
+        cfg = self._config()
+        if not getattr(cfg, "enabled", False) or self._paused:
+            return None
+        return self._last_obs
+
+    def last_spoken_entries(self) -> list[dict[str, Any]]:
+        """The catches said together in Live's latest spoken remark (several catches in one turn are one remark)."""
+        return [
+            {k: v for k, v in entry.items() if k != "key"}
+            for entry in self._recent
+            if entry.get("spoken") and entry.get("at") == self._last_spoken_at
+        ]
+
+    def last_raised(self) -> dict[str, Any] | None:
+        """The latest card or remark Live raised (within the reply window), without its internal fields."""
+        entry = self._latest(self._clock())
+        if entry is None:
+            return None
+        return {k: v for k, v in entry.items() if k != "key"}
+
     # ── the person's response ──
 
     def _latest(self, now: float) -> dict[str, Any] | None:
@@ -741,18 +884,34 @@ class LiveCompanion:
             parts.append(f"The fix: {entry['fix']}.")
         return " ".join(parts)
 
+    def why_spoken(self, correction_id: str = "") -> str:
+        """Why Live spoke, said from what it noticed: where, the words it saw or heard, and what was wrong."""
+        entry = self._find(correction_id) if correction_id else self._latest(self._clock())
+        if entry is None:
+            return self.explain(correction_id)
+        return because(entry)
+
     async def handle_reply(self, normalized: str) -> LiveReply | None:
-        """ "Thanks", "not now", "why?" and "fix it", when they follow a recent correction."""
+        """ "Thanks", "not now", "why?", "don't mention these" and "fix it", when they follow a recent correction."""
         entry = self._latest(self._clock())
         if entry is None:
             return None
         if _WHY.match(normalized):
-            return LiveReply(self.explain(entry["id"]))
+            return LiveReply(because(entry))
         if _THANKS.match(normalized):
             await self.feedback(entry["id"], "helpful")
             return LiveReply("Glad it helped.")
+        if _MUTE.match(normalized):
+            await self.feedback(entry["id"], "mute")
+            label = KIND_LABELS.get(entry["kind"], "that kind of thing").lower()
+            return LiveReply(
+                f"Okay, I won't mention these again: {label}. You can turn them back on in Settings, under Live."
+            )
         if _DISMISS.match(normalized):
             await self.feedback(entry["id"], "dismissed")
+            if entry.get("urgency") != URGENT:
+                self.snooze(entry["kind"])
+                return LiveReply("Okay. I won't bring that kind of thing up for the next half hour.")
             return LiveReply("Okay, leaving it.")
         if _FIX.match(normalized):
             if entry.get("fix_kind") == "ask" and entry.get("fix"):

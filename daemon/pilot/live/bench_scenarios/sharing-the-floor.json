@@ -1,0 +1,49 @@
+[
+  {
+    "name": "floor: a slip finished just as Heliox starts answering a question",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: offsite - Message (HTML)",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"pause": 125.0, "label": "done"},
+      {"type": "Let's hold the offsite on Wednesday, 19 November at the lake house."},
+      {"pause": 0.8, "label": "done"},
+      {"converse": 6.0},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "floor: a sum slip while Heliox is in the middle of a long answer",
+    "app": "EXCEL.EXE",
+    "title": "budget.xlsx - Excel",
+    "expect": ["arithmetic"],
+    "steps": [
+      {"pause": 125.0, "label": "done"},
+      {"type": "Travel total: 120 + 85 = 215 for the two of us."},
+      {"converse": 9.0},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "floor: a risky command while Heliox answers still gets its card at once",
+    "app": "WindowsTerminal.exe",
+    "title": "bash",
+    "expect": ["risky_command"],
+    "steps": [
+      {"type": "$ git clean -fdx"},
+      {"converse": 5.0},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "floor: Heliox answers and nothing is wrong (must not fire)",
+    "app": "notepad.exe",
+    "title": "notes.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "The trains run every twenty minutes on Sundays."},
+      {"converse": 6.0},
+      {"pause": "done"}
+    ]
+  }
+]

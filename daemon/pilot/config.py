@@ -542,9 +542,15 @@ class ConversationConfig:
 class SuggestionsConfig:
     """Proactive suggestions (see pilot.workflows.suggestions). Off by default. When on,
     Heliox offers one gentle suggestion now and then, computed in code from your goals,
-    habits and to-do list, held during a focus session. It never acts on a suggestion."""
+    habits and to-do list, held during a focus session. It never acts on a suggestion.
+
+    ``offers`` (pilot.personal.offers): Heliox offers what you usually do at about this time ("You usually open
+    Outlook about now. Want me to open it?") and picks from your habits, goals and to-dos, at most one an hour and
+    three a day, at a quiet moment, all computed on this computer. "auto" (default) turns them on once your profile
+    has something in it; "on" and "off" override."""
 
     enabled: bool = False
+    offers: str = "auto"  # "auto" | "on" | "off"
 
 
 @dataclass
@@ -1211,6 +1217,7 @@ def _validate_config_types(raw: dict) -> None:
         },
         "suggestions": {
             "enabled": bool,
+            "offers": str,
         },
         "live": {
             "enabled": bool,
@@ -1594,6 +1601,9 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
 
     if "suggestions" in raw and isinstance(raw["suggestions"], dict):
         config.suggestions.enabled = bool(raw["suggestions"].get("enabled", config.suggestions.enabled))
+        offers = raw["suggestions"].get("offers")
+        if isinstance(offers, str) and offers.strip().casefold() in ("auto", "on", "off"):
+            config.suggestions.offers = offers.strip().casefold()
 
     if "live" in raw and isinstance(raw["live"], dict):
         l_raw = raw["live"]

@@ -28,6 +28,13 @@ from typing import Any
 
 from pilot.workflows.clipboard_history import looks_secret
 
+# "the wifi password is hunter2": the value itself may not look like a key, but the sentence says it is one.
+NAMES_A_SECRET = re.compile(
+    r"\b(?:password|passcode|passphrase|pin(?: code| number)?|api key|secret key|access key|private key|token"
+    r"|security code|cvv|cvc|recovery code|seed phrase)s?\b\s*(?:is|was|=|:)\s*\S",
+    re.IGNORECASE,
+)
+
 MAX_ENTRIES = 60  # per list
 MAX_TEXT = 200
 MAX_NAME = 40
@@ -239,7 +246,7 @@ class UserProfile:
         text = _clean(text)
         if not 2 <= len(text) <= MAX_TEXT:
             raise ValueError("That is too short or too long to remember")
-        if looks_secret(text) or any(looks_secret(str(v)) for v in extra.values()):
+        if looks_secret(text) or NAMES_A_SECRET.search(text) or any(looks_secret(str(v)) for v in extra.values()):
             raise ValueError("That looks like a password or key, so I won't keep it. Use your password manager.")
         profile = self._load()
         items = profile[kind]
@@ -423,7 +430,7 @@ class UserProfile:
             if what in ("everything about me", "who i am", "my profile"):
                 removed = await self.clear()
                 return "Done, I've forgotten what I knew about you." if removed else "I didn't have anything about you."
-            removed = await self._forget_matching(what) if what else False
+            removed = await self.forget_matching(what) if what else ""
             if correct:
                 raw_correct = re.search(r"(?i)\bi (?:'m |am )?(.+)$", raw)
                 correct = raw_correct.group(1).strip() if raw_correct else correct
@@ -432,31 +439,39 @@ class UserProfile:
                 entry = await self.add("about", f"I {correct}")
                 return f'Fixed. I\'ll remember instead: "{entry["text"]}".'
             if removed:
-                return "Okay, I've forgotten that."
+                # Say exactly what went, so a wrong match is heard at once.
+                return f'Okay, I\'ve forgotten "{removed}".'
             return None  # not in the profile: let other handlers or the planner take it
         return None
 
-    async def _forget_last(self) -> bool:
-        """Remove the most recently added list entry (what the person just told me)."""
+    async def forget_last(self) -> str:
+        """Remove the most recently added list entry (what the person just told me). Returns its text, or ""."""
         profile = self._load()
         latest = max(
             (item for key in _LISTS for item in profile[key]),
             key=lambda item: item.get("at", 0),
             default=None,
         )
-        return await self.delete(latest["id"]) if latest is not None else False
+        if latest is None or not await self.delete(latest["id"]):
+            return ""
+        return str(latest.get("text", ""))
 
-    async def _forget_matching(self, what: str) -> bool:
+    async def _forget_last(self) -> bool:
+        return bool(await self.forget_last())
+
+    async def forget_matching(self, what: str) -> str:
+        """Remove the first entry whose words include every word of ``what``. Returns what was removed, or ""."""
         profile = self._load()
         norm = _normalize(what)
         if norm and profile["call_me"] and norm in _normalize(profile["call_me"]):
+            name = profile["call_me"]
             await self._mirror_forget(profile, "call_me")
             profile["call_me"] = ""
             self._save(profile)
-            return True
+            return f"call me {name}"
         for key in _LISTS:
             for item in profile[key]:
                 haystack = _normalize(item["text"] + " " + item.get("name", ""))
                 if norm and all(word in haystack for word in norm.split()):
-                    return await self.delete(item["id"])
-        return False
+                    return str(item["text"]) if await self.delete(item["id"]) else ""
+        return ""

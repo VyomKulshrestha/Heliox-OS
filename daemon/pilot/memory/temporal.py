@@ -103,6 +103,9 @@ class RankedMemory:
     memory_id: str
 
 
+# What an erased fact holds instead of the words the person asked Heliox to forget.
+ERASED_VALUE = "[forgotten at your request]"
+
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS temporal_facts (
     fact_id TEXT PRIMARY KEY,
@@ -584,6 +587,25 @@ class TemporalMemoryStore:
         if fact is None:  # pragma: no cover
             raise RuntimeError(f"Fact disappeared after retraction: {fact_id}")
         return fact
+
+    async def erase_fact(self, fact_id: str, *, reason: str = "") -> None:
+        """The person asked Heliox to forget this: retract it and overwrite the stored value, so the words are gone
+        from the database and not only hidden. The append-only evidence log keeps that it happened, never the text."""
+        try:
+            await self.retract_fact(fact_id, reason=reason)
+        except KeyError:
+            pass  # already retracted or superseded: still erase the words
+        pool = self._require_pool()
+        async with pool.write() as db:
+            cursor = await db.execute(
+                "UPDATE temporal_facts SET value_json = ?, updated_at = ? WHERE fact_id = ?",
+                (json.dumps(ERASED_VALUE), self._now(), fact_id),
+            )
+            found = cursor.rowcount
+            await cursor.close()
+            await db.commit()
+        if not found:
+            raise KeyError(f"No fact exists: {fact_id}")
 
     async def query_facts(
         self,

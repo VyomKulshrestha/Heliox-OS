@@ -1,0 +1,85 @@
+[
+  {
+    "name": "email: a weekday with the day of the month and no month",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: planning - Message (HTML)",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"type": "Could we push the planning session to Tuesday the 12th so that"},
+      {"pause": "think"},
+      {"type": " Ravi can join from the other office?"},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "chat: the right weekday for the coming 12th (must not fire)",
+    "app": "slack.exe",
+    "title": "#team - Slack",
+    "expect": [],
+    "steps": [
+      {"type": "Thursday the 12th works for me, and"},
+      {"pause": "think"},
+      {"type": " Saturday the 12th of December is the party."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "notes: a past day of the month that was that weekday (must not fire)",
+    "app": "notepad.exe",
+    "title": "retro.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "The outage was on Tuesday the 3rd and"},
+      {"pause": "think"},
+      {"type": " the fix shipped on Friday 6 pm."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "notes: next month's date on the right weekday (must not fire)",
+    "app": "notepad.exe",
+    "title": "trip.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "Flights land on Friday the 4th, so"},
+      {"pause": "think"},
+      {"type": " we can rest over the weekend."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "speech: a weekday with the day of the month and no month",
+    "app": "",
+    "title": "",
+    "expect": ["weekday_date"],
+    "steps": [{"say": "move the review to Thursday the fourteenth", "seconds": 2.6}, {"pause": 4.0, "label": "done"}]
+  },
+  {
+    "name": "speech: the right weekday with no month (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [{"say": "book it for Thursday the twelfth", "seconds": 2.4}, {"pause": 4.0, "label": "done"}]
+  },
+  {
+    "name": "speech: a promise with a deadline and no reminder",
+    "app": "",
+    "title": "",
+    "expect": ["commitment"],
+    "steps": [{"say": "I'll send Priya the deck by Friday", "seconds": 2.4}, {"pause": 4.0, "label": "done"}]
+  },
+  {
+    "name": "speech: a date that does not exist",
+    "app": "",
+    "title": "",
+    "expect": ["weekday_date"],
+    "steps": [{"say": "remind me on the thirty first of November to pay the rent", "seconds": 3.0}, {"pause": 4.0, "label": "done"}]
+  },
+  {
+    "name": "speech: an ordinary request with a date (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [{"say": "put the dentist on Friday November 13 at four", "seconds": 2.8}, {"pause": 4.0, "label": "done"}]
+  }
+]

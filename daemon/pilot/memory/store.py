@@ -913,6 +913,12 @@ class MemoryStore:
             raise RuntimeError("Temporal memory is not initialized")
         return await self._temporal.retract_fact(fact_id, reason=reason)
 
+    async def erase_fact(self, fact_id: str, *, reason: str = "") -> None:
+        """Forget one fact for good: retracted, and its stored words overwritten (see TemporalMemoryStore)."""
+        if self._temporal is None:
+            raise RuntimeError("Temporal memory is not initialized")
+        await self._temporal.erase_fact(fact_id, reason=reason)
+
     async def get_preference(self, key: str) -> str | None:
         """Return the stored value for *key*, or None if not found."""
         if not self._pool:

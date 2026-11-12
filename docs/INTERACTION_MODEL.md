@@ -121,6 +121,25 @@ plus the last six turns of this conversation as real message turns. The turns li
 the existing "new conversation" call and lapse after ten quiet minutes. Speech that was not addressed to Heliox
 never reaches this layer, so it is never stored as conversation or sent to a model.
 
+### Sharing the floor with Heliox Live
+
+Live (slips, risks, offers) and the conversation used to start speaking on their own checks, and Live's correction
+channel outranks an answer, so a Live remark could cut a reply mid-sentence. `pilot/live/floor.py` holds one rule,
+measured on the Live Bench's `converse` steps (spoken remarks over a reply: 3 per persona before, 0 after, recall
+and false alarms unchanged):
+
+1. Nobody starts while the person is talking.
+2. A conversation turn holds the floor from dispatch until it is answered (`PilotServer._voice_turn`), plus 3 s.
+   Live shows cards at once (an urgent risk is never held) but does not speak; a non-urgent typed catch waits and
+   is said after.
+3. A catch about the words that opened the turn may be spoken first, only before the turn has said anything; once
+   the reply has started it becomes a card.
+4. So Live never asks to speak during a reply, and a reply that starts during a Live remark waits behind it.
+
+What Live says aloud is recorded in `ConversationMemory` as a Heliox turn (cut off if talked over), and the
+listener's existing follow-up window (opened after any spoken Heliox sentence) lets "why?" or "not now" follow it
+without the wake phrase.
+
 ### What leaves the machine
 
 `conversation.share_screen_text` is `auto` by default.
@@ -138,6 +157,20 @@ never reaches this layer, so it is never stored as conversation or sent to a mod
 * For Heliox's own window, password managers and apps excluded from the timeline, nothing is sent, in every row.
 * The person's words, the earlier turns of this conversation, the time, the task state and the profile lines go
   to whichever model is configured. With a local model none of it leaves the machine.
+
+Two more context sources, added with Heliox Live and the personal layer (`pilot/live/conversation_link.py`,
+`pilot/personal/context.py`):
+
+| What | Model on this machine (Ollama) | Cloud model, `share_screen_text` `auto` or `off` | Cloud model, `on` |
+|---|---|---|---|
+| A Live remark about what the person *said* to Heliox (a wrong weekday, a promise), as a Heliox turn | as said | as said (it quotes addressed speech the model already gets) | as said |
+| A Live remark or card about what the person *typed* (it quotes screen text), as a Heliox turn or the "Live raised this" line | as said, with the evidence | only the kind and the app ("pointed out a weekday that doesn't match its date in Notepad"); the words stay here | as said, with the evidence |
+| Up to five profile, goal and habit lines that share words with this utterance, plus the answer style and preferences (one line, at most 360 characters, picked by word overlap in code) | yes | yes, like the profile lines above | yes |
+| Offers ("You usually open Outlook about now"), as a Heliox turn | yes | yes (app names only, never window titles) | yes |
+
+"Why did you say that", "thanks", "not now", "don't mention these", "fix it", "remember that ...", "forget ...",
+"what did I tell you about ..." and the answers to an offer are handled in code before the layer and never reach a
+model. Offers and the relevant-lines pick are computed on the machine with no model call.
 
 ### Handing over to the planner
 

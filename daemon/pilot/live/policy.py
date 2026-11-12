@@ -67,6 +67,9 @@ class Activity:
     last_shown_at: float = float("-inf")
     # The pause this person needs before a non-urgent correction (pilot.live.timing); None uses the level's.
     personal_pause: float | None = None
+    # A conversation turn holds the floor (pilot.live.floor): Live may show a card but not start speaking, and a
+    # non-urgent catch about typed text waits until the turn is over.
+    floor_held: bool = False
 
 
 @dataclass
@@ -117,6 +120,8 @@ def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: 
         return WAIT
     if urgent:
         return SHOW if act.heliox_speaking else SPEAK
+    if act.floor_held:
+        return WAIT
     if act.focus_active or act.visible_cards >= MAX_VISIBLE_CARDS:
         return WAIT
     speakable = (

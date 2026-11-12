@@ -276,8 +276,13 @@ async def test_replies_thanks_why_fix_and_mute(tmp_path):
     await settle()
     [card] = [p for e, p in events if e == "live_interjection"]
     assert card["kind"] == "error_on_screen"
-    why = await live.handle_reply("why")
-    assert why.reply.startswith("Port 3000 is already taken. Stop that program")
+    why = await live.handle_reply("why did you say that")
+    # Said from what Live noticed: where, the words it saw, and what was wrong with them.
+    assert why.reply == (
+        'In Notepad, the error was "EADDRINUSE: address already in use :::3000", and port 3000 is already taken. '
+        "Stop that program, or start this one on another port."
+    )
+    assert (await live.handle_reply("what do you mean")).reply == why.reply
     fix = await live.handle_reply("fix it")
     assert fix.delegate == "Show me which program is using port 3000"
     assert await live.handle_reply("what time is it") is None

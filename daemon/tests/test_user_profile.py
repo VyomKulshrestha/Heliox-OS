@@ -90,7 +90,7 @@ async def test_correction_forget_and_clear(profile):
     assert [item["text"] for item in profile.get()["about"]] == ["I run Dovel Lab"]
 
     await profile.answer_async("my doctor is Dr Mehta")
-    assert await profile.answer_async("forget my doctor") == "Okay, I've forgotten that."
+    assert await profile.answer_async("forget my doctor") == 'Okay, I\'ve forgotten "Dr Mehta (doctor)".'
     assert profile.get()["people"] == []
     # A forget that matches nothing in the profile is left to other handlers.
     assert await profile.answer_async("forget the downloaded file") is None

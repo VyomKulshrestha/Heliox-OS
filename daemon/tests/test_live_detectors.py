@@ -361,3 +361,24 @@ def test_a_wrong_tomorrow_before_a_matching_date_blames_tomorrow_not_the_weekday
     # A date that disagrees with its weekday keeps both ordinary cards.
     titles = sorted(c.title for c in detect("Demo is tomorrow, Thursday 13 Nov", tuesday))
     assert titles == ["13 November is a Friday", "Tomorrow is Wednesday"]
+
+
+def test_a_weekday_with_a_day_of_the_month_and_no_month():
+    from datetime import date
+
+    from pilot.live.detectors import TextContext, detect
+
+    def found(text, source="focused_field"):
+        ctx = TextContext(today=date(2026, 11, 9), app="notepad.exe", source=source)
+        return [(c.title, c.fix) for c in detect(text, ctx, kinds=("weekday_date",))]
+
+    assert found("Could we do Tuesday the 12th instead?") == [("12 November is a Thursday", "Thursday the 12th")]
+    assert found("book it for Tuesday the twelfth", "speech")[0][0] == "The twelfth of November is a Thursday"
+    for fine in (
+        "Thursday the 12th works",  # the coming 12th
+        "the outage was on Tuesday the 3rd",  # the last 3rd
+        "flights land on Friday the 4th",  # next month's 4th
+        "Friday 3 pm",  # no ordinal: not a date
+        "see you Tuesday 12 people",
+    ):
+        assert found(fine) == [], fine

@@ -141,7 +141,7 @@ async def run(
 
         async def forget(fact_id: str) -> None:
             try:
-                await memory.retract_fact(fact_id, reason="Removed from your profile")
+                await memory.erase_fact(fact_id, reason="Removed from your profile")
             except KeyError:
                 pass
 

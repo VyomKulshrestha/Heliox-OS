@@ -1369,6 +1369,9 @@ class PilotServer:
             deliver=self._deliver_suggestion,
         )
         self._suggestions.start()
+        from pilot.personal.wiring import start_offers
+
+        start_offers(self, DATA_DIR)  # offers from routines, habits and goals (pilot.personal.offers)
         from pilot.live.engine import LiveCompanion
         from pilot.live.focused_text import create_reader
 
@@ -1376,6 +1379,8 @@ class PilotServer:
         from pilot.live.catches import BUILT_IN_DIR, CatchBook, install
 
         install(CatchBook([BUILT_IN_DIR, DATA_DIR / "live_catches"]))
+        from pilot.personal.wiring import floor_for
+
         self._live = LiveCompanion(
             settings=lambda: self.config.live,
             observe=self._live_observe,
@@ -1391,6 +1396,7 @@ class PilotServer:
             timing_path=DATA_DIR / "live_timing.json",
             grounded=self._build_live_grounded(),
             reminders=lambda: self._reminders.list() if getattr(self, "_reminders", None) is not None else [],
+            floor=floor_for(self),
         )
         await self._live.start()
         from pilot.workflows.workspaces import WorkspaceStore
@@ -6660,6 +6666,7 @@ class PilotServer:
             return None
 
         handlers = (
+            self._offer_reply,
             self._live_reply,
             self._help_request,
             self._say_again_request,
@@ -6676,6 +6683,7 @@ class PilotServer:
             self._undo_request,
             self._routine_request,
             self._shortcut_request,
+            self._memory_talk_request,
         )
         for handler in handlers:
             reply = await handler(text)
@@ -6885,7 +6893,7 @@ class PilotServer:
     async def _profile_forget(self, fact_id: str) -> None:
         if self._memory is not None:
             try:
-                await self._memory.retract_fact(fact_id, reason="Removed from your profile")
+                await self._memory.erase_fact(fact_id, reason="Removed from your profile")
             except KeyError:
                 pass
 
@@ -6980,9 +6988,10 @@ class PilotServer:
         return reading
 
     async def _live_speak(self, text: str, urgent: bool) -> None:
-        channel = SpeechChannel.LIVE_CORRECTION if urgent else SpeechChannel.PROACTIVE_SUGGESTION
+        from pilot.personal.wiring import live_speak
+
         try:
-            await self._speak_companion_text(text, channel=channel, dedupe_key=f"live:{text}")
+            await live_speak(self, text, urgent)  # held when a conversation turn has the floor; a Heliox turn if said
         except Exception:
             logger.debug("Live correction speech failed", exc_info=True)
 
@@ -7011,6 +7020,20 @@ class PilotServer:
             # The background model does the work, through the same path and approvals as a typed request.
             asyncio.create_task(self._live_delegate(answer.delegate))
         return answer.reply
+
+    async def _offer_reply(self, text: str) -> str | None:
+        """Yes, no, why, "don't offer that" after an offer (pilot.personal.offers)."""
+        from pilot.personal.wiring import offer_reply
+
+        return await offer_reply(self, text)
+
+    async def _memory_talk_request(self, text: str) -> str | None:
+        """ "Remember that ...", "what did I tell you about ...", "forget what I just told you"."""
+        if getattr(self, "_user_profile", None) is None:
+            return None
+        from pilot.personal.wiring import memory_talk_for
+
+        return await memory_talk_for(self).answer(text)
 
     async def _live_delegate(self, request: str) -> None:
         try:
@@ -13133,6 +13156,9 @@ def handle_tool(tool_name, params):
         dedupe_key: str = "",
     ) -> SpeechOutcome:
         """Route daemon speech through the single companion audio authority."""
+        from pilot.personal.wiring import note_heliox_speech
+
+        note_heliox_speech(self, channel, dedupe_key)  # the conversation floor knows Heliox has started its reply
         if (
             self._focus is not None
             and self._focus.active
@@ -13332,6 +13358,16 @@ def handle_tool(tool_name, params):
         """Said during an open conversation but not as a request (a promise, a date): Live checks it, nothing runs."""
         if self._live is not None:
             self._live.offer_speech(text)
+
+    async def _voice_turn(self, command_text: str) -> None:
+        """One addressed utterance holds the conversation floor until it is answered (pilot.live.floor)."""
+        from pilot.personal.wiring import begin_turn, end_turn
+
+        token = begin_turn(self, command_text)
+        try:
+            await self._voice_command_dispatch(command_text)
+        finally:
+            end_turn(self, token)
 
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Run voice through the same safe interaction path as typed input."""
@@ -13726,7 +13762,7 @@ def handle_tool(tool_name, params):
 
         replacement = ContinuousVoiceListener(
             wake_words=wake_words,
-            on_command=self._voice_command_dispatch,
+            on_command=self._voice_turn,
             on_status=self._voice_status_broadcast,
             workflow_control=self._voice_workflow_control_dispatch,
             config=self.config,
@@ -13762,7 +13798,7 @@ def handle_tool(tool_name, params):
 
         self._voice_listener = ContinuousVoiceListener(
             wake_words=wake_words,
-            on_command=self._voice_command_dispatch,
+            on_command=self._voice_turn,
             on_status=self._voice_status_broadcast,
             workflow_control=self._voice_workflow_control_dispatch,
             config=self.config,
