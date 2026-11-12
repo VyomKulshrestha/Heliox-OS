@@ -715,10 +715,12 @@ def owner_config_listing() -> dict[str, tuple[int, int]]:
     listing: dict[str, tuple[int, int]] = {}
     if any(name == "folder_guard" or name.endswith(".folder_guard") for name in sys.modules):
         return listing
-    from pilot.real_folders import _owner_folder, account_home
+    from pilot.real_folders import account_home
 
     own = account_home() or Path.home()
-    for folder in {_owner_folder("XDG_CONFIG_HOME", ".config"), own / ".config" / "heliox-os"}:
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    config_home = Path(xdg) if xdg and Path(xdg).is_absolute() else own / ".config"  # pilot.config's rule, no test root
+    for folder in {config_home / "heliox-os", own / ".config" / "heliox-os"}:
         try:
             entries = list(os.scandir(folder))
         except OSError:
@@ -935,13 +937,15 @@ async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     """The Claude road against the real fast model, once, with the budget tracker on; scored by the same rules."""
     from pilot.config import PilotConfig
     from pilot.conversation.fast_model import build_fast_model
-    from pilot.real_folders import real_budget_tracker
+    from pilot.real_folders import apply_owner_settings, real_budget_tracker
     from pilot.security.vault import KeyVault
 
-    from .owner import apply_owner_settings
+    from . import OWNER_CONVERSATION_FIELDS
 
     config = PilotConfig()  # the run's own, under the scratch root: its save cannot reach the person's file
-    apply_owner_settings(config)  # their provider and conversation model, read and copied
+    apply_owner_settings(
+        config, ("model", "conversation"), only=OWNER_CONVERSATION_FIELDS
+    )  # their provider and conversation model, read and copied
     if config.model.cloud_provider != "claude":
         raise SystemExit("--real runs the Claude road only; the configured cloud provider is not Claude")
     # The one intended write to the person's own folders: the budget tracker records what the run spent.

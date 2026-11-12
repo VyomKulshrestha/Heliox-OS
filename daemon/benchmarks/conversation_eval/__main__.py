@@ -74,13 +74,15 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     from pilot.conversation.fast_model import build_fast_model
     from pilot.conversation.layer import ConversationLayer
     from pilot.conversation.planner_context import planner_sees
-    from pilot.real_folders import real_budget_tracker
+    from pilot.real_folders import apply_owner_settings, real_budget_tracker
     from pilot.security.vault import KeyVault
 
-    from .owner import apply_owner_settings
+    from . import OWNER_CONVERSATION_FIELDS
 
     config = PilotConfig()  # the run's own: its files are under the scratch root
-    apply_owner_settings(config)  # the person's provider and conversation model, copied
+    apply_owner_settings(
+        config, ("model", "conversation"), only=OWNER_CONVERSATION_FIELDS
+    )  # the person's provider and conversation model, copied
     if args.provider:
         if args.provider == "ollama":
             config.model.provider = "ollama"

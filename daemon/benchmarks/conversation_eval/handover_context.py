@@ -125,13 +125,13 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     from pilot.conversation.layer import ConversationLayer
     from pilot.conversation.planner_context import planner_sees
     from pilot.conversation.promises import promised_action
-    from pilot.real_folders import real_budget_tracker
+    from pilot.real_folders import apply_owner_settings, real_budget_tracker
     from pilot.security.vault import KeyVault
 
-    from .owner import apply_owner_settings
+    from . import OWNER_CONVERSATION_FIELDS
 
     config = PilotConfig()  # the run's own: its files are under the scratch root
-    apply_owner_settings(config)
+    apply_owner_settings(config, ("model", "conversation"), only=OWNER_CONVERSATION_FIELDS)
     budget = real_budget_tracker(config.model)  # the one intended write to the person's folders
     await budget.initialize()
     before = budget._monthly_cost

@@ -255,24 +255,28 @@ def test_a_paid_run_copies_the_persons_model_and_conversation_settings_into_its_
     cannot reach theirs."""
     import pilot.config as config_module
     import pilot.real_folders as real_folders
+    from benchmarks.conversation_eval import OWNER_CONVERSATION_FIELDS
     from benchmarks.conversation_eval import sessions as S
-    from benchmarks.conversation_eval.owner import apply_owner_settings
     from pilot.config import PilotConfig
 
     theirs = tmp_path / ".config" / "heliox-os" / "config.toml"
     theirs.parent.mkdir(parents=True)
     theirs.write_text(
         '[model]\nprovider = "cloud"\ncloud_provider = "claude"\nbudget_monthly_limit_usd = 25.0\n\n'
-        '[conversation]\nclaude_model = "claude-haiku-5-5"\nmax_reply_tokens = 300\n\n[security]\nroot_enabled = true\n',
+        '[conversation]\nclaude_model = "claude-haiku-5-5"\nmax_reply_tokens = 300\nshare_screen_text = "on"\n'
+        'provisional_answers = "on"\n\n[security]\nroot_enabled = true\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(real_folders, "_owner_folder", lambda variable, fallback: tmp_path / fallback / "heliox-os")
     before = theirs.stat().st_mtime_ns
     config = PilotConfig()
-    copied = apply_owner_settings(config)
+    copied = real_folders.apply_owner_settings(config, ("model", "conversation"), only=OWNER_CONVERSATION_FIELDS)
     assert "conversation.claude_model" in copied and "model.cloud_provider" in copied
     assert config.model.budget_monthly_limit_usd == 25.0 and config.conversation.max_reply_tokens == 300
     assert config.security.root_enabled is False  # only [model] and [conversation]
+    # A pack's own privacy and feature settings are never inherited: only the fields the constant names.
+    assert config.conversation.share_screen_text == "auto" and config.conversation.provisional_answers == "auto"
+    assert "conversation.share_screen_text" not in copied
     assert config_module.CONFIG_FILE.resolve().is_relative_to(S.TEST_ROOT.resolve())  # where its save would go
     assert theirs.stat().st_mtime_ns == before
 

@@ -256,13 +256,13 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
         return summary
     from pilot.config import PilotConfig
     from pilot.conversation.fast_model import build_fast_model
-    from pilot.real_folders import real_budget_tracker
+    from pilot.real_folders import apply_owner_settings, real_budget_tracker
     from pilot.security.vault import KeyVault
 
-    from .owner import apply_owner_settings
+    from . import OWNER_CONVERSATION_FIELDS
 
     config = PilotConfig()  # the run's own: its files are under the scratch root
-    apply_owner_settings(config)
+    apply_owner_settings(config, ("model", "conversation"), only=OWNER_CONVERSATION_FIELDS)
     if args.provider == "ollama":
         config.model.provider = "ollama"
     elif args.provider:
