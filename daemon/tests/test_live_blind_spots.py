@@ -35,22 +35,57 @@ def look_for(spots, clock, app, seconds, readable=False, **kw):
 def test_the_table_names_what_would_let_live_see():
     mac = advice("Notes", platform="darwin", reader_state="needs_permission")
     assert "Accessibility for Heliox-OS in System Settings" in mac.fix
-    off = advice("slack", platform="linux", reader_message="Turn on toolkit accessibility")
-    assert "gsettings set org.gnome.desktop.interface toolkit-accessibility true" in off.fix
-    assert "--force-renderer-accessibility" in advice("google-chrome", platform="linux").fix
-    assert "ACCESSIBILITY_ENABLED=1" in advice("discord", platform="linux").fix
-    assert "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1" in advice("telegram-desktop", platform="linux").fix
     assert "remote control" in advice("kitty", platform="linux").fix
     assert "terminal check" in advice("alacritty", platform="darwin").fix
+    # Qt has not been run yet: what is documented, by whether the desktop's switch is on.
+    assert "toolkit-accessibility true" in advice("telegram-desktop", platform="linux", reader_message="off").fix
+    assert "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1" in advice("telegram-desktop", platform="linux").fix
     assert advice("SomeGame", platform="win32").fix == ""
     assert kind_of("Code.exe") == "electron" and kind_of("Google Chrome.app") == "chromium"
 
 
-def test_the_sentence():
-    assert sentence("slack", advice("slack", platform="linux")).startswith("Live can't see what you type in Slack")
-    assert sentence("SomeGame", advice("SomeGame", platform="win32")) == (
-        "Live can't see what you type in SomeGame, and there is nothing to turn on for it yet."
+@pytest.mark.parametrize("app", ["google-chrome", "chromium", "slack", "discord", "code"])
+@pytest.mark.parametrize("switch_off", [True, False])
+def test_chrome_and_electron_on_linux_get_the_honest_sentence(app, switch_off):
+    """CI on 7f553b9: nothing a person turns on (the desktop switch, the app's flag) made Live read them."""
+    found = advice(app, platform="linux", reader_message="toolkit accessibility is off" if switch_off else "")
+    assert found.fix == "" and sentence(app, found).startswith("Live doesn't work in ") and found.shown
+
+
+@pytest.mark.parametrize(("app", "platform"), [("firefox", "linux"), ("Safari", "darwin")])
+def test_apps_read_by_default_are_only_named_if_the_reader_really_gives_nothing(app, platform):
+    """Firefox on X11 and Safari on macOS gave fields by default; if one ever gives nothing, the sentence says so."""
+    for message in ("", "toolkit accessibility is off"):
+        found = advice(app, platform=platform, reader_message=message)
+        assert "usually can" in found.fix and found.shown
+    clock = Clock()
+    spots = BlindSpots(None, clock)
+    look_for(spots, clock, app, 1.2, readable=True)  # a field, as by default
+    assert look_for(spots, clock, app, 300, platform=platform) == []  # never named once a field was seen
+
+
+def test_a_cell_a_run_shows_working_becomes_the_advice(monkeypatch):
+    from pilot.live import blind_spots
+
+    cells = dict(blind_spots.LINUX_FINDINGS["chromium"])
+    cells[("on", "on")] = blind_spots.Finding(True, "a later run")
+    monkeypatch.setitem(blind_spots.LINUX_FINDINGS, "chromium", cells)
+    found = advice("google-chrome", platform="linux", reader_message="off")
+    assert found.fix == (
+        "turn on accessibility for apps (gsettings set org.gnome.desktop.interface toolkit-accessibility true) and "
+        "start it with --force-renderer-accessibility, then restart it"
     )
+    assert found.shown == "a later run"
+    assert (
+        advice("google-chrome", platform="linux").fix == "start it with --force-renderer-accessibility, then restart it"
+    )
+
+
+def test_the_sentence():
+    assert sentence("google-chrome", advice("google-chrome", platform="linux")) == (
+        "Live doesn't work in Google Chrome yet."
+    )
+    assert sentence("SomeGame", advice("SomeGame", platform="win32")) == "Live doesn't work in SomeGame yet."
 
 
 # ── when it is said ──

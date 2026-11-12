@@ -81,13 +81,28 @@ in; what each says so far:
 | App | What the sentence says | Shown by |
 |---|---|---|
 | Any app on macOS while Accessibility is not granted | Turn on Accessibility for Heliox-OS in System Settings, Privacy & Security, Accessibility | **Fakes only** |
-| Chromium, Electron, Qt or Firefox apps on Linux while the session reports toolkit accessibility off | Turn on accessibility for apps (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`), then restart it | **Fakes only** |
-| Chromium browsers on Linux (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | Start it with `--force-renderer-accessibility` | **Not tested**; the platform checks will say |
-| Electron apps on Linux (Slack, Discord, VS Code, Teams, Signal, Obsidian and others) | Start it with `ACCESSIBILITY_ENABLED=1` set | **Not tested**; the platform checks will say |
-| Qt apps on Linux | Start it with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` set | **Not tested**; the platform checks will say |
+| Safari on macOS | Not named while it gives fields (it does by default); if it ever gives nothing: it usually can, restarting it may help | Read by default, password refused 14 of 14: **Run for real** (`platform-readers` on 7f553b9) |
+| Chrome, Electron and Qt apps on macOS | Live doesn't work in it yet | **Not tested** (the checks did not finish) |
+| Firefox on Linux | Not named while it gives fields (it does by default); if it ever gives nothing: it usually can, restarting it may help | Read by default under X11, password refused 17 of 17: **Run for real** (`platform-readers` on 7f553b9) |
+| Chromium browsers on Linux (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | Live doesn't work in it yet | See the four set-ups below: none read so far |
+| Electron apps on Linux (Slack, Discord, VS Code, Teams, Signal, Obsidian and others) | Live doesn't work in it yet | As Chrome: none read so far |
+| Qt apps on Linux | With the desktop switch off: turn it on (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`); on: start it with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` | **Not tested**: what is documented |
 | kitty | Turn on its remote control, or add the zsh or fish terminal check | kitty read directly: **Run for real** (above) |
 | Other terminals that expose nothing (Alacritty, foot, xterm, Ghostty and others) | Add the zsh or fish terminal check | The terminal check: **Run for real** (above) |
-| Anything else | Live does not work in this app yet | |
+| Anything else | Live doesn't work in it yet | |
+
+On Linux each kind of app has four set-ups a person can choose: the desktop's accessibility switch off or on, and the
+app's own flag (`--force-renderer-accessibility` for Chromium, `ACCESSIBILITY_ENABLED=1` for Electron) off or on. A
+fix is offered only when a run has shown a field read in a set-up with something turned on
+(`LINUX_FINDINGS` in `blind_spots.py`, filled from the platform checks); until then the sentence is that Live doesn't
+work in the app yet. What the runs have shown so far (`platform-readers` on 7f553b9):
+
+| App | Switch off, flag off | Switch on, flag off | Switch off, flag on | Switch on, flag on |
+|---|---|---|---|---|
+| Chrome | Not read | On the bus with a titled window; no focused object found | Not on the bus | **Not tested** |
+| Electron | Not read | As Chrome | As Chrome | **Not tested** |
+| Firefox | Read; password refused 17 of 17 | **Not tested** | (no flag) | (no flag) |
+| Qt | **Not tested** | **Not tested** | **Not tested** | **Not tested** |
 
 The rule itself (when, how often, never for never-read windows, a terminal Live reads directly counted as seen into):
 **Fakes only** (`tests/test_live_blind_spots.py`); a real check runs in the `platform-readers` X11 step with a window

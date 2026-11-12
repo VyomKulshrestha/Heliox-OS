@@ -28,11 +28,11 @@ describe("LivePresence", () => {
       paused: false,
       watching: "",
       userState: "away",
-      blindNote: "Live can't see what you type in Slack, and there is nothing to turn on for it yet.",
+      blindNote: "Live doesn't work in Slack yet.",
     });
     render(LivePresence);
     expect(screen.getByTestId("live-presence").getAttribute("title")).toBe(
-      "Live can't see what you type in Slack, and there is nothing to turn on for it yet. Click to pause.",
+      "Live doesn't work in Slack yet. Click to pause.",
     );
   });
 });

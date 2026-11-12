@@ -86,14 +86,60 @@ def kind_of(app: str) -> str:
     return ""
 
 
+@dataclass(frozen=True)
+class Finding:
+    """What a real run showed for one set-up of one kind of app: ``reads`` True (a field was read), False (shown not
+    read), None (not run yet); ``shown`` names the run and check."""
+
+    reads: bool | None = None
+    shown: str = ""
+
+
+# Linux: per kind of app, the four set-ups a person can choose: the desktop's accessibility switch (TOOLKIT_SWITCH)
+# off or on, and the app's own flag (LINUX_FLAGS) off or on. The platform agent's runs fill in each cell. Live offers a
+# fix only when a cell with something turned on shows a field read; with none, the sentence is that Live does not work
+# in the app yet.
+R22 = "platform-readers on 7f553b9 (ci_r22)"
+LINUX_FINDINGS: dict[str, dict[tuple[str, str], Finding]] = {
+    "chromium": {
+        ("off", "off"): Finding(False, f"{R22}: Chrome not read by default"),
+        ("on", "off"): Finding(False, f"{R22}: on the bus with a titled window, no focused object found"),
+        ("off", "on"): Finding(False, f"{R22}: --force-renderer-accessibility alone, not on the bus"),
+        ("on", "on"): Finding(),
+    },
+    "electron": {
+        ("off", "off"): Finding(False, f"{R22}: not read by default"),
+        ("on", "off"): Finding(False, f"{R22}: as Chrome, no focused object found"),
+        ("off", "on"): Finding(False, f"{R22}: as Chrome, not on the bus"),
+        ("on", "on"): Finding(),
+    },
+    "gecko": {("off", "off"): Finding(True, f"{R22}: Firefox read by default, password refused 17 of 17")},
+    "qt": {},
+}
+LINUX_FLAGS = {
+    "chromium": "--force-renderer-accessibility",
+    "electron": "ACCESSIBILITY_ENABLED=1",
+    "qt": "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1",
+}
+# macOS: apps a run showed read with the default set-up (Accessibility granted to Heliox-OS).
+MAC_READ_BY_DEFAULT: dict[str, str] = {"safari": f"{R22}: Safari read by default, password refused 14 of 14"}
+
+
+def _usually_read(app: str, shown: str) -> Advice:
+    """An app Live does read with the default set-up, giving nothing right now."""
+    return Advice("it usually can, so restarting it may bring it back", shown)
+
+
 def advice(app: str, *, platform: str = sys.platform, reader_state: str = "ready", reader_message: str = "") -> Advice:
-    """What would let Live see into ``app`` here, from what is known so far."""
+    """What would let Live see into ``app`` here, from what real runs have shown (``LINUX_FINDINGS``,
+    ``MAC_READ_BY_DEFAULT``). Never a fix that no run has shown to work, except for kinds not run yet."""
     kind = kind_of(app)
+    name = _key(app)
     mac, linux = platform == "darwin", platform.startswith("linux")
     if mac and reader_state == "needs_permission":
         return Advice("turn on Accessibility for Heliox-OS in System Settings, Privacy & Security, Accessibility")
     if kind == "terminal":
-        if app.strip().casefold() == "kitty":
+        if name == "kitty":
             return Advice(
                 "turn on kitty's remote control, or add the zsh or fish terminal check, in Settings, Live, "
                 "Terminal check",
@@ -101,25 +147,45 @@ def advice(app: str, *, platform: str = sys.platform, reader_state: str = "ready
             )
         return Advice("add the zsh or fish terminal check in Settings, Live, Terminal check",
                       "shell-check run 43209835182 (zsh and fish)")  # fmt: skip
-    if linux and reader_message and kind in ("chromium", "electron", "qt", "gecko"):
-        # The session reports toolkit accessibility off: these toolkits only join the accessibility bus with it on.
+    if mac:
+        shown = MAC_READ_BY_DEFAULT.get(name)
+        return _usually_read(app, shown) if shown else Advice("")
+    if not linux or kind not in LINUX_FINDINGS:
+        return Advice("")
+    cells = LINUX_FINDINGS[kind]
+    switch = "off" if reader_message else "on"  # the reader's note says the desktop switch is off
+    # Read with no flag: with the desktop switch as it is, or with it off (turning it on cannot take an app off the bus).
+    default = cells.get((switch, "off"), Finding())
+    if not default.reads and switch == "on":
+        default = cells.get(("off", "off"), Finding())
+    if default.reads:
+        return _usually_read(app, default.shown)
+    working = [(cell, found) for cell, found in cells.items() if found.reads]
+    if working:
+        (need_switch, need_flag), found = working[0]
+        steps = []
+        if need_switch == "on" and switch == "off":
+            steps.append(f"turn on accessibility for apps ({TOOLKIT_SWITCH})")
+        if need_flag == "on":
+            steps.append(f"start it with {LINUX_FLAGS[kind]}")
+        return Advice(" and ".join(steps) + ", then restart it", found.shown) if steps else Advice("", found.shown)
+    tried = [found.shown for found in cells.values() if found.reads is False]
+    if tried:
+        return Advice("", "; ".join(tried))  # the set-ups a person can choose that were tried showed nothing
+    # Not run yet (Qt): what is documented, not shown.
+    if switch == "off":
         return Advice(f"turn on accessibility for apps ({TOOLKIT_SWITCH}), then restart it")
-    if linux and kind == "chromium":
-        return Advice("start it with --force-renderer-accessibility, then it can be read")
-    if linux and kind == "electron":
-        return Advice("start it with ACCESSIBILITY_ENABLED=1 set, then it can be read")
-    if linux and kind == "qt":
-        return Advice("start it with QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 set, then it can be read")
-    return Advice("")
+    flag = LINUX_FLAGS.get(kind)
+    return Advice(f"start it with {flag} set, then it can be read") if flag else Advice("")
 
 
 def sentence(app: str, found: Advice) -> str:
     label = app_label(app) or app
-    if label.islower():
-        label = label[:1].upper() + label[1:]  # "slack" as the process is named: "Slack" as people say it
+    if label.islower():  # "google-chrome" as the process is named: "Google Chrome" as people say it
+        label = " ".join(word[:1].upper() + word[1:] for word in label.replace("-", " ").split())
     if found.fix:
         return f"Live can't see what you type in {label}: {found.fix}."
-    return f"Live can't see what you type in {label}, and there is nothing to turn on for it yet."
+    return f"Live doesn't work in {label} yet."
 
 
 def _key(app: str) -> str:
