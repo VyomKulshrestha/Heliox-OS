@@ -51,6 +51,7 @@ DEFAULT_MODELS = {
 
 PROVIDER_DISPLAY_NAMES = {
     "openrouter": "OpenRouter",
+    "openai": "OpenAI",
 }
 
 MAX_RETRIES = 3
@@ -234,7 +235,10 @@ def safe_provider_error(error: Exception, provider: str) -> str:
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
         body = error.response.text.lower()
-        if status == 429:
+        if _is_out_of_credit(status, body):
+            # Anthropic says so with a 400, OpenAI with a 429: both mean the account needs credit, not a wait.
+            detail = "the account or API key has insufficient credits"
+        elif status == 429:
             detail = "quota or rate limit reached"
         elif status in {401, 403}:
             detail = "authentication was rejected"
@@ -257,6 +261,12 @@ def safe_provider_error(error: Exception, provider: str) -> str:
     if "api unavailable" in message.lower():
         return message[:240]
     return f"{provider_name} API unavailable: {message[:200]}"
+
+
+def _is_out_of_credit(status: int, body: str) -> bool:
+    """The provider's account has no credit left: OpenRouter 402, Anthropic 400 "credit balance is too low",
+    OpenAI 429 "insufficient_quota"."""
+    return status == 402 or "credit balance" in body or "insufficient_quota" in body
 
 
 def _is_rate_limit_error(error: Exception) -> bool:

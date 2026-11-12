@@ -189,3 +189,26 @@ def test_cloud_circuit_breaker_fails_fast_with_sanitized_reason():
 
     assert "Retry shortly" in str(raised.value)
     assert "key=" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "provider", "name"),
+    [
+        (
+            400,
+            '{"error":{"type":"invalid_request_error","message":"Your credit balance is too low"}}',
+            "claude",
+            "Claude",
+        ),
+        (
+            429,
+            '{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}',
+            "openai",
+            "OpenAI",
+        ),
+    ],
+)
+def test_an_account_out_of_credit_says_so_rather_than_rate_limit_or_rejected(status, body, provider, name):
+    message = safe_provider_error(_http_error(status, body=body), provider)
+    assert message.endswith(f"({status}): the account or API key has insufficient credits.")
+    assert message.startswith(name)
