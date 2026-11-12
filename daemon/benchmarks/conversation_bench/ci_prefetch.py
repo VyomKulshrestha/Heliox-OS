@@ -67,8 +67,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     from pilot.real_folders import use_scratch_folders
 
-    # The same scratch root ci_timing runs on, so the models land where the timing run looks for them.
-    use_scratch_folders(Path(os.environ.get("HELIOX_BENCH_ROOT") or ".heliox-bench"))
+    # The same scratch root ci_timing runs on, so the models land where the timing run looks for them. Named, never
+    # guessed: a default in the current folder put gigabytes of models inside the checkout when run by hand.
+    root = os.environ.get("HELIOX_BENCH_ROOT", "").strip()
+    if not root or not Path(root).is_absolute():
+        raise SystemExit(
+            "Set HELIOX_BENCH_ROOT to an absolute folder outside the checkout first: the speech models (several GB) "
+            "are fetched into it, and ci_timing reads them from the same folder."
+        )
+    use_scratch_folders(Path(root))
     rows = [*fetch_catalogue(), fetch_voice()]
     from pilot.config import DATA_DIR
 
