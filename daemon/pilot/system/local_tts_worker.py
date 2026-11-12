@@ -15,7 +15,9 @@ worker says a short sentence in 0.1 s and a long one in 0.25 s on the GPU. So th
 * speaks a long reply sentence by sentence, synthesising the next sentence while the current one plays;
 * keeps the worker when speech is cut off mid-synthesis (the worker finishes that request unheard);
 * after the worker fails to start or crashes, reports it once and lets the caller use the system voice at once,
-  retrying the local voice in the background after ``RETRY_AFTER_SECONDS``.
+  retrying the local voice in the background after ``RETRY_AFTER_SECONDS``;
+* runs the voice on the CPU when CUDA_VISIBLE_DEVICES hides every card, when the GPU arbiter says the card cannot
+  be used, and for the rest of the session after the voice hit a GPU error there (the same voice, said once).
 """
 
 from __future__ import annotations
@@ -48,6 +50,29 @@ LOAD_TIMEOUT_SECONDS = 180.0
 REQUEST_TIMEOUT_SECONDS = 120.0
 LOADING_MESSAGE = "Getting my voice ready…"
 VOICE_HOST_RAM_BYTES = 2 * 1024**3  # Kokoro's worker holds 1.6-1.9 GB once loaded
+ON_CPU_MESSAGE = (
+    "My voice hit a graphics card error, so it runs on the processor for the rest of this session. "
+    "It may take a moment longer to start speaking."
+)
+# What a model runtime says when the card, its driver or its libraries fail (cuDNN, cuBLAS, a device-side assert,
+# out of memory on the card). Matched on the worker's error text.
+_GPU_ERROR = re.compile(r"cuda|cudnn|cublas|nvrtc|nccl|device-side|\bgpu\b|hip error|out of memory", re.IGNORECASE)
+
+
+def cuda_hidden(environ: Any = None) -> bool:
+    """CUDA_VISIBLE_DEVICES hides every card: set and empty, or only negative indexes ("-1"). Read from the
+    daemon's own environment: on Windows an empty value is dropped from the environment a child process gets, so
+    the worker would otherwise see every card."""
+    value = (os.environ if environ is None else environ).get("CUDA_VISIBLE_DEVICES")
+    if value is None:
+        return False
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    return not parts or all(part.startswith("-") for part in parts)
+
+
+def is_gpu_error(reason: str) -> bool:
+    return bool(_GPU_ERROR.search(reason or ""))
+
 
 # ── Worker side ──────────────────────────────────────────────────────
 
@@ -92,6 +117,8 @@ def _take_gpu_lease(device: str) -> tuple[str, Any]:
 
 def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
     lease = None
+    if device != "cpu" and cuda_hidden():
+        device = "cpu"  # every card hidden: on POSIX the worker sees the empty value itself
     if gpu_lease and device != "cpu":
         device, lease = _take_gpu_lease(device)
     if engine == "kokoro_tts":
@@ -135,6 +162,10 @@ class LocalTTSUnavailable(RuntimeError):
     """The local voice cannot speak right now; the failure has already been logged once."""
 
     already_logged = True
+
+
+class _MovedToCpu(LocalTTSUnavailable):
+    """The voice hit a GPU error; the worker was closed and the next one starts on the CPU. Retried at once."""
 
 
 _ABBREVIATION = re.compile(r"(?:\b(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|vs|etc|No)|(?:\b[A-Za-z]\.)*\b[A-Za-z])\.$")
@@ -247,6 +278,9 @@ class LocalTTSWorkerManager:
         self.effective_device: str | None = None
         self.choose_device: Callable[[str], tuple[str, bool]] | None = None
         self.on_gpu_fault: Callable[[str, str], Any] | None = None
+        # Why the voice runs on the CPU for the rest of the session ("" while the GPU may still be used).
+        self.cpu_for_session = ""
+        self.gpu_lease = False  # the running worker holds Heliox's GPU lease (the arbiter said the card is usable)
         # Free system memory now, or None: the worker is not started when less than VOICE_HOST_RAM_BYTES is free
         # (on an 8 GB machine the model's 1.6-1.9 GB can push everything into swap); the system voice speaks.
         self.free_memory: Callable[[], int | None] | None = None
@@ -341,7 +375,9 @@ class LocalTTSWorkerManager:
                 self._mark_failed(engine, reason)
                 raise LocalTTSUnavailable(f"{engine}: {reason}")
             device, gpu_lease = self.device, False
-            if self.choose_device is not None:
+            if device != "cpu" and (self.cpu_for_session or cuda_hidden()):
+                device = "cpu"  # a GPU error earlier this session, or every card hidden
+            elif self.choose_device is not None:
                 try:
                     device, gpu_lease = await asyncio.to_thread(self.choose_device, self.device)
                 except Exception:
@@ -358,6 +394,7 @@ class LocalTTSWorkerManager:
             self.engine = engine
             self.process_device = self.device
             self.effective_device = device
+            self.gpu_lease = gpu_lease
             self.loaded = False
             self._load_task = None
             self.note_activity()
@@ -370,7 +407,11 @@ class LocalTTSWorkerManager:
 
     async def _load(self, process: Any, engine: str, voice: str) -> None:
         started = self._clock()
-        await self._request(process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS)
+        try:
+            await self._request(process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS)
+        except _MovedToCpu:
+            process = await self._ensure_process(engine, voice, preload=False)
+            await self._request(process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS)
         logger.info("Local voice %s loaded in %.1f s", engine, self._clock() - started)
 
     def _start_idle_watch(self) -> None:
@@ -422,11 +463,26 @@ class LocalTTSWorkerManager:
         self._failed_until = self._clock() + RETRY_AFTER_SECONDS
 
     async def _fail(self, process: Any, engine: str, reason: str) -> LocalTTSUnavailable:
-        self._mark_failed(engine, reason)
-        if self.on_gpu_fault is not None and process is self.process and self.effective_device not in {None, "cpu"}:
+        on_gpu = process is self.process and self.effective_device not in {None, "cpu"}
+        if on_gpu and self.on_gpu_fault is not None:
             # A voice worker on the GPU that died or hung counts toward switching the GPU off for the session.
             with contextlib.suppress(Exception):
                 self.on_gpu_fault("voice", reason)
+        # On the card for certain (the arbiter leased it, or "cuda" was asked for), a crash or hang is the card's;
+        # on "auto" without a lease only an error that names the card says the worker was on it.
+        on_card = self.effective_device == "cuda" or self.gpu_lease
+        died = reason == "the worker exited" or reason.startswith("no answer")
+        if on_gpu and (is_gpu_error(reason) or (on_card and died)):
+            # The card failed, not the voice: the same voice goes on on the CPU, for the rest of the session.
+            first = not self.cpu_for_session
+            self.cpu_for_session = reason[-300:]
+            if first:
+                logger.warning("Local voice %s hit a GPU error (%s); it runs on the CPU for this session", engine,
+                               reason[-300:])  # fmt: skip
+                await self._notify("voice_on_cpu", {"message": ON_CPU_MESSAGE})
+            await self._close(process)
+            return _MovedToCpu(f"{engine} moved to the CPU after a GPU error: {reason}")
+        self._mark_failed(engine, reason)
         if process is self.process or process.poll() is None:
             await self._close(process)
         return LocalTTSUnavailable(f"{engine} worker failed: {reason}")
@@ -470,12 +526,15 @@ class LocalTTSWorkerManager:
         process = await self._usable_process(engine, voice)
         request_path = request_dir / f"{output_file.stem}-{id(output_file):x}.txt"
         request_path.write_text(text, encoding="utf-8")
-        await self._request(
-            process,
-            engine,
-            {"text_file": str(request_path), "voice": voice, "output_file": str(output_file)},
-            timeout=LOAD_TIMEOUT_SECONDS if not self.loaded else REQUEST_TIMEOUT_SECONDS,
-        )
+        request = {"text_file": str(request_path), "voice": voice, "output_file": str(output_file)}
+        try:
+            await self._request(
+                process, engine, request, timeout=LOAD_TIMEOUT_SECONDS if not self.loaded else REQUEST_TIMEOUT_SECONDS
+            )
+        except _MovedToCpu:
+            # The same sentence, once, from the same voice started on the CPU.
+            process = await self._usable_process(engine, voice)
+            await self._request(process, engine, request, timeout=LOAD_TIMEOUT_SECONDS)
         if not output_file.is_file() or output_file.stat().st_size == 0:
             raise await self._fail(process, engine, "the worker produced no audio")
 

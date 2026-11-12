@@ -424,7 +424,7 @@
       showDeviceNotice(String(payload.message ?? ""), 6000);
       return;
     }
-    if (status === "microphone_recovered" || status === "speaker_changed") {
+    if (status === "microphone_recovered" || status === "speaker_changed" || status === "voice_on_cpu") {
       showDeviceNotice(String(payload.message ?? ""), 6000);
       return;
     }

@@ -3812,6 +3812,10 @@ Voice listener lifecycle updates.
   "voice_output_failed", "text": "the sentence", "message": "Heliox's voice did not work, so its replies are shown
   here as text. Check ..." }`. `message` is given the first time only (until a sentence is spoken again); the UI
   shows `text` as a caption. No follow-up window and no Live reply window open after it.
+- `"voice_on_cpu"` — the local voice hit a graphics card error (a CUDA or cuDNN error, or its worker died or hung on
+  the card), so the same voice runs on the CPU for the rest of the session: `{ "status": "voice_on_cpu", "message":
+  "My voice hit a graphics card error, so it runs on the processor ..." }`. Sent once per session; the UI shows
+  `message` for a few seconds.
 - `"wake_teach"` — one try of `voice_wake_teach` was heard: `{ "status": "wake_teach", "try": 1, "of": 4, "heard": "Hey Helios." }` (`heard` is "" when nothing was recognised).
 
 ### `voice_partial`

@@ -47,4 +47,12 @@ describe("VoiceControl when Heliox's voice did not work", () => {
     expect(screen.getByText("It is done.")).toBeTruthy();
     await waitFor(() => expect(screen.queryAllByText(check).length).toBeLessThanOrEqual(1));
   });
+
+  it("says once that the voice moved to the processor after a graphics card error", async () => {
+    render(VoiceControl);
+    const moved = "My voice hit a graphics card error, so it runs on the processor for the rest of this session.";
+    emit("voice_status", { status: "voice_on_cpu", message: moved });
+    await tick();
+    expect(screen.getByText(moved)).toBeTruthy();
+  });
 });

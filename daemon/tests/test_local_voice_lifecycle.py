@@ -190,7 +190,8 @@ async def test_prewarm_ignores_the_system_voice() -> None:
 @pytest.mark.asyncio
 async def test_a_worker_that_fails_to_load_is_reported_once_and_retried_later(caplog) -> None:
     clock = FakeClock()
-    broken = FakeWorker(load_reply=b'{"status":"error","error":"RuntimeError: CUDA driver fault"}\n')
+    # A load failure that is not the graphics card (that one moves the voice to the CPU: test_voice_gpu_fallback).
+    broken = FakeWorker(load_reply=b'{"status":"error","error":"RuntimeError: voice weights are damaged"}\n')
     healthy = FakeWorker()
     spawner = Spawner(broken, healthy)
     manager = _manager(spawner, clock)
@@ -209,7 +210,7 @@ async def test_a_worker_that_fails_to_load_is_reported_once_and_retried_later(ca
         assert raised.value.already_logged is True
     assert len(spawner.calls) == 1
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 1 and "CUDA driver fault" in warnings[0].getMessage()
+    assert len(warnings) == 1 and "voice weights are damaged" in warnings[0].getMessage()
     assert statuses == ["voice_loading", "voice_unavailable"]
 
     await clock.advance(121)

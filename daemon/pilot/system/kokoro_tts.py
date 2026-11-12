@@ -26,6 +26,10 @@ def configure(*, device: str = "auto") -> None:
     """Choose where the model runs: "auto" (CUDA when present), "cpu" or "cuda"."""
     global _device
     _device = device if device in {"auto", "cpu", "cuda"} else "auto"
+    from pilot.system.local_tts_worker import cuda_hidden
+
+    if _device != "cpu" and cuda_hidden():
+        _device = "cpu"  # CUDA_VISIBLE_DEVICES hides every card
 
 
 def use_cached_weights_offline(voice: str) -> bool:
