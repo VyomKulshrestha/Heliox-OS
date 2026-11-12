@@ -444,6 +444,32 @@ jobs:
           failed=$((failed + $?))
           exit $failed
 
+      # Where people type: a browser, an Electron app and a Qt app. Each shows a text field and a password field;
+      # the default setup of each is an ANSWER (does Heliox see the field as a person has it), the forced setups
+      # must read it, and the password field must be refused wherever the text field was read.
+      - name: Linux, X11 - fields in Chrome, Electron and Qt, by default and with accessibility forced on
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        continue-on-error: true
+        run: |
+          set +e
+          sudo apt-get install -y -q --no-install-recommends openbox libxcb-cursor0 libxkbcommon-x11-0 \
+            libxcb-icccm4 libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-xinerama0
+          pip install -q "PySide6==6.8.1"
+          mkdir -p "$RUNNER_TEMP/electron"
+          npm install --prefix "$RUNNER_TEMP/electron" --no-save --no-audit --no-fund electron@33.2.1 >/dev/null 2>&1
+          export HELIOX_ELECTRON="$RUNNER_TEMP/electron/node_modules/.bin/electron"
+          ls -l "$HELIOX_ELECTRON" || echo "electron did not install"
+          which google-chrome chromium chromium-browser || true
+          dbus-run-session -- bash -c '
+            Xvfb :96 -screen 0 1280x800x24 >/tmp/xvfb-fields.log 2>&1 &
+            export DISPLAY=:96
+            sleep 2
+            openbox >/tmp/openbox-fields.log 2>&1 &
+            sleep 1
+            python tests/platform_real/apps_fields_check.py chrome-default chrome-switch chrome-forced \
+              electron-default electron-forced qt-default qt-forced
+          '
+
       # Weston's headless backend has no seat, so nothing can take keyboard focus there (first run: GTK logged
       # gdk_seat_get_keyboard assertions and no element was ever focused). Sway on wlroots' headless backend
       # always has a seat, focuses new windows, and accepts keys from wtype through the virtual-keyboard protocol.
