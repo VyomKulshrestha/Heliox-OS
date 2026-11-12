@@ -51,11 +51,19 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
-def toolkit_accessibility(on: bool | None) -> None:
-    """Set the session's toolkit-accessibility switch (None: back to the default, off)."""
-    args = ["gsettings", "reset", "org.gnome.desktop.interface", "toolkit-accessibility"]
-    if on is not None:
-        args = ["gsettings", "set", "org.gnome.desktop.interface", "toolkit-accessibility", "true" if on else "false"]
+SETTING = ["org.gnome.desktop.interface", "toolkit-accessibility"]
+
+
+def read_toolkit_accessibility() -> str:
+    """The session's toolkit-accessibility value as gsettings prints it ("true", "false"), written down before any
+    change so it can be put back."""
+    done = subprocess.run(["gsettings", "get", *SETTING], capture_output=True, text=True, timeout=10, check=False)
+    return done.stdout.strip()
+
+
+def toolkit_accessibility(value: str | None) -> None:
+    """Set the session's toolkit-accessibility switch to ``value`` ("true", "false"); None resets it."""
+    args = ["gsettings", "reset", *SETTING] if value is None else ["gsettings", "set", *SETTING, value]
     subprocess.run(args, capture_output=True, timeout=10, check=False)
 
 
@@ -121,7 +129,7 @@ def run(target: str) -> None:
     from pilot.live import focused_text_linux as L
 
     variant = target.partition("-")[2]
-    toolkit_accessibility(True if variant == "switch" else None)
+    toolkit_accessibility("true" if variant == "switch" else "false")
     workdir = Path(tempfile.mkdtemp(prefix="heliox-fields-", dir=Path.home()))
     shutil.copyfile(HERE / "field_fixture.html", workdir / "field_fixture.html")
     process = launch(target, workdir)
@@ -170,14 +178,22 @@ def run(target: str) -> None:
         )
     finally:
         end(process)
-        toolkit_accessibility(None)
+        toolkit_accessibility(ORIGINAL.get("value") or None)
         shutil.rmtree(workdir, ignore_errors=True)
         time.sleep(1.0)
 
 
+ORIGINAL: dict[str, str] = {}
+
+
 def main(argv: list[str]) -> int:
-    for target in argv:
-        run(target)
+    ORIGINAL["value"] = read_toolkit_accessibility()
+    print(f"toolkit-accessibility before the check: {ORIGINAL['value'] or 'unset'}", flush=True)
+    try:
+        for target in argv:
+            run(target)
+    finally:
+        toolkit_accessibility(ORIGINAL["value"] or None)
     return failures
 
 
