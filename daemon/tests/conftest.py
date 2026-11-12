@@ -1,20 +1,38 @@
 """Shared test fixtures."""
 
+import importlib.util
 import os
 import sys
+from pathlib import Path
 from typing import Any, Callable
 
 import pytest
 
-from pilot.config import PilotConfig
+# Before any pilot module is imported: Heliox's folders go to a session folder, and the real ones are refused
+# (tests/folder_guard.py). Loaded by path, so it is the same module whichever way pytest imports this file.
+_spec = importlib.util.spec_from_file_location("folder_guard", Path(__file__).with_name("folder_guard.py"))
+folder_guard = sys.modules.setdefault("folder_guard", importlib.util.module_from_spec(_spec))
+if not hasattr(folder_guard, "install"):
+    _spec.loader.exec_module(folder_guard)
+folder_guard.install()
+
+from pilot.config import PilotConfig  # noqa: E402
 
 # Keep ordinary CI lightweight; research checks can explicitly use real Torch.
 if os.environ.get("HELIOX_TEST_REAL_TORCH") != "1":
     sys.modules["torch"] = None
 
 
+_folder_guard_lines: list[str] = []
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_sessionfinish(session, exitstatus):
-    """Watchdog to catch and debug test teardown hangs."""
+    """Watchdog to catch and debug test teardown hangs; and what reached Heliox's real folders (folder_guard)."""
+    lines, failed = folder_guard.report()
+    _folder_guard_lines.extend(lines)
+    if failed and session.exitstatus == 0:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
     import os
     import threading
     import time
@@ -33,6 +51,11 @@ def pytest_sessionfinish(session, exitstatus):
 
     t = threading.Thread(target=watchdog, daemon=True, name="TeardownWatchdog")
     t.start()
+
+
+def pytest_terminal_summary(terminalreporter):
+    for line in _folder_guard_lines:
+        terminalreporter.write_line(line)
 
 
 @pytest.fixture(autouse=True)

@@ -209,4 +209,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from ci_only import require_runner
+
+    require_runner("opens windows (and Firefox) on this desktop and types into them")
     sys.exit(main())

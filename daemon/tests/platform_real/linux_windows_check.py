@@ -153,4 +153,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from ci_only import require_runner
+
+    require_runner("opens windows on this desktop and moves, focuses and closes them")
     sys.exit(main())

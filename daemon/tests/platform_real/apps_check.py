@@ -147,4 +147,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from ci_only import require_runner
+
+    require_runner("launches apps (TextEdit on macOS) on this desktop")
     sys.exit(main())

@@ -137,5 +137,8 @@ def fake() -> None:
 
 
 if __name__ == "__main__":
+    from ci_only import require_runner
+
+    require_runner("asks this desktop for a screenshot and a global shortcut")
     {"real": real, "fake": fake}[sys.argv[1] if len(sys.argv) > 1 else "real"]()
     sys.exit(failures)

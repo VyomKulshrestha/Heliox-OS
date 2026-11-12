@@ -149,4 +149,7 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    from ci_only import require_runner
+
+    require_runner("opens a full-screen window on this desktop")
     sys.exit(main(sys.argv[1:]))

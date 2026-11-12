@@ -33,8 +33,20 @@ def _xdg(env_var: str, fallback: str) -> Path:
     return Path(os.environ.get(env_var, Path.home() / fallback))
 
 
+def _heliox_dir(override: str, env_var: str, fallback: str) -> Path:
+    """Heliox's own folder under the XDG one. ``override`` (HELIOX_CONFIG_DIR and the others) names Heliox's folder
+    itself and wins: the test suite points it at a temporary folder without changing the XDG variables other
+    programs read (PulseAudio's cookie, the accessibility bus), and nothing else sets it."""
+    named = os.environ.get(override, "").strip()
+    return Path(named) if named else _xdg(env_var, fallback) / "heliox-os"
+
+
 def _default_runtime_dir() -> Path:
-    """Resolve runtime dir when XDG_RUNTIME_DIR is unset (macOS, Windows, minimal Linux)."""
+    """Resolve runtime dir when XDG_RUNTIME_DIR is unset (macOS, Windows, minimal Linux). HELIOX_RUNTIME_DIR, when
+    set, is the folder itself (see _heliox_dir)."""
+    named = os.environ.get("HELIOX_RUNTIME_DIR", "").strip()
+    if named:
+        return Path(named)
     xdg = os.environ.get("XDG_RUNTIME_DIR", "").strip()
     if xdg:
         return Path(xdg) / "heliox-os"
@@ -51,9 +63,9 @@ def _default_runtime_dir() -> Path:
     return Path(tmp) / f"heliox-os-runtime-{uid}"
 
 
-CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "heliox-os"
-DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "heliox-os"
-STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "heliox-os"
+CONFIG_DIR = _heliox_dir("HELIOX_CONFIG_DIR", "XDG_CONFIG_HOME", ".config")
+DATA_DIR = _heliox_dir("HELIOX_DATA_DIR", "XDG_DATA_HOME", ".local/share")
+STATE_DIR = _heliox_dir("HELIOX_STATE_DIR", "XDG_STATE_HOME", ".local/state")
 RUNTIME_DIR = _default_runtime_dir()
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"

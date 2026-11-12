@@ -370,4 +370,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from ci_only import require_runner
+
+    require_runner("opens a window on this desktop and types into it")
     sys.exit(main())

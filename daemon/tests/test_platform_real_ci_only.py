@@ -27,6 +27,18 @@ GUARDED = (
     "audio_check.py",
     "credential_store_check.py",
     "learner_key_reboot_check.py",
+    # the desktop drivers: they open windows and type, click or show notifications
+    "apps_check.py",
+    "click_hang_check.py",
+    "linux_atspi_check.py",
+    "linux_portal_check.py",
+    "linux_windows_check.py",
+    "live_end_to_end_check.py",
+    "live_more_checks.py",
+    "macos_ax_check.py",
+    "notify_check.py",
+    "ocr_check.py",
+    "toolkit_check.py",
 )
 
 
