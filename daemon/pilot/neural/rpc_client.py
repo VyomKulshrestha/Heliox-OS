@@ -93,19 +93,39 @@ class NeuralRpcTransport:
                 separators=(",", ":"),
             )
         )
-        try:
-            raw = await bounded(self._connection.recv(), timeout=self._timeout)
-        except TimeoutError as exc:
-            raise NeuralRpcError(f"RPC timed out: {method}") from exc
-        response = json.loads(str(raw))
-        if response.get("id") != request_id:
-            raise NeuralRpcError("neural RPC response id did not match")
+        response = await self._reply_to(request_id, method)
         if "error" in response:
             raise NeuralRpcError(str(response["error"].get("message") or "RPC failed"))
         result = response.get("result")
         if not isinstance(result, dict):
             raise NeuralRpcError("neural RPC returned a non-object result")
         return result
+
+    async def _reply_to(self, request_id: str, method: str) -> dict[str, Any]:
+        """Read until the reply to ``request_id``, within one timeout for the whole wait.
+
+        The daemon sends every connection some notifications of its own (``startup_status`` right after auth while
+        it starts, for one), and a reply to an earlier call that timed out can still arrive late. Neither is this
+        call's reply: both are skipped, as the Rust app's send_rpc does.
+        """
+        connection = self._connection
+        if connection is None:
+            raise NeuralRpcError("neural RPC transport is not connected")
+        deadline = time.monotonic() + self._timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise NeuralRpcError(f"RPC timed out: {method}")
+            try:
+                raw = await bounded(connection.recv(), timeout=remaining)
+            except TimeoutError as exc:
+                raise NeuralRpcError(f"RPC timed out: {method}") from exc
+            try:
+                response = json.loads(str(raw))
+            except ValueError as exc:
+                raise NeuralRpcError("neural RPC received a message that is not JSON") from exc
+            if isinstance(response, dict) and response.get("id") == request_id:
+                return response
 
 
 class BridgeTransport(Protocol):

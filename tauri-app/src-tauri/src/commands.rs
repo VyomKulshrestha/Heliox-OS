@@ -593,32 +593,75 @@ pub(crate) async fn daemon_answers() -> bool {
     )
 }
 
-async fn try_ping_daemon(_window: tauri::Window) -> Result<String, String> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "ping",
-        "params": {},
-        "id": 1
-    });
+/// Longest wait for the reply to a one-off request (a git resolution writes one file).
+const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-    let mut ws = connect_authenticated().await?;
-    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into()))
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if let Some(Ok(response)) = ws.next().await {
-        let text = response.to_text().map_err(|e| e.to_string())?;
-        let parsed: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-        let version = parsed
-            .get("result")
-            .and_then(|r| r.get("version"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        return Ok(version);
+/// Read until the reply whose id is `id`. The daemon also sends this connection notifications it sends to every
+/// window (late_parts, storage, Live), and those can arrive before the reply; they are skipped, as in send_rpc.
+async fn read_reply<S>(ws: &mut S, id: &serde_json::Value) -> Result<serde_json::Value, String>
+where
+    S: futures_util::Stream<
+            Item = Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin,
+{
+    use tokio_tungstenite::tungstenite::Message;
+    loop {
+        let message = ws
+            .next()
+            .await
+            .ok_or_else(|| "Daemon closed before replying".to_string())?
+            .map_err(|e| format!("Daemon connection failed: {e}"))?;
+        let text = match message {
+            Message::Text(text) => text,
+            Message::Close(_) => return Err("Daemon closed before replying".to_string()),
+            _ => continue, // ping, pong and binary frames are not replies
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("Invalid daemon reply: {e}"))?;
+        if parsed.get("id") == Some(id) {
+            return Ok(parsed);
+        }
     }
-    Err("Ping failed".to_string())
+}
+
+/// Send one request on an authenticated socket and return its reply, within `limit`.
+async fn request_reply(
+    ws: &mut DaemonSocket,
+    request: &serde_json::Value,
+    limit: std::time::Duration,
+) -> Result<serde_json::Value, String> {
+    let id = request
+        .get("id")
+        .cloned()
+        .ok_or_else(|| "Request has no id".to_string())?;
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        request.to_string().into(),
+    ))
+    .await
+    .map_err(|e| format!("Send failed: {e}"))?;
+    tokio::time::timeout(limit, read_reply(ws, &id))
+        .await
+        .map_err(|_| "The daemon did not reply in time".to_string())?
+}
+
+fn version_of(reply: &serde_json::Value) -> String {
+    reply
+        .get("result")
+        .and_then(|r| r.get("version"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+async fn try_ping_daemon(_window: tauri::Window) -> Result<String, String> {
+    let request =
+        serde_json::json!({"jsonrpc": "2.0", "method": "ping", "params": {}, "id": "native-ping"});
+    let mut ws = connect_authenticated().await?;
+    let reply = request_reply(&mut ws, &request, crate::supervisor::PING_TIMEOUT).await?;
+    Ok(version_of(&reply))
 }
 
 // Main streaming loop broadcasting raw frames back to Svelte context
@@ -773,31 +816,26 @@ pub async fn apply_git_conflict_resolution(
             "full_block": full_block,
             "resolved_code": resolved_code
         },
-        "id": 1
+        "id": "native-git-resolution"
     });
 
     let mut ws = connect_authenticated().await?;
-    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into()))
-        .await
-        .map_err(|e| e.to_string())?;
+    let reply = request_reply(&mut ws, &request, REPLY_TIMEOUT).await?;
+    result_or_error(reply)
+}
 
-    if let Some(Ok(response)) = ws.next().await {
-        let text = response.to_text().map_err(|e| e.to_string())?;
-        let parsed: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-        if let Some(result) = parsed.get("result") {
-            return Ok(result.clone());
-        }
-        if let Some(error) = parsed.get("error") {
-            return Err(error
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("Daemon error")
-                .to_string());
-        }
-        return Ok(parsed);
+fn result_or_error(reply: serde_json::Value) -> Result<serde_json::Value, String> {
+    if let Some(result) = reply.get("result") {
+        return Ok(result.clone());
     }
-    Err("Failed to receive response from daemon".to_string())
+    if let Some(error) = reply.get("error") {
+        return Err(error
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("Daemon error")
+            .to_string());
+    }
+    Ok(reply)
 }
 
 // 5. Get the currently active global shortcut
@@ -979,6 +1017,84 @@ mod tests {
 
         assert!(socket.is_ok());
         server.await.unwrap();
+    }
+
+    fn text(value: serde_json::Value) -> tokio_tungstenite::tungstenite::Message {
+        tokio_tungstenite::tungstenite::Message::Text(value.to_string().into())
+    }
+
+    #[tokio::test]
+    async fn one_off_requests_skip_notifications_and_return_their_own_reply() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = accept_async(stream).await.unwrap();
+            let _auth = socket.next().await.unwrap().unwrap();
+            socket
+                .send(text(serde_json::json!({"jsonrpc": "2.0", "result": {"status": "authenticated"}, "id": "native-auth"})))
+                .await
+                .unwrap();
+            let request: serde_json::Value =
+                serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap())
+                    .unwrap();
+            // What the daemon sends every window by itself, before the reply: these must not be taken for it.
+            socket
+                .send(text(serde_json::json!({"jsonrpc": "2.0", "method": "late_parts", "params": {"ready": ["neural"]}})))
+                .await
+                .unwrap();
+            socket
+                .send(text(serde_json::json!({"jsonrpc": "2.0", "result": {"version": "wrong"}, "id": "someone-else"})))
+                .await
+                .unwrap();
+            socket
+                .send(tokio_tungstenite::tungstenite::Message::Ping(
+                    vec![1].into(),
+                ))
+                .await
+                .unwrap();
+            socket
+                .send(text(serde_json::json!({"jsonrpc": "2.0", "result": {"version": "1.2.3"}, "id": request["id"]})))
+                .await
+                .unwrap();
+            let _ = socket.next().await; // keep the socket open until the client is done
+        });
+
+        let mut ws = connect_authenticated_to(&format!("ws://{address}"), "test-token")
+            .await
+            .unwrap();
+        let request = serde_json::json!({"jsonrpc": "2.0", "method": "ping", "params": {}, "id": "native-ping"});
+        let reply = request_reply(&mut ws, &request, std::time::Duration::from_secs(5))
+            .await
+            .unwrap();
+
+        assert_eq!(version_of(&reply), "1.2.3");
+        drop(ws);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_reply_that_never_comes_is_an_error_not_a_wrong_answer() {
+        let messages = vec![
+            Ok(text(
+                serde_json::json!({"jsonrpc": "2.0", "method": "storage", "params": {}}),
+            )),
+            Ok(text(
+                serde_json::json!({"jsonrpc": "2.0", "result": {"ok": true}, "id": 7}),
+            )),
+        ];
+        let mut stream = futures_util::stream::iter(messages);
+
+        let outcome = read_reply(&mut stream, &serde_json::json!("native-git-resolution")).await;
+
+        assert_eq!(outcome.unwrap_err(), "Daemon closed before replying");
+    }
+
+    #[test]
+    fn a_git_resolution_error_reply_is_an_error() {
+        let reply = serde_json::json!({"jsonrpc": "2.0", "error": {"code": -32010, "message": "Disk full"}, "id": "native-git-resolution"});
+
+        assert_eq!(result_or_error(reply).unwrap_err(), "Disk full");
     }
 
     #[tokio::test]

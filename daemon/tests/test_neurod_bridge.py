@@ -223,3 +223,65 @@ async def test_stop_during_the_back_off_ends_the_bridge_at_once(monkeypatch) -> 
     await asyncio.wait_for(task, timeout=5)
 
     assert transport.connects == 1 and service.stopped and bridge.status == {"state": "stopped"}
+
+
+class QueuedConnection:
+    """A daemon connection that answers with queued messages; ``None`` means nothing more arrives."""
+
+    def __init__(self, messages: list) -> None:
+        self.messages = list(messages)
+        self.sent: list[str] = []
+
+    async def send(self, text: str) -> None:
+        self.sent.append(text)
+
+    async def recv(self) -> str:
+        if not self.messages or self.messages[0] is None:
+            await asyncio.sleep(3600)
+        message = self.messages.pop(0)
+        return message(self.sent) if callable(message) else message
+
+
+def _reply_to_last(sent: list[str]) -> str:
+    import json
+
+    request = json.loads(sent[-1])
+    return json.dumps({"jsonrpc": "2.0", "result": {"status": "ok", "state": "idle"}, "id": request["id"]})
+
+
+@pytest.mark.asyncio
+async def test_a_call_skips_notifications_and_late_replies_and_returns_its_own() -> None:
+    import json
+
+    from pilot.neural.rpc_client import NeuralRpcTransport
+
+    transport = NeuralRpcTransport(url="ws://unused", token="t", timeout_seconds=2)
+    transport._connection = QueuedConnection(
+        [
+            json.dumps({"jsonrpc": "2.0", "method": "startup_status", "params": {"phase": "starting"}}),
+            json.dumps({"jsonrpc": "2.0", "result": {"status": "ok"}, "id": "neurod-0"}),  # an earlier call's, late
+            _reply_to_last,
+        ]
+    )
+
+    result = await transport.call("neural_status")
+
+    assert result == {"status": "ok", "state": "idle"}
+
+
+@pytest.mark.asyncio
+async def test_notifications_alone_end_in_a_timeout_within_one_limit() -> None:
+    import json
+    import time
+
+    from pilot.neural.rpc_client import NeuralRpcError, NeuralRpcTransport
+
+    transport = NeuralRpcTransport(url="ws://unused", token="t", timeout_seconds=0.3)
+    transport._connection = QueuedConnection(
+        [json.dumps({"jsonrpc": "2.0", "method": "startup_status", "params": {}})] * 3 + [None]
+    )
+    started = time.monotonic()
+
+    with pytest.raises(NeuralRpcError, match="timed out: neural_status"):
+        await transport.call("neural_status")
+    assert time.monotonic() - started < 1.5  # one limit for the whole wait, not one per message
