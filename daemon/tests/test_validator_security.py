@@ -59,6 +59,61 @@ def test_protected_folder_bypass_mitigated(validator):
 @pytest.mark.parametrize(
     ("action_type", "path", "destination"),
     [
+        (ActionType.FILE_DELETE, "{home}/Documents/private/plan.txt", None),
+        (ActionType.FILE_WRITE, "{home}/Documents/private", None),
+        (ActionType.FILE_COPY, "{home}/notes.txt", "{home}/Documents/private/notes.txt"),
+        (ActionType.FILE_MOVE, "{home}/notes.txt", "{home}/Documents/private"),
+    ],
+)
+def test_a_protected_folder_written_with_a_tilde_protects_absolute_paths_and_destinations(
+    monkeypatch, tmp_path, action_type, path, destination
+):
+    # The setup wizard's placeholder is "~/Documents/private". Before, "~" was never expanded, so the folder resolved
+    # against the daemon's working folder and an absolute path into it went through; a copy or move into any
+    # protected folder went through too, as only the source path was checked. (Action paths must be absolute.)
+    home = tmp_path / "home"
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(home))
+    config = PilotConfig()
+    config.restrictions.protected_folders = ["~/Documents/private"]
+    values = {"home": str(home)}
+    action = Action(
+        action_type=action_type,
+        target=path.format(**values),
+        parameters=FileParams(
+            path=path.format(**values), destination=destination.format(**values) if destination else None
+        ),
+    )
+    with pytest.raises(Exception, match="is in protected folder ~/Documents/private"):
+        ActionValidator(config).validate_action(action, 0)
+    # A neighbouring folder is not protected.
+    free = Action(
+        action_type=ActionType.FILE_WRITE,
+        target=str(home / "Documents" / "private-notes.txt"),
+        parameters=FileParams(path=str(home / "Documents" / "private-notes.txt")),
+    )
+    ActionValidator(config).validate_action(free, 0)
+
+
+@pytest.mark.parametrize("name", ["Mozilla.Firefox", "mozilla.firefox", "MOZILLA.FIREFOX"])
+def test_a_protected_package_is_refused_whatever_its_case(name):
+    from pilot.actions import PackageParams
+
+    config = PilotConfig()
+    config.restrictions.protected_packages = ["Mozilla.Firefox"]
+    action = Action(action_type=ActionType.PACKAGE_REMOVE, target=name, parameters=PackageParams(name=name))
+    with pytest.raises(Exception, match="is protected and cannot be removed"):
+        ActionValidator(config).validate_action(action, 0)
+    other = Action(action_type=ActionType.PACKAGE_REMOVE, target="Git.Git", parameters=PackageParams(name="Git.Git"))
+    try:
+        ActionValidator(config).validate_action(other, 0)
+    except Exception as exc:  # other rules may object; the protection rule must not
+        assert "is protected" not in str(exc)
+
+
+@pytest.mark.parametrize(
+    ("action_type", "path", "destination"),
+    [
         (ActionType.FILE_READ, "{config}/config.toml", None),
         (ActionType.FILE_WRITE, "{config}/mcp_servers.json", None),
         (ActionType.FILE_READ, "{runtime}/auth_token", None),

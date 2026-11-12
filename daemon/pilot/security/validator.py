@@ -368,22 +368,30 @@ class ActionValidator:
 
             from pilot.security.path_rules import path_within
 
-            try:
-                resolved_path = os.path.realpath(action.parameters.path)
-            except Exception:
-                resolved_path = action.parameters.path
-
-            for protected in restrictions.protected_folders:
+            # Both the path and the destination: a copy or move into a protected folder changes it as much as a write.
+            # "~" is expanded on both sides, as the setup wizard and settings invite "~/Documents/private": without
+            # it the folder resolved against the daemon's working folder and an absolute path never matched.
+            for candidate in (action.parameters.path, getattr(action.parameters, "destination", None)):
+                if not candidate:
+                    continue
                 try:
-                    resolved_protected = os.path.realpath(protected)
+                    resolved_path = os.path.realpath(os.path.expanduser(candidate))
                 except Exception:
-                    resolved_protected = protected
+                    resolved_path = candidate
 
-                if path_within(resolved_path, resolved_protected):
-                    raise ValidationError(idx, f"Path {action.parameters.path} is in protected folder {protected}")
+                for protected in restrictions.protected_folders:
+                    try:
+                        resolved_protected = os.path.realpath(os.path.expanduser(protected))
+                    except Exception:
+                        resolved_protected = protected
+
+                    if path_within(resolved_path, resolved_protected):
+                        raise ValidationError(idx, f"Path {candidate} is in protected folder {protected}")
 
         if isinstance(action.parameters, PackageParams) and action.action_type == ActionType.PACKAGE_REMOVE:
-            if action.parameters.name in restrictions.protected_packages:
+            # Case-insensitive: winget ids and Homebrew names are, and "Firefox" must not slip past "firefox".
+            protected_names = {str(name).strip().casefold() for name in restrictions.protected_packages}
+            if action.parameters.name.strip().casefold() in protected_names:
                 raise ValidationError(
                     idx,
                     f"Package '{action.parameters.name}' is protected and cannot be removed",
