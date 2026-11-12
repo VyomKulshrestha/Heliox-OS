@@ -179,23 +179,25 @@ def run(target: str) -> None:
             diag_reader(target)
             diag_search(target, process.pid)
             return
-        # Only after a first successful read: the password field must be refused, and nothing typed may leak.
-        subprocess.run(["xdotool", "key", "Tab"], timeout=10, check=False)
-        time.sleep(0.6)
-        type_keys("s3cret", False)
-        diag_focused(f"{target} password field")
-        reads = []
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            reads.append(L.read_focused())
-            time.sleep(0.3)
-        leaked = [r for r in reads if r is not None and "s3cret" in (r.text or "")]
-        refused = [r for r in reads if r is not None and r.password]
-        check(
-            f"{target}/password-refused",
-            not leaked and bool(refused),
-            f"{len(refused)} of {len(reads)} reads refused, leaked {leaked[:1]!r}",
-        )
+        # Only after a first successful read: each password field must be refused, and nothing typed may leak. The
+        # second has no label, no name and a neutral id: the refusal must not depend on what the field is called.
+        for name, secret in (("password-refused", "s3cret"), ("unnamed-password-refused", "n3utral")):
+            subprocess.run(["xdotool", "key", "Tab"], timeout=10, check=False)
+            time.sleep(0.6)
+            type_keys(secret, False)
+            diag_focused(f"{target} {name} field")
+            reads = []
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                reads.append(L.read_focused())
+                time.sleep(0.3)
+            leaked = [r for r in reads if r is not None and secret in (r.text or "")]
+            refused = [r for r in reads if r is not None and r.password]
+            check(
+                f"{target}/{name}",
+                not leaked and bool(refused),
+                f"{len(refused)} of {len(reads)} reads refused, leaked {leaked[:1]!r}",
+            )
     finally:
         if process is not None:
             end(process)

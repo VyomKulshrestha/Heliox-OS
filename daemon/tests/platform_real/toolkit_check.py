@@ -244,7 +244,7 @@ def gtk4(system_python: str, wayland: bool) -> None:
 
 PAGE = (
     "<!doctype html><title>Heliox Firefox fixture</title><textarea autofocus aria-label=message></textarea>"
-    "<input type=password aria-label=password>\n"
+    "<input type=password aria-label=password><input type=password id=f3>\n"
 )
 
 
@@ -285,25 +285,27 @@ def firefox() -> None:
         type_keys("hello firefox", False)
         typed = read_until(lambda r: r.text.endswith("hello firefox"), timeout=30.0)
         check("firefox/reads-typed-text", typed is not None and typed.text.endswith("hello firefox"), repr(typed))
-        # The password field: Tab to it, type, and every read for five seconds must be refused.
-        subprocess.run(["xdotool", "key", "Tab"], timeout=10, check=False)
-        time.sleep(0.5)
-        type_keys("s3cret", False)
-        diag_focused("firefox password field")
+        # Each password field: Tab to it, type, and every read for five seconds must be refused. The second has no
+        # label and a neutral id, so the refusal cannot depend on what the page calls it.
         from pilot.live import focused_text_linux as L
 
-        reads = []
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            reads.append(L.read_focused())
-            time.sleep(0.3)
-        leaked = [r for r in reads if r is not None and "s3cret" in (r.text or "")]
-        refused = [r for r in reads if r is not None and r.password]
-        check(
-            "firefox/password-refused",
-            not leaked and bool(refused),
-            f"{len(refused)} of {len(reads)} reads refused, leaked {leaked[:1]!r}",
-        )
+        for name, secret in (("password-refused", "s3cret"), ("unnamed-password-refused", "n3utral")):
+            subprocess.run(["xdotool", "key", "Tab"], timeout=10, check=False)
+            time.sleep(0.5)
+            type_keys(secret, False)
+            diag_focused(f"firefox {name} field")
+            reads = []
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                reads.append(L.read_focused())
+                time.sleep(0.3)
+            leaked = [r for r in reads if r is not None and secret in (r.text or "")]
+            refused = [r for r in reads if r is not None and r.password]
+            check(
+                f"firefox/{name}",
+                not leaked and bool(refused),
+                f"{len(refused)} of {len(reads)} reads refused, leaked {leaked[:1]!r}",
+            )
     finally:
         browser.kill()
         shutil.rmtree(profile, ignore_errors=True)

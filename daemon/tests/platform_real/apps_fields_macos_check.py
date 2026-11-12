@@ -264,31 +264,33 @@ def run(target: str, workdir: Path) -> None:
             check(f"{target}/reads-typed-text", ok, repr(seen))
         if not ok:
             return
-        # Only after a first successful read: the password input must be refused, and nothing typed may leak.
-        pyautogui.press("tab")
-        time.sleep(0.6)
-        type_text("s3cret")
-        diag_focused(f"{target} password field")
-        # The reader refuses by either mark; which one the app gives is the answer to "refused by which mark".
-        focused = attr(ax().AXUIElementCreateSystemWide(), "AXFocusedUIElement")
-        subrole = str(attr(focused, "AXSubrole") or "") if focused is not None else ""
-        print(
-            f"ANSWER {target}: password field marks: subrole {subrole or 'none'}, "
-            f"secure keyboard entry {'on' if M.secure_input_enabled() else 'off'}",
-            flush=True,
-        )
-        reads = []
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            reads.append(reader.read())
-            time.sleep(0.3)
-        leaked = [r for r in reads if r is not None and "s3cret" in (r.text or "")]
-        refused = [r for r in reads if r is not None and r.password]
-        check(
-            f"{target}/password-refused",
-            not leaked and bool(refused),
-            f"{len(refused)} of {len(reads)} reads refused, leaked {leaked[:1]!r}",
-        )
+        # Only after a first successful read: each password input must be refused, and nothing typed may leak. The
+        # second has no label and a neutral id: the refusal must not depend on what the page calls the field.
+        for name, secret in (("password-refused", "s3cret"), ("unnamed-password-refused", "n3utral")):
+            pyautogui.press("tab")
+            time.sleep(0.6)
+            type_text(secret)
+            diag_focused(f"{target} {name} field")
+            # The reader refuses by either mark; which one the app gives is the answer to "refused by which mark".
+            focused = attr(ax().AXUIElementCreateSystemWide(), "AXFocusedUIElement")
+            subrole = str(attr(focused, "AXSubrole") or "") if focused is not None else ""
+            print(
+                f"ANSWER {target}: {name} field marks: subrole {subrole or 'none'}, "
+                f"secure keyboard entry {'on' if M.secure_input_enabled() else 'off'}",
+                flush=True,
+            )
+            reads = []
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                reads.append(reader.read())
+                time.sleep(0.3)
+            leaked = [r for r in reads if r is not None and secret in (r.text or "")]
+            refused = [r for r in reads if r is not None and r.password]
+            check(
+                f"{target}/{name}",
+                not leaked and bool(refused),
+                f"{len(refused)} of {len(reads)} reads refused, leaked {leaked[:1]!r}",
+            )
     finally:
         if variant == "enhanced" and pid:
             set_app_bool(pid, "AXEnhancedUserInterface", bool(enhanced_before))

@@ -1,4 +1,5 @@
-"""A Qt window with a text field and a password field (PySide6), for apps_fields_check.py.
+"""A Qt window with a text field, a password field and a second password field with no name (PySide6), for
+apps_fields_check.py.
 
 Prints ``ready`` once shown with the text field focused; quits when killed.
 """
@@ -21,8 +22,11 @@ def main() -> None:
     password = QLineEdit()
     password.setAccessibleName("password")
     password.setEchoMode(QLineEdit.EchoMode.Password)
+    unnamed = QLineEdit()  # no accessible name: refusing it must not depend on what the field is called
+    unnamed.setEchoMode(QLineEdit.EchoMode.Password)
     layout.addWidget(message)
     layout.addWidget(password)
+    layout.addWidget(unnamed)
     window.resize(480, 160)
     window.show()
     window.activateWindow()

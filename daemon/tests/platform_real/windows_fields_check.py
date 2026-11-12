@@ -26,6 +26,7 @@ Each check prints one ``CHECK`` line; the exit code is the number of failed chec
 from __future__ import annotations
 
 import asyncio
+import base64
 import ctypes
 import json
 import os
@@ -72,6 +73,7 @@ for ($i = 0; $i -lt 3 -and $el -ne $null; $i++) {
   }
   $el = $walker.GetParent($el)
 }
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 ConvertTo-Json -Compress -Depth 4 @($levels)
 """
 
@@ -84,18 +86,23 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
 
 
 def diag_focused(label: str) -> list[dict]:
+    """The DIAG dump. The script goes in as -EncodedCommand: given on stdin ("-Command -"), PowerShell runs it line
+    by line, the multi-line table broke, and the first run on the runner printed nothing, which the check then
+    reported as "IsPassword False" (CI on 2aeeab2). An empty answer is now said as such."""
+    encoded = base64.b64encode(DIAG_SCRIPT.encode("utf-16-le")).decode("ascii")
     done = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", "-"],
-        input=DIAG_SCRIPT,
+        ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
         capture_output=True,
-        text=True,
         timeout=30,
         check=False,
     )
+    output = done.stdout.decode("utf-8", errors="replace").strip()
     try:
-        levels = json.loads(done.stdout.strip() or "[]")
+        levels = json.loads(output) if output else None
     except ValueError:
-        print(f"DIAG {label}: no answer ({done.stderr.strip()[:300]!r})", flush=True)
+        levels = None
+    if not levels:
+        print(f"DIAG {label}: UI Automation gave no answer ({done.stderr.decode('utf-8', 'replace').strip()[:300]!r})")
         return []
     levels = levels if isinstance(levels, list) else [levels]
     for level in levels:
@@ -230,33 +237,54 @@ def run(target: str, reader) -> None:
         if not ok:
             print(f"DIAG {target}: last read {seen!r}", flush=True)
             return
-        # Only after a first successful read: the password input must be refused, and nothing typed may leak.
-        pyautogui.press("tab")
-        time.sleep(0.6)
-        pyautogui.write("s3cret", interval=0.03)
-        time.sleep(0.6)
-        levels = diag_focused(f"{target} password field")
-        marked = bool(levels) and bool(levels[0].get("is_password"))
-        print(f"ANSWER {target}: password field marks: IsPassword {marked}", flush=True)
-        reads = []
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            reads.append(reader.read())
-            time.sleep(0.3)
-        leaked = [r for r in reads if r is not None and "s3cret" in (r.text or "")]
-        refused = [r for r in reads if r is not None and r.password]
-        check(
-            f"{target}/password-refused",
-            not leaked and bool(refused),
-            f"{len(refused)} of {len(reads)} reads refused, leaked {leaked[:1]!r}",
-        )
+        # Only after a first successful read: each password input must be refused, and nothing typed may leak.
+        # The second has a neutral id, no label and no placeholder: the refusal must not depend on what the page
+        # calls the field.
+        password_check(target, "password-refused", "s3cret", reader)
+        password_check(target, "unnamed-password-refused", "n3utral", reader)
     finally:
         end_tree(process.pid)
         time.sleep(1.5)
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def password_check(target: str, name: str, secret: str, reader) -> None:
+    """Tab to the next field, type ``secret``, and read for five seconds: every read refused, none carrying it."""
+    import pyautogui
+
+    pyautogui.press("tab")
+    time.sleep(0.6)
+    pyautogui.write(secret, interval=0.03)
+    time.sleep(0.6)
+    levels = diag_focused(f"{target} {name} field")
+    if levels:
+        focused = levels[0]
+        print(
+            f"ANSWER {target}: {name} field: UI Automation IsPassword {focused.get('is_password')!r} on the focused "
+            f"element (control {focused.get('type')!r}, automation id {focused.get('automation_id')!r})",
+            flush=True,
+        )
+    reads = []
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        reads.append(reader.read())
+        time.sleep(0.3)
+    leaked = [r for r in reads if r is not None and secret in (r.text or "")]
+    refused = [r for r in reads if r is not None and r.password]
+    # The Windows reader refuses only on UI Automation's IsPassword of the focused element (focused_text._HELPER),
+    # so a refused read means UI Automation marked that element a password.
+    check(
+        f"{target}/{name}",
+        not leaked and bool(refused),
+        f"{len(refused)} of {len(reads)} reads refused (the reader's mark: IsPassword), leaked {leaked[:1]!r}",
+    )
+
+
 def main(argv: list[str]) -> int:
+    # The console of a Windows runner is not UTF-8 (a window title with U+200B stopped the first run, CI on 2aeeab2).
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     from pilot.live.focused_text import WindowsFocusedTextReader
 
     for target in argv:
