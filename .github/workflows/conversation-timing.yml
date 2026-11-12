@@ -1,0 +1,96 @@
+name: "Conversation Bench — timing (synthetic voice, CPU only)"
+
+# The Conversation Bench's timing lines on a quiet, CPU-only machine with no audio device: a real kind of person
+# Heliox is for. Synthetic voices only (no recording of a real person is ever needed or uploaded); every number is
+# labelled "synthetic voice, GitHub runner (N cores), CPU only". Not run on pushes and never blocks anything.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conversation-timing-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  timing:
+    name: Timing lines (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu first; macOS and Windows join once the ubuntu run is known to work.
+        os: [ubuntu-latest]
+    defaults:
+      run:
+        working-directory: daemon
+        shell: bash
+    env:
+      XDG_DATA_HOME: ${{ github.workspace }}/.heliox-data # Heliox's data folder; its models/ part is cached
+      BENCH_AUDIO: ${{ github.workspace }}/.bench-audio # synthetic speech rendered by the bench, cached
+      CUDA_VISIBLE_DEVICES: ""
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: System libraries (PortAudio for the audio package import, espeak-ng for the voice)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libportaudio2 libsndfile1 espeak-ng
+
+      - name: Install the daemon with the voice extras (CPU-only PyTorch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[voice]" psutil
+
+      - name: Cache speech models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.heliox-data/heliox-os/models
+            ~/.cache/huggingface
+          key: speech-${{ runner.os }}-${{ hashFiles('daemon/pilot/system/speech_models.json', 'daemon/benchmarks/conversation_bench/ci_prefetch.py') }}
+
+      - name: Cache rendered synthetic speech
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.bench-audio
+          key: bench-audio-${{ runner.os }}-${{ hashFiles('daemon/benchmarks/conversation_bench/scenarios/*.json', 'daemon/benchmarks/conversation_bench/synth.py') }}
+
+      - name: Fetch the speech set through Heliox's own download path
+        env:
+          HF_HUB_OFFLINE: "0"
+        run: python -m benchmarks.conversation_bench.ci_prefetch --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Render the synthetic-voice scenarios with the bench's renderer
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: python -m benchmarks.conversation_bench.synth --audio "$BENCH_AUDIO" --only scenarios
+
+      - name: Timing lines (load-checked before every scenario)
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: >-
+          python -m benchmarks.conversation_bench.ci_timing --audio "$BENCH_AUDIO"
+          --results "$RUNNER_TEMP/conversation-timing" --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload timelines
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-timing-${{ matrix.os }}
+          path: ${{ runner.temp }}/conversation-timing
+          if-no-files-found: warn
+          retention-days: 30

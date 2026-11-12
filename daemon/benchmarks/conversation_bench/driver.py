@@ -36,16 +36,23 @@ ROOM_NOISE = 40  # int16 standard deviation of the quiet room between utterances
 
 
 class Log:
+    """Events on the wall clock; with ``audio_clock`` set, each also carries ``audio_t``, the seconds of microphone
+    audio fed so far, so a stage can be read on the audio's own clock as well (the two differ when the machine
+    falls behind real time)."""
+
     def __init__(self) -> None:
         self.t0 = time.perf_counter()
         self.events: list[tl.Event] = []
         self.lock = threading.Lock()
         self.echo = bool(os.environ.get("CONVERSATION_BENCH_VERBOSE"))
+        self.audio_clock: Callable[[], float] | None = None
 
     def now(self) -> float:
         return time.perf_counter() - self.t0
 
     def __call__(self, kind: str, detail: str = "", /, **data: Any) -> None:
+        if self.audio_clock is not None and "audio_t" not in data:
+            data["audio_t"] = round(self.audio_clock(), 3)
         event = tl.Event(self.now(), kind, detail, data)
         with self.lock:
             self.events.append(event)
@@ -187,7 +194,16 @@ def system_cpu() -> float | None:
 class Harness:
     """One listener and one server for a whole run; scenarios run one after another on it."""
 
-    def __init__(self, *, audio_root: str, data_dir: Path, model: ModelKind, pace: float = 1.0) -> None:
+    def __init__(
+        self,
+        *,
+        audio_root: str,
+        data_dir: Path,
+        model: ModelKind,
+        pace: float = 1.0,
+        configure: Callable[[Any], None] | None = None,
+    ) -> None:
+        self.configure = configure  # adjusts the loaded settings before the server is built (CI: models it fetched)
         self.audio_root = audio_root
         self.data_dir = data_dir
         self.model = model
@@ -223,6 +239,8 @@ class Harness:
         config.save = MagicMock()
         config.live.enabled = True
         config.live.grounded_checks = False  # the local model takes minutes on a CPU
+        if self.configure is not None:
+            self.configure(config)
         server = PilotServer(config)
         self.server = server
 
@@ -373,6 +391,7 @@ class Harness:
         recorder = listener._recorder
         pump = FilePump(recorder, log, self.pace)
         self.pump = pump
+        log.audio_clock = lambda: pump.played / wavio.RATE
 
         def fake_start() -> bool:
             recorder._loop = asyncio.get_event_loop()
