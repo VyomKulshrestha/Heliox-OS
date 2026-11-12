@@ -199,7 +199,7 @@ jobs:
           workspaces: "tauri-app/src-tauri -> target"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "npm"
