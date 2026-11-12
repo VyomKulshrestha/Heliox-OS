@@ -41,6 +41,18 @@ def heavy_loaded(modules: dict[str, Any] | None = None) -> list[str]:
     return [name for name in HEAVY_LIBRARIES if loaded.get(name) is not None]
 
 
+def packages(loaded: dict[str, Any]) -> dict[str, int]:
+    """Modules loaded, counted by top-level package (Heliox's own by its subpackage, pilot.system and so on)."""
+    counts: dict[str, int] = {}
+    for name, module in loaded.items():
+        if module is None:
+            continue
+        parts = name.split(".")
+        key = ".".join(parts[:2]) if parts[0] == "pilot" else parts[0]
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 class StartupTimings:
     def __init__(
         self,
@@ -64,6 +76,8 @@ class StartupTimings:
             "modules": len(loaded),
             "heavy": heavy_loaded(loaded),
         }
+        if os.environ.get(ENV_FLAG) == "1":
+            point["packages"] = packages(loaded)  # what the modules are, for the first-run job's comparison
         self.points[name] = point
         logger.info(
             "Start-up timing %s: %.1f s after %s, %d modules, heavy: %s",
@@ -74,6 +88,11 @@ class StartupTimings:
             ", ".join(point["heavy"]) or "none",
         )
         return point
+
+    def since_start(self, monotonic_at: float) -> float:
+        """A time.monotonic() reading as seconds after the same start the points use."""
+        start = self._created if self._created is not None else self._fallback_start
+        return round(self._wall() - (time.monotonic() - monotonic_at) - start, 2)
 
     def snapshot(self) -> dict[str, dict[str, Any]] | None:
         """For startup_status: only with HELIOX_STARTUP_TIMINGS=1."""

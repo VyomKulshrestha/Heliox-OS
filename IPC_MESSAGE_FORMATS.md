@@ -51,7 +51,8 @@ once, and every other request waits until start-up has finished and is then answ
 "not ready yet"). Each stage is announced with the `startup_status` notification (same fields as the RPC).
 
 **Parts that start after ready** (neural input, agent mesh, strategy evolution and the others in
-`pilot.system.late_start`): a request that needs one before it has started is answered
+`pilot.system.late_start`): a request that needs one before it has started starts it at once and waits for it, at
+most 5 s; only a part still starting after that is answered
 `{ "status": "starting", "message": "<what it is waiting for, in words>" }`, never an error. Each change of their
 states is announced with the `late_parts` notification, `{ "late_parts": { "<part>": "waiting" | "starting" |
 "ready" | "failed" } }`, so a window told "starting" can ask again once the part is ready.

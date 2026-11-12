@@ -2747,7 +2747,11 @@ class PilotServer:
             handler = getattr(self, f"_handle_{request.method}")
         if handler is None:
             return _error_response(request.id, -32601, f"Method not found: {request.method}")
-        starting = self._late_parts().waiting_reply(request.method)
+        # A part that starts after ready and has not yet: started now, out of turn, and waited for up to
+        # LATE_PART_WAIT_SECONDS; only a part still starting after that is answered "starting".
+        from pilot.system.late_start import LATE_PART_WAIT_SECONDS
+
+        starting = await self._late_parts().ready_for(request.method, LATE_PART_WAIT_SECONDS)
         if starting is not None:
             return _success_response(request.id, starting)  # a sentence, never an exception
         if request.method not in CONFIG_MUTATING_RPC_METHODS:
@@ -3879,6 +3883,9 @@ class PilotServer:
         if emit:
             mem_phase = await emit.phase_start("memory_recall", MEMORY_SEARCH_STARTED)
 
+        # What every plan reads from parts that start after ready: a request in the first seconds starts them out
+        # of turn and waits for them together, at most PLAN_PART_WAIT_SECONDS (pilot.system.late_start).
+        await self._ensure_plan_parts("screen_vision", "subconscious", "strategy_evolution")
         improvement_ctx = await self._reflector.get_improvement_context(request_text)
         if self._strategy_evolution is not None and self._late_parts().ready("strategy_evolution"):
             promoted_strategy = await self._strategy_evolution.get_active_text("planner.primary")
@@ -9029,6 +9036,7 @@ class PilotServer:
             except Exception:
                 message = "I could not read the current screen right now."
         elif self._model_router is not None:
+            await self._ensure_plan_parts("screen_vision", "subconscious")
             screen_context = ""
             if self._screen_vision is not None:
                 screen_context = self._screen_vision.get_context_for_planner()[:500]
@@ -10472,6 +10480,10 @@ class PilotServer:
         if timings is not None:
             reply["timings"] = timings
             reply["late_parts"] = self._late_parts().snapshot()
+            reply["late_part_times"] = {  # seconds after process start, as the other timings
+                name: {point: self._startup_timings().since_start(at) for point, at in times.items()}
+                for name, times in self._late_parts().timings().items()
+            }
         return reply
 
     async def _handle_ping(self, params: dict, ws: ServerConnection) -> dict:
@@ -10987,7 +10999,19 @@ class PilotServer:
             late.mark("online_learning", "starting")  # loaded by _after_ready, not by run()
             # Every change reaches the window: a panel told "starting" asks again when its part is ready.
             late.on_change = lambda states: self._spawn_notification("late_parts", {"late_parts": states})
+            # The parts few people need early (neural input, the mesh, the harness) wait while a request runs.
+            late.busy = lambda: bool(self._interactive_request_active or self._active_task_id)
         return late
+
+    async def _ensure_plan_parts(self, *names: str) -> None:
+        """Start these after-ready parts now if they have not started, and wait for all of them together, at most
+        PLAN_PART_WAIT_SECONDS; a plan made meanwhile leaves out what a part still starting adds, as before."""
+        from pilot.system.late_start import PLAN_PART_WAIT_SECONDS
+
+        late = self._late_parts()
+        if all(late.ready(name) for name in names):
+            return
+        await asyncio.gather(*(late.ensure(name, PLAN_PART_WAIT_SECONDS) for name in names))
 
     def _startup_timings(self) -> Any:
         """When start-up reached listening, ready and all-started, and what was loaded (pilot.system.startup_timing)."""
@@ -13424,6 +13448,12 @@ def handle_tool(tool_name, params):
         if after_ready is not None and not after_ready.done():
             after_ready.cancel()
             await self._bounded_stop_step("starting after ready", asyncio.gather(after_ready, return_exceptions=True))
+        late = self.__dict__.get("_late_starts")
+        if late is not None:
+            starting = [part.task for part in late.parts.values() if part.task is not None and not part.task.done()]
+            late.cancel()  # parts a request started out of turn
+            if starting:
+                await self._bounded_stop_step("parts starting", asyncio.gather(*starting, return_exceptions=True))
         await self._bounded_stop_step("saving what the learner knows", self._save_learner_snapshot())
         storage_wait = self.__dict__.get("_storage_wait_task")
         if storage_wait is not None and not storage_wait.done():

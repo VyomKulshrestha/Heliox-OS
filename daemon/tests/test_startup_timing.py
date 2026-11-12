@@ -75,3 +75,27 @@ def test_the_seeded_ledger_is_the_mix_the_learner_learns_from():
     assert {"action_started", "action_completed", "outcome_verified", "suggestion_feedback", "observation"} <= types
     assert len({row[10] for row in rows}) == 1_000  # idempotency keys are unique, as the table requires
     json.loads(rows[0][12])
+
+
+def test_modules_are_counted_by_package_for_the_first_run_comparison(monkeypatch, tmp_path):
+    from pilot.system.startup_timing import packages
+
+    assert packages({"pilot": 1, "pilot.system.voice": 1, "pilot.system": 1, "numpy.core": 1, "torch": None}) == {
+        "pilot": 1,
+        "pilot.system": 2,
+        "numpy": 1,
+    }
+    check = _load("first_run_rpc_check")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    assert check.package_lines("first-run", {"chromadb": 180, "pilot.system": 300}) == []
+    lines = check.package_lines("saved-state", {"pilot.system": 300})
+    assert lines == ["INFO start-up/saved-state/modules at ready, first run minus this start: +180 chromadb"]
+
+
+def test_each_part_is_reported_with_when_it_settled_after_ready():
+    check = _load("first_run_rpc_check")
+    lines = check.part_lines("first-run", {"screen_vision": {"started": 2.5, "settled": 2.75}}, 2.0)
+    assert lines == [
+        "INFO start-up/first-run/part screen_vision: started 2.5 s, settled 2.75 s after process start, "
+        "0.8 s after ready"
+    ]
