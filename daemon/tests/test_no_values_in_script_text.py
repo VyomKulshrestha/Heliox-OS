@@ -39,20 +39,8 @@ SAFE = {
 
 # Still to be fixed (patches 2 and 3 of the sweep). This list only shrinks; a new place fails the test.
 NOT_YET = {
-    "system/download.py::download_file",
-    "agents/executor.py::_exec_registry_read",
-    "agents/executor.py::_exec_registry_write",
     "agents/executor.py::_exec_shell_command",
     "agents/executor.py::_exec_open_url",
-    "system/window_mgr.py::window_focus",
-    "system/window_mgr.py::window_close",
-    "system/window_mgr.py::window_minimize",
-    "system/window_mgr.py::window_maximize",
-    "system/window_mgr.py::window_exists",
-    "system/window_mgr.py::window_read_text",
-    "system/window_mgr.py::window_set_text",
-    "system/voice.py::_tts_windows",
-    "system/voice.py::_transcribe_windows",
     "system/clipboard.py::clipboard_write",
     "system/processes.py::process_exists",
     "system/disks.py::mount_exists",
@@ -81,9 +69,10 @@ class _Scope:
     """The names assigned in one function (or at module level), with the module's functions, so text built in a
     helper function is followed to where it is built."""
 
-    def __init__(self, statements: list[ast.stmt], functions: dict[str, ast.AST]) -> None:
+    def __init__(self, statements: list[ast.stmt], functions: dict[str, ast.AST], module: _Scope | None = None) -> None:
         self.assigned: dict[str, list[ast.AST]] = {}
         self.functions = functions
+        self.module = module
         self.nodes = [n for stmt in statements for n in _walk_without_defs(stmt)]
         for node in self.nodes:
             if isinstance(node, ast.Assign):
@@ -104,33 +93,51 @@ def _text_constant(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
 
-def _constant_text(node: ast.AST) -> bool:
-    """Text made only of constants ("a" "b", "a" + "b")."""
+def _constant_text(node: ast.AST, scope: _Scope | None = None, seen: frozenset[str] = frozenset()) -> bool:
+    """Text made only of constants: literals, "a" + "b", a name every assignment of which is constant text (in the
+    function or at module level), and a call to a function of the module that only returns constant text."""
     if _text_constant(node):
         return True
+    if isinstance(node, ast.JoinedStr):
+        return all(isinstance(v, ast.Constant) for v in node.values)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _constant_text(node.left) and _constant_text(node.right)
+        return _constant_text(node.left, scope, seen) and _constant_text(node.right, scope, seen)
+    if scope is None:
+        return False
+    if isinstance(node, ast.Name) and node.id not in seen:
+        values = scope.assigned.get(node.id) or (scope.module.assigned.get(node.id) if scope.module else None)
+        return bool(values) and all(_constant_text(v, scope, seen | {node.id}) for v in values)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in scope.functions:
+        key = "fn:" + node.func.id
+        if key in seen or node.args or node.keywords:
+            return False
+        inner = _Scope(list(scope.functions[node.func.id].body), scope.functions, scope.module)
+        returns = [n.value for n in inner.nodes if isinstance(n, ast.Return) and n.value is not None]
+        return bool(returns) and all(_constant_text(v, inner, seen | {key}) for v in returns)
     return False
 
 
 def _built(node: ast.AST, scope: _Scope, seen: set[str]) -> bool:
     """Whether ``node`` builds text from something that is not a constant."""
     for sub in ast.walk(node):
-        if isinstance(sub, ast.JoinedStr) and any(isinstance(v, ast.FormattedValue) for v in sub.values):
+        if isinstance(sub, ast.JoinedStr) and not _constant_text(sub):
             return True
-        if isinstance(sub, ast.BinOp) and isinstance(sub.op, (ast.Add, ast.Mod)) and not _constant_text(sub):
-            sides = (sub.left, sub.right)
-            if any(_text_constant(side) or isinstance(side, (ast.JoinedStr, ast.BinOp)) for side in sides):
+        if isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.Mod) and _text_constant(sub.left):
+            return True
+        if isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.Add) and not _constant_text(sub, scope):
+            leaves = _add_leaves(sub)
+            if any(isinstance(leaf, ast.JoinedStr) or _constant_text(leaf, scope) for leaf in leaves):
                 return True
         if isinstance(sub, ast.Call) and _call_name(sub) in ("format", "join"):
             receiver = sub.func.value if isinstance(sub.func, ast.Attribute) else None
-            if receiver is not None and _text_constant(receiver) and not all(_constant_text(a) for a in sub.args):
-                return True
+            if receiver is not None and _text_constant(receiver):
+                if not all(_constant_text(a, scope) for a in sub.args):
+                    return True
         if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) and sub.func.id in scope.functions:
             key = "fn:" + sub.func.id
             if key not in seen:
                 seen.add(key)
-                inner = _Scope(list(scope.functions[sub.func.id].body), scope.functions)
+                inner = _Scope(list(scope.functions[sub.func.id].body), scope.functions, scope.module)
                 returns = [n.value for n in inner.nodes if isinstance(n, ast.Return) and n.value is not None]
                 if any(_built(value, inner, seen) for value in returns):
                     return True
@@ -139,6 +146,12 @@ def _built(node: ast.AST, scope: _Scope, seen: set[str]) -> bool:
             if any(_built(value, scope, seen) for value in scope.assigned[sub.id]):
                 return True
     return False
+
+
+def _add_leaves(node: ast.AST) -> list[ast.AST]:
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _add_leaves(node.left) + _add_leaves(node.right)
+    return [node]
 
 
 def _list_items(node: ast.AST) -> list[ast.AST] | None:
@@ -183,20 +196,21 @@ def places() -> set[str]:
         rel = path.relative_to(PILOT).as_posix()
         functions = {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
         top = [n for n in tree.body if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
-        scopes = [("<module>", top)] + [(name, list(fn.body)) for name, fn in functions.items()]
-        for scope_name, statements in scopes:
-            scope = _Scope(statements, functions)
-            for node in scope.nodes:
-                if not isinstance(node, ast.Call):
-                    continue
-                code, any_value = _interpreter_code(node, scope)
-                if (
-                    any_value
-                    and any(not _constant_text(arg) for arg in code)
-                    or any(_built(arg, scope, set()) for arg in code)
-                ):
-                    found.add(f"{rel}::{scope_name}")
+        module = _Scope(top, functions)
+        scopes = [("<module>", module)] + [
+            (name, _Scope(list(fn.body), functions, module)) for name, fn in functions.items()
+        ]
+        for scope_name, scope in scopes:
+            if any(_pasted(node, scope) for node in scope.nodes if isinstance(node, ast.Call)):
+                found.add(f"{rel}::{scope_name}")
     return found
+
+
+def _pasted(node: ast.Call, scope: _Scope) -> bool:
+    code, any_value = _interpreter_code(node, scope)
+    if any_value and any(not _constant_text(arg, scope) for arg in code):
+        return True
+    return any(_built(arg, scope, set()) for arg in code)
 
 
 def test_no_value_is_pasted_into_interpreter_code():
@@ -220,16 +234,9 @@ def test_the_scan_catches_each_way_of_building_code():
     def scan(source: str) -> bool:
         tree = ast.parse(textwrap.dedent(source))
         functions = {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-        fn = functions["f"]
-        scope = _Scope(list(fn.body), functions)
-        for node in scope.nodes:
-            if isinstance(node, ast.Call):
-                code, any_value = _interpreter_code(node, scope)
-                if (any_value and any(not _constant_text(a) for a in code)) or any(
-                    _built(a, scope, set()) for a in code
-                ):
-                    return True
-        return False
+        top = [n for n in tree.body if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        scope = _Scope(list(functions["f"].body), functions, _Scope(top, functions))
+        return any(_pasted(node, scope) for node in scope.nodes if isinstance(node, ast.Call))
 
     assert scan("def f(x):\n    run_powershell(f\"Get-Item '{x}'\")")
     assert scan("def f(x):\n    s = 'Get-Item ' + x\n    run_powershell(s)")
@@ -242,3 +249,6 @@ def test_the_scan_catches_each_way_of_building_code():
     assert not scan("def f(x):\n    run_powershell('Get-Item $HelioxArgs[\\'p\\']', values={'p': x})")
     assert not scan("def f(x):\n    run_command(['notify-send', '--', x])")
     assert not scan("def f():\n    run_powershell('Get-Date; ' + 'Get-Item .')")
+    # Constant pieces held in module names or returned by a helper are constant.
+    assert not scan("A = 'Get-Date; '\ndef g():\n    return 'Get-Item .'\ndef f():\n    run_powershell(A + g())")
+    assert scan("A = 'Get-Date; '\ndef f(x):\n    run_powershell(A + x)")

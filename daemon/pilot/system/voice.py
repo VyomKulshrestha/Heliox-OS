@@ -982,6 +982,22 @@ async def speak_interruptible(
                 await task
 
 
+# Windows speech: the text, the voice and the output file are data ($HelioxArgs), never part of the script. The
+# text can hold anything spoken aloud (a page, an email, the screen); a long text travels in an owner-only file
+# (script_values). Rate and volume are integers.
+_TTS_WINDOWS = (
+    "Add-Type -AssemblyName System.Speech; "
+    "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+    "$synth.Rate = [int]$HelioxArgs['rate']; "
+    "$synth.Volume = [int]$HelioxArgs['volume']; "
+    "if ($HelioxArgs['voice']) { $synth.SelectVoice($HelioxArgs['voice']) }; "
+    "if ($HelioxArgs['out']) { $synth.SetOutputToWaveFile($HelioxArgs['out']) }; "
+    "$synth.Speak($HelioxArgs['text']); "
+    "if ($HelioxArgs['out']) { $synth.SetOutputToDefaultAudioDevice() }; "
+    "$synth.Dispose()"
+)
+
+
 async def _tts_windows(
     text: str,
     voice: str | None,
@@ -989,50 +1005,18 @@ async def _tts_windows(
     volume: float,
     output_file: str | None,
 ) -> str:
-    safe_text = text.replace("'", "''").replace('"', '""')
-
+    values = {
+        "text": text,
+        "voice": voice or "",
+        "out": output_file or "",
+        "rate": str((int(rate) - 170) // 20),
+        "volume": str(int(float(volume) * 100)),
+    }
+    code, out, err = await run_powershell(_TTS_WINDOWS, values=values)
     if output_file:
-        script = (
-            f"Add-Type -AssemblyName System.Speech; "
-            f"$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-            f"$synth.Rate = {(rate - 170) // 20}; "
-            f"$synth.Volume = {int(volume * 100)}; "
-        )
-
-        if voice:
-            script += f"$synth.SelectVoice('{voice}'); "
-
-        script += (
-            f"$synth.SetOutputToWaveFile('{output_file}'); "
-            f"$synth.Speak('{safe_text}'); "
-            "$synth.SetOutputToDefaultAudioDevice(); "
-            "$synth.Dispose()"
-        )
-
-        code, out, err = await run_powershell(script)
-
-        if code != 0:
-            return f"TTS save failed: {err}"
-
-        return f"Speech saved to {output_file}"
-
-    script = (
-        f"Add-Type -AssemblyName System.Speech; "
-        f"$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-        f"$synth.Rate = {(rate - 170) // 20}; "
-        f"$synth.Volume = {int(volume * 100)}; "
-    )
-
-    if voice:
-        script += f"$synth.SelectVoice('{voice}'); "
-
-    script += f"$synth.Speak('{safe_text}'); $synth.Dispose()"
-
-    code, out, err = await run_powershell(script)
-
+        return f"TTS save failed: {err}" if code != 0 else f"Speech saved to {output_file}"
     if code != 0:
         return f"TTS failed: {err}"
-
     return f"Spoken: {text[:80]}..."
 
 
@@ -1782,12 +1766,13 @@ async def _transcribe_windows(audio_path: str) -> str:
     code, out, err = await run_powershell(
         "Add-Type -AssemblyName System.Speech; "
         "$recognizer = New-Object System.Speech.Recognition.SpeechRecognitionEngine; "
-        f"$recognizer.SetInputToWaveFile('{audio_path}'); "
+        "$recognizer.SetInputToWaveFile($HelioxArgs['audio']); "  # the file is data, never part of the script
         "$grammar = New-Object System.Speech.Recognition.DictationGrammar; "
         "$recognizer.LoadGrammar($grammar); "
         "$result = $recognizer.Recognize(); "
         "if ($result) { $result.Text } else { 'No speech detected' }; "
-        "$recognizer.Dispose()"
+        "$recognizer.Dispose()",
+        values={"audio": audio_path},
     )
 
     return out.strip() if code == 0 else f"Transcription failed: {err}"

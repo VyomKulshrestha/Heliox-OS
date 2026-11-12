@@ -48,7 +48,7 @@ def failing_programs(monkeypatch, code: int = 1):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
 
-    async def powershell(_script):
+    async def powershell(_script, **_kwargs):
         return code, "", "No voice installed"
 
     monkeypatch.setattr(voice, "run_powershell", powershell)

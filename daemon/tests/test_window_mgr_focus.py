@@ -18,7 +18,7 @@ async def test_windows_focus_uses_verified_app_activation(monkeypatch):
     result = await window_mgr.window_focus(title="Owner's Notepad")
 
     script = run.await_args.args[0]
-    assert "$target = 'Owner''s Notepad'" in script
+    assert run.await_args.kwargs["values"]["title"] == "Owner's Notepad" and "Owner" not in script
     assert "AppActivate([int]$p.Id)" in script
     assert "GetWindowThreadProcessId" in script
     assert "$foregroundPid -ne $p.Id" in script
@@ -63,5 +63,5 @@ async def test_windows_sets_and_verifies_target_text_without_foreground_focus(mo
 
     assert result == "Set exact text in window: Notepad"
     script = run.await_args.args[0]
-    assert base64.b64encode(b"HELIOX EXACT").decode() in script
+    assert run.await_args.kwargs["values"]["text"] == "HELIOX EXACT" and "HELIOX EXACT" not in script
     assert "Text verification mismatch" in script

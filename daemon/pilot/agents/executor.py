@@ -88,6 +88,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.agents.executor")
 
+# registry_write's value type: the REG_ names a plan uses (the default is "REG_SZ") and PowerShell's own names, mapped
+# to the RegistryValueKind that Set-ItemProperty -Type takes. Anything else is refused, never passed on.
+REGISTRY_KINDS = {
+    "REG_SZ": "String",
+    "REG_EXPAND_SZ": "ExpandString",
+    "REG_BINARY": "Binary",
+    "REG_DWORD": "DWord",
+    "REG_MULTI_SZ": "MultiString",
+    "REG_QWORD": "QWord",
+    "STRING": "String",
+    "EXPANDSTRING": "ExpandString",
+    "BINARY": "Binary",
+    "DWORD": "DWord",
+    "MULTISTRING": "MultiString",
+    "QWORD": "QWord",
+}
+
 # Spoken and shown when the stress gate pauses a gated action. Nobody confirms anything during the pause: the
 # action continues after ten seconds unless the person stops the task.
 STRESS_PAUSE_PHRASE = "Pausing ten seconds before continuing. Say or press Stop to cancel."
@@ -2295,10 +2312,12 @@ class Executor:
         if CURRENT_PLATFORM != Platform.WINDOWS:
             return "Registry operations are only available on Windows"
         params: RegistryParams = action.parameters  # type: ignore[assignment]
+        # The key and the value name are data ($HelioxArgs), never part of the command text.
+        script = "Get-ItemProperty -LiteralPath ('Registry::' + $HelioxArgs['key'])"
+        if params.value_name:
+            script += " -Name $HelioxArgs['name']"
         code, out, err = await run_powershell(
-            f"Get-ItemProperty -Path 'Registry::{params.key_path}' "
-            + (f"-Name '{params.value_name}'" if params.value_name else "")
-            + " | Format-List"
+            script + " | Format-List", values={"key": params.key_path, "name": params.value_name}
         )
         if code != 0:
             raise RuntimeError(f"Registry read failed: {err.strip()}")
@@ -2312,10 +2331,17 @@ class Executor:
         params: RegistryParams = action.parameters  # type: ignore[assignment]
         if not params.value_name or params.value_data is None:
             raise ValueError("registry_write requires value_name and value_data")
+        kind = REGISTRY_KINDS.get(str(params.value_type or "").strip().upper())
+        if kind is None:
+            raise ValueError(
+                f"registry_write does not know the value type {params.value_type!r}; use one of "
+                + ", ".join(sorted({name for name in REGISTRY_KINDS if name.startswith("REG_")}))
+            )
+        # The key, name and value are data ($HelioxArgs); the type is one of a fixed set of words.
         code, out, err = await run_powershell(
-            f"Set-ItemProperty -Path 'Registry::{params.key_path}' "
-            f"-Name '{params.value_name}' -Value '{params.value_data}' "
-            f"-Type {params.value_type}"
+            "Set-ItemProperty -LiteralPath ('Registry::' + $HelioxArgs['key']) -Name $HelioxArgs['name'] "
+            "-Value $HelioxArgs['value'] -Type $HelioxArgs['kind']",
+            values={"key": params.key_path, "name": params.value_name, "value": params.value_data, "kind": kind},
         )
         if code != 0:
             raise RuntimeError(f"Registry write failed: {err.strip()}")

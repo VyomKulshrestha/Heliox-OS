@@ -164,7 +164,10 @@ def test_window_mgr_falls_back_to_applescript_without_pyobjc(monkeypatch):
 
     monkeypatch.setattr(window_mgr, "run_command", run)
     asyncio.run(window_mgr.window_focus(process_name="Notes"))
-    assert calls == [["osascript", "-e", 'tell application "Notes" to activate']]
+    # The name is an osascript argument ("x" + name), never part of the AppleScript text.
+    ((program, flag, script, *args),) = calls
+    assert (program, flag, args) == ("osascript", "-e", ["xNotes"])
+    assert "tell application (item 1 of heliox_args) to activate" in script and "Notes" not in script
 
 
 def test_focus_leaves_a_front_app_alone_and_uses_axfrontmost_when_activation_is_ignored():

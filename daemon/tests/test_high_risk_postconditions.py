@@ -216,4 +216,6 @@ async def test_window_observer_escapes_windows_title(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(window_mgr, "run_powershell", run)
 
     assert await window_mgr.window_exists(title="Owner's Controlled Window") is False
-    assert "Owner''s Controlled Window" in run.await_args.args[0]
+    # The title is data ($HelioxArgs), never part of the script text.
+    assert run.await_args.kwargs["values"]["title"] == "Owner's Controlled Window"
+    assert "Owner" not in run.await_args.args[0]

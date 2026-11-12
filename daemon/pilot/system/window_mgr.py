@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
+from pilot.system.script_values import osascript_command
 
 logger = logging.getLogger("pilot.system.windows")
 
@@ -36,26 +37,75 @@ async def _mac_accessibility(action: str, process_name: str | None, title: str |
     return await asyncio.to_thread(run)
 
 
-def _powershell_literal(value: str) -> str:
-    """Quote untrusted text as one PowerShell single-quoted literal."""
-    return "'" + value.replace("'", "''") + "'"
+# Window titles and process names come from plans, and titles often from the screen (a web page chooses its own),
+# so they are never part of the code text: PowerShell reads them from $HelioxArgs (run_powershell values=), and
+# AppleScript from its arguments (script_values.osascript_command). A title is matched as text, its wildcard
+# characters escaped.
+_SELECT = (
+    "$pattern = '*' + [WildcardPattern]::Escape([string]$HelioxArgs['title']) + '*'; "
+    "if ($HelioxArgs['process']) { $p = Get-Process -Name $HelioxArgs['process'] -ErrorAction SilentlyContinue | "
+    "Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1 } "
+    "else { $p = Get-Process | Where-Object {$_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like $pattern} | "
+    "Select-Object -First 1 }; "
+)
 
 
-def _windows_process_selector(*, title: str | None, process_name: str | None) -> str:
+def _target(*, title: str | None, process_name: str | None) -> dict[str, str]:
+    """The values ``_SELECT`` reads: the process name when given, else the title."""
     if process_name:
-        target = _powershell_literal(process_name)
-        return (
-            f"$target = {target}; $p = Get-Process -Name $target -ErrorAction SilentlyContinue | "
-            "Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1; "
-        )
+        return {"process": process_name, "title": ""}
     if title:
-        target = _powershell_literal(title)
-        return (
-            f"$target = {target}; $pattern = '*' + [WildcardPattern]::Escape($target) + '*'; "
-            "$p = Get-Process | Where-Object {$_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like $pattern} | "
-            "Select-Object -First 1; "
-        )
+        return {"process": "", "title": title}
     raise ValueError("Provide process_name or title")
+
+
+_WIN32_FOCUS = (
+    "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; "
+    'public class Win32 { [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow); '
+    '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); '
+    '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid); }\'; '
+)
+_FOCUS = (
+    _SELECT
+    + "if (-not $p) { Write-Error 'Window not found'; exit 1 }; "
+    + _WIN32_FOCUS
+    + "[void][Win32]::ShowWindowAsync($p.MainWindowHandle, 9); "
+    + "$shell = New-Object -ComObject WScript.Shell; "
+    + "$activated = $shell.AppActivate([int]$p.Id); Start-Sleep -Milliseconds 120; "
+    + "$foregroundPid = 0; [void][Win32]::GetWindowThreadProcessId([Win32]::GetForegroundWindow(), [ref]$foregroundPid); "
+    + "if (-not $activated -or $foregroundPid -ne $p.Id) { Write-Error 'Window activation was rejected'; exit 1 }; $p.Id"
+)
+_CLOSE = (
+    "if ($HelioxArgs['process']) { $p = Get-Process -Name $HelioxArgs['process'] -ErrorAction SilentlyContinue; "
+    "if ($p) { $p | ForEach-Object { $_.CloseMainWindow() } } else { Write-Error 'Process not found' } } "
+    "else { $pattern = '*' + [WildcardPattern]::Escape([string]$HelioxArgs['title']) + '*'; "
+    "Get-Process | Where-Object {$_.MainWindowTitle -like $pattern} | ForEach-Object { $_.CloseMainWindow() } }"
+)
+# Minimize and maximize match the name or title given against window titles, as before.
+_SHOW_WINDOW = (
+    "$pattern = '*' + [WildcardPattern]::Escape([string]$HelioxArgs['title']) + '*'; "
+    "$p = Get-Process | Where-Object {$_.MainWindowTitle -like $pattern} | Select-Object -First 1; "
+    "if ($p) { Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; "
+    'public class Win32 { [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); }\'; '
+    "[Win32]::ShowWindow($p.MainWindowHandle, [int]$HelioxArgs['show']) }"
+)
+_MAC_EXISTS = (
+    'tell application "System Events"\n'
+    "set matches to every process whose name is (item 1 of heliox_args)\n"
+    "if (count of matches) is 0 then return 0\n"
+    "return count windows of first item of matches\n"
+    "end tell"
+)
+_MAC_ACTIVATE = "tell application (item 1 of heliox_args) to activate"
+_MAC_QUIT = "tell application (item 1 of heliox_args) to quit"
+_MAC_MINIMIZE = (
+    'tell application "System Events" to set miniaturized of first window of '
+    "(first process whose name is (item 1 of heliox_args)) to true"
+)
+_MAC_MAXIMIZE = (
+    'tell application "System Events" to set size of first window of '
+    "(first process whose name is (item 1 of heliox_args)) to {1920, 1080}"
+)
 
 
 def _windows_text_element_script() -> str:
@@ -95,10 +145,10 @@ async def window_read_text(*, title: str | None = None, process_name: str | None
     """Read exact text from a target window without requiring foreground focus."""
     if CURRENT_PLATFORM != Platform.WINDOWS:
         raise RuntimeError("Background window text reading is currently available on Windows only")
-    selector = _windows_process_selector(title=title, process_name=process_name)
+    values = _target(title=title, process_name=process_name)
     script = (
         "$ErrorActionPreference = 'Stop'; "
-        + selector
+        + _SELECT
         + "if (-not $p) { Write-Error 'Window not found'; exit 1 }; "
         + _windows_text_element_script()
         + "$textPattern = $null; $valuePattern = $null; $text = $null; "
@@ -117,7 +167,7 @@ async def window_read_text(*, title: str | None = None, process_name: str | None
         + "$bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$text); "
         + "[Convert]::ToBase64String($bytes)"
     )
-    code, out, err = await run_powershell(script)
+    code, out, err = await run_powershell(script, values=values)
     if code != 0:
         raise RuntimeError(f"Window text read failed: {err.strip()}")
     try:
@@ -135,11 +185,10 @@ async def window_set_text(
     """Set and verify a target window's active editor through Windows UIA."""
     if CURRENT_PLATFORM != Platform.WINDOWS:
         raise RuntimeError("Background window text entry is currently available on Windows only")
-    selector = _windows_process_selector(title=title, process_name=process_name)
-    encoded = _powershell_literal(base64.b64encode(text.encode("utf-8")).decode("ascii"))
+    values = {**_target(title=title, process_name=process_name), "text": text}
     script = (
         "$ErrorActionPreference = 'Stop'; "
-        + selector
+        + _SELECT
         + "if (-not $p) { Write-Error 'Window not found'; exit 1 }; "
         + _windows_text_element_script()
         + "$valuePattern = $null; "
@@ -148,7 +197,7 @@ async def window_set_text(
         + "$nativeHandle = if ($element) { [IntPtr]$element.Current.NativeWindowHandle } else { [IntPtr]::Zero }; "
         + "if (-not $hasValue -and $nativeHandle -eq [IntPtr]::Zero) { "
         + "Write-Error 'No writable text control found'; exit 1 }; "
-        + f"$expected = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String({encoded})); "
+        + "$expected = [string]$HelioxArgs['text']; "
         + "if ($hasValue) { $valuePattern.SetValue($expected); $actual = $valuePattern.Current.Value } "
         + "else { [void][NativeText]::SendMessage($nativeHandle, 12, [IntPtr]::Zero, $expected); "
         + "$length = [int][NativeText]::SendMessage($nativeHandle, 14, [IntPtr]::Zero, [IntPtr]::Zero); "
@@ -158,7 +207,7 @@ async def window_set_text(
         + "if ($actual -ne $expected) { "
         + "Write-Error 'Text verification mismatch'; exit 1 }; 'ok'"
     )
-    code, out, err = await run_powershell(script)
+    code, out, err = await run_powershell(script, values=values)
     if code != 0:
         raise RuntimeError(f"Window text entry failed: {err.strip()}")
     return f"Set exact text in window: {title or process_name}"
@@ -218,13 +267,11 @@ async def window_exists(
         raise ValueError("Provide window_id, process_name, or title")
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        if process_name:
-            selector = _windows_process_selector(title=None, process_name=process_name)
-        elif title:
-            selector = _windows_process_selector(title=title, process_name=None)
-        else:
+        if not (process_name or title):
             raise ValueError("Windows window observation requires process_name or title")
-        code, out, err = await run_powershell(selector + "if ($p) { 'present' }")
+        code, out, err = await run_powershell(
+            _SELECT + "if ($p) { 'present' }", values=_target(title=title, process_name=process_name)
+        )
         if code != 0:
             raise RuntimeError(f"Window observation failed: {err.strip()}")
         return out.strip() == "present"
@@ -233,16 +280,7 @@ async def window_exists(
         present = await _mac_accessibility("exists", process_name, None if process_name else title)
         if present is not _NOT_HANDLED:
             return bool(present)
-        target = process_name or title or ""
-        literal = target.replace('"', '\\"')
-        script = (
-            'tell application "System Events"\n'
-            f'  set matches to every process whose name is "{literal}"\n'
-            "  if (count of matches) is 0 then return 0\n"
-            "  return count windows of first item of matches\n"
-            "end tell"
-        )
-        code, out, err = await run_command(["osascript", "-e", script])
+        code, out, err = await run_command(osascript_command(_MAC_EXISTS, [process_name or title or ""]))
         if code != 0:
             raise RuntimeError(f"Window observation failed: {err.strip()}")
         try:
@@ -264,50 +302,14 @@ async def window_exists(
 async def window_focus(window_id: str | None = None, title: str | None = None, process_name: str | None = None) -> str:
     """Focus/activate a window by ID, title, or process name."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        if process_name:
-            target = _powershell_literal(process_name)
-            code, out, err = await run_powershell(
-                f"$target = {target}; "
-                f"$p = Get-Process -Name $target -ErrorAction SilentlyContinue | "
-                f"Where-Object {{$_.MainWindowHandle -ne 0}} | Select-Object -First 1; "
-                f"if (-not $p) {{ Write-Error 'Process not found'; exit 1 }}; "
-                f"Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; "
-                f'public class Win32 {{ [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow); '
-                f'[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); '
-                f'[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid); }}\'; '
-                f"[void][Win32]::ShowWindowAsync($p.MainWindowHandle, 9); "
-                f"$shell = New-Object -ComObject WScript.Shell; "
-                f"$activated = $shell.AppActivate([int]$p.Id); Start-Sleep -Milliseconds 120; "
-                f"$foregroundPid = 0; [void][Win32]::GetWindowThreadProcessId([Win32]::GetForegroundWindow(), [ref]$foregroundPid); "
-                f"if (-not $activated -or $foregroundPid -ne $p.Id) {{ "
-                f"Write-Error 'Window activation was rejected'; exit 1 }}; $p.Id"
-            )
-        elif title:
-            target = _powershell_literal(title)
-            code, out, err = await run_powershell(
-                f"$target = {target}; "
-                f"$pattern = '*' + [WildcardPattern]::Escape($target) + '*'; "
-                f"$p = Get-Process | Where-Object {{$_.MainWindowTitle -like $pattern}} | Select-Object -First 1; "
-                f"if (-not $p) {{ Write-Error 'Window not found'; exit 1 }}; "
-                f"Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; "
-                f'public class Win32 {{ [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow); '
-                f'[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); '
-                f'[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid); }}\'; '
-                f"[void][Win32]::ShowWindowAsync($p.MainWindowHandle, 9); "
-                f"$shell = New-Object -ComObject WScript.Shell; "
-                f"$activated = $shell.AppActivate([int]$p.Id); Start-Sleep -Milliseconds 120; "
-                f"$foregroundPid = 0; [void][Win32]::GetWindowThreadProcessId([Win32]::GetForegroundWindow(), [ref]$foregroundPid); "
-                f"if (-not $activated -or $foregroundPid -ne $p.Id) {{ "
-                f"Write-Error 'Window activation was rejected'; exit 1 }}; $p.Id"
-            )
-        else:
+        if not (process_name or title):
             raise ValueError("Provide process_name or title to focus a window")
+        code, out, err = await run_powershell(_FOCUS, values=_target(title=title, process_name=process_name))
 
     elif CURRENT_PLATFORM == Platform.MACOS:
         if await _mac_accessibility("focus", process_name, title) is not _NOT_HANDLED:
             return f"Focused window: {title or process_name or window_id}"
-        target = process_name or title or ""
-        code, out, err = await run_command(["osascript", "-e", f'tell application "{target}" to activate'])
+        code, out, err = await run_command(osascript_command(_MAC_ACTIVATE, [process_name or title or ""]))
 
     else:  # Linux
         if window_id:
@@ -325,26 +327,15 @@ async def window_focus(window_id: str | None = None, title: str | None = None, p
 async def window_close(window_id: str | None = None, title: str | None = None, process_name: str | None = None) -> str:
     """Close a window."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        if process_name:
-            code, out, err = await run_powershell(
-                f"$p = Get-Process -Name '{process_name}' -ErrorAction SilentlyContinue; "
-                f"if ($p) {{ $p | ForEach-Object {{ $_.CloseMainWindow() }} }} "
-                f"else {{ Write-Error 'Process not found' }}"
-            )
-        elif title:
-            code, out, err = await run_powershell(
-                f"Get-Process | Where-Object {{$_.MainWindowTitle -like '*{title}*'}} | "
-                f"ForEach-Object {{ $_.CloseMainWindow() }}"
-            )
-        else:
+        if not (process_name or title):
             raise ValueError("Provide process_name or title")
+        code, out, err = await run_powershell(_CLOSE, values=_target(title=title, process_name=process_name))
 
     elif CURRENT_PLATFORM == Platform.MACOS:
         # Closes the window, as its close button does; the AppleScript fallback can only quit the app.
         if await _mac_accessibility("close", process_name, title) is not _NOT_HANDLED:
             return f"Closed window: {title or process_name or window_id}"
-        target = process_name or title or ""
-        code, out, err = await run_command(["osascript", "-e", f'tell application "{target}" to quit'])
+        code, out, err = await run_command(osascript_command(_MAC_QUIT, [process_name or title or ""]))
 
     else:  # Linux
         if window_id:
@@ -362,27 +353,14 @@ async def window_close(window_id: str | None = None, title: str | None = None, p
 async def window_minimize(title: str | None = None, process_name: str | None = None) -> str:
     """Minimize a window."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        target = process_name or title
         code, out, err = await run_powershell(
-            f"$p = Get-Process | Where-Object {{$_.MainWindowTitle -like '*{target}*'}} | Select-Object -First 1; "
-            f"if ($p) {{ "
-            f"  Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; "
-            f'  public class Win32 {{ [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); }}\'; '
-            f"  [Win32]::ShowWindow($p.MainWindowHandle, 6) "  # SW_MINIMIZE = 6
-            f"}}"
+            _SHOW_WINDOW,
+            values={"title": process_name or title or "", "show": "6"},  # SW_MINIMIZE
         )
     elif CURRENT_PLATFORM == Platform.MACOS:
         if await _mac_accessibility("minimize", process_name, title) is not _NOT_HANDLED:
             return f"Minimized window: {title or process_name}"
-        target = process_name or title or ""
-        code, out, err = await run_command(
-            [
-                "osascript",
-                "-e",
-                f'tell application "System Events" to set miniaturized of first window of '
-                f'(first process whose name is "{target}") to true',
-            ]
-        )
+        code, out, err = await run_command(osascript_command(_MAC_MINIMIZE, [process_name or title or ""]))
     else:
         if title:
             code, out, err = await run_command(["xdotool", "search", "--name", title, "windowminimize"])
@@ -397,27 +375,14 @@ async def window_minimize(title: str | None = None, process_name: str | None = N
 async def window_maximize(title: str | None = None, process_name: str | None = None) -> str:
     """Maximize a window."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        target = process_name or title
         code, out, err = await run_powershell(
-            f"$p = Get-Process | Where-Object {{$_.MainWindowTitle -like '*{target}*'}} | Select-Object -First 1; "
-            f"if ($p) {{ "
-            f"  Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; "
-            f'  public class Win32 {{ [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); }}\'; '
-            f"  [Win32]::ShowWindow($p.MainWindowHandle, 3) "  # SW_MAXIMIZE = 3
-            f"}}"
+            _SHOW_WINDOW,
+            values={"title": process_name or title or "", "show": "3"},  # SW_MAXIMIZE
         )
     elif CURRENT_PLATFORM == Platform.MACOS:
         if await _mac_accessibility("maximize", process_name, title) is not _NOT_HANDLED:
             return f"Maximized window: {title or process_name}"
-        target = process_name or title or ""
-        code, out, err = await run_command(
-            [
-                "osascript",
-                "-e",
-                f'tell application "System Events" to set size of first window of '
-                f'(first process whose name is "{target}") to {{1920, 1080}}',
-            ]
-        )
+        code, out, err = await run_command(osascript_command(_MAC_MAXIMIZE, [process_name or title or ""]))
     else:
         if title:
             code, out, err = await run_command(["wmctrl", "-r", title, "-b", "add,maximized_vert,maximized_horz"])

@@ -37,8 +37,10 @@ async def download_file(url: str, output_path: str, overwrite: bool = False) -> 
 
     # Fallback to OS tools
     if CURRENT_PLATFORM == Platform.WINDOWS:
+        # The address and the file are data ($HelioxArgs), never part of the command text.
         code, out, err = await run_powershell(
-            f"Invoke-WebRequest -Uri '{url}' -OutFile '{output_path}' -UseBasicParsing"
+            "Invoke-WebRequest -Uri $HelioxArgs['url'] -OutFile $HelioxArgs['out'] -UseBasicParsing",
+            values={"url": url, "out": output_path},
         )
     elif CURRENT_PLATFORM == Platform.MACOS:
         code, out, err = await run_command(["curl", "-fSL", "-o", output_path, url])
