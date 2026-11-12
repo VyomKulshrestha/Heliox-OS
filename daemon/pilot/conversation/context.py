@@ -104,7 +104,8 @@ class Screen:
 class ContextSources:
     """Callables the layer reads at the start of each turn. Each may fail; a failing source is left out."""
 
-    profile_lines: Callable[[], list[str]] = list
+    # The person's profile lines; a source may take the words being answered and give only what bears on them.
+    profile_lines: Callable[..., list[str]] = list
     task_state: Callable[[], dict[str, Any]] = dict
     screen: Callable[[], Screen | None] = lambda: None
     # Asked once per turn with whether the model runs on this machine; it decides what may be shared.
@@ -112,6 +113,10 @@ class ContextSources:
     now: Callable[[], datetime] = datetime.now
     # Further context lines (personal memory, Live). Each takes no argument or the words being answered.
     extra: list[Callable[..., str]] = field(default_factory=list)
+    # How long the person asked answers to be: "short", "detailed" or "" (the profile's answer style).
+    answer_length: Callable[[], str] = lambda: ""
+    # The people the person named, relation -> name ("manager" -> "Priya"), for a hand-over that says "my manager".
+    people: Callable[[], dict[str, str]] = dict
 
 
 def _safe(call: Callable[[], Any], default: Any) -> Any:
@@ -142,7 +147,29 @@ def describe_task(state: dict[str, Any]) -> list[str]:
 _UNSET: Any = object()
 
 
-def _call_extra(extra: Callable[..., str], text: str) -> str:
+# Never sent to a model as a fact about the person, even when something stored it: health, money, someone else's
+# private details, and anything that names or looks like a secret (pilot.personal.passing, pilot.workflows.user_profile).
+def never_sent(line: str) -> bool:
+    try:
+        from pilot.personal import passing
+        from pilot.workflows.clipboard_history import looks_secret
+        from pilot.workflows.user_profile import NAMES_A_SECRET
+    except Exception:
+        return False
+    for name in ("_HEALTH", "_MONEY", "_PRIVATE_OF_OTHERS"):
+        pattern = getattr(passing, name, None)
+        if pattern is not None and pattern.search(line):
+            return True
+    return bool(NAMES_A_SECRET.search(line) or looks_secret(line))
+
+
+LENGTH_LINES = {
+    "short": "They asked for short answers: at most about 12 words.",
+    "detailed": "They asked for more detail: up to about 50 words is fine, still spoken, no lists.",
+}
+
+
+def _call_extra(extra: Callable[..., Any], text: str) -> Any:
     """An extra source may take the words being answered (one argument) or nothing."""
     import inspect
 
@@ -176,11 +203,15 @@ def assemble(
     opening = " ".join(last.split()[:2]) if last else ""
     if opening and memory.open:
         sections.append(f"Your last reply began {opening!r}; begin this one differently.")
-    profile = [str(line) for line in _safe(sources.profile_lines, [])][:PROFILE_LINES]
+    chosen = _call_extra(sources.profile_lines, text) if text else _safe(sources.profile_lines, [])
+    profile = [str(line) for line in (chosen or []) if not never_sent(str(line))][:PROFILE_LINES]
     if profile:
         sections.append("About the person: " + " ".join(profile))
+    length = LENGTH_LINES.get(str(_safe(sources.answer_length, "")))
+    if length:
+        sections.append(length)
     for extra in sources.extra:
-        line = _call_extra(extra, text)
+        line = _without(_call_extra(extra, text), profile)
         if line:
             sections.append(str(line))
     block = ""
@@ -205,6 +236,20 @@ def assemble(
     if opening:
         block = f"Heliox said before this: {' '.join(opening)[:TURN_CHARS]}\n" + block
     return block.strip(), messages
+
+
+def _without(line: str, sent: list[str]) -> str:
+    """An extra line ("Also relevant about the person: A. B.") without what the profile lines already said and
+    without anything never sent; "" when nothing is left."""
+    if not isinstance(line, str) or not line:
+        return ""
+    head, colon, body = line.partition(": ")
+    if not colon or not head.startswith("Also relevant"):
+        return "" if never_sent(line) else line
+    already = {piece.rstrip(".").casefold() for piece in sent}
+    pieces = [piece.strip().rstrip(".") for piece in body.split(". ") if piece.strip()]
+    kept = [piece for piece in pieces if piece.casefold() not in already and not never_sent(piece)]
+    return f"{head}: " + ". ".join(kept) + "." if kept else ""
 
 
 def build_messages(

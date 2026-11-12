@@ -1,0 +1,848 @@
+{
+  "how_to_read": "Personal sessions: what a person tells Heliox, and whether it changes how Heliox talks and what it does after a restart. Read like sessions.json, plus: an 'event' of 'restart' starts a new session server over the same folder (what is on disk stays, the conversation does not); 'sent' and 'not_sent' are about what the fast model is sent in that turn (checked for every kind with a model); 'planned_with' is about what the planner is given; 'stored' and 'not_stored' are about everything on disk after the turn; 'never_sent' and 'never_stored' hold for the whole session. 'via': 'turn' dispatches as the listener does (PilotServer._voice_turn), with the personal context the daemon gives the layer. 'expect_cloud' holds for a model in the cloud only: a model on this computer may be sent more.",
+  "sessions": [
+    {
+      "name": "told once: the name to be called by",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, call me Sam.",
+          "expect": {
+            "taken": true,
+            "has": [
+              "Sam"
+            ],
+            "model": false,
+            "stored": [
+              "Sam"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, good morning.",
+          "gap": 5,
+          "model": "Good morning, Sam.",
+          "expect": {
+            "taken": true,
+            "has": [
+              "Sam"
+            ]
+          }
+        },
+        {
+          "say": "What's a good name for a cat?",
+          "gap": 1.0,
+          "model": "Whiskers suits most cats.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "Call them Sam"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "told once: keep answers short",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, keep your answers short.",
+          "expect": {
+            "taken": true,
+            "model": false,
+            "stored": [
+              "short"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, why is the sky blue?",
+          "gap": 5,
+          "model": "Air scatters blue light the most.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "short"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "told once: I like detail",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, be detailed.",
+          "expect": {
+            "taken": true,
+            "model": false,
+            "stored": [
+              "detailed"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, why is the sky blue?",
+          "gap": 5,
+          "detail": true,
+          "model": "Sunlight holds every colour. Air molecules scatter short blue waves far more than long red ones, so blue light reaches your eyes from every direction of the sky. At sunset the light crosses more air and the blue is scattered away.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "detailed"
+            ]
+          },
+          "expect_model": {
+            "has": [
+              "every direction"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "told once: a person and who they are",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, Priya is my manager.",
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "Priya"
+            ],
+            "stored": [
+              "Priya"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what's the capital of Peru?",
+          "gap": 5,
+          "model": "Lima.",
+          "expect": {
+            "taken": true
+          },
+          "expect_cloud": {
+            "not_sent": [
+              "Priya"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, what does my manager like for lunch?",
+          "gap": 2,
+          "model": "I don't know what Priya likes for lunch.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "Priya"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, message my manager that I'm running late.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "planned_with": [
+              "Priya"
+            ]
+          },
+          "model": "ACT {\"verb\": \"message\", \"object\": \"my manager\", \"request\": \"Message my manager that I am running late\", \"say\": \"Messaging your manager.\"}"
+        }
+      ]
+    },
+    {
+      "name": "told once: when work ends",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, remember that I stop work at six.",
+          "expect": {
+            "taken": true,
+            "model": false,
+            "stored": [
+              "six"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what's the capital of Peru?",
+          "gap": 5,
+          "model": "Lima.",
+          "expect": {
+            "taken": true
+          },
+          "expect_cloud": {
+            "not_sent": [
+              "stop work"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, when do I stop work?",
+          "gap": 2,
+          "model": "You stop work at six.",
+          "expect": {
+            "taken": true
+          },
+          "expect_model": {
+            "has": [
+              "six|6"
+            ]
+          },
+          "expect_none": {
+            "has": [
+              "six|6"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "told once: being interrupted",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, stay quiet unless I ask.",
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "quiet"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, will you speak up when you notice something?",
+          "gap": 5,
+          "model": "Only when you ask.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "quiet|unless"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "corrected: the name",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, call me Alex.",
+          "expect": {
+            "taken": true,
+            "has": [
+              "Alex"
+            ]
+          }
+        },
+        {
+          "say": "No, call me Sam.",
+          "gap": 1.0,
+          "expect": {
+            "taken": true,
+            "has": [
+              "Sam"
+            ],
+            "not": [
+              "Alex"
+            ],
+            "stored": [
+              "Sam"
+            ],
+            "not_stored": [
+              "Alex"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, good morning.",
+          "gap": 5,
+          "model": "Good morning, Sam.",
+          "expect": {
+            "taken": true,
+            "has": [
+              "Sam"
+            ],
+            "not": [
+              "Alex"
+            ]
+          }
+        },
+        {
+          "say": "What's a good name for a dog?",
+          "gap": 1.0,
+          "model": "Biscuit is a friendly one.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "Sam"
+            ],
+            "not_sent": [
+              "Alex"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "corrected: a person",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, Priya is my manager.",
+          "expect": {
+            "taken": true,
+            "stored": [
+              "Priya"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, my manager is now Dana.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "has": [
+              "Dana"
+            ],
+            "stored": [
+              "Dana"
+            ],
+            "not_stored": [
+              "Priya"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what does my manager like for lunch?",
+          "gap": 5,
+          "model": "I don't know what Dana likes.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "Dana"
+            ],
+            "not_sent": [
+              "Priya"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "forgotten: a fact, the forget said as a follow-up",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, remember that I'm a founder.",
+          "expect": {
+            "taken": true,
+            "model": false,
+            "stored": [
+              "founder"
+            ]
+          }
+        },
+        {
+          "say": "What do you know about me?",
+          "gap": 1.0,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "founder"
+            ]
+          }
+        },
+        {
+          "say": "Forget that I'm a founder.",
+          "gap": 1.0,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "not_stored": [
+              "founder"
+            ]
+          }
+        },
+        {
+          "say": "What do you know about me?",
+          "gap": 1.0,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "not": [
+              "you're a founder"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what should I read this weekend?",
+          "gap": 5,
+          "model": "Try a short novel.",
+          "expect": {
+            "taken": true,
+            "not_sent": [
+              "founder"
+            ],
+            "not_stored": [
+              "founder"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "forgotten: a fact, with the wake phrase",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, remember that I'm a founder.",
+          "expect": {
+            "taken": true,
+            "model": false,
+            "stored": [
+              "founder"
+            ]
+          }
+        },
+        {
+          "say": "What do you know about me?",
+          "gap": 1.0,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "founder"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, forget that I'm a founder.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "not_stored": [
+              "founder"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, what do you know about me?",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "not": [
+              "you're a founder"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what should I read this weekend?",
+          "gap": 5,
+          "model": "Try a short novel.",
+          "expect": {
+            "taken": true,
+            "not_sent": [
+              "founder"
+            ],
+            "not_stored": [
+              "founder"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "forgotten: everything",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, call me Sam.",
+          "expect": {
+            "taken": true,
+            "stored": [
+              "Sam"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, Priya is my manager.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "stored": [
+              "Priya"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, forget everything about me.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "model": false
+          }
+        },
+        {
+          "say": "What do you know about me?",
+          "gap": 1.0,
+          "expect": {
+            "taken": true,
+            "not": [
+              "Sam",
+              "Priya"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what does my manager like for lunch?",
+          "gap": 5,
+          "model": "I don't know.",
+          "expect": {
+            "taken": true,
+            "not_sent": [
+              "Priya",
+              "Sam"
+            ],
+            "not_stored": [
+              "Priya",
+              "Sam"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "not learned: said to someone else",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, what time is it?",
+          "expect": {
+            "taken": true,
+            "has": [
+              "9|nine"
+            ]
+          }
+        },
+        {
+          "say": "Priya is my sister, by the way, and my password is hunter2.",
+          "gap": 30,
+          "voiced": 3.5,
+          "expect": {
+            "taken": false,
+            "silent": true
+          }
+        },
+        {
+          "say": "Call me Tom from now on, he said.",
+          "gap": 30,
+          "voiced": 2.4,
+          "expect": {
+            "taken": false,
+            "silent": true
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what do you know about me?",
+          "gap": 5,
+          "expect": {
+            "taken": true,
+            "not": [
+              "Priya",
+              "hunter2",
+              "Tom"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, what's a good name for a cat?",
+          "gap": 2,
+          "model": "Whiskers.",
+          "expect": {
+            "taken": true,
+            "not_sent": [
+              "Priya",
+              "hunter2",
+              "Tom"
+            ]
+          }
+        }
+      ],
+      "never_stored": [
+        "hunter2",
+        "Priya",
+        "Tom"
+      ]
+    },
+    {
+      "name": "not learned: a doubtful follow-up",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, what's the capital of Peru?",
+          "model": "Lima.",
+          "expect": {
+            "taken": true
+          }
+        },
+        {
+          "say": "You know my brother Tom is a doctor.",
+          "gap": 2.0,
+          "expect": {
+            "taken": true,
+            "has": [
+              "Sorry?"
+            ],
+            "model": false
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what do you know about me?",
+          "gap": 5,
+          "expect": {
+            "taken": true,
+            "not": [
+              "Tom",
+              "doctor"
+            ]
+          }
+        }
+      ],
+      "never_stored": [
+        "Tom",
+        "doctor"
+      ]
+    },
+    {
+      "name": "not learned: things never kept",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, remember that my salary is 90k.",
+          "expect": {
+            "taken": true,
+            "not_stored": [
+              "90k"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, remember that I have a dentist appointment on Friday.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "not_stored": [
+              "dentist"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, remember the wifi password is hunter2.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "not_stored": [
+              "hunter2"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, my card number is 4111 1111 1111 1111.",
+          "gap": 2,
+          "model": "I won't keep that.",
+          "expect": {
+            "taken": true,
+            "not_stored": [
+              "4111"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what do you know about me?",
+          "gap": 5,
+          "expect": {
+            "taken": true,
+            "not": [
+              "salary",
+              "90k",
+              "dentist",
+              "hunter2",
+              "4111"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, what should I do on Friday?",
+          "gap": 2,
+          "model": "Maybe a walk.",
+          "expect": {
+            "taken": true,
+            "not_sent": [
+              "salary",
+              "90k",
+              "dentist",
+              "hunter2",
+              "4111"
+            ]
+          }
+        }
+      ],
+      "never_stored": [
+        "90k",
+        "dentist",
+        "hunter2",
+        "4111"
+      ]
+    },
+    {
+      "name": "what a model is sent: only what the answer needs",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, call me Sam.",
+          "expect": {
+            "taken": true
+          }
+        },
+        {
+          "say": "Hey Heliox, keep your answers short.",
+          "gap": 2,
+          "expect": {
+            "taken": true
+          }
+        },
+        {
+          "say": "Hey Heliox, Priya is my manager.",
+          "gap": 2,
+          "expect": {
+            "taken": true
+          }
+        },
+        {
+          "say": "Hey Heliox, remember that I live in Pune.",
+          "gap": 2,
+          "expect": {
+            "taken": true
+          }
+        },
+        {
+          "say": "Hey Heliox, remember that I'm training for a marathon.",
+          "gap": 2,
+          "expect": {
+            "taken": true
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what's the capital of Peru?",
+          "gap": 5,
+          "model": "Lima.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "Sam",
+              "short"
+            ]
+          },
+          "expect_cloud": {
+            "not_sent": [
+              "Priya",
+              "Pune",
+              "marathon"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, where should I eat near home tonight?",
+          "gap": 2,
+          "model": "Try somewhere in Koregaon Park.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "Pune"
+            ]
+          },
+          "expect_cloud": {
+            "not_sent": [
+              "Priya",
+              "marathon"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, how should I train this week?",
+          "gap": 2,
+          "model": "Two easy runs and one long one.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "marathon"
+            ]
+          },
+          "expect_cloud": {
+            "not_sent": [
+              "Priya",
+              "Pune"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

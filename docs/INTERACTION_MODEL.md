@@ -208,7 +208,8 @@ Each turn the model gets, in this order, dropping from the end when the block pa
 2. what Heliox is doing: a running task and its phase, an approval waiting (with the reminder that voice cannot
    approve), the last task result;
 3. the focused app (see the table below);
-4. up to eight profile lines from `UserProfile.context_lines` (name, preferences, things they asked to keep);
+4. profile lines from `UserProfile.context_lines`, chosen for the words (see "What the model is sent about the
+   person" below), and the person's answer length when they set one;
 
 plus the last six turns of this conversation as real message turns. The turns live in memory only, are cleared by
 the existing "new conversation" call and lapse after ten quiet minutes. Speech that was not addressed to Heliox
@@ -264,8 +265,9 @@ audio-level run is pending).
 * For Heliox's own window, password managers and apps excluded from the timeline, nothing is sent, in every row.
 * What reaches a model in these rows is **Fakes only**: unit tests of the context builder; no request body sent to
   a real provider has been captured and checked yet.
-* The person's words, the earlier turns of this conversation, the time, the task state and the profile lines go
-  to whichever model is configured. With a local model none of it leaves the machine.
+* The person's words, the earlier turns of this conversation, the time and the task state go to whichever model
+  is configured; the profile lines go as chosen for the words ("Personal sessions" below). With a local model none of
+  it leaves the machine.
 
 Two more context sources, added with Heliox Live and the personal layer (`pilot/live/conversation_link.py`,
 `pilot/personal/context.py`):
@@ -279,7 +281,7 @@ Two more context sources, added with Heliox Live and the personal layer (`pilot/
 | Answers to the getting-to-know questions (name, main use, how to talk) | never; parsed in code | never | never |
 | Speech heard near the microphone but not said to Heliox (Live does not check it: no card) | never | never | never |
 | A note said in passing ("my flight is on Friday"), kept until the day after its date or for a week | yes, as a profile line | yes, as a profile line | yes |
-| What those answers stored (the name, "I mainly use the computer for ...", the answer style, a speak-up or stay-quiet preference) | yes, as profile lines with later turns | yes, as profile lines with later turns | yes |
+| What those answers stored (the name, "I mainly use the computer for ...", the answer style, a speak-up or stay-quiet preference) | yes, as profile lines with later turns | the name and the answer style with every turn; the rest only when the words bear on it | the same as `auto` |
 | An answer Heliox gave in code earlier in the conversation (the person's words always go) | the answer, whatever it was | only sums, units, dates, the time and the spoken help; every other code answer (the day, the timeline, to-dos, reminders, notes, the profile, goals, memory, workspaces, suggestions, Live, settings, and any handler added later) is sent as "(answered on this computer)" | the same as `auto` |
 
 "Why did you say that", "thanks", "not now", "don't mention these", "fix it", "remember that ...", "forget ...",
@@ -660,6 +662,68 @@ kept to 25 words, and "And times ten?" after "what's two plus two?" was answered
 the pack's wording: asked "how do I open Notepad?", the model offered in its own words ("I can open Notepad for you.
 Want me to go ahead?") instead of the layer's "Do you want me to ...?", and the "yes" that followed opened it; the
 pack now accepts either.
+
+### Personal sessions
+
+`benchmarks/conversation_eval/personal_sessions.json`, run by the session suite
+(`python -m benchmarks.conversation_eval.sessions --pack personal`, `tests/test_conversation_personal.py`).
+
+Each session runs across a restart of the session server: a new server over the same folder, so what is on disk
+stays and the conversation does not. Dispatch goes through `PilotServer._voice_turn`, as the listener calls it, with
+the personal context the daemon gives the layer. Besides what is said, the checks read:
+- the request body the fast model was sent (`sent`, `not_sent`; `expect_cloud` for a model in the cloud only);
+- what the planner was given (`planned_with`);
+- everything on disk after the turn (`stored`, `not_stored`).
+
+**What the model is sent about the person.**
+- *Before this round:* the first eight profile lines went with every turn to every model, whatever the turn was
+  about. "What's the capital of Peru?" carried the person's manager, their home and their marathon training, and
+  "my salary is 90k" once stored.
+- *Now, with a cloud model,* only what the answer needs:
+  - the name and the answer style, always, since they shape every reply;
+  - stated preferences;
+  - a person or a fact only when the words bear on it: a name, "my manager", a shared word
+    (`pilot.personal.context.relevant_lines`), and the home when the words are about home or nearby.
+- *With a model on this computer,* every line (the first eight).
+- *For every model:* a line in the never-kept categories is never sent, even when something stored it (health,
+  money, someone else's private details, anything that names or looks like a secret). The personal context line no
+  longer repeats a profile line.
+
+**What else changed:**
+- **Answer length.** The person's answer length now changes the spoken reply as well as the context. "Keep it
+  short" caps it at 15 words; "I like detail" allows 60, where the old fixed 25-word cap cut a detailed answer
+  after its first sentence. The model is told the same in a context line.
+- **People in a hand-over.** "Message my manager" hands over with "Their manager is Priya." in the planner's
+  context. Before, the session planner was never called: "message" was not a request to act, so the turn went to
+  the model, or with no model to "Not without the language model".
+
+Pass table on the stubbed models (15 sessions, each for a Claude key, an OpenAI-compatible endpoint, a local model
+only and no model): 11, 11, 11 and 10 pass. The rest fail on other workstreams' code, listed in the test's KNOWN:
+
+| Session | What fails | Whose code |
+|---|---|---|
+| told once: being interrupted | "stay quiet unless I ask" is understood only inside getting-to-know; on its own it goes to the model, which said "Okay, I'll stay quiet until you ask me something." (real run) and nothing changed | `pilot.personal.getting_to_know` |
+| corrected: the name | "No, call me Sam" is not a name request (the leading "No,"); the real model answered "Got it, Sam." and the next morning was "Good morning, Alex." | `pilot.workflows.user_profile` |
+| forgotten: a fact, the forget said as a follow-up | "Forget that I'm a founder." right after an answer is not taken as a follow-up; with the wake phrase it works | `pilot.system.addressing` |
+| not learned: things never kept | "remember that my salary is 90k" and a dentist appointment are stored and read back; they are never sent to a model | `pilot.workflows.user_profile`, `pilot.personal.memory_talk` |
+| told once: when work ends (no model) | "when do I stop work?" is not a recall phrase, so with no model nothing answers it | `pilot.personal.memory_talk` |
+
+Not shown by any session: a stated end of the working day ("I stop work at six") is stored, but nothing reads it
+when deciding whether to speak up or make an offer in the evening. The quiet hours, Live's timing and offers do not
+read it.
+
+**Run for real**, once (12 November, Claude Haiku 5.5, a fresh model per session, budget tracker on; machine load not
+recorded): 22 calls, $0.00294, first text a median 0.97 s. The same 11 of 15 passed, failing on the same four rows
+above. What the model did with what it was sent:
+- the name was used once ("I don't know your local restaurants, Sam");
+- "keep it short" gave 11 words;
+- "I like detail" gave 58 words over three sentences;
+- "what does my manager like for lunch" was answered about Priya;
+- "when do I stop work" gave "at six";
+- "I live in Pune" was sent for "where should I eat near home" but not used.
+- Twice the model said it would do what nothing had saved ("Got it, Sam.", "I'll stay quiet until you ask me
+  something."). Proposed, not built (it needs a real-model check): one prompt line saying the model cannot save
+  anything or change how Heliox behaves, and should say so when asked.
 
 ## 4. Not in this pass
 

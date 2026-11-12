@@ -33,6 +33,7 @@ from typing import Any
 from pilot.conversation.layer import SPOKEN_WORD_CAP
 
 PACK = Path(__file__).with_name("sessions.json")
+PERSONAL_PACK = Path(__file__).with_name("personal_sessions.json")
 KINDS = ("claude", "openai", "local", "none")
 NOW = datetime(2026, 11, 12, 9, 0)  # a Thursday
 WORDS_PER_SECOND = 2.5
@@ -91,6 +92,9 @@ class Record:
     ended: dict[int, float] = field(default_factory=dict)  # when the person stopped talking, per taken turn
     tasks: dict[int, set[Any]] = field(default_factory=dict)  # every asyncio task a turn spawned, by that turn
     stuck: list[str] = field(default_factory=list)  # every bounded wait that ran out, and on what
+    requests: dict[int, list[str]] = field(default_factory=dict)  # each fast-model request body, by turn
+    planned: dict[int, list[str]] = field(default_factory=dict)  # what the planner was given, by turn
+    stored: dict[int, str] = field(default_factory=dict)  # everything on disk after the turn, as text
     seq: int = 0
     turn: int = -1
 
@@ -228,6 +232,7 @@ def fast_model(kind: str, replies: dict[str, Any], record: Record) -> Any:
             return httpx.Response(200, json={"input_tokens": 1})
         turn = _turn_of(record)
         record.model_calls[turn] = record.model_calls.get(turn, 0) + 1
+        record.requests.setdefault(turn, []).append(request.content.decode("utf-8", "replace"))
         reply = replies.get(turn)
         text = reply if isinstance(reply, str) else "Okay."
         return httpx.Response(200, content=_wire(provider, text), headers={"content-type": "text/event-stream"})
@@ -314,6 +319,8 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     async def plan(user_input: str, **kwargs: Any) -> Any:
         from pilot.actions import Action
 
+        given = f"{user_input}\n{kwargs.get('screen_context') or ''}"
+        record.planned.setdefault(_turn_of(record), []).append(given)
         if kind == "none":
             return ActionPlan(actions=[], explanation="Planning that needs a language model, and none is set up.")
         lowered = user_input.casefold()
@@ -448,6 +455,19 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
             for index, turn in enumerate(session["turns"]):
                 record.turn = index
                 event = turn.get("event")
+                if event == "restart":
+                    # Heliox restarts: a new server over the same folder. What is on disk stays; what was only in
+                    # memory (the conversation, the follow-up window) is gone.
+                    for task in pending:
+                        task.cancel()
+                    pending = []
+                    server = await build_server(kind, session, folder, record, clock)
+                    if real_model is not None:
+                        from pilot.conversation import layer_for
+
+                        layer_for(server)._model = lambda: _counting(real_model, record)
+                    listener = server._voice_listener
+                    continue
                 if event == "call":
                     listener.in_call = str(turn.get("app", "Teams"))
                     continue
@@ -481,11 +501,11 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                     record.withdrawals[index] = result.status
                     if result.status != "withdrawn":
 
-                        async def rest(words: str = text, turn_index: int = index) -> None:
+                        async def rest(words: str = text, turn_index: int = index, on: Any = server) -> None:
                             SESSION_TURN.set(turn_index)
                             voice_turn_addressed.set("follow_up")
                             voice_turn_id.set(f"v{turn_index}")
-                            await server._voice_command_dispatch(words.strip(" \t,.:;!?-"))
+                            await on._voice_command_dispatch(words.strip(" \t,.:;!?-"))
 
                         token = SESSION_TURN.set(index)
                         try:
@@ -496,7 +516,7 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                             record,
                             index,
                             task,
-                            lambda before=asked_before: set(server._pending_confirms) - before,
+                            lambda before=asked_before, on=server: set(on._pending_confirms) - before,
                             winding_down,
                         )
                         (task.result() if task.done() else pending.append(task))
@@ -505,7 +525,7 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                             record,
                             index,
                             None,
-                            lambda before=asked_before: set(server._pending_confirms) - before,
+                            lambda before=asked_before, on=server: set(on._pending_confirms) - before,
                             winding_down,
                         )
                     continue
@@ -538,11 +558,16 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                 command = decision.command if decision.act else text.strip(" \t,.:;!?-")
                 listener.user_is_speaking = bool(turn.get("still_talking"))
 
-                async def dispatch(words: str = command, how: str = addressed, turn_index: int = index) -> None:
+                async def dispatch(
+                    words: str = command, how: str = addressed, turn_index: int = index, on: Any = server
+                ) -> None:
                     SESSION_TURN.set(turn_index)
                     voice_turn_addressed.set(how)
                     voice_turn_id.set(f"v{turn_index}")  # the listener numbers its dispatches the same way
-                    await server._voice_command_dispatch(words)
+                    if session.get("via") == "turn":
+                        await on._voice_turn(words)  # as the listener calls it: with the personal context
+                    else:
+                        await on._voice_command_dispatch(words)
 
                 asked_before = set(server._pending_confirms)
                 token = SESSION_TURN.set(index)
@@ -554,13 +579,14 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                     record,
                     index,
                     task,
-                    lambda before=asked_before: set(server._pending_confirms) - before,
+                    lambda before=asked_before, on=server: set(on._pending_confirms) - before,
                     winding_down,
                 )
                 if task.done():
                     task.result()
                 else:
                     pending.append(task)  # waiting on the visible approval dialog, which nobody presses here
+                record.stored[index] = _on_disk(folder)
             record.turn = len(session["turns"])
             for task in pending:
                 task.cancel()
@@ -637,6 +663,18 @@ def _track_tasks(record: Record) -> Any:
     return lambda: loop.set_task_factory(before)
 
 
+def _on_disk(folder: Path) -> str:
+    """Everything the session's server has written, as text (for "is it stored?")."""
+    parts = []
+    for item in sorted(folder.rglob("*")):
+        if item.is_file():
+            try:
+                parts.append(item.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+    return "\n".join(parts)
+
+
 def _isolate(folder: Path) -> list[Any]:
     """Point the server's data folder at the session's temporary folder; give back how to undo it."""
     import pilot.server as server_module
@@ -662,6 +700,8 @@ def _expect(turn: dict[str, Any], kind: str) -> dict[str, Any]:
         expect.update(turn.get("expect_none", {}))
     if kind in ("claude", "openai", "local"):
         expect.update(turn.get("expect_model", {}))
+    if kind in ("claude", "openai"):
+        expect.update(turn.get("expect_cloud", {}))  # what only a model in the cloud must (not) be sent
     return expect
 
 
@@ -712,6 +752,27 @@ def check_session(session: dict[str, Any], kind: str, record: Record) -> list[st
             called = record.model_calls.get(index, 0) > 0
             if called != expect["model"]:
                 failures.append(f"{where}: the model was {'called' if called else 'not called'}; expected the opposite")
+        sent = record.requests.get(index, [])
+        if kind != "none":
+            for option in expect.get("sent", []):
+                if not sent:
+                    failures.append(f"{where}: expected {option!r} sent to the model; no request was made")
+                elif not any(_has(body, option) for body in sent):
+                    failures.append(f"{where}: expected {option!r} in what the model was sent")
+        for option in expect.get("not_sent", []):
+            if any(_has(body, option) for body in sent):
+                failures.append(f"{where}: {option!r} was sent to the model")
+        planned = record.planned.get(index, [])
+        for option in expect.get("planned_with", []):
+            if not any(_has(given, option) for given in planned):
+                failures.append(f"{where}: expected the planner to be given {option!r}; given {planned!r}")
+        on_disk = record.stored.get(index, "")
+        for option in expect.get("stored", []):
+            if not _has(on_disk, option):
+                failures.append(f"{where}: expected {option!r} stored")
+        for option in expect.get("not_stored", []):
+            if _has(on_disk, option):
+                failures.append(f"{where}: {option!r} is stored")
         reply = " ".join(s.text for s in said if s.text not in WAIT_SIGNS)  # "One moment." is not the reply
         if not turn.get("detail") and _words(reply) > REPLY_WORD_LIMIT:
             failures.append(f"{where}: {_words(reply)} words said without being asked for detail: {reply!r}")
@@ -724,6 +785,13 @@ def check_session(session: dict[str, Any], kind: str, record: Record) -> list[st
         ran = sum(r.action_type == action for r in record.ran)
         if ran != times:
             failures.append(f"session: {action} ran {ran} times; expected {times}")
+    every_request = [body for bodies in record.requests.values() for body in bodies]
+    for option in session.get("never_sent", []):
+        if any(_has(body, option) for body in every_request):
+            failures.append(f"session: {option!r} was sent to the model")
+    for option in session.get("never_stored", []):
+        if any(_has(text, option) for text in record.stored.values()):
+            failures.append(f"session: {option!r} was stored")
     for action in session.get("never_runs", []):
         ran = [r for r in record.ran if r.action_type == action]
         if ran:
@@ -771,6 +839,7 @@ class _counting:
     def stream(self, system: str, messages: list[dict[str, Any]]) -> Any:
         turn = _turn_of(self._record)
         self._record.model_calls[turn] = self._record.model_calls.get(turn, 0) + 1
+        self._record.requests.setdefault(turn, []).append(json.dumps({"system": system, "messages": messages}))
         return self._model.stream(system, messages)
 
 
@@ -837,13 +906,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", default="")
     parser.add_argument("--kind", default="")
     parser.add_argument("--out", default="")
+    parser.add_argument("--pack", default="", help="personal: the personal sessions (personal_sessions.json)")
     parser.add_argument(
         "--real",
         action="store_true",
         help="the Claude road only, against the configured Claude fast model; costs money, recorded in the budget",
     )
     args = parser.parse_args(argv)
-    sessions = [s for s in load_pack() if args.only in s["name"]]
+    pack = PERSONAL_PACK if args.pack == "personal" else PACK
+    sessions = [s for s in load_pack(pack) if args.only in s["name"]]
     kinds = (args.kind,) if args.kind else KINDS
     if args.real:
         summary = asyncio.run(_real_run(sessions))
@@ -864,4 +935,4 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-__all__ = ["KINDS", "NOW", "PACK", "check_session", "load_pack", "run_all", "run_session", "date"]
+__all__ = ["KINDS", "NOW", "PACK", "PERSONAL_PACK", "check_session", "load_pack", "run_all", "run_session", "date"]

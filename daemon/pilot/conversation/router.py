@@ -161,6 +161,7 @@ ACTION_VERBS: dict[str, str] = {
     "play": "Playing",
     "send": "Sending",
     "email": "Emailing",
+    "message": "Messaging",
     "reply": "Replying",
     "schedule": "Scheduling",
     "book": "Booking",

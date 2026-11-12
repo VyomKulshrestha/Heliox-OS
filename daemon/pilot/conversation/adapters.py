@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -169,11 +170,65 @@ def _task_state(server: Any, layer: Any) -> dict[str, Any]:
     return state
 
 
-def _profile_lines(server: Any) -> list[str]:
+# Words that make the person's home relevant ("near home", "around here", the weather).
+_HOME_WORDS = re.compile(r"\b(?:home|near me|nearby|near here|around here|local|this city|my city|weather)\b", re.I)
+_HOME_FACT = re.compile(
+    r"\b(?:i live in|i'm living in|i am living in|i moved to|i'm based in|i am based in|i'm from)\b", re.I
+)
+
+
+def _profile_lines(server: Any, text: str = "", local: bool | None = None) -> list[str]:
+    """The person's profile lines for one turn.
+
+    With a model on this computer, every line (the first PROFILE_LINES of them). With a cloud model only what the
+    answer needs: the name and the answer style always (they shape every reply), stated preferences, and a person or
+    fact only when the words bear on it (pilot.personal.context.relevant_lines: a name, "my manager", a shared word;
+    the home when the words are about home or nearby). Never the whole profile on every turn."""
     profile = getattr(server, "_user_profile", None)
     if profile is None:
         return []
-    return prioritise_profile(list(profile.context_lines()))
+    lines = prioritise_profile(list(profile.context_lines()))
+    if local is None:
+        local = _model_local(server)
+    if local or not text:
+        return lines if local else [line for line in lines if line.startswith(("Call them", "Answer style"))]
+    from pilot.personal.context import relevant_lines
+
+    try:
+        data = profile.get()
+    except Exception:
+        data = {}
+    chosen = [line for line in lines if line.startswith("Call them")]
+    chosen += relevant_lines(text, profile=data)
+    if _HOME_WORDS.search(text):
+        chosen += [line for line in lines if line.startswith("About them") and _HOME_FACT.search(line)]
+    seen: set[str] = set()
+    return [line for line in chosen if not (line in seen or seen.add(line))]
+
+
+def _model_local(server: Any) -> bool:
+    layer = getattr(server, "_conversation", None)
+    try:
+        return bool(getattr(layer._model(), "local", False)) if layer is not None else False
+    except Exception:
+        return False
+
+
+def _answer_length(server: Any) -> str:
+    profile = getattr(server, "_user_profile", None)
+    try:
+        style = (profile.get() or {}).get("style") or {} if profile is not None else {}
+    except Exception:
+        return ""
+    return str(style.get("length") or "")
+
+
+def _people(server: Any) -> dict[str, str]:
+    profile = getattr(server, "_user_profile", None)
+    try:
+        return dict(profile.people_by_relation()) if profile is not None else {}
+    except Exception:
+        return {}
 
 
 _PROFILE_ORDER = ("Call them", "Answer style", "Preference", "About them", "Person they know")
@@ -324,7 +379,9 @@ def layer_for(server: Any) -> Any:
 
     layer: Any = None
     sources = ContextSources(
-        profile_lines=lambda: _profile_lines(server),
+        profile_lines=lambda text="": _profile_lines(server, text),
+        answer_length=lambda: _answer_length(server),
+        people=lambda: _people(server),
         task_state=lambda: _task_state(server, layer),
         screen_async=screen,
     )

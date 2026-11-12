@@ -16,6 +16,7 @@ is passed on unless ``conversation.share_screen_text`` allows screen text for th
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -47,14 +48,17 @@ class HandoverContext:
 
     lines: tuple[tuple[str, str], ...]  # (speaker, text): speaker "person" or "heliox", oldest first
     understood_as: str = ""  # the fast model's written-out request; for the planner only
+    people: tuple[str, ...] = ()  # who the request means ("Their manager is Priya."), from what the person told Heliox
 
     def for_planner(self) -> str:
-        if not self.lines and not self.understood_as:
+        if not self.lines and not self.understood_as and not self.people:
             return ""
         out = [PLANNER_PREAMBLE]
         out += [f"{'The person' if who == 'person' else 'Heliox'}: {text}" for who, text in self.lines]
         if self.understood_as:
             out.append(f"Heliox understood the request as: {self.understood_as}")
+        if self.people:
+            out.append("Who the person means (they told Heliox): " + " ".join(self.people))
         return "\n".join(out)
 
     def person_lines(self) -> tuple[str, ...]:
@@ -85,6 +89,7 @@ def build_context(
     max_turns: int = MAX_TURNS,
     turn_chars: int = TURN_CHARS,
     total_chars: int = TOTAL_CHARS,
+    people: dict[str, str] | None = None,
 ) -> HandoverContext | None:
     """The context for one hand-over, from the conversation's turns before it (``context.Turn`` objects).
 
@@ -112,9 +117,20 @@ def build_context(
     budget = total_chars - len(reading)
     while kept and sum(len(text) for _, text in kept) > budget:
         kept.pop(0)  # oldest first
-    if not kept and not reading:
+    meant = people_meant(words, people or {})
+    if not kept and not reading and not meant:
         return None
-    return HandoverContext(lines=tuple(kept), understood_as=reading)
+    return HandoverContext(lines=tuple(kept), understood_as=reading, people=meant)
+
+
+def people_meant(words: str, people: dict[str, str]) -> tuple[str, ...]:
+    """ "Their manager is Priya." for each relation the request names as "my <relation>"."""
+    folded = words.casefold()
+    return tuple(
+        f"Their {relation} is {name}."
+        for relation, name in sorted(people.items())
+        if relation and name and re.search(rf"\bmy {re.escape(relation.casefold())}\b", folded)
+    )
 
 
 def screen_text_ok_for_planner(config: Any) -> bool:

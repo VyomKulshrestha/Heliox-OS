@@ -111,6 +111,8 @@ LOCAL_LOADING = "Loading the local model, one moment."
 SPOKEN_WORD_CAP = (
     25  # about 10 seconds of speech: a sentence that would go past it is not started (the prompt asks for 20)
 )
+# The spoken cap when the person set an answer length (the context tells the model the same).
+PERSONAL_WORD_CAPS = {"short": 15, "detailed": 60}
 OFFER_SECONDS = 60.0  # how long "Do you want me to ...?" waits for a yes
 YES = frozenset(
     {
@@ -664,7 +666,7 @@ class ConversationLayer:
                         logger.info("Dropped a sentence claiming an action the fast model cannot take: %r", clean)
                     continue
                 words_so_far = sum(len(part.split()) for part in said)
-                if not typed and said and words_so_far + len(clean.split()) > SPOKEN_WORD_CAP:
+                if not typed and said and words_so_far + len(clean.split()) > self._word_cap():
                     # Long enough to listen to: the reply ends at the last whole sentence (never after a clause
                     # cut at a comma: those are joined to their sentence before this point).
                     capped = True
@@ -753,6 +755,21 @@ class ConversationLayer:
         result.done = True
         result.timings["done_ms"] = (self._clock() - started) * 1000
         return result
+
+    def _people(self) -> dict[str, str]:
+        try:
+            return dict(self.sources.people() or {})
+        except Exception:
+            return {}
+
+    def _word_cap(self) -> int:
+        """How long a spoken reply may run: the person's own answer style when they set one ("keep it short",
+        "I like detail"), else SPOKEN_WORD_CAP."""
+        try:
+            length = str(self.sources.answer_length() or "")
+        except Exception:
+            length = ""
+        return PERSONAL_WORD_CAPS.get(length, SPOKEN_WORD_CAP)
 
     def _prepare_next(self, queue: asyncio.Queue[str | None]) -> None:
         """Hand the sentence after this one to the speech engine to synthesise while this one plays."""
@@ -873,6 +890,7 @@ class ConversationLayer:
                 understood_as=intent.request if intent.source == "model" else "",
                 screen_text_ok=bool(self._screen_text_ok()),
                 heliox_saw_screen_text=self._saw_screen_text,
+                people=self._people(),
             )
         except Exception:
             logger.debug("No conversation context for the planner", exc_info=True)
