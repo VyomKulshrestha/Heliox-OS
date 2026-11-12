@@ -358,7 +358,7 @@ jobs:
             # window.
             python tests/platform_real/live_end_to_end_check.py --python /usr/bin/python3
             reader=$(( reader + $? ))
-            # Live never reads a password manager's or Heliox's own window; an error on screen; back and forth.
+            # Live never reads the window of a password manager or of Heliox itself; an error on screen; back and forth.
             python tests/platform_real/live_more_checks.py --python /usr/bin/python3
             exit $(( reader + $? ))
           '
