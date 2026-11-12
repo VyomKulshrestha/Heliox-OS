@@ -29,11 +29,28 @@
     focused_text?: ReaderState;
     timing?: Timing;
     catches?: Catches;
+    held_back?: HeldKind[];
   };
+  type HeldKind = { kind: string; label: string; sentence: string; seconds_left: number };
 
   let kinds = $state<Kind[]>([]);
   let timing = $state<Timing | null>(null);
   let catches = $state<Catches | null>(null);
+  let notNowHolds = $state<HeldKind[]>([]);
+
+  function timeLeft(seconds: number): string {
+    const minutes = Math.max(1, Math.round(seconds / 60));
+    return minutes === 1 ? "about a minute left" : `${minutes} minutes left`;
+  }
+
+  async function undoHold(kind: string) {
+    try {
+      const status = await call<Status>("live_set", { unsnooze: kind });
+      if (status.status === "ok") notNowHolds = status.held_back ?? [];
+    } catch {
+      /* the hold ends by itself */
+    }
+  }
   let readsFocusedText = $state(true);
   let reader = $state<ReaderState | null>(null);
   let error = $state("");
@@ -137,6 +154,7 @@
         reader = status.focused_text ?? null;
         timing = status.timing ?? null;
         catches = status.catches ?? null;
+        notNowHolds = status.held_back ?? [];
       }
     } catch {
       /* shown without the per-kind list until the daemon answers */
@@ -263,6 +281,18 @@
     </label>
   </div>
 
+  {#if notNowHolds.length}
+    <div class="block" data-testid="live-held-back">
+      <span class="block-label">Held back after "Not now"</span>
+      {#each notNowHolds as item (item.kind)}
+        <div class="held-row">
+          <span>{item.label} ({timeLeft(item.seconds_left)})</span>
+          <button type="button" class="link" onclick={() => void undoHold(item.kind)}>Undo</button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if kinds.length}
     <div class="block">
       <span class="block-label">What it points out</span>
@@ -324,6 +354,25 @@
     color: var(--text-secondary);
     font-size: var(--text-sm);
     line-height: 1.5;
+  }
+
+  .held-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+  }
+
+  .held-row .link {
+    padding: 0;
+    border: 0;
+    color: var(--accent);
+    background: none;
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
 
   .listening-note {

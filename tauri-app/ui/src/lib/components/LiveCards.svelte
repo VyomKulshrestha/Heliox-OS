@@ -32,55 +32,65 @@
     {/each}
     {#each $live.cards as card (card.id)}
       {@const note = $live.notes[card.id]}
-      <article
-        class="live-card {card.urgency}"
-        class:done={note === "Fixed"}
-        role={card.urgency === "urgent" ? "alert" : "status"}
-        aria-live={card.urgency === "urgent" ? "assertive" : "polite"}
-        data-testid="live-card"
-      >
-        <header>
-          <span class="icon" aria-hidden="true">
-            {#if card.urgency === "urgent"}<ShieldAlert size={15} />{:else if card.urgency === "normal"}<CircleAlert
-                size={15}
-              />{:else}<Lightbulb size={15} />{/if}
-          </span>
-          <strong class="title"
-            ><span class="sr-only">{`${URGENCY_WORDS[card.urgency] ?? ""} `}</span>{card.title}</strong
-          >
-          {#if note}<span class="note">{note}</span>{/if}
-          <button
-            type="button"
-            class="close"
-            aria-label="Not now"
-            title="Not now"
-            onclick={() => live.feedback(card, "dismissed")}
-          >
-            <X size={14} />
-          </button>
-        </header>
-        <p class="message">{card.message}</p>
-        {#if card.evidence}
-          <p class="evidence">
-            <span class="sr-only">About: </span><q>{card.evidence}</q>{#if card.app}<span class="where"
-                >in {card.app}</span
-              >{/if}
-          </p>
-        {/if}
-        {#if $live.explanations[card.id]}
-          <p class="explanation">{$live.explanations[card.id]}</p>
-        {/if}
-        <div class="actions">
-          {#if card.fix && note !== "Fixed"}
-            <button type="button" class="primary" onclick={() => useFix(card)}>{fixLabel(card)}</button>
+      {@const held = $live.held[card.id]}
+      {#if held}
+        <article class="live-card held" role="status" aria-live="polite" data-testid="live-card-held">
+          <p class="message">{held.sentence}</p>
+          <div class="actions">
+            <button type="button" onclick={() => live.undoHold(card, held)}>Undo</button>
+          </div>
+        </article>
+      {:else}
+        <article
+          class="live-card {card.urgency}"
+          class:done={note === "Fixed"}
+          role={card.urgency === "urgent" ? "alert" : "status"}
+          aria-live={card.urgency === "urgent" ? "assertive" : "polite"}
+          data-testid="live-card"
+        >
+          <header>
+            <span class="icon" aria-hidden="true">
+              {#if card.urgency === "urgent"}<ShieldAlert size={15} />{:else if card.urgency === "normal"}<CircleAlert
+                  size={15}
+                />{:else}<Lightbulb size={15} />{/if}
+            </span>
+            <strong class="title"
+              ><span class="sr-only">{`${URGENCY_WORDS[card.urgency] ?? ""} `}</span>{card.title}</strong
+            >
+            {#if note}<span class="note">{note}</span>{/if}
+            <button
+              type="button"
+              class="close"
+              aria-label="Not now"
+              title="Not now"
+              onclick={() => live.feedback(card, "dismissed")}
+            >
+              <X size={14} />
+            </button>
+          </header>
+          <p class="message">{card.message}</p>
+          {#if card.evidence}
+            <p class="evidence">
+              <span class="sr-only">About: </span><q>{card.evidence}</q>{#if card.app}<span class="where"
+                  >in {card.app}</span
+                >{/if}
+            </p>
           {/if}
-          {#if card.detail && !$live.explanations[card.id]}
-            <button type="button" onclick={() => live.explain(card)}>Why?</button>
+          {#if $live.explanations[card.id]}
+            <p class="explanation">{$live.explanations[card.id]}</p>
           {/if}
-          <button type="button" onclick={() => live.feedback(card, "helpful")}>Thanks</button>
-          <button type="button" class="quiet" onclick={() => live.feedback(card, "mute")}>Don't mention these</button>
-        </div>
-      </article>
+          <div class="actions">
+            {#if card.fix && note !== "Fixed"}
+              <button type="button" class="primary" onclick={() => useFix(card)}>{fixLabel(card)}</button>
+            {/if}
+            {#if card.detail && !$live.explanations[card.id]}
+              <button type="button" onclick={() => live.explain(card)}>Why?</button>
+            {/if}
+            <button type="button" onclick={() => live.feedback(card, "helpful")}>Thanks</button>
+            <button type="button" class="quiet" onclick={() => live.feedback(card, "mute")}>Don't mention these</button>
+          </div>
+        </article>
+      {/if}
     {/each}
   </div>
 {/if}
@@ -118,6 +128,15 @@
 
   .live-card.done {
     opacity: 0.55;
+  }
+
+  .live-card.held {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+
+  .live-card.held .actions {
+    margin-top: 0;
   }
 
   header {

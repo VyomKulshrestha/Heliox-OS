@@ -174,6 +174,7 @@ def memory_talk_for(server: Any) -> Any:
         talk = MemoryTalk(
             profile=lambda: getattr(server, "_user_profile", None),
             goals=goals.list if goals is not None else list,
+            notes_enabled=lambda: bool(getattr(getattr(server.config, "memory", None), "passing_notes", True)),
         )
         server._memory_talk = talk
     return talk

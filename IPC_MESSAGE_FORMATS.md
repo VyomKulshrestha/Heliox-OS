@@ -597,12 +597,14 @@ Every 200 ms it decides, per correction it has noticed, whether to wait, show a 
   path, ok, problems, admitted, held_back: [{id, problems}]}], rules, held_back}`.
 - `live_set` takes any of `enabled`, `paused` (this session only), `level` (`quiet`, `balanced`, `proactive`),
   `read_focused_text`, `ocr_fallback`, `listen_to_speech`, `personal_timing`, `grounded_checks`, `grounded_model`
-  (an Ollama model name), `muted_kinds`, and `reset_timing: true` (forget the learned pauses), and returns
-  `live_status`. Corrections from grounded checks arrive as ordinary `live_interjection` cards with kind
+  (an Ollama model name), `muted_kinds`, `reset_timing: true` (forget the learned pauses) and `unsnooze: <kind>`
+  (lift a "not now"), and returns `live_status`, whose `held_back` lists `[{kind, label, sentence, seconds_left}]`
+  for the kinds "not now" holds back. Corrections from grounded checks arrive as ordinary `live_interjection` cards with kind
   `personal_fact`.
 - `live_feedback {id, verdict}` with `helpful`, `dismissed`, `used_fix` or `mute` (mutes that kind) ->
-  `{status, kind, relevance}`. Feedback moves the per-kind relevance that decides whether a kind is spoken,
-  shown or held back.
+  `{status, kind, relevance, held?}`. Feedback moves the per-kind relevance that decides whether a kind is spoken,
+  shown or held back. `dismissed` on a card that is not urgent ("Not now") also holds that kind back for half an
+  hour and returns `held: {kind, sentence, seconds}`, shown in the card's place with an Undo.
 - `live_explain {id?}` -> `{status, text}`: the correction, its detail and its fix, for "why?".
 
 Notifications: `live_interjection {id, kind, title, message, detail, evidence, fix, fix_kind, urgency, spoken,

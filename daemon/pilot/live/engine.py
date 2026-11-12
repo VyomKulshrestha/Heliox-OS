@@ -198,6 +198,29 @@ def _lower_first(text: str) -> str:
     return text[0].lower() + text[1:] if first.casefold() in _COMMON_FIRST else text
 
 
+# Each kind in a few words that fit "I'll hold back ... for the next half hour."
+HELD_WORDS = {
+    "weekday_date": "catches about weekdays and dates",
+    "arithmetic": "arithmetic slips",
+    "profile_fact": "name mix-ups",
+    "missing_attachment": "attachment reminders",
+    "repeated_word": "doubled words",
+    "personal_fact": "checks against your calendar and lists",
+    "community_catch": "catch-pack catches",
+    "stuck": "offers of help when you seem stuck",
+    "commitment": "reminder offers for your promises",
+    "said_vs_typed": "checks of what you say against what you wrote",
+    "error_on_screen": "error explanations",
+    "risky_command": "warnings about risky commands",
+    "secret_in_text": "warnings about keys in messages",
+}
+
+
+def held_sentence(kind: str) -> str:
+    """What "not now" did, the same words by voice, on the card and in Settings."""
+    return f"I'll hold back {HELD_WORDS.get(kind, 'that kind of thing')} for the next half hour."
+
+
 def because(entry: dict[str, Any]) -> str:
     """Why Live spoke up, as one or two spoken sentences built from what it noticed: where it was, the person's own
     words it saw or heard, and what was wrong with them. Nothing is invented; every part comes from the card."""
@@ -1028,7 +1051,8 @@ class LiveCompanion:
         entry = self._find(correction_id)
         if entry is None:
             return {"status": "error", "message": "That correction is no longer available."}
-        if from_person and verdict == "dismissed" and entry.get("urgency") != URGENT:
+        held = from_person and verdict == "dismissed" and entry.get("urgency") != URGENT
+        if held:
             self.snooze(entry["kind"])
         if verdict == "mute":
             self.relevance.update(entry["kind"], "dismissed")
@@ -1040,7 +1064,40 @@ class LiveCompanion:
         if correction_id in self._visible:
             self._visible.pop(correction_id, None)
             await self._emit("live_interjection_withdrawn", {"id": correction_id, "reason": verdict})
-        return {"status": "ok", "kind": entry["kind"], "relevance": round(self.relevance.score(entry["kind"]), 2)}
+        result = {"status": "ok", "kind": entry["kind"], "relevance": round(self.relevance.score(entry["kind"]), 2)}
+        if held:
+            # The card's place shows what happened, with an Undo: closing cards out of habit must not leave Live
+            # quiet without the person knowing why.
+            result["held"] = {
+                "kind": entry["kind"],
+                "sentence": held_sentence(entry["kind"]),
+                "seconds": SNOOZE_SECONDS,
+            }
+        return result
+
+    def unsnooze(self, kind: str) -> bool:
+        """Undo "not now" for a kind (the card's Undo, Settings)."""
+        if not self._snooze_loaded:
+            self._load_snoozes()
+        if self._snoozed.pop(kind, None) is None:
+            return False
+        self._save_snoozes()
+        return True
+
+    def held_back(self) -> list[dict[str, Any]]:
+        """The kinds "not now" holds back now, with the time left, for Settings."""
+        now = self._clock()
+        current = self.snoozed_kinds(now)  # loads what a previous run held back
+        return [
+            {
+                "kind": kind,
+                "label": KIND_LABELS.get(kind, kind),
+                "sentence": held_sentence(kind),
+                "seconds_left": round(until - now),
+            }
+            for kind, until in sorted(self._snoozed.items())
+            if kind in current
+        ]
 
     def explain(self, correction_id: str = "") -> str:
         entry = self._find(correction_id) if correction_id else self._latest(self._clock())
@@ -1081,7 +1138,7 @@ class LiveCompanion:
         if _DISMISS.match(normalized):
             await self.feedback(entry["id"], "dismissed", from_person=True)
             if entry.get("urgency") != URGENT:
-                return LiveReply("Okay. I won't bring that kind of thing up for the next half hour.")
+                return LiveReply(f"Okay. {held_sentence(entry['kind'])}")
             return LiveReply("Okay, leaving it.")
         if _FIX.match(normalized):
             if entry.get("fix_kind") == "ask" and entry.get("fix"):
@@ -1119,6 +1176,7 @@ class LiveCompanion:
             "relevance": self.relevance.snapshot(),
             "muted_kinds": list(getattr(cfg, "muted_kinds", []) or []),
             "personal_timing": self._personal_timing(),
+            "held_back": self.held_back(),
             "grounded": {"enabled": self._grounding(), **(self.grounded.stats() if self.grounded else {})},
             "timing": self.timing.snapshot(LEVELS.get(getattr(cfg, "level", ""), LEVELS[DEFAULT_LEVEL]).pause_seconds),
         }

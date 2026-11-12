@@ -1,0 +1,205 @@
+[
+  {
+    "name": "recognised: wake words heard as \"Do you\", ordinal in digits",
+    "app": "",
+    "title": "",
+    "expect": [
+      "weekday_date"
+    ],
+    "steps": [
+      {
+        "say": "Do you remind me that the launch call is Monday the 12th of November at 10",
+        "seconds": 3.6
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "recognised: wake words heard as \"The works\", all in words",
+    "app": "",
+    "title": "",
+    "expect": [
+      "weekday_date"
+    ],
+    "steps": [
+      {
+        "say": "The works remind me that the launch call is Monday, the twelfth of November at ten.",
+        "seconds": 3.8
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "recognised: no punctuation, lower case",
+    "app": "",
+    "title": "",
+    "expect": [
+      "weekday_date"
+    ],
+    "steps": [
+      {
+        "say": "Remind me that the launch call is monday the twelfth of november at ten",
+        "seconds": 3.4
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "recognised: a promise with the name and the weekday misheard",
+    "app": "",
+    "title": "",
+    "expect": [
+      "commitment"
+    ],
+    "steps": [
+      {
+        "say": "I'll send ken the report by fryday",
+        "seconds": 2.6
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "recognised: \"Monday\" heard as \"by me\" (a known miss)",
+    "app": "",
+    "title": "",
+    "expect": [
+      "weekday_date"
+    ],
+    "steps": [
+      {
+        "say": "Viewer, remind me that the launch call is by me the 12th of November at 10th.",
+        "seconds": 3.8
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ],
+    "known_miss": "the recogniser wrote 'by me' for 'Monday'; no weekday is left to check"
+  },
+  {
+    "name": "recognised: a garbled promise with no one to promise to (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [
+      {
+        "say": "Pre of the deck by friday",
+        "seconds": 2.6
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "recognised: misheard words (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [
+      {
+        "say": "Where we store home",
+        "seconds": 2.6
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "recognised: a garbled question (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [
+      {
+        "say": "what's am I to do lis",
+        "seconds": 2.6
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "recognised: a question about Heliox (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [
+      {
+        "say": "Here he works. What can I say?",
+        "seconds": 2.6
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "recognised: a correction to a running task (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [
+      {
+        "say": "Skip the back up",
+        "seconds": 2.6
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "recognised: an answer to a question (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [
+      {
+        "say": "No problem go ahead",
+        "seconds": 2.6
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "recognised: a date said right (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [
+      {
+        "say": "Remind me that the launch call is Thursday the 12th of November at 10",
+        "seconds": 3.4
+      },
+      {
+        "pause": 4.0,
+        "label": "done"
+      }
+    ]
+  }
+]

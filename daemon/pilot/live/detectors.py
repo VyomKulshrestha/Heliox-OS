@@ -1433,6 +1433,53 @@ _QUOTED = re.compile(
 )
 
 
+# ── What screen reading (OCR) gets wrong, put right before the error checks read it ──
+
+_KNOWN_ERRNO = frozenset(
+    {"EADDRINUSE", "ECONNREFUSED", "ECONNRESET", "ENOENT", "EACCES", "EPERM", "ETIMEDOUT", "EADDRNOTAVAIL", "EEXIST"}
+)
+# A word whose letters were read as digits: "modu1e", "Err0r", "pyth0n" (no other digits in it).
+_LETTER_DIGITS = re.compile(r"\b(?=[A-Za-z01]*[A-Za-z]{2})(?=[A-Za-z01]*[01])[A-Za-z01]{3,}\b")
+# A number whose digits were read as letters, where a number must be: ":::3OOO", "127.0.0.l:5432", "port 8O80".
+_NUMBER_PLACE = re.compile(
+    r"(?<=:)[0-9OolI]{2,5}\b|(?<=\bport )[0-9OolI]{2,5}\b|(?<=\.)[0-9OolI]{1,3}(?=:\d|:[0-9OolI])"
+)
+# An error class name split in two: "ModuleNot FoundError".
+_SPLIT_ERROR = re.compile(r"\b([A-Z][A-Za-z]+) ([A-Z][a-z]+(?:Error|Exception))\b")
+_SPLIT_ERRNO = re.compile(r"\b(E[A-Z]{2,}) ([A-Z]{2,})\b")
+
+
+def repair_ocr(text: str) -> str:
+    """The usual recognition damage in screen text, undone where the right reading is certain enough."""
+
+    def letters(match: re.Match[str]) -> str:
+        word = match.group(0)
+        return word.replace("0", "o").replace("1", "l")
+
+    def digits(match: re.Match[str]) -> str:
+        return match.group(0).translate(str.maketrans({"O": "0", "o": "0", "l": "1", "I": "1"}))
+
+    def errno(match: re.Match[str]) -> str:
+        joined = match.group(1) + match.group(2)
+        return joined if joined in _KNOWN_ERRNO else match.group(0)
+
+    text = _NUMBER_PLACE.sub(digits, text)
+    text = _LETTER_DIGITS.sub(letters, text)
+    text = _SPLIT_ERROR.sub(lambda m: m.group(1) + m.group(2), text)
+    return _SPLIT_ERRNO.sub(errno, text)
+
+
+def _line_goes_on(text: str, evidence: str) -> bool:
+    """On screen, real error output ends its line; a headline or a sentence about an error goes on ("Fixing
+    ModuleNotFoundError: No module named 'requests' in five minutes")."""
+    at = text.find(evidence)
+    if at < 0 or not evidence:
+        return False
+    end = text.find("\n", at + len(evidence))
+    rest = text[at + len(evidence) : end if end >= 0 else len(text)]
+    return len(re.findall(r"[A-Za-z]{2,}", rest)) >= 2
+
+
 def only_quoted(text: str, evidence: str) -> bool:
     """Every place ``evidence`` appears in ``text`` is inside a quotation (straight, curly or backticks)."""
     if not evidence:
@@ -1466,6 +1513,8 @@ def detect(text: str, ctx: TextContext, *, kinds: tuple[str, ...] = KINDS) -> li
     if ctx.source == "speech":
         norm = sp.normalise(text)
         read, where = norm.text, replace(ctx, spoken=norm)
+    elif ctx.source == "screen_ocr":
+        read = repair_ocr(text)
     results: list[Correction] = []
     for kind in kinds:
         if kind not in allowed or kind not in DETECTORS:
@@ -1477,6 +1526,8 @@ def detect(text: str, ctx: TextContext, *, kinds: tuple[str, ...] = KINDS) -> li
             continue
     if norm is not None:
         results = [_in_said_words(c, norm) for c in results]
+    elif ctx.source == "screen_ocr":
+        results = [c for c in results if c.kind != "error_on_screen" or not _line_goes_on(read, c.evidence)]
     else:
         results = [c for c in results if c.kind not in MENTION_KINDS or not only_quoted(read, c.evidence)]
     order = {URGENT: 0, NORMAL: 1, LOW: 2}

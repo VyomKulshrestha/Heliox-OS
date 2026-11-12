@@ -7282,6 +7282,8 @@ class PilotServer:
             self._live.set_paused(bool(params["paused"]))
         if params.get("reset_timing") is True:
             self._live.timing.reset()
+        if isinstance(params.get("unsnooze"), str):
+            self._live.unsnooze(params["unsnooze"])  # Undo for "not now", from the card or Settings
         keys = (
             "enabled",
             "level",

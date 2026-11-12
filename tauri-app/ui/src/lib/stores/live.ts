@@ -37,6 +37,14 @@ export interface LiveState {
   explanations: Record<string, string>;
   /** Brief confirmation shown on a card after an action, by card id. */
   notes: Record<string, string>;
+  /** Cards closed with "Not now" that held their kind back: shown in the card's place with an Undo, by card id. */
+  held: Record<string, HeldBack>;
+}
+
+export interface HeldBack {
+  kind: string;
+  /** "I'll hold back catches about weekdays and dates for the next half hour." (from the daemon) */
+  sentence: string;
 }
 
 const INITIAL: LiveState = {
@@ -47,7 +55,11 @@ const INITIAL: LiveState = {
   cards: [],
   explanations: {},
   notes: {},
+  held: {},
 };
+
+/** How long the "held back" note stays in the card's place before it goes by itself. */
+export const HELD_NOTE_MS = 12000;
 
 const MAX_CARDS = 3;
 
@@ -67,7 +79,11 @@ function createLiveStore() {
   const { subscribe, update, set } = writable<LiveState>({ ...INITIAL });
 
   function drop(id: string) {
-    update((s) => ({ ...s, cards: s.cards.filter((card) => card.id !== id) }));
+    update((s) => {
+      const held = { ...s.held };
+      delete held[id];
+      return { ...s, cards: s.cards.filter((card) => card.id !== id), held };
+    });
   }
 
   onNotification((method, params) => {
@@ -124,11 +140,30 @@ function createLiveStore() {
   }
 
   async function feedback(card: LiveCard, verdict: "helpful" | "dismissed" | "used_fix" | "mute") {
+    // "Not now" on a card that is not urgent holds that kind back for half an hour: the card's place then says so,
+    // with an Undo, instead of vanishing. An urgent card's "Not now" holds nothing back and just goes.
+    const mayHold = verdict === "dismissed" && card.urgency !== "urgent";
+    if (!mayHold) drop(card.id);
+    try {
+      const result = await call<{ status?: string; held?: HeldBack }>("live_feedback", { id: card.id, verdict });
+      if (mayHold && result?.held) {
+        const held = result.held;
+        update((s) => ({ ...s, held: { ...s.held, [card.id]: held } }));
+        setTimeout(() => drop(card.id), HELD_NOTE_MS);
+      } else if (mayHold) {
+        drop(card.id);
+      }
+    } catch {
+      drop(card.id); /* the card is gone either way */
+    }
+  }
+
+  async function undoHold(card: LiveCard, held: HeldBack) {
     drop(card.id);
     try {
-      await call("live_feedback", { id: card.id, verdict });
+      await call("live_set", { unsnooze: held.kind });
     } catch {
-      /* the card is gone either way */
+      /* Settings, Live still lists it with its own Undo */
     }
   }
 
@@ -158,7 +193,17 @@ function createLiveStore() {
     await session.sendCommand(card.fix);
   }
 
-  return { subscribe, load, setPaused, feedback, explain, copyFix, askHeliox, reset: () => set({ ...INITIAL }) };
+  return {
+    subscribe,
+    load,
+    setPaused,
+    feedback,
+    undoHold,
+    explain,
+    copyFix,
+    askHeliox,
+    reset: () => set({ ...INITIAL }),
+  };
 }
 
 export const live = createLiveStore();

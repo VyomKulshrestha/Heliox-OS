@@ -32,6 +32,7 @@
   import LiveCompanionPanel from "./LiveCompanionPanel.svelte";
   import LocalModelsPanel from "./LocalModelsPanel.svelte";
   import OffersPanel from "./OffersPanel.svelte";
+  import PassingNotesPanel from "./PassingNotesPanel.svelte";
   import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
   import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
   import RecordedWorkflowsPanel from "./RecordedWorkflowsPanel.svelte";
@@ -2779,6 +2780,7 @@
   <LiveCompanionPanel />
   <LocalModelsPanel />
   <OffersPanel />
+  <PassingNotesPanel />
   <OptionalParts />
   <RemoveHelioxFiles />
 </div>

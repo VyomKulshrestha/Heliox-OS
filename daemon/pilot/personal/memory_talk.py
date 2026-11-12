@@ -25,7 +25,7 @@ from datetime import datetime
 from typing import Any
 
 from pilot.personal.context import words
-from pilot.personal.passing import Note, passing_note
+from pilot.personal.passing import Note, never_kept, passing_note
 
 logger = logging.getLogger("pilot.personal.memory_talk")
 
@@ -81,10 +81,12 @@ class MemoryTalk:
         profile: Callable[[], Any],
         goals: Callable[[], list[dict[str, Any]]] = list,
         now: Callable[[], datetime] = datetime.now,
+        notes_enabled: Callable[[], bool] = lambda: True,
     ) -> None:
         self._profile = profile
         self._goals = goals
         self._now = now
+        self._notes_enabled = notes_enabled  # memory.passing_notes
 
     async def answer(self, text: str) -> str | None:
         profile = self._profile()
@@ -141,10 +143,21 @@ class MemoryTalk:
                 return f'Okay, I\'ve forgotten "{removed}".'
             return f"I don't have anything stored about {what}, so there was nothing to forget."
 
+        if not self._notes_on():
+            return None
         note = passing_note(raw, self._now())
         if note is not None:
+            why = never_kept(raw)
+            if why:
+                return f"I haven't kept that, because {why}. I don't keep notes like that from things said in passing."
             return await self._keep(profile, note)
         return None
+
+    def _notes_on(self) -> bool:
+        try:
+            return bool(self._notes_enabled())
+        except Exception:
+            return True
 
     async def _keep(self, profile: Any, note: Note) -> str | None:
         """Keep a note said in passing, replacing an older note about the same thing."""

@@ -46,6 +46,17 @@ from the timeline, text inside images or video without screen reading on, the bo
 (only fields you type in), other fields of a form than the one you are in (so it cannot check a mail's recipients),
 and speech said near the microphone that was not for Heliox (see below).
 
+The most valuable gap: a risky command typed in a terminal that exposes nothing to accessibility. On Windows every
+console and Windows Terminal is read; on Linux kitty, Alacritty, WezTerm, foot and xterm expose no text (and those are
+what many developers use), and on macOS only Terminal.app and iTerm2 are read. Closing it does not need the terminals'
+help: an opt-in shell integration, the way prompt tools hook in, can hand Heliox the line being edited before Enter.
+In zsh a ZLE widget bound to `zle-line-pre-redraw` sees `$BUFFER`; in fish a `commandline` binding does the same; in
+bash it needs ble.sh, since plain bash only offers hooks after Enter. The hook writes the line to a local socket that
+only the person's own Heliox reads, and Live checks it as it checks a terminal field today. kitty (`kitty @ get-text`
+with remote control on) and WezTerm (`wezterm cli get-text`) can also be read directly. About two to three days for
+zsh and fish with tests on the CI runners, a day each for kitty and WezTerm; the person turns it on and can see the
+lines it added to their shell's start-up file.
+
 Speech heard near the microphone but not said to Heliox (in an open conversation, a sentence for someone else)
 reaches Live only as text, can give at most a silent card, is kept in memory for 90 seconds and then forgotten, and
 is never stored as conversation or sent to any model. Outside an open conversation Live does not hear it at all.

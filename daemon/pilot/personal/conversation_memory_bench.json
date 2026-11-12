@@ -198,23 +198,23 @@
       "why": "a note said in passing is forgotten on request, and its words are gone from the memory database",
       "turns": [
         {
-          "say": "my dentist appointment is tomorrow at four",
-          "reply_starts": "Noted: \"My dentist appointment is tomorrow"
+          "say": "my haircut is tomorrow at four",
+          "reply_starts": "Noted: \"My haircut is tomorrow"
         },
         {
           "next_day": true
         },
         {
-          "say": "forget about my dentist appointment",
-          "reply_starts": "Okay, I've forgotten \"My dentist appointment"
+          "say": "forget about my haircut",
+          "reply_starts": "Okay, I've forgotten \"My haircut"
         },
         {
-          "say": "When is the dentist appointment?",
+          "say": "When is the haircut?",
           "model_forbid": [
-            "dentist appointment is"
+            "haircut is"
           ],
           "store_forbid": [
-            "dentist appointment is tomorrow"
+            "haircut is tomorrow"
           ]
         }
       ]

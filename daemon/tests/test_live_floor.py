@@ -312,7 +312,7 @@ async def test_not_now_holds_that_kind_back_and_dont_mention_these_mutes_it(tmp_
     await run_for(live, clock, 6)
     assert len(cards(events)) == 1
     reply = await live.handle_reply("not now")
-    assert reply.reply == "Okay. I won't bring that kind of thing up for the next half hour."
+    assert reply.reply == "Okay. I'll hold back arithmetic slips for the next half hour."
     assert "arithmetic" in live.snoozed_kinds()
     text[0] += " Also 3 x 3 = 10 so that is fine."
     await run_for(live, clock, 6)

@@ -665,6 +665,9 @@ class MemoryConfig:
     pruning_min_memories: int = 10
     max_context_tokens: int = 8000
     max_recent_messages: int = 10
+    # Keep things said to Heliox in passing ("my flight is on Friday") as short-lived notes (pilot.personal.passing).
+    # Never health, money, secrets or other people's private details. Off: only "remember that ..." is kept.
+    passing_notes: bool = True
 
 
 @dataclass
@@ -1293,6 +1296,7 @@ def _validate_config_types(raw: dict) -> None:
             "pruning_min_memories": int,
             "max_context_tokens": int,
             "max_recent_messages": int,
+            "passing_notes": bool,
         },
         "rss": {
             "enabled": bool,

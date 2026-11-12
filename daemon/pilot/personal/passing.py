@@ -9,6 +9,12 @@ name, or a week after they were said when they name none. "Forget about my fligh
 
 Only sentences said or typed to Heliox reach this (never speech overheard near the microphone), it is parsed in code,
 and what is kept goes where every profile line goes: the planner's and the conversation model's context.
+
+Never kept this way, whatever the wording (``never_kept``): anything that looks like a password, key or code (the
+profile's own refusal also applies); health (appointments with a doctor or dentist, treatment, conditions,
+medication); money amounts (a price, a salary, the rent); and other people's private details beyond a name and a
+relation (someone's address, number, email, health or money). Heliox says it did not keep it and why. One switch,
+``memory.passing_notes`` (on by default), turns the whole thing off.
 """
 
 from __future__ import annotations
@@ -19,6 +25,45 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
 KEEP_WITHOUT_DATE = timedelta(days=7)
+
+_HEALTH = re.compile(
+    r"\b(?:doctor|doctors|gp|dentist|dental|orthodontist|therapist|therapy|counsell?or|psychiatrist|psychologist"
+    r"|physio|physiotherapy|hospital|clinic|surgery|operation|scan|mri|x-?ray|blood test|test results|diagnosis"
+    r"|diagnosed|medication|medicine|pills?|prescription|dose|chemo|chemotherapy|radiotherapy|cancer|diabetes"
+    r"|hiv|pregnan(?:t|cy)|ivf|miscarriage|depression|anxiety|adhd|autism|mental health|rehab|illness|sick"
+    r"|vaccin(?:e|ation)|injection|std|sti|smear)\b",
+    re.IGNORECASE,
+)
+_MONEY = re.compile(
+    r"[$\u20ac\u00a3\u20b9\u00a5]\s?\d|\b\d[\d,.]*\s?(?:k|grand|dollars?|euros?|pounds?|quid|rupees?|bucks|usd"
+    r"|eur|gbp|inr|lakhs?|crores?)\b|\b(?:salary|wage|wages|pay ?rise|bonus|rent|mortgage|loan|debt|overdraft"
+    r"|bank balance|balance)\b",
+    re.IGNORECASE,
+)
+_SECRET = re.compile(
+    r"\b(?:password|passcode|passphrase|pin|code|key|token|login|username|account number|card number|cvv|sort code"
+    r"|iban|routing number|social security|ssn|passport number|licen[cs]e number)s?\b",
+    re.IGNORECASE,
+)
+_PRIVATE_OF_OTHERS = re.compile(
+    r"\b(?:\w+'s|his|her|their)\s+(?:home |new |old )?(?:address|flat|house|phone|number|mobile|email|e-mail"
+    r"|birthday|date of birth|health|condition|salary|pay|income|bank|account|card|religion|divorce|password)\b",
+    re.IGNORECASE,
+)
+
+
+def never_kept(text: str) -> str:
+    """Why this may not be kept as a note, in a few words, or "" when it may."""
+    if _SECRET.search(text):
+        return "it looks like a password, key or code"
+    if _PRIVATE_OF_OTHERS.search(text):
+        return "it is someone else's private details"
+    if _HEALTH.search(text):
+        return "it is about health"
+    if _MONEY.search(text):
+        return "it is about money"
+    return ""
+
 
 _THING = r"[a-z][\w'-]*(?: [a-z][\w'-]*){0,4}?"
 PASSING = re.compile(
@@ -31,7 +76,7 @@ PASSING = re.compile(
 )
 # A request riding along ("my meeting is at three, remind me before") belongs to the planner, not to a note.
 _REQUEST = re.compile(r"\b(?:remind|tell me|book|set|schedule|can you|could you|would you|please|cancel)\b|\?")
-_NOT_A_THING = frozenset({"name", "password", "pin", "code", "key", "it", "this", "that"})
+_NOT_A_THING = frozenset({"name", "it", "this", "that"})  # secrets are parsed so never_kept can say no
 _DAYS = [d.casefold() for d in calendar.day_name]
 _MONTHS = [m.casefold() for m in calendar.month_name[1:]]
 
@@ -112,4 +157,4 @@ def passing_note(said: str, now: datetime) -> Note | None:
     return Note(thing=thing, text=f"{body} (said on {said_on})", expires=expires, until=until)
 
 
-__all__ = ["Note", "passing_note"]
+__all__ = ["Note", "never_kept", "passing_note"]

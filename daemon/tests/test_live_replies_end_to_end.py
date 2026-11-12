@@ -64,7 +64,7 @@ async def test_by_voice(tmp_path):
     assert why.startswith('In Notepad, you wrote "Tuesday, 14 November"') and "17 November" in why
     assert await server._control_reply("thanks") == "Glad it helped."
     assert server._live.relevance.score("weekday_date") > 2 / 3
-    assert (await server._control_reply("not now")).startswith("Okay. I won't bring that kind of thing up")
+    assert (await server._control_reply("not now")).startswith("Okay. I'll hold back catches about weekdays and dates")
     assert "weekday_date" in server._live.snoozed_kinds()
     assert (await server._control_reply("don't mention these again")).startswith("Okay, I won't mention these")
     assert server.config.live.muted_kinds == ["weekday_date"]
@@ -134,3 +134,40 @@ async def test_the_spoken_forms_after_the_listener_normalises_them(tmp_path):
     offers.mode = lambda: "on"
     offers.mark_offered(Offer("habit:reading", "habit", "Log reading?", "log reading", "Daily."))
     assert await server._control_reply("don't offer that again") == "Okay, I won't offer that again."
+
+
+@pytest.mark.asyncio
+async def test_not_now_says_what_it_held_back_the_same_way_everywhere_and_undo_lifts_it(tmp_path):
+    from pilot.config import PilotConfig
+    from pilot.live.engine import held_sentence
+
+    config = PilotConfig()
+    server, _, clock = make_server(tmp_path, config)
+    card = await raise_card(server, clock)
+    clicked = await server._handle_live_feedback({"id": card["id"], "verdict": "dismissed"}, None)
+    sentence = held_sentence("weekday_date")
+    assert sentence == "I'll hold back catches about weekdays and dates for the next half hour."
+    assert clicked["held"] == {"kind": "weekday_date", "sentence": sentence, "seconds": 1800.0}
+    status = await server._handle_live_status({}, None)
+    [held] = status["held_back"]
+    assert held["sentence"] == sentence and 1790 <= held["seconds_left"] <= 1800  # Settings shows the same words
+
+    # A restart with the hold in place: Settings still lists it, and its Undo lifts it.
+    again, _, _ = make_server(tmp_path, config)
+    assert [h["kind"] for h in (await again._handle_live_status({}, None))["held_back"]] == ["weekday_date"]
+    lifted = await again._handle_live_set({"unsnooze": "weekday_date"}, None)
+    assert lifted["held_back"] == [] and "weekday_date" not in again._live.snoozed_kinds()
+
+    # By voice the reply is the same sentence.
+    third, _, clock_third = make_server(tmp_path, config, text="Call on Friday, 11 November")
+    await raise_card(third, clock_third)
+    assert await third._control_reply("not now") == f"Okay. {sentence}"
+
+
+@pytest.mark.asyncio
+async def test_an_urgent_cards_not_now_holds_nothing_back(tmp_path):
+    server, _, clock = make_server(tmp_path, text="$ git reset --hard HEAD~3")
+    card = await raise_card(server, clock, seconds=2)
+    assert card is not None and card["urgency"] == "urgent"
+    clicked = await server._handle_live_feedback({"id": card["id"], "verdict": "dismissed"}, None)
+    assert "held" not in clicked and server._live.snoozed_kinds() == frozenset()

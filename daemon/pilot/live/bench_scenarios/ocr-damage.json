@@ -1,0 +1,199 @@
+[
+  {
+    "name": "ocr: \"modu1e\" for \"module\"",
+    "app": "chrome.exe",
+    "title": "Build #318 failed - CI",
+    "screen": true,
+    "editable": true,
+    "expect": [
+      "error_on_screen"
+    ],
+    "steps": [
+      {
+        "paste": "Step 5/9 : RUN python -m app\nModuleNotFoundError: No modu1e named 'pydantic'"
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "ocr: an error name split in two",
+    "app": "WindowsTerminal.exe",
+    "title": "python",
+    "screen": true,
+    "editable": true,
+    "expect": [
+      "error_on_screen"
+    ],
+    "steps": [
+      {
+        "paste": "Traceback (most recent call last):\n  File \"main.py\", line 2\nModuleNot FoundError: No module named 'numpy'"
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "ocr: a port read with letter Os",
+    "app": "WindowsTerminal.exe",
+    "title": "npm run start",
+    "screen": true,
+    "editable": true,
+    "expect": [
+      "error_on_screen"
+    ],
+    "steps": [
+      {
+        "paste": "> web@2.1.0 start\nError: listen EADDRINUSE: address already in use :::3OOO"
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "ocr: Err0r and a split errno",
+    "app": "WindowsTerminal.exe",
+    "title": "node server.js",
+    "screen": true,
+    "editable": true,
+    "expect": [
+      "error_on_screen"
+    ],
+    "steps": [
+      {
+        "paste": "Err0r: listen EADDRIN USE: address already in use :::8080"
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "ocr: a command name with a zero",
+    "app": "WindowsTerminal.exe",
+    "title": "bash",
+    "screen": true,
+    "editable": true,
+    "expect": [
+      "error_on_screen"
+    ],
+    "steps": [
+      {
+        "paste": "$ pyth0n3 manage.py runserver\nbash: pyth0n3: command not found"
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "ocr: code that handles an error (must not fire)",
+    "app": "Code.exe",
+    "title": "loader.py - Visual Studio Code",
+    "screen": true,
+    "editable": true,
+    "expect": [],
+    "steps": [
+      {
+        "paste": "try:\n    import httpx\nexcept ModuleNotFoundError:\n    httpx = None"
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "ocr: a clean build summary (must not fire)",
+    "app": "devenv.exe",
+    "title": "Build output",
+    "screen": true,
+    "editable": true,
+    "expect": [],
+    "steps": [
+      {
+        "paste": "Build succeeded.\n    0 Warning(s)\n    0 Error(s)"
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "ocr: a headline about an error (must not fire)",
+    "app": "chrome.exe",
+    "title": "Fixing imports - a blog",
+    "screen": true,
+    "editable": true,
+    "expect": [],
+    "steps": [
+      {
+        "paste": "Fixing ModuleNotFoundError: No module named 'requests' in five minutes"
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "ocr: a passing test run (must not fire)",
+    "app": "WindowsTerminal.exe",
+    "title": "pytest",
+    "screen": true,
+    "editable": true,
+    "expect": [],
+    "steps": [
+      {
+        "paste": "=== 12 passed, 0 errors in 3.2s ==="
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "ocr: a wrong weekday wrapped across lines is not checked on screen (must not fire)",
+    "app": "chrome.exe",
+    "title": "Team calendar",
+    "screen": true,
+    "editable": true,
+    "expect": [],
+    "steps": [
+      {
+        "paste": "Offsite: Tuesday,\n14 November, lake house"
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  },
+  {
+    "name": "ocr: a heading about error handling (must not fire)",
+    "app": "chrome.exe",
+    "title": "Python docs",
+    "screen": true,
+    "editable": true,
+    "expect": [],
+    "steps": [
+      {
+        "paste": "Errors and Exceptions\nError handling in Python uses try and except."
+      },
+      {
+        "pause": 9.0,
+        "label": "done"
+      }
+    ]
+  }
+]
