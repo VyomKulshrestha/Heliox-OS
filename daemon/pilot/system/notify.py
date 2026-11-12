@@ -1,41 +1,47 @@
 """Desktop notifications from the daemon's ``notify`` action, on each system, reporting what really happened.
 
 Windows shows a balloon through PowerShell, macOS a notification through ``osascript``, Linux through
-``notify-send`` (libnotify; it needs a notification daemon, which every desktop session has). Text is passed as
-data, never spliced into a script unescaped. When the command fails, the result says the notification was not
-shown and why, and carries the message so it still reaches the person in the conversation.
+``notify-send`` (libnotify; it needs a notification daemon, which every desktop session has). The title and the
+text are data on every system, never part of the code that shows them: PowerShell reads them from
+``$HelioxArgs`` and AppleScript from its arguments (``script_values``); notify-send takes them as arguments after
+``--``. When the command fails, the result says the notification was not shown and why, and carries the message so
+it still reaches the person in the conversation.
 """
 
 from __future__ import annotations
 
+from pilot.system.script_values import osascript_command
 
-def powershell_quoted(text: str) -> str:
-    """A PowerShell single-quoted string literal: only ' needs escaping, by doubling it."""
-    return "'" + text.replace("'", "''") + "'"
-
-
-def applescript_quoted(text: str) -> str:
-    """An AppleScript string literal: backslash and double quote are escaped."""
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+# Constant code; the title and text arrive as $HelioxArgs['summary'] and $HelioxArgs['body'].
+WINDOWS_SCRIPT = (
+    "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; "
+    "$notify = New-Object System.Windows.Forms.NotifyIcon; "
+    "$notify.Icon = [System.Drawing.SystemIcons]::Information; "
+    "$notify.Visible = $true; "
+    "$notify.ShowBalloonTip(5000, $HelioxArgs['summary'], $HelioxArgs['body'], "
+    "[System.Windows.Forms.ToolTipIcon]::Info); "
+    "Start-Sleep -Seconds 3; $notify.Dispose()"
+)
+MAC_SCRIPT = "display notification (item 2 of heliox_args) with title (item 1 of heliox_args)"
 
 
 def notification_command(platform: str, summary: str, body: str) -> list[str]:
-    """The command that shows a notification on ``platform`` ("windows", "macos" or "linux")."""
-    if platform == "windows":
-        script = (
-            "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; "
-            "$notify = New-Object System.Windows.Forms.NotifyIcon; "
-            "$notify.Icon = [System.Drawing.SystemIcons]::Information; "
-            "$notify.Visible = $true; "
-            f"$notify.ShowBalloonTip(5000, {powershell_quoted(summary)}, {powershell_quoted(body)}, "
-            "[System.Windows.Forms.ToolTipIcon]::Info); "
-            "Start-Sleep -Seconds 3; $notify.Dispose()"
-        )
-        return ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
+    """The command that shows a notification on macOS or Linux. Windows goes through ``show``, as its values travel in
+    the environment (``run_powershell(WINDOWS_SCRIPT, values=...)``)."""
     if platform == "macos":
-        script = f"display notification {applescript_quoted(body)} with title {applescript_quoted(summary)}"
-        return ["osascript", "-e", script]
+        return osascript_command(MAC_SCRIPT, [summary, body])
     return ["notify-send", "--app-name=Heliox", "--", summary, body]
+
+
+async def show(platform: str, summary: str, body: str) -> tuple[int, str]:
+    """Show a notification; (exit code, error text)."""
+    from pilot.system.platform_detect import run_command, run_powershell
+
+    if platform == "windows":
+        code, _out, err = await run_powershell(WINDOWS_SCRIPT, values={"summary": summary, "body": body})
+    else:
+        code, _out, err = await run_command(notification_command(platform, summary, body))
+    return code, err
 
 
 def notification_result(platform: str, code: int, error: str, summary: str, body: str) -> str:

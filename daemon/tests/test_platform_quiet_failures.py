@@ -6,25 +6,17 @@ import asyncio
 
 from pilot.security.path_rules import LINUX, MACOS, WINDOWS, path_within, rules_for
 from pilot.system import linux_voice
-from pilot.system.notify import (
-    applescript_quoted,
-    notification_command,
-    notification_result,
-    powershell_quoted,
-)
+from pilot.system.notify import notification_command, notification_result
 
 # ── notifications ──
 
 
-def test_notification_text_is_quoted_as_data():
-    assert powershell_quoted("it's") == "'it''s'"
-    assert applescript_quoted('say "hi" \\ bye') == '"say \\"hi\\" \\\\ bye"'
+def test_notification_text_is_passed_as_data():
+    # The text is never part of the script (pilot.system.script_values; Windows: tests/test_script_values.py).
     mac = notification_command("macos", 'Build "done"', "all good")
-    assert mac[:2] == ["osascript", "-e"] and 'with title "Build \\"done\\""' in mac[2]
+    assert mac[:2] == ["osascript", "-e"] and "Build" not in mac[2] and mac[3:] == ['xBuild "done"', "xall good"]
     linux = notification_command("linux", "-rf", "body")
     assert linux[0] == "notify-send" and linux[linux.index("--") + 1] == "-rf"  # never taken as an option
-    win = notification_command("windows", "it's", "ok")
-    assert win[0] == "powershell" and "'it''s'" in win[-1]
 
 
 def test_notification_result_reports_failure_on_macos_and_linux():

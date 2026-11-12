@@ -1884,11 +1884,10 @@ class Executor:
 
     async def _exec_notify(self, action: Action) -> str:
         params: NotifyParams = action.parameters  # type: ignore[assignment]
-        from pilot.system.notify import notification_command, notification_result
-        from pilot.system.platform_detect import CURRENT_PLATFORM, run_command
+        from pilot.system.notify import notification_result, show
+        from pilot.system.platform_detect import CURRENT_PLATFORM
 
-        command = notification_command(CURRENT_PLATFORM.value, params.summary, params.body or "")
-        code, _, err = await run_command(command)
+        code, err = await show(CURRENT_PLATFORM.value, params.summary, params.body or "")
         return notification_result(CURRENT_PLATFORM.value, code, err, params.summary, params.body or "")
 
     # ======================================================================

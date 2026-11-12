@@ -628,33 +628,31 @@ def _find_conflicts(
     return conflicts
 
 
+_WINDOWS_BALLOON = (
+    "Add-Type -AssemblyName System.Windows.Forms; "
+    "$n = New-Object System.Windows.Forms.NotifyIcon; "
+    "$n.Icon = [System.Drawing.SystemIcons]::Information; "
+    "$n.Visible = $true; "
+    "$n.ShowBalloonTip(6000, $HelioxArgs['title'], $HelioxArgs['body'], [System.Windows.Forms.ToolTipIcon]::Info);"
+)
+
+
 def _send_os_notification(title: str, body: str) -> None:
     """Fire an OS-native desktop notification (best-effort, never raises)."""
+    # The body holds calendar event titles, which anyone who sends the person an invitation chooses: it is data for
+    # every system's notifier, never part of the code that shows it (pilot.system.script_values).
+    from pilot.system.notify import notification_command
+    from pilot.system.script_values import powershell_values
+
     system = platform.system()
     try:
         if system == "Linux":
-            subprocess.run(
-                ["notify-send", "--app-name=Heliox OS", title, body],
-                timeout=5,
-                check=False,
-            )
+            subprocess.run(["notify-send", "--app-name=Heliox OS", "--", title, body], timeout=5, check=False)
         elif system == "Darwin":
-            from pilot.system.notify import applescript_quoted
-
-            script = f"display notification {applescript_quoted(body)} with title {applescript_quoted(title)}"
-            subprocess.run(["osascript", "-e", script], timeout=5, check=False)
+            subprocess.run(notification_command("macos", title, body), timeout=5, check=False)
         elif system == "Windows":
             # Windows Forms balloon tip — no extra packages required
-            safe_title = title.replace("'", "''")
-            safe_body = body.replace("'", "''")
-            ps = (
-                "Add-Type -AssemblyName System.Windows.Forms; "
-                "$n = New-Object System.Windows.Forms.NotifyIcon; "
-                "$n.Icon = [System.Drawing.SystemIcons]::Information; "
-                "$n.Visible = $true; "
-                f"$n.ShowBalloonTip(6000, '{safe_title}', '{safe_body}', "
-                "[System.Windows.Forms.ToolTipIcon]::Info);"
-            )
-            subprocess.run(["powershell", "-Command", ps], timeout=10, check=False)
+            with powershell_values(_WINDOWS_BALLOON, {"title": title, "body": body}) as (args, env):
+                subprocess.run(args, env=env, timeout=10, check=False)
     except Exception:  # noqa: BLE001
         logger.debug("OS notification failed", exc_info=True)

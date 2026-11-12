@@ -9,6 +9,7 @@ import asyncio
 import logging
 import platform
 import sys
+from collections.abc import Mapping
 from enum import StrEnum
 
 from pilot.timeouts import bounded
@@ -57,8 +58,9 @@ async def run_command(
     timeout: int = 30,
     cwd: str | None = None,
     input_data: bytes | None = None,
+    env: dict[str, str] | None = None,
 ) -> tuple[int, str, str]:
-    """Run a subprocess command cross-platform.
+    """Run a subprocess command cross-platform. ``env`` replaces the environment when given.
 
     On Linux, root commands use pkexec.
     On Windows, elevated commands use runas conceptually (but we just run them).
@@ -74,6 +76,7 @@ async def run_command(
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
             stdin=asyncio.subprocess.PIPE if input_data else None,
+            env=env,
         )
         stdout, stderr = await bounded(proc.communicate(input_data), timeout=timeout)
         return (
@@ -99,13 +102,24 @@ async def run_command(
         return (-1, "", f"Command error: {e}")
 
 
-async def run_powershell(script: str, *, timeout: int = 30, cwd: str | None = None) -> tuple[int, str, str]:
-    """Run a PowerShell script (Windows)."""
-    return await run_command(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-        timeout=timeout,
-        cwd=cwd,
-    )
+async def run_powershell(
+    script: str,
+    *,
+    timeout: int = 30,
+    cwd: str | None = None,
+    values: Mapping[str, object] | None = None,
+) -> tuple[int, str, str]:
+    """Run a PowerShell script (Windows). ``script`` is constant code; anything that comes from a plan, the screen,
+    a file name or a message goes in ``values`` and is read as ``$HelioxArgs['name']`` (``script_values``), never
+    pasted into ``script``."""
+    if not values:
+        return await run_command(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script], timeout=timeout, cwd=cwd
+        )
+    from pilot.system.script_values import powershell_values
+
+    with powershell_values(script, values) as (args, env):
+        return await run_command(args, timeout=timeout, cwd=cwd, env=env)
 
 
 async def run_shell_script(
