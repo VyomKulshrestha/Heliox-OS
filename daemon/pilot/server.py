@@ -16812,10 +16812,37 @@ LOG_BACKUPS = 3
 def _bounded_log_handler(path: Path) -> logging.Handler:
     """pilot.log stops at 10 MB and is kept as pilot.log.1 to .3: at most 40 MB, however long Heliox runs. (A plain
     FileHandler grew without bound over a long day.) If another process holds the file when it is due to roll over
-    (Windows), the handler reports it and keeps writing; nothing stops."""
+    (Windows: an editor or a log viewer has it open), the handler says so once and keeps writing into the same file,
+    trying again after another tenth of the limit; nothing stops and no line is lost."""
     from logging.handlers import RotatingFileHandler
 
-    return RotatingFileHandler(path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
+    class BoundedLogHandler(RotatingFileHandler):
+        # The standard handler closes the file, then fails to rename it, and from then on tries to roll over again
+        # on every line: each line was dropped with a traceback (measured: 2,000 lines past the limit, one kept).
+        retry_at = 0
+        reported = False
+
+        def shouldRollover(self, record: logging.LogRecord) -> bool:  # noqa: N802 - the logging API's name
+            if self.retry_at and self.stream is not None and self.stream.tell() < self.retry_at:
+                return False
+            return bool(super().shouldRollover(record))
+
+        def doRollover(self) -> None:  # noqa: N802 - the logging API's name
+            try:
+                super().doRollover()
+                self.retry_at = 0
+            except OSError as error:
+                if self.stream is None:
+                    self.stream = self._open()
+                self.retry_at = self.stream.tell() + max(self.maxBytes // 10, 1)
+                if not self.reported:
+                    self.reported = True
+                    sys.stderr.write(
+                        f"Heliox could not start a new log file ({error}); it keeps writing to {self.baseFilename} "
+                        "and tries again later.\n"
+                    )
+
+    return BoundedLogHandler(path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
 
 
 def _setup_logging() -> None:
