@@ -280,3 +280,32 @@ def test_voice_state_says_when_heliox_can_speak_without_a_load(monkeypatch):
     worker.running = False
     assert ltw.local_voice_state(kokoro) == {"voice_loaded": False, "voice_loading": False}
     loop.close()
+
+
+@pytest.mark.asyncio
+async def test_a_sentence_prepared_while_the_last_one_plays_is_not_synthesised_again() -> None:
+    from types import SimpleNamespace
+
+    worker = _SuccessfulWorker()
+    played: list[Path] = []
+
+    async def play(path: Path) -> None:
+        played.append(path)
+
+    config = SimpleNamespace(tts_engine="kokoro_tts", tts_voice="af_heart")
+    with (
+        patch.object(voice.subprocess, "Popen", return_value=worker),
+        patch.object(voice, "_play_local_tts_file", new=play),
+    ):
+        await voice._run_local_tts_worker("kokoro_tts", "Here is the first part.", "af_heart", None)
+        local_tts_worker.prepare_local_speech(config, "And here is the second.")  # while the first plays
+        for _ in range(100):
+            if "And here is the second." in _spoken(worker):
+                break
+            await asyncio.sleep(0.01)
+        made_before = len(_spoken(worker))
+        await voice._run_local_tts_worker("kokoro_tts", "And here is the second.", "af_heart", None)
+        assert len(_spoken(worker)) == made_before  # played from the prepared audio, no second synthesis
+        assert len(played) == 2 and not played[1].exists()  # the prepared file is removed once spoken
+        local_tts_worker.prepare_local_speech(SimpleNamespace(tts_engine="os_native", tts_voice=""), "Hi.")  # no-op
+        await voice._shutdown_local_tts_worker()

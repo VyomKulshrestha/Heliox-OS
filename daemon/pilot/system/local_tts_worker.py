@@ -38,6 +38,7 @@ from typing import Any
 logger = logging.getLogger("pilot.system.local_tts_worker")
 
 LOCAL_ENGINES = frozenset({"kokoro_tts", "pocket_tts"})
+PREPARED_LIMIT = 6  # sentences synthesised ahead and not yet spoken
 DEVICES = ("auto", "cpu", "cuda")
 MAX_TEXT_CHARACTERS = 20_000
 DEFAULT_KEEP_LOADED_SECONDS = 300.0
@@ -254,6 +255,9 @@ class LocalTTSWorkerManager:
         self._last_activity = clock()
         self._failed_until: float | None = None
         self._background: set[asyncio.Future[Any]] = set()
+        # Sentences synthesised ahead of their turn (prepare()), keyed by (engine, voice, sentence).
+        self._prepared: dict[tuple[str, str, str], asyncio.Task[Path]] = {}
+        self._prepared_dir: Path | None = None
 
     # Settings and activity -------------------------------------------------
 
@@ -537,7 +541,10 @@ class LocalTTSWorkerManager:
         folder: Path,
         play: PlayFile,
     ) -> None:
-        def make(index: int) -> asyncio.Task[Path]:
+        def make(index: int) -> asyncio.Future[Path]:
+            ahead = self._prepared.pop((engine, voice, sentences[index]), None)
+            if ahead is not None and not ahead.cancelled():
+                return ahead  # synthesised while the sentence before it played
             target = folder / f"sentence-{index}.wav"
             return asyncio.ensure_future(self._make(engine, sentences[index], voice, target, folder))
 
@@ -549,11 +556,40 @@ class LocalTTSWorkerManager:
                 upcoming = make(index + 1) if index + 1 < len(sentences) else None
                 await play(path)
                 self.note_activity()
+                if self._prepared_dir is not None and path.parent == self._prepared_dir:
+                    with contextlib.suppress(OSError):
+                        path.unlink()
         finally:
             if upcoming is not None and not upcoming.done():
                 upcoming.cancel()
                 with contextlib.suppress(BaseException):
                     await upcoming
+
+    def prepare(self, engine: str, text: str, voice: str) -> None:
+        """Start synthesising ``text`` now, so that a later speak() of it plays at once. Never blocks.
+
+        For a reply streamed sentence by sentence: prepare the next sentence while the current one plays, and
+        there is no gap between them. Unused preparations are dropped (the oldest after PREPARED_LIMIT).
+        """
+        if engine not in LOCAL_ENGINES or self._failed_until is not None:
+            return
+        for sentence in split_for_speech(text):
+            key = (engine, voice, sentence)
+            if key in self._prepared:
+                continue
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+            if self._prepared_dir is None:
+                self._prepared_dir = Path(tempfile.mkdtemp(prefix="heliox-tts-ahead-"))
+            target = self._prepared_dir / f"ahead-{len(self._prepared)}-{id(key):x}.wav"
+            task = loop.create_task(self._make(engine, sentence, voice, target, self._prepared_dir))
+            task.add_done_callback(lambda done: done.cancelled() or done.exception())
+            self._prepared[key] = task
+            while len(self._prepared) > PREPARED_LIMIT:
+                oldest = next(iter(self._prepared))
+                self._prepared.pop(oldest).cancel()
 
     async def _make(self, engine: str, text: str, voice: str, target: Path, folder: Path) -> Path:
         await self.synthesize(engine, text, voice, target, folder)
@@ -614,6 +650,12 @@ def local_voice_state(voice_config: Any) -> dict[str, bool]:
     loaded = bool(same and worker.loaded and worker._failed_until is None)
     loading = bool(same and not loaded and worker._load_task is not None and not worker._load_task.done())
     return {"voice_loaded": loaded, "voice_loading": loading}
+
+
+def prepare_local_speech(voice_config: Any, text: str) -> None:
+    """Synthesise ``text`` ahead of time with the configured local voice (no-op for the system voice), so the
+    speak() that follows plays it without waiting. Call it for the next sentence while the current one plays."""
+    _manager.prepare(str(getattr(voice_config, "tts_engine", "")), text, str(getattr(voice_config, "tts_voice", "")))
 
 
 def prewarm_local_voice(voice_config: Any) -> None:

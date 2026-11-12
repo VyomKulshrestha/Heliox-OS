@@ -19,6 +19,7 @@ import threading
 import time
 import warnings
 import wave
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,12 @@ from pilot.system.vad import AdaptiveEnergyThreshold, EndpointEvent, UtteranceEn
 from pilot.system.voice_calibration import WakeWordCalibrator
 
 logger = logging.getLogger("pilot.system.voice")
+
+# When the person's last word of the utterance being handled ended (time.monotonic(), from the capture thread's
+# clock), set for the whole of each voice dispatch. Latency to Heliox's first sound is measured from here:
+#     from pilot.system.voice import voice_turn_ended_at
+#     waited = time.monotonic() - (voice_turn_ended_at.get() or time.monotonic())
+voice_turn_ended_at: ContextVar[float | None] = ContextVar("voice_turn_ended_at", default=None)
 
 _VOICE_TRANSCRIPTION_PROMPT = (
     "Hey Heliox. Desktop command vocabulary: open, close, click, type, search, scroll, launch, switch, "
@@ -1311,34 +1318,82 @@ def _get_whisper_model(model_name: str) -> Any:
 _faster_whisper_cuda_unusable = False
 
 
-def _faster_whisper_runtime() -> tuple[str, str]:
-    """Choose a conservative local compute mode for Faster-Whisper."""
+# Why Whisper runs where it does, for the voice stats and the model health panel.
+_faster_whisper_device_reason = ""
+# Graphics memory Whisper base/small need on the card, with room for a short utterance's activations.
+WHISPER_GPU_NEEDS_MB = {"tiny": 300, "base": 400, "small": 900, "medium": 2200}
+
+
+def _faster_whisper_runtime(model_name: str = "base") -> tuple[str, str]:
+    """Where Faster-Whisper runs: the CPU unless an NVIDIA card is present, healthy and free.
+
+    Whisper runs inside the daemon, so a CUDA fault there would end the daemon (the reason Gnomon has its own
+    worker). The GPU arbiter decides: a card that is hot, held by another Heliox process (Gnomon), short of memory,
+    unreadable or switched off for the session after faults means the CPU. A CUDA error at run time counts as a fault
+    and keeps Whisper on the CPU for the rest of the session. The wake check and the short final passes cost about
+    a second on the CPU (measured on the owner's sentences), so the CPU is never a bad place to be.
+    """
+    global _faster_whisper_device_reason
+    if _faster_whisper_cuda_unusable:
+        _faster_whisper_device_reason = "The graphics card failed for Whisper earlier this session."
+        return "cpu", "int8"
     try:
         import ctranslate2
 
-        if not _faster_whisper_cuda_unusable and ctranslate2.get_cuda_device_count() > 0:
-            return "cuda", "float16"
-    except (ImportError, RuntimeError):
-        pass
-    return "cpu", "int8"
+        cards = ctranslate2.get_cuda_device_count()
+    except (ImportError, RuntimeError, OSError):
+        cards = 0
+    if cards <= 0:
+        _faster_whisper_device_reason = "No CUDA graphics card."
+        return "cpu", "int8"
+    from pilot.system.gpu_arbiter import MIB, Needs, arbiter
+
+    needs = Needs(gpu_bytes=WHISPER_GPU_NEEDS_MB.get(model_name.split(".")[0], 1500) * MIB, default_device_only=True)
+    decision = arbiter().check("whisper", needs)
+    if not decision.use_gpu or decision.device != "cuda":
+        _faster_whisper_device_reason = decision.reason or "The graphics card is not available."
+        return "cpu", "int8"
+    _faster_whisper_device_reason = "The graphics card is healthy and free."
+    return "cuda", "float16"
+
+
+def _whisper_gpu_failed(error: BaseException) -> None:
+    """A CUDA error in Whisper: the CPU for the rest of the session, and a fault for the arbiter."""
+    global _faster_whisper_cuda_unusable
+    _faster_whisper_cuda_unusable = True
+    try:
+        from pilot.system.gpu_arbiter import arbiter
+
+        arbiter().record_fault("whisper", f"Faster-Whisper: {str(error)[:200]}")
+    except Exception:
+        logger.debug("Could not record the GPU fault", exc_info=True)
+    for key in [key for key in _faster_whisper_model_cache if key[1] == "cuda"]:
+        _faster_whisper_model_cache.pop(key, None)  # free the card
+    logger.warning("Faster-Whisper cannot use the GPU (%s); using the CPU", str(error)[:120])
 
 
 def _get_faster_whisper_model(model_name: str) -> Any:
     from faster_whisper import WhisperModel
 
-    device, compute_type = _faster_whisper_runtime()
+    device, compute_type = _faster_whisper_runtime(model_name)
     cache_key = (model_name, device, compute_type)
     if cache_key not in _faster_whisper_model_cache:
         options: dict[str, Any] = {}
         if device == "cpu":
             # Measured on the rehearsal recording: 8 threads take base from 2.2 s to 1.1 s for a 6 s sentence.
             options["cpu_threads"] = max(1, min(8, os.cpu_count() or 4))
-        _faster_whisper_model_cache[cache_key] = WhisperModel(
-            model_name,
-            device=device,
-            compute_type=compute_type,
-            **options,
-        )
+        try:
+            _faster_whisper_model_cache[cache_key] = WhisperModel(
+                model_name,
+                device=device,
+                compute_type=compute_type,
+                **options,
+            )
+        except (RuntimeError, ValueError) as error:
+            if device != "cuda":
+                raise
+            _whisper_gpu_failed(error)
+            return _get_faster_whisper_model(model_name)
     return _faster_whisper_model_cache[cache_key]
 
 
@@ -1391,9 +1446,7 @@ async def _transcribe_faster_whisper(
             # build for the rest of the session and transcribe this utterance again.
             if not any(name in str(error).lower() for name in ("cublas", "cudnn", "cuda")):
                 raise
-            global _faster_whisper_cuda_unusable
-            _faster_whisper_cuda_unusable = True
-            logger.warning("Faster-Whisper cannot use the GPU (%s); using the CPU", str(error)[:120])
+            _whisper_gpu_failed(error)
             model = _get_faster_whisper_model(model_name)
             segments, info = model.transcribe(audio if audio is not None else audio_path, **kwargs)
             text = _speech_text(segments)
@@ -1403,7 +1456,7 @@ async def _transcribe_faster_whisper(
             "language": detected_language or (language if language != "auto" else "en"),
         }
 
-    return await asyncio.to_thread(_do)
+    return await asyncio.to_thread(_counted, _do)
 
 
 async def _transcribe_whisper(
@@ -1546,6 +1599,10 @@ class _ContinuousRecorder:
         self.last_frame_rms = 0.0
         self.peak_frame_rms = 0.0
         self.last_above_threshold_at = 0.0
+        # time.monotonic() when a frame above the speech threshold was last captured (the capture thread's clock,
+        # not when the frame was processed): the end of the person's last word, for latency measured from there.
+        self.last_voice_monotonic = 0.0
+        self.last_turn_ended_at: float | None = None  # last_voice_monotonic when the last utterance ended
         self.utterances_captured = 0
         # True between the endpointer confirming speech and the utterance ending (read by the live layer).
         self.user_is_speaking = False
@@ -1561,6 +1618,16 @@ class _ContinuousRecorder:
         # digital silence), and Smart Turn, asked after 200 ms, ended the turn at every one of those pauses.
         self.turn_check_frames = 8
         self.turn_recheck_frames = 12  # ask again every 600 ms of continued silence
+        # A candidate end of turn after 200 ms of quiet: the listener starts the final pass on the audio so far, so
+        # the words are ready when the turn does end there; voice resuming cancels it (on_candidate_cancel).
+        self.speculate_frames = 4
+        self.on_candidate_end: Any = None  # callable(frames) -> None
+        self.on_candidate_cancel: Any = None  # callable() -> None
+        # Smart Turn can also be asked at the candidate end; at or above this it ends the turn 200 ms sooner.
+        # Off (1.0) until its effect on split sentences is measured on recorded speech: pauses between words on a
+        # noise-gated headset last 250 to 350 ms, and asking after 200 ms once ended the turn at every such pause.
+        # 0.95 is the value to measure: the owner's mid-sentence pauses scored 0.71 to 0.83, real ends 0.94 to 0.98.
+        self.early_turn_threshold = 1.0
         self.turn_hold_frames = 50  # 2.5 s
         # 0.85, not 0.5: on the owner's headset Smart Turn gave 0.71 to 0.83 at mid-sentence pauses ("...the launch call
         # is Monday | the twelfth of November") and 0.94 to 0.98 at the real ends of their sentences.
@@ -1695,6 +1762,7 @@ class _ContinuousRecorder:
             self._adaptive_threshold.observe(signal_rms)
         if signal_rms >= self.effective_energy_threshold:
             self.last_above_threshold_at = time.time()
+            self.last_voice_monotonic = time.monotonic()
         loop = self._loop
         queue = self._queue
         if loop is not None and queue is not None and not loop.is_closed():
@@ -1906,6 +1974,7 @@ class _ContinuousRecorder:
         captured: list[Any] = []
         lead = 0
         held = False
+        candidate = False
         silence_frames_used = endpointer.silence_frames
 
         while True:
@@ -1937,6 +2006,7 @@ class _ContinuousRecorder:
                 captured = preroll + [frame]
                 lead = len(preroll)
                 preroll = []
+                candidate = False
                 self.user_is_speaking = True
                 self.speech_started_at = time.monotonic()
                 if self.on_speech_start is not None and self.stream_sink is None:
@@ -1971,6 +2041,27 @@ class _ContinuousRecorder:
             captured.append(frame)
             if self.stream_sink is not None:
                 self.stream_sink.feed(frame)
+
+            silence_now = endpointer.trailing_silence
+            if candidate and silence_now == 0:
+                candidate = False  # they carried on: the early pass was for half a sentence
+                self._notify(self.on_candidate_cancel)
+            elif not candidate and silence_now >= self.speculate_frames:
+                candidate = True
+                self._notify(self.on_candidate_end, list(captured))
+                if self.turn_detector is not None and self.early_turn_threshold < 1.0:
+                    import numpy as np
+
+                    probability = await asyncio.to_thread(self.turn_detector.probability, np.concatenate(captured))
+                    if probability is not None and probability >= self.early_turn_threshold:
+                        self.last_turn_probability = probability
+                        self.last_endpoint_ms = endpointer.trailing_silence * self.frame_ms
+                        endpointer.reset()
+                        self.utterances_captured += 1
+                        self.user_is_speaking = False
+                        self.last_endpoint_reason = "smart_turn_early"
+                        self._note_voiced(len(captured) - lead)
+                        return _write_wav(captured, self.sample_rate)
 
             if (
                 self.complete_hint is not None
@@ -2015,7 +2106,17 @@ class _ContinuousRecorder:
                         except Exception:
                             logger.debug("Turn hold callback failed", exc_info=True)
 
+    @staticmethod
+    def _notify(callback: Any, *args: Any) -> None:
+        if callback is None:
+            return
+        try:
+            callback(*args)
+        except Exception:
+            logger.debug("Candidate end-of-turn callback failed", exc_info=True)
+
     def _note_voiced(self, frames: int) -> None:
+        self.last_turn_ended_at = self.last_voice_monotonic or None
         self.last_voiced_seconds = max(0.0, (frames * self.frame_ms - self.last_endpoint_ms) / 1000.0)
 
     def _turn_check_due(self, silence: int) -> bool:
@@ -2051,6 +2152,59 @@ def _write_wav(frames: list[Any], sample_rate: int) -> str:
 
 
 # ── Continuous Voice Listener (JARVIS Mode) ──────────────────────────
+
+
+_recogniser_threads = 0
+_recogniser_lock = threading.Lock()
+
+
+def _recognisers_running() -> int:
+    return _recogniser_threads
+
+
+def _counted(function: Any, *args: Any) -> Any:
+    """Run a recogniser in the calling worker thread, counted, so speculation knows when the CPU is taken."""
+    global _recogniser_threads
+    with _recogniser_lock:
+        _recogniser_threads += 1
+    try:
+        return function(*args)
+    finally:
+        with _recogniser_lock:
+            _recogniser_threads -= 1
+
+
+class _Speculation:
+    """The final pass (Parakeet and the Whisper wake check, or Whisper alone) started at a candidate end of turn.
+
+    200 ms into a pause the recorder hands over the audio so far; the pass runs while Smart Turn and the remaining
+    quiet decide whether the turn really ended. If the person carries on, the pass is cancelled and a new one starts
+    at the next pause. If the turn ends at that pause, the same words are used: nothing voiced came after them.
+    """
+
+    def __init__(self, listener: ContinuousVoiceListener) -> None:
+        self.listener = listener
+        self.task: asyncio.Task[str] | None = None
+
+    def start(self, frames: list[Any]) -> None:
+        self.cancel()
+        if _recognisers_running():
+            # Recognisers run in threads that cannot be stopped: a pass dropped because the person carried on
+            # keeps the CPU busy until it finishes. No second one starts beside it (on 4 cores two at once made
+            # both several times slower); the pass then runs at the end of the turn, as without speculation.
+            return
+        path = _write_wav(frames, self.listener._recorder.sample_rate)
+        self.task = asyncio.ensure_future(self.listener._transcribe_path(path, speculative=True))
+        self.task.add_done_callback(lambda task: task.cancelled() or task.exception())
+
+    def cancel(self) -> None:
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
+        self.task = None
+
+    def take(self) -> asyncio.Task[str] | None:
+        task, self.task = self.task, None
+        return task
 
 
 class ContinuousVoiceListener:
@@ -2831,7 +2985,9 @@ class ContinuousVoiceListener:
                 )
 
                 if self._on_command:
-                    task = asyncio.create_task(self._dispatch_command(command_text))
+                    ended = getattr(self._recorder, "last_turn_ended_at", None)
+                    ended = ended if isinstance(ended, float) else None
+                    task = asyncio.create_task(self._dispatch_command(command_text, ended))
                     self._command_tasks.add(task)
                     task.add_done_callback(self._command_tasks.discard)
                     # Give the newly scheduled command a chance to publish its
@@ -2851,9 +3007,12 @@ class ContinuousVoiceListener:
                 )
                 await asyncio.sleep(1.0)
 
-    async def _dispatch_command(self, command_text: str) -> None:
+    async def _dispatch_command(self, command_text: str, turn_ended_at: float | None = None) -> None:
         """Run a recognized command without pausing ambient listening."""
         started = time.perf_counter()
+        if turn_ended_at is not None:
+            voice_turn_ended_at.set(turn_ended_at)  # this task's own context: one value per dispatch
+            logger.info("Last word to dispatch: %.0f ms", 1000 * (time.monotonic() - turn_ended_at))
         try:
             await self._on_command(command_text)
         except asyncio.CancelledError:
@@ -2884,8 +3043,9 @@ class ContinuousVoiceListener:
                 logger.warning("voice.final_pass is parakeet but its model is missing; using Whisper (%s)", folder)
         return current if current.available else None
 
-    async def _transcribe_path(self, audio_path: str) -> str:
-        """Transcribes an already-recorded WAV file with multilingual support."""
+    async def _transcribe_path(self, audio_path: str, *, speculative: bool = False) -> str:
+        """Transcribes an already-recorded WAV file with multilingual support. ``speculative``: started before the
+        turn was known to have ended, so nothing is offered to Live yet (the person may still be talking)."""
         parakeet = self._parakeet()
         if parakeet is not None:
             samples = _load_pcm_wav_for_whisper(audio_path)
@@ -2902,7 +3062,7 @@ class ContinuousVoiceListener:
                 # fast. Parakeet, whose words are used, is English-only anyway.
                 wake_check = asyncio.ensure_future(self._transcribe_whisper_text(opening, language="en"))
                 wake_check.add_done_callback(lambda task: task.cancelled() or task.exception())
-                said = await asyncio.to_thread(parakeet.transcribe, samples)
+                said = await asyncio.to_thread(_counted, parakeet.transcribe, samples)
                 addressed = self._addressed()  # the microphone button, or talking over Heliox
                 in_conversation = addressed or self.conversation_open()
                 if addressed and self._button_until and len(said.split()) > 2:
@@ -2917,7 +3077,7 @@ class ContinuousVoiceListener:
                     # Mid-conversation a reply needs no wake phrase: answer from Parakeet without waiting.
                     wake_check.cancel()
                     return said
-                if in_conversation and len(said.split()) > 2 and self._on_overheard:
+                if in_conversation and len(said.split()) > 2 and self._on_overheard and not speculative:
                     # While Whisper decides whether this began with the wake phrase, Live can already check the
                     # words ("…Monday, the twelfth of November"): a correction does not depend on the wake phrase,
                     # and Live never acts, it only speaks up. The same sentence offered again later is not repeated.
@@ -2976,8 +3136,13 @@ class ContinuousVoiceListener:
                 # The first utterance after start is often waited for before the recognisers finish loading;
                 # they are picked up when the person starts talking.
                 self._recorder.on_speech_start = self._configure_turn_taking
-                audio_path = await self._recorder.record_utterance(timeout=timeout, keep_backlog=keep_backlog)
+                speculation = self._speculate_final_pass()
+                try:
+                    audio_path = await self._recorder.record_utterance(timeout=timeout, keep_backlog=keep_backlog)
+                finally:
+                    self._recorder.on_candidate_end = self._recorder.on_candidate_cancel = None
                 if not audio_path:
+                    speculation.cancel()
                     return ""
                 if streaming is None and self._recorder.stream_sink is not None:
                     streaming = self._recorder.stream_sink
@@ -2985,6 +3150,7 @@ class ContinuousVoiceListener:
                 audio_path = await _record_audio(duration)
 
             started = time.perf_counter()
+            early = speculation.take() if self._recorder.is_active else None
             heard = await streaming.finish() if streaming is not None else ""
             if self._cutting_off(final=True):
                 # A short cut-off over Heliox is a stop whatever it says (is_cut_off_stop): no recogniser is waited
@@ -3000,12 +3166,16 @@ class ContinuousVoiceListener:
                 # live caption and turn-taking: on a real voice through a Bluetooth headset it heard "Hey Heliox,
                 # remind me that the launch call is Monday..." as "Do you know my way down the lawn spot...".
                 self.last_transcription_engine = "whisper"  # _transcribe_path says "parakeet" when it used it
-                transcript = await self._transcribe_path(audio_path)
+                # Started at the candidate end, 200 ms into the quiet, when the turn ended there: most of the pass
+                # has already run by the time the end of turn is decided.
+                transcript = await early if early is not None else await self._transcribe_path(audio_path)
                 if not transcript and heard and not self._final_pass_available():
                     transcript = heard
                     self.last_transcription_engine = "streaming"
                 if transcript and heard and self._on_partial and not self._cutting_off(final=True):
                     self._schedule(self._on_partial, transcript)  # the caption shows the words acted on
+            if early is not None and not early.done():
+                early.cancel()
             self.last_transcription_ms = (time.perf_counter() - started) * 1000
             logger.info(
                 "Voice transcription completed (duration_ms=%.0f, characters=%d)",
@@ -3021,6 +3191,13 @@ class ContinuousVoiceListener:
             )
             return ""
 
+    def _speculate_final_pass(self) -> _Speculation:
+        """Arm the recorder to start the final pass at each candidate end of turn (see _Speculation)."""
+        speculation = _Speculation(self)
+        self._recorder.on_candidate_end = speculation.start
+        self._recorder.on_candidate_cancel = speculation.cancel
+        return speculation
+
     def get_stats(self) -> dict:
         """Return listener statistics."""
         return {
@@ -3032,6 +3209,9 @@ class ContinuousVoiceListener:
             "transcription_engine": self.config.voice.transcription_engine,
             **self._final_pass_status(),
             "whisper_model": self.config.voice.whisper_model,
+            # Where the loaded Whisper runs ("cpu"/"cuda"; "" before it loads) and why (the GPU arbiter's reason).
+            "whisper_device": next(iter(sorted({key[1] for key in _faster_whisper_model_cache})), ""),
+            "whisper_device_reason": _faster_whisper_device_reason,
             "turn_detection": getattr(self.config.voice, "turn_detection", "smart_turn"),
             "turn_detector_ready": bool(self._turn_detector is not None and self._turn_detector.ready),
             "turn_detector_error": self._turn_detector.error if self._turn_detector is not None else "",

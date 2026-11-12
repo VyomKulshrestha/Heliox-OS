@@ -81,3 +81,82 @@ async def test_explicit_faster_whisper_does_not_hide_backend_failure():
 async def test_unknown_transcription_engine_is_rejected():
     with pytest.raises(ValueError, match="Unsupported transcription engine"):
         await voice._transcribe_speech("voice.wav", "auto", "base", "remote_magic")
+
+
+# ── where Whisper runs: the GPU arbiter decides, and a CUDA error is a fault ──
+
+
+@pytest.fixture
+def gpu_world(monkeypatch):
+    """One NVIDIA card as ctranslate2 and the arbiter see it; the test sets its temperature and holder."""
+    from pilot.system import gpu_arbiter
+
+    card = {"temperature": 60.0, "holder": None, "free": 6 * gpu_arbiter.GIB}
+    shared = gpu_arbiter.GpuArbiter(
+        read=lambda: gpu_arbiter.MachineReading(
+            "nvidia",
+            gpus=(gpu_arbiter.GpuInfo(0, "RTX 4060", card["temperature"], card["free"], 8 * gpu_arbiter.GIB),),
+        ),
+        holder=lambda: card["holder"],
+    )
+    monkeypatch.setattr(gpu_arbiter, "_shared", shared)
+    monkeypatch.setitem(__import__("sys").modules, "ctranslate2", SimpleNamespace(get_cuda_device_count=lambda: 1))
+    monkeypatch.setattr(voice, "_faster_whisper_cuda_unusable", False)
+    return card, shared
+
+
+def test_whisper_uses_the_card_only_when_the_arbiter_says_it_is_healthy(gpu_world):
+    card, _shared = gpu_world
+    assert voice._faster_whisper_runtime("base") == ("cuda", "float16")
+    card["temperature"] = 88.0
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")
+    assert "°C" in voice._faster_whisper_device_reason
+    card["temperature"], card["holder"] = 60.0, {"component": "gnomon", "pid": 1}
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")  # Gnomon holds the card
+    assert "Gnomon" in voice._faster_whisper_device_reason
+    card["holder"], card["free"] = None, 200 * 1024**2
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")  # short of graphics memory
+
+
+def test_without_a_cuda_card_whisper_is_on_the_cpu(monkeypatch):
+    monkeypatch.setitem(__import__("sys").modules, "ctranslate2", SimpleNamespace(get_cuda_device_count=lambda: 0))
+    monkeypatch.setattr(voice, "_faster_whisper_cuda_unusable", False)
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")
+    monkeypatch.setitem(__import__("sys").modules, "ctranslate2", None)  # not installed
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")
+
+
+def test_a_cuda_error_while_loading_counts_as_a_fault_and_moves_to_the_cpu(gpu_world):
+    _card, shared = gpu_world
+    made = []
+
+    def whisper_model(name, device, compute_type, **_options):
+        made.append(device)
+        if device == "cuda":
+            raise RuntimeError("CUDA failed with error unspecified launch failure")
+        return SimpleNamespace(device=device)
+
+    with patch.dict("sys.modules", {"faster_whisper": SimpleNamespace(WhisperModel=whisper_model)}):
+        model = voice._get_faster_whisper_model("base")
+    assert model.device == "cpu" and made == ["cuda", "cpu"]
+    assert shared.last_fault("whisper") is not None
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")  # for the rest of the session
+
+
+@pytest.mark.asyncio
+async def test_a_cuda_error_while_transcribing_frees_the_card_and_retries_on_the_cpu(gpu_world, monkeypatch):
+    _card, shared = gpu_world
+    gpu_model = MagicMock()
+    gpu_model.transcribe.side_effect = RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+    cpu_model = MagicMock()
+    cpu_model.transcribe.return_value = (iter([SimpleNamespace(text=" open notes ")]), SimpleNamespace(language="en"))
+
+    def whisper_model(name, device, compute_type, **_options):
+        return gpu_model if device == "cuda" else cpu_model
+
+    monkeypatch.setattr(voice, "_load_pcm_wav_for_whisper", lambda _path: None)
+    with patch.dict("sys.modules", {"faster_whisper": SimpleNamespace(WhisperModel=whisper_model)}):
+        result = await voice._transcribe_faster_whisper("utterance.wav", "en", "base")
+    assert result["text"] == "open notes"
+    assert not any(key[1] == "cuda" for key in voice._faster_whisper_model_cache)
+    assert len(shared.faults()) == 1

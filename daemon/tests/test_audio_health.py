@@ -300,3 +300,84 @@ async def test_off_macos_the_permission_check_says_nothing(monkeypatch):
     monkeypatch.setattr(macos_permissions, "microphone_state", lambda: macos_permissions.PermissionState.CANNOT_TELL)
     listener = ContinuousVoiceListener(wake_words=["hey heliox"], config=PilotConfig())
     assert not await listener._check_microphone_permission()
+
+
+class FakeSoundcard:
+    """soundcard as the WASAPI path uses it: the first recorder dies with "device invalidated", the next works."""
+
+    class SoundcardRuntimeWarning(Warning):
+        pass
+
+    def __init__(self) -> None:
+        self.opened = 0
+
+    def all_microphones(self, include_loopback=False):
+        return [self.default_microphone()]
+
+    def default_microphone(self):
+        card = self
+
+        class Recorder:
+            def __init__(self, dies: bool) -> None:
+                self.dies, self.blocks = dies, 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def record(self, numframes):
+                import time as _time
+
+                self.blocks += 1
+                if self.dies and self.blocks > 3:
+                    raise RuntimeError("Error 0x88890004")  # AUDCLNT_E_DEVICE_INVALIDATED: a call app took it
+                _time.sleep(0.005)
+                return np.full((numframes, 1), 0.01, dtype=np.float32)
+
+        class Microphone:
+            name = "Headset (Jabra)"
+
+            def recorder(self, samplerate, channels, blocksize):
+                card.opened += 1
+                return Recorder(dies=card.opened == 1)
+
+        return Microphone()
+
+
+@pytest.mark.asyncio
+async def test_a_wasapi_stream_invalidated_by_a_call_app_is_reopened(monkeypatch):
+    """10 November 15:41:58: record() raised 0x88890004, the pump thread ended, but the recorder still looked open."""
+    import sys
+
+    from pilot.system import voice
+    from pilot.system.platform_detect import Platform
+
+    card = FakeSoundcard()
+    monkeypatch.setitem(sys.modules, "soundcard", card)
+    monkeypatch.setattr(voice, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(audio_health, "STALL_SECONDS", 0.2)
+    monkeypatch.setattr(audio_health, "default_microphone_name", lambda: "")
+    monkeypatch.setattr(audio_health, "default_speaker_name", lambda: "")
+    statuses: list[tuple[str, dict]] = []
+
+    async def on_status(name, data):
+        statuses.append((name, data))
+
+    listener = voice.ContinuousVoiceListener(wake_words=["hey heliox"], on_status=on_status, config=PilotConfig())
+    recorder = listener._recorder
+    assert recorder.start() and recorder.capture_backend == "windows_wasapi"
+    listener._running = True
+    watch = asyncio.ensure_future(listener._watch_capture(every_seconds=0.02))
+    for _ in range(500):
+        if any(name == "microphone_recovered" for name, _data in statuses):
+            break
+        await asyncio.sleep(0.01)
+    listener._running = False
+    await asyncio.wait_for(watch, 5)
+    recorder.stop()
+    assert recorder.is_active is False
+    assert statuses[0][0] == "microphone_problem" and statuses[0][1]["reason"] == "stream_failed"
+    assert "0x88890004" in statuses[0][1]["message"]
+    assert card.opened == 2 and any(name == "microphone_recovered" for name, _data in statuses)

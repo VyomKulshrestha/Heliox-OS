@@ -102,12 +102,16 @@ def recogniser_entries(stats: dict[str, Any] | None, whisper_devices: list[str])
             entries.append(_entry(name, "loading", reason="Loads when the listener starts."))
     final_pass = str(stats.get("final_pass") or "whisper")
     notice = str(stats.get("final_pass_notice") or "")
+    device = whisper_devices[0] if whisper_devices else None
+    state = "loaded" if whisper_devices else "not_loaded"
+    # Why Whisper is on the CPU or the graphics card (the GPU arbiter's reason), unless a notice says more.
+    reason = notice or str(stats.get("whisper_device_reason") or "")
     if final_pass == "parakeet":
         entries.append(_entry("Final pass (Parakeet)", "loaded", device="cpu"))
+        # Whisper still reads each utterance for the wake phrase alongside Parakeet.
+        entries.append(_entry("Wake check (Whisper)", state, reason=reason, device=device))
     else:
-        device = whisper_devices[0] if whisper_devices else None
-        state = "loaded" if whisper_devices else "not_loaded"
-        entries.append(_entry("Final pass (Whisper)", state, reason=notice, device=device))
+        entries.append(_entry("Final pass (Whisper)", state, reason=reason, device=device))
     return entries
 
 

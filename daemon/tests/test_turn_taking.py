@@ -78,14 +78,44 @@ def test_a_failed_load_is_reported_not_raised(tmp_path):
 @pytest.mark.asyncio
 async def test_a_finished_sentence_ends_the_turn_after_400_ms_not_the_full_silence():
     rec = recorder()
-    rec.turn_detector = FakeDetector([0.93])
+    rec.early_turn_threshold = 0.95  # the early check on: asked at 200 ms as well
+    rec.turn_detector = FakeDetector([0.80, 0.93])  # at 200 ms not sure enough; at 400 ms finished
     frames = [loud()] * 6 + [quiet()] * 12
     feeder = asyncio.create_task(feed(rec._queue, frames))
     path = await rec.record_utterance(timeout=3)
     feeder.cancel()
     assert path and rec.last_endpoint_reason == "smart_turn"
     # Asked after 400 ms, not 200: real pauses between words on a hands-free headset last 250 to 350 ms.
-    assert rec.last_endpoint_ms == 400 and rec.turn_detector.calls == 1
+    assert rec.last_endpoint_ms == 400 and rec.turn_detector.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_a_turn_smart_turn_is_sure_of_ends_200_ms_into_the_quiet():
+    rec = recorder()
+    rec.early_turn_threshold = 0.95  # off by default until measured; this is the behaviour when it is on
+    rec.turn_detector = FakeDetector([0.97])  # mid-sentence pauses scored 0.71 to 0.83 on the owner's headset
+    frames = [loud()] * 6 + [quiet()] * 12
+    feeder = asyncio.create_task(feed(rec._queue, frames))
+    path = await rec.record_utterance(timeout=3)
+    feeder.cancel()
+    assert path and rec.last_endpoint_reason == "smart_turn_early" and rec.last_endpoint_ms == 200
+
+
+@pytest.mark.asyncio
+async def test_the_final_pass_starts_at_each_pause_and_is_dropped_when_the_person_carries_on():
+    rec = recorder()
+    rec.early_turn_threshold = 0.95  # with the early check on, Smart Turn is asked at each candidate end
+    rec.turn_detector = FakeDetector([0.3, 0.3, 0.97])
+    events = []
+    rec.on_candidate_end = lambda frames: events.append(("start", len(frames)))
+    rec.on_candidate_cancel = lambda: events.append(("cancel", 0))
+    frames = [loud()] * 6 + [quiet()] * 5 + [loud()] * 4 + [quiet()] * 12
+    feeder = asyncio.create_task(feed(rec._queue, frames))
+    path = await rec.record_utterance(timeout=3)
+    feeder.cancel()
+    assert path
+    assert [kind for kind, _ in events] == ["start", "cancel", "start"]
+    assert events[2][1] > events[0][1]  # the second start has the whole sentence
 
 
 @pytest.mark.asyncio
@@ -346,3 +376,76 @@ async def test_a_wait_that_began_before_the_room_was_learned_hears_a_quiet_voice
     path = await rec.record_utterance(timeout=3)
     feeder.cancel()
     assert path, "the quiet voice was heard once the threshold followed the room"
+
+
+@pytest.mark.asyncio
+async def test_the_listener_uses_the_pass_started_at_the_pause_when_the_turn_ends_there():
+    from pilot.config import PilotConfig
+    from pilot.system.voice import ContinuousVoiceListener
+
+    config = PilotConfig()
+    config.voice.transcription_engine = "whisper"
+    listener = ContinuousVoiceListener(wake_words=["hey heliox"], config=config)
+    listener._recorder._soundcard_recorder = object()  # the stream is "open"
+    calls = []
+
+    async def transcribe(path, *, speculative=False):
+        calls.append(speculative)
+        await asyncio.sleep(0.05)
+        return "hey heliox what can i say"
+
+    async def record(**_kwargs):
+        listener._recorder.on_candidate_end([loud()] * 6)  # 200 ms into the quiet
+        await asyncio.sleep(0.2)  # Smart Turn and the rest of the quiet decide
+        return "utterance.wav"
+
+    listener._transcribe_path = transcribe
+    listener._recorder.record_utterance = record
+    text = await listener._record_and_transcribe(duration=3, timeout=None, keep_backlog=True)
+    assert text == "hey heliox what can i say" and calls == [True]  # one pass, started early, not a second one
+    assert listener._recorder.on_candidate_end is None
+
+
+@pytest.mark.asyncio
+async def test_each_dispatch_carries_when_the_persons_last_word_ended():
+    import time
+
+    from pilot.config import PilotConfig
+    from pilot.system import voice
+
+    seen = []
+
+    async def on_command(text):
+        seen.append((text, voice.voice_turn_ended_at.get()))
+
+    listener = voice.ContinuousVoiceListener(wake_words=["hey heliox"], on_command=on_command, config=PilotConfig())
+    ended = time.monotonic() - 0.4
+    await asyncio.gather(
+        listener._dispatch_command("open notes", ended), listener._dispatch_command("what time is it", ended + 5)
+    )
+    assert seen == [("open notes", ended), ("what time is it", ended + 5)]  # one value per dispatch
+    assert voice.voice_turn_ended_at.get() is None  # nothing leaks outside the dispatch
+
+
+@pytest.mark.asyncio
+async def test_no_second_early_pass_starts_while_a_dropped_one_still_holds_the_cpu(monkeypatch):
+    from pilot.config import PilotConfig
+    from pilot.system import voice
+
+    listener = voice.ContinuousVoiceListener(wake_words=["hey heliox"], config=PilotConfig())
+    started = []
+
+    async def transcribe(path, *, speculative=False):
+        started.append(path)
+        return ""
+
+    listener._transcribe_path = transcribe
+    speculation = voice._Speculation(listener)
+    monkeypatch.setattr(voice, "_recogniser_threads", 1)  # a dropped pass is still running in its thread
+    speculation.start([loud()] * 4)
+    assert speculation.task is None
+    monkeypatch.setattr(voice, "_recogniser_threads", 0)
+    speculation.start([loud()] * 4)
+    assert speculation.task is not None
+    await speculation.task
+    assert len(started) == 1
