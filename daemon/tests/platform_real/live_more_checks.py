@@ -194,7 +194,15 @@ async def back_and_forth(wayland: bool, python: str, folder: Path) -> None:
             seen.append(getattr(obs, "title", "") if obs is not None else "-")
             if offer() is not None:
                 break
-        check(f"{prefix}/live-back-and-forth-gives-the-side-by-side-offer", offer() is not None, f"titles seen {seen}")
+        # A card waits for the person to pause (moving focus counts as activity), so stop switching, as a person
+        # would once they have what they came for, and give Live that pause.
+        await live.run(8.0, until=lambda: offer() is not None)
+        pending = [v.correction.kind for v in live.engine._pending.values()]
+        check(
+            f"{prefix}/live-back-and-forth-gives-the-side-by-side-offer",
+            offer() is not None,
+            f"titles seen {seen}; pending {pending}",
+        )
     finally:
         left.close()
         right.close()

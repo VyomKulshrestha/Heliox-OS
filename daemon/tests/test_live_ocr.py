@@ -32,6 +32,10 @@ def test_repairs():
         ("Error: listen EADDRINUSE: address already in use :::3OOO", "Port 3000 is already taken"),
         ("Err0r: listen EADDRIN USE: address already in use :::8080", "Port 8080 is already taken"),
         ("bash: pyth0n: command not found", "The shell can't find python"),
+        # git's own line goes on after the match; the platform-readers job (12 November) read it cut off at the
+        # window's edge, and the card did not come because the tail read as a sentence about the error
+        ("fatal: not a git repository (or any of the parent directories): .git", "This folder isn't a git repository"),
+        ("fatal: not a git repository (or any of the parent director", "This folder isn't a git repository"),
     ],
 )
 def test_damaged_errors_are_still_read(text, title):
@@ -42,6 +46,7 @@ def test_damaged_errors_are_still_read(text, title):
     "text",
     [
         "Fixing ModuleNotFoundError: No module named 'requests' in five minutes",  # a headline about an error
+        "Fixing fatal: not a git repository errors in five minutes",
         "try:\n    import httpx\nexcept ModuleNotFoundError:\n    httpx = None",
         "Build succeeded.\n    0 Warning(s)\n    0 Error(s)",
         "=== 12 passed, 0 errors in 3.2s ===",

@@ -1171,7 +1171,12 @@ _ERRORS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("not_recognized", re.compile(r"'(?P<cmd>[\w.-]+)' is not recognized as an internal or external command", re.I)),
     ("command_not_found", re.compile(r"(?:command not found: (?P<cmd>[\w.-]+)|(?P<cmd2>[\w.-]+): command not found)")),
     ("npm_missing_script", re.compile(r'npm (?:ERR!|error) Missing script: "(?P<script>[\w:.-]+)"')),
-    ("not_git_repo", re.compile(r"fatal: not a git repository")),
+    # git's own line goes on: "fatal: not a git repository (or any of the parent directories): .git". Its tail is
+    # part of the match, cut short or not (a narrow window, OCR), so the line does not read as a sentence about it.
+    (
+        "not_git_repo",
+        re.compile(r"fatal: not a git repository(?:\s*\(or any of the parent director[^\n]*)?", re.IGNORECASE),
+    ),
     (
         "python_syntax",
         re.compile(r'File "(?P<file>[^"]+)", line (?P<line>\d+)[\s\S]{0,200}?SyntaxError: (?P<msg>[^\n]+)'),
