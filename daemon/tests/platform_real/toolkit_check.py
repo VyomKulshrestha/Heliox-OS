@@ -160,9 +160,33 @@ def diag_reader(prefix: str) -> None:
                 print(f"DIAG {prefix} application {app}: {type(exc).__name__}: {exc}", flush=True)
 
 
+def fixture_focus_within(fixture: subprocess.Popen, field: str, wayland: bool, timeout: float = 10.0) -> str:
+    """Wait until the fixture's window is active and ``field`` ("entry" or "password") has focus; the fixture's last
+    answer. Under sway the window is asked forward with swaymsg on the way."""
+    answer = ""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        answer = ask_fixture(fixture, "text", "text ")
+        if f"{field}_focus=True" in answer and "window_active=True" in answer:
+            return answer
+        if wayland and shutil.which("swaymsg"):
+            subprocess.run(
+                ["swaymsg", '[title="Heliox GTK 4 fixture"] focus'], capture_output=True, timeout=5, check=False
+            )
+        time.sleep(0.5)
+    return answer
+
+
 def gtk4(system_python: str, wayland: bool) -> None:
     prefix = "gtk4-wayland" if wayland else "gtk4"
     env = {key: value for key, value in os.environ.items() if key != "NO_AT_BRIDGE"}
+    keeper = None
+    if wayland and shutil.which("wtype"):
+        # A headless sway seat has no keyboard until a virtual one is open, and without it no window gets keyboard
+        # focus (CI on e8bf67c: the GTK 4 window was never active, and the first typed letter was lost). The GTK 3
+        # check holds one open for its own run only; this one holds its own.
+        keeper = subprocess.Popen(["wtype", "-s", "600000"])
+        time.sleep(1.0)
     fixture = subprocess.Popen(
         [system_python, str(HERE / "gtk4_fixture.py")],
         stdin=subprocess.PIPE,
@@ -175,6 +199,14 @@ def gtk4(system_python: str, wayland: bool) -> None:
         if not check(f"{prefix}/fixture-started", fixture.stdout.readline().startswith("ready")):
             return
         focus_window("Heliox GTK 4 fixture", wayland)
+        state = fixture_focus_within(fixture, "entry", wayland)
+        if not check(
+            f"{prefix}/window-active-with-the-entry-focused",
+            "entry_focus=True" in state and "window_active=True" in state,
+            state or "no answer",
+        ):
+            diag_reader(prefix)
+            return
         type_keys("hello gtk four", wayland)
         typed = read_until(lambda r: r.text == "hello gtk four")
         check(f"{prefix}/reads-typed-text", typed is not None and typed.text == "hello gtk four", repr(typed))
@@ -185,6 +217,8 @@ def gtk4(system_python: str, wayland: bool) -> None:
         fixture.stdin.write("focus password\n")
         fixture.stdin.flush()
         time.sleep(0.8)
+        state = fixture_focus_within(fixture, "password", wayland)
+        print(f"DIAG {prefix} before typing the password: {state or 'no answer'}", flush=True)
         type_keys("s3cret", wayland)
         diag_focused(f"{prefix} password entry")
         # Read for a while: every read in that time must be refused, none may carry the typed text.
@@ -204,9 +238,14 @@ def gtk4(system_python: str, wayland: bool) -> None:
         )
     finally:
         fixture.kill()
+        if keeper is not None:
+            keeper.kill()
 
 
-PAGE = "<!doctype html><title>Heliox Firefox fixture</title><textarea autofocus aria-label=message></textarea>\n"
+PAGE = (
+    "<!doctype html><title>Heliox Firefox fixture</title><textarea autofocus aria-label=message></textarea>"
+    "<input type=password aria-label=password>\n"
+)
 
 
 def firefox() -> None:
@@ -246,6 +285,25 @@ def firefox() -> None:
         type_keys("hello firefox", False)
         typed = read_until(lambda r: r.text.endswith("hello firefox"), timeout=30.0)
         check("firefox/reads-typed-text", typed is not None and typed.text.endswith("hello firefox"), repr(typed))
+        # The password field: Tab to it, type, and every read for five seconds must be refused.
+        subprocess.run(["xdotool", "key", "Tab"], timeout=10, check=False)
+        time.sleep(0.5)
+        type_keys("s3cret", False)
+        diag_focused("firefox password field")
+        from pilot.live import focused_text_linux as L
+
+        reads = []
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            reads.append(L.read_focused())
+            time.sleep(0.3)
+        leaked = [r for r in reads if r is not None and "s3cret" in (r.text or "")]
+        refused = [r for r in reads if r is not None and r.password]
+        check(
+            "firefox/password-refused",
+            not leaked and bool(refused),
+            f"{len(refused)} of {len(reads)} reads refused, leaked {leaked[:1]!r}",
+        )
     finally:
         browser.kill()
         shutil.rmtree(profile, ignore_errors=True)

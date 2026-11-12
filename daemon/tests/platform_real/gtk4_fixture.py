@@ -42,10 +42,17 @@ def main() -> None:
             if command == "focus":
                 (password if arg == "password" else entry).grab_focus()
             elif command == "text":
-                # What the keys actually reached: the entry's text, and only the length of the password's.
+                # What the keys actually reached: the entry's text, and only the length of the password's. In GTK 4
+                # the focus sits on the text widget inside an entry, so "has focus" means the window's focus widget
+                # is the entry or inside it.
+                focus = window.get_focus()
+
+                def within(widget: Gtk.Widget) -> bool:
+                    return focus is not None and (focus == widget or focus.is_ancestor(widget))
+
                 print(
                     f"text entry={entry.get_text()!r} password_length={len(password.get_text())} "
-                    f"entry_focus={entry.has_focus()} password_focus={password.has_focus()} "
+                    f"entry_focus={within(entry)} password_focus={within(password)} "
                     f"window_active={window.is_active()}",
                     flush=True,
                 )
