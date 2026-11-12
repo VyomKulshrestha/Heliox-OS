@@ -499,7 +499,9 @@ It is never stored as conversation and never sent to a cloud model.
 turn, typed or spoken, goes to `LiveCompanion.hold` before any road takes it. A weekday that does not match its date
 ("put the review in for Monday the nineteenth", when the nineteenth is a Thursday), a date that does not exist (the
 thirty-first of November), or an amount that differs from one the person stated earlier in the same conversation
-("the invoice for Acme is 2,400", then "email the Acme invoice for 4,200") holds the turn: Heliox asks one short
+("the invoice for Acme is 2,400", then "email the Acme invoice for 4,200"; or "email it for 4,200", where "it" or
+"that" is taken as the last thing an amount was stated about, only when the two look like the same number gone
+wrong, and only for this check) holds the turn: Heliox asks one short
 question ("The nineteenth is a Thursday. Monday the sixteenth, or Thursday the nineteenth?") and the action waits.
 The answer picks the version that is acted on; "never mind" drops it; anything else is asked once more and then
 dropped. A hold lapses after 60 seconds, and earlier turns count for 10 minutes. A change said on purpose ("change

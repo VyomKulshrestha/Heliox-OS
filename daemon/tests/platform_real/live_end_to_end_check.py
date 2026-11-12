@@ -1,0 +1,266 @@
+"""Heliox Live end to end on real macOS and Linux, for the ``platform-readers`` CI job.
+
+The reader checks prove the field is read; this proves that a slip typed into a real window becomes a Live card.
+Everything is the daemon's own code: ``PilotServer._live_observe`` (the foreground window, ``never_read`` for
+excluded apps, the platform's focused-text reader, the password refusal) feeds a real ``LiveCompanion`` with the
+default settings and Live turned on, ticked at its own pace. Only its speech is a silent stub.
+
+Against the GTK fixture (X11 under Xvfb, or Wayland under sway with ``--wayland``) or the AppKit fixture on macOS:
+
+1. the fixture's app is excluded: a sentence with a wrong weekday typed into its field gives no card;
+2. the exclusion is lifted and a second such sentence is typed: a ``weekday_date`` card with that sentence's
+   weekday and date as evidence;
+3. a third one typed into the password field: no card;
+4. the window is closed: the card is withdrawn with reason ``closed``.
+
+Each step prints one ``CHECK`` line (``SKIP`` where the runner cannot read fields); the exit code is the number of
+failed checks.
+
+    python tests/platform_real/live_end_to_end_check.py [--wayland] [--python /usr/bin/python3]
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import date, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[1]))
+sys.path.insert(0, str(HERE))
+
+from pilot.live import focused_text  # noqa: E402
+from pilot.live.engine import TICK_SECONDS, LiveCompanion  # noqa: E402
+
+failures = 0
+CARD_WAIT = 20.0  # seconds Live may take to raise a card after the sentence is typed
+QUIET_WAIT = 6.0  # seconds a "nothing happens" step is watched for
+
+
+def check(name: str, ok: bool, detail: str = "") -> bool:
+    global failures
+    failures += 0 if ok else 1
+    print(f"CHECK {name}: {'PASS' if ok else 'FAIL'}{' - ' + detail if detail else ''}", flush=True)
+    return ok
+
+
+def skip(name: str, why: str) -> None:
+    print(f"CHECK {name}: SKIP - {why}", flush=True)
+
+
+def slip(days_ahead: int) -> tuple[str, str]:
+    """A sentence whose weekday is wrong for its date, and the evidence Live should quote."""
+    day = date.today() + timedelta(days=days_ahead)
+    wrong = (day + timedelta(days=1)).strftime("%A")
+    evidence = f"{wrong} {day.day} {day.strftime('%B')}"
+    return f"Lunch with Sam is on {evidence}, see you there. ", evidence
+
+
+class Live:
+    """A real LiveCompanion fed by the daemon's own observe method, with the settings the daemon starts with."""
+
+    def __init__(self, folder: Path) -> None:
+        from pilot.config import PilotConfig
+        from pilot.server import PilotServer
+
+        self.config = PilotConfig()
+        self.config.live.enabled = True
+        self.config.live.ocr_fallback = False
+        self.events: list[tuple[str, dict[str, Any]]] = []
+        reader = focused_text.create_reader()
+        server = SimpleNamespace(config=self.config, _live_reader=reader, _live_last_ocr=0.0)
+
+        async def observe():
+            return await PilotServer._live_observe(server)  # type: ignore[arg-type]
+
+        async def emit(event: str, payload: dict[str, Any]) -> None:
+            self.events.append((event, payload))
+
+        async def speak(_text: str, _urgent: bool) -> str:
+            return "suppressed"  # never a sound on the runner
+
+        self.engine = LiveCompanion(
+            settings=lambda: self.config.live,
+            observe=observe,
+            emit=emit,
+            speak=speak,
+            relevance_path=folder / "relevance.json",
+            timing_path=folder / "timing.json",
+            on_disable=reader.close,
+        )
+
+    def cards(self) -> list[dict[str, Any]]:
+        return [payload for event, payload in self.events if event == "live_interjection"]
+
+    def withdrawn(self) -> list[dict[str, Any]]:
+        return [payload for event, payload in self.events if event == "live_interjection_withdrawn"]
+
+    async def run(self, seconds: float, until=lambda: False) -> bool:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            await self.engine.tick()
+            if until():
+                return True
+            await asyncio.sleep(TICK_SECONDS)
+        return bool(until())
+
+    async def while_typing(self, type_text, text: str, seconds: float, until=lambda: False) -> bool:
+        """Type in a thread while Live keeps ticking, as it does while a person types."""
+        typing = asyncio.ensure_future(asyncio.to_thread(type_text, text))
+        hit = await self.run(seconds, until)
+        await typing
+        return hit or bool(until())
+
+
+async def steps(prefix: str, live: Live, type_text, focus, close) -> None:
+    from pilot.agents.screen_vision import _get_active_window
+
+    app, title = await asyncio.to_thread(_get_active_window)
+    print(f"{prefix}: foreground app {app!r}, title {title!r}")
+
+    # 1. the app excluded (before Live has seen it, as when the person set it up earlier): nothing typed there
+    # reaches Live
+    live.config.timeline.excluded_apps = [*live.config.timeline.excluded_apps, app]
+    await live.run(2.0)
+    first, first_evidence = slip(9)
+    await live.while_typing(type_text, first, QUIET_WAIT, until=lambda: bool(live.cards()))
+    check(f"{prefix}/live-excluded-app-gives-no-card", not live.cards(), repr(live.cards()[:1]))
+    live.config.timeline.excluded_apps = [name for name in live.config.timeline.excluded_apps if name != app]
+
+    # 2. the exclusion lifted: the next slip typed there is a card, quoting it
+    await live.run(2.0)  # what is already there is the person's starting text, not a new slip
+    second, evidence = slip(12)
+
+    def card_for(text: str):
+        return next((c for c in live.cards() if c.get("evidence") == text), None)
+
+    await live.while_typing(type_text, second, CARD_WAIT, until=lambda: card_for(evidence) is not None)
+    card = card_for(evidence)
+    check(
+        f"{prefix}/live-typed-slip-becomes-a-card",
+        card is not None and card.get("kind") == "weekday_date" and card.get("source") == "focused_field",
+        repr(card or live.cards()[-1:]),
+    )
+    # The first sentence may now get its card too: once the app is no longer excluded, what its field holds may be
+    # read, and the first field Live sees is checked whole (someone who turns Live on mid-draft wants it checked).
+    print(
+        f"{prefix}: cards so far {[c.get('evidence') for c in live.cards()]} (typed while excluded: {first_evidence})"
+    )
+
+    # 3. the same kind of slip in the password field: nothing
+    await asyncio.to_thread(focus, "password")
+    third, secret_evidence = slip(16)
+    await live.while_typing(type_text, third, QUIET_WAIT, until=lambda: card_for(secret_evidence) is not None)
+    check(
+        f"{prefix}/live-password-field-gives-no-card",
+        card_for(secret_evidence) is None,
+        repr([c.get("evidence") for c in live.cards()]),
+    )
+
+    # 4. the window closed: the card goes with it
+    if card is None:
+        skip(f"{prefix}/live-card-withdrawn-when-window-closes", "no card to withdraw")
+        return
+    await asyncio.to_thread(close)
+
+    def gone():
+        return any(w.get("id") == card["id"] for w in live.withdrawn())
+
+    await live.run(10.0, until=gone)
+    reason = next((w.get("reason") for w in live.withdrawn() if w.get("id") == card["id"]), None)
+    check(f"{prefix}/live-card-withdrawn-when-window-closes", reason == "closed", f"reason {reason!r}")
+
+
+async def linux(wayland: bool, python: str, folder: Path) -> None:
+    import atexit
+
+    from linux_atspi_check import Fixture, typer
+
+    prefix = "wayland" if wayland else "x11"
+    fixture = Fixture(python)
+    try:
+        if not check(f"{prefix}/live-fixture-started", fixture.wait_for("ready")):
+            return
+        type_keys, how = typer(wayland, fixture)
+        print(f"typing with: {how}")
+        if wayland and shutil.which("wtype"):
+            keeper = subprocess.Popen(["wtype", "-s", "600000"])  # gives the headless seat a keyboard
+            atexit.register(keeper.kill)
+            time.sleep(1.0)
+        live = Live(folder)
+
+        def focus(which: str) -> None:
+            fixture.send(f"focus {which}")
+
+        await steps(prefix, live, type_keys, focus, fixture.close)
+    finally:
+        fixture.close()
+
+
+async def macos(folder: Path) -> None:
+    from pilot.live import focused_text_macos as M
+    from pilot.system import macos_permissions as mp
+
+    if mp.accessibility_state() != mp.PermissionState.GRANTED:
+        skip("macos/live-end-to-end", "this runner does not grant Accessibility to the job, so no field can be read")
+        return
+    fixture = subprocess.Popen(
+        [sys.executable, str(HERE / "macos_fixture.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    assert fixture.stdin is not None and fixture.stdout is not None
+
+    def send(command: str) -> None:
+        assert fixture.stdin is not None
+        try:
+            fixture.stdin.write(command + "\n")
+            fixture.stdin.flush()
+        except (BrokenPipeError, OSError):
+            return
+        time.sleep(0.6)
+
+    def type_text(text: str) -> None:
+        # No input tool may send keys to another app on the runner; insert from inside the app, a few words at a
+        # time, so Live sees the sentence grow.
+        for word in text.split(" "):
+            send(f"insert {word} ")
+
+    def close() -> None:
+        send("quit")
+        fixture.wait(timeout=10)
+
+    try:
+        if not check("macos/live-fixture-started", fixture.stdout.readline().startswith("ready")):
+            return
+        time.sleep(1.0)
+        print(f"reader shared: {M.shared() is not None}")
+        await steps("macos", Live(folder), type_text, lambda which: send(f"focus {which}"), close)
+    finally:
+        if fixture.poll() is None:
+            fixture.kill()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--wayland", action="store_true")
+    parser.add_argument("--python", default="/usr/bin/python3")
+    args = parser.parse_args()
+    with tempfile.TemporaryDirectory(prefix="heliox-live-e2e-") as folder:
+        if sys.platform == "darwin":
+            asyncio.run(macos(Path(folder)))
+        elif sys.platform.startswith("linux"):
+            asyncio.run(linux(args.wayland, args.python, Path(folder)))
+        else:
+            skip("live-end-to-end", "macOS and Linux only; Windows has its own reader checks")
+    return failures
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -107,6 +107,56 @@ def test_must_not_ask(said):
     assert hold_for(spoken.to_written(said), TODAY, turns) is None
 
 
+@pytest.mark.parametrize(
+    ("said", "asked", "question"),
+    [
+        (
+            ["the invoice is 2,400."],
+            "email it for 4,200.",
+            "A moment ago you said the invoice is 2,400. 2,400 or 4,200?",
+        ),
+        (
+            ["the invoice is 2,400."],
+            "send that to Sam for 4,200.",
+            "A moment ago you said the invoice is 2,400. 2,400 or 4,200?",
+        ),
+        (
+            ["the invoice is two thousand four hundred."],
+            "email it for four thousand two hundred.",
+            "A moment ago you said the invoice is 2,400. 2,400 or 4,200?",
+        ),
+    ],
+)
+def test_it_or_that_points_back_to_the_last_thing_an_amount_was_stated_about(said, asked, question):
+    turns = Turns()
+    for text in said:
+        turns.add(spoken.to_written(text))
+    held = hold_for(spoken.to_written(asked), TODAY, turns)
+    assert held is not None and held.question == question
+    # The person's pick changes the amount only; "it" stays "it".
+    assert resolve(held, "2,400").request == spoken.to_written(asked).replace(held.evidence, "2,400")
+
+
+@pytest.mark.parametrize(
+    ("said", "asked"),
+    [
+        (["the invoice for Acme is 2,400.", "the hotel is 180."], "book it for 180."),  # two things, two amounts
+        (["the invoice is 2,400.", "the deposit is 400."], "pay it for 400."),
+        (["the invoice is 2,400."], "pay the deposit of 400."),  # another thing, named
+        (["the invoice is 2,400 and the deposit is 400."], "email it for 4,200."),  # not the same number gone wrong
+        (["the invoice is 2,400."], "actually make it 4,200."),  # a change said on purpose
+        (["the invoice is 2,400."], "change it to 4,200."),
+        ([], "email it for 4,200."),  # nothing said before
+        (["the invoice is 2,400."], "the total is 4,200 for that."),  # a statement, not a request
+    ],
+)
+def test_pointing_back_must_not_ask(said, asked):
+    turns = Turns()
+    for text in said:
+        turns.add(spoken.to_written(text))
+    assert hold_for(spoken.to_written(asked), TODAY, turns) is None
+
+
 def test_answers():
     held = hold_for("put the review in for Monday the 19th at 10.", TODAY, Turns())
     assert resolve(held, "Monday").request == "put the review in for Monday 16 November at 10."

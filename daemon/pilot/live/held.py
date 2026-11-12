@@ -151,7 +151,7 @@ def words_to_number(text: str) -> int | None:
 _NUMBER_WORDS = (
     r"(?:(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|"
     r"seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|and)"
-    r"(?:[\s-]+|$))+"
+    r"(?:[\s-]+|\b))+"  # a word ends at a space, a hyphen, punctuation ("four hundred.") or the end
 )
 _AMOUNT = re.compile(
     r"(?P<cur>[$€£₹])?\s?(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{3,}(?:\.\d+)?)"
@@ -203,6 +203,15 @@ def _subjects(text: str, start: int, end: int) -> frozenset[str]:
     before = re.findall(r"[a-z][a-z'-]+", before_text.casefold())[-NEAR_WORDS:]
     after = re.findall(r"[a-z][a-z'-]+", after_text.casefold())[:NEAR_WORDS]
     return frozenset(w for w in before + after if len(w) >= 4 and w not in _STOP and not words_to_number(w))
+
+
+# "email it for 4,200", "send that for 4,200": the request names no thing, only points back to one.
+_POINTS_BACK = re.compile(r"\b(?:it|that|this|them|those|these)\b", re.IGNORECASE)
+
+
+def _points_back(text: str, start: int, end: int) -> bool:
+    before, after = _clause(text, start, end)
+    return bool(_POINTS_BACK.search(before) or _POINTS_BACK.search(after))
 
 
 def _fmt(value: int) -> str:
@@ -387,40 +396,85 @@ class Turns:
         return [turn for turn in self.turns if now - turn.at <= TURNS_SECONDS]
 
     def check(self, request: str) -> Held | None:
-        """An amount in this request that differs from one the person gave for the same thing a moment ago."""
+        """An amount in this request that differs from one the person gave for the same thing a moment ago.
+
+        The thing is matched by the words around both amounts ("the invoice for Acme is 2,400", "email the Acme
+        invoice for 4,200"), or, when the request only points back ("email it for 4,200", "send that for 4,200"), it
+        is the last thing an amount was stated about in this conversation. That is used for this check only: the
+        request is never rewritten beyond the version of the amount the person picks.
+        """
         if _DELIBERATE.search(request):
             return None
+        recent = self.recent()
         for value, start, end in amounts(request):
-            subjects = _subjects(request, start, end)
-            if not subjects or _states(request, start):
+            if _states(request, start):
                 continue  # a statement is the person telling Heliox, not a request to act on
-            for turn in reversed(self.recent()):
+            subjects = _subjects(request, start, end)
+            matched = False
+            for turn in reversed(recent):
                 for earlier, e_start, e_end in amounts(turn.text):
                     if not _states(turn.text, e_start):
                         continue  # only what the person stated is checked against
                     shared = subjects & _subjects(turn.text, e_start, e_end)
-                    if not shared or earlier == value:
+                    if not shared:
                         continue
-                    if any(v == value for v, _, _ in amounts(turn.text)):
-                        continue  # both amounts were said before: two things, not a slip
-                    thing = _thing(turn.text, e_start, shared)
-                    a = Option(_fmt(earlier), (_fmt(earlier), str(earlier)), _fmt(earlier))
-                    b = Option(_fmt(value), (_fmt(value), str(value)), request[start:end].strip())
-                    return Held(
-                        "said_vs_said",
-                        f"A moment ago you said {thing} is {_fmt(earlier)}. {_fmt(earlier)} or {_fmt(value)}?",
-                        request,
-                        (start, end),
-                        (a, b),
-                        title=f"You said {_fmt(earlier)} a moment ago",
-                        evidence=request[start:end].strip(),
-                    )
+                    matched = True
+                    if earlier == value or any(v == value for v, _, _ in amounts(turn.text)):
+                        continue  # the same, or both amounts were said before: two things, not a slip
+                    return _amount_hold(request, start, end, value, earlier, _thing(turn.text, e_start, shared))
+            if matched or not _points_back(request, start, end):
+                continue
+            last = _last_stated(recent)
+            if last is None:
+                continue
+            turn, earlier, e_start, e_end = last
+            if earlier == value or any(v == value for v, _, _ in amounts(turn.text)):
+                continue
+            if not _looks_like_slip(earlier, value):
+                continue  # "it" may be something new; only the same number gone wrong is worth asking about
+            thing = _thing(turn.text, e_start, _subjects(turn.text, e_start, e_end))
+            return _amount_hold(request, start, end, value, earlier, thing)
         return None
+
+
+def _looks_like_slip(said: int, now: int) -> bool:
+    """The same number gone wrong: its digits swapped (2,400 and 4,200), one digit different (2,400 and 2,500), or a
+    zero added or dropped (2,400 and 24,000)."""
+    a, b = str(said), str(now)
+    if sorted(a) == sorted(b):
+        return True
+    if len(a) == len(b) and sum(x != y for x, y in zip(a, b, strict=True)) == 1:
+        return True
+    return said * 10 == now or now * 10 == said
+
+
+def _last_stated(turns: list[Turn]) -> tuple[Turn, int, int, int] | None:
+    """The last amount the person stated about something, in these turns."""
+    for turn in reversed(turns):
+        stated = [(v, s, e) for v, s, e in amounts(turn.text) if _states(turn.text, s)]
+        if stated:
+            value, start, end = stated[-1]
+            return turn, value, start, end
+    return None
+
+
+def _amount_hold(request: str, start: int, end: int, value: int, earlier: int, thing: str) -> Held:
+    a = Option(_fmt(earlier), (_fmt(earlier), str(earlier)), _fmt(earlier))
+    b = Option(_fmt(value), (_fmt(value), str(value)), request[start:end].strip())
+    return Held(
+        "said_vs_said",
+        f"A moment ago you said {thing} is {_fmt(earlier)}. {_fmt(earlier)} or {_fmt(value)}?",
+        request,
+        (start, end),
+        (a, b),
+        title=f"You said {_fmt(earlier)} a moment ago",
+        evidence=request[start:end].strip(),
+    )
 
 
 def _thing(text: str, start: int, shared: frozenset[str]) -> str:
     """ "the Acme invoice" from "the invoice for Acme is 2,400", in the person's own words where possible."""
-    before = text[:start].rstrip()
+    before = _clause(text, start, start)[0].rstrip()
     before = re.sub(r"\s+(?:is|was|are|were|comes to|costs|for)$", "", before, flags=re.IGNORECASE)
     words = before.split()[-4:]
     phrase = " ".join(words).strip(" ,.")

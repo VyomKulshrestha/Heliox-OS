@@ -1,5 +1,5 @@
-"""What Live keeps from speech that was not said to Heliox: a silent card at most, its words for 90 seconds in
-memory, nothing in the conversation and nothing for any model."""
+"""What Live does with speech that was not said to Heliox: nothing. No card, nothing kept, nothing in the
+conversation and nothing for any model."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ async def test_a_sentence_first_offered_as_overheard_and_then_dispatched_is_answ
     await run_for(live, clock, 1)
     assert spoken == ["The fourteenth of November is a Saturday. You said Tuesday."]
     [card] = [p for e, p in events if e == "live_interjection"]
-    assert card["spoken"] is True and not live._find(card["id"]).get("overheard")
+    assert card["spoken"] is True
 
 
 def test_a_card_from_addressed_speech_still_reaches_the_model_as_before():
@@ -90,7 +90,6 @@ def test_a_card_from_addressed_speech_still_reaches_the_model_as_before():
         "source": "speech",
         "spoken": False,
         "at": 0.0,
-        "overheard": False,
     }
     memory = ConversationMemory(clock=lambda: 0.0)
     link = LiveConversationLink(

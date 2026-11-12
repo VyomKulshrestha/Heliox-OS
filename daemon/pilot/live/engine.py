@@ -100,8 +100,6 @@ NOTICE_SOURCES = frozenset({"keystroke"})
 NOTICE_QUIET_SECONDS = 3600.0
 # "Not now" holds that kind of catch back this long (urgent risks still show). "Don't mention these" mutes it.
 SNOOZE_SECONDS = 1800.0
-# How long a card from speech not said to Heliox keeps the words it quotes (in memory; never on disk).
-OVERHEARD_KEEP_SECONDS = REPLY_WINDOW_SECONDS
 # After a call ends, this long before the held catches are said: people say goodbye and breathe first.
 AFTER_CALL_SECONDS = 5.0
 # A speech outcome that means the remark was not heard; it must not count against the spoken rate limit.
@@ -616,7 +614,7 @@ class LiveCompanion:
                 verdict, item.resumed_after, paused_for=item.paused_for, needed=item.needed_pause
             )
 
-    def _note(self, correction: Correction, source: str, window: str, now: float, *, silent: bool = False) -> None:
+    def _note(self, correction: Correction, source: str, window: str, now: float) -> None:
         if any(item.correction.key == correction.key for item in self._visible.values()):
             for item in self._visible.values():
                 if item.correction.key == correction.key:
@@ -627,23 +625,16 @@ class LiveCompanion:
         existing = self._pending.get(correction.key)
         if existing:
             existing.last_seen = now
-            if not silent:
-                # Heard first while the listener was still deciding, then dispatched as said to Heliox: it was
-                # addressed after all, so it may be spoken and is no longer an overheard sentence.
-                existing.silent = False
             # Keep the latest reading: a slip first seen at the end of the text stops trailing once they type on.
             existing.correction = correction
             return
-        self._pending[correction.key] = Pending(
-            correction, source, now, now, window=window, noted_seq=next_seq(), silent=silent
-        )
+        self._pending[correction.key] = Pending(correction, source, now, now, window=window, noted_seq=next_seq())
 
     def offer_speech(self, text: str, *, addressed: bool = True) -> None:
         """Check a sentence the person said. Spoken corrections land as soon as they stop talking.
 
         ``addressed=False``: heard near the microphone but not said to Heliox (a promise to a colleague, a date
-        said in a meeting). Live does not check it at all: no card, nothing kept, nothing sent anywhere. (It used to
-        give a silent card; the conversation bench's must-not-fire case for a slip said to a colleague expects none.)
+        said in a meeting). Live does not check it at all: no card, nothing kept, nothing sent anywhere.
         """
         cfg = self._config()
         if not getattr(cfg, "enabled", False) or self._paused or not getattr(cfg, "listen_to_speech", True):
@@ -653,9 +644,8 @@ class LiveCompanion:
         now = self._clock()
         kinds = tuple(kind for kind in self._kinds() if kind in SPEECH_KINDS)
         ctx = self._context(None, "speech")
-        silent = not addressed
         for correction in detect(text, ctx, kinds=kinds):
-            self._note(correction, "speech", "speech", now, silent=silent)
+            self._note(correction, "speech", "speech", now)
         if SAID_VS_TYPED in self._kinds():
             # "Remind me about the dentist on Friday" minutes after typing "Dentist, Thursday 12 November".
             try:
@@ -664,7 +654,7 @@ class LiveCompanion:
                 logger.warning("Said-versus-typed check failed; the other checks still ran", exc_info=True)
                 found = []
             for correction in found:
-                self._note(correction, "speech", "speech", now, silent=silent)
+                self._note(correction, "speech", "speech", now)
         if COMMITMENT in self._kinds():
             # "I'll send Priya the deck by Friday", said to Heliox or while talking with it: offer the reminder.
             try:
@@ -673,8 +663,8 @@ class LiveCompanion:
                 logger.warning("Spoken commitment check failed; the other checks still ran", exc_info=True)
                 promises = []
             for promise in promises:
-                self._note(promise, "speech", "speech", now, silent=silent)
-        if addressed and self._grounding() and "personal_fact" in self._kinds():
+                self._note(promise, "speech", "speech", now)
+        if self._grounding() and "personal_fact" in self._kinds():
             # What they asked for, against their calendar and lists, while the planner gets going.
             asyncio.ensure_future(self._ground(text, "speech", "speech"))
         if any(item.source == "speech" for item in self._pending.values()):
@@ -853,21 +843,7 @@ class LiveCompanion:
         now = self._clock() if now is None else now
         return bool(self._call) or now - self._call_ended_at < AFTER_CALL_SECONDS
 
-    def _forget_overheard(self, now: float) -> None:
-        """Words from speech not said to Heliox are kept only while the card can be asked about. After that the card
-        keeps its kind (for "thanks" and "not now" counts) but loses what was said."""
-        for entry in self._recent:
-            if entry.get("overheard") and not entry.get("forgotten") and now - entry["at"] > OVERHEARD_KEEP_SECONDS:
-                for field in ("title", "message", "detail", "evidence", "fix"):
-                    entry[field] = ""
-                entry["forgotten"] = True
-                # The card in the app goes too, so the words are not left on screen either.
-                asyncio.ensure_future(
-                    self._emit("live_interjection_withdrawn", {"id": entry["id"], "reason": "expired"})
-                )
-
     def _expire(self, now: float) -> None:
-        self._forget_overheard(now)
         if now - self._last_window_check >= WINDOW_CHECK_SECONDS:
             self._last_window_check = now
             for key, item in list(self._pending.items()):
@@ -1018,9 +994,6 @@ class LiveCompanion:
                 "seq": next_seq(),  # order against offers and the floor, never by clock
                 "noted_seq": item.noted_seq,
                 "remark": remark if spoken else 0,
-                # From speech that was not said to Heliox: never shared with a model, and its words are dropped
-                # from memory after OVERHEARD_KEEP_SECONDS (see _forget_overheard).
-                "overheard": item.silent,
             }
         )
         self._last_shown_at = now
@@ -1178,8 +1151,6 @@ class LiveCompanion:
             if correction_id:
                 return "That correction is no longer available."
             return "Nothing to explain: Live hasn't raised anything in the last minute and a half."
-        if entry.get("forgotten"):
-            return "That one came from something not said to me, so I no longer keep its words."
         parts = [because(entry)]  # the same answer as "why did you say that", by voice or on the card
         if entry.get("fix") and entry.get("fix_kind") in ("replace", "command"):
             parts.append(f"The fix: {entry['fix']}.")

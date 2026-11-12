@@ -353,6 +353,11 @@ jobs:
             export DISPLAY=:99 GTK_A11Y=atspi
             sleep 2
             python tests/platform_real/linux_atspi_check.py --python /usr/bin/python3
+            reader=$?
+            # Live end to end: a slip typed into the GTK field becomes a card; excluded app, password field, closed
+            # window.
+            python tests/platform_real/live_end_to_end_check.py --python /usr/bin/python3
+            exit $(( reader + $? ))
           '
 
       # Weston's headless backend has no seat, so nothing can take keyboard focus there (first run: GTK logged
@@ -378,6 +383,8 @@ jobs:
             export WAYLAND_DISPLAY=$sock GDK_BACKEND=wayland
             python tests/platform_real/linux_atspi_check.py --wayland --python /usr/bin/python3
             status=$?
+            python tests/platform_real/live_end_to_end_check.py --wayland --python /usr/bin/python3
+            status=$(( status + $? ))
             tail -20 /tmp/sway.log
             exit $status
           '
@@ -444,6 +451,9 @@ jobs:
         run: |
           sw_vers
           python tests/platform_real/macos_ax_check.py
+          reader=$?
+          python tests/platform_real/live_end_to_end_check.py
+          exit $(( reader + $? ))
 
       - name: Live terminal check in real zsh and fish sessions
         run: |
