@@ -99,6 +99,9 @@ class FakeClient:
     def pid(self, bus):
         return 4242
 
+    def is_password(self, ref, role=None):
+        return self.nodes[ref[1]][0] == "password text" or ref[1] in getattr(self, "password_paths", ())
+
 
 def test_linux_capture_lists_showing_controls_and_never_values(monkeypatch):
     shared = L._Shared()
@@ -306,6 +309,15 @@ def test_linux_press_checks_the_window_again_and_presses_nothing_in_a_refused_on
     _linux(monkeypatch, client)
     assert P.press_linux((":1.5", "/btn"), excluded=("gedit",))[0] == "refused"
     assert client.pressed == []
+
+
+def test_linux_press_refuses_a_password_field_and_gtk4_controls_are_named(monkeypatch):
+    client = PressClient()
+    _linux(monkeypatch, client)
+    client.password_paths = {"/btn"}  # e.g. a GTK 4 password entry: known only by its numeric role
+    outcome, detail = P.press_linux((":1.5", "/btn"))
+    assert outcome == "refused" and "password field" in detail and client.pressed == []
+    assert P.control_type("text box", P.ATSPI_ROLES) == "Edit" and P.control_type("button", P.ATSPI_ROLES) == "Button"
 
 
 def _click_action(snapshot_id: str, ref: str):

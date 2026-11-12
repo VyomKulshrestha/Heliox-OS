@@ -1,11 +1,16 @@
-"""The Linux reader against toolkits other than GTK 3, under Xvfb with a session bus and AT-SPI, for CI.
+"""The Linux reader against toolkits other than GTK 3, with a session bus and AT-SPI, for CI.
 
-    python toolkit_check.py gtk4 --python /usr/bin/python3   # gtk4_fixture.py: typed text read, password refused
-    python toolkit_check.py firefox                          # a Firefox textarea, with toolkit accessibility on
+    python toolkit_check.py gtk4 --python /usr/bin/python3             # under Xvfb: keys typed with xdotool
+    python toolkit_check.py gtk4 --python /usr/bin/python3 --wayland   # under sway: keys typed with wtype
+    python toolkit_check.py firefox                                    # a Firefox textarea, toolkit a11y on
 
-Keys are typed with xdotool into the focused window, and ``focused_text_linux.read_focused`` must read them back.
-Firefox is told to expose itself through ``GNOME_ACCESSIBILITY=1`` and the session's toolkit-accessibility
-setting, the same switch Live asks the person to turn on.
+``focused_text_linux.read_focused`` must read the typed text back, and must refuse the password entry. For the
+password entry the check prints DIAG lines with what AT-SPI says about the focused object and its two parents
+(role name, numeric role, states, object attributes, interfaces), so each run records how the toolkit marks it.
+GTK 4 marks a password entry only in its numeric role (CI on 008f1a0 read one as a "text box").
+
+Firefox is told to expose itself through ``GNOME_ACCESSIBILITY=1`` and the session's toolkit-accessibility setting,
+the same switch Live asks the person to turn on; its own output is printed when its window does not appear.
 
 Each check prints one ``CHECK`` line; the exit code is the number of failed checks.
 """
@@ -36,17 +41,70 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
-def focus_and_type(title: str, text: str) -> None:
-    found = subprocess.run(["xdotool", "search", "--sync", "--name", title], capture_output=True, text=True, timeout=30)
-    window = (found.stdout.split() or [""])[0]
-    if window:
-        subprocess.run(["xdotool", "windowactivate", "--sync", window], timeout=10, check=False)
-        subprocess.run(["xdotool", "windowfocus", "--sync", window], timeout=10, check=False)
-    subprocess.run(["xdotool", "type", "--delay", "30", text], timeout=60, check=False)
+def find_window(title: str, timeout: float = 30.0) -> str:
+    try:
+        found = subprocess.run(
+            ["xdotool", "search", "--sync", "--name", title], capture_output=True, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        return ""
+    return (found.stdout.split() or [""])[0]
+
+
+def type_keys(text: str, wayland: bool) -> None:
+    if wayland:
+        subprocess.run(["wtype", "-d", "30", text], timeout=60, check=False)
+    else:
+        subprocess.run(["xdotool", "type", "--delay", "30", text], timeout=60, check=False)
     time.sleep(0.6)
 
 
-def gtk4(system_python: str) -> None:
+def focus_window(title: str, wayland: bool) -> bool:
+    if wayland:
+        return True  # sway focuses a new window; the fixture also grabs focus for its entry
+    window = find_window(title)
+    if window:
+        subprocess.run(["xdotool", "windowactivate", "--sync", window], timeout=10, check=False)
+        subprocess.run(["xdotool", "windowfocus", "--sync", window], timeout=10, check=False)
+    return bool(window)
+
+
+def diag_focused(prefix: str) -> None:
+    """DIAG lines: what AT-SPI says about the focused object and its two parents."""
+    from pilot.live import focused_text_linux as L
+
+    with L.SHARED.lock:
+        client = L.SHARED.get()
+        if client is None:
+            print(f"DIAG {prefix}: no AT-SPI client: {L.SHARED.error}")
+            return
+        ref = client.focused()
+        for level in range(3):
+            if ref is None:
+                break
+            facts = {"ref": f"{ref[0]}{ref[1]}"}
+            for key, call in (
+                ("role_name", lambda r: client._role(r)),
+                ("role_number", lambda r: client._role_number(r)),
+                ("states", lambda r: sorted(client._state(r))),
+                ("attributes", lambda r: dict(client._t.call(r[0], r[1], L.ACCESSIBLE, "GetAttributes")[0])),
+                ("interfaces", lambda r: list(client._t.call(r[0], r[1], L.ACCESSIBLE, "GetInterfaces")[0])),
+                ("name", lambda r: client._get(r, L.ACCESSIBLE, "Name")),
+            ):
+                try:
+                    facts[key] = call(ref)
+                except Exception as exc:
+                    facts[key] = f"{type(exc).__name__}: {exc}"
+            print(f"DIAG {prefix} level {level}: {facts}", flush=True)
+            try:
+                bus, path = client._get(ref, L.ACCESSIBLE, "Parent")
+                ref = (str(bus), str(path))
+            except Exception:
+                break
+
+
+def gtk4(system_python: str, wayland: bool) -> None:
+    prefix = "gtk4-wayland" if wayland else "gtk4"
     env = {key: value for key, value in os.environ.items() if key != "NO_AT_BRIDGE"}
     fixture = subprocess.Popen(
         [system_python, str(HERE / "gtk4_fixture.py")],
@@ -57,17 +115,32 @@ def gtk4(system_python: str) -> None:
     )
     assert fixture.stdin is not None and fixture.stdout is not None
     try:
-        if not check("gtk4/fixture-started", fixture.stdout.readline().startswith("ready")):
+        if not check(f"{prefix}/fixture-started", fixture.stdout.readline().startswith("ready")):
             return
-        focus_and_type("Heliox GTK 4 fixture", "hello gtk four")
+        focus_window("Heliox GTK 4 fixture", wayland)
+        type_keys("hello gtk four", wayland)
         typed = read_until(lambda r: r.text == "hello gtk four")
-        check("gtk4/reads-typed-text", typed is not None and typed.text == "hello gtk four", repr(typed))
+        check(f"{prefix}/reads-typed-text", typed is not None and typed.text == "hello gtk four", repr(typed))
         fixture.stdin.write("focus password\n")
         fixture.stdin.flush()
         time.sleep(0.8)
-        subprocess.run(["xdotool", "type", "--delay", "30", "s3cret"], timeout=30, check=False)
-        secret = read_until(lambda r: r.password)
-        check("gtk4/password-refused", secret is not None and secret.password and secret.text == "", repr(secret))
+        type_keys("s3cret", wayland)
+        diag_focused(f"{prefix} password entry")
+        # Read for a while: every read in that time must be refused, none may carry the typed text.
+        reads = []
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            from pilot.live import focused_text_linux as L
+
+            reads.append(L.read_focused())
+            time.sleep(0.3)
+        leaked = [r for r in reads if r is not None and "s3cret" in (r.text or "")]
+        refused = [r for r in reads if r is not None and r.password]
+        check(
+            f"{prefix}/password-refused",
+            not leaked and bool(refused),
+            f"{len(refused)} of {len(reads)} reads refused, leaked {leaked[:1]!r}",
+        )
     finally:
         fixture.kill()
 
@@ -89,29 +162,47 @@ def firefox() -> None:
         'user_pref("accessibility.force_disabled", -1);\nuser_pref("browser.shell.checkDefaultBrowser", false);\n',
         encoding="utf-8",
     )
+    log = profile / "firefox.log"
     env = {**os.environ, "GNOME_ACCESSIBILITY": "1", "MOZ_ENABLE_WAYLAND": "0"}
-    browser = subprocess.Popen(
-        [program, "--new-instance", "--profile", str(profile), PAGE],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env=env,
-    )
+    with log.open("w", encoding="utf-8") as out:
+        browser = subprocess.Popen(
+            [program, "--new-instance", "--profile", str(profile), PAGE], stdout=out, stderr=out, env=env
+        )
     try:
-        time.sleep(12.0)
-        focus_and_type("Heliox Firefox fixture", "hello firefox")
+        window = find_window("Heliox Firefox fixture", timeout=60.0)
+        if not check("firefox/window-shown", bool(window), "" if window else f"exit {browser.poll()}"):
+            tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-15:]
+            print("DIAG firefox output:\n  " + "\n  ".join(tail))
+            print(f"DIAG windows now: {run_quiet(['xdotool', 'search', '--name', '.'])}")
+            return
+        focus_window("Heliox Firefox fixture", False)
+        type_keys("hello firefox", False)
         typed = read_until(lambda r: r.text.endswith("hello firefox"), timeout=30.0)
         check("firefox/reads-typed-text", typed is not None and typed.text.endswith("hello firefox"), repr(typed))
     finally:
         browser.kill()
 
 
+def run_quiet(args: list[str]) -> str:
+    try:
+        done = subprocess.run(args, capture_output=True, text=True, timeout=10, check=False)
+    except subprocess.TimeoutExpired:
+        return "timed out"
+    names = []
+    for window in done.stdout.split()[:15]:
+        title = subprocess.run(["xdotool", "getwindowname", window], capture_output=True, text=True, check=False)
+        names.append(title.stdout.strip())
+    return repr(names)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("toolkit", choices=["gtk4", "firefox"])
     parser.add_argument("--python", default="/usr/bin/python3")
+    parser.add_argument("--wayland", action="store_true")
     args = parser.parse_args()
     if args.toolkit == "gtk4":
-        gtk4(args.python)
+        gtk4(args.python, args.wayland)
     else:
         firefox()
     return failures

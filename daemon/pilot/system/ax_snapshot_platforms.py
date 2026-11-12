@@ -79,6 +79,10 @@ ATSPI_ROLES = {
     "slider": "Slider",
     "scroll bar": "ScrollBar",
     "label": "Text",
+    # GTK 4 names its roles after ARIA in GetRoleName ("button", "text box"; CI on 008f1a0).
+    "button": "Button",
+    "text box": "Edit",
+    "search box": "Edit",
 }
 
 
@@ -428,6 +432,9 @@ def press_linux(ref: Any, excluded: Iterable[str] = ()) -> tuple[str, str]:
         reason = refuse_window(app_name, title, excluded)
         if reason:
             return "refused", reason
+        if client.is_password(ref):
+            # A password field, or the text inside one (GTK 4 marks it only in the entry's numeric role).
+            return "refused", "Heliox does not act inside a password field."
         if L.STATE_DEFUNCT in state:
             return "missing", ""
         if not (8 in state or 24 in state):  # ENABLED or SENSITIVE

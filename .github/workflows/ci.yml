@@ -448,7 +448,7 @@ jobs:
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         continue-on-error: true
         run: |
-          sudo apt-get install -y -q --no-install-recommends sway wtype
+          sudo apt-get install -y -q --no-install-recommends sway wtype gir1.2-gtk-4.0
           dbus-run-session -- bash -c '
             export XDG_RUNTIME_DIR=$(mktemp -d) && chmod 700 "$XDG_RUNTIME_DIR"
             printf "output HEADLESS-1 resolution 1280x800\n" > /tmp/sway.conf
@@ -467,6 +467,9 @@ jobs:
             python tests/platform_real/live_end_to_end_check.py --wayland --python /usr/bin/python3
             status=$(( status + $? ))
             python tests/platform_real/live_more_checks.py --wayland --python /usr/bin/python3
+            status=$(( status + $? ))
+            # A GTK 4 password entry under Wayland: refused, with DIAG lines of how GTK 4 marks it.
+            python tests/platform_real/toolkit_check.py gtk4 --wayland --python /usr/bin/python3
             status=$(( status + $? ))
             tail -20 /tmp/sway.log
             exit $status

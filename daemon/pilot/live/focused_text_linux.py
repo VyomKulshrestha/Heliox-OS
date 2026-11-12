@@ -63,6 +63,12 @@ STATE_MANAGES_DESCENDANTS = 31
 STATE_READ_ONLY = 43
 
 PASSWORD_ROLES = frozenset({"password text"})
+# AtspiRole ATSPI_ROLE_PASSWORD_TEXT (at-spi2-core atspi-constants.h). GTK 4 names its roles after ARIA in
+# GetRoleName, so a password entry's role name is "text box" like any entry's; it marks the password only in the
+# numeric role (GetRole), on the GtkPasswordEntry, while focus sits on the text widget inside it (CI on 008f1a0:
+# a GTK 4 password entry was read as a "text box"). The numeric role is asked of the field and of its parents.
+ROLE_PASSWORD_TEXT = 40
+PASSWORD_PARENT_DEPTH = 2
 TERMINAL_ROLES = frozenset({"terminal"})
 WINDOW_ROLES = frozenset({"frame", "window", "dialog", "alert", "file chooser"})
 # Roles that are never somewhere the person writes, even if a toolkit marks them editable.
@@ -113,6 +119,15 @@ def classify(role: str, state: set[int], interfaces: Iterable[str]) -> tuple[boo
     if STATE_EDITABLE in state and STATE_READ_ONLY not in state:
         return False, FIELD
     return False, ""
+
+
+def password_by_role(role_names: Iterable[str], role_numbers: Iterable[int | None]) -> bool:
+    """Whether the field, or a parent it sits in, is a password field, from the role names and numeric roles of the
+    field and its parents (field first). A numeric role that could not be read counts as a password: Heliox does not
+    read a field it cannot tell is not one. Pure."""
+    if any(str(name).casefold() in PASSWORD_ROLES for name in role_names):
+        return True
+    return any(number is None or number == ROLE_PASSWORD_TEXT for number in role_numbers)
 
 
 def field_id(ref: Ref) -> str:
@@ -310,6 +325,35 @@ class AtspiClient:
     def _role(self, ref: Ref) -> str:
         return str(self._t.call(ref[0], ref[1], ACCESSIBLE, "GetRoleName")[0])
 
+    def _role_number(self, ref: Ref) -> int | None:
+        try:
+            return int(self._t.call(ref[0], ref[1], ACCESSIBLE, "GetRole")[0])
+        except Exception:
+            return None
+
+    def is_password(self, ref: Ref, role: str | None = None) -> bool:
+        """Whether ``ref`` is a password field, or sits inside one, by role name or numeric role (GTK 4 marks it
+        only in the numeric role of the entry that holds the focused text widget)."""
+        names = [role if role is not None else self._role(ref)]
+        numbers = [self._role_number(ref)]
+        current = ref
+        for _ in range(PASSWORD_PARENT_DEPTH):
+            try:
+                bus, path = self._get(current, ACCESSIBLE, "Parent")
+            except Exception:
+                break
+            current = (str(bus), str(path))
+            if not current[1] or current[1] == ROOT_PATH or current[1].endswith("/null"):
+                break
+            try:
+                names.append(self._role(current))
+            except Exception:
+                break
+            number = self._role_number(current)
+            if number is not None:
+                numbers.append(number)
+        return password_by_role(names, numbers)
+
     def pid(self, bus: str) -> int:
         if bus not in self._pids:
             if len(self._pids) > 200:
@@ -395,6 +439,8 @@ class AtspiClient:
         except Exception:
             interfaces = []
         secure, kind = classify(role, state, interfaces)
+        if kind and not secure and self.is_password(ref, role):
+            secure, kind = True, ""
         text = None
         if kind:
             count = int(self._get(ref, TEXT, "CharacterCount") or 0)

@@ -155,6 +155,21 @@ class FakeBus(L.Transport):
                 "parent": "/win",
             },
             "/label": {"role": "label", "state": [L.STATE_SHOWING], "text": "Name", "parent": "/win"},
+            # GTK 4: a GtkPasswordEntry ("text box", numeric role password text) holding the text widget that has
+            # focus ("text box", numeric role text). Only the entry's numeric role says it is a password.
+            "/gtk4pw": {
+                "role": "text box",
+                "number": L.ROLE_PASSWORD_TEXT,
+                "state": [L.STATE_SHOWING],
+                "parent": "/win",
+            },
+            "/gtk4pw/text": {
+                "role": "text box",
+                "number": 61,
+                "state": [L.STATE_EDITABLE, L.STATE_SHOWING],
+                "text": "s3cret",
+                "parent": "/gtk4pw",
+            },
             "/term": {"role": "terminal", "state": [L.STATE_SHOWING], "text": "$ make", "parent": "/win"},
         }
         self.focus = "/entry"
@@ -177,6 +192,11 @@ class FakeBus(L.Transport):
             return (bits(*state),)
         if method == "GetRoleName":
             return (node["role"],)
+        if method == "GetRole":
+            if node.get("number", 0) is None:
+                raise RuntimeError("[org.freedesktop.DBus.Error.UnknownMethod] GetRole")
+            default = {"frame": 23, "entry": 79, "password text": 40, "label": 29, "terminal": 59}
+            return (node.get("number", default.get(node["role"], 61)),)
         if method == "GetChildren":
             return ([(APP, child) for child in node.get("children", [])],)
         if method == "GetInterfaces":
@@ -237,6 +257,24 @@ def test_atspi_refuses_a_password_field_before_asking_for_its_text():
     read = client.describe(client.focused())
     assert read.password and not read.editable and read.text == ""
     assert not any(path == "/pw" and method in ("GetText", "Get") for path, method in bus.calls)
+
+
+def test_a_gtk4_password_entry_is_refused_by_its_numeric_role_and_its_parents():
+    # Role names, numeric roles and the parent chain as GTK 4 gives them over AT-SPI (gtkatspicontext: GetRoleName
+    # returns the ARIA-style "text box", GetRole returns password text only for the GtkPasswordEntry). The next
+    # CI run records the real dump (DIAG lines of toolkit_check.py gtk4).
+    assert L.password_by_role(["text box", "text box"], [61, L.ROLE_PASSWORD_TEXT])
+    assert L.password_by_role(["password text"], [61])
+    assert L.password_by_role(["text box"], [None]), "a field whose numeric role cannot be read is not read"
+    assert not L.password_by_role(["text box", "frame"], [61, 23])
+    bus = FakeBus()
+    bus.focus = "/gtk4pw/text"
+    client = L.AtspiClient(bus, clock=Clock())
+    read = client.describe((APP, "/gtk4pw/text"))
+    assert read.password and not read.editable and read.text == ""
+    assert not any(path == "/gtk4pw/text" and method == "GetText" for path, method in bus.calls)
+    bus.nodes["/entry"]["number"] = None  # a toolkit that cannot say its numeric role: refused, not read
+    assert client.describe((APP, "/entry")).text == ""
 
 
 def test_atspi_field_identity_holds_while_typing_and_when_the_title_changes():
