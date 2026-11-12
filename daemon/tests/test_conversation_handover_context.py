@@ -221,3 +221,18 @@ def test_the_eval_labels_what_must_not_happen_for_every_case():
     assert broken_rules(named, handed_over=True, found={"object": True, "place": False}, promised=False) == [
         "bare_hand_over"
     ]
+
+
+async def test_a_held_back_reply_whose_promise_followed_a_comma_ends_on_a_whole_question():
+    from pilot.conversation.layer import ASK_MORE
+
+    reply = (
+        "I'm not sure which message app you use or what time the review starts, "
+        "so I'll send her a short note saying you'll be late."
+    )
+    layer, sink = layer_with(Replies("Okay.", "Okay.", reply, pieces=5))
+    await talk(layer, "Priya is my manager.", "I need to tell her I'll be late to the design review.")
+    result = await layer.take("Send her a message about it.")
+    assert result.done and result.intent is None
+    assert sink.said[-1] == ASK_MORE
+    assert not any("I'll send" in line for line in sink.said)

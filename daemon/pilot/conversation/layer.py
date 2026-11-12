@@ -118,6 +118,7 @@ _QUESTION_WORDS = re.compile(r"^(?:how|what|why|when|where|which|who|whats|what'
 _ASKS_TO_ACT = re.compile(r"^(?:can|could|would|will) you\b|^please\b")
 DOUBTFUL = "doubtful_follow_up"
 ASK_WHAT = "Which ones do you mean?"
+ASK_MORE = "Could you tell me a bit more?"
 SORRY = "Sorry?"
 LOST_MID_REPLY = "I lost the connection there."
 # No text from a cloud model by then: it is treated as not answering. A local model may be loading into memory.
@@ -547,6 +548,10 @@ class ConversationLayer:
             # "I can't tell which files you mean, so I won't delete anything yet" with a promise elsewhere in the
             # reply: holding back wins; what was said stands and nothing is handed over.
             logger.info("The reply promised and also held back: nothing handed over")
+            if said and said[-1].rstrip()[-1:] not in (".", "?", "!"):
+                # The promise that was not said followed a clause cut at a comma: end on a whole question instead
+                # of trailing off ("I'm not sure which app you use or when the review starts,").
+                await self._say_one(result, ASK_MORE, started)
         elif promised and not failure:
             # The model said in words that it would act but wrote no ACT line. The person is not left with a
             # promise and nothing done: what they said goes to the full planner, which reviews it as always.

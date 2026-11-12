@@ -1028,6 +1028,10 @@ class PilotServer:
         self._focus: Any = None
         self._quiet_hours: Any = None
         self._last_spoken = ""
+        self._last_spoken_at = float("-inf")  # monotonic: when it was said, for follow-ups on it
+        # What the last voice turn was, from what the server saw happen: "action" (an action ran), "answer" (Heliox
+        # only spoke), "" (not known). Decides whether "again" means the words or the action.
+        self._last_turn_kind = ""
         # When the person last cut Heliox's voice off: "Wait, stop." right after it is acknowledged aloud.
         self._voice_cut_off_at = 0.0
         self._workspaces: Any = None
@@ -7936,7 +7940,18 @@ class PilotServer:
         return {"status": "ok", "restored": restored}
 
     async def _say_again_request(self, text: str) -> str | None:
-        """ "Say that again": repeat the last thing Heliox said out loud."""
+        """ "Say that again": repeat the last thing Heliox said out loud. Right after it, "repeat that", "once
+        more" and "shorter" are about those words too (pilot.conversation.followups)."""
+        from pilot.conversation.followups import follow_up_reply
+
+        follow_up = follow_up_reply(
+            text,
+            last_spoken=self._last_spoken,
+            seconds_since=time.monotonic() - self._last_spoken_at,
+            last_turn=self._last_turn_kind,
+        )
+        if follow_up is not None:
+            return follow_up
         if not SAY_AGAIN_REQUEST.match(_normalize_spoken_phrase(text)):
             return None
         return self._last_spoken or "I haven't said anything yet."
@@ -13635,6 +13650,7 @@ def handle_tool(tool_name, params):
             return SpeechOutcome("suppressed", SpeechChannel(str(channel)), "Held during a focus session")
         if str(channel) in REPEATABLE_SPEECH and text.strip():
             self._last_spoken = text.strip()
+            self._last_spoken_at = time.monotonic()
         # The continuous listener is the sole microphone consumer. It keeps
         # capturing wake-word commands while work and speech continue, then
         # _voice_command_dispatch stops current playback before applying the
@@ -13965,9 +13981,25 @@ def handle_tool(tool_name, params):
             )
             return
 
-        if not self._interactive_request_active:
+        from pilot.conversation.followups import repeat_meaning
+
+        again_action = False
+        if (
+            not self._interactive_request_active
+            and repeat_meaning(
+                command_text, last_turn=self._last_turn_kind, seconds_since=time.monotonic() - self._last_spoken_at
+            )
+            == "action"
+            and await self._expand_request("do that again") is not None
+        ):
+            # "Again" right after an action, or "do that again": the last task as a new request through the normal
+            # road (planner, reviews, approvals), never a shortcut around them.
+            again_action = True
+            command_text = "do that again"
+        if not self._interactive_request_active and not again_action:
             timeline_answer = await self._control_reply(command_text)
             if timeline_answer is not None:
+                self._last_turn_kind = "answer"
                 await self._broadcast_notification(
                     "voice_result", {"command": command_text, "status": "answered", "message": timeline_answer}
                 )
@@ -14059,13 +14091,19 @@ def handle_tool(tool_name, params):
                 if normalized_command.startswith(question_prefixes)
                 else command_text
             )
-            if not is_question:
+            # "Wait", "hold on", "that's enough", or a bare "no" / "not that" while the task runs: stop it. Taken as a
+            # correction, the planner would get "wait" as the change to make and carry on. Voice can always stop.
+            stop_now = not is_question and (
+                normalized_command in VOICE_STOP_PHRASES or normalized_command in VOICE_DENIALS
+            )
+            if not is_question and not stop_now:
                 await self._interaction_runtime.transition(
                     InteractionPhase.CORRECTING,
                     message="Applying your spoken correction",
                 )
+            mode = {"mode": "ask"} if is_question else {"mode": "stop"} if stop_now else {}
             result = await self._handle_interject(
-                {"input": question_text if is_question else command_text, **({"mode": "ask"} if is_question else {})},
+                {"input": question_text if is_question else command_text, **mode},
                 None,
             )
             await self._broadcast_notification(
@@ -14074,7 +14112,7 @@ def handle_tool(tool_name, params):
                     "command": command_text,
                     "status": result.get("status", "error"),
                     "message": result.get("message", ""),
-                    "coordinated_correction": not is_question,
+                    "coordinated_correction": not is_question and not stop_now,
                 },
             )
             if is_question and result.get("status") == "answered":
@@ -14114,8 +14152,9 @@ def handle_tool(tool_name, params):
             )
 
         # The fast layer answers talk itself (streamed) and hands requests to act on to the planner below.
-        turn = await conversation.take(command_text) if proactive_decision is None else None
+        turn = await conversation.take(command_text) if proactive_decision is None and not again_action else None
         if turn is not None and turn.done:
+            self._last_turn_kind = "answer"
             message = " ".join(turn.spoken)
             await self._broadcast_notification(
                 "voice_result", {"command": spoken_command, "status": "answered", "message": message}
@@ -14174,6 +14213,8 @@ def handle_tool(tool_name, params):
                 if isinstance(acknowledgement_task, asyncio.Task) and not acknowledgement_task.done():
                     acknowledgement_task.cancel()
             status = str(response.get("status") or "error")
+            acted = any(isinstance(r, dict) and r.get("success") for r in response.get("results") or [])
+            self._last_turn_kind = "action" if acted else "answer" if status == "success" else ""
             result_text = str(
                 response.get("message")
                 or response.get("explanation")
