@@ -886,9 +886,14 @@ class PlanHistoryStore:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-# Each step of stopping what is in flight (speech, requests, a conversation turn, voice turns) waits at most this
-# long for cleanup; a step that does not finish in time is left behind so stop() always completes.
+# Said while the window offers a task Heliox stopped under: leave it (voice can never continue it).
+LEAVE_INTERRUPTED_PHRASES = frozenset({"leave it", "leave it be", "leave that", "forget it", "drop it"})
+# A daemon that could not write its data folder at start-up checks again this often, then starts fully.
+STORAGE_RECHECK_SECONDS = 30.0
+# Each awaited step of stop() waits at most this long; a step that does not finish in time is left behind.
 STOP_IN_FLIGHT_SECONDS = 10.0
+# And the whole of stop() at most this long: steps after the deadline are not waited for at all.
+STOP_TOTAL_SECONDS = 30.0
 GNOMON_WARM_AFTER_SECONDS = 45.0  # after start-up, so the daemon is answering before the model loads
 GNOMON_REQUEST_TIMEOUT = 4.0  # a review of a request never holds it up longer than this
 # Warm reviews took 0.7-1.5 s for 1-6 action plans on a free RTX 4060 (scripts/check_gnomon_review_timing.py,
@@ -994,6 +999,8 @@ class PilotServer:
         self._budget_tracker: Any = None
         self._running = False
         self._pending_confirms: dict[str, PendingConfirmation] = {}
+        # Tasks the daemon stopped under that the window is offering (Continue / Leave it); voice may only leave them.
+        self._interrupted_offers: set[str] = set()
         # ── Undo (rollback_plan RPC) ── plan_id -> snapshot_id taken before execution
         self._plan_snapshots: dict[str, str] = {}
         # ── Cancel Token (Issue #92) ──
@@ -1072,6 +1079,8 @@ class PilotServer:
         self._authenticated_clients: set[ServerConnection] = set()
         self._client_roles: dict[ServerConnection, RpcClientRole] = {}
         self._neural_sidecar_client: ServerConnection | None = None
+        # When the neural sidecar's link last dropped (wall clock), for neural_status; cleared when it is back.
+        self._neural_sidecar_lost_at: float | None = None
         self._neural_controller: Any = None
         self._controller_lease: Any = None
         # Rotated on each daemon process start. neurod reads the separate
@@ -1739,6 +1748,7 @@ class PilotServer:
             # Gnomon loads in the background and only ever adds caution. With it switched on, it is loaded
             # shortly after start-up, so reviewing a request never waits on the load.
             gpu_arbiter().configure(self.config.gpu)
+            self._announce_storage_problems()
             self._gnomon_reviewer = GnomonReviewer(self._typed_decision_model)
             if self.config.typed_decision.enabled and self.config.typed_decision.review_requests:
                 asyncio.get_running_loop().call_later(GNOMON_WARM_AFTER_SECONDS, self._gnomon_reviewer.warm)
@@ -2453,6 +2463,7 @@ class PilotServer:
         self._client_roles[websocket] = role
         if role == RpcClientRole.NEURAL_SIDECAR:
             self._neural_sidecar_client = websocket
+            self._neural_sidecar_lost_at = None
         logger.info("Client authenticated: %s role=%s", remote, role.value)
 
         # Keep ordinary requests sequential, but allow confirmation and abort
@@ -2544,6 +2555,7 @@ class PilotServer:
             self._client_roles.pop(websocket, None)
             if self._neural_sidecar_client is websocket:
                 self._neural_sidecar_client = None
+                self._neural_sidecar_lost_at = time.time()
                 if self._neural_controller is not None:
                     await self._neural_controller.disarm(reason="sidecar_disconnected")
             logger.info("Client disconnected: %s", remote)
@@ -5345,6 +5357,64 @@ class PilotServer:
             "message": "Heliox is stopping this MCP task at the safest available boundary.",
         }
 
+    async def _interrupted_task_offer(self, task: Any, interruption: Any) -> dict[str, Any]:
+        """What the window shows for a task the daemon stopped under: what it was, how far it got, what is left."""
+        done = total = 0
+        if task.plan_id and self._checkpoint_store is not None:
+            checkpoint = await self._checkpoint_store.get(task.plan_id)
+            if checkpoint is not None:
+                total = len(checkpoint.plan.actions)
+                done = max(0, min(checkpoint.completed_count, total))
+        phase = "planning" if interruption.from_status in {"queued", "planning"} or not total else "executing"
+        self._interrupted_offers.add(task.task_id)
+        return {
+            "status": "interrupted",
+            "task_id": task.task_id,
+            "request": task.user_input,
+            "phase": phase,
+            "steps_done": done,
+            "steps_left": max(0, total - done),
+            "uncertain_steps": interruption.uncertain_actions,
+            "message": "Heliox stopped while it was doing this. Nothing more runs until you choose.",
+        }
+
+    async def _voice_leaves_interrupted_task(self, command_text: str) -> bool:
+        """ "Leave it" while the window offers a task Heliox stopped under: the task is left. Voice can only leave such
+        a task, never continue it (continuing starts work again, which only the window's button may do)."""
+        if not self._interrupted_offers or self._durable_tasks is None:
+            return False
+        from pilot.workflows.routines import normalize_phrase
+
+        words = normalize_phrase(command_text)
+        for wake in ("hey heliox ", "heliox "):
+            words = words.removeprefix(wake)
+        if words not in LEAVE_INTERRUPTED_PHRASES:
+            return False
+        for task_id in list(self._interrupted_offers):
+            task = await self._durable_tasks.get(task_id)
+            if task is None or task.is_terminal:
+                self._interrupted_offers.discard(task_id)
+                continue
+            response = await self._leave_interrupted_task(task)
+            await self._broadcast_notification("interrupted_task_left", response)
+        with contextlib.suppress(Exception):
+            await self._speak_companion_text("Okay, I'll leave it.")
+        return True
+
+    async def _leave_interrupted_task(self, task: Any) -> dict[str, Any]:
+        """The person chose to leave an interrupted task: it ends as cancelled, and says so in the activity log."""
+        response = {
+            "status": "cancelled",
+            "task_id": task.task_id,
+            "message": "Left as it was after Heliox stopped. Nothing more was done.",
+        }
+        await self._finalize_durable_task(task.task_id, response)
+        self._interrupted_offers.discard(task.task_id)
+        if self._memory is not None:
+            with contextlib.suppress(Exception):
+                await self._memory.record_note(task.user_input, response["message"], session_id=task.session_id)
+        return response
+
     async def _handle_resume_task(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Authenticate and continue a durable task after reconnect or restart."""
 
@@ -5371,6 +5441,24 @@ class PilotServer:
             }
             await self._finalize_durable_task(task.task_id, response)
             return response
+
+        # A task the daemon stopped under (crash, kill, restart) never starts again by itself: the window offers it
+        # and only the person's button continues it. A reconnect to the same daemon is not a restart.
+        if task.status == TaskStatus.INTERRUPTED:
+            interruption = await self._durable_tasks.interruption(task.task_id)
+            if interruption is not None and interruption.by_restart:
+                if params.get("leave") is True:
+                    return await self._leave_interrupted_task(task)
+                if params.get("continue") is not True:
+                    return await self._interrupted_task_offer(task, interruption)
+                # Continue is a button in the window only: voice cannot approve and cannot restart a task.
+                if self._client_roles.get(ws) != RpcClientRole.UI:
+                    return {
+                        "status": "error",
+                        "task_id": task.task_id,
+                        "message": "Only the Continue button in the window can restart an interrupted task.",
+                    }
+                self._interrupted_offers.discard(task.task_id)
 
         approval = await self._durable_tasks.get_approval(task.plan_id) if task.plan_id else None
         if approval is not None and approval.status == ApprovalStatus.PENDING:
@@ -8106,7 +8194,13 @@ class PilotServer:
                 continue
             try:
                 answer = await source.answer_async(text)
-            except Exception:
+            except Exception as error:
+                # A full disk or a read-only data folder: say so instead of passing the request on as if unheard.
+                from pilot.system.storage_health import storage
+
+                said = storage().report(type(source).__name__, error)
+                if said is not None:
+                    return said
                 logger.warning("Local history answer failed", exc_info=True)
                 continue
             if answer is not None:
@@ -10428,10 +10522,13 @@ class PilotServer:
             listener_stats=listener.get_stats() if listener else None,
             arbiter=arbiter,
         )
+        from pilot.system.storage_health import storage
+
         return {
             "status": "ok",
             "world_model": {"enabled": bool(self.config.gateway.enabled and self.config.gateway.risk_gate_enabled)},
             "gnomon": gnomon,
+            "storage": storage().status(),  # a full disk or read-only data folder, in plain words; None when fine
             "local_models": local_models,
             "gpu": await asyncio.to_thread(arbiter.status),
         }
@@ -10440,7 +10537,53 @@ class PilotServer:
         self._require_rpc_role(ws, RpcClientRole.UI, RpcClientRole.NEURAL_SIDECAR)
         if self._neural_controller is None:
             return {"status": "unavailable", "connected": False}
-        return {"status": "ok", **await self._neural_controller.status()}
+        return {"status": "ok", **await self._neural_controller.status(), "sidecar": self._neural_sidecar_state()}
+
+    async def _initialize_when_storage_returns(self) -> None:
+        """Started without stores because the data folder could not be written: check every 30 s, then start."""
+        from pilot.system.storage_health import preflight, storage
+
+        while self._running:
+            await asyncio.sleep(STORAGE_RECHECK_SECONDS)
+            if await asyncio.to_thread(preflight, DATA_DIR) is None:
+                storage().report_ok()
+                logger.info("The data folder can be written again; starting Heliox's stores")
+                await self.initialize()
+                await self._broadcast_notification(
+                    "storage_problem", {"kind": "", "message": "Heliox can save again and is fully started."}
+                )
+                return
+
+    def _announce_storage_problems(self) -> None:
+        """A full disk or read-only data folder reaches every open window once (notification storage_problem)."""
+        from pilot.system.storage_health import storage
+
+        tasks: set[asyncio.Task[Any]] = self.__dict__.setdefault("_storage_notice_tasks", set())
+
+        def notify(payload: dict[str, Any]) -> None:
+            try:
+                task = asyncio.get_running_loop().create_task(self._broadcast_notification("storage_problem", payload))
+            except RuntimeError:  # reported from a thread without a loop: the log line is enough
+                return
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
+        storage().notify = notify
+
+    def _neural_sidecar_state(self) -> dict[str, Any]:
+        """Whether the neural sidecar is linked now; after a drop, that it reconnects by itself and must be armed
+        again (the daemon disarmed when it went away)."""
+        if self._neural_sidecar_client is not None:
+            return {"linked": True, "message": ""}
+        if self._neural_sidecar_lost_at is None:
+            return {"linked": False, "message": "The neural sidecar is not running."}
+        lost = time.strftime("%H:%M:%S", time.localtime(self._neural_sidecar_lost_at))
+        return {
+            "linked": False,
+            "lost_at": lost,
+            "message": f"The neural sidecar lost its link at {lost} and reconnects by itself. Arm it again once it "
+            "is back.",
+        }
 
     async def _handle_neural_stage_task(self, params: dict, ws: ServerConnection) -> dict:
         self._require_rpc_role(ws, RpcClientRole.UI)
@@ -12390,7 +12533,18 @@ def handle_tool(tool_name, params):
         configured host and port, and announces new features to clients.
         """
         self._running = True
-        await self.initialize()
+        from pilot.system.storage_health import preflight, storage
+
+        blocked = await asyncio.to_thread(preflight, DATA_DIR)
+        if blocked is None:
+            await self.initialize()
+        else:
+            # A full disk or read-only data folder: say so and keep answering (ping, health, status), and start
+            # everything else once the folder can be written again, instead of failing part-way through start-up.
+            self._announce_storage_problems()
+            message = storage().report("data folder", blocked, "anything")
+            logger.error("Heliox cannot write its data folder %s (%s): %s", DATA_DIR, blocked, message)
+            self._storage_wait_task = asyncio.create_task(self._initialize_when_storage_returns())
 
         host = self.config.server.host
         port = self.config.server.port
@@ -12401,13 +12555,21 @@ def handle_tool(tool_name, params):
         # read it via a Rust command.  The file is chmod 600 (owner-read only).
         from pilot.config import RUNTIME_DIR
 
-        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         token_file = RUNTIME_DIR / "auth_token"
-        token_file.write_text(self.config.server.auth_token, encoding="utf-8")
         neural_token_file = RUNTIME_DIR / "neural_auth_token"
-        neural_token_file.write_text(self._neural_auth_token, encoding="utf-8")
         mcp_token_file = RUNTIME_DIR / "mcp_auth_token"
-        mcp_token_file.write_text(self._mcp_auth_token, encoding="utf-8")
+        try:
+            RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            token_file.write_text(self.config.server.auth_token, encoding="utf-8")
+            neural_token_file.write_text(self._neural_auth_token, encoding="utf-8")
+            mcp_token_file.write_text(self._mcp_auth_token, encoding="utf-8")
+        except OSError as error:
+            # The window reads its token from this file; without it, it cannot connect. Say why in the log and keep
+            # running rather than dying in a restart loop.
+            from pilot.system.storage_health import storage
+
+            storage().report("runtime folder", error, "its connection token")
+            logger.error("Could not write the auth tokens to %s: %s", RUNTIME_DIR, error)
         try:
             import os as _os
 
@@ -12491,17 +12653,20 @@ def handle_tool(tool_name, params):
                 pending.event.set()
         self._pending_confirms.clear()
 
-    @staticmethod
-    async def _bounded_stop_step(step: str, awaitable: Any) -> None:
+    async def _bounded_stop_step(self, step: str, awaitable: Any) -> None:
         """Wait for one shutdown step at most STOP_IN_FLIGHT_SECONDS; what still runs after that is left behind.
 
         asyncio.wait, not wait_for: wait_for waits for a cancelled awaitable to finish, so work that swallows
         cancellation would hold stop() forever.
         """
         task = asyncio.ensure_future(awaitable)
-        done, _pending = await asyncio.wait({task}, timeout=STOP_IN_FLIGHT_SECONDS)
+        limit = STOP_IN_FLIGHT_SECONDS
+        deadline = getattr(self, "_stop_deadline", None)
+        if deadline is not None:
+            limit = max(0.0, min(limit, deadline - time.monotonic()))
+        done, _pending = await asyncio.wait({task}, timeout=limit) if limit > 0 else (set(), {task})
         if not done:
-            logger.warning("Stopping: %s did not finish within %.0f s", step, STOP_IN_FLIGHT_SECONDS)
+            logger.warning("Stopping: left %s behind; it did not finish within %.1f s", step, limit)
         elif not task.cancelled() and task.exception() is not None:
             logger.warning("Stopping: %s failed", step, exc_info=task.exception())
 
@@ -12533,98 +12698,113 @@ def handle_tool(tool_name, params):
             await self._bounded_stop_step("voice turns", asyncio.gather(*turns, return_exceptions=True))
 
     async def stop(self) -> None:
-        """Stop the Pilot daemon server and clean up all resources."""
+        """Stop the Pilot daemon server and clean up all resources.
+
+        Every awaited step is bounded (``_bounded_stop_step``): at most STOP_IN_FLIGHT_SECONDS each and
+        STOP_TOTAL_SECONDS for the whole of stop(). A step that does not finish is logged and left behind, and an
+        exception in one close no longer ends stop() part-way.
+        """
+        self._stop_deadline = time.monotonic() + STOP_TOTAL_SECONDS
         self._running = False
+        storage_wait = self.__dict__.get("_storage_wait_task")
+        if storage_wait is not None and not storage_wait.done():
+            storage_wait.cancel()
+            await self._bounded_stop_step("storage wait", asyncio.gather(storage_wait, return_exceptions=True))
         self._queue_shutdown = True
         if self._recorded_workflow_scheduler is not None:
             self._recorded_workflow_scheduler.cancel()
-            await asyncio.gather(self._recorded_workflow_scheduler, return_exceptions=True)
+            await self._bounded_stop_step(
+                "cancelled tasks", asyncio.gather(self._recorded_workflow_scheduler, return_exceptions=True)
+            )
             self._recorded_workflow_scheduler = None
         if self._manual_workflow_hook is not None:
             self._manual_workflow_hook.stop()
             self._manual_workflow_hook = None
         if self._recorded_workflows is not None:
-            await self._recorded_workflows.stop_manual_visual_capture(save=False)
+            await self._bounded_stop_step(
+                "recorded_workflows.stop_manual_visual_capture",
+                self._recorded_workflows.stop_manual_visual_capture(save=False),
+            )
         await self._release_pending_confirmations_for_shutdown()
         await self._stop_in_flight()
 
         queued_worker = self._queued_execute_worker
         if queued_worker is not None and not queued_worker.done():
             queued_worker.cancel()
-            await asyncio.gather(queued_worker, return_exceptions=True)
+            await self._bounded_stop_step("cancelled tasks", asyncio.gather(queued_worker, return_exceptions=True))
         self._queued_execute_requests.clear()
         self._queued_reserved_task_id = ""
 
         active_execution = self._active_execution_task
         if active_execution is not None and not active_execution.done():
             active_execution.cancel()
-            await asyncio.gather(active_execution, return_exceptions=True)
+            await self._bounded_stop_step("cancelled tasks", asyncio.gather(active_execution, return_exceptions=True))
         self._active_execution_task = None
 
         refresh = self._mcp_client_refresh
         if refresh is not None and not refresh.done():
             refresh.cancel()
-            await asyncio.gather(refresh, return_exceptions=True)
-        await self._mcp_client.close()
+            await self._bounded_stop_step("cancelled tasks", asyncio.gather(refresh, return_exceptions=True))
+        await self._bounded_stop_step("mcp_client.close", self._mcp_client.close())
 
         mcp_tasks = tuple(self._mcp_tasks.values())
         for task in mcp_tasks:
             task.cancel()
         if mcp_tasks:
-            await asyncio.gather(*mcp_tasks, return_exceptions=True)
+            await self._bounded_stop_step("cancelled tasks", asyncio.gather(*mcp_tasks, return_exceptions=True))
         self._mcp_tasks.clear()
 
         if self._trigger_engine is not None:
             self._trigger_engine.set_fire_callback(None)
-            await self._trigger_engine.stop()
+            await self._bounded_stop_step("trigger_engine.stop", self._trigger_engine.stop())
         if self._voice_gesture_workflows is not None:
-            await self._voice_gesture_workflows.stop()
+            await self._bounded_stop_step("voice_gesture_workflows.stop", self._voice_gesture_workflows.stop())
         if self._voice_listener is not None:
-            await self._voice_listener.stop()
+            await self._bounded_stop_step("voice_listener.stop", self._voice_listener.stop())
             self._voice_listener = None
         # The local voice worker: closing its pipe ends it, and frees the thread waiting on its answer. Left open,
         # that thread kept the interpreter from exiting for 300 s after stop (2-hour soak, 12 November 2026).
         from pilot.system.local_tts_worker import manager as local_voice_manager
 
         try:
-            await asyncio.wait_for(local_voice_manager().shutdown(), timeout=10.0)
+            await self._bounded_stop_step("local voice worker", local_voice_manager().shutdown())
         except Exception:
             logger.warning("Could not stop the local voice worker", exc_info=True)
         supervision_hook = getattr(self, "_supervision_hook", None)
         if supervision_hook is not None:
             supervision_hook.stop()
         if self._scheduled_runs is not None:
-            await self._scheduled_runs.stop()
+            await self._bounded_stop_step("scheduled_runs.stop", self._scheduled_runs.stop())
         if self._daily_brief is not None:
-            await self._daily_brief.stop()
+            await self._bounded_stop_step("daily_brief.stop", self._daily_brief.stop())
         if self._reminders is not None:
-            await self._reminders.stop()
+            await self._bounded_stop_step("reminders.stop", self._reminders.stop())
         if self._focus is not None:
-            await self._focus.close()
+            await self._bounded_stop_step("focus.close", self._focus.close())
         if self._quiet_hours is not None:
-            await self._quiet_hours.stop()
+            await self._bounded_stop_step("quiet_hours.stop", self._quiet_hours.stop())
         if self._nudges is not None:
-            await self._nudges.stop()
+            await self._bounded_stop_step("nudges.stop", self._nudges.stop())
         if self._watchers is not None:
-            await self._watchers.stop()
+            await self._bounded_stop_step("watchers.stop", self._watchers.stop())
         if self._clipboard_history is not None:
-            await self._clipboard_history.stop()
+            await self._bounded_stop_step("clipboard_history.stop", self._clipboard_history.stop())
         if self._suggestions is not None:
-            await self._suggestions.stop()
+            await self._bounded_stop_step("suggestions.stop", self._suggestions.stop())
         if getattr(self, "_offer_loop", None) is not None:
-            await self._offer_loop.stop()
+            await self._bounded_stop_step("offer_loop.stop", self._offer_loop.stop())
         if self._live is not None:
-            await self._live.stop()
+            await self._bounded_stop_step("live.stop", self._live.stop())
         if self._live_reader is not None:
-            await self._live_reader.close()
+            await self._bounded_stop_step("live_reader.close", self._live_reader.close())
         if self._focus_guard is not None:
-            await self._focus_guard.stop()
+            await self._bounded_stop_step("focus_guard.stop", self._focus_guard.stop())
         if self._app_reminders is not None:
-            await self._app_reminders.stop()
+            await self._bounded_stop_step("app_reminders.stop", self._app_reminders.stop())
         if self._gnomon_reviewer is not None:
-            await self._gnomon_reviewer.close()
+            await self._bounded_stop_step("gnomon_reviewer.close", self._gnomon_reviewer.close())
         if self._autonomous is not None:
-            await self._autonomous.stop()
+            await self._bounded_stop_step("autonomous.stop", self._autonomous.stop())
 
         if self._server:
             self._server.close()
@@ -12634,80 +12814,84 @@ def handle_tool(tool_name, params):
         # ── Stop LAN mesh ──
         if self._mesh:
             self._set_collab_executor(None)
-            await self._mesh.stop()
+            await self._bounded_stop_step("mesh.stop", self._mesh.stop())
         if self._air_handoff_server:
-            await self._air_handoff_server.stop()
+            await self._bounded_stop_step("air_handoff_server.stop", self._air_handoff_server.stop())
         if self._air_handoff_manager:
-            await self._air_handoff_manager.clear_ephemeral()
+            await self._bounded_stop_step(
+                "air_handoff_manager.clear_ephemeral", self._air_handoff_manager.clear_ephemeral()
+            )
         if self._orchestrator:
-            await self._orchestrator.stop_all()
-            await self._orchestrator.stop()
+            await self._bounded_stop_step("orchestrator.stop_all", self._orchestrator.stop_all())
+            await self._bounded_stop_step("orchestrator.stop", self._orchestrator.stop())
         if self._background:
-            await self._background.shutdown()
+            await self._bounded_stop_step("background.shutdown", self._background.shutdown())
         if hasattr(self, "_proactive") and self._proactive:
-            await self._proactive.stop()
+            await self._bounded_stop_step("proactive.stop", self._proactive.stop())
             if hasattr(self._proactive, "close"):
-                await self._proactive.close()
+                await self._bounded_stop_step("proactive.close", self._proactive.close())
         if hasattr(self, "_subconscious") and self._subconscious:
-            await self._subconscious.stop()
+            await self._bounded_stop_step("subconscious.stop", self._subconscious.stop())
             if hasattr(self._subconscious, "close"):
-                await self._subconscious.close()
+                await self._bounded_stop_step("subconscious.close", self._subconscious.close())
         if hasattr(self, "_screen_vision") and self._screen_vision:
-            await self._screen_vision.stop()
+            await self._bounded_stop_step("screen_vision.stop", self._screen_vision.stop())
             from pilot.security.risk_gate import get_risk_gate
 
             get_risk_gate().set_ui_observation_provider(None)
             if hasattr(self._screen_vision, "close"):
-                await self._screen_vision.close()
+                await self._bounded_stop_step("screen_vision.close", self._screen_vision.close())
         if self._executor is not None:
-            await self._executor.close()
+            await self._bounded_stop_step("executor.close", self._executor.close())
         if self._tts_warmup_task and not self._tts_warmup_task.done():
             self._tts_warmup_task.cancel()
-            await asyncio.gather(self._tts_warmup_task, return_exceptions=True)
+            await self._bounded_stop_step(
+                "cancelled tasks", asyncio.gather(self._tts_warmup_task, return_exceptions=True)
+            )
         if self._companion_follow_up_tasks:
             follow_up_tasks = tuple(self._companion_follow_up_tasks)
             for task in follow_up_tasks:
                 task.cancel()
-            await asyncio.gather(*follow_up_tasks, return_exceptions=True)
+            await self._bounded_stop_step("cancelled tasks", asyncio.gather(*follow_up_tasks, return_exceptions=True))
         if self._interaction_speech_tasks:
             speech_tasks = tuple(self._interaction_speech_tasks)
             for task in speech_tasks:
                 task.cancel()
-            await asyncio.gather(*speech_tasks, return_exceptions=True)
-        await self._speech_coordinator.close()
+            await self._bounded_stop_step("cancelled tasks", asyncio.gather(*speech_tasks, return_exceptions=True))
+        await self._bounded_stop_step("speech_coordinator.close", self._speech_coordinator.close())
         if hasattr(self, "_prompt_improver") and self._prompt_improver:
             if hasattr(self._prompt_improver, "close"):
-                await self._prompt_improver.close()
-        await self._drain_post_execution_tasks()
+                await self._bounded_stop_step("prompt_improver.close", self._prompt_improver.close())
+        await self._bounded_stop_step("drain_post_execution_tasks", self._drain_post_execution_tasks())
         if self._strategy_evolution is not None:
-            await self._strategy_evolution.close()
+            await self._bounded_stop_step("strategy_evolution.close", self._strategy_evolution.close())
             self._strategy_evolution = None
         if self._evolution_harness is not None:
-            await self._evolution_harness.close()
+            await self._bounded_stop_step("evolution_harness.close", self._evolution_harness.close())
             self._evolution_harness = None
         if hasattr(self, "_reflector") and self._reflector:
             if hasattr(self._reflector, "close"):
-                await self._reflector.close()
+                await self._bounded_stop_step("reflector.close", self._reflector.close())
         if self._memory:
-            await self._memory.close()
+            await self._bounded_stop_step("memory.close", self._memory.close())
         if self._agent_mesh is not None:
-            await self._agent_mesh.close()
+            await self._bounded_stop_step("agent_mesh.close", self._agent_mesh.close())
             self._agent_mesh = None
         lapse_task, self._co_adaptation_lapse_task = self._co_adaptation_lapse_task, None
         if lapse_task is not None and not lapse_task.done():
             lapse_task.cancel()
-            await asyncio.gather(lapse_task, return_exceptions=True)
+            await self._bounded_stop_step("cancelled tasks", asyncio.gather(lapse_task, return_exceptions=True))
         if self._co_adaptation is not None:
-            await self._co_adaptation.close()
+            await self._bounded_stop_step("co_adaptation.close", self._co_adaptation.close())
             self._co_adaptation = None
         if self._experience_ledger:
-            await self._experience_ledger.close()
+            await self._bounded_stop_step("experience_ledger.close", self._experience_ledger.close())
             self._experience_ledger = None
         if self._durable_tasks:
-            await self._durable_tasks.close()
+            await self._bounded_stop_step("durable_tasks.close", self._durable_tasks.close())
             self._durable_tasks = None
         if self._budget_tracker:
-            await self._budget_tracker.close()
+            await self._bounded_stop_step("budget_tracker.close", self._budget_tracker.close())
         # ── Drain pending plan-history tasks before closing the store ──
         # Avoids aiosqlite.ProgrammingError when a fire-and-forget log task
         # is still writing as the connection is torn down.
@@ -12716,11 +12900,13 @@ def handle_tool(tool_name, params):
                 "Waiting for %d pending plan-history task(s) to flush…",
                 len(self._plan_history_tasks),
             )
-            await asyncio.gather(*self._plan_history_tasks, return_exceptions=True)
+            await self._bounded_stop_step(
+                "cancelled tasks", asyncio.gather(*self._plan_history_tasks, return_exceptions=True)
+            )
         if self._plan_history:
-            await self._plan_history.close()
+            await self._bounded_stop_step("plan_history.close", self._plan_history.close())
         if self._model_router:
-            await self._model_router.close()
+            await self._bounded_stop_step("model_router.close", self._model_router.close())
             self._model_router = None
         if self._cognitive_engine and self._cognitive_engine.is_loaded:
             self._cognitive_engine.unload_model()
@@ -13556,6 +13742,8 @@ def handle_tool(tool_name, params):
         """One addressed utterance holds the conversation floor until it is answered (pilot.live.floor)."""
         from pilot.personal.wiring import begin_turn, end_turn
 
+        if await self._voice_leaves_interrupted_task(command_text):
+            return
         token = begin_turn(self, command_text)
         # Known to stop(), which cancels a voice turn still running before any store closes.
         turns: set[asyncio.Task[Any]] = self.__dict__.setdefault("_voice_turn_tasks", set())

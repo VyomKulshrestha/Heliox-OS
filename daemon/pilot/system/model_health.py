@@ -17,6 +17,8 @@ import shutil
 import sys
 from typing import Any
 
+from pilot.system.storage_health import plain_reason
+
 _GNOMON_STATES = {
     "ready": "loaded",
     "loading": "loading",
@@ -51,7 +53,7 @@ def gnomon_entry(status: dict[str, Any]) -> dict[str, Any]:
     state = _GNOMON_STATES.get(str(status.get("state")), "unavailable")
     if state == "unavailable" and status.get("supported") is False:
         state = "not_supported"
-    reason = str(status.get("reason") or "")
+    reason = plain_reason(str(status.get("reason") or ""), "the review model")
     if state == "off":
         reason = "Switched off in Settings."
     elif state == "not_loaded":
@@ -105,7 +107,7 @@ def recogniser_entries(stats: dict[str, Any] | None, whisper_devices: list[str])
         ("Streaming recogniser", "streaming_ready", "streaming_error"),
         ("Turn detector", "turn_detector_ready", "turn_detector_error"),
     ):
-        error = str(stats.get(error_key) or "")
+        error = plain_reason(str(stats.get(error_key) or ""))
         if stats.get(ready_key):
             entries.append(_entry(name, "loaded", device="cpu"))
         elif error:
@@ -113,7 +115,7 @@ def recogniser_entries(stats: dict[str, Any] | None, whisper_devices: list[str])
         else:
             entries.append(_entry(name, "loading", reason="Loads when the listener starts."))
     final_pass = str(stats.get("final_pass") or "whisper")
-    notice = str(stats.get("final_pass_notice") or "")
+    notice = plain_reason(str(stats.get("final_pass_notice") or ""))
     device = whisper_devices[0] if whisper_devices else None
     state = "loaded" if whisper_devices else "not_loaded"
     # Why Whisper is on the CPU or the graphics card (the GPU arbiter's reason), unless a notice says more.

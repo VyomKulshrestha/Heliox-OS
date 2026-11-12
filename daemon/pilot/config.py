@@ -954,12 +954,19 @@ class PilotConfig:
                 data[section][key] = original
         restrictions = data.pop("restrictions", {})
 
-        _atomic_write_text(CONFIG_FILE, _carry_comments(_read_text(CONFIG_FILE), tomli_w.dumps(data)))
+        try:
+            _atomic_write_text(CONFIG_FILE, _carry_comments(_read_text(CONFIG_FILE), tomli_w.dumps(data)))
 
-        if restrictions:
-            _atomic_write_text(
-                RESTRICTIONS_FILE, _carry_comments(_read_text(RESTRICTIONS_FILE), tomli_w.dumps(restrictions))
-            )
+            if restrictions:
+                _atomic_write_text(
+                    RESTRICTIONS_FILE, _carry_comments(_read_text(RESTRICTIONS_FILE), tomli_w.dumps(restrictions))
+                )
+        except OSError as error:
+            # A full disk or read-only folder is said once in plain words; the caller still sees the failure.
+            from pilot.system.storage_health import storage
+
+            storage().report("config", error, "your settings")
+            raise
         self._disk_signature = _disk_signature()
 
 

@@ -204,6 +204,17 @@ class ActionClaim:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskInterruption:
+    """Why a task is interrupted: ``by_restart`` when the daemon stopped under it (recover_incomplete), and what it
+    was doing then ("planning", "executing", ...). ``uncertain_actions``: steps that may or may not have happened;
+    they are never repeated."""
+
+    from_status: str
+    by_restart: bool
+    uncertain_actions: int
+
+
+@dataclass(frozen=True, slots=True)
 class RecoverySummary:
     interrupted_tasks: int
     uncertain_actions: int
@@ -388,6 +399,34 @@ class DurableTaskStore:
             row = await cursor.fetchone()
             await cursor.close()
         return self._task_from_row(row) if row is not None else None
+
+    async def interruption(self, task_id: str) -> TaskInterruption | None:
+        """How the task came to be interrupted (its latest transition into "interrupted"), or None."""
+        pool = self._require_pool()
+        async with pool.read() as db:
+            cursor = await db.execute(
+                """
+                SELECT from_status, reason FROM task_transitions
+                WHERE task_id = ? AND to_status = ?
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (task_id, TaskStatus.INTERRUPTED.value),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+            if row is None:
+                return None
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM action_execution_claims WHERE task_id = ? AND status = ?",
+                (task_id, ActionExecutionStatus.UNCERTAIN.value),
+            )
+            count = await cursor.fetchone()
+            await cursor.close()
+        return TaskInterruption(
+            from_status=str(row[0] or ""),
+            by_restart=str(row[1]) == "daemon_recovery",
+            uncertain_actions=int(count[0]) if count else 0,
+        )
 
     async def get_by_resume_token(self, resume_token: str) -> DurableTask | None:
         token_hash = self._hash_token(resume_token)

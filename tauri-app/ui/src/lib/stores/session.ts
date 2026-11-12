@@ -412,7 +412,46 @@ interface SessionState {
   proactiveSuggestionPending: boolean;
   terminalStatus: string;
   durableTask?: DurableTaskReference;
+  /** A task Heliox stopped under (the daemon died and came back): offered, never restarted by itself. */
+  interruptedTask: InterruptedTaskOffer | null;
   queuedTasks: QueuedTask[];
+}
+
+/** What the daemon's resume_task reports for a task it stopped under; only the window's Continue restarts it. */
+export interface InterruptedTaskOffer {
+  taskId: string;
+  request: string;
+  phase: "planning" | "executing";
+  stepsDone: number;
+  stepsLeft: number;
+  uncertainSteps: number;
+}
+
+export function interruptedTaskOffer(result: Record<string, unknown>): InterruptedTaskOffer | null {
+  if (result.status !== "interrupted" || !result.phase) return null;
+  const count = (value: unknown) => Math.max(0, Number(value) || 0);
+  return {
+    taskId: String(result.task_id ?? ""),
+    request: String(result.request ?? ""),
+    phase: result.phase === "planning" ? "planning" : "executing",
+    stepsDone: count(result.steps_done),
+    stepsLeft: count(result.steps_left),
+    uncertainSteps: count(result.uncertain_steps),
+  };
+}
+
+/** The card's sentence, e.g. "Heliox stopped while it was doing "send the report". 1 step was done, 2 were left." */
+export function describeInterruptedTask(offer: InterruptedTaskOffer): string {
+  const what = offer.request ? `"${offer.request}"` : "a task";
+  if (offer.phase === "planning") return `Heliox stopped while it was planning ${what}. Nothing was done yet.`;
+  const steps = (n: number) => `${n} step${n === 1 ? "" : "s"}`;
+  let text = `Heliox stopped while it was doing ${what}. ${steps(offer.stepsDone)} ${
+    offer.stepsDone === 1 ? "was" : "were"
+  } done, ${offer.stepsLeft} ${offer.stepsLeft === 1 ? "was" : "were"} left.`;
+  if (offer.uncertainSteps > 0) {
+    text += ` ${steps(offer.uncertainSteps)} may or may not have happened and will not be repeated.`;
+  }
+  return text;
 }
 
 export interface Attachment {
@@ -483,6 +522,7 @@ const initialState: SessionState = {
   proactiveSuggestionPending: false,
   terminalStatus: "",
   durableTask: loadedActiveChat.durableTask,
+  interruptedTask: null,
   queuedTasks: [],
 };
 
@@ -1240,6 +1280,26 @@ function createSession() {
         }));
         break;
 
+      case "storage_problem": {
+        // A full disk or a read-only data folder, said once by the daemon in plain words; Heliox keeps working.
+        const text = String(p.message ?? "").trim();
+        if (text) {
+          update((s) => ({
+            ...s,
+            messages: [...s.messages, { type: "system" as MessageType, text, timestamp: Date.now() }],
+          }));
+        }
+        break;
+      }
+      case "interrupted_task_left": {
+        // Said by voice ("leave it") while the card was showing: the task ended, nothing more was done.
+        const left = get({ subscribe });
+        if (left.durableTask?.taskId === String(p.task_id ?? "")) {
+          update((s) => ({ ...s, interruptedTask: null }));
+          applyTaskResult(p);
+        }
+        break;
+      }
       case "confirmation_closed": {
         // The daemon stopped waiting on this approval (answered, withdrawn by a correction or Stop, timed out).
         // Keyed on the plan: a close for any other approval leaves the open dialog alone.
@@ -1393,7 +1453,12 @@ function createSession() {
     }, 500);
   }
 
-  async function resumeDurableTask() {
+  /**
+   * Ask the daemon about the saved task. After a reconnect to the same daemon it continues as before; after the
+   * daemon died and came back it only reports the task, and the card offers Continue / Leave it.
+   * `choice` is the person's button: "continue" restarts the task, "leave" ends it.
+   */
+  async function resumeDurableTask(choice?: "continue" | "leave") {
     const current = get({ subscribe });
     if (!current.durableTask || !isConnected() || resumeInFlight) return;
     resumeInFlight = true;
@@ -1407,7 +1472,15 @@ function createSession() {
       const result = (await call("resume_task", {
         task_id: current.durableTask.taskId,
         resume_token: current.durableTask.resumeToken,
+        ...(choice === "continue" ? { continue: true } : {}),
+        ...(choice === "leave" ? { leave: true } : {}),
       })) as Record<string, unknown>;
+      const offer = interruptedTaskOffer(result);
+      if (offer) {
+        update((s) => ({ ...s, loading: false, phase: "", interruptedTask: offer }));
+        return;
+      }
+      update((s) => ({ ...s, interruptedTask: null }));
       if (result.status === "awaiting_approval") {
         const approval = (result.approval ?? {}) as Record<string, unknown>;
         update((s) => ({
@@ -2317,6 +2390,8 @@ function createSession() {
     abort,
     cancelQueuedTask,
     resumeDurableTask,
+    continueInterruptedTask: () => resumeDurableTask("continue"),
+    leaveInterruptedTask: () => resumeDurableTask("leave"),
     addSystemMessage,
     clearMessages,
     listChatSessions,

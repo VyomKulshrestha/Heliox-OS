@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from websockets.asyncio.client import ClientConnection, connect
+from websockets.exceptions import ConnectionClosed
 
 from pilot.config import DATA_DIR, RUNTIME_DIR
 from pilot.neural.acquisition import (
@@ -37,6 +39,12 @@ logger = logging.getLogger("pilot.neural.rpc_client")
 
 class NeuralRpcError(RuntimeError):
     pass
+
+
+# After losing the daemon (a slow RPC on a saturated machine, a daemon restart), the bridge connects again after 1 s,
+# doubling to 60 s; the back-off starts again once a connection is established.
+RECONNECT_BASE_SECONDS = 1.0
+RECONNECT_MAX_SECONDS = 60.0
 
 
 class NeuralRpcTransport:
@@ -128,76 +136,110 @@ class NeurodBridge:
         self._poll_seconds = poll_seconds
         self._activated_revision = -1
         self._last_marker_sequence = -1
+        # "connecting", "connected", "reconnecting" (with attempt, retry_in_s and reason) or "stopped".
+        self.status: dict[str, Any] = {"state": "stopped"}
 
     async def run(self, stop_event: asyncio.Event | None = None) -> None:
+        """Pair with the daemon until ``stop`` is set, connecting again with a back-off whenever the link fails.
+
+        A failed RPC (timed out on a saturated machine, a daemon that restarted, a closed socket) no longer ends the
+        bridge for the session. Each new connection starts a new session on the daemon side: the daemon disarmed
+        when the sidecar went away, so nothing is armed again without the person (fail closed).
+        """
         stop = stop_event or asyncio.Event()
         self._service.start()
+        failures = 0
         try:
-            await self._transport.connect()
-            connected = await self._transport.call(
-                "neural_connect",
-                {"descriptor": self._service.descriptor.model_dump(mode="json")},
-            )
-            self._require_ok(connected, "connect")
             while not stop.is_set():
-                marker_result = await self._transport.call(
-                    "neural_stimulus_markers",
-                    {"after_sequence": self._last_marker_sequence},
-                )
-                self._require_ok(marker_result, "stimulus marker sync")
-                for payload in marker_result.get("markers", []):
-                    marker = NeuralStimulusMarkerV1.model_validate(payload)
-                    self._service.record_stimulus_marker(marker)
-                    self._last_marker_sequence = marker.sequence
-                status = await self._transport.call("neural_status")
-                state = str(status.get("state") or "")
-                revision = int(status.get("state_revision", 0))
-                if state == "calibrating" and revision != self._activated_revision:
-                    result = await self._transport.call(
-                        "neural_finish_calibration",
-                        {
-                            "session_id": str(self._service.descriptor.session_id),
-                            "calibration_id": self._artifact.calibration_id,
-                            "decoder_version": self._artifact.decoder_version,
-                            "subject_key": self._artifact.subject_key,
-                            "metrics": self._artifact.metrics.model_dump(mode="json"),
-                        },
-                    )
-                    self._require_ok(result, "calibration activation")
-                    self._activated_revision = revision
-                elif state in self._ARMED_STATES:
-                    scope = NeuralScope.NAVIGATE if state == "armed_safe_ui" else NeuralScope.SAFE_DESKTOP
-                    observation = self._service.observe_once(
-                        state_revision=revision,
-                        requested_scope=scope,
-                    )
-                    health = self._service.buffer_health
-                    telemetry = await self._transport.call(
-                        "neural_observation",
-                        {
-                            "quality": observation.quality.model_dump(mode="json"),
-                            "buffered_samples": health.buffered_samples,
-                            "dropped_samples": health.dropped_samples,
-                            "observed_at_ns": time.monotonic_ns(),
-                        },
-                    )
-                    self._require_ok(telemetry, "quality telemetry")
-                    if observation.intent is not None:
-                        preview = await self._transport.call(
-                            "neural_intent_preview",
-                            {"intent": observation.intent.model_dump(mode="json", by_alias=True)},
-                        )
-                        # Low dwell/margin/confidence is a normal abstention,
-                        # not a retryable delivery error.
-                        if preview.get("status") not in {"previewed", "cancelled", "rejected"}:
-                            raise NeuralRpcError("daemon returned an invalid preview state")
                 try:
-                    await asyncio.wait_for(stop.wait(), timeout=self._poll_seconds)
-                except TimeoutError:
-                    pass
+                    await self._session(stop)
+                    return
+                except (NeuralRpcError, OSError, TimeoutError, ValueError, ConnectionClosed) as error:
+                    if stop.is_set():
+                        return
+                    failures = 0 if self.status.get("state") == "connected" else failures
+                    failures += 1
+                    delay = min(RECONNECT_BASE_SECONDS * 2 ** (failures - 1), RECONNECT_MAX_SECONDS)
+                    reason = str(error)[:200] or type(error).__name__
+                    self.status = {"state": "reconnecting", "attempt": failures, "retry_in_s": delay, "reason": reason}
+                    logger.warning("Neural bridge lost the daemon (%s); connecting again in %.0f s", reason, delay)
+                    with contextlib.suppress(Exception):
+                        await self._transport.close()
+                    self._activated_revision = -1
+                    self._last_marker_sequence = -1
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(stop.wait(), timeout=delay)
         finally:
+            self.status = {"state": "stopped"}
             self._service.stop()
             await self._transport.close()
+
+    async def _session(self, stop: asyncio.Event) -> None:
+        """One connection: connect, announce the stream, then poll until ``stop``. Raises when the link fails."""
+        self.status = {"state": "connecting"}
+        await self._transport.connect()
+        connected = await self._transport.call(
+            "neural_connect",
+            {"descriptor": self._service.descriptor.model_dump(mode="json")},
+        )
+        self._require_ok(connected, "connect")
+        self.status = {"state": "connected"}
+        while not stop.is_set():
+            marker_result = await self._transport.call(
+                "neural_stimulus_markers",
+                {"after_sequence": self._last_marker_sequence},
+            )
+            self._require_ok(marker_result, "stimulus marker sync")
+            for payload in marker_result.get("markers", []):
+                marker = NeuralStimulusMarkerV1.model_validate(payload)
+                self._service.record_stimulus_marker(marker)
+                self._last_marker_sequence = marker.sequence
+            status = await self._transport.call("neural_status")
+            state = str(status.get("state") or "")
+            revision = int(status.get("state_revision", 0))
+            if state == "calibrating" and revision != self._activated_revision:
+                result = await self._transport.call(
+                    "neural_finish_calibration",
+                    {
+                        "session_id": str(self._service.descriptor.session_id),
+                        "calibration_id": self._artifact.calibration_id,
+                        "decoder_version": self._artifact.decoder_version,
+                        "subject_key": self._artifact.subject_key,
+                        "metrics": self._artifact.metrics.model_dump(mode="json"),
+                    },
+                )
+                self._require_ok(result, "calibration activation")
+                self._activated_revision = revision
+            elif state in self._ARMED_STATES:
+                scope = NeuralScope.NAVIGATE if state == "armed_safe_ui" else NeuralScope.SAFE_DESKTOP
+                observation = self._service.observe_once(
+                    state_revision=revision,
+                    requested_scope=scope,
+                )
+                health = self._service.buffer_health
+                telemetry = await self._transport.call(
+                    "neural_observation",
+                    {
+                        "quality": observation.quality.model_dump(mode="json"),
+                        "buffered_samples": health.buffered_samples,
+                        "dropped_samples": health.dropped_samples,
+                        "observed_at_ns": time.monotonic_ns(),
+                    },
+                )
+                self._require_ok(telemetry, "quality telemetry")
+                if observation.intent is not None:
+                    preview = await self._transport.call(
+                        "neural_intent_preview",
+                        {"intent": observation.intent.model_dump(mode="json", by_alias=True)},
+                    )
+                    # Low dwell/margin/confidence is a normal abstention,
+                    # not a retryable delivery error.
+                    if preview.get("status") not in {"previewed", "cancelled", "rejected"}:
+                        raise NeuralRpcError("daemon returned an invalid preview state")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=self._poll_seconds)
+            except TimeoutError:
+                pass
 
     @staticmethod
     def _require_ok(result: dict[str, Any], operation: str) -> None:

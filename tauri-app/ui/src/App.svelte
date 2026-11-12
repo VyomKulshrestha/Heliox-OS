@@ -33,7 +33,7 @@
   import PluginsTab from "./lib/components/PluginsTab.svelte";
   import GitConflictResolver from "./lib/components/GitConflictResolver.svelte";
   import { airHandoff } from "./lib/stores/airHandoff";
-  import { session } from "./lib/stores/session";
+  import { describeInterruptedTask, session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
   import { tick, onDestroy, onMount, untrack } from "svelte";
@@ -515,7 +515,27 @@
           </aside>
         {/if}
 
-        {#if $session.durableTask && !$session.loading}
+        {#if $session.interruptedTask && !$session.loading}
+          <!-- The daemon stopped under this task and came back: nothing restarts until the person chooses. -->
+          <aside class="task-recovery" aria-live="polite" data-testid="interrupted-task">
+            <div>
+              <strong>Interrupted task</strong>
+              <span>{describeInterruptedTask($session.interruptedTask)}</span>
+            </div>
+            <div class="task-recovery-actions">
+              <button
+                type="button"
+                disabled={!$session.daemonConnected}
+                onclick={() => session.continueInterruptedTask()}
+              >
+                {$session.interruptedTask.phase === "planning" ? "Plan it again" : "Continue"}
+              </button>
+              <button type="button" disabled={!$session.daemonConnected} onclick={() => session.leaveInterruptedTask()}>
+                Leave it
+              </button>
+            </div>
+          </aside>
+        {:else if $session.durableTask && !$session.loading}
           <aside class="task-recovery" aria-live="polite">
             <div>
               <strong>Interrupted task saved</strong>
@@ -1211,6 +1231,12 @@
   .task-recovery div {
     display: grid;
     gap: 2px;
+  }
+
+  .task-recovery .task-recovery-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
   }
 
   .task-recovery span {

@@ -337,6 +337,20 @@ class MemoryStore:
                 ids=[macro_id_str],
             )
 
+    async def record_note(self, user_input: str, explanation: str, *, session_id: str = "default") -> None:
+        """One activity-log line that ran nothing (e.g. an interrupted task the person chose to leave): shown in
+        the activity log as not successful, never used as an example of what worked."""
+        if not self._pool:
+            return
+        async with self._pool.write() as db:
+            await db.execute(
+                """INSERT INTO action_history
+                   (timestamp, session_id, user_input, plan_json, results_json, success, explanation)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (datetime.now(UTC).isoformat(), session_id, user_input, "{}", "[]", 0, explanation),
+            )
+            await db.commit()
+
     async def record(
         self,
         user_input: str,

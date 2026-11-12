@@ -141,3 +141,85 @@ async def test_bridge_activates_calibration_streams_only_summaries_and_closes() 
     assert transport.connected and transport.closed
     assert service.started and service.stopped
     assert service.markers[0].target_id == "focus_right"
+
+
+class FlakyTransport(FakeTransport):
+    """Fails the way a saturated machine or a restarted daemon does, then works."""
+
+    def __init__(self, stop: asyncio.Event, failures: list[str]) -> None:
+        super().__init__(stop)
+        self.failures = failures
+        self.connects = 0
+        self.closes = 0
+
+    async def connect(self) -> None:
+        self.connects += 1
+        if self.failures and self.failures[0] == "connect":
+            self.failures.pop(0)
+            raise OSError("connection refused")
+        self.connected = True
+
+    async def close(self) -> None:
+        self.closes += 1
+
+    async def call(self, method: str, params: dict | None = None) -> dict:
+        if method == "neural_status" and self.failures and self.failures[0] == "slow":
+            self.failures.pop(0)
+            from pilot.neural.rpc_client import NeuralRpcError
+
+            raise NeuralRpcError("RPC timed out: neural_status")
+        return await super().call(method, params)
+
+
+def _artifact():
+    metrics = MagicMock()
+    metrics.model_dump.return_value = {"balanced_accuracy": 1.0}
+    return SimpleNamespace(calibration_id="b" * 64, decoder_version="a" * 64, subject_key="s", metrics=metrics)
+
+
+@pytest.mark.asyncio
+async def test_a_slow_rpc_or_a_lost_daemon_reconnects_with_a_back_off(monkeypatch) -> None:
+    from pilot.neural import rpc_client
+
+    monkeypatch.setattr(rpc_client, "RECONNECT_BASE_SECONDS", 0.01)
+    stop = asyncio.Event()
+    transport = FlakyTransport(stop, ["slow", "connect", "connect"])
+    seen: list[dict] = []
+    bridge = NeurodBridge(transport=transport, service=FakeService(), artifact=_artifact(), poll_seconds=0.05)
+    original = bridge._session
+
+    async def watched(stop_event):
+        seen.append(dict(bridge.status))
+        return await original(stop_event)
+
+    monkeypatch.setattr(bridge, "_session", watched)
+
+    await asyncio.wait_for(bridge.run(stop), timeout=5)
+
+    # One slow RPC after connecting, then the daemon refused twice; the bridge kept going and finished its work.
+    assert transport.connects == 4
+    assert [method for method, _ in transport.calls].count("neural_connect") == 2  # one per established link
+    assert seen[1]["state"] == "reconnecting" and seen[1]["attempt"] == 1  # reset: the first link was established
+    assert seen[2]["attempt"] == 2 and seen[3]["attempt"] == 3
+    assert seen[3]["retry_in_s"] == pytest.approx(0.04)
+    assert "timed out" in seen[1]["reason"]
+    assert bridge.status == {"state": "stopped"}
+
+
+@pytest.mark.asyncio
+async def test_stop_during_the_back_off_ends_the_bridge_at_once(monkeypatch) -> None:
+    from pilot.neural import rpc_client
+
+    monkeypatch.setattr(rpc_client, "RECONNECT_BASE_SECONDS", 30.0)
+    stop = asyncio.Event()
+    transport = FlakyTransport(stop, ["connect"] * 5)
+    service = FakeService()
+    bridge = NeurodBridge(transport=transport, service=service, artifact=_artifact(), poll_seconds=0.05)
+
+    task = asyncio.create_task(bridge.run(stop))
+    while bridge.status.get("state") != "reconnecting":
+        await asyncio.sleep(0.01)
+    stop.set()
+    await asyncio.wait_for(task, timeout=5)
+
+    assert transport.connects == 1 and service.stopped and bridge.status == {"state": "stopped"}

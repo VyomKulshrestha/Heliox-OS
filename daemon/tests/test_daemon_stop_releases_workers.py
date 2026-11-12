@@ -162,3 +162,36 @@ async def test_work_that_ignores_cancellation_does_not_hold_stop_past_its_bound(
     release.set()
     turn.cancel()
     await asyncio.gather(turn, return_exceptions=True)
+
+
+async def test_a_subsystem_that_never_returns_cannot_hold_stop_past_the_whole_bound(quiet_voice, monkeypatch):
+    """Every awaited close is bounded, and the whole of stop() too: here each step may wait 0.2 s and the whole of
+    stop() 0.5 s, while two subsystems never return and one raises."""
+    monkeypatch.setattr(server_module, "STOP_IN_FLIGHT_SECONDS", 0.2)
+    monkeypatch.setattr(server_module, "STOP_TOTAL_SECONDS", 0.5)
+    server = PilotServer(PilotConfig())
+
+    async def never() -> None:
+        await asyncio.Event().wait()
+
+    async def broken() -> None:
+        raise OSError("database is locked")
+
+    closed: list[str] = []
+
+    async def close_memory() -> None:
+        closed.append("memory")
+
+    server._reminders = type("Hangs", (), {"stop": staticmethod(never)})()
+    server._live = type("Hangs", (), {"stop": staticmethod(never)})()
+    server._executor = type("Breaks", (), {"close": staticmethod(broken)})()
+    server._memory = type("Store", (), {"close": staticmethod(close_memory)})()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    await asyncio.wait_for(server.stop(), STOP_LIMIT)
+
+    # The deadline is what is asserted, with room for a slow machine: 0.5 s plus scheduling, far below 2 x 0.2 s
+    # per step for every step stop() has.
+    assert loop.time() - started < 5.0
+    assert closed == [] or closed == ["memory"]  # after the deadline a close is started but not waited for

@@ -77,7 +77,19 @@ class AsyncSqlitePool:
             raise RuntimeError("SQLite pool writer is not initialized")
 
         async with self._write_lock:
-            yield self._write_conn
+            try:
+                yield self._write_conn
+            except (sqlite3.Error, OSError) as error:
+                # A full disk or a read-only data folder is said once in plain words (pilot.system.storage_health);
+                # the caller still gets the error and decides what to do.
+                from pilot.system.storage_health import storage
+
+                storage().report(self._db_path.stem, error)
+                raise
+            else:
+                from pilot.system.storage_health import storage
+
+                storage().report_ok()
 
     async def checkpoint(self, mode: str = "TRUNCATE") -> dict[str, int | str]:
         """Run a WAL checkpoint to flush WAL contents safely to disk."""
