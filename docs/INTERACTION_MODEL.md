@@ -797,8 +797,14 @@ taken as "Stop" (before, the 1.5 and 2.0 s pauses cancelled the request), and no
   1.9 s), past the server's 6 s limit for withdrawing, then counted on processing time, so the withdrawal answered
   "unknown" and the second half ran as its own turn. The listener now passes the gap on the capture clock (from
   the first half's last word to the start of the second half: 2.6 s here) to `withdraw_voice_turn(turn_id, joined,
-  gap)`, and the server counts its limit on that; the 2.0 s case is to be measured again once both sides land.
-So the single right action is shown for pauses up to 1.5 s, and the acknowledgement is said once only when nothing
+  gap)`, and the server counts its limit on that.
+- Measured again on main 008f1a0 with both sides of `gap` (12 November, the bench's wired runner, same audio, run
+  once, timing-free): 0.6, 1.5 and 2.0 s were withdrawn and joined, one action each. 1.0 s became two "Stop"s:
+  Heliox was still speaking from the scenario before, "Hey Heliox, remind me too" said over it was short enough
+  to be the cut-off rule's "stop", and "call the bank tomorrow morning" said over its "Okay, stopped." was too.
+  "Hey Heliox" over Heliox is now the start of a request (below), and words that stop mid-sentence are not
+  dispatched, so none of the four splits any more.
+So the single right action is shown for pauses up to 2.0 s, and the acknowledgement is said once only when nothing
 of the first half's was spoken.
 
 **Words that stop mid-sentence are not dispatched.** When the recognised words end on a comma, a dash or an ellipsis,
