@@ -376,17 +376,27 @@ pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
             watch.borrow();
             BORROW_AT_START.store(false, std::sync::atomic::Ordering::SeqCst);
         }
+        let paused = || setup::DAEMON_PAUSED.load(std::sync::atomic::Ordering::SeqCst);
+        let exiting = || APP_EXITING.load(std::sync::atomic::Ordering::SeqCst);
+        let mut was_paused = false;
         loop {
             std::thread::sleep(CHECK_EVERY);
             if APP_EXITING.load(std::sync::atomic::Ordering::SeqCst) {
                 return;
             }
-            if setup::DAEMON_PAUSED.load(std::sync::atomic::Ordering::SeqCst) {
+            if paused() {
                 // Setup is changing the daemon's environment (update, repair); it starts the daemon again itself.
-                watch.started();
+                was_paused = true;
                 continue;
             }
             let state = app.state::<DaemonProcess>();
+            if was_paused {
+                // Own what setup started, or quietly borrow what answers; decided once, when the pause ends.
+                was_paused = false;
+                let owns = state.0.lock().map(|guard| guard.is_some()).unwrap_or(false);
+                watch.resume_after_pause(owns);
+                continue;
+            }
             let exited = if watch.borrowed {
                 None // another copy's daemon: only its port is watched
             } else {
@@ -436,9 +446,18 @@ pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
                     }
                 }
                 Step::Restart { after } => {
-                    std::thread::sleep(after);
-                    if APP_EXITING.load(std::sync::atomic::Ordering::SeqCst) {
+                    let stop = || paused() || exiting();
+                    supervisor::wait_unless(
+                        after,
+                        Duration::from_millis(250),
+                        stop,
+                        std::thread::sleep,
+                    );
+                    if exiting() {
                         return;
+                    }
+                    if !supervisor::may_launch(paused(), exiting()) {
+                        continue; // an update or repair began during the back-off: setup starts the daemon
                     }
                     if let Ok(mut guard) = state.0.lock() {
                         if let Some(mut old) = guard.take() {
@@ -468,8 +487,11 @@ pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
                     }
                 }
                 Step::TakeOver => {
-                    if APP_EXITING.load(std::sync::atomic::Ordering::SeqCst) {
+                    if exiting() {
                         return;
+                    }
+                    if !supervisor::may_launch(paused(), exiting()) {
+                        continue;
                     }
                     if let Ok(mut guard) = state.0.lock() {
                         *guard = launch_daemon();

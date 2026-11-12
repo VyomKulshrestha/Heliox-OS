@@ -81,6 +81,18 @@ impl Watch {
         self.since_answer = Duration::ZERO;
     }
 
+    /// Setup paused the supervisor (an update or a repair replaced the environment) and has now ended the pause.
+    /// Setup starts the daemon again itself: if it did, this app owns that one; if not, whatever answers on the port
+    /// is borrowed, quietly. Before, every paused tick reset the watch to "owned", so an app that had been borrowing
+    /// announced "stopped, starting it again" the moment the pause ended.
+    pub(crate) fn resume_after_pause(&mut self, owns_a_daemon: bool) {
+        if owns_a_daemon {
+            self.started();
+        } else {
+            self.borrow();
+        }
+    }
+
     /// From now on, watch another copy's daemon instead of one this app owns.
     pub(crate) fn borrow(&mut self) {
         self.borrowed = true;
@@ -133,6 +145,34 @@ impl Watch {
             }
         }
     }
+}
+
+/// Right before the supervisor starts a daemon (after a restart's back-off, or to take over): only when setup has
+/// not paused it and the app is not exiting. A restart decided before an update began must not start a daemon from
+/// the environment the update is replacing: on Windows its files would be locked and the update rolled back, and
+/// elsewhere it would import a half-installed environment and then hold the port and the lock, so the updated
+/// daemon would never start.
+pub(crate) fn may_launch(paused: bool, exiting: bool) -> bool {
+    !paused && !exiting
+}
+
+/// Sleep up to `total` in short steps, giving up as soon as `stop()` says so. Returns whether the whole time passed.
+pub(crate) fn wait_unless(
+    total: Duration,
+    step: Duration,
+    mut stop: impl FnMut() -> bool,
+    mut sleep: impl FnMut(Duration),
+) -> bool {
+    let mut left = total;
+    while !left.is_zero() {
+        if stop() {
+            return false;
+        }
+        let now = step.min(left);
+        sleep(now);
+        left -= now;
+    }
+    !stop()
 }
 
 /// 2, 4, 8, 16, 32, then 60 s.
@@ -275,6 +315,74 @@ mod tests {
         assert_eq!(watch.observe(Observation::Silent, CHECK_EVERY), Step::Wait);
         // Once this app starts its own, it owns it again: an exit is a restart with the usual back-off.
         watch.started();
+        assert!(!watch.borrowed);
+        assert!(matches!(
+            watch.observe(Observation::Exited, CHECK_EVERY),
+            Step::Restart { .. }
+        ));
+    }
+
+    #[test]
+    fn an_update_that_starts_during_a_back_off_is_never_raced_by_a_restart() {
+        // The daemon exited; the supervisor decided to restart it after the back-off.
+        let mut watch = Watch::default();
+        watch.started();
+        let Step::Restart { after } = watch.observe(Observation::Exited, CHECK_EVERY) else {
+            panic!("an exit is a restart");
+        };
+        // Setup pauses the supervisor for an update one second into that back-off.
+        let mut slept = Duration::ZERO;
+        let paused = std::cell::Cell::new(false);
+        let waited = wait_unless(
+            after,
+            Duration::from_millis(250),
+            || paused.get(),
+            |step| {
+                slept += step;
+                paused.set(slept >= Duration::from_secs(1));
+            },
+        );
+        assert!(
+            !waited,
+            "the back-off ends as soon as the update pauses the supervisor"
+        );
+        assert!(
+            !may_launch(paused.get(), false),
+            "no daemon is started from the environment being replaced"
+        );
+        assert!(slept < after);
+        // Exiting the app also stops a launch; only a running, unpaused app launches.
+        assert!(!may_launch(false, true));
+        assert!(may_launch(false, false));
+    }
+
+    #[test]
+    fn a_back_off_that_is_not_interrupted_waits_its_whole_time() {
+        let mut slept = Duration::ZERO;
+        let waited = wait_unless(
+            Duration::from_secs(4),
+            Duration::from_millis(250),
+            || false,
+            |step| slept += step,
+        );
+        assert!(waited);
+        assert_eq!(slept, Duration::from_secs(4));
+    }
+
+    #[test]
+    fn after_an_update_the_supervisor_owns_what_setup_started_or_quietly_borrows() {
+        // Borrowing before the update; setup found the port answering afterwards and started nothing.
+        let mut watch = Watch::default();
+        watch.borrow();
+        watch.resume_after_pause(false);
+        assert!(watch.borrowed);
+        let step = watch.observe(Observation::Answered, CHECK_EVERY);
+        assert_eq!(step, Step::Wait);
+        assert_eq!(notice(step), None); // no "stopped, starting it again" line
+                                        // Owning before the update; setup started the updated daemon.
+        let mut watch = Watch::default();
+        watch.started();
+        watch.resume_after_pause(true);
         assert!(!watch.borrowed);
         assert!(matches!(
             watch.observe(Observation::Exited, CHECK_EVERY),
