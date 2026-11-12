@@ -21,13 +21,7 @@ REACHING = re.compile(
 GIVEN_PATH_ONLY = {"scripts/train_world_visual_transition.py"}
 # The conversation agent moves these onto use_scratch_folders and real_budget_tracker in its own patch
 # (conv_isolation); each comes off this list in that patch. Nothing may be added to it.
-PENDING = {
-    "benchmarks/conversation_eval/__main__.py",
-    "benchmarks/conversation_eval/handover_context.py",
-    "benchmarks/conversation_eval/interrupt_timing.py",
-    "benchmarks/conversation_eval/more.py",
-    "benchmarks/conversation_eval/sessions.py",
-}
+PENDING: set[str] = set()
 # The owner's own tools: they read or write the person's real Heliox data on purpose and stop without the flag.
 OWNER_TOOLS = {
     "scripts/review_local_scope.py",

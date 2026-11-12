@@ -28,7 +28,13 @@ import sys
 import time
 from typing import Any
 
-from .__main__ import machine_busy
+from pilot.real_folders import use_scratch_folders
+
+# Every Heliox folder under a scratch root before pilot.config loads, never the person's own. A paid run reads the
+# person's model settings and counts what it spent through pilot.real_folders, never through their files.
+use_scratch_folders()
+
+from .__main__ import machine_busy  # noqa: E402
 
 
 class SlowTalk:

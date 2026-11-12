@@ -676,20 +676,18 @@ Windows and macOS and 24 on Linux (from the code). **Fakes only**.
 
 ### Whole sessions
 
-**Where a session writes.** Every folder `pilot.config` names belongs to the session driver. It uses
-`pilot.config`'s marked test root (`HELIOX_TEST_ROOT` and `.heliox-test-root`):
-- under pytest, the folder guard's root;
-- run as a script, a new temporary root the driver makes before any `pilot` module reads a path, and removes at
-  exit.
+**Where a session writes.** The session driver and the other conversation evals (`__main__`, `more`,
+`handover_context`, `interrupt_timing`) call `pilot.real_folders.use_scratch_folders()` before anything imports
+`pilot.config`. Every Heliox folder is then under a scratch root: the folder guard's test root under pytest, or a
+new one, removed at exit, when run as a script. Each session gets its own folder inside that root. The driver
+records where every settings save went, and the personal pack's settings session ("stop suggesting things", "stop
+interrupting me", "be my live companion") fails if one lands outside the root.
 
-Each session gets its own folder inside that root. For the session, every `pilot.config` path points into that
-folder, so a settings phrase saves the session's own `config.toml`. The driver refuses to start a session when any
-path lies outside, and refuses to run at all if `pilot.config` was imported before it could set the root.
-
-Before this, the driver moved only the server's data folder. On 12 November a session server's settings save
-("stop interrupting me") overwrote the person's real `config.toml` and `restrictions.toml`. A paid run (`--real`)
-reads the person's model, conversation and budget settings once, read-only, into a config of its own inside the
-root. The only write it makes to the person's own folders is the budget tracker's record of what the run spent.
+On 12 November, before this, a session server's settings save ("stop interrupting me") overwrote the person's real
+`config.toml` and `restrictions.toml`. A paid run now copies the person's `[model]` settings
+(`apply_owner_model_settings`) and `[conversation]` settings (`benchmarks/conversation_eval/owner.py`) onto a config
+of its own under the root. It records what it spent with `real_budget_tracker`, the one intended write to the
+person's own folders.
 
 `python -m benchmarks.conversation_eval.sessions` runs 21 sessions of 6 to 8 turns (`sessions.json`: a morning, a
 task corrected and stopped, "shorter" and "again", an action repeated, a slip Live asks about, a vague destructive

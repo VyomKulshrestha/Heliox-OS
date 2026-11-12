@@ -31,74 +31,16 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-# ── every Heliox folder is the driver's own ──
+# ── every Heliox folder is a scratch one ──
 #
 # A session server builds its own PilotConfig, and a settings phrase ("stop interrupting me") saves it. On 12 November
-# that save went to the person's real config.toml: the driver moved only the server's data folder. Now every folder
-# pilot.config names is inside a marked test root (pilot.config's HELIOX_TEST_ROOT and its marker, the one mechanism
-# the test suite's folder guard uses): under pytest the guard's; run as a script, a new temporary one made here, before
-# any pilot module reads its paths. Each session then gets a folder of its own inside it, and every pilot.config path is
-# pointed into that folder for the session. The driver refuses to start a session when any path is outside.
+# that save went to the person's real config.toml. Every Heliox folder is now under a scratch root before pilot.config
+# loads (pilot.real_folders.use_scratch_folders: under pytest the folder guard's test root, run as a script a new one,
+# removed when it ends); a RuntimeError there means something imported pilot.config first. Each session gets a folder of
+# its own inside the root, and the driver records where every settings save went.
+from pilot.real_folders import use_scratch_folders  # noqa: E402
 
-TEST_ROOT_VARIABLE = "HELIOX_TEST_ROOT"  # pilot.config.TEST_ROOT_VARIABLE, named before pilot is imported
-TEST_ROOT_MARKER = ".heliox-test-root"  # pilot.config.TEST_ROOT_MARKER
-
-
-def _claim_test_root() -> Path:
-    named = os.environ.get(TEST_ROOT_VARIABLE, "").strip()
-    if not (named and (Path(named) / TEST_ROOT_MARKER).is_file()):
-        if "pilot.config" in sys.modules:
-            raise SystemExit(
-                "refusing to run sessions: pilot.config was imported with the real Heliox folders before the session "
-                "driver could give it a test root (import benchmarks.conversation_eval.sessions first)"
-            )
-        root = Path(tempfile.mkdtemp(prefix="heliox-sessions-root-"))
-        (root / TEST_ROOT_MARKER).write_text("conversation sessions (benchmarks/conversation_eval)\n", encoding="utf-8")
-        os.environ[TEST_ROOT_VARIABLE] = str(root)
-        import atexit
-        import shutil
-
-        atexit.register(shutil.rmtree, root, True)  # the driver's own root goes when the run ends
-    import pilot.config as config_module
-
-    root = getattr(config_module, "_TEST_ROOT", None)
-    if root is None:
-        raise SystemExit("refusing to run sessions: pilot.config did not take the test root")
-    refuse_outside(Path(root))
-    return Path(root)
-
-
-def config_paths() -> dict[str, Path]:
-    """Every folder and file pilot.config names (its *_DIR and *_FILE paths)."""
-    import pilot.config as config_module
-
-    return {
-        name: value
-        for name, value in vars(config_module).items()
-        if name.isupper() and name.endswith(("_DIR", "_FILE")) and isinstance(value, Path)
-    }
-
-
-def outside(folder: Path) -> dict[str, Path]:
-    """The pilot.config paths that do not resolve inside ``folder``."""
-    inside = folder.resolve()
-    found = {}
-    for name, value in config_paths().items():
-        try:
-            value.resolve().relative_to(inside)
-        except ValueError:
-            found[name] = value
-    return found
-
-
-def refuse_outside(folder: Path) -> None:
-    stray = outside(folder)
-    if stray:
-        listed = ", ".join(f"{name}={value}" for name, value in sorted(stray.items()))
-        raise RuntimeError(f"refusing to start a session: Heliox paths outside its folder {folder}: {listed}")
-
-
-TEST_ROOT = _claim_test_root()
+TEST_ROOT = use_scratch_folders()
 
 from pilot.conversation.layer import SPOKEN_WORD_CAP  # noqa: E402
 
@@ -773,7 +715,10 @@ def owner_config_listing() -> dict[str, tuple[int, int]]:
     listing: dict[str, tuple[int, int]] = {}
     if any(name == "folder_guard" or name.endswith(".folder_guard") for name in sys.modules):
         return listing
-    for folder in {_owner_heliox_dir("XDG_CONFIG_HOME", ".config"), Path.home() / ".config" / "heliox-os"}:
+    from pilot.real_folders import _owner_folder, account_home
+
+    own = account_home() or Path.home()
+    for folder in {_owner_folder("XDG_CONFIG_HOME", ".config"), own / ".config" / "heliox-os"}:
         try:
             entries = list(os.scandir(folder))
         except OSError:
@@ -788,33 +733,17 @@ def owner_config_listing() -> dict[str, tuple[int, int]]:
 
 
 def _isolate(folder: Path) -> list[Any]:
-    """Point every Heliox folder at the session's own folder, laid out as under the test root (a settings save lands in
-    ``folder``/.config/heliox-os/config.toml), and the server's data folder at ``folder``; give back how to undo it.
-    Refuses, changing nothing, when the session folder is not inside the test root or a path would stay outside it."""
-    import pilot.config as config_module
+    """Point the server's data folder at the session's own folder; give back how to undo it. Refuses when the folders
+    are not a scratch root (pilot.real_folders) or the session folder is outside it."""
     import pilot.server as server_module
+    from pilot.real_folders import refuse_real_folders
 
-    refuse_outside(TEST_ROOT)
-    try:
-        folder.resolve().relative_to(TEST_ROOT.resolve())
-    except ValueError:
-        raise RuntimeError(f"refusing to start a session: its folder {folder} is not inside {TEST_ROOT}") from None
-    undo = []
-    moved = {name: folder / value.resolve().relative_to(TEST_ROOT.resolve()) for name, value in config_paths().items()}
-    for module, name, value in [
-        *((config_module, name, value) for name, value in moved.items()),
-        (server_module, "DATA_DIR", folder),
-    ]:
-        before = getattr(module, name)
-        setattr(module, name, value)
-        undo.append(lambda m=module, n=name, b=before: setattr(m, n, b))
-    try:
-        refuse_outside(folder)
-    except RuntimeError:
-        for step in undo:
-            step()
-        raise
-    return undo
+    refuse_real_folders("A conversation session")
+    if not folder.resolve().is_relative_to(TEST_ROOT.resolve()):
+        raise RuntimeError(f"refusing to start a session: its folder {folder} is not inside {TEST_ROOT}")
+    before = server_module.DATA_DIR
+    server_module.DATA_DIR = folder
+    return [lambda: setattr(server_module, "DATA_DIR", before)]
 
 
 # ── checks ──
@@ -897,12 +826,12 @@ def check_session(session: dict[str, Any], kind: str, record: Record) -> list[st
             if not any(_has(given, option) for given in planned):
                 failures.append(f"{where}: expected the planner to be given {option!r}; given {planned!r}")
         saves = record.config_saves.get(index, [])
-        if "config_saved_in_session" in expect:
-            if expect["config_saved_in_session"] and not saves:
+        if "config_saved_in_scratch" in expect:
+            if expect["config_saved_in_scratch"] and not saves:
                 failures.append(f"{where}: expected the config to be saved; it was not")
             for target in saves:
-                if not Path(target).resolve().is_relative_to(Path(record.folder).resolve()):
-                    failures.append(f"{where}: a config save went outside the session's folder: {target}")
+                if not Path(target).resolve().is_relative_to(TEST_ROOT.resolve()):
+                    failures.append(f"{where}: a config save went outside the scratch root: {target}")
         on_disk = record.stored.get(index, "")
         for option in expect.get("stored", []):
             if not _has(on_disk, option):
@@ -1002,58 +931,21 @@ async def run_all(sessions: list[dict[str, Any]], kinds: tuple[str, ...], real_m
     return {"table": table, "rows": rows}
 
 
-OWNER_KEYS = {
-    "model": ("provider", "cloud_provider", "cloud_model", "budget_enabled", "budget_monthly_limit_usd"),
-    "conversation": None,  # every conversation setting (the fast model for each provider, reply length, sharing)
-}
-
-
-def _owner_heliox_dir(variable: str, fallback: str) -> Path:
-    """The person's own Heliox folder, as pilot.config resolves it outside tests (the test root does not apply)."""
-    from pilot.config import _xdg
-
-    return _xdg(variable, fallback) / "heliox-os"
-
-
-def owner_settings(config_file: Path | None = None) -> dict[str, dict[str, Any]]:
-    """What a paid run needs from the person's configuration, read once and read-only (no PilotConfig is built over it,
-    so nothing holds a save that could reach it): the model provider, the conversation settings and the budget."""
-    import tomllib
-
-    path = config_file or _owner_heliox_dir("XDG_CONFIG_HOME", ".config") / "config.toml"
-    with open(path, "rb") as handle:  # read-only
-        raw = tomllib.load(handle)
-    picked: dict[str, dict[str, Any]] = {}
-    for section, keys in OWNER_KEYS.items():
-        values = raw.get(section)
-        if isinstance(values, dict):
-            picked[section] = {k: v for k, v in values.items() if keys is None or k in keys}
-    return picked
-
-
-def config_from_owner(settings: dict[str, dict[str, Any]]) -> Any:
-    """A fresh config, inside the test root, with the person's model, conversation and budget settings copied in."""
-    from pilot.config import PilotConfig, _merge_config
-
-    refuse_outside(TEST_ROOT)
-    return _merge_config(PilotConfig(), settings)
-
-
-def owner_budget_file() -> Path:
-    return _owner_heliox_dir("XDG_DATA_HOME", ".local/share") / "pilot.db"
-
-
 async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     """The Claude road against the real fast model, once, with the budget tracker on; scored by the same rules."""
+    from pilot.config import PilotConfig
     from pilot.conversation.fast_model import build_fast_model
-    from pilot.models.budget_tracker import BudgetTracker
+    from pilot.real_folders import real_budget_tracker
     from pilot.security.vault import KeyVault
 
-    config = config_from_owner(owner_settings())  # a fresh config inside the test root: its save cannot reach theirs
+    from .owner import apply_owner_settings
+
+    config = PilotConfig()  # the run's own, under the scratch root: its save cannot reach the person's file
+    apply_owner_settings(config)  # their provider and conversation model, read and copied
     if config.model.cloud_provider != "claude":
         raise SystemExit("--real runs the Claude road only; the configured cloud provider is not Claude")
     # The one intended write to the person's own folders: the budget tracker records what the run spent.
-    budget = BudgetTracker(config.model, str(owner_budget_file()))
+    budget = real_budget_tracker(config.model)
     await budget.initialize()
     before = budget._monthly_cost
     rows: list[dict[str, Any]] = []

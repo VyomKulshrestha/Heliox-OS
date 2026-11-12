@@ -22,7 +22,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .cases import NOW
+from pilot.real_folders import use_scratch_folders
+
+# Every Heliox folder under a scratch root before pilot.config loads, never the person's own. A paid run reads the
+# person's model settings and counts what it spent through pilot.real_folders, never through their files.
+use_scratch_folders()
+
+from .cases import NOW  # noqa: E402
 
 CASES = [
     {
@@ -113,18 +119,20 @@ def broken_rules(case: dict[str, Any], *, handed_over: bool, found: dict[str, bo
 
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
-    from pilot.config import DB_FILE, PilotConfig
+    from pilot.config import PilotConfig
     from pilot.conversation.context import ContextSources
     from pilot.conversation.fast_model import build_fast_model
     from pilot.conversation.layer import ConversationLayer
     from pilot.conversation.planner_context import planner_sees
     from pilot.conversation.promises import promised_action
-    from pilot.models.budget_tracker import BudgetTracker
+    from pilot.real_folders import real_budget_tracker
     from pilot.security.vault import KeyVault
 
-    config = PilotConfig.load()
-    config.save = lambda: None
-    budget = BudgetTracker(config.model, str(DB_FILE))
+    from .owner import apply_owner_settings
+
+    config = PilotConfig()  # the run's own: its files are under the scratch root
+    apply_owner_settings(config)
+    budget = real_budget_tracker(config.model)  # the one intended write to the person's folders
     await budget.initialize()
     before = budget._monthly_cost
     model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
