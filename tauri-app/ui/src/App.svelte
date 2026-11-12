@@ -18,6 +18,7 @@
   import { onNotification, offNotification } from "./lib/api/daemon";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
   import SetupWizard from "./lib/components/SetupWizard.svelte";
+  import FirstRunInstall from "./lib/components/FirstRunInstall.svelte";
   import VoiceControl from "./lib/components/VoiceControl.svelte";
   import GestureControl from "./lib/components/GestureControl.svelte";
   import AirHandoffControl from "./lib/components/AirHandoffControl.svelte";
@@ -277,6 +278,7 @@
 </script>
 
 <svelte:document onvisibilitychange={() => (documentVisible = document.visibilityState === "visible")} />
+<FirstRunInstall />
 {#if showWizard}
   <SetupWizard oncomplete={onSetupComplete} />
 {/if}

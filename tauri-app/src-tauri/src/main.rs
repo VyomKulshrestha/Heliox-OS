@@ -4,6 +4,7 @@
 mod commands;
 mod file_access;
 mod hotkey;
+mod setup;
 mod supervisor;
 mod tray;
 use std::net::TcpStream;
@@ -97,109 +98,6 @@ fn daemon_child_started(child: &mut Child, source: &str) -> bool {
     }
 }
 
-/// Run the first-time venv + pip install in a background thread (non-blocking).
-fn daemon_requirement() -> String {
-    format!("pilot-daemon[all]=={}", env!("CARGO_PKG_VERSION"))
-}
-
-fn playwright_browser_install_args() -> [&'static str; 4] {
-    ["-m", "playwright", "install", "chromium"]
-}
-
-fn setup_venv_in_background() {
-    std::thread::spawn(|| {
-        let data_dir = get_app_data_dir();
-        let _ = std::fs::create_dir_all(&data_dir);
-        let venv_dir = data_dir.join("env");
-        println!(
-            "[Heliox OS] First run detected — setting up virtual environment in background..."
-        );
-        // 1. Create venv
-        #[cfg(target_os = "windows")]
-        let sys_python = "python";
-        #[cfg(not(target_os = "windows"))]
-        let sys_python = "python3";
-        let mut venv_cmd = Command::new(sys_python);
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            venv_cmd.creation_flags(0x08000000);
-        }
-        let ok = venv_cmd
-            .args(["-m", "venv", venv_dir.to_str().unwrap()])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !ok {
-            eprintln!("[Heliox OS] Background setup: failed to create venv. Is Python installed?");
-            return;
-        }
-        // 2. pip install pilot-daemon
-        #[cfg(target_os = "windows")]
-        let pip_exe = venv_dir.join("Scripts").join("pip.exe");
-        #[cfg(not(target_os = "windows"))]
-        let pip_exe = venv_dir.join("bin").join("pip");
-        #[cfg(target_os = "windows")]
-        let venv_python = venv_dir.join("Scripts").join("python.exe");
-        #[cfg(not(target_os = "windows"))]
-        let venv_python = venv_dir.join("bin").join("python");
-
-        let mut pip_cmd = Command::new(&pip_exe);
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            pip_cmd.creation_flags(0x08000000);
-        }
-
-        // [all] pulls in every optional feature this project ships (voice,
-        // vision, browser automation, gesture cursor, self-healing,
-        // supervision, gateway/risk-gate, documents, cognitive, ssh,
-        // network, wasm) so real users get every shipped feature out of
-        // the box, not a partial install requiring separate manual pip
-        // steps per feature. Every one of these still defaults to off/
-        // config-gated behavior where the feature is privacy- or
-        // safety-sensitive (e.g. supervision's global keyboard/mouse hook
-        // stays behind its own explicit one-time "I understand" consent
-        // checkbox in Settings regardless of whether pynput is installed)
-        // -- installing the package is not the same as enabling the
-        // feature.
-        // Keep the desktop and daemon on the same release. An unpinned install
-        // can silently pair an older desktop with a newer, incompatible RPC
-        // surface after a future PyPI publication.
-        let daemon_requirement = daemon_requirement();
-        let ok = pip_cmd
-            .args(["install", daemon_requirement.as_str()])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        if !ok {
-            eprintln!("[Heliox OS] Background setup: pip install failed.");
-            return;
-        }
-
-        // Installing the Playwright Python package does not install a browser
-        // executable. Provision Chromium during the same background setup so
-        // browser actions work without a separate developer command.
-        let mut browser_cmd = Command::new(&venv_python);
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            browser_cmd.creation_flags(0x08000000);
-        }
-        let browser_ok = browser_cmd
-            .args(playwright_browser_install_args())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !browser_ok {
-            eprintln!("[Heliox OS] Background setup: Chromium installation failed.");
-            return;
-        }
-
-        println!("[Heliox OS] Background setup complete — restart the app to activate AI backend.");
-    });
-}
 #[tauri::command]
 fn get_system_stats() -> serde_json::Value {
     let mut system = System::new_all();
@@ -362,12 +260,12 @@ fn spawn_daemon() -> Option<Child> {
         return Some(child);
     }
 
-    // Strategy 3: background install if venv doesn't exist
-    if !get_venv_python().exists() {
-        println!("[Heliox OS] No daemon found. Starting background installation...");
-        setup_venv_in_background();
-    } else {
+    // Strategy 3: no environment yet. Nothing is installed here: the app shows the first-run screen (setup.rs),
+    // where the person chooses what to install.
+    if get_venv_python().exists() {
         eprintln!("[Heliox OS] Warning: venv exists but daemon failed to start.");
+    } else {
+        println!("[Heliox OS] No daemon found. Waiting for first-run setup in the app.");
     }
 
     None
@@ -518,12 +416,16 @@ fn stop_daemon(state: &DaemonProcess) {
 fn main() {
     // Spawn the Python daemon before building the Tauri app
     let daemon_child = spawn_daemon();
+    let installed = daemon_child.is_some()
+        || get_venv_python().exists()
+        || TcpStream::connect((DAEMON_HOST, DAEMON_PORT)).is_ok();
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .manage(DaemonProcess(Mutex::new(daemon_child)))
+        .manage(setup::Setup(Mutex::new(setup::initial_state(installed))))
         .manage(commands::NeuralProcess::new())
         .manage(file_access::AllowedPaths::new())
         .manage(commands::GestureCursor::init())
@@ -535,6 +437,7 @@ fn main() {
             window.set_focus().unwrap();
             tray::setup_tray(app)?;
             hotkey::register_hotkey(app)?;
+            setup::probe_in_background(app.handle().clone());
             supervise_daemon(app.handle().clone());
             Ok(())
         })
@@ -566,6 +469,8 @@ fn main() {
             commands::open_logs_folder,
             commands::apply_git_conflict_resolution,
             commands::get_hotkey,
+            setup::setup_status,
+            setup::setup_run,
             commands::get_hotkey_status,
             commands::set_hotkey,
             commands::get_auth_token,
@@ -667,21 +572,5 @@ mod startup_tests {
         let title = feed[0]["title"].as_str().unwrap_or_default();
 
         assert!(title.contains(env!("CARGO_PKG_VERSION")));
-    }
-
-    #[test]
-    fn desktop_installs_matching_daemon_version() {
-        assert_eq!(
-            daemon_requirement(),
-            format!("pilot-daemon[all]=={}", env!("CARGO_PKG_VERSION"))
-        );
-    }
-
-    #[test]
-    fn desktop_first_run_installs_playwright_chromium() {
-        assert_eq!(
-            playwright_browser_install_args(),
-            ["-m", "playwright", "install", "chromium"]
-        );
     }
 }

@@ -392,3 +392,65 @@ jobs:
         run: |
           pip install pytest pytest-asyncio pytest-timeout
           pytest tests/test_platform_readers.py tests/test_platform_quiet_failures.py -q --timeout=120
+
+  # ── First run from nothing (experimental, non-blocking) ──
+  # Runs the app's own first-run script (tauri-app/src-tauri/setup) in an empty home folder with the core only
+  # (plus the platform readers on macOS and Linux), starts the daemon it installed and checks that it answers its
+  # RPC. "private" proves the path for a machine without Python 3.11+ (uv and a private Python); "auto" uses the
+  # runner's Python. The daemon comes from this checkout, as the released version may not be on PyPI yet.
+  first-run:
+    name: First run (${{ matrix.os }}, ${{ matrix.python }} Python)
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+        python: [auto, private]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run the first-run script in an empty home folder
+        env:
+          HELIOX_PYTHON: ${{ matrix.python }}
+        run: |
+          set +e
+          export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          export HELIOX_SETUP_DIR="$HOME/.config/heliox-os"
+          export HELIOX_CORE_REQ="$GITHUB_WORKSPACE/daemon"
+          case "$RUNNER_OS" in
+            Linux) export HELIOX_GROUPS="platform=$GITHUB_WORKSPACE/daemon[linux]" ;;
+            macOS) export HELIOX_GROUPS="platform=$GITHUB_WORKSPACE/daemon[macos]" ;;
+            *) export HELIOX_GROUPS="" ;;
+          esac
+          start=$(date +%s)
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export HELIOX_SETUP_DIR="$(cygpath -w "$HELIOX_SETUP_DIR")" HELIOX_CORE_REQ="$(cygpath -w "$HELIOX_CORE_REQ")"
+            powershell -NoProfile -ExecutionPolicy Bypass -File tauri-app/src-tauri/setup/first-run.ps1 probe
+            powershell -NoProfile -ExecutionPolicy Bypass -File tauri-app/src-tauri/setup/first-run.ps1 run | tee "$RUNNER_TEMP/setup.log"
+          else
+            sh tauri-app/src-tauri/setup/first-run.sh probe
+            sh tauri-app/src-tauri/setup/first-run.sh run | tee "$RUNNER_TEMP/setup.log"
+          fi
+          status=${PIPESTATUS[0]}
+          echo "setup exit code $status after $(( $(date +%s) - start )) s"
+          grep "^@@" "$RUNNER_TEMP/setup.log"
+          du -sh "$HOME/.config/heliox-os"/* 2>/dev/null || true
+          exit $status
+
+      - name: Start the daemon it installed and check that it answers
+        run: |
+          set +e
+          export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
+          if [ "$RUNNER_OS" = "Windows" ]; then PY="$HOME/.config/heliox-os/env/Scripts/python.exe"; else PY="$HOME/.config/heliox-os/env/bin/python"; fi
+          "$PY" -m pilot.server > "$RUNNER_TEMP/daemon.log" 2>&1 &
+          "$PY" daemon/tests/platform_real/first_run_rpc_check.py 240
+          status=$?
+          if [ $status -ne 0 ]; then tail -60 "$RUNNER_TEMP/daemon.log"; fi
+          exit $status

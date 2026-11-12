@@ -11,3 +11,6 @@ releases.xml text eol=lf
 daemon/pilot/actions.py text eol=lf
 daemon/pilot/network/collab_executor.py text eol=lf
 daemon/pilot/plugins/**/manifest.json text eol=lf
+
+# Shell scripts run on macOS and Linux and are embedded into the app on every system.
+*.sh text eol=lf

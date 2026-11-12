@@ -50,6 +50,7 @@
     toTauriHotkey,
     type HotkeyStatus,
   } from "../hotkey";
+  import OptionalParts from "./OptionalParts.svelte";
   import { companion } from "../stores/companion";
 
   let {
@@ -1210,6 +1211,8 @@
       </select>
     </div>
   </section>
+
+  <OptionalParts />
 
   <section class="settings-group">
     <h3>Keyboard Shortcut</h3>
