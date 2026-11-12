@@ -996,3 +996,80 @@ jobs:
       - name: Cargo tests
         working-directory: tauri-app/src-tauri
         run: cargo test --all-targets
+
+  # ── Real faults on the runners (non-blocking) ──
+  # Each step makes a fault happen for real on this machine and prints CHECK lines (daemon/tests/platform_real):
+  # hard kills, two daemons at once, stop() with a request in flight, network faults in front of the real clients,
+  # the update path against a port held by something else, and what "no NVIDIA card" claims. Every step starts from
+  # an empty home with the keyring turned off, so nothing of the runner's own is touched.
+  real-faults:
+    name: Real faults (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the daemon (core only, as a first run does)
+        run: python -m pip install --disable-pip-version-check --progress-bar off -e ./daemon
+
+      - name: Hard kills (a worker's parent, a task in the middle)
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/kill" USERPROFILE="$RUNNER_TEMP/kill" LOCALAPPDATA="$RUNNER_TEMP/kill/AppData/Local"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/kill_checks.py
+
+      - name: Two daemons started together
+        if: runner.os != 'Windows'
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/two" USERPROFILE="$RUNNER_TEMP/two"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/two_copies_check.py
+
+      - name: Stop with a request in flight
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/stop" USERPROFILE="$RUNNER_TEMP/stop" LOCALAPPDATA="$RUNNER_TEMP/stop/AppData/Local"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/stop_timing_check.py
+
+      - name: Network faults in front of the real clients
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/net" USERPROFILE="$RUNNER_TEMP/net" LOCALAPPDATA="$RUNNER_TEMP/net/AppData/Local"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/network_faults_check.py
+
+      - name: The update path with the port held by something else
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/port" USERPROFILE="$RUNNER_TEMP/port" LOCALAPPDATA="$RUNNER_TEMP/port/AppData/Local"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/foreign_port_check.py
+
+      - name: What "no NVIDIA card" claims, on a machine without one
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/gpu" USERPROFILE="$RUNNER_TEMP/gpu" LOCALAPPDATA="$RUNNER_TEMP/gpu/AppData/Local"
+          mkdir -p "$HOME"
+          python -m pilot.server > "$RUNNER_TEMP/gpu-daemon.log" 2>&1 &
+          python daemon/tests/platform_real/first_run_rpc_check.py 240 && python daemon/tests/platform_real/model_health_check.py
+          status=$?
+          python -c "import asyncio, sys; sys.path.insert(0, 'daemon/tests/platform_real'); import stop_timing_check as s; asyncio.run(s.send('daemon_stop', {}, wait=True))" || true
+          exit $status
