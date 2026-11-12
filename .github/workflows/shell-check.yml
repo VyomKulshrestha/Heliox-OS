@@ -47,6 +47,10 @@ jobs:
       - name: Live terminal check in real zsh and fish sessions
         run: python tests/platform_real/shell_integration_check.py
 
+      - name: What zsh never sends (read -s, a password prompt) and its socket modules (also /bin/zsh on macOS)
+        if: always()
+        run: python tests/platform_real/shell_prompts_check.py
+
       - name: Unit tests of the shell check
         if: always()
         run: |

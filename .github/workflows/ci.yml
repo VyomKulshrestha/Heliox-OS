@@ -328,7 +328,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends \
             xvfb xdotool dbus dbus-x11 at-spi2-core libatk-adaptor \
-            python3-gi gir1.2-gtk-3.0
+            python3-gi gir1.2-gtk-3.0 tesseract-ocr scrot
           ls /usr/share/dbus-1/services/ | grep -i a11y || echo "no org.a11y.Bus service file"
 
       - name: Linux, quiet in calls - another app recording is seen through PulseAudio
@@ -357,6 +357,9 @@ jobs:
             # Live end to end: a slip typed into the GTK field becomes a card; excluded app, password field, closed
             # window.
             python tests/platform_real/live_end_to_end_check.py --python /usr/bin/python3
+            reader=$(( reader + $? ))
+            # Live never reads a password manager's or Heliox's own window; an error on screen; back and forth.
+            python tests/platform_real/live_more_checks.py --python /usr/bin/python3
             exit $(( reader + $? ))
           '
 
@@ -403,6 +406,8 @@ jobs:
             python tests/platform_real/linux_atspi_check.py --wayland --python /usr/bin/python3
             status=$?
             python tests/platform_real/live_end_to_end_check.py --wayland --python /usr/bin/python3
+            status=$(( status + $? ))
+            python tests/platform_real/live_more_checks.py --wayland --python /usr/bin/python3
             status=$(( status + $? ))
             tail -20 /tmp/sway.log
             exit $status
@@ -479,6 +484,8 @@ jobs:
         run: python tests/platform_real/apps_check.py
           reader=$?
           python tests/platform_real/live_end_to_end_check.py
+          reader=$(( reader + $? ))
+          python tests/platform_real/live_more_checks.py
           exit $(( reader + $? ))
 
       - name: Live terminal check in real zsh and fish sessions
@@ -490,6 +497,9 @@ jobs:
           fi
           zsh --version; fish --version
           python tests/platform_real/shell_integration_check.py
+          shell=$?
+          python tests/platform_real/shell_prompts_check.py
+          exit $(( shell + $? ))
 
       # kitty read through its own remote control, without changing the shell. WezTerm is checked too when the
       # runner has it (it is not in Ubuntu's archive); the unit tests cover its answers.
