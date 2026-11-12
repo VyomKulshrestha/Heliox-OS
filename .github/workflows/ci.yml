@@ -1081,6 +1081,13 @@ jobs:
           python -c "import asyncio, sys; sys.path.insert(0, 'daemon/tests/platform_real'); import stop_timing_check as s; asyncio.run(s.send('daemon_stop', {}, wait=True))" || true
           exit $status
 
+      - name: The learner's saved state after the runtime folder is emptied (a reboot), and an earlier key moved
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/learner" USERPROFILE="$RUNNER_TEMP/learner" LOCALAPPDATA="$RUNNER_TEMP/learner/AppData/Local"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/learner_key_reboot_check.py
+
       - name: A full disk and a read-only data folder (tmpfs and an ext4 image)
         if: runner.os == 'Linux'
         continue-on-error: true

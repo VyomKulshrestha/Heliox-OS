@@ -26,6 +26,7 @@ GUARDED = (
     "protected_case_check.py",
     "audio_check.py",
     "credential_store_check.py",
+    "learner_key_reboot_check.py",
 )
 
 

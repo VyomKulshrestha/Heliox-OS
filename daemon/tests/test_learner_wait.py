@@ -153,11 +153,12 @@ def test_a_damaged_key_file_is_refused_not_rewritten(tmp_path):
 
 
 async def test_without_a_keyring_the_server_uses_the_key_file(monkeypatch, tmp_path):
-    from pilot.server import LEARNER_SNAPSHOT_KEY_FILE, PilotServer
+    from pilot.server import KEYS_FOLDER, LEARNER_SNAPSHOT_KEY_FILE, PilotServer
 
     monkeypatch.setattr("pilot.config.RUNTIME_DIR", tmp_path / "runtime")
+    monkeypatch.setattr("pilot.server.DATA_DIR", tmp_path / "data")
     server = PilotServer(PilotConfig())
     server._vault = None  # no system keyring
     key = await server._learner_key()
-    assert key is not None and (tmp_path / "runtime" / LEARNER_SNAPSHOT_KEY_FILE).exists()
+    assert key is not None and (tmp_path / "data" / KEYS_FOLDER / LEARNER_SNAPSHOT_KEY_FILE).exists()
     assert await server._learner_key() == key  # the same key next start: the saved state stays usable

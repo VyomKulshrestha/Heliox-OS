@@ -95,7 +95,7 @@ class _Ledger:
 
 
 async def test_a_daemon_with_a_blocked_keychain_starts_answers_and_stops(blocked_keyring, monkeypatch, tmp_path):
-    from pilot.server import LEARNER_SNAPSHOT_KEY_FILE
+    from pilot.server import KEYS_FOLDER, LEARNER_SNAPSHOT_KEY_FILE
     from pilot.system.late_start import LearnerLoading
 
     monkeypatch.setattr("pilot.config.RUNTIME_DIR", tmp_path / "runtime")
@@ -134,7 +134,7 @@ async def test_a_daemon_with_a_blocked_keychain_starts_answers_and_stops(blocked
                 break
             await asyncio.sleep(0.05)
         assert late.snapshot()["online_learning"] == "ready"  # the learner loaded, keyed by the file
-        assert (tmp_path / "runtime" / LEARNER_SNAPSHOT_KEY_FILE).exists()
+        assert (tmp_path / "data" / KEYS_FOLDER / LEARNER_SNAPSHOT_KEY_FILE).exists()
         assert "set" not in blocked_keyring  # nothing was ever written to the keychain
     finally:
         started = time.monotonic()

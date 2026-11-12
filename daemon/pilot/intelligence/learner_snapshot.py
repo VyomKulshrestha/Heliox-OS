@@ -6,14 +6,16 @@ format would have to copy ADWIN's private layout for each river version; anythin
 decide differently from a full replay as soon as drift is next checked. So the snapshot is a pickle, and it is only
 ever loaded when all of these hold:
 
-- its HMAC-SHA256 matches, keyed by a secret kept in Heliox's key vault (the system keyring), not on disk beside it;
+- its HMAC-SHA256 matches, keyed by a secret in an owner-only file in the data folder (``pilot.system.key_file``):
+  a truncated, corrupted or foreign snapshot is refused, but a program running as the same user can read the key,
+  so against that the allow-list below is the defence;
 - the header's format, model version, river and numpy versions and reset point match this installation;
 - every class it names is on a short allow-list (river's model, optimiser, drift detector and vector types, numpy's
   array rebuild, a few standard containers and the learner's own two classes); anything else is refused before it
   is built.
 
-On any refusal the caller replays the whole ledger in the background instead. With no vault (no system keyring),
-nothing is saved or loaded.
+On any refusal the caller replays the whole ledger in the background instead. Without a usable key file, nothing is
+saved or loaded.
 
 File layout: one line of JSON (the header, with ``hmac``), a newline, then the pickle bytes. The HMAC covers the header
 without its ``hmac`` field (sorted keys) and the pickle bytes.
@@ -110,6 +112,22 @@ def write(
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(staged, path)
+
+
+def signed_by(path: Path, key: bytes) -> bool:
+    """Whether the snapshot at ``path`` carries an HMAC made with ``key``. Reads the bytes only; nothing is unpickled."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False
+    head, separator, payload = raw.partition(b"\n")
+    try:
+        header = json.loads(head)
+    except ValueError:
+        return False
+    if not separator or not isinstance(header, dict) or header.get("format") != FORMAT:
+        return False
+    return hmac.compare_digest(str(header.get("hmac", "")), _sign(key, header, payload))
 
 
 def read(path: Path, key: bytes, *, model_version: str, reset_before: int) -> tuple[int, dict[str, Any]]:

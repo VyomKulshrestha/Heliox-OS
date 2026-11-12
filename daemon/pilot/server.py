@@ -174,7 +174,8 @@ def keyring_guard_status() -> dict[str, Any]:
 LEARNER_SNAPSHOT_FILE = "online_learning_snapshot.bin"
 LEARNER_SNAPSHOT_KEY = "heliox_learner_snapshot"
 LEARNER_KEYRING_READ_SECONDS = 1.0  # a read of an earlier version's key; no write is ever made
-LEARNER_SNAPSHOT_KEY_FILE = "learner_snapshot_key"  # in the runtime folder, owner-only, when there is no keyring
+LEARNER_SNAPSHOT_KEY_FILE = "learner_snapshot_key"  # owner-only, in KEYS_FOLDER beside the snapshot it signs
+KEYS_FOLDER = "keys"  # in the data folder (0700): survives a reboot, and removal treats it as data
 
 
 async def _accessibility_observation(limit: int = 40, excluded: tuple[str, ...] = ()) -> str:
@@ -10940,10 +10941,12 @@ class PilotServer:
             self._after_ready_task = asyncio.create_task(self._after_ready(), name="after_ready")
 
     async def _learner_key(self) -> bytes | None:
-        """The snapshot key: an owner-only file in the runtime folder (pilot.system.key_file), made once. Never written
-        to the system keyring: on macOS a keychain write can put up a dialog and wait for it, and at start nobody may
-        see it. A key an earlier version kept in the keyring is still used when the keyring answers a read quickly,
-        so its saved state stays valid. None only when the file cannot be used: every start then replays in full."""
+        """The snapshot key: an owner-only file in the data folder's ``keys`` folder (pilot.system.key_file), made
+        once. Not the runtime folder, which Linux empties at every reboot and macOS keeps under Library/Caches: a key
+        an earlier version kept there is moved here first, when it signs the saved state. Never written to the system
+        keyring: on macOS a keychain write can put up a dialog and wait for it, and at start nobody may see it. A key
+        an earlier version kept in the keyring is still used when the keyring answers a read quickly, so its saved
+        state stays valid. None only when the file cannot be used: every start then replays in full."""
         vault = self._vault
         if vault is not None and vault.available:
             from pilot.security import keyring_guard
@@ -10961,10 +10964,21 @@ class PilotServer:
             if earlier:
                 return earlier.encode("utf-8")
         from pilot.config import RUNTIME_DIR
-        from pilot.system.key_file import KeyFileRefused, load_or_create
+        from pilot.intelligence.learner_snapshot import signed_by
+        from pilot.system.key_file import KeyFileRefused, load_or_create, move_key
 
+        key_path = DATA_DIR / KEYS_FOLDER / LEARNER_SNAPSHOT_KEY_FILE
+        snapshot = DATA_DIR / LEARNER_SNAPSHOT_FILE
         try:
-            return await asyncio.to_thread(load_or_create, RUNTIME_DIR / LEARNER_SNAPSHOT_KEY_FILE)
+            moved = await asyncio.to_thread(
+                move_key, RUNTIME_DIR / LEARNER_SNAPSHOT_KEY_FILE, key_path, lambda key: signed_by(snapshot, key)
+            )
+            if moved:
+                logger.info("Learner key: %s", moved)
+        except OSError:
+            logger.warning("The learner's earlier key file could not be moved; a new key is made", exc_info=True)
+        try:
+            return await asyncio.to_thread(load_or_create, key_path)
         except KeyFileRefused as refused:
             logger.warning("%s Every start replays the learner in full until it is fixed.", refused)
         except OSError:
