@@ -1,0 +1,132 @@
+{
+ "scenarios": [
+  {
+   "id": "s-syn-slip-weekday",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "3.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a slip in a request to Heliox: Live must raise it; real voice owed: no recording of the owner saying this exists yet",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox_remind_me_on_tuesday_the_nineteenth_t.wav",
+     "text": "Hey Heliox, remind me on Tuesday the nineteenth to send the report."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "card": true,
+    "transcript": false
+   }
+  },
+  {
+   "id": "s-syn-slip-weekday-meeting",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "3.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a slip in a request to Heliox: Live must raise it; real voice owed: no recording of the owner saying this exists yet",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox_put_the_review_in_for_monday_the_nine.wav",
+     "text": "Hey Heliox, put the review in for Monday the nineteenth at ten."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "card": true,
+    "transcript": false
+   }
+  },
+  {
+   "id": "s-syn-slip-impossible-date",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "3.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a slip in a request to Heliox: Live must raise it; real voice owed: no recording of the owner saying this exists yet",
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/hey_heliox_remind_me_that_the_invoice_is_due_on_.wav",
+     "text": "Hey Heliox, remind me that the invoice is due on the thirty-first of November."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "card": true,
+    "transcript": false
+   }
+  },
+  {
+   "id": "s-syn-slip-amount-swap",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "3.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "an amount said to Heliox, then a different one: Live must raise it; real voice owed: no recording of the owner saying this exists yet",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox_the_invoice_for_acme_is_two_thousand_.wav",
+     "text": "Hey Heliox, the invoice for Acme is two thousand four hundred."
+    },
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox_email_the_acme_invoice_for_four_thous.wav",
+     "text": "Hey Heliox, email the Acme invoice for four thousand two hundred.",
+     "when": "previous_done",
+     "delay": 1.0
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "card": true,
+    "transcript": false
+   }
+  },
+  {
+   "id": "s-syn-remark-slip-must-not-fire",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "3.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "setup": {
+    "conversation_open": true
+   },
+   "note": "the same slip said to a colleague while a conversation is open: Live never hears it, no card",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/the_invoice_is_due_on_the_thirty_first_of_novemb.wav",
+     "text": "The invoice is due on the thirty-first of November."
+    }
+   ],
+   "expect": {
+    "card": false,
+    "route": [
+     "ignored",
+     "overheard"
+    ],
+    "spoken": false,
+    "transcript": false
+   }
+  }
+ ]
+}
