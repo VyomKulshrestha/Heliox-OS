@@ -34,6 +34,12 @@ Replaced:
 - The speaker: silent. Output-device latency and the device's own cut-off time on barge-in are therefore not in
   the numbers, and neither is echo of Heliox's voice into an open microphone.
 
+The listener is wired as the server wires its own: the bench reads the server's listener start-up from its source
+and sets the same attributes (turns enter through the server's turn entry point; a sentence split at a pause can
+be withdrawn and joined). Scenarios are independent: one server runs them all, and between scenarios the bench
+makes the new-conversation call, as a person starting over would, which drops what Live holds, clears the
+conversation layer and closes the follow-up windows.
+
 ## Audio
 
 Scenario files hold only text and expectations. Audio is referenced as a path inside a private folder

@@ -449,3 +449,34 @@ def test_a_stalled_loop_does_not_move_a_clip_on_the_audio_clock():
     assert starts == [0, start]
     late = pump.play(second, "c", first=0.0, last=0.5, start_at=pump.played - 100)
     assert late == pump.played + 8000  # a start already in the past begins at once, never before the clock
+
+
+def test_the_bench_wires_its_listener_exactly_as_the_server_does():
+    import inspect
+
+    from benchmarks.conversation_bench import driver
+
+    source = driver.SERVER_SOURCE.read_text(encoding="utf-8")
+    entry, attrs = driver.server_listener_wiring(source)
+    # The server today: turns enter through _voice_turn; a split sentence can be withdrawn. If the server's wiring
+    # changes, this fails, and the bench (which reads the same source) must be checked against the new wiring.
+    assert entry == "_voice_turn"
+    assert attrs["withdraw_turn"] == "withdraw_voice_turn" and attrs["task_open"] == "_voice_task_open"
+
+    class Server:
+        def withdraw_voice_turn(self):
+            return "withdrawn"
+
+        def _voice_task_open(self):
+            return True
+
+    class Listener:
+        pass
+
+    listener, server = Listener(), Server()
+    assert driver.wire_like_server(listener, server, source) == attrs
+    assert listener.withdraw_turn() == "withdrawn" and listener.task_open() is True
+    build = inspect.getsource(driver.Harness.build)
+    assert "wire_like_server(listener, server)" in build and "getattr(server, turn_entry)" in build
+    teardown = inspect.getsource(driver.Harness._teardown)
+    assert "_handle_voice_new_conversation" in teardown  # every scenario starts from a clean conversation

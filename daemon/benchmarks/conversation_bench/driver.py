@@ -187,6 +187,51 @@ class FilePump:
                 self.max_lag = max(self.max_lag, -delay)
 
 
+SERVER_SOURCE = Path(__file__).resolve().parents[2] / "pilot" / "server.py"
+
+
+def server_listener_wiring(source: str) -> tuple[str, dict[str, str]]:
+    """How the server wires the listener it starts, read from its source (pure; nothing is imported).
+
+    Returns the server method the listener calls for an addressed turn (``on_command=self.X``) and every attribute
+    the server sets on that listener afterwards (``self._voice_listener.attr = self.method``), so the bench wires its
+    own listener the same way and follows any change to the server's wiring.
+    """
+    import ast
+
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) and node.name == "_handle_voice_listener_start":
+            on_command = ""
+            attrs: dict[str, str] = {}
+            for sub_node in ast.walk(node):
+                if isinstance(sub_node, ast.Call) and getattr(sub_node.func, "id", "") == "ContinuousVoiceListener":
+                    for kw in sub_node.keywords:
+                        if kw.arg == "on_command" and isinstance(kw.value, ast.Attribute):
+                            on_command = kw.value.attr
+                if isinstance(sub_node, ast.Assign) and len(sub_node.targets) == 1:
+                    target, value = sub_node.targets[0], sub_node.value
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Attribute)
+                        and target.value.attr == "_voice_listener"
+                        and isinstance(value, ast.Attribute)
+                        and isinstance(value.value, ast.Name)
+                        and value.value.id == "self"
+                    ):
+                        attrs[target.attr] = value.attr
+            return on_command, attrs
+    raise ValueError("the server has no _handle_voice_listener_start")
+
+
+def wire_like_server(listener: Any, server: Any, source: str | None = None) -> dict[str, str]:
+    """Set on ``listener`` every attribute the server sets on its own listener; returns what was wired."""
+    _, attrs = server_listener_wiring(source if source is not None else SERVER_SOURCE.read_text(encoding="utf-8"))
+    for attr, method in attrs.items():
+        setattr(listener, attr, getattr(server, method))
+    return attrs
+
+
 def table_rows(folder: Path) -> dict[str, int]:
     """Row counts of every table in every SQLite file under ``folder`` (what was stored)."""
     counts: dict[str, int] = {}
@@ -391,7 +436,8 @@ class Harness:
 
         # What the server's own listener calls for an addressed turn: the turn entry point (it holds the floor,
         # lets Live see the turn first and runs the conversation layer), or the dispatch on servers without it.
-        original_dispatch = getattr(server, "_voice_turn", None) or server._voice_command_dispatch
+        turn_entry, _ = server_listener_wiring(SERVER_SOURCE.read_text(encoding="utf-8"))
+        original_dispatch = getattr(server, turn_entry)
 
         async def dispatch(text: str) -> None:
             lst = self.listener
@@ -418,11 +464,9 @@ class Harness:
             on_turn_hold=server._voice_turn_hold,
             on_overheard=overheard,
         )
-        listener.task_open = server._voice_task_open
-        # Wired exactly as the server wires its own listener, so a sentence split at a pause can be withdrawn
-        # and joined (without it every bench run was the unwired case).
-        if hasattr(server, "withdraw_voice_turn"):
-            listener.withdraw_turn = server.withdraw_voice_turn
+        # Wired exactly as the server wires its own listener (read from its source), so a sentence split at a
+        # pause can be withdrawn and joined; without it every bench run was the unwired case.
+        wire_like_server(listener, server)
         self.listener = listener
         original_note = listener.note_interruption
 
@@ -677,6 +721,11 @@ class Harness:
         listener.clear_follow_up_window()
         listener.end_interruption()
         self._observed[0] = None
+        # Every scenario starts from a clean conversation, as a person starting over would: the new-conversation
+        # call drops what Live holds, clears the conversation layer and closes the follow-up windows.
+        new_conversation = getattr(server, "_handle_voice_new_conversation", None)
+        if new_conversation is not None:
+            await new_conversation({}, None)
 
 
 def model_kind(name: str) -> ModelKind:
