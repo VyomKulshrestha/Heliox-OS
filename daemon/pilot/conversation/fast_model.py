@@ -212,7 +212,12 @@ def claude_payload(
     model: str, max_tokens: int, system: str, messages: list[dict[str, str]], effort: str, thinking_off: bool
 ) -> dict[str, Any]:
     """The Messages API body for a spoken reply, the same for the SDK and the HTTP path."""
-    payload: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "system": system, "messages": messages}
+    # The system prompt is the same text on every turn and comes first: one cache breakpoint on it lets the next turn
+    # read it from the cache (about a tenth of the input price) instead of paying for it again. Same words as before:
+    # only the shape of the field changes. The context that varies by turn (the time, the profile, the screen) is in
+    # the last user message, after the breakpoint. A prompt under the model's cacheable minimum is sent as usual.
+    cached_system = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+    payload: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "system": cached_system, "messages": messages}
     if not model.startswith(("claude-3", "claude-haiku-4", "claude-sonnet-4-5")):
         # Older models reject output_config.effort (see pilot.models.cloud.claude_supports_effort).
         payload["output_config"] = {"effort": effort}

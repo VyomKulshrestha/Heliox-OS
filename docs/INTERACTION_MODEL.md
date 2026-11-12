@@ -543,6 +543,36 @@ warmed (network time on a home connection; machine load not recorded): SDK first
 the owner's machine (load not recorded; about three minutes without compiled bytecode), which a turn would have waited
 for.
 
+**The system prompt is cached.** It is the same text on every turn and comes first, so it carries one cache
+breakpoint (`cache_control: ephemeral`). The words the model is told do not change; the context that varies by turn
+is in the last user message, after the breakpoint. The prompt-caching page gives Claude Haiku 5.5 a 512-token
+minimum, and the system prompt is 1,134 tokens.
+
+**Run for real**: two calls three seconds apart, on 13 November, about 70% CPU, 0.02 of a cent.
+- The first call wrote 1,134 tokens to the cache, with 22 input tokens left.
+- The second read 1,134 from the cache, with 18 input tokens left.
+- Cache reads are a tenth of the input price.
+- First words: 1.78 s (the first call, which also opened the connection) and 0.84 s.
+- The same pair without the breakpoint: 1.61 s and 1.13 s.
+- One pair each, so the first-word gain is not measured beyond that.
+
+The other providers need nothing marked. OpenAI-compatible endpoints and recent Gemini models reuse a long enough
+repeated prefix by themselves, and Ollama reuses the loaded model's memory of a matching prefix. Keeping the stable
+system prompt first is what all of them need, and it already is.
+
+**The connection is not kept warm between a warm-up and the turn.** The fast model's `httpx` client keeps an idle
+connection 5 s (httpx's default `keepalive_expiry`), and the warm-up runs at most every 45 s. Measured on 13 November
+with free token-counting calls:
+- After 2 s idle, the default client reused its connection (0.33 s).
+- After 6, 15, 40 and 120 s it opened a new one (0.41 to 0.60 s).
+- A client asking to keep idle connections 300 s reused the same connection at every interval up to 120 s
+  (0.30 to 0.47 s), so the server keeps it at least that long.
+
+So a warm-up at the start of a ten-second sentence is gone when the person finishes, and the first question after a
+minute of silence starts cold. In the paid runs the first call of a fresh model took 1.2 to 1.9 s against about
+0.9 s warm. The session runner now warms before each dispatch, as the daemon does at a wake or a follow-up, so the
+bench no longer measures cold calls.
+
 ### The model for each kind of person
 
 The fast model is a setting per provider (`conversation.claude_model`, `gemini_model`, `openai_model`,

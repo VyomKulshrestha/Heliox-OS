@@ -409,6 +409,7 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     model = fast_model(kind, {i: t.get("model") for i, t in enumerate(session["turns"])}, record)
     layer._model = lambda: model
     layer._prepare = lambda text: None  # no speech synthesis is prepared: there is no voice here, and no audio
+    layer.sources.now = lambda: NOW  # the model is told the session's Thursday 9:00, as every code answer is
     server._voice_turns._clock = clock  # the withdraw window runs on the session's clock
     return server
 
@@ -590,6 +591,12 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                 asked_before = set(server._pending_confirms)
                 token = SESSION_TURN.set(index)
                 try:
+                    # As the daemon does when the listener reports a wake or a follow-up (PilotServer
+                    # _voice_status_broadcast -> _prewarm_voice): the fast model's connection is warmed just before
+                    # the dispatch, so a paid run measures the same first word a person gets, not a cold call.
+                    from pilot.conversation import layer_for
+
+                    layer_for(server).prewarm()
                     task = asyncio.ensure_future(dispatch())
                 finally:
                     SESSION_TURN.reset(token)
@@ -914,11 +921,15 @@ class _counting:
         return self._model.stream(system, messages)
 
 
-async def run_all(sessions: list[dict[str, Any]], kinds: tuple[str, ...], real_model: Any = None) -> dict[str, Any]:
+async def run_all(
+    sessions: list[dict[str, Any]], kinds: tuple[str, ...], real_model: Any = None, keep_records: bool = False
+) -> dict[str, Any]:
     rows = []
+    records = []
     for session in sessions:
         for kind in kinds:
             record, failures = await run_session(session, kind, real_model)
+            records.append(record)
             rows.append(
                 {
                     "session": session["name"],
@@ -930,7 +941,7 @@ async def run_all(sessions: list[dict[str, Any]], kinds: tuple[str, ...], real_m
                 }
             )
     table = {kind: f"{sum(r['passed'] for r in rows if r['kind'] == kind)}/{len(sessions)}" for kind in kinds}
-    return {"table": table, "rows": rows}
+    return {"table": table, "rows": rows, **({"records": records} if keep_records else {})}
 
 
 async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
@@ -943,15 +954,28 @@ async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     from . import OWNER_CONVERSATION_FIELDS
 
     config = PilotConfig()  # the run's own, under the scratch root: its save cannot reach the person's file
-    apply_owner_settings(
-        config, ("model", "conversation"), only=OWNER_CONVERSATION_FIELDS
-    )  # their provider and conversation model, read and copied
-    if config.model.cloud_provider != "claude":
-        raise SystemExit("--real runs the Claude road only; the configured cloud provider is not Claude")
+    copied = apply_owner_settings(config, ("model", "conversation"), only=OWNER_CONVERSATION_FIELDS)
+    print("copied from the person's settings:", ", ".join(copied) or "nothing", flush=True)
+    if config.model.provider != "cloud" or config.model.cloud_provider != "claude":
+        raise SystemExit("--real runs the Claude road only; the copied provider is not Claude")
     # The one intended write to the person's own folders: the budget tracker records what the run spent.
     budget = real_budget_tracker(config.model)
     await budget.initialize()
     before = budget._monthly_cost
+    monthly, per_task = float(config.model.budget_monthly_limit_usd), float(config.model.max_usd_per_task)
+    turns = sum(1 for s in sessions for t in s["turns"] if "say" in t)
+    estimate = round(turns * ESTIMATE_USD_PER_TURN, 4)
+    print(
+        f"budget: spent this month ${before:.4f} of ${monthly:.2f}; per task ${per_task:.2f}; this run at most "
+        f"${MAX_RUN_USD:.2f} (estimate ${estimate:.4f} for {turns} turns, {len(sessions)} sessions)",
+        flush=True,
+    )
+    if estimate > MAX_RUN_USD:
+        raise SystemExit(f"the estimate ${estimate:.4f} passes the ${MAX_RUN_USD:.2f} a run may cost: run a subset")
+    if (monthly > 0 and before + MAX_RUN_USD > monthly) or (per_task > 0 and per_task < MAX_RUN_USD):
+        raise SystemExit("a run of this size could pass the person's own limits: not started")
+    config_before, data_before = owner_config_listing(), _owner_data_listing()
+    per_call: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
     calls = 0
     firsts: list[float | None] = []  # seconds to the first text, per call (None: no text came)
@@ -960,8 +984,28 @@ async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
         # A fresh model per session, as a person's sessions are minutes apart: a slow answer's rest in one session
         # must not answer the next session's turns.
         model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
-        rows += (await run_all([session], ("claude",), real_model=model))["rows"]
+        result = await run_all([session], ("claude",), real_model=model, keep_records=True)
+        rows += result["rows"]
         calls += len(getattr(model, "calls", []))
+        record = result["records"][0]
+        turns_called = [turn for turn in sorted(record.requests) for _ in record.requests[turn]]
+        for call, turn, body in zip(
+            getattr(model, "calls", []),
+            turns_called,
+            [b for t in sorted(record.requests) for b in record.requests[t]],
+            strict=False,
+        ):
+            per_call.append(
+                {
+                    "session": session["name"],
+                    "turn": turn + 1,
+                    "said": session["turns"][turn].get("say", "") if 0 <= turn < len(session["turns"]) else "",
+                    "first_text_s": round(call.first_text_at - call.started, 3) if call.first_text_at else None,
+                    "input_tokens": call.input_tokens,
+                    "output_tokens": call.output_tokens,
+                    "request_chars": len(body),
+                }
+            )
         firsts += [
             round(c.first_text_at - c.started, 2) if c.first_text_at is not None else None
             for c in getattr(model, "calls", [])
@@ -973,8 +1017,34 @@ async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     summary["calls"] = calls
     summary["first_text_seconds"] = firsts
     summary["model"] = name
+    summary["per_call"] = per_call
     await budget.close()
+    config_after, data_after = owner_config_listing(), _owner_data_listing()
+    summary["owner_config_changed"] = sorted(set(config_before.items()) ^ set(config_after.items()))
+    summary["owner_data_changed"] = sorted({name for name, _ in set(data_before.items()) ^ set(data_after.items())})
     return summary
+
+
+MAX_RUN_USD = 0.50  # the most one paid run of ours may cost
+ESTIMATE_USD_PER_TURN = 0.0005  # a fast-model turn on Haiku has cost about $0.00015; three times that, to be safe
+
+
+def _owner_data_listing() -> dict[str, tuple[int, int]]:
+    """The person's data folder, as name -> (size, modified): metadata only, no file read (the folder guard does the
+    same under pytest, so nothing is listed there)."""
+    if any(name == "folder_guard" or name.endswith(".folder_guard") for name in sys.modules):
+        return {}
+    from pilot.real_folders import real_budget_db
+
+    found: dict[str, tuple[int, int]] = {}
+    for folder, _dirs, files in os.walk(real_budget_db().parent):
+        for file in files:
+            try:
+                info = os.stat(os.path.join(folder, file))
+            except OSError:
+                continue
+            found[os.path.join(folder, file)] = (info.st_size, info.st_mtime_ns)
+    return found
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -999,6 +1069,11 @@ def main(argv: list[str] | None = None) -> int:
     print("sessions passed:", summary["table"])
     if "spent_usd" in summary:
         print("budget tracker:", summary["spent_usd"], "USD over", summary["calls"], "calls")
+    if "owner_config_changed" in summary:
+        print(
+            "the person's config folder, changed:", [name for name, _ in summary["owner_config_changed"]] or "nothing"
+        )
+        print("the person's data folder, changed:", summary["owner_data_changed"] or "nothing")
     for row in summary["rows"]:
         for failure in row["failures"]:
             print(f"[{row['kind']}] {row['session']}: {failure}")

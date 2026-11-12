@@ -252,7 +252,8 @@ def test_claude_over_http_sends_the_same_request_and_records_the_same_usage():
     assert body == {
         "model": "claude-haiku-5-5",
         "max_tokens": 400,
-        "system": "sys",
+        # The same words, with one cache breakpoint: the next turn reads the stable system prompt from the cache.
+        "system": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}],
         "messages": [{"role": "user", "content": "hi"}],
         "thinking": {"type": "disabled"},  # Haiku 5.5 accepts it at effort low, medium and high
         "output_config": {"effort": "low"},

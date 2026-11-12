@@ -302,3 +302,16 @@ def test_run_as_a_script_the_driver_takes_a_scratch_root_before_pilot_reads_a_pa
 def test_run_as_a_script_after_pilot_read_the_real_paths_the_driver_refuses():
     done = _child("import pilot.config\nimport benchmarks.conversation_eval.sessions\n")
     assert done.returncode != 0 and "must run before pilot.config is imported" in done.stderr
+
+
+def test_the_model_is_told_the_sessions_time_not_the_machines():
+    """A session happens on Thursday 12 November 2026 at 9:00 (the pack's NOW), for code answers and the model alike;
+    on the machine's own clock the model once said "It's three thirty on a Friday morning"."""
+    session = {
+        "name": "the time",
+        "turns": [{"say": "Hey Heliox, what's a good name for a cat?", "model": "Whiskers."}],
+    }
+    record, failures = asyncio.run(run_session(session, "claude"))
+    assert failures == [], failures
+    sent = record.requests[0][0]
+    assert "Thursday 12 November 2026, 09:00" in sent, sent[:400]
