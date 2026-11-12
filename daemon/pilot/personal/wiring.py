@@ -369,8 +369,6 @@ async def offer_reply(server: Any, text: str) -> str | None:
 async def _act_on(server: Any, answer: Any, *, from_card: bool = False) -> None:
     from pilot.personal.offers import INTRO
 
-    if answer.silence_all:
-        await server._handle_update_config({"section": "suggestions", "values": {"offers": "off"}}, None)
     if answer.request == INTRO.request and from_card:
         await start_getting_to_know(server)  # in the chat, and aloud only when they use voice
         return

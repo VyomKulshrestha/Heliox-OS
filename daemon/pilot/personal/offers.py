@@ -82,11 +82,8 @@ _SILENCE_KIND = re.compile(
     r"|that kind of thing)(?: again| any more| anymore)?(?: please)?$"
     r"|^(?:please )?stop (?:mentioning|offering|suggesting) (?:these|those)(?: please)?$"
 )
-_SILENCE_ALL = re.compile(
-    r"^(?:please )?(?:stop (?:offering|suggesting) (?:me )?(?:things|stuff|anything)"
-    r"|(?:don(?:'| )?t|do not) (?:offer|suggest) (?:me )?anything(?: else)?|no more (?:offers|suggestions)"
-    r"|turn off offers)$"
-)
+# "Stop suggesting things", "no more offers" and their way back are settings, said any time, not answers to an offer:
+# pilot.personal.spoken_settings, through the server's spoken settings.
 
 
 @dataclass(frozen=True)
@@ -116,7 +113,6 @@ INTRO = Offer(
 class OfferReply:
     reply: str
     request: str = ""  # hand this to the normal road (the person said yes)
-    silence_all: bool = False
 
 
 @dataclass
@@ -444,10 +440,6 @@ class Offers:
 
     def reply(self, normalized: str) -> OfferReply | None:
         """The person's answer to the latest offer, or None when it is not one."""
-        if _SILENCE_ALL.match(normalized):
-            return OfferReply(
-                "Okay, no more offers. You can turn them back on in Settings, under Suggestions.", silence_all=True
-            )
         made = self.latest()
         if made is None:
             return None

@@ -1057,11 +1057,11 @@
           "expect": {
             "taken": true,
             "model": false,
-            "config_saved_in_scratch": true
+            "config_saved_in_scratch": false
           }
         },
         {
-          "say": "Hey Heliox, be my live companion.",
+          "say": "Hey Heliox, stop correcting me.",
           "gap": 2,
           "expect": {
             "taken": true,

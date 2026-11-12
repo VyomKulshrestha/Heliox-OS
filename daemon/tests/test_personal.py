@@ -277,7 +277,7 @@ def test_replies_yes_no_why_and_silence_for_good(tmp_path):
     again, state2, _ = _offers(tmp_path)  # a new run reads the silenced offer back
     state2["t"] += 999_999
     assert again.next_offer() is None
-    assert again.reply("stop offering things").silence_all
+    assert again.reply("stop offering things") is None  # a setting, said any time (pilot.personal.spoken_settings)
     # "No" holds it for the rest of the day.
     offers, state, picks = _offers(tmp_path / "other")
     offers.mark_offered(offers.next_offer())

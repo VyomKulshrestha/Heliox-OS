@@ -373,7 +373,8 @@ me" says once how many things were dropped and of which kind, without repeating 
 
 A correction replaces the old fact: "no, call me Sam", "actually, my name is Sam", "not Alex, Sam", and "it's Sam"
 said within ten minutes of giving a name all rename, and the greeting, the context lines and "what's my name" use the
-new name. "Stay quiet unless I ask" (also "be quiet", "don't interrupt me", "only speak when I ask"), said any day,
+new name. "Stay quiet unless I ask" (also "be quiet", "don't interrupt me", "stop interrupting me", "no more interruptions",
+"only speak when I ask"), said any day,
 is a profile preference: offers stop, suggestions stop, and Live holds every catch except the urgent kinds (a risky
 command), the same hold a focus session gives; "you can speak up again" undoes it. Recall answers questions in a
 person's own words about what they told Heliox ("when do I stop work?", "where do I live?", "who is my manager?");
@@ -383,6 +384,16 @@ Settings for offers and Live's level as they were. "I stop work at six" is kept 
 time, and from then until 05:00 offers and suggestions wait like quiet hours, with one sentence the first time each
 evening saying why (`pilot.personal.wiring.quiet_now`). **Fakes only** (`tests/test_personal_rules.py`, and the
 "corrected: the name", "told once: being interrupted" and "told once: when work ends" personal sessions).
+
+Suggestions, offers and Live are turned off, back on, down or up by voice from one table
+(`pilot.personal.spoken_settings`), each phrase family with the value it saves and the sentence said, and a request to
+stop something is answered by a sentence that says it stopped. "Stop suggesting things" (also "quit", "don't",
+"never", "no more suggestions") turns proactive suggestions and offers off; "you can suggest things again" turns both
+on. "No more offers" and "you can offer things again" change offers alone. "Stop correcting me" (and the same
+negations) turns Live off; "be my live companion" turns it on. "Correct me less" or "fewer corrections" sets Live's
+level to quiet, "correct me more" back to balanced. A phrase whose setting already has that value is answered without
+writing the person's file again. Until 13 November "stop suggesting things" turned suggestions on and said so.
+**Fakes only** (`tests/test_spoken_settings.py`, through the server's own handler and the saved file).
 
 ### Handing over to the planner
 
@@ -749,7 +760,7 @@ Windows and macOS and 24 on Linux (from the code). **Fakes only**.
 `pilot.config`. Every Heliox folder is then under a scratch root: the folder guard's test root under pytest, or a
 new one, removed at exit, when run as a script. Each session gets its own folder inside that root. The driver
 records where every settings save went, and the personal pack's settings session ("stop suggesting things", "stop
-interrupting me", "be my live companion") fails if one lands outside the root.
+interrupting me", "stop correcting me") fails if one lands outside the root.
 
 On 12 November, before this, a session server's settings save ("stop interrupting me") overwrote the person's real
 `config.toml` and `restrictions.toml`. A paid run now copies the person's `[model]` settings

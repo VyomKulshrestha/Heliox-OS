@@ -60,6 +60,8 @@ from pilot.intelligence.experience import (
     stable_action_idempotency_key,
 )
 from pilot.logger import ColorFormatter
+from pilot.personal.spoken_settings import PATTERNS as SPOKEN_SETTINGS
+from pilot.personal.spoken_settings import spoken_setting
 from pilot.plan_checks import world_model_summary
 from pilot.reasoning.events import (
     CONFIRMATION_APPROVED,
@@ -498,14 +500,6 @@ VOICE_TIMELINE_SETTING = re.compile(
 )
 VOICE_BRIEF_SETTING = re.compile(r"^(?:please )?turn (?P<state>on|off) (?:the |my )?daily brief$")
 VOICE_CLIPBOARD_SETTING = re.compile(r"^(?:please )?turn (?P<state>on|off) (?:the |my )?clipboard history$")
-VOICE_SUGGESTIONS_SETTING = re.compile(
-    r"^(?:please )?turn (?P<state>on|off) (?:proactive )?suggestions$|^(?:please )?(?:start|stop) suggesting things$"
-)
-VOICE_LIVE_SETTING = re.compile(
-    r"^(?:please )?turn (?P<state>on|off) (?:the |my )?(?:live companion|live mode|always on mode)$"
-    r"|^(?:please )?(?P<on>be my live companion|watch over me|start correcting me|correct me as i work)$"
-    r"|^(?:please )?(?P<off>stop correcting me|stop interrupting me|stop watching me)$"
-)
 VOICE_BRIEF_TIME_SETTING = re.compile(
     r"^(?:please )?send (?:me )?(?:a |the |my )?daily brief (?:every day )?at (?P<hour>\d{1,2})(?: (?P<minute>\d{2}))?"
     r"(?: (?P<meridiem>am|pm))?$"
@@ -7074,8 +7068,7 @@ class PilotServer:
             companion.INTRO_REQUEST,
             companion.RESET_REQUEST,
             suggestions.ASK_REQUEST,
-            VOICE_SUGGESTIONS_SETTING,
-            VOICE_LIVE_SETTING,
+            *SPOKEN_SETTINGS,  # suggestions, offers, Live on and off, fewer or more corrections
             focus_log.HISTORY_REQUEST,
             generators.PASSWORD_REQUEST,
             generators.COIN_REQUEST,
@@ -7554,6 +7547,8 @@ class PilotServer:
             return "error"
 
     async def _live_mute_kind(self, kind: str) -> None:
+        if kind in self.config.live.muted_kinds:
+            return  # already muted: the person's file is not written again
         muted = sorted({*self.config.live.muted_kinds, kind})
         await self._handle_update_config({"section": "live", "values": {"muted_kinds": muted}}, None)
         await self._broadcast_notification("config_updated", {"method": "live", "section": "live"})
@@ -8057,27 +8052,16 @@ class PilotServer:
                 if on
                 else "Clipboard history is off, and I forgot what you copied.",
             )
-        elif suggest := VOICE_SUGGESTIONS_SETTING.match(normalized):
-            on = suggest.group("state") != "off"
-            change = (
-                "suggestions",
-                {"enabled": on},
-                "Okay, I'll offer a suggestion now and then, held while you focus."
-                if on
-                else "Okay, I'll keep suggestions to when you ask.",
-            )
-        elif live := VOICE_LIVE_SETTING.match(normalized):
-            on = live.group("on") is not None or live.group("state") == "on"
-            change = (
-                "live",
-                {"enabled": on},
-                "Okay, I'm with you. I'll point out slips as you work, at your pauses, and stay quiet while you talk."
-                if on
-                else 'Okay, I\'ll stay quiet. Say "be my live companion" when you want me back.',
-            )
+        elif spoken := spoken_setting(normalized, self.config):
+            # Suggestions, offers and Live: one table, where a request to stop is answered by a sentence that
+            # says it stopped (pilot.personal.spoken_settings).
+            change = (spoken.section, spoken.values, spoken.reply)
         if change is None:
             return None
         section, values, reply = change
+        target = getattr(self.config, section, None)
+        if target is not None and all(getattr(target, key, object()) == value for key, value in values.items()):
+            return reply  # already so: the person's file is not written again
         result = await self._handle_update_config({"section": section, "values": values}, None)
         if result.get("status") != "ok":
             return f"That setting was not changed: {result.get('message', 'unknown error')}"

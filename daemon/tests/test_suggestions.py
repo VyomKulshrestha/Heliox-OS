@@ -106,9 +106,11 @@ async def test_rpc_voice_toggle_and_delivery(tmp_path):
     now = await server._handle_suggestion_now({}, ws)
     assert now["suggestion"]["kind"] == "stale_goal" and now["enabled"] is False
 
-    assert (await server._control_reply("turn on suggestions")).startswith("Okay, I'll offer a suggestion")
+    assert (await server._control_reply("turn on suggestions")).startswith(
+        "Okay, I'll suggest things now and then again"
+    )
     assert server.config.suggestions.enabled is True
-    assert (await server._control_reply("turn off suggestions")).startswith("Okay, I'll keep suggestions")
+    assert (await server._control_reply("turn off suggestions")).startswith("Okay, no more suggestions or offers")
     assert server.config.suggestions.enabled is False
 
     await server._deliver_suggestion({"key": "stale:g1", "text": "pick up the podcast", "say": None})

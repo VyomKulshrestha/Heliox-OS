@@ -53,7 +53,7 @@ async def test_voice_toggles_turn_it_on_and_off_and_are_reserved(tmp_path):
         assert server._phrase_reserved(normalize_phrase(phrase)), phrase
     assert (await server._control_reply("be my live companion")).startswith("Okay, I'm with you")
     assert server.config.live.enabled is True
-    assert (await server._control_reply("stop correcting me")).startswith("Okay, I'll stay quiet")
+    assert (await server._control_reply("stop correcting me")).startswith("Okay, Live is off")
     assert server.config.live.enabled is False
 
 

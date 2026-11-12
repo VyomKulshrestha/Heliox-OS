@@ -88,7 +88,10 @@ FORGET_REQUEST = re.compile(
     r"|^(?:please )?that(?:'s| is) (?:not right|wrong|incorrect)(?:,? i(?:'m| am)? (?P<correct>.+))?$"
 )
 # A correction said in front of a phrase: "No, call me Sam", "Actually, I live in Pune", "Sorry, I mean ...".
-CORRECTION = re.compile(r"^(?:no|nope|actually|sorry|oops|wait|i mean|correction)[,.!:]*\s+(?:i mean\s+)?(?P<rest>.+)$")
+# "No more interruptions" is a request, not a correction.
+CORRECTION = re.compile(
+    r"^(?:no(?![ ](?:more|longer)[ ])|nope|actually|sorry|oops|wait|i mean|correction)[,.!:]*\s+(?:i mean\s+)?(?P<rest>.+)$"
+)
 # "not Alex, Sam" / "not Alex, call me Sam" / "it's Sam" (right after a name was set or corrected)
 NOT_THAT_NAME = re.compile(r"^not (?P<old>[\w'-]+),? (?:it'?s |call me |i'?m )?(?P<new>[\w .'-]{1,40})$")
 ITS_NAME = re.compile(r"^(?:it'?s|i'?m|it is) (?P<new>[a-z][\w'-]{0,39})$")
@@ -96,7 +99,8 @@ NAME_QUESTION = re.compile(r"^(?:what(?:'s| is) my name|what do you call me|do y
 # How the person wants Heliox to behave between questions: one preference, kept in the profile (QUIET_PREF).
 QUIET_REQUEST = re.compile(
     r"^(?:please )?(?:stay|be|keep) quiet(?: unless i ask(?: you)?| until i ask(?: you)?(?: something)?| please| for now)?$"
-    r"|^(?:please )?(?:don'?t|do not) (?:interrupt me|speak up|chime in|talk to me)(?: unless i ask(?: you)?)?$"
+    r"|^(?:please )?(?:don'?t|do not|never) (?:interrupt me|speak up|chime in|talk to me)(?: unless i ask(?: you)?)?$"
+    r"|^(?:please )?(?:stop|quit) interrupting me(?: please)?$|^(?:please )?no more interruptions$"
     r"|^(?:please )?only (?:speak|talk)(?: up)? when i ask(?: you)?$"
 )
 SPEAK_REQUEST = re.compile(
