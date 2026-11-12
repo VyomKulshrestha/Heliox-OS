@@ -62,12 +62,14 @@ class TestConfigConstants:
         assert LOG_FILE.name == "pilot.log"
 
     def test_all_dirs_are_under_home(self):
-        home = Path.home()
-        assert str(CONFIG_DIR).startswith(str(home))
-        assert str(DATA_DIR).startswith(str(home))
-        assert str(STATE_DIR).startswith(str(home))
-        assert str(PLUGINS_DIR).startswith(str(home))
-        assert str(SCREENSHOTS_DIR).startswith(str(home))
+        # In the suite Heliox's folders sit under the session's test root, laid out as in a home folder
+        # (tests/folder_guard.py). That root is the system's temporary folder, which is inside the home folder on
+        # Windows and outside it on Linux and macOS runners (/tmp, /var/folders): CI on e8bf67c failed here on all six.
+        import pilot.config as config
+
+        home = config._TEST_ROOT or Path.home()
+        for folder in (CONFIG_DIR, DATA_DIR, STATE_DIR, PLUGINS_DIR, SCREENSHOTS_DIR):
+            assert folder.is_relative_to(home), folder
 
 
 class TestEnsureDirs:
