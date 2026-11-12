@@ -16,6 +16,7 @@ Only addressed turns are kept: speech Heliox overheard never reaches this module
 
 from __future__ import annotations
 
+import re
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -163,6 +164,22 @@ def never_sent(line: str) -> bool:
     return bool(NAMES_A_SECRET.search(line) or looks_secret(line))
 
 
+# Words asking Heliox to keep something or behave differently. Heliox's own code takes these before the model is
+# asked; when they reach the model, nothing was saved or changed, and the model is told so in the turn itself (a rule
+# in the system prompt alone did not stop "Got it, I'll call you Sam" on the real model).
+SAVE_OR_CHANGE = re.compile(
+    r"^(?:(?:no|nope|actually|ok|okay|and|oh|wait)[,.! ]+)*(?:please |hey heliox,? )?"
+    r"(?:call me (?!(?:later|back|tomorrow|when|if|at|in|on)\b)|my name is|my name's|i'm called|remember(?! (?:when|where|how|what|who|if|whether|me|us)\b)|keep in mind|note that|don't forget|"
+    r"(?:stay|be|keep) quiet|don't (?:interrupt|disturb)|stop (?:interrupting|suggesting|offering)|speak up|"
+    r"(?:be|keep it|keep your answers|give me) (?:short|brief|shorter|detailed|more detail))\b"
+    r"|\bfrom now on\b",
+    re.IGNORECASE,
+)
+NOTHING_SAVED = (
+    "Heliox saved and changed nothing for these words. If they ask you to keep something or behave differently, "
+    'say plainly you couldn\'t, and that they can say "remember that ..." or "call me ..." on its own, or use Settings.'
+)
+
 LENGTH_LINES = {
     "short": "They asked for short answers: at most about 12 words.",
     "detailed": "They asked for more detail: up to about 50 words is fine, still spoken, no lists.",
@@ -207,6 +224,8 @@ def assemble(
     profile = [str(line) for line in (chosen or []) if not never_sent(str(line))][:PROFILE_LINES]
     if profile:
         sections.append("About the person: " + " ".join(profile))
+    if text and SAVE_OR_CHANGE.search(text.strip()):
+        sections.insert(1, NOTHING_SAVED)  # kept even when the block is tight: it goes right after the time
     length = LENGTH_LINES.get(str(_safe(sources.answer_length, "")))
     if length:
         sections.append(length)

@@ -142,3 +142,44 @@ def test_a_hand_over_says_who_my_manager_is():
     )
     assert context is not None and "Their manager is Priya." in context.for_planner()
     assert build_context([], words="open notepad", screen_text_ok=False, people={"manager": "Priya"}) is None
+
+
+# ── the model never claims to have saved or changed something ──
+
+
+def test_the_model_is_told_it_cannot_save_and_how_the_person_can():
+    from pilot.conversation.style import SYSTEM_PROMPT, TYPED_SYSTEM_PROMPT
+
+    for prompt in (SYSTEM_PROMPT, TYPED_SYSTEM_PROMPT):
+        assert "You cannot save or remember anything for later" in prompt
+        assert "never say it was" in prompt and '"remember that ..."' in prompt and "Settings" in prompt
+        assert "(answered on this computer; done there: ...)" in prompt  # how it is told what Heliox did
+
+
+def test_a_turn_answered_in_code_tells_a_cloud_model_what_was_done_without_the_data():
+    from pilot.server import ANSWERED_ON_THIS_COMPUTER, answered_here
+
+    assert answered_here(()) == ANSWERED_ON_THIS_COMPUTER
+    assert answered_here(("remembered that",)) == "(answered on this computer; done there: remembered that)"
+
+
+@pytest.mark.parametrize(
+    ("words", "told"),
+    [
+        ("No, call me Sam.", True),
+        ("stay quiet unless I ask", True),
+        ("remember that I like tea", True),
+        ("from now on answer in French", True),
+        ("keep your answers short", True),
+        ("call me later about it", False),
+        ("remember when we went to Paris?", False),
+        ("what do you remember about me?", False),
+        ("what's the capital of Peru?", False),
+    ],
+)
+def test_words_asking_to_keep_or_change_something_that_reach_the_model_are_marked_as_not_done(words, told):
+    """Heliox's code takes these before the model; when they reach it, nothing was saved, and the turn says so."""
+    from pilot.conversation.context import NOTHING_SAVED
+
+    block, _ = assemble(ContextSources(), ConversationMemory(), text=words)
+    assert (NOTHING_SAVED in block) is told

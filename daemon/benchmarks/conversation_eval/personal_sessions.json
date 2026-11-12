@@ -46,6 +46,58 @@
       ]
     },
     {
+      "name": "told once: asked straight after whether it was saved",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, call me Sam.",
+          "expect": {
+            "taken": true,
+            "has": [
+              "Sam"
+            ],
+            "model": false
+          }
+        },
+        {
+          "say": "Did you get that right?",
+          "gap": 1.0,
+          "model": "Yes, I'll call you Sam.",
+          "expect": {
+            "taken": true
+          },
+          "expect_cloud": {
+            "sent": [
+              "done there: remembered that",
+              "Call them Sam"
+            ]
+          },
+          "expect_model": {
+            "sent": [
+              "Sam"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what's a good name for a cat?",
+          "gap": 5,
+          "model": "Whiskers.",
+          "expect": {
+            "taken": true,
+            "sent": [
+              "Call them Sam"
+            ],
+            "not_sent": [
+              "done there: remembered"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "told once: keep answers short",
       "via": "turn",
       "turns": [
@@ -809,6 +861,9 @@
           }
         },
         {
+          "event": "restart"
+        },
+        {
           "say": "Hey Heliox, where should I eat near home tonight?",
           "gap": 2,
           "model": "Try somewhere in Koregaon Park.",
@@ -824,6 +879,9 @@
               "marathon"
             ]
           }
+        },
+        {
+          "event": "restart"
         },
         {
           "say": "Hey Heliox, how should I train this week?",

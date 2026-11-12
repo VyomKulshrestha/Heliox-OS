@@ -635,6 +635,16 @@ CODE_ANSWERS_ANY_MODEL = frozenset(
     }
 )
 ANSWERED_ON_THIS_COMPUTER = "(answered on this computer)"
+
+
+def answered_here(done: list[str] | tuple[str, ...] = ()) -> str:
+    """The line a cloud model sees for a turn answered in code: what Heliox did there, in the change record's own
+    few words ("remembered that", "updated your to-do list"), which hold none of the person's data."""
+    if not done:
+        return ANSWERED_ON_THIS_COMPUTER
+    return f"(answered on this computer; done there: {'; '.join(done)})"
+
+
 # The handler that answered a turn in code (and, for a local answer, which kind of answer), held in the turn's own
 # context: a typed turn and a voice turn running at once never read each other's.
 CODE_ANSWER_BY: contextvars.ContextVar[str] = contextvars.ContextVar("heliox_code_answer_by", default="")
@@ -14792,7 +14802,7 @@ def handle_tool(tool_name, params):
                     conversation.memory.add_heliox(
                         timeline_answer
                         if CODE_ANSWER_BY.get() in CODE_ANSWERS_ANY_MODEL or _conversation_model_local(conversation)
-                        else ANSWERED_ON_THIS_COMPUTER
+                        else answered_here(tuple(voice_turn.kept))
                     )
                 await self._broadcast_notification(
                     "voice_result", {"command": command_text, "status": "answered", "message": timeline_answer}

@@ -722,8 +722,25 @@ above. What the model did with what it was sent:
 - "when do I stop work" gave "at six";
 - "I live in Pune" was sent for "where should I eat near home" but not used.
 - Twice the model said it would do what nothing had saved ("Got it, Sam.", "I'll stay quiet until you ask me
-  something."). Proposed, not built (it needs a real-model check): one prompt line saying the model cannot save
-  anything or change how Heliox behaves, and should say so when asked.
+  something.").
+
+**A model never claims to have kept or changed something.**
+- The system prompt now says the model cannot save anything or change how Heliox behaves. When asked to, and
+  nothing it is told shows it was done, it says plainly that it couldn't, and how: "remember that ...", "call me
+  ...", or Settings.
+- So that it never denies what Heliox did do, a turn Heliox answered in code shows a cloud model what was done there,
+  in the change record's own few words: "(answered on this computer; done there: remembered that)". These words
+  hold none of the person's data. A local model sees the answer itself.
+- **Run for real** a second time (Claude Haiku 5.5, a fresh model per session; 24 calls, $0.00372; the machine was at
+  91% CPU, so the timings are not quoted). The prompt line alone did not stop either claim: "No, call me Sam." still
+  got "Got it, I'll call you Sam from now on.", and "stay quiet unless I ask" still got "Okay, I'll stay quiet until
+  you ask me something." Asked "Did you get that right?" right after "call me Sam", the model answered "Yes, I'll
+  call you Sam from now on. Heliox saved that when you asked." That one is right, and was right because of the "done
+  there" line. Nothing else got worse: the same 11 sessions passed, plus the new one.
+- Now the turn itself says it. Words asking to keep something or behave differently ("call me ...", "remember ...",
+  "stay quiet", "from now on ...", "keep it short") reach the model only when Heliox's own code did not take them.
+  When they do, the context says "Heliox saved and changed nothing for these words" and how the person can.
+  **Fakes only**: it has not run on the real model yet.
 
 ## 4. Not in this pass
 
