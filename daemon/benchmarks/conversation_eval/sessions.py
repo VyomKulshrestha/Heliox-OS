@@ -35,6 +35,7 @@ NOW = datetime(2026, 11, 12, 9, 0)  # a Thursday
 WORDS_PER_SECOND = 2.5
 DEFAULT_GAP = 1.0
 TURN_WAIT_SECONDS = 4.0  # real time a dispatch may take before it is taken to be waiting (an approval)
+APPROVAL_SENTENCE_WAIT_SECONDS = 5.0  # for the spoken request for approval to be recorded in its own turn
 REPLY_WORD_LIMIT = 25
 DEFAULT_OUTPUTS = {
     "battery_info": "=== Battery ===\n  Charge: 80%\n  Status: Charging",
@@ -425,6 +426,7 @@ async def run_session(session: dict[str, Any], kind: str) -> tuple[Record, list[
                     voice_turn_addressed.set(how)
                     await server._voice_command_dispatch(words)
 
+                said_before = len(record.said)
                 task = asyncio.ensure_future(dispatch())
                 waited = 0.0
                 asked_before = set(server._pending_confirms)
@@ -437,6 +439,13 @@ async def run_session(session: dict[str, Any], kind: str) -> tuple[Record, list[
                     task.result()
                 else:
                     pending.append(task)
+                    # The sentence that asks for the approval is spoken by a task of its own. On a slow machine it
+                    # had not run by the time the next turn began and was counted there (Windows CI, 12 November:
+                    # "33 words said" in the turn after). Wait until this turn has said something, within a bound.
+                    waited = 0.0
+                    while len(record.said) == said_before and waited < APPROVAL_SENTENCE_WAIT_SECONDS:
+                        await asyncio.sleep(0.02)
+                        waited += 0.02
                 await asyncio.sleep(0.05)  # Live's end-of-turn delivery and spawned speech get their turn
             record.turn = len(session["turns"])
             for task in pending:

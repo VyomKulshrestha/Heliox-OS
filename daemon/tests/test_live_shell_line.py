@@ -34,6 +34,17 @@ from pilot.live.shell_line import (
 POSIX = pytest.mark.skipif(sys.platform == "win32", reason="Unix sockets; Windows terminals are read directly")
 
 
+@pytest.fixture
+def short_folder():
+    """A folder with a short path for a Unix socket: pytest's tmp_path on macOS is longer than the 104 bytes a
+    socket path may have ("AF_UNIX path too long" on the macOS runners, 12 November)."""
+    import tempfile
+
+    folder = Path(tempfile.mkdtemp(prefix="hlx-", dir="/tmp"))
+    yield folder
+    shutil.rmtree(folder, ignore_errors=True)
+
+
 def test_the_socket_lives_in_a_folder_only_this_user_can_open():
     assert socket_path({"XDG_RUNTIME_DIR": "/run/user/1000"}, 1000) == Path("/run/user/1000/heliox/live-shell.sock")
     assert socket_path({"TMPDIR": "/var/folders/ab/T/"}, 501) == Path("/var/folders/ab/T/heliox-501/live-shell.sock")
@@ -121,8 +132,8 @@ def test_the_scripts_keep_the_rules():
 
 @POSIX
 @pytest.mark.asyncio
-async def test_the_socket_takes_lines_answers_enter_and_exists_only_while_live_is_on(tmp_path):
-    folder = tmp_path / "rt"
+async def test_the_socket_takes_lines_answers_enter_and_exists_only_while_live_is_on(short_folder):
+    folder = short_folder / "rt"
     on = [True]
     server = ShellLineServer(ShellLines(), enabled=lambda: on[0], path=folder / "live-shell.sock", uid=os.getuid())
     assert await server.open()
@@ -157,8 +168,8 @@ async def test_the_socket_takes_lines_answers_enter_and_exists_only_while_live_i
 
 @POSIX
 @pytest.mark.asyncio
-async def test_a_folder_others_can_open_is_refused(tmp_path):
-    folder = tmp_path / "open"
+async def test_a_folder_others_can_open_is_refused(short_folder):
+    folder = short_folder / "open"
     folder.mkdir(mode=0o755)
     os.chmod(folder, 0o755)
     server = ShellLineServer(ShellLines(), enabled=lambda: True, path=folder / "s.sock", uid=os.getuid())
