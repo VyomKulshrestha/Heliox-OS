@@ -24,46 +24,11 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
+# The one rule, for every store. Its patterns stay importable from here: the conversation layer's never_sent
+# reads them by name.
+from pilot.personal.never_kept import _HEALTH, _MONEY, _PRIVATE_OF_OTHERS, _SECRET, never_kept  # noqa: F401
+
 KEEP_WITHOUT_DATE = timedelta(days=7)
-
-_HEALTH = re.compile(
-    r"\b(?:doctor|doctors|gp|dentist|dental|orthodontist|therapist|therapy|counsell?or|psychiatrist|psychologist"
-    r"|physio|physiotherapy|hospital|clinic|surgery|operation|scan|mri|x-?ray|blood test|test results|diagnosis"
-    r"|diagnosed|medication|medicine|pills?|prescription|dose|chemo|chemotherapy|radiotherapy|cancer|diabetes"
-    r"|hiv|pregnan(?:t|cy)|ivf|miscarriage|depression|anxiety|adhd|autism|mental health|rehab|illness|sick"
-    r"|vaccin(?:e|ation)|injection|std|sti|smear)\b",
-    re.IGNORECASE,
-)
-_MONEY = re.compile(
-    r"[$\u20ac\u00a3\u20b9\u00a5]\s?\d|\b\d[\d,.]*\s?(?:k|grand|dollars?|euros?|pounds?|quid|rupees?|bucks|usd"
-    r"|eur|gbp|inr|lakhs?|crores?)\b|\b(?:salary|wage|wages|pay ?rise|bonus|rent|mortgage|loan|debt|overdraft"
-    r"|bank balance|balance)\b",
-    re.IGNORECASE,
-)
-_SECRET = re.compile(
-    r"\b(?:password|passcode|passphrase|pin|code|key|token|login|username|account number|card number|cvv|sort code"
-    r"|iban|routing number|social security|ssn|passport number|licen[cs]e number)s?\b",
-    re.IGNORECASE,
-)
-_PRIVATE_OF_OTHERS = re.compile(
-    r"\b(?:\w+'s|his|her|their)\s+(?:home |new |old )?(?:address|flat|house|phone|number|mobile|email|e-mail"
-    r"|birthday|date of birth|health|condition|salary|pay|income|bank|account|card|religion|divorce|password)\b",
-    re.IGNORECASE,
-)
-
-
-def never_kept(text: str) -> str:
-    """Why this may not be kept as a note, in a few words, or "" when it may."""
-    if _SECRET.search(text):
-        return "it looks like a password, key or code"
-    if _PRIVATE_OF_OTHERS.search(text):
-        return "it is someone else's private details"
-    if _HEALTH.search(text):
-        return "it is about health"
-    if _MONEY.search(text):
-        return "it is about money"
-    return ""
-
 
 _THING = r"[a-z][\w'-]*(?: [a-z][\w'-]*){0,4}?"
 PASSING = re.compile(

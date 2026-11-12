@@ -92,17 +92,17 @@
       "why": "\"forget what I just told you\" removes exactly the last thing, and says what it was",
       "turns": [
         {
-          "say": "Remember that the dentist is on Thursday",
-          "reply": "Remembered: \"the dentist is on Thursday\"."
+          "say": "Remember that the plumber is coming on Thursday",
+          "reply": "Remembered: \"the plumber is coming on Thursday\"."
         },
         {
           "say": "Forget what I just told you",
-          "reply": "Okay, I've forgotten \"the dentist is on Thursday\"."
+          "reply": "Okay, I've forgotten \"the plumber is coming on Thursday\"."
         },
         {
-          "say": "When is the dentist?",
+          "say": "When is the plumber coming?",
           "model_forbid": [
-            "dentist is on Thursday"
+            "plumber is coming on Thursday"
           ]
         }
       ]

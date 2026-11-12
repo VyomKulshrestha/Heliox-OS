@@ -7,6 +7,7 @@ expected failure, so it shows up the moment that code changes."""
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -29,11 +30,6 @@ _EVERYONE = {
     "corrected: the name": f'"No, call me Sam" is not a name request in {_PROFILE_STORE}: the leading "No," stops it',
     "forgotten: a fact, the forget said as a follow-up": (
         'the addressing rule (pilot.system.addressing) does not take "Forget that I\'m a founder." as a follow-up'
-    ),
-    "not learned: things never kept": (
-        f'"remember that my salary is 90k" and a dentist appointment are stored by {_PROFILE_STORE} and '
-        "pilot.personal.memory_talk, which do not apply pilot.personal.passing.never_kept (they are never sent to a "
-        "model: the conversation layer drops them)"
     ),
 }
 KNOWN: dict[tuple[str, str], str] = {(name, kind): cause for name, cause in _EVERYONE.items() for kind in KINDS}
@@ -75,9 +71,13 @@ def profile(tmp_path):
         await store.add_person("Priya", "manager")
         await store.add("about", "I live in Pune")
         await store.add("about", "I'm training for a marathon")
-        await store.add("about", "my salary is 90k")
 
     asyncio.run(fill())
+    # Stored by an older version, before the profile refused it (pilot.personal.never_kept): still never sent.
+    path = tmp_path / "profile.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["about"].append({"id": "older00001", "text": "my salary is 90k", "at": 1.0})
+    path.write_text(json.dumps(data), encoding="utf-8")
     return store
 
 

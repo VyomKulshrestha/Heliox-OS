@@ -288,6 +288,14 @@ Two more context sources, added with Heliox Live and the personal layer (`pilot/
 "what did I tell you about ..." and the answers to an offer are handled in code before the layer and never reach a
 model. Offers and the relevant-lines pick are computed on the machine with no model call.
 
+Never kept, by any route that stores something about the person (the profile's own phrases, "remember that ...",
+notes said in passing, the getting-to-know answers): health, money, other people's private details, and anything
+that names or looks like a secret (`pilot.personal.never_kept`, one rule applied in `UserProfile.add`). Heliox says
+it did not keep it and why. Anything like that stored by an earlier version is left out whenever the profile is read
+and removed from it and from long-term memory the next time a profile phrase is said; the next "what do you know about
+me" says once how many things were dropped and of which kind, without repeating them. **Fakes only**
+(`tests/test_never_kept.py`, and the "not learned: things never kept" personal session).
+
 ### Handing over to the planner
 
 `take` returns `done=False` with a `HandoverIntent`: the verb, the object, the person's words, the request

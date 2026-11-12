@@ -7,7 +7,9 @@ you, the people you name, your stated preferences, and how you like to be spoken
 is shown and editable in Settings and listed in Your data.
 
 Only what you say in these phrases is stored, as your own words (never inferred silently
-from your activity), and text that looks like a password, key or card number is refused.
+from your activity). What is never kept, whatever the route (``pilot.personal.never_kept``): anything that looks
+like a password, key or code, health, money, and other people's private details. ``add`` refuses it and says why,
+and anything like that stored before is left out when the profile is read and removed by ``sweep``.
 Each entry is also mirrored into Heliox's long-term memory as an explicit-user fact, so
 the planner already has it; clearing or removing it here retracts the mirrored fact too.
 The profile personalizes greetings, the daily brief and tone. It never grants Heliox any
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -26,6 +29,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from pilot.personal.never_kept import KINDS as NEVER_KEPT_KINDS
+from pilot.personal.never_kept import never_kept
 from pilot.turn_changes import note_change
 from pilot.workflows.clipboard_history import looks_secret
 
@@ -35,6 +40,8 @@ NAMES_A_SECRET = re.compile(
     r"|security code|cvv|cvc|recovery code|seed phrase)s?\b\s*(?:is|was|=|:)\s*\S",
     re.IGNORECASE,
 )
+
+logger = logging.getLogger("pilot.workflows.user_profile")
 
 MAX_ENTRIES = 60  # per list
 MAX_TEXT = 200
@@ -135,6 +142,13 @@ def _strip_lead(raw: str) -> str:
     return _LEAD.sub("", raw.strip(), count=1).strip()
 
 
+def _never(key: str, item: dict[str, Any]) -> str:
+    """Why a stored entry may not be kept, or "". For a person, their name only: "Dr Mehta (dentist)" says who
+    someone is to the person, which is what the people list is for; health or money about them never gets this far."""
+    text = str(item.get("name", "")) if key == "people" else str(item.get("text", ""))
+    return never_kept(text)
+
+
 def _lapsed(item: dict[str, Any], now: float) -> bool:
     try:
         return "expires" in item and float(item["expires"]) <= now
@@ -167,6 +181,7 @@ class UserProfile:
         self._remember = remember
         self._forget = forget
         self._clock = clock  # for notes said in passing, which lapse (an "expires" field on the entry)
+        self._dropped: list[str] = []  # kinds of entries the sweep removed, said once in the next "about me" answer
 
     async def _mirror_add(self, profile: dict[str, Any], key: str, predicate: str, value: str) -> None:
         if self._remember is None:
@@ -208,11 +223,41 @@ class UserProfile:
         for key in _LISTS:
             items = data.get(key)
             profile[key] = (
-                [item for item in items if isinstance(item, dict) and item.get("id") and not _lapsed(item, now)]
+                [
+                    item
+                    for item in items
+                    if isinstance(item, dict) and item.get("id") and not _lapsed(item, now) and not _never(key, item)
+                ]
                 if isinstance(items, list)
                 else []
             )
         return profile
+
+    async def sweep(self) -> int:
+        """Remove what is never kept (``pilot.personal.never_kept``) from the file and from long-term memory: entries
+        stored before the rule covered every route. Reading already leaves them out. Returns how many."""
+        try:
+            data = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return 0
+        if not isinstance(data, dict):
+            return 0
+        found = [
+            (item["id"], _never(key, item))
+            for key in _LISTS
+            for item in (data.get(key) or [])
+            if isinstance(item, dict) and item.get("id") and _never(key, item)
+        ]
+        if not found:
+            return 0
+        profile = self._load()  # already without them
+        profile["_mirror"] = {str(k): str(v) for k, v in (data.get("_mirror") or {}).items()}
+        for entry_id, _why in found:
+            await self._mirror_forget(profile, entry_id)
+        self._save(profile)
+        self._dropped += [NEVER_KEPT_KINDS.get(why, "something never kept") for _id, why in found]
+        logger.info("Profile: removed %d stored entries Heliox never keeps (%s)", len(found), ", ".join(self._dropped))
+        return len(found)
 
     async def prune_lapsed(self) -> int:
         """Remove notes said in passing whose time is over, here and in long-term memory. Returns how many."""
@@ -306,6 +351,9 @@ class UserProfile:
             raise ValueError("That is too short or too long to remember")
         if looks_secret(text) or NAMES_A_SECRET.search(text) or any(looks_secret(str(v)) for v in extra.values()):
             raise ValueError("That looks like a password or key, so I won't keep it. Use your password manager.")
+        why = _never(kind, {"text": text, **extra})
+        if why:
+            raise ValueError(f"I won't keep that, because {why}. Heliox never keeps notes like that.")
         profile = self._load()
         items = profile[kind]
         norm = _normalize(text)
@@ -392,7 +440,26 @@ class UserProfile:
 
     # ------------------------------------------------------------------ voice and chat
 
+    def _dropped_sentence(self) -> str:
+        """Once: what the sweep removed, by kind, never repeating the words."""
+        if not self._dropped:
+            return ""
+        kinds = sorted(set(self._dropped))
+        count = len(self._dropped)
+        self._dropped = []
+        things = "one thing" if count == 1 else f"{count} things"
+        return (
+            f"I've stopped keeping {things} you told me before, about {', '.join(kinds)}: Heliox never keeps "
+            "notes like that."
+        )
+
     def describe(self) -> str:
+        dropped = self._dropped_sentence()
+        if dropped:
+            return f"{dropped} {self._describe()}"
+        return self._describe()
+
+    def _describe(self) -> str:
         profile = self._load()
         if self.is_empty():
             return (
@@ -419,6 +486,10 @@ class UserProfile:
         """Handle a profile phrase; None when it is not one."""
         raw = text.strip()
         normalized = _normalize(text)
+        try:
+            await self.sweep()  # what is never kept leaves the file and long-term memory the next time it is used
+        except Exception:
+            logger.warning("Could not remove stored entries Heliox never keeps", exc_info=True)
         if READ_REQUEST.match(normalized):
             return self.describe()
         if CLEAR_REQUEST.match(normalized):
