@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **321 WebSocket RPC methods**. That is the API
+The daemon currently registers **322 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -540,6 +540,21 @@ than a minute is logged (`{"started_at", "ended_at", "seconds", "reason"}`, kept
 `{"status": "ok", "today": {"seconds", "sessions"}, "this_week": {"seconds", "sessions"},
 "recent": [<up to 20 sessions, newest first>]}`. "How long did I focus this week" and
 "how many focus sessions today" work by voice and in chat.
+
+#### `offers` (offers from routines, habits and goals, `[suggestions] offers`)
+Offers are computed on this computer (`pilot.personal.offers`), at most one an hour and three a day, at a quiet moment.
+
+- `offers {action: "status"}` -> `{status, mode, active, waiting_for_profile, silenced: [{key, label}], per_hour,
+  per_day}`. `mode` is `auto` (on once the profile has something in it), `on` or `off`; `waiting_for_profile` is
+  true while `auto` waits for that.
+- `offers {action: "set", mode}` changes the mode and returns the status.
+- `offers {action: "unsilence", key}` lets a silenced offer be made again and returns the status.
+- `offers {action: "answer", id, answer}` with `yes` (the request goes down the normal road, approvals unchanged),
+  `not_today`, `silence` (never this offer again) or `why` -> `{status, reply, ...status}`; `reply` is the
+  sentence to show (for `why`, the evidence).
+
+Notifications: `offer {id, key, kind, text, request}` and `offer_withdrawn {id, reason}` (answered on the card, by
+voice or in chat).
 
 #### `live_status` / `live_set` / `live_feedback` / `live_explain` (Heliox Live, `[live]`)
 The always-on companion (`pilot.live`). Off by default; `[live] enabled` or "be my live companion" turns it on.

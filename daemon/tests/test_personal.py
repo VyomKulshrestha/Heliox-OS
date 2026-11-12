@@ -300,4 +300,60 @@ async def test_the_loop_offers_only_at_a_quiet_moment(tmp_path):
     assert await loop.tick() is None and not deliver.await_count
     quiet[0] = True
     offer = await loop.tick()
-    assert offer is not None and deliver.await_args.args == (offer,)
+    assert offer is not None and deliver.await_args.args == (offer, offers.made[-1].id)
+
+
+def test_card_buttons_answer_the_offer_they_belong_to_and_silenced_offers_can_be_undone(tmp_path):
+    offers, _, _ = _offers(tmp_path)
+    offer = offers.next_offer()
+    offer_id = offers.mark_offered(offer)
+    assert offers.answer(offer_id, "why").reply == offer.why
+    assert offers.answer("nope", "yes") is None
+    assert offers.answer(offer_id, "yes").request == "log reading"
+    assert offers.answer(offer_id, "yes").reply == "That one was already answered."
+    assert offers.answer(offer_id, "silence").reply == "Okay, I won't offer that again."
+    status = offers.status()
+    assert status["silenced"] == [{"key": "habit:reading", "label": "Logging reading"}]
+    assert status["mode"] == "auto" and status["active"] and not status["waiting_for_profile"]
+    assert offers.unsilence("habit:reading") and not offers.unsilence("habit:reading")
+    again, _, _ = _offers(tmp_path)
+    assert again.silenced == {}  # undoing it is kept too
+
+
+def test_the_first_offers_file_with_a_list_of_keys_still_loads(tmp_path):
+    (tmp_path / "offers.json").write_text('{"silenced": ["todos"]}', encoding="utf-8")
+    offers, _, _ = _offers(tmp_path)
+    assert offers.silenced == {"todos": "todos"}
+
+
+@pytest.mark.asyncio
+async def test_the_offers_rpc(tmp_path):
+    from unittest.mock import MagicMock
+
+    from pilot.config import PilotConfig
+    from pilot.personal.offers import Offer
+    from pilot.server import PilotServer
+
+    config = PilotConfig()
+    config.save = MagicMock()
+    server = PilotServer(config)
+    server._broadcast_notification = AsyncMock()
+    server._voice_turn = AsyncMock()
+    status = await server._handle_offers({"action": "status"}, None)
+    assert status["status"] == "ok" and status["mode"] == "auto" and status["waiting_for_profile"]
+    assert (await server._handle_offers({"action": "set", "mode": "loud"}, None))["status"] == "error"
+    assert (await server._handle_offers({"action": "set", "mode": "on"}, None))["active"] is True
+    assert server.config.suggestions.offers == "on"
+    offer = Offer("usual_app:outlook.exe", "usual_app", "Want me to open Outlook?", "open Outlook", "Usually.")
+    offer_id = server._offers.mark_offered(offer)
+    answered = await server._handle_offers({"action": "answer", "id": offer_id, "answer": "yes"}, None)
+    assert answered["reply"] == "Okay."
+    import asyncio
+
+    await asyncio.sleep(0)
+    server._voice_turn.assert_awaited_with("open Outlook")
+    server._broadcast_notification.assert_awaited_with("offer_withdrawn", {"id": offer_id, "reason": "yes"})
+    silenced = await server._handle_offers({"action": "answer", "id": offer_id, "answer": "silence"}, None)
+    assert silenced["silenced"] == [{"key": "usual_app:outlook.exe", "label": "Opening Outlook at the usual time"}]
+    undone = await server._handle_offers({"action": "unsilence", "key": "usual_app:outlook.exe"}, None)
+    assert undone["silenced"] == []

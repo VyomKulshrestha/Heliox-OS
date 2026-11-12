@@ -70,6 +70,8 @@ class Activity:
     # A conversation turn holds the floor (pilot.live.floor): Live may show a card but not start speaking, and a
     # non-urgent catch about typed text waits until the turn is over.
     floor_held: bool = False
+    # In a call (pilot.live.calls), or one ended a moment ago: nothing is said, only urgent cards are shown.
+    in_call: bool = False
 
 
 @dataclass
@@ -87,6 +89,11 @@ class Pending:
     missing_since: float | None = None
     # Seconds from delivery to the next keystroke in the same window: short and unused means it interrupted.
     resumed_after: float | None = None
+    # Noticed or kept while the person was in a call: said after it, if it still applies.
+    held_in_call: bool = False
+    # How long the person had stopped when it was delivered, and the wait Live required (pilot.live.timing).
+    paused_for: float | None = None
+    needed_pause: float | None = None
 
 
 def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: frozenset[str]) -> str:
@@ -98,8 +105,12 @@ def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: 
         return DROP
     if not urgent and relevance < MIN_RELEVANCE_TO_SHOW:
         return DROP
-    if act.user_speaking or item.missing_since is not None:
-        return WAIT  # never over the person's voice, and never about text that is no longer there
+    if act.in_call and not urgent:
+        return WAIT  # never a voice into someone's call, and only urgent cards: the rest waits for the call to end
+    if (act.user_speaking and not act.in_call) or item.missing_since is not None:
+        # Never over the person's voice (in a call they talk to others, and a silent card does not interrupt
+        # that), and never about text that is no longer there.
+        return WAIT
     if item.source == "speech":
         # The person just spoke to Heliox, so answering is the expected next turn: no rate limits or focus hold.
         if act.now - item.last_seen < SPEECH_SETTLE_SECONDS:

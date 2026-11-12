@@ -1,7 +1,10 @@
 <script lang="ts">
-  /** The live companion's corrections: small cards over any tab, each with the evidence and a fix. */
+  /** The live companion's corrections and Heliox's offers: small cards over any tab. A correction carries the
+   * evidence and a fix; an offer carries Yes, Not today, Why and Don't offer this. */
   import { CircleAlert, Lightbulb, ShieldAlert, X } from "@lucide/svelte";
   import { live, type LiveCard } from "../stores/live";
+  import { offers } from "../stores/offers";
+  import OfferCard from "./OfferCard.svelte";
 
   function fixLabel(card: LiveCard): string {
     if (card.fix_kind === "ask") return "Ask Heliox";
@@ -22,8 +25,11 @@
   }
 </script>
 
-{#if $live.cards.length}
+{#if $live.cards.length || $offers.cards.length}
   <div class="live-cards" aria-label="Live companion">
+    {#each $offers.cards as offer (offer.id)}
+      <OfferCard card={offer} />
+    {/each}
     {#each $live.cards as card (card.id)}
       {@const note = $live.notes[card.id]}
       <article

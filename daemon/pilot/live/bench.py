@@ -11,7 +11,11 @@ detectors, same policy, same personal timing model) against scripted sessions on
   (two cards arriving together are one interruption, so they count once);
 - **wait**: seconds from the moment the person really stopped to the delivery (lower is better, when on time);
 - **over reply**: spoken deliveries while Heliox was answering the person (a ``converse`` step: the conversation
-  holds the floor, see ``pilot.live.floor``). Each one is a Live remark talking over, or cutting, a reply.
+  holds the floor, see ``pilot.live.floor``). Each one is a Live remark talking over, or cutting, a reply;
+- **into call**: deliveries during a call (between ``{"call": "start"}`` and ``{"call": "end"}``) that were spoken,
+  or were a non-urgent card. In a call Live says nothing and shows urgent cards only.
+
+A ``{"reply": "not now"}`` step is the person answering the latest card (``LiveCompanion.handle_reply``).
 
 Each scenario is typed by three personas with different rhythms (``quick``, ``steady``, ``thinker``), so a policy
 that works only for fast typists shows up. Before the scored scenarios each persona types a warm-up of plain
@@ -113,6 +117,7 @@ class Score:
     false_alarms: int = 0
     cut_offs: int = 0
     over_reply: int = 0
+    into_call: int = 0
     deliveries: int = 0
     waits: list[float] = field(default_factory=list)
     learned_mid_sentence_seconds: float = 0.0
@@ -144,6 +149,7 @@ class Score:
             "false_alarms": self.false_alarms,
             "cut_offs": self.cut_offs,
             "over_reply": self.over_reply,
+            "into_call": self.into_call,
             "deliveries": self.deliveries,
             "precision": round(self.precision, 3),
             "recall": round(self.recall, 3),
@@ -179,7 +185,7 @@ def validate(scenario: dict[str, Any], where: str = "") -> None:
         raise ValueError(f"{where}: {name}: needs steps")
     allowed = {
         "type", "pause", "replace", "paste", "send", "say", "label", "seconds", "switch", "text", "delete", "notice",
-        "source", "converse",
+        "source", "converse", "call", "reply",
     }  # fmt: skip
     for step in steps:
         if not isinstance(step, dict) or not set(step) <= allowed:
@@ -221,6 +227,14 @@ def expand(scenario: dict[str, Any], persona: Persona, rng: random.Random) -> li
         elif "notice" in raw:
             # Supervision matched a risk rule: {"notice": "credential_exposure", "source": "ocr" or "keystroke"}.
             script.append(Step(t, t, "idle", "notice", text=raw["notice"], old=raw.get("source", "ocr")))
+            seconds = 0.0
+        elif "call" in raw:
+            # A call starts or ends: {"call": "start"} / {"call": "end"}. Typing and pauses go on in between.
+            script.append(Step(t, t, "idle", "call", text=str(raw["call"])))
+            seconds = 0.0
+        elif "reply" in raw:
+            # The person answers the latest card: {"reply": "not now"}.
+            script.append(Step(t, t, "idle", "reply", text=str(raw["reply"])))
             seconds = 0.0
         elif "converse" in raw:
             # Heliox is answering the person (they asked something just before): the conversation has the floor.
@@ -271,6 +285,8 @@ class Session:
         self.reactions: list[tuple[float, dict[str, Any]]] = []
         self.said: list[str] = []
         self.notices: list[tuple[str, str]] = []
+        self.in_call = False
+        self.replies: list[str] = []
         # False: focus is on page text (a web page, a chat transcript), which the person reads but does not write.
         self.editable = bool(scenario.get("editable", True))
 
@@ -333,6 +349,10 @@ class Session:
                 self.docs.setdefault(self.window, step.old)
             elif step.kind == "notice":
                 self.notices.append((step.text, step.old))
+            elif step.kind == "call":
+                self.in_call = step.text == "start"
+            elif step.kind == "reply":
+                self.replies.append(step.text)
             elif step.kind == "say":
                 if rel < step.until:
                     break
@@ -373,6 +393,7 @@ async def run(
     level: str = "balanced",
     seed: int = 7,
     floor: bool = True,
+    calls: bool = True,
 ) -> Score:
     # Each scenario has its own seed, so adding a scenario never changes the pauses in another one.
     clock = {"t": 1000.0}
@@ -420,6 +441,7 @@ async def run(
         emit=emit,
         speak=speak,
         user_speaking=lambda: bool(state["session"] and state["session"].speaking(clock["t"])),
+        in_call=lambda: "Zoom" if calls and state["session"] is not None and state["session"].in_call else "",
         people=people,
         clock=lambda: clock["t"],
         today=today,
@@ -455,6 +477,9 @@ async def run(
             for pattern, source in session.notices:
                 await live.notice_risk(pattern, source)
             session.notices.clear()
+            for reply in session.replies:
+                await live.handle_reply(reply)
+            session.replies.clear()
             await live.tick()
             await asyncio.sleep(0)
             for payload, at in deliveries[seen:]:
@@ -477,6 +502,8 @@ async def run(
                         score.cut_offs += 1
                     if label == "heliox" and payload.get("spoken"):
                         score.over_reply += 1
+                    if session.in_call and (payload.get("spoken") or payload.get("urgency") != "urgent"):
+                        score.into_call += 1
                     wait = None if busy else round(at - session.stopped_at(at), 2)
                     if wait is not None and hit:
                         score.waits.append(wait)
@@ -502,6 +529,7 @@ async def run(
         for card_id in list(live._visible):
             await live.feedback(card_id, "dismissed" if card_id in cut_in else "helpful")
         live._pending.clear()
+        live._snoozed.clear()  # "not now" belongs to one session; the next scenario is another
         state["session"] = None
         clock["t"] += 2.0
         await live.tick()
@@ -520,25 +548,26 @@ async def run_all(
     policies: tuple[str, ...] = POLICIES,
     level: str = "balanced",
     floor: bool = True,
+    calls: bool = True,
 ) -> list[Score]:
     scenarios = scenarios if scenarios is not None else load_scenarios()
     results = []
     for policy in policies:
         for name in personas or list(PERSONAS):
-            results.append(await run(policy, PERSONAS[name], scenarios, level=level, floor=floor))
+            results.append(await run(policy, PERSONAS[name], scenarios, level=level, floor=floor, calls=calls))
     return results
 
 
 def table(scores: list[Score]) -> str:
     head = (
         f"{'policy':<9} {'persona':<8} {'caught':>7} {'missed':>6} {'false':>6} {'cut-offs':>8} "
-        f"{'precision':>9} {'recall':>6} {'wait s':>6} {'over reply':>10}"
+        f"{'precision':>9} {'recall':>6} {'wait s':>6} {'over reply':>10} {'into call':>9}"
     )
     lines = [head, "-" * len(head)]
     for s in scores:
         lines.append(
             f"{s.policy:<9} {s.persona:<8} {s.catches:>3}/{s.expected:<3} {s.missed:>6} {s.false_alarms:>6} "
-            f"{s.cut_offs:>8} {s.precision:>9.2f} {s.recall:>6.2f} {s.median_wait:>6.2f} {s.over_reply:>10}"
+            f"{s.cut_offs:>8} {s.precision:>9.2f} {s.recall:>6.2f} {s.median_wait:>6.2f} {s.over_reply:>10} {s.into_call:>9}"
         )
     return "\n".join(lines)
 
@@ -551,6 +580,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--level", choices=("quiet", "balanced", "proactive"), default="balanced")
     parser.add_argument("--json", type=Path, help="write the full results, every delivery included, here")
     parser.add_argument("--no-floor", action="store_true", help="Live without the shared floor (the old behaviour)")
+    parser.add_argument("--no-calls", action="store_true", help="Live blind to calls (the old behaviour)")
     args = parser.parse_args(argv)
     scenarios = load_scenarios(args.scenarios)
     scores = asyncio.run(
@@ -560,6 +590,7 @@ def main(argv: list[str] | None = None) -> int:
             policies=tuple(args.policy or POLICIES),
             level=args.level,
             floor=not args.no_floor,
+            calls=not args.no_calls,
         )
     )
     print(f"Heliox Live Bench: {len(scenarios)} scenarios, level {args.level}")

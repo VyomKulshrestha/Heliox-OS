@@ -1,0 +1,87 @@
+[
+  {
+    "name": "call: a slip in meeting notes is said after the call, not into it",
+    "app": "notepad.exe",
+    "title": "standup-notes.txt - Notepad",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"pause": 125.0, "label": "done"},
+      {"call": "start"},
+      {"type": "Action: Dana books the venue for Friday, 17 November."},
+      {"pause": 40.0, "label": "done"},
+      {"call": "end"},
+      {"pause": 12.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "call: a risky command during a call gets its card at once, silently",
+    "app": "WindowsTerminal.exe",
+    "title": "bash",
+    "expect": ["risky_command"],
+    "steps": [
+      {"call": "start"},
+      {"type": "$ git reset --hard HEAD~3"},
+      {"pause": 6.0, "label": "done"},
+      {"call": "end"},
+      {"pause": 8.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "call: a slip fixed during the call is not raised afterwards (must not fire)",
+    "app": "notepad.exe",
+    "title": "retro-notes.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"pause": 125.0, "label": "done"},
+      {"call": "start"},
+      {"type": "Retro moved to Monday, 26 November at noon."},
+      {"pause": 20.0, "label": "done"},
+      {"replace": ["Monday, 26 November", "Thursday, 26 November"]},
+      {"pause": 20.0, "label": "done"},
+      {"call": "end"},
+      {"pause": 12.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "call: a long call does not make Live forget what it held",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: budget - Message (HTML)",
+    "expect": ["arithmetic"],
+    "steps": [
+      {"pause": 125.0, "label": "done"},
+      {"call": "start"},
+      {"type": "Flights and hotel come to 340 + 260 = 610 for the trip."},
+      {"pause": 150.0, "label": "done"},
+      {"call": "end"},
+      {"pause": 12.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "not now: the same kind is not raised again a few minutes later",
+    "app": "slack.exe",
+    "title": "#planning - Slack",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"type": "The review is on Wednesday, 12 November in room 4."},
+      {"pause": "done"},
+      {"reply": "not now"},
+      {"pause": 30.0, "label": "done"},
+      {"type": " And the demo is on Sunday, 16 November after lunch."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "not now: another kind still gets through",
+    "app": "slack.exe",
+    "title": "#travel - Slack",
+    "expect": ["weekday_date", "arithmetic"],
+    "steps": [
+      {"type": "Leaving on Saturday, 20 November first thing."},
+      {"pause": "done"},
+      {"reply": "not now"},
+      {"pause": 30.0, "label": "done"},
+      {"type": " Taxi plus train is 45 + 30 = 85 each way."},
+      {"pause": "done"}
+    ]
+  }
+]

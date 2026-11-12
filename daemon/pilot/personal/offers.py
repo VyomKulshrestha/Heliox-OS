@@ -34,6 +34,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -101,6 +102,7 @@ class _Made:
     at: float
     day: str
     answered: bool = False
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
 
 
 def _day_type(day: datetime) -> str:
@@ -176,6 +178,19 @@ def usual_apps(
     return [offer for _, offer in offers]
 
 
+def _label(offer: Offer) -> str:
+    """What was offered, in a few words, for the list of silenced offers."""
+    if offer.kind == "usual_app":
+        return f"Opening {offer.request.removeprefix('open ').strip()} at the usual time"
+    if offer.kind == "habit":
+        return f"Logging {offer.request.removeprefix('log ').strip()}"
+    if offer.kind == "todos":
+        return "Reading your to-do list in the evening"
+    if offer.kind == "stale_goal":
+        return f"A reminder to {offer.request.split(' to ', 1)[-1]}"
+    return offer.text[:80]
+
+
 def from_suggestion(pick: dict[str, Any] | None) -> Offer | None:
     """An offer from a ``Suggester`` pick that can be acted on, with the reason it was picked."""
     if not pick or not pick.get("say"):
@@ -225,13 +240,16 @@ class Offers:
     state_path: Path | None = None
     made: list[_Made] = field(default_factory=list)
     declined: dict[str, str] = field(default_factory=dict)  # key -> day
-    silenced: set[str] = field(default_factory=set)
+    # key -> what was offered, in words, so Settings can list it and undo it
+    silenced: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.state_path and self.state_path.exists():
             try:
-                raw = json.loads(self.state_path.read_text(encoding="utf-8"))
-                self.silenced = {str(key) for key in raw.get("silenced", []) if isinstance(key, str)}
+                raw = json.loads(self.state_path.read_text(encoding="utf-8")).get("silenced", {})
+                if isinstance(raw, list):  # the first version kept keys only
+                    raw = {key: key for key in raw}
+                self.silenced = {str(k): str(v) for k, v in raw.items() if isinstance(k, str)}
             except (OSError, ValueError, AttributeError):
                 logger.debug("Ignoring an unreadable offers file", exc_info=True)
 
@@ -292,8 +310,10 @@ class Offers:
             return offer
         return None
 
-    def mark_offered(self, offer: Offer) -> None:
-        self.made.append(_Made(offer, self.clock(), self._today()))
+    def mark_offered(self, offer: Offer) -> str:
+        made = _Made(offer, self.clock(), self._today())
+        self.made.append(made)
+        return made.id
 
     # ── the person's answer ──
 
@@ -303,8 +323,55 @@ class Offers:
         made = self.made[-1]
         return made if self.clock() - made.at <= within else None
 
-    def _answered(self) -> None:
-        self.made[-1].answered = True
+    def _answered(self, made: _Made | None = None) -> None:
+        (made or self.made[-1]).answered = True
+
+    def silence(self, offer: Offer) -> None:
+        self.silenced[offer.key] = _label(offer)
+        self._save()
+
+    def unsilence(self, key: str) -> bool:
+        if self.silenced.pop(key, None) is None:
+            return False
+        self._save()
+        return True
+
+    def answer(self, offer_id: str, answer: str) -> OfferReply | None:
+        """A button on the offer's card: "yes", "not_today", "silence" or "why". None when the offer is unknown."""
+        made = next((m for m in reversed(self.made) if m.id == offer_id), None)
+        if made is None:
+            return None
+        offer = made.offer
+        if answer == "why":
+            return OfferReply(offer.why)
+        if answer == "silence":
+            self.silence(offer)
+            self._answered(made)
+            return OfferReply("Okay, I won't offer that again.")
+        if made.answered:
+            return OfferReply("That one was already answered.")
+        self._answered(made)
+        if answer == "yes":
+            return OfferReply("Okay.", request=offer.request)
+        if answer == "not_today":
+            self.declined[offer.key] = made.day
+            return OfferReply("Okay, not today.")
+        return None
+
+    def status(self) -> dict[str, Any]:
+        mode = str(self.mode() or "auto").casefold()
+        try:
+            empty = bool(self.profile_empty())
+        except Exception:
+            empty = True
+        return {
+            "mode": mode if mode in MODES else "auto",
+            "active": self.active(),
+            "waiting_for_profile": mode == "auto" and empty,
+            "silenced": [{"key": key, "label": label} for key, label in sorted(self.silenced.items())],
+            "per_hour": MAX_PER_HOUR,
+            "per_day": MAX_PER_DAY,
+        }
 
     def last_offered_at(self) -> float | None:
         return self.made[-1].at if self.made else None
@@ -322,8 +389,8 @@ class Offers:
         if _WHY.match(normalized):
             return OfferReply(offer.why)
         if _SILENCE.match(normalized):
-            self.silenced.add(offer.key)
-            self._save()
+            self.silence(offer)
+            self._answered(made)
             return OfferReply("Okay, I won't offer that again.")
         if made.answered or self.clock() - made.at > ANSWER_WINDOW_SECONDS:
             return None
@@ -347,7 +414,7 @@ class Offers:
             return
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(json.dumps({"silenced": sorted(self.silenced)}), encoding="utf-8")
+            self.state_path.write_text(json.dumps({"silenced": dict(sorted(self.silenced.items()))}), encoding="utf-8")
         except OSError:
             logger.debug("Could not save offers", exc_info=True)
 
@@ -360,7 +427,7 @@ class OfferLoop:
         offers: Offers,
         *,
         quiet_moment: Callable[[], bool],
-        deliver: Callable[[Offer], Awaitable[None]],
+        deliver: Callable[[Offer, str], Awaitable[None]],
     ) -> None:
         self._offers = offers
         self._quiet = quiet_moment
@@ -378,8 +445,8 @@ class OfferLoop:
         offer = self._offers.next_offer()
         if offer is None:
             return None
-        self._offers.mark_offered(offer)
-        await self._deliver(offer)
+        offer_id = self._offers.mark_offered(offer)
+        await self._deliver(offer, offer_id)
         return offer
 
     async def _loop(self) -> None:

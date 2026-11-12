@@ -1379,7 +1379,7 @@ class PilotServer:
         from pilot.live.catches import BUILT_IN_DIR, CatchBook, install
 
         install(CatchBook([BUILT_IN_DIR, DATA_DIR / "live_catches"]))
-        from pilot.personal.wiring import floor_for
+        from pilot.personal.wiring import call_watch_for, floor_for
 
         self._live = LiveCompanion(
             settings=lambda: self.config.live,
@@ -1397,6 +1397,7 @@ class PilotServer:
             grounded=self._build_live_grounded(),
             reminders=lambda: self._reminders.list() if getattr(self, "_reminders", None) is not None else [],
             floor=floor_for(self),
+            in_call=call_watch_for(self),
         )
         await self._live.start()
         from pilot.workflows.workspaces import WorkspaceStore
@@ -2005,6 +2006,7 @@ class PilotServer:
             "live_status": self._handle_live_status,
             "live_set": self._handle_live_set,
             "live_feedback": self._handle_live_feedback,
+            "offers": self._handle_offers,
             "live_explain": self._handle_live_explain,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
@@ -7031,13 +7033,16 @@ class PilotServer:
                 return Observation(text=text[-6000:], app=app, title=title, source="screen_ocr")
         return reading
 
-    async def _live_speak(self, text: str, urgent: bool) -> None:
+    async def _live_speak(self, text: str, urgent: bool) -> str:
         from pilot.personal.wiring import live_speak
 
         try:
-            await live_speak(self, text, urgent)  # held when a conversation turn has the floor; a Heliox turn if said
+            # Held when a conversation turn has the floor; a Heliox turn if said. Live gives the rate limit back
+            # when the outcome says nobody heard it (a call, a focus session).
+            return await live_speak(self, text, urgent)
         except Exception:
             logger.debug("Live correction speech failed", exc_info=True)
+            return "error"
 
     async def _live_mute_kind(self, kind: str) -> None:
         muted = sorted({*self.config.live.muted_kinds, kind})
@@ -7064,6 +7069,12 @@ class PilotServer:
             # The background model does the work, through the same path and approvals as a typed request.
             asyncio.create_task(self._live_delegate(answer.delegate))
         return answer.reply
+
+    async def _handle_offers(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Offers in the app: status, mode, undoing a silenced offer, and the buttons on an offer card."""
+        from pilot.personal.wiring import offers_rpc
+
+        return await offers_rpc(self, params)
 
     async def _offer_reply(self, text: str) -> str | None:
         """Yes, no, why, "don't offer that" after an offer (pilot.personal.offers)."""
@@ -12517,6 +12528,8 @@ def handle_tool(tool_name, params):
             await self._clipboard_history.stop()
         if self._suggestions is not None:
             await self._suggestions.stop()
+        if getattr(self, "_offer_loop", None) is not None:
+            await self._offer_loop.stop()
         if self._live is not None:
             await self._live.stop()
         if self._live_reader is not None:

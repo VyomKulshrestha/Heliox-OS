@@ -94,6 +94,10 @@ NOTICE_SOURCES = frozenset({"keystroke"})
 NOTICE_QUIET_SECONDS = 3600.0
 # "Not now" holds that kind of catch back this long (urgent risks still show). "Don't mention these" mutes it.
 SNOOZE_SECONDS = 1800.0
+# After a call ends, this long before the held catches are said: people say goodbye and breathe first.
+AFTER_CALL_SECONDS = 5.0
+# A speech outcome that means the remark was not heard; it must not count against the spoken rate limit.
+UNHEARD = frozenset({"suppressed", "held", "dropped", "error", "cancelled", "superseded"})
 
 
 @dataclass(frozen=True)
@@ -296,6 +300,7 @@ class LiveCompanion:
         reminders: Callable[[], list[dict[str, Any]]] = list,
         window_exists: Callable[[int], bool] = focused_text.window_exists,
         floor: Any = None,
+        in_call: Callable[[], str] = lambda: "",
     ) -> None:
         self._settings = settings
         self._observe = observe
@@ -343,6 +348,10 @@ class LiveCompanion:
         self._notices: dict[str, float] = {}  # supervision rule -> when it last raised a card
         # pilot.live.floor.Floor shared with the conversation: Live does not start speaking while a turn holds it.
         self.floor = floor
+        self._in_call = in_call  # the call app, or "" (pilot.live.calls.CallWatch)
+        self._call = ""
+        self._call_ended_at = float("-inf")
+        self._needed_pause: float | None = None  # the wait the last decision required
         self._snoozed: dict[str, float] = {}  # kind -> until when "not now" holds it back
 
     # ── lifecycle ──
@@ -427,6 +436,7 @@ class LiveCompanion:
             await self._perceive(now)
             self._maybe_ground(now)
 
+        self._watch_call(now)
         self._expire(now)
         await self._deliver_due(now)
         await self._publish_state(now)
@@ -540,8 +550,11 @@ class LiveCompanion:
                 item.resumed_after = now - item.delivered_at
 
     def _outcome(self, item: Pending | None, verdict: str) -> None:
-        if item is not None and item.source != "speech" and self._personal_timing():
-            self.timing.record_outcome(verdict, item.resumed_after)
+        # A catch held through a call was timed by the call, not by the person's typing: it teaches nothing.
+        if item is not None and item.source != "speech" and not item.held_in_call and self._personal_timing():
+            self.timing.record_outcome(
+                verdict, item.resumed_after, paused_for=item.paused_for, needed=item.needed_pause
+            )
 
     def _note(self, correction: Correction, source: str, window: str, now: float) -> None:
         if any(item.correction.key == correction.key for item in self._visible.values()):
@@ -678,6 +691,24 @@ class LiveCompanion:
         handle = focused_text.window_handle(item.window.split("|#", 1)[1])
         return handle is not None and not self._window_exists(handle)
 
+    def _watch_call(self, now: float) -> None:
+        try:
+            call = str(self._in_call() or "")
+        except Exception:
+            call = ""
+        if self._call and not call:
+            self._call_ended_at = now
+            logger.info("Live: the call ended; held catches are said if they still apply")
+        self._call = call
+        if call:
+            for item in self._pending.values():
+                item.held_in_call = True
+
+    def in_call(self, now: float | None = None) -> bool:
+        """In a call, or one ended a moment ago."""
+        now = self._clock() if now is None else now
+        return bool(self._call) or now - self._call_ended_at < AFTER_CALL_SECONDS
+
     def _expire(self, now: float) -> None:
         if now - self._last_window_check >= WINDOW_CHECK_SECONDS:
             self._last_window_check = now
@@ -693,7 +724,11 @@ class LiveCompanion:
                     )
         for key, item in list(self._pending.items()):
             ttl = SPEECH_TTL_SECONDS if item.source == "speech" else PENDING_TTL_SECONDS
-            if self._gone(item, now) or now - item.first_seen > ttl:
+            # A catch held through a call keeps its time from when the call ended: a long call does not expire it.
+            since = max(item.first_seen, self._call_ended_at) if item.held_in_call else item.first_seen
+            if self._call and item.held_in_call and item.source != "speech":
+                since = now
+            if self._gone(item, now) or now - since > ttl:
                 del self._pending[key]
         for correction_id, item in list(self._visible.items()):
             if self._gone(item, now):
@@ -717,9 +752,11 @@ class LiveCompanion:
         personal_pause = (
             self.timing.pause_for(self._last_text, level.pause_seconds) if self._personal_timing() else None
         )
+        self._needed_pause = personal_pause if personal_pause is not None else level.pause_seconds
         order = {URGENT: 0}
         verdicts = []
         audio = self._heliox_speaking()
+        calling = self.in_call(now)
         for key, item in sorted(self._pending.items(), key=lambda kv: order.get(kv[1].correction.urgency, 1)):
             if item.correction.kind in snoozed and item.correction.urgency != URGENT:
                 verdicts.append((key, item, DROP))  # "not now" for this kind: an urgent risk still gets through
@@ -729,8 +766,9 @@ class LiveCompanion:
                 now=now,
                 last_text_change=self._last_text_change,
                 user_speaking=self._user_speaking(),
-                heliox_speaking=audio or held,
+                heliox_speaking=audio or held or calling,  # in a call an urgent risk is a card, never a voice
                 floor_held=held,
+                in_call=calling,
                 focus_active=self._focus_active(),
                 visible_cards=len(self._visible) + sum(v in (SHOW, SPEAK) for _, _, v in verdicts),
                 # Everything due at this pause goes out together as one interruption, so the rate limits
@@ -753,6 +791,7 @@ class LiveCompanion:
             verdicts = self._verdicts(now, spoken_at, shown_at)
         said: list[str] = []
         urgent_said = False
+        after_call = False
         for key, item, verdict in verdicts:
             if verdict == DROP:
                 del self._pending[key]
@@ -760,6 +799,7 @@ class LiveCompanion:
                 del self._pending[key]
                 await self._deliver(item, spoken=verdict == SPEAK, now=now)
                 if verdict == SPEAK:
+                    after_call = after_call or item.held_in_call
                     said.append(say(item.correction.title, item.correction.message, item.source))
                     # An answer to what the person just said is part of the conversation: it goes out on the
                     # correction channel, so Heliox's own "Opening it now." cannot talk over it.
@@ -767,13 +807,32 @@ class LiveCompanion:
         if said:
             # Several catches in one turn are said as one reply, not as a queue of interruptions.
             self._last_spoken_at = now
-            asyncio.ensure_future(self._speak(" ".join(said), urgent_said))
+            text = " ".join(said)
+            if after_call:
+                text = "While you were on the call: " + _lower_first(text)
+            asyncio.ensure_future(self._say_aloud(text, urgent_said, now, spoken_at))
+
+    async def _say_aloud(self, text: str, urgent: bool, now: float, before: float) -> None:
+        """Speak, and when the remark was not heard (a call, a focus session, held by the floor) give the spoken
+        rate limit back, so the next real remark is not held up by one nobody heard."""
+        try:
+            outcome = await self._speak(text, urgent)
+        except Exception:
+            outcome = "error"
+        status = str(getattr(outcome, "status", outcome) or "")
+        if status in UNHEARD and self._last_spoken_at == now:
+            self._last_spoken_at = before
+            for entry in self._recent:
+                if entry.get("at") == now and entry.get("spoken"):
+                    entry["spoken"] = False
 
     async def _deliver(self, item: Pending, *, spoken: bool, now: float) -> None:
         correction = item.correction
         item.id = uuid.uuid4().hex[:10]
         item.delivered = True
         item.delivered_at = now
+        item.paused_for = now - self._last_text_change
+        item.needed_pause = self._needed_pause
         item.mode = SPEAK if spoken else SHOW
         if item.source != "speech":
             self._visible[item.id] = item

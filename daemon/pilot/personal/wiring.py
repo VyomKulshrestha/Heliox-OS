@@ -27,6 +27,20 @@ def floor_for(server: Any) -> Any:
     return floor
 
 
+def call_watch_for(server: Any) -> Any:
+    """Whether the person is in a call, for Live: the listener's own answer, else polled detection."""
+    watch = getattr(server, "_live_calls", None)
+    if watch is None:
+        from pilot.live.calls import CallWatch
+
+        watch = CallWatch(
+            listener=lambda: getattr(server, "_voice_listener", None),
+            enabled=lambda: bool(getattr(getattr(server.config, "voice", None), "quiet_in_calls", True)),
+        )
+        server._live_calls = watch
+    return watch
+
+
 def model_is_local(server: Any) -> bool:
     model = getattr(getattr(server, "config", None), "model", None)
     return str(getattr(model, "provider", "") or "").casefold() in LOCAL_PROVIDERS
@@ -207,8 +221,10 @@ def quiet_moment(server: Any) -> bool:
     if floor is not None and floor.held():
         return False
     listener = getattr(server, "_voice_listener", None)
-    if listener is not None and (getattr(listener, "user_is_speaking", False) or getattr(listener, "in_call", "")):
+    if listener is not None and getattr(listener, "user_is_speaking", False):
         return False
+    if getattr(server, "config", None) is not None and call_watch_for(server)():
+        return False  # in a call: no offer, by voice or on screen
     focus = getattr(server, "_focus", None)
     if focus is not None and getattr(focus, "active", False):
         return False
@@ -224,12 +240,20 @@ def quiet_moment(server: Any) -> bool:
     return True
 
 
-async def deliver_offer(server: Any, offer: Any) -> None:
-    """A card always; spoken only when the person is using voice (the listener runs), so they can answer."""
+async def deliver_offer(server: Any, offer: Any, offer_id: str = "") -> None:
+    """A card always (the app's offer card: Yes, Not today, Don't offer this, Why); spoken only when the person is
+    using voice (the listener runs), so they can answer by voice too."""
     from pilot.system.companion_speech import SpeechChannel
 
     await server._broadcast_notification(
-        "nudge", {"id": f"offer-{uuid.uuid4().hex[:8]}", "text": offer.text, "kind": "offer", "offer": offer.kind}
+        "offer",
+        {
+            "id": offer_id or uuid.uuid4().hex[:10],
+            "key": offer.key,
+            "kind": offer.kind,
+            "text": offer.text,
+            "request": offer.request,
+        },
     )
     layer = _layer(server)
     if layer is not None:
@@ -246,8 +270,8 @@ def start_offers(server: Any, data_dir: Any) -> None:
 
     offers = offers_for(server, data_dir)
 
-    async def deliver(offer: Any) -> None:
-        await deliver_offer(server, offer)
+    async def deliver(offer: Any, offer_id: str) -> None:
+        await deliver_offer(server, offer, offer_id)
 
     loop = OfferLoop(offers, quiet_moment=lambda: quiet_moment(server), deliver=deliver)
     server._offer_loop = loop
@@ -266,15 +290,54 @@ async def offer_reply(server: Any, text: str) -> str | None:
     raised = live.last_raised() if live is not None else None
     if offered_at is not None and raised and float(raised.get("at", 0.0)) > offered_at:
         return None  # Live spoke since: "why?" and "thanks" are about that
+    latest = offers.latest()
     answer = offers.reply(normalize_phrase(text))
     if answer is None:
         return None
+    await _act_on(server, answer)
+    if latest is not None and latest.answered:
+        await server._broadcast_notification("offer_withdrawn", {"id": latest.id, "reason": "answered"})
+    return answer.reply
+
+
+async def _act_on(server: Any, answer: Any) -> None:
     if answer.silence_all:
         await server._handle_update_config({"section": "suggestions", "values": {"offers": "off"}}, None)
     if answer.request:
         task = asyncio.ensure_future(server._voice_turn(answer.request))
         task.add_done_callback(lambda t: t.cancelled() or t.exception())
-    return answer.reply
+
+
+async def offers_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """The app's side of offers. ``action``: "status"; "set" with ``mode`` (auto, on, off); "unsilence" with ``key``;
+    "answer" with ``id`` and ``answer`` (yes, not_today, silence, why) from an offer card."""
+    from pilot.personal.offers import MODES
+
+    offers = offers_for(server)
+    action = str(params.get("action") or "status")
+    if action == "set":
+        mode = str(params.get("mode") or "").casefold()
+        if mode not in MODES:
+            return {"status": "error", "message": "mode must be auto, on or off"}
+        result = await server._handle_update_config({"section": "suggestions", "values": {"offers": mode}}, None)
+        if result.get("status") != "ok":
+            return result
+    elif action == "unsilence":
+        if not offers.unsilence(str(params.get("key") or "")):
+            return {"status": "error", "message": "That offer is not silenced."}
+    elif action == "answer":
+        answer = offers.answer(str(params.get("id") or ""), str(params.get("answer") or ""))
+        if answer is None:
+            return {"status": "error", "message": "That offer is no longer available."}
+        await _act_on(server, answer)
+        if params.get("answer") != "why":
+            await server._broadcast_notification(
+                "offer_withdrawn", {"id": params.get("id"), "reason": params.get("answer")}
+            )
+        return {"status": "ok", "reply": answer.reply, **offers.status()}
+    elif action != "status":
+        return {"status": "error", "message": "action must be status, set, unsilence or answer"}
+    return {"status": "ok", **offers.status()}
 
 
 __all__ = [
@@ -290,6 +353,7 @@ __all__ = [
     "note_heliox_speech",
     "offer_reply",
     "offers_for",
+    "offers_rpc",
     "personal_context_for",
     "quiet_moment",
     "start_offers",

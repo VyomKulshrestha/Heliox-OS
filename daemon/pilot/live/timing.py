@@ -40,6 +40,10 @@ GROW_ON_CUT_OFF = 1.15
 SHRINK_ON_WELL_TIMED = 0.98
 MIN_SCALE, MAX_SCALE = 0.8, 2.0
 SAVE_EVERY = 5
+# A card that went well says the wait could be shorter only when Live spoke close to its own threshold. One that
+# arrived long after the person stopped (they were done, or away) says nothing about how short the wait can be:
+# counting those shrank the waits for a slow typist until Live cut into their ordinary thinking pauses.
+NEAR_THRESHOLD = 1.5
 
 GOOD_VERDICTS = frozenset({"helpful", "fixed", "used_fix"})
 BAD_VERDICTS = frozenset({"dismissed", "ignored", "expired", "mute"})
@@ -94,11 +98,22 @@ class PersonalTiming:
         if self._unsaved >= SAVE_EVERY:
             self._save()
 
-    def record_outcome(self, verdict: str, resumed_after: float | None) -> str:
-        """How a delivered card went. Returns "well_timed", "cut_off" or "" (says nothing about timing)."""
+    def record_outcome(
+        self,
+        verdict: str,
+        resumed_after: float | None,
+        *,
+        paused_for: float | None = None,
+        needed: float | None = None,
+    ) -> str:
+        """How a delivered card went. Returns "well_timed", "cut_off" or "" (says nothing about timing).
+
+        ``paused_for`` is how long the person had stopped when the card came, ``needed`` the wait Live required.
+        """
         if verdict in GOOD_VERDICTS:
             self.well_timed += 1
-            self.scale = max(MIN_SCALE, self.scale * SHRINK_ON_WELL_TIMED)
+            if paused_for is None or needed is None or paused_for <= needed * NEAR_THRESHOLD:
+                self.scale = max(MIN_SCALE, self.scale * SHRINK_ON_WELL_TIMED)
             self._save()
             return "well_timed"
         if verdict in BAD_VERDICTS and resumed_after is not None and resumed_after < CUT_OFF_SECONDS:
