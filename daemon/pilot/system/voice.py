@@ -2606,6 +2606,11 @@ class ContinuousVoiceListener:
         self._on_overheard = on_overheard
         # Callable() -> bool, set by the server: a task the person started is running or an approval is waiting.
         self.task_open: Any = None
+        # Callable(addressed) -> bool, set by the server (PilotServer.warm_for_speech): open the cloud model's
+        # connection now, so the reply does not pay 0.3 to 0.9 s for a new one. Called only for speech known to be
+        # for Heliox ("wake", "button", "follow_up"; _warm_if_for_heliox), never awaited; it returns at once
+        # (it schedules its own work) and does nothing for a local model.
+        self.warm_model: Any = None
         self._interrupted_until = 0.0
         # The microphone button addresses the next sentence whatever it says; talking over Heliox does not.
         self._button_until = 0.0
@@ -4044,14 +4049,63 @@ class ContinuousVoiceListener:
         path = _write_wav(frames, self._recorder.sample_rate)
         task = asyncio.ensure_future(self._transcribe_whisper_text(path, language="en"))
         task.add_done_callback(lambda done: done.cancelled() or done.exception())
+        task.add_done_callback(lambda _done: self._warm_if_for_heliox(only="wake"))  # the wake phrase is known
         self._early_wake = task
 
     def _speculate_final_pass(self) -> _Speculation:
         """Arm the recorder to start the final pass at each candidate end of turn (see _Speculation)."""
         speculation = _Speculation(self)
-        self._recorder.on_candidate_end = speculation.start
+
+        def candidate_end(frames: list[Any]) -> None:
+            speculation.start(frames)
+            self._warm_if_for_heliox()
+
+        self._recorder.on_candidate_end = candidate_end
         self._recorder.on_candidate_cancel = speculation.cancel
         return speculation
+
+    def _early_wake_heard(self) -> bool:
+        """The early reading of the opening has finished and heard the wake phrase."""
+        early = self._early_wake
+        if early is None or not early.done() or early.cancelled() or early.exception() is not None:
+            return False
+        return bool(loose_wake_prefix(str(early.result() or "")))
+
+    def _addressed_so_far(self) -> str:
+        """How what is being said now is known to be for Heliox, before its words are read: "wake" (the opening
+        held the wake phrase), "button" (the microphone button started it), "follow_up" (Heliox's follow-up window
+        or question is open, or a task the person started is running, and Heliox is not speaking over it), or ""."""
+        if self._early_wake_heard():
+            return "wake"
+        if self._button_until and self._addressed():
+            return "button"
+        if self._wake_free_suppression_depth == 0:
+            task_open = bool(self.task_open and self.task_open())
+            if self.follow_up_remaining_seconds > 0 or self.question_open or task_open:
+                return "follow_up"
+        return ""
+
+    def _warm_if_for_heliox(self, only: str = "") -> None:
+        """Have the server open the cloud model's connection, without waiting for it, when the speech is for
+        Heliox (and addressed the ``only`` way, when given). Unaddressed speech never warms anything."""
+        warm = self.warm_model
+        if warm is None:
+            return
+        try:
+            addressed = self._addressed_so_far()
+            if not addressed or (only and addressed != only):
+                return
+            loop = self._loop or asyncio.get_running_loop()
+            loop.call_soon_threadsafe(self._call_warm, warm, addressed)
+        except Exception:
+            logger.debug("Could not ask for the model connection to be warmed", exc_info=True)
+
+    @staticmethod
+    def _call_warm(warm: Any, addressed: str) -> None:
+        try:
+            warm(addressed)
+        except Exception:
+            logger.debug("Warming the model connection failed", exc_info=True)
 
     def get_stats(self) -> dict:
         """Return listener statistics."""
