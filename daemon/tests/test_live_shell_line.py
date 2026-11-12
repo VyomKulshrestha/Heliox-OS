@@ -119,12 +119,17 @@ def test_the_scripts_keep_the_rules():
     fish = script_for("fish", Path("/tmp/s.sock"))
     assert (
         "string match -qr '^\\s'" in fish
-        and "nc $__heliox_nc $__heliox_sock" in fish
+        and "'nc' $__heliox_nc $__heliox_sock" in fish
         and "bind \\r __heliox_enter" in fish
     )
-    # Enter's wait is bounded, and nc's flags are worked out once when fish starts, not on every Enter.
-    assert "set -g __heliox_nc -U -w 1" in fish and fish.index("nc -h") < fish.index("function __heliox_enter")
-    assert "type -q nc; or exit" in fish
+    # Enter's wait is bounded; without a dry run's finding, nc from PATH with -U -w 1 (no -N: Apple's nc lacks it).
+    assert "set -g __heliox_nc -U -w 1\n" in fish and "command -q 'nc'; or exit" in fish and "nc -h" not in fish
+    # What the dry run found is what is written: the nc's own path and the flags that worked.
+    pinned = script_for("fish", Path("/tmp/s.sock"), ("/usr/bin/nc", ("-U", "-N", "-w", "1")))
+    assert "test -x '/usr/bin/nc'; or exit" in pinned and "set -g __heliox_nc -U -N -w 1" in pinned
+    assert "'/usr/bin/nc' $__heliox_nc $__heliox_sock" in pinned
+    # add-zle-hook-widget does nothing unless zsh/zle is loaded, and .zshrc cannot assume it is.
+    assert zsh.index("zmodload zsh/zle") < zsh.index("add-zle-hook-widget line-pre-redraw")
     # zsh never waits on a Heliox that stopped reading, and leaves it alone for a while after.
     assert "zselect -t 0 -w $_heliox_fd" in zsh and "_heliox_quiet_until" in zsh
     assert "[[ -o interactive ]] && add-zle-hook-widget" in zsh
@@ -240,21 +245,42 @@ async def test_install_is_refused_when_the_dry_run_fails(tmp_path, monkeypatch):
     assert not (tmp_path / "cfg" / "fish" / "conf.d" / "heliox-live.fish").exists()  # nothing written
 
 
-def _stub(folder: Path, body: str) -> str:
-    path = folder / "fakeshell"
-    path.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+def _stub(folder: Path, body: str, name: str = "fakeshell", shebang: str = "#!/bin/sh") -> str:
+    path = folder / name
+    path.write_text(shebang + "\n" + body + "\n", encoding="utf-8")
     path.chmod(0o700)
     return str(path)
+
+
+# A stand-in for nc that really connects: sends stdin, waits up to its -w for the answer, prints it.
+FAKE_NC = """import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[-1])
+s.sendall(sys.stdin.buffer.read())
+s.settimeout(float(sys.argv[sys.argv.index("-w") + 1]))
+try:
+    data = s.recv(100)
+except socket.timeout:
+    data = b""
+sys.stdout.write(data.decode())"""
+
+
+def _fake_fish(folder: Path, nc: str) -> str:
+    """fish for the dry run: names the nc, and runs the probe line (which is also valid sh)."""
+    return _stub(folder, f'if [ "$2" = "command -s nc" ]; then echo {nc}; else eval "$2"; fi', "fakefish")
 
 
 @POSIX
 @pytest.mark.asyncio
 async def test_an_nc_that_never_gives_up_is_caught_and_add_is_not_offered(tmp_path):
     """The silent socket accepts and never answers: an Enter that would wait on it past the bound fails the dry run."""
-    fake = _stub(tmp_path, 'case "$*" in *silent.sock*) sleep 30;; *) echo ok;; esac')
+    nc = _stub(tmp_path, "cat >/dev/null; echo ok", "fakenc")  # answers at once, as if Heliox did
+    fake = _stub(
+        tmp_path, f'case "$*" in *"command -s nc"*) echo {nc};; *silent.sock*) sleep 30;; *) echo ok;; esac', "fish2"
+    )
     ready = await dry_run("fish", which=lambda name: fake if name == "fish" else None, platform="linux", timeout=0.5)
-    assert not ready.ok and "does not give up" in ready.problem
-    assert ready.silent_ms is not None and ready.silent_ms >= int(BOUND_SECONDS * 1000)
+    assert not ready.ok and "did not give up" in ready.problem
+    assert all("waited" in line for line in ready.tried) and len(ready.tried) == 2
 
 
 @POSIX
@@ -265,9 +291,47 @@ async def test_a_shell_that_cannot_reach_the_socket_is_caught(tmp_path):
     assert not zsh.ok and "zsh/net/socket" in zsh.problem
     fish = await dry_run("fish", which=lambda name: fake if name == "fish" else None, platform="darwin")
     assert not fish.ok and fish.install.startswith("Nothing needs installing: macOS's own nc")
-    quiet = _stub(tmp_path, "echo nothing")
+    mute = _stub(tmp_path, "cat >/dev/null; echo 'nc: illegal option -- N' >&2; exit 1", "mutenc")
+    quiet = _fake_fish(tmp_path, mute)
     nc = await dry_run("fish", which=lambda name: quiet if name == "fish" else None, platform="linux")
-    assert not nc.ok and "-U" in nc.problem
+    assert not nc.ok and "in any way Heliox tries" in nc.problem and nc.nc == mute
+    assert len(nc.tried) == 2 and "illegal option" in nc.tried[0]  # what nc said, for Settings and CI
+    assert nc.install.startswith("Install the OpenBSD netcat")
+
+
+@POSIX
+@pytest.mark.asyncio
+async def test_a_working_nc_is_found_pinned_and_the_dry_run_never_hangs_on_the_silent_socket(tmp_path):
+    """The silent socket really holds a connection here (Python 3.12's wait_closed used to wait for it forever)."""
+    nc = _stub(tmp_path, FAKE_NC, "realishnc", shebang=f"#!{sys.executable}")
+    fish = _fake_fish(tmp_path, nc)
+    ready = await asyncio.wait_for(
+        dry_run("fish", which=lambda name: fish if name == "fish" else None, platform="linux"), 30
+    )
+    assert ready.ok, (ready.problem, ready.tried)
+    assert ready.nc == nc and ready.nc_flags == ("-U", "-w", "1")
+    assert ready.silent_ms <= int((BOUND_SECONDS + shell_line.BOUND_SLACK) * 1000)
+
+
+@POSIX
+@pytest.mark.asyncio
+async def test_turning_live_off_never_waits_on_a_shell_that_keeps_its_connection(short_folder):
+    server = ShellLineServer(ShellLines(), enabled=lambda: True, path=short_folder / "rt" / "s.sock", uid=os.getuid())
+    assert await server.open()
+    _reader, writer = await asyncio.open_unix_connection(str(server.path))  # a zsh, connected and staying
+    writer.write(b"HLX1 line zsh kitty 7 git status\n")
+    await writer.drain()
+    await asyncio.sleep(0.1)
+    await asyncio.wait_for(server.close(), 5)
+    assert not server.path.exists()
+    writer.close()
+
+
+def test_what_to_say_when_macs_own_nc_cannot():
+    unusable = install_hint("nc-unusable", "darwin", lambda _name: None, "/usr/bin/nc")
+    assert unusable.startswith("Not available for fish on this Mac") and "zsh's check does not need nc" in unusable
+    other = install_hint("nc-unusable", "darwin", lambda _name: None, "/opt/homebrew/bin/nc")
+    assert "brew uninstall netcat" in other
 
 
 @POSIX

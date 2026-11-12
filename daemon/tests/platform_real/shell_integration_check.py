@@ -233,6 +233,19 @@ def zsh_diagnose(term: Terminal, start: int, home: Path, env: dict[str, str], si
         )
         diag("transcript", term.tail(start))
         server_log(since)
+        # From inside the running zsh: is the module loaded, the widget and the hook registered, the socket there?
+        before = len(term.read())
+        probe = (
+            "\x15print -r -- HLXD zle=$(zmodload -e zsh/zle && print yes || print no)"
+            " fn=${+functions[_heliox_line_changed]} widget=${widgets[_heliox_line_changed]-none}"
+            " hook=${widgets[zle-line-pre-redraw]-none} sock=$([[ -S $_heliox_sock ]] && print yes || print no)"
+            " fd=${_heliox_fd:-none} quiet=$_heliox_quiet_until; zstyle -L ':zle-hook:*'\r"
+        )
+        for char in probe:
+            os.write(term.master, char.encode())
+        time.sleep(1.5)
+        diag("inside the zsh", plain(term.read()[before:])[-700:])
+        server_log(since)
 
     return show
 
@@ -342,7 +355,14 @@ async def fish_checks(server: ShellLineServer, root: Path) -> None:
     home.mkdir()
     env = base_env(home)
     env["XDG_CONFIG_HOME"] = str(home / ".config")
-    install("fish", home, env, server.path)
+    # As Settings does: the dry run picks the nc and flags that work here, and Add writes those.
+    ready = await dry_run("fish", server.path)
+    diag("fish dry run", "\n".join(ready.tried) or ready.problem)
+    if not check("fish: Settings' test offers Add here", ready.ok, f"{ready.problem} {ready.install}".strip()):
+        for name in ("Enter on a risky command prints Heliox's warning", "Enter again runs it"):
+            skip(f"fish: {name}", "Add is refused here, so there is no hook to check")
+        return
+    install("fish", home, env, server.path, (ready.nc, ready.nc_flags))
     config = home / ".config" / "fish" / "config.fish"
     config.write_text(f"set -g fish_greeting ''\nfunction fish_prompt\n    printf '{READY}> '\nend\n", encoding="utf-8")
     term = Terminal([fish, "-i"], env, root / "work")
@@ -402,7 +422,12 @@ async def dry_run_checks(root: Path) -> None:
             continue
         ready = await dry_run(shell)
         detail = f"answered {ready.answered_ms} ms, silent {ready.silent_ms} ms; {ready.problem}"
-        check(f"dry run: {shell} can reach Heliox here, so Add is offered", ready.ok, detail, nc_facts)
+        check(
+            f"dry run: {shell} can reach Heliox here, so Add is offered",
+            ready.ok,
+            detail,
+            lambda ready=ready: (nc_facts(), diag("tried", "\n".join(ready.tried) or "(nothing)")),
+        )
     fish = shutil.which("fish")
     if not fish:
         return
@@ -432,7 +457,11 @@ async def fish_bound_checks(root: Path) -> None:
     env = base_env(home)
     env["XDG_CONFIG_HOME"] = str(home / ".config")
     sock = root / "hung" / "live-shell.sock"
-    install("fish", home, env, sock)
+    ready = await dry_run("fish")
+    if not ready.ok:
+        skip("fish: Enter is bounded", f"Add is refused here: {ready.problem}")
+        return
+    install("fish", home, env, sock, (ready.nc, ready.nc_flags))
     (home / ".config" / "fish" / "config.fish").write_text(
         f"set -g fish_greeting ''\nfunction fish_prompt\n    printf '{READY}> '\nend\n", encoding="utf-8"
     )

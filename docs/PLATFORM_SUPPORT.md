@@ -41,13 +41,14 @@ page, with what has been shown for each claim:
 - **Fakes only**: the decision is tested with stand-ins (recorded or typed text, fake readers), never seen there;
 - **Not tested**.
 
-As of 12 November no slip typed into a real window has yet been seen to become a card on macOS or Linux: the
-end-to-end check (`tests/platform_real/live_end_to_end_check.py`, in the `platform-readers` job: an excluded app, a slip that must become a card with its
-evidence, the password field, the window closed) has its first run pending.
+The end-to-end check (`tests/platform_real/live_end_to_end_check.py`, in the `platform-readers` job: an excluded
+app, a slip that must become a card with its evidence, the password field, the window closed) passed all four on
+Linux under X11 and sway on 12 November. On macOS the slip did not become a card (the reader reads the field in its
+own check, so the gap is between the reader and Live); that is being found out.
 
 | Slip | Comes from | Windows | macOS | Linux |
 |---|---|---|---|---|
-| In what you type: a weekday that doesn't match its date, a date that doesn't exist, a wrong sum, a wrong name for someone in your profile, a doubled word, "attached" with nothing attached, a key pasted into a message, catch-pack phrases, a promise with a deadline, rewriting the same sentence | The focused text field (the reader above) | Meant for any app whose fields UI Automation exposes (the reader was built against Notepad on the development machine). Notepad, Office, browsers, chat apps: **Not tested** by a recorded check. The detectors: **Fakes only** (typed text, the Live Bench) | Meant for apps that expose their fields to Accessibility, once it is granted to Heliox-OS. Reading a field: **Run for real** on an AppKit text field (`platform-readers`, `macos_ax_check.py`, "reads-typed-text"). The slip becoming a card: **Not tested** (end-to-end check pending). Safari, Chrome, Electron apps: **Not tested** | Meant for apps on the accessibility bus. Reading a field: **Run for real** on a GTK 3 field under X11 and sway (`platform-readers`, `linux_atspi_check.py`, "reads-typed-text"). The slip becoming a card: **Not tested** (end-to-end check pending). GTK 4, Qt, Chromium, Electron, Firefox: **Not tested** |
+| In what you type: a weekday that doesn't match its date, a date that doesn't exist, a wrong sum, a wrong name for someone in your profile, a doubled word, "attached" with nothing attached, a key pasted into a message, catch-pack phrases, a promise with a deadline, rewriting the same sentence | The focused text field (the reader above) | Meant for any app whose fields UI Automation exposes (the reader was built against Notepad on the development machine). Notepad, Office, browsers, chat apps: **Not tested** by a recorded check. The detectors: **Fakes only** (typed text, the Live Bench) | Meant for apps that expose their fields to Accessibility, once it is granted to Heliox-OS. Reading a field: **Run for real** on an AppKit text field (`platform-readers`, `macos_ax_check.py`, "reads-typed-text"). The slip becoming a card: **Run for real: fails** (end-to-end check, "live-typed-slip-becomes-a-card": no card). Safari, Chrome, Electron apps: **Not tested** | Meant for apps on the accessibility bus. Reading a field: **Run for real** on a GTK 3 field under X11 and sway (`platform-readers`, `linux_atspi_check.py`, "reads-typed-text"). The slip becoming a card, an excluded app and the password field giving none, the card withdrawn when the window closes: **Run for real** under X11 and sway (`live_end_to_end_check.py`). GTK 4, Qt, Chromium, Electron, Firefox: **Not tested** |
 | A risky command before you press Enter | The focused field of a terminal | Meant for Windows Terminal, the console and PowerShell windows. The detector: **Fakes only**; reading those windows: **Not tested** by a recorded check | Meant for Terminal.app and iTerm2 (other terminals expose nothing): **Not tested** | Meant for VTE terminals (GNOME Terminal, Tilix, Terminator, Xfce Terminal) and partly Konsole; not Alacritty, kitty, WezTerm, foot or xterm: **Not tested** |
 | In what you say to Heliox: a wrong weekday or impossible date, a wrong sum, a wrong name, a promise without a reminder, a date that differs from the one you just typed | Speech, after the wake phrase, the microphone button, or in the 8 s follow-up | **Fakes only**: the catches run on recognised text, including real recogniser output replayed from recordings (Live Bench); no recorded voice session has shown a spoken catch | **Fakes only**, as on Windows; it needs capture to work (PortAudio, microphone permission) | **Fakes only**, as on Windows; it needs capture to work (PortAudio with ALSA, PulseAudio or PipeWire) |
 | An error on screen, with the fix | Reading the screen (OCR); off by default | Windows OCR. The card: **Not tested** | The Vision framework, once Screen Recording is granted. Vision reading a rendered line: **Run for real** (`macos_ax_check.py`, "ocr-vision-in-process"). The card: **Not tested** | tesseract on X11; on Wayland through the desktop's Screenshot portal, not yet proven (see above). The card: **Not tested** |
@@ -72,8 +73,8 @@ take it out:
 
 | Shell | What it does | What is added |
 |---|---|---|
-| zsh (5.3 or later; only 5.9 has been run) | A ZLE `line-pre-redraw` hook sends the line being edited each time it changes; Live checks it like a terminal field and the card comes at the first pause, before Enter. In a real zsh: **Not tested** yet (see below) | One line in `~/.zshrc` (or `$ZDOTDIR/.zshrc`) that sources `~/.local/share/heliox/shell/heliox-live.zsh`, marked "# Heliox Live terminal check" |
-| fish | fish has no hook on every change, so Enter asks Heliox first (through `nc -U -w 1`: at most one second, and no wait at all when Heliox is not running); a risky command is not run, its warning is printed, and Enter again runs it. In a real fish: **Not tested** yet (see below) | `~/.config/fish/conf.d/heliox-live.fish`; no start-up file is changed |
+| zsh (5.3 or later; only 5.9 has been run) | A ZLE `line-pre-redraw` hook sends the line being edited each time it changes; Live checks it like a terminal field and the card comes at the first pause, before Enter. In a real zsh: **Run for real: fails** (see below) | One line in `~/.zshrc` (or `$ZDOTDIR/.zshrc`) that sources `~/.local/share/heliox/shell/heliox-live.zsh`, marked "# Heliox Live terminal check" |
+| fish | fish has no hook on every change, so Enter asks Heliox first (through `nc -U -w 1`: at most one second, and no wait at all when Heliox is not running); a risky command is not run, its warning is printed, and Enter again runs it. In a real fish: **Run for real** on Linux; on macOS not available yet (see below) | `~/.config/fish/conf.d/heliox-live.fish`; no start-up file is changed |
 | bash | Nothing yet. Plain bash only offers hooks after Enter, too late; with ble.sh installed it could work like zsh, which is not built | Nothing |
 
 The line travels over a Unix socket in a folder only the person can open (mode 0700, owned by them; Heliox refuses a
@@ -85,10 +86,13 @@ first token-looking string onwards. It is kept in memory for 3 seconds and never
 What has been shown: **Run for real**, the socket folder 0700 and the socket 0600, and the socket gone once Heliox
 closes it (`platform-readers` on ubuntu, `tests/platform_real/shell_integration_check.py`). **Fakes only**, the
 decisions above (what is never sent, the 3 seconds) on all three systems, and the socket opening and closing with
-Live in unit tests on Linux and macOS. **Not tested**, the hook in a real zsh or fish: the first real run (ubuntu,
-12 November) failed five of its eight shell checks because the check's terminal was not the shell's own (no
-controlling terminal, no window size), so fish never reached its line editor; the corrected check has not run yet.
-Sudo and password prompts: **Not tested**.
+Live in unit tests on Linux and macOS. **Run for real** on ubuntu with fish 3.7 and netcat-openbsd (the
+`shell-check` workflow, 12 November): Enter on a risky command prints Heliox's warning and does not run it, Enter
+again runs it, an ordinary command runs at once. **Run for real: fails**: the zsh hook sent nothing in a real zsh on
+ubuntu or macOS (the socket was reachable; `add-zle-hook-widget` does nothing unless `zsh/zle` is already loaded,
+which the hook now loads itself, not yet re-run); fish on macOS, where the system's nc was called with a flag it
+lacks (the hook now uses the flags Settings' test found working, not yet re-run). Sudo and password prompts:
+**Not tested**.
 
 **kitty and WezTerm, read directly.** For people who would rather not change their shell, kitty and WezTerm are
 read directly (`daemon/pilot/live/terminal_text.py`), while one of them is the window in front, Live is on and

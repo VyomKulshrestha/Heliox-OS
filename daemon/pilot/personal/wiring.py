@@ -547,7 +547,8 @@ async def live_shell_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
                 message = f"Not added: {ready.problem}" + (f" {ready.install}" if ready.install else "")
                 return {"status": "error", "message": message, "ready": tested}
             if action == "install":
-                shell_line.install(shell, home, env, found.path)
+                pinned = (ready.nc, ready.nc_flags) if shell == "fish" and ready.nc else None
+                shell_line.install(shell, home, env, found.path, pinned)
         elif action == "uninstall":
             shell_line.uninstall(shell, home, env)
         elif action != "status":

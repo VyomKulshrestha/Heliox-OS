@@ -211,6 +211,7 @@ class ShellLineServer:
         self._uid = _uid() if uid is None else uid
         self._server: Any = None
         self._task: asyncio.Task[None] | None = None
+        self._clients: set[Any] = set()  # open connections (a running zsh keeps one), closed with the socket
         self.problem = ""
 
     @property
@@ -252,13 +253,18 @@ class ShellLineServer:
         server, self._server = self._server, None
         if server is not None:
             server.close()
+            for writer in list(self._clients):  # Python 3.12 waits for every connection: a zsh keeps its own open
+                with contextlib.suppress(Exception):
+                    writer.close()
+            self._clients.clear()
             with contextlib.suppress(Exception):
-                await server.wait_closed()
+                await asyncio.wait_for(server.wait_closed(), 2.0)
         with contextlib.suppress(OSError):
             self.path.unlink()
         self.lines.clear()
 
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        self._clients.add(writer)
         try:
             while True:
                 raw = await reader.readline()
@@ -282,6 +288,7 @@ class ShellLineServer:
         except (ConnectionError, OSError):
             pass
         finally:
+            self._clients.discard(writer)
             writer.close()
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
@@ -324,6 +331,9 @@ ZSH_SCRIPT = """# Heliox Live: lets Heliox check the command you are typing (for
 # file (Settings, Live, Terminal check, Remove does it), then this file.
 zmodload zsh/net/socket 2>/dev/null || return 0
 zmodload zsh/zselect 2>/dev/null || return 0
+# add-zle-hook-widget does nothing unless the line editor's module is already loaded, which .zshrc cannot assume
+# (a shell with no system-wide start-up file has not loaded it yet when .zshrc runs).
+zmodload zsh/zle 2>/dev/null || return 0
 autoload -Uz add-zle-hook-widget 2>/dev/null || return 0
 typeset -g _heliox_sock=__SOCKET__ _heliox_fd= _heliox_last= _heliox_quiet_until=0
 _heliox_send() {
@@ -368,19 +378,17 @@ FISH_SCRIPT = """# Heliox Live: Enter asks Heliox first, so a risky command (for
 # Only while Live is on; never a line that starts with a space. Remove: delete this file (Settings, Live,
 # Terminal check, Remove does it).
 status is-interactive; or exit
-type -q nc; or exit
+__NCTEST__; or exit
 set -g __heliox_sock __SOCKET__
-# Enter waits for Heliox at most 1 second (-w 1); with Heliox not running it does not wait at all.
-set -g __heliox_nc -U -w 1
-if nc -h 2>&1 | string match -q '*-N*'
-    set -a __heliox_nc -N
-end
+# Enter waits for Heliox at most 1 second (-w 1); with Heliox not running it does not wait at all. The nc and its
+# flags are the ones Settings' test found working on this computer.
+set -g __heliox_nc __NCFLAGS__
 function __heliox_enter
     set -l line (commandline)
     if test -S $__heliox_sock; and not string match -qr '^\\s' -- "$line[1]"
         set -l text (string join '\\n' -- (string replace -a '\\\\' '\\\\\\\\' -- $line))
         set -l term (string replace -a ' ' _ -- (set -q TERM_PROGRAM; and echo $TERM_PROGRAM; or echo $TERM))
-        set -l answer (printf 'HLX1 check fish %s %s %s\\n' $term $fish_pid "$text" | nc $__heliox_nc $__heliox_sock 2>/dev/null)
+        set -l answer (printf 'HLX1 check fish %s %s %s\\n' $term $fish_pid "$text" | __NC__ $__heliox_nc $__heliox_sock 2>/dev/null)
         if string match -q 'warn*' -- "$answer"
             if test "$__heliox_warned" != "$line"
                 set -g __heliox_warned "$line"
@@ -424,17 +432,29 @@ def plan(shell: str, home: Path, env: dict[str, str]) -> Plan:
     raise ValueError("Only zsh and fish are supported; bash needs ble.sh, which is not supported yet.")
 
 
-def script_for(shell: str, socket: Path) -> str:
-    text = ZSH_SCRIPT if shell == "zsh" else FISH_SCRIPT
-    quoted = "'" + socket.as_posix().replace("'", "'\\''") + "'"
-    return text.replace("__SOCKET__", quoted)
+def script_for(shell: str, socket: Path, nc: tuple[str, tuple[str, ...]] | None = None) -> str:
+    """The hook's text. ``nc``: fish's nc and flags as the dry run found them (``DEFAULT_NC`` when not given)."""
+    if shell == "zsh":
+        quoted = "'" + socket.as_posix().replace("'", "'\\''") + "'"
+        return ZSH_SCRIPT.replace("__SOCKET__", quoted)
+    path, flags = nc or DEFAULT_NC
+    test = f"test -x {_fish_quote(path)}" if "/" in path else f"command -q {_fish_quote(path)}"
+    return (
+        FISH_SCRIPT.replace("__NCTEST__", test)
+        .replace("__NCFLAGS__", " ".join(flags))
+        .replace("__NC__", _fish_quote(path))
+        .replace("__SOCKET__", _fish_quote(socket.as_posix()))
+    )
 
 
-def install(shell: str, home: Path, env: dict[str, str], socket: Path) -> Plan:
-    """Write the script and, for zsh, add the one line. Called only after the person pressed Add."""
+def install(
+    shell: str, home: Path, env: dict[str, str], socket: Path, nc: tuple[str, tuple[str, ...]] | None = None
+) -> Plan:
+    """Write the script and, for zsh, add the one line. Called only after the person pressed Add (and, from Settings,
+    after the dry run passed: ``nc`` is what it found for fish)."""
     chosen = plan(shell, home, env)
     chosen.script_path.parent.mkdir(parents=True, exist_ok=True)
-    chosen.script_path.write_text(script_for(shell, socket), encoding="utf-8")
+    chosen.script_path.write_text(script_for(shell, socket, nc), encoding="utf-8")
     if chosen.startup_file is not None:
         existing = chosen.startup_file.read_text(encoding="utf-8") if chosen.startup_file.exists() else ""
         if MARKER not in existing:
@@ -471,6 +491,9 @@ class Ready:
     install: str = ""  # what to install, when that is the fix
     answered_ms: int | None = None  # how long Heliox took to answer the probe, through the shell's own route
     silent_ms: int | None = None  # fish: how long Enter waited on a Heliox that never answered
+    nc: str = ""  # fish: the nc that worked, as fish finds it
+    nc_flags: tuple[str, ...] = ()  # fish: the flags that worked with it, written into the hook
+    tried: tuple[str, ...] = ()  # fish: each way nc was tried and what it did, for Settings' details and CI
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -480,18 +503,34 @@ class Ready:
             "answered_ms": self.answered_ms,
             "silent_ms": self.silent_ms,
             "bound_ms": int(BOUND_SECONDS * 1000) if self.shell == "fish" else 0,
+            "nc": self.nc,
+            "nc_flags": list(self.nc_flags),
+            "tried": list(self.tried),
         }
 
 
-def install_hint(missing: str, platform: str, which: Callable[[str], str | None]) -> str:
-    """What to install, for this kind of computer. ``missing``: "zsh", "fish", "zsh-modules" or "nc"."""
+# The ways fish's Enter may call nc, tried in order on the person's computer; the first that gets Heliox's answer
+# and gives up within the bound on a Heliox that never answers is written into the hook. Without -N first: Heliox
+# answers and closes, so nc ends without it, and Apple's nc has no -N.
+NC_CANDIDATES: tuple[tuple[str, ...], ...] = (("-U", "-w", "1"), ("-U", "-N", "-w", "1"))
+DEFAULT_NC: tuple[str, tuple[str, ...]] = ("nc", NC_CANDIDATES[0])
+
+
+def install_hint(missing: str, platform: str, which: Callable[[str], str | None], nc: str = "") -> str:
+    """What to do, for this kind of computer. ``missing``: "zsh", "fish", "zsh-modules", "nc" (none, or not one
+    that can do this) or "nc-unusable" (nc found, and no way of calling it worked)."""
     mac = platform == "darwin"
     if missing == "zsh-modules":
         if mac:
             return "Install zsh from Homebrew (brew install zsh) and use it as your shell; it has the socket module."
         return "Install your distribution's zsh package; this zsh was built without zsh/net/socket or zsh/zselect."
-    if missing == "nc":
+    if missing in ("nc", "nc-unusable"):
         if mac:
+            if missing == "nc-unusable" and nc in ("/usr/bin/nc", ""):
+                return (
+                    "Not available for fish on this Mac: macOS's own nc could not ask Heliox and wait for its answer "
+                    "in any way Heliox tries, and nothing to install is known to fix that. zsh's check does not need nc."
+                )
             # macOS ships the BSD nc, which talks to a Unix socket. Homebrew's "netcat" is GNU netcat 0.7.1, which
             # cannot (no -U): installing it is what breaks this, never what fixes it.
             return (
@@ -515,10 +554,11 @@ def _fish_quote(text: str) -> str:
     return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-async def _serve(folder: Path, name: str, answer: bool) -> tuple[Any, Path, list[Any]]:
-    """A throwaway socket: one that answers "ok" to each line, or one that accepts and never reads or answers."""
+async def _serve(folder: Path, name: str, answer: bool, held: list[Any]) -> tuple[Any, Path]:
+    """A throwaway socket: one that answers "ok" to each line, or one that accepts and never reads or answers.
+    Every connection's writer goes into ``held``, so the caller can close them all (Python 3.12's
+    ``Server.wait_closed`` waits for every connection)."""
     path = folder / name
-    held: list[Any] = []
 
     async def client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         held.append(writer)
@@ -531,44 +571,108 @@ async def _serve(folder: Path, name: str, answer: bool) -> tuple[Any, Path, list
             writer.close()
 
     server = await asyncio.start_unix_server(client, path=str(path))
-    return server, path, held
+    return server, path
 
 
-async def _run(argv: list[str], env: dict[str, str], timeout: float) -> tuple[int | None, str, float]:
-    """Run, returning (exit code or None when it had to be killed, output, seconds taken)."""
+async def _run(
+    argv: list[str], env: dict[str, str] | None, timeout: float, stdin: bytes | None = None
+) -> tuple[int | None, str, float, str]:
+    """Run, returning (exit code or None when it had to be killed, output, seconds taken, error output)."""
     started = time.monotonic()
     proc = await asyncio.create_subprocess_exec(
         *argv,
-        stdin=asyncio.subprocess.DEVNULL,
+        stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
         env=env,
     )
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        out, err = await asyncio.wait_for(proc.communicate(stdin), timeout)
     except asyncio.TimeoutError:
-        proc.kill()
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
         with contextlib.suppress(Exception):
             await proc.wait()
-        return None, "", time.monotonic() - started
-    return proc.returncode, out.decode("utf-8", errors="replace").strip(), time.monotonic() - started
+        return None, "", time.monotonic() - started, ""
+    decode = lambda raw: (raw or b"").decode("utf-8", errors="replace").strip()  # noqa: E731
+    return proc.returncode, decode(out), time.monotonic() - started, decode(err)
+
+
+async def _close_all(servers: list[Any], held: list[Any]) -> None:
+    for writer in held:
+        with contextlib.suppress(Exception):
+            writer.close()
+    for server in servers:
+        server.close()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(server.wait_closed(), 2.0)
 
 
 ZSH_PROBE = """zmodload zsh/net/socket 2>/dev/null || exit 3
 zmodload zsh/zselect 2>/dev/null || exit 3
+zmodload zsh/zle 2>/dev/null || exit 3
 zsocket "$1" 2>/dev/null || exit 4
 print -u $REPLY -r -- "HLX1 check zsh probe 0 __PROBE__"
 read -t 2 -u $REPLY answer
 print -r -- "$answer"
 """
 
-FISH_PROBE = """type -q nc; or exit 3
-set flags -U -w 1
-if nc -h 2>&1 | string match -q '*-N*'
-    set -a flags -N
-end
-printf 'HLX1 check fish probe 0 __PROBE__\\n' | nc $flags __SOCKET__ 2>/dev/null
+FISH_PROBE = """printf 'HLX1 check fish probe 0 __PROBE__\\n' | __NC__ __FLAGS__ __SOCKET__ 2>/dev/null
 """
+
+
+def _fish_probe(nc: str, flags: tuple[str, ...], socket: Path) -> str:
+    return (
+        FISH_PROBE.replace("__PROBE__", PROBE_LINE)
+        .replace("__NC__", _fish_quote(nc))
+        .replace("__FLAGS__", " ".join(flags))
+        .replace("__SOCKET__", _fish_quote(socket.as_posix()))
+    )
+
+
+async def _dry_run_fish(
+    exe: str, env: dict[str, str], target: Path, folder: Path, servers, held, platform, which, timeout
+):
+    """Find the nc fish uses and a way of calling it that gets Heliox's answer and gives up on a silent Heliox."""
+    code, found, _, _ = await _run([exe, "-c", "command -s nc"], env, timeout)
+    nc = found.splitlines()[0] if code == 0 and found else ""
+    if not nc:
+        return Ready("fish", False, "fish needs nc (netcat) to reach Heliox, and there is none here.",
+                     install_hint("nc", platform, which))  # fmt: skip
+    silent_path: Path | None = None
+    tried: list[str] = []
+    for flags in NC_CANDIDATES:
+        shown = " ".join(flags)
+        line = f"HLX1 check fish probe 0 {PROBE_LINE}\n".encode()
+        code, out, _, err = await _run([nc, *flags, str(target)], env, 3.0, stdin=line)
+        if out.splitlines()[-1:] != ["ok"]:
+            tried.append(f"{nc} {shown}: no answer (exit {code}{', ' + err[:160] if err else ''})")
+            continue
+        code, out, took, _ = await _run([exe, "-c", _fish_probe(nc, flags, target)], env, timeout)
+        if out.splitlines()[-1:] != ["ok"]:
+            tried.append(f"{nc} {shown}: answered directly, not from fish (exit {code})")
+            continue
+        answered_ms = int(took * 1000)
+        if silent_path is None:
+            silent, silent_path = await _serve(folder, "silent.sock", False, held)
+            servers.append(silent)
+        code, _, waited, _ = await _run([exe, "-c", _fish_probe(nc, flags, silent_path)], env, BOUND_SECONDS + timeout)
+        silent_ms = int(waited * 1000)
+        if code is None or waited > BOUND_SECONDS + BOUND_SLACK:
+            tried.append(f"{nc} {shown}: answered, but waited {silent_ms} ms on a Heliox that never answers")
+            continue
+        tried.append(f"{nc} {shown}: answered in {answered_ms} ms, gave up after {silent_ms} ms on a silent Heliox")
+        return Ready("fish", True, answered_ms=answered_ms, silent_ms=silent_ms, nc=nc, nc_flags=flags,
+                     tried=tuple(tried))  # fmt: skip
+    return Ready(
+        "fish",
+        False,
+        f"The nc fish finds ({nc}) could not ask Heliox over a Unix socket and get its answer, or did not give up "
+        "on a Heliox that never answers, in any way Heliox tries.",
+        install_hint("nc-unusable", platform, which, nc),
+        nc=nc,
+        tried=tuple(tried),
+    )
 
 
 async def dry_run(
@@ -582,8 +686,9 @@ async def dry_run(
     """Prove the hook would reach Heliox from this shell, on this computer, before Add is offered.
 
     ``socket``: Heliox's own socket when it is listening (Live on); otherwise a throwaway socket stands in, so the
-    shell's side is still proven. For fish, the same ``nc`` is also run against a socket that accepts and never
-    answers, and must give up within ``BOUND_SECONDS`` (plus ``BOUND_SLACK`` for starting it).
+    shell's side is still proven. For fish, each way of calling ``nc`` in ``NC_CANDIDATES`` is tried: directly, then
+    from fish, then against a socket that accepts and never answers (it must give up within ``BOUND_SECONDS`` plus
+    ``BOUND_SLACK``). The first that passes is returned in ``nc`` and ``nc_flags`` and written into the hook.
     """
     if shell not in SHELLS:
         return Ready(shell, False, "Only zsh and fish are supported.")
@@ -600,72 +705,29 @@ async def dry_run(
         env["XDG_CONFIG_HOME"] = str(folder)  # fish loads no config of the person's (and not this hook) for the test
         target = socket
         if target is None or not target.exists():
-            server, target, kept = await _serve(folder, "probe.sock", answer=True)
+            server, target = await _serve(folder, "probe.sock", True, held)
             servers.append(server)
-            held += kept
-        if shell == "zsh":
-            argv = [exe, "-f", "-c", ZSH_PROBE.replace("__PROBE__", PROBE_LINE), "heliox-probe", str(target)]
-        else:
-            command = FISH_PROBE.replace("__PROBE__", PROBE_LINE).replace("__SOCKET__", _fish_quote(str(target)))
-            argv = [exe, "-c", command]
-        code, out, took = await _run(argv, env, timeout)
+        if shell == "fish":
+            return await _dry_run_fish(exe, env, target, folder, servers, held, platform, which, timeout)
+        argv = [exe, "-f", "-c", ZSH_PROBE.replace("__PROBE__", PROBE_LINE), "heliox-probe", str(target)]
+        code, out, took, _ = await _run(argv, env, timeout)
         if code == 3:
-            if shell == "zsh":
-                return Ready(
-                    shell,
-                    False,
-                    "This zsh cannot open a socket (it lacks zsh/net/socket or zsh/zselect), so the check would stay "
-                    "silent.",
-                    install_hint("zsh-modules", platform, which),
-                )
             return Ready(
                 shell,
                 False,
-                "fish needs nc (netcat) to reach Heliox, and there is none here.",
-                install_hint("nc", platform, which),
+                "This zsh cannot open a socket or its line editor (it lacks zsh/net/socket, zsh/zselect or zsh/zle), "
+                "so the check would stay silent.",
+                install_hint("zsh-modules", platform, which),
             )
         if out.splitlines()[-1:] != ["ok"]:
-            if shell == "zsh":
-                return Ready(
-                    shell, False, "zsh could not reach Heliox's socket.", install_hint("zsh-modules", platform, which)
-                )
             return Ready(
-                shell,
-                False,
-                "The nc here cannot ask Heliox over a Unix socket and wait for the answer (it needs -U, -w and to keep "
-                "the connection open after sending).",
-                install_hint("nc", platform, which),
+                shell, False, "zsh could not reach Heliox's socket.", install_hint("zsh-modules", platform, which)
             )
-        answered_ms = int(took * 1000)
-        if shell == "zsh":
-            return Ready(shell, True, answered_ms=answered_ms)
-        silent, silent_path, kept = await _serve(folder, "silent.sock", answer=False)
-        servers.append(silent)
-        held += kept
-        command = FISH_PROBE.replace("__PROBE__", PROBE_LINE).replace("__SOCKET__", _fish_quote(str(silent_path)))
-        code, _, waited = await _run([exe, "-c", command], env, BOUND_SECONDS + timeout)
-        silent_ms = int(waited * 1000)
-        if code is None or waited > BOUND_SECONDS + BOUND_SLACK:
-            return Ready(
-                shell,
-                False,
-                f"The nc here does not give up when Heliox is slow (it waited {silent_ms} ms on a socket that never "
-                "answered), so Enter could hang.",
-                install_hint("nc", platform, which),
-                answered_ms,
-                silent_ms,
-            )
-        return Ready(shell, True, answered_ms=answered_ms, silent_ms=silent_ms)
+        return Ready(shell, True, answered_ms=int(took * 1000))
     except OSError as error:
         return Ready(shell, False, f"The check could not be tried: {error}.")
     finally:
-        for writer in held:
-            with contextlib.suppress(Exception):
-                writer.close()
-        for server in servers:
-            server.close()
-            with contextlib.suppress(Exception):
-                await server.wait_closed()
+        await _close_all(servers, held)
         shutil.rmtree(folder, ignore_errors=True)
 
 

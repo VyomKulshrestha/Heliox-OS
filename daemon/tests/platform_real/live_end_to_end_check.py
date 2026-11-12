@@ -76,6 +76,7 @@ class Live:
         self.config.live.ocr_fallback = False
         self.events: list[tuple[str, dict[str, Any]]] = []
         reader = focused_text.create_reader()
+        self.reader = reader
         server = SimpleNamespace(config=self.config, _live_reader=reader, _live_last_ocr=0.0)
 
         async def observe():
@@ -96,6 +97,42 @@ class Live:
             timing_path=folder / "timing.json",
             on_disable=reader.close,
         )
+
+    async def diagnose(self, prefix: str) -> None:
+        """Why no card: what the daemon's observe gives, what the reader gives (and, on macOS, the same read on the
+        main thread), the reader's status, and what Live is holding."""
+        from pilot.agents.screen_vision import _get_active_window
+
+        def say(label: str, value: Any) -> None:
+            print(f"DIAG {prefix} {label}: {str(value)[:500]}", flush=True)
+
+        try:
+            say("observe() now", await self.engine._observe())
+        except Exception as exc:
+            say("observe() raised", f"{type(exc).__name__}: {exc}")
+        say("Live's last look", getattr(self.engine, "_last_obs", None))
+        try:
+            say("reader.read() (worker thread)", await self.reader.read())
+        except Exception as exc:
+            say("reader.read() raised", f"{type(exc).__name__}: {exc}")
+        if sys.platform == "darwin":
+            from pilot.live import focused_text_macos as M
+
+            shared = M.shared()
+            say("the same read on the main thread", shared.read() if shared is not None else "(no reader)")
+        try:
+            say("reader.status()", self.reader.status().as_dict())
+        except Exception as exc:
+            say("reader.status() raised", f"{type(exc).__name__}: {exc}")
+        say("foreground window", await asyncio.to_thread(_get_active_window))
+        say("pending", {k: (v.correction.kind, v.correction.evidence) for k, v in self.engine._pending.items()})
+        say("events", [(e, p.get("kind"), p.get("evidence")) for e, p in self.events][-8:])
+        last = getattr(self.engine, "_last_obs", None)
+        if last is not None and last.text:
+            from pilot.live.detectors import detect
+
+            ctx = self.engine._context(last, last.source)
+            say("detectors on that text", [(c.kind, c.evidence) for c in detect(last.text, ctx)])
 
     def cards(self) -> list[dict[str, Any]]:
         return [payload for event, payload in self.events if event == "live_interjection"]
@@ -144,11 +181,12 @@ async def steps(prefix: str, live: Live, type_text, focus, close) -> None:
 
     await live.while_typing(type_text, second, CARD_WAIT, until=lambda: card_for(evidence) is not None)
     card = card_for(evidence)
-    check(
+    if not check(
         f"{prefix}/live-typed-slip-becomes-a-card",
         card is not None and card.get("kind") == "weekday_date" and card.get("source") == "focused_field",
         repr(card or live.cards()[-1:]),
-    )
+    ):
+        await live.diagnose(prefix)
     # The first sentence may now get its card too: once the app is no longer excluded, what its field holds may be
     # read, and the first field Live sees is checked whole (someone who turns Live on mid-draft wants it checked).
     print(
