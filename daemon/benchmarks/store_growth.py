@@ -170,7 +170,10 @@ async def measure(requests: int) -> dict[str, dict[str, float]]:
         before = {name: _bytes(data, name) for name in STORES}
         for number in range(requests):
             began = time.monotonic()
-            response = await server._handle_execute({"input": f"request {number}"}, _Ws())
+            # Every request text the same length: a checkpoint row that sits near half a SQLite page fits two to a
+            # page or one, and "request 99" against "request 100" decided which (the macOS soak run measured 3072
+            # bytes per request at 200 requests and 4037 at 2,000 from that alone).
+            response = await server._handle_execute({"input": f"request {number:06d}"}, _Ws())
             if number < 3:
                 print(f"request {number}: {time.monotonic() - began:.1f} s", file=sys.stderr)
             status = str(response.get("status"))
