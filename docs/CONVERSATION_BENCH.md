@@ -250,9 +250,61 @@ call mode, which the product now detects and warns about) measures the warning.
 | 2.2 open-conversation remarks to a colleague | | | 0 of 3 | none |
 | 3.1 spoken slip raised as a card | 0/3 | 0/2 | - | was 1/3 desk: remarks in an open conversation are now ignored, so Live never hears the invoice slip |
 | 4.2 control words | 12/12 (all three models) | | 10/11 per model | the undo after a correction is now heard as "undo that" (merge fixed), but nothing is said back |
-| 2.2 the unaddressed hour through the real listener (13 blocks, 67 min of speech, 1130 utterances recognised) | | | 0 dispatched, 0 spoken, 0 stored | was 264 dispatched and 514 spoken lines |
-| Transcript replay, the hour plus the owner's clips | 0 of 981 not-addressed lines dispatched; addressed 7/9 (desk 4/4, headset 3/5); control 4/4 | | | first baseline at audio level: 264 dispatches |
+| 2.2 the unaddressed hour through the real listener (13 blocks, 67 min of synthetic speech, 1130 utterances recognised) | | | 0 on a synthetic hour (dispatched, spoken, stored); no real recording of a meeting, a television or a second person exists yet | was 264 dispatched and 514 spoken lines |
+| Transcript replay, the hour plus the owner's clips | 0 of 981 synthetic not-addressed lines dispatched; addressed 7/9 (desk 4/4, headset 3/5); control 4/4 | | | first baseline at audio level: 264 dispatches |
 
 Also seen: "Hey Heliox, open Notepad" (synthetic, one voice) was heard as "opened Notepad" and answered by the
 conversation layer as a remark, not sent to the planner. With no model, the layer said that talking things
 through needs a language model and where to set one up.
+
+## Round 2, 12 November evening (fc60d65, timing-free)
+
+| line | case | result | moved since the afternoon? |
+|---|---|---|---|
+| 2.1c | follow-up without the wake phrase after a local answer ("And what about reminders?") | taken and answered | yes, 0/1 to 1/1 |
+| 4.2 | "Hey Heliox, undo that." after a correction, once the task has ended | recognised, then handed to Live as overheard; nothing dispatched, nothing said | no |
+| 1.2a, 1.3 | "Hey Heliox, remind me to ... call the bank tomorrow morning." with a 0.6 to 2.0 s pause | the turn still ends at the pause; at 0.6 and 1.0 s Heliox's acknowledgement starts while the person is still talking (no barge-in); at 1.5 and 2.0 s the second half is taken as "Stop" | no |
+| 2.1a | "Hey Heliox, open Notepad." in one synthetic voice | heard as "opened Notepad", answered by the conversation layer as a remark | no |
+
+Line 3.1 now means a slip in something said to Heliox. A slip in a remark to someone else must not raise a card,
+because Live never hears speech that was not addressed to it (the privacy line). Scenarios are in
+`scenarios/slips.json`; they use synthetic voices, and the owner's real voice for them is still owed.
+
+| case | expected | today |
+|---|---|---|
+| "Hey Heliox, remind me on Tuesday the nineteenth to send the report." (the 19th is a Thursday) | card | card |
+| "Hey Heliox, remind me that the invoice is due on the thirty-first of November." | card | card |
+| "Hey Heliox, put the review in for Monday the nineteenth at ten." | card | no card: the conversation layer answers it and Live never sees it |
+| "the invoice for Acme is 2,400", then "email the Acme invoice for 4,200" | card | no card; Heliox says "Emailing the acme invoice for 4 200." |
+| the invoice slip said to a colleague in an open conversation (synthetic, and the three real desk takes) | no card | no card, 4 of 4 |
+
+The wake phrase with another person talking behind it, on the four real desk sentences (two-voice background mixed
+at a speech-to-background level, two background positions each, the listener's own recognisers and addressing
+rule): 8 of 8 taken at 30, 20 and 15 dB; 4 of 8 at 10 dB; 2 of 8 at 5 dB; 1 of 8 at 0 dB. It breaks between 15
+and 10 dB, mostly because the name is replaced by the background voice's words; twice the name survived but not
+at the start, and the rule correctly declined it. Only the Whisper wake check ever writes "Heliox"; Parakeet does
+not, even at 30 dB.
+
+The real word error rate rests on 58 words from three distinct sentences on the desk microphone and 44 words on the
+headset. A desk number good to about 2.5 points near 8% needs about 40 different sentences (about 500 words) per
+microphone, plus about 20 wake sentences per microphone for the 19-in-20 line: what the recording helper below
+collects.
+
+## Recording your own voice
+
+The bench needs more of your own voice before two lines mean anything: how many words Heliox gets wrong, and how
+often it hears its name. One pass takes about fifteen minutes per microphone. Open a terminal in the `daemon`
+folder and run `.venv\Scripts\python.exe -m benchmarks.conversation_bench.record --mic desk` (on macOS or Linux,
+`.venv/bin/python` instead). Before it starts it shows which microphone it is about to record from: the one
+Heliox is set to use, or the one you name with `--device`. It changes no setting and plays nothing. It then shows
+one sentence at a time: press Enter, say the sentence the way you would say it to Heliox, press Enter again, then
+keep it, redo it or skip it. There are three sets: 41 everyday sentences, 20 sentences that start with "Hey
+Heliox", and five minutes where you let a television or another person talk near the microphone without speaking
+to Heliox. You can stop at any point with q; next time it carries on where you left off. If the microphone turns
+out to be a Bluetooth headset in call mode while you called it something else, it stops and asks you to run it
+again with `--mic headset`.
+
+Then do the same with every other microphone you use, under another name (`--mic headset`, `--mic laptop`), so the
+results can be compared. The recordings stay in your private audio folder on this computer, never in the
+repository and never uploaded. When you finish, the helper prints what you recorded and the command that runs the
+bench on it; the scorecard then shows your word error rate and wake-phrase rate for each microphone separately.
