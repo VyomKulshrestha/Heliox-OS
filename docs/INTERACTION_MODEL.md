@@ -665,14 +665,21 @@ after that end and at most 2 s before (it is the one who came in too early):
 The listener asks the server to withdraw the first half's dispatch (`withdraw_voice_turn(turn_id, joined)`,
 `ContinuousVoiceListener.withdraw_turn`): "withdrawn" means the server stopped it and dispatched the joined sentence
 in its place, with one acknowledgement when it leads to the same action; "too_late" (something already ran, and
-Heliox says what) or "unknown" means the listener dispatches the new words alone as a new turn. Until the server
-provides the call, the listener does the same as for "unknown": it yields, never reads the second half as "Stop",
-and dispatches the second half as its own turn, judged like any follow-up. The joined sentence is dispatched only
-through the server's call, so one request now runs as two turns ("remind me to", then "call the bank tomorrow
-morning"); the single right action is owed until the server's call lands.
-Measured on the bench's four pause scenarios (synthetic voice, one sentence, pauses of 0.6 to 2.0 s inside "Hey
-Heliox, remind me to | call the bank tomorrow morning"), without the server's call: none is taken as "Stop" (before,
-the 1.5 and 2.0 s pauses cancelled the request) and each half runs once as its own turn. The 23 corpus lines cut at
+Heliox says what) or "unknown" means the listener dispatches the new words alone as a new turn. The server provides
+the call (`withdraw_voice_turn`, set on the listener where it is created); a listener without it does the same as
+for "unknown": it yields, never reads the second half as "Stop", and dispatches the second half as its own turn.
+Measured on the bench's four pause scenarios with the server's call (synthetic voice, one sentence, pauses of 0.6 to
+2.0 s inside "Hey Heliox, remind me to | call the bank tomorrow morning", cloud model stub, 12 November): none is
+taken as "Stop" (before, the 1.5 and 2.0 s pauses cancelled the request), and nothing is said over the person
+(Heliox's first sound came after the second half's last word each time).
+- 0.6 s: one action, the joined request, and one acknowledgement.
+- 1.0 and 1.5 s: one action, the joined request, but the acknowledgement twice: the first half's "I'm on it" began,
+  was cut when the first half was withdrawn, and the joined request's was said again.
+- 2.0 s: two actions. The second half was decided 6.1 s after the first half was dispatched (its recognition took
+  1.9 s), past the server's 6 s limit for withdrawing (counted when the dispatch is processed, not on the capture
+  clock), so the withdrawal answered "unknown" and the second half ran as its own turn.
+So the single right action is shown for pauses up to 1.5 s; at 2.0 s on a machine this busy it is not yet, and the
+acknowledgement is said once only when nothing of the first half's was spoken. The 23 corpus lines cut at
 a pause (synthetic voice; pauses of 0.40 to 0.72 s) all resume well inside the window. Not yet shown on the owner's
 own long requests.
 
