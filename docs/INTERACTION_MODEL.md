@@ -153,14 +153,18 @@ recall and false alarms unchanged):
 What Live says aloud is recorded in `ConversationMemory` as a Heliox turn (cut off if talked over). The floor rule is
 **Fakes only**: measured on the Live Bench's simulated `converse` steps, not yet in a real voice session.
 
-**Answering Live.** Today a reply to a spoken Live remark needs the wake phrase when no conversation is open: the
-listener's follow-up window opens only inside an open conversation, so "why?" two seconds after Live spoke is not
-taken (`tests/test_live_reply_window.py`, with the real `Addressing` and listener). Decided, and not yet built (the
-listener is the speech workstream's next change): for about 6 s after Live speaks with no conversation open, the
-listener takes only Live's own closed list of replies (`pilot.live.engine.is_live_reply`: "why?", "why did you say
-that", "thanks", "not now", "don't mention these", "fix it", "never mind", stop words) and nothing else; any other
-sentence is not taken and opens nothing. These words can only answer what Live just said, so speech not addressed
-to Heliox is still never acted on.
+**Answering Live.** For 6 s after Live finishes a spoken remark (`LIVE_REPLY_SECONDS`, a setting), with no
+conversation open, the listener takes Live's own closed list of replies without the wake phrase
+(`pilot.live.engine.is_live_reply`: "why?", "why did you say that", "thanks", "not now", "don't mention these",
+"fix it", "never mind", stop words) and nothing else. A reply taken this way opens no conversation, and only one is
+taken per remark; Live speaking again opens the next. The 6 s are counted on the capture clock, from the end of
+Live's voice to the start of the reply, so a recognition backlog does not close them. A call, a wake from sleep and
+anything that clears the follow-up window close them too. A reply begun over Live's voice is not one: a word or two
+said over it is a cut-off ("stop"), as before, and a longer sentence over it is not taken. Every other sentence is
+not taken and opens nothing (`tests/test_live_reply_window.py`, with the real `Addressing` and listener; text). Of
+the 981 utterances not addressed to Heliox in the synthetic hour (transcript replay, both recognisers' words), none
+is one of these replies, so the room speech measured so far could not be taken in the window; a real room has not
+been recorded yet. The dispatch is marked `voice_turn_addressed` "live_reply".
 
 ### What leaves the machine
 
@@ -555,11 +559,12 @@ Heliox' first."
 **Settings.** `voice.continuous_conversation_enabled`, which took sentences that looked like commands as addressed
 without the wake phrase, is no longer read and defaults to off; its text says that it made Heliox act on what other
 people say. `voice.follow_up_window_seconds` is 8. Heliox speaking (a reminder, a Live card) opens no reply window
-unless someone opened the conversation; for the replies Live's own remarks are to get, see "Answering Live" above.
+unless someone opened the conversation; the replies Live's own remarks get are in "Answering Live" above.
 
 **Hooks.** Each dispatch sets `pilot.system.voice.voice_turn_addressed` ("wake", "button", "follow_up",
-"doubtful_follow_up") beside `voice_turn_ended_at`; the conversation layer calls
-`ContinuousVoiceListener.note_not_understood()` after a "Sorry?".
+"doubtful_follow_up", "continuation", "live_reply") beside `voice_turn_ended_at`; the conversation layer calls
+`ContinuousVoiceListener.note_not_understood()` after a "Sorry?", and Live's speech calls
+`ContinuousVoiceListener.note_live_spoke()` once a remark has been heard.
 
 Measured three ways, all on synthetic speech for the part that must not be taken:
 - Transcript replay (2026-11-12, both recognisers' words cached through the listener's own calls): of the 981

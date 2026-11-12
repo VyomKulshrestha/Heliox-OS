@@ -32,6 +32,7 @@ MONOLOGUE_SECONDS = 8.0  # a follow-up with more voice than this is talk, not a 
 CUT_OFF_SECONDS = 1.6  # a word or two said over Heliox's voice is "stop", whatever it reads as (voice.is_cut_off_stop)
 QUICK_REPLY_SECONDS = 2.0  # an answer to Heliox's question starts within this, in any language
 QUICK_REPLY_VOICE_SECONDS = 4.0  # and is short: an answer, not a story
+LIVE_REPLY_SECONDS = 6.0  # after a spoken Live remark: its own replies ("why?", "not now") need no wake phrase
 ELLIPTICAL_SECONDS = 4.0  # "and tomorrow?", "again", "shorter": said right after Heliox's answer, not later
 ELLIPTICAL_WORDS = 6  # "what about the second one?" is short; a sentence starting with "and" is narration
 EXACT_NAME = re.compile(r"^heliox(?:'s)?$", re.I)
@@ -242,7 +243,13 @@ class Addressing:
     question_open: bool = False
     task_open: bool = False  # a task the person started is running or an approval waits
     _sorry_given: bool = False
-    _at: float | None = None  # while deciding: when the utterance began (capture clock), not when it is processed
+    _at: float | None = None
+    # When Heliox Live last finished a spoken remark (live_spoke), and the test for its own closed list of replies
+    # (pilot.live.engine.is_live_reply, injected: importing the Live stack here would load it with the listener).
+    live_spoke_at: float | None = None
+    live_reply: Callable[[str], bool] | None = (
+        None  # while deciding: when the utterance began (capture clock), not when it is processed
+    )
     _hint_given: bool = False
     history: list[str] = field(default_factory=list)
 
@@ -267,6 +274,12 @@ class Addressing:
         self.heliox_ended_at = None
         self.question_open = False
         self._sorry_given = False
+        self.live_spoke_at = None
+
+    def live_spoke(self) -> None:
+        """Heliox Live just finished a spoken remark: for LIVE_REPLY_SECONDS its own replies are taken without the
+        wake phrase, even with no conversation open, and open nothing."""
+        self.live_spoke_at = self.clock()
 
     def note_not_understood(self) -> None:
         """The conversation layer could not understand the last turn ("Sorry?"): the window closes."""
@@ -308,6 +321,9 @@ class Addressing:
             # The command in the words acted on (Parakeet's), the wake phrase decided by the wake check's.
             spoken = vocative_wake(heard.text) if heard.wake_text else None
             return Decision(True, spoken.command if spoken is not None else wake.command, "wake")
+        if not self.conversation_open and self._live_reply(heard):
+            self.live_spoke_at = None  # one reply per remark; Live speaking again opens the next
+            return Decision(True, heard.text.strip(" \t,.:;!?-"), "live reply")
         if not self.conversation_open:
             return self._not_taken(heard, "no conversation open")
         kind = plausibly_addressed(heard.text, question_open=self.question_open)
@@ -330,6 +346,20 @@ class Addressing:
             self._sorry_given = True
             return Decision(False, why="unclear", say_sorry=True)
         return Decision(False, why=f"follow-up: {kind}")
+
+    def _live_reply(self, heard: Heard) -> bool:
+        """A reply to Live's remark: one of its own replies, begun after its voice ended (a sentence begun over it
+        is not; a word or two over it is a cut-off, decided above) and within LIVE_REPLY_SECONDS, on the capture
+        clock."""
+        spoke, test = self.live_spoke_at, self.live_reply
+        if spoke is None or test is None or heard.heliox_was_speaking or heard.in_call:
+            return False
+        if not 0.0 <= heard.started - spoke <= LIVE_REPLY_SECONDS:
+            return False
+        try:
+            return bool(test(heard.text))
+        except Exception:
+            return False
 
     def _quick_reply(self, heard: Heard) -> bool:
         """A short answer that starts right after Heliox's own question and not over its voice."""

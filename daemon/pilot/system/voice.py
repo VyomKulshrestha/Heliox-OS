@@ -2679,6 +2679,8 @@ class ContinuousVoiceListener:
             return "doubtful_follow_up"
         if decision.why in {"wake", "button", "continuation"}:
             return decision.why
+        if decision.why == "live reply":
+            return "live_reply"
         return "follow_up"
 
     async def _report_transcript(self, text: str, decision: Any) -> None:
@@ -2701,6 +2703,21 @@ class ContinuousVoiceListener:
             )
         except Exception:
             logger.debug("on_transcript callback failed", exc_info=True)
+
+    def note_live_spoke(self) -> None:
+        """Heliox Live finished a spoken remark (pilot.personal.wiring.live_speak): for a few seconds its own replies
+        ("why?", "not now", "fix it") are taken without the wake phrase, with no conversation open, and open nothing
+        (pilot.system.addressing, LIVE_REPLY_SECONDS). Live is loaded by then, so its reply test is imported here."""
+        rule = self._addressing
+        if rule.live_reply is None:
+            try:
+                from pilot.live.engine import is_live_reply
+
+                rule.live_reply = is_live_reply
+            except Exception:
+                logger.debug("Live's reply list is not available", exc_info=True)
+                return
+        rule.live_spoke()
 
     def note_not_understood(self) -> None:
         """The conversation layer could not understand the last turn (it said "Sorry?" or nothing): the follow-up

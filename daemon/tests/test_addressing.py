@@ -353,3 +353,49 @@ def test_the_word_heliox_invited_is_taken_in_the_window():
     clock.now += 1.5
     decision = rule.decide(heard("More.", clock.now))
     assert decision.act and decision.why == "follow-up: reply"
+
+
+# ── answering Live: its own replies for a few seconds after it spoke, with no conversation open ──
+
+
+def live_rule():
+    clock = Clock()
+    rule = Addressing(clock=clock)
+    rule.live_reply = lambda text: text.strip(" .?!").casefold() in {"why", "not now", "thanks", "stop"}
+    rule.live_spoke()  # Live finished its remark at clock.now
+    return rule, clock
+
+
+def test_a_reply_to_live_is_judged_when_it_was_said_not_when_it_was_heard():
+    rule, clock = live_rule()
+    said_at = clock.now + 2.0
+    clock.now += 9.0  # a recognition backlog: the decision comes 9 s after Live spoke
+    decision = rule.decide(Heard("Why?", said_at, said_at + 0.6, 0.6))
+    assert decision.act and decision.why == "live reply"
+    assert not rule.conversation_open  # nothing opens
+
+
+def test_one_reply_per_remark_and_nothing_else_or_later():
+    rule, clock = live_rule()
+    assert not rule.decide(Heard("Open the door.", clock.now + 1.0, clock.now + 2.0, 1.0)).act
+    assert rule.decide(Heard("Not now.", clock.now + 2.0, clock.now + 2.5, 0.5)).act
+    assert not rule.decide(Heard("Thanks.", clock.now + 3.0, clock.now + 3.5, 0.5)).act  # the window is used
+    late, late_clock = live_rule()
+    assert not late.decide(Heard("Why?", late_clock.now + 7.0, late_clock.now + 7.5, 0.5)).act
+
+
+def test_no_reply_to_live_in_a_call_or_after_the_computer_woke():
+    rule, clock = live_rule()
+    assert not rule.decide(Heard("Why?", clock.now + 1.0, clock.now + 1.5, 0.5, in_call=True)).act
+    woke, woke_clock = live_rule()
+    woke.close("cleared")  # the server's wake-from-sleep path clears every window
+    assert not woke.decide(Heard("Why?", woke_clock.now + 1.0, woke_clock.now + 1.5, 0.5)).act
+
+
+def test_over_live_s_voice_a_short_cut_off_is_still_stop_and_a_sentence_is_not_a_reply():
+    rule, clock = live_rule()
+    cut = rule.decide(Heard("Why?", clock.now - 0.5, clock.now, 0.6, heliox_was_speaking=True))
+    assert cut.act and cut.command == "Stop" and cut.why == "cut-off"
+    rule2, clock2 = live_rule()
+    long = rule2.decide(Heard("Why?", clock2.now - 1.0, clock2.now + 1.5, 2.5, heliox_was_speaking=True))
+    assert not long.act

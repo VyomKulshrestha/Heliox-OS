@@ -84,7 +84,6 @@ def hear(listener, clock, at: float, said: str):
     return decision
 
 
-@pytest.mark.xfail(strict=True, reason="the listener does not yet take Live's replies after a spoken remark")
 def test_why_two_seconds_after_live_spoke_is_taken_and_opens_nothing():
     listener, clock = listener_after_a_live_remark()
     decision = hear(listener, clock, 2.0, "why?")
