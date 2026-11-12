@@ -578,6 +578,19 @@ const NO_APPROVAL = {
 /** Replies to a correction or Stop after which the daemon no longer waits on the interactive approval. */
 const WITHDRAWING_STATUSES = new Set(["revising", "aborted", "denied"]);
 
+/** Pass each line the desktop app's daemon supervisor announces; nothing happens outside the desktop app. */
+export async function listenToDaemonSupervisor(onLine: (text: string) => void): Promise<void> {
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    await listen<{ message?: string }>("daemon-supervisor", (event) => {
+      const text = String(event.payload?.message ?? "").trim();
+      if (text) onLine(text);
+    });
+  } catch {
+    // Browser dev mode: no desktop app, no supervisor.
+  }
+}
+
 export const CONNECTION_LOST_APPROVAL_MESSAGE =
   "Lost the connection to Heliox, so the approval dialog was closed. Nothing in it was approved.";
 
@@ -1365,6 +1378,13 @@ function createSession() {
   }
 
   async function init() {
+    // The desktop app restarts a daemon that exited or stopped answering, and says so in one line here.
+    void listenToDaemonSupervisor((text) =>
+      update((s) => ({
+        ...s,
+        messages: [...s.messages, { type: "system" as MessageType, text, timestamp: Date.now() }],
+      })),
+    );
     await connect();
     update((s) => ({ ...s, daemonConnected: isConnected() }));
 

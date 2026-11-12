@@ -574,6 +574,25 @@ pub async fn confirm_action(
 }
 
 // Internal worker to parse handshake ping data
+/// One authenticated ping for the daemon supervisor: true when the daemon answered within the time limit.
+pub(crate) async fn daemon_answers() -> bool {
+    let attempt = async {
+        let mut ws = connect_authenticated().await.ok()?;
+        let request = serde_json::json!({"jsonrpc": "2.0", "method": "ping", "params": {}, "id": "supervisor"});
+        ws.send(tokio_tungstenite::tungstenite::Message::Text(
+            request.to_string().into(),
+        ))
+        .await
+        .ok()?;
+        let reply = ws.next().await?.ok()?;
+        Some(reply.is_text())
+    };
+    matches!(
+        tokio::time::timeout(crate::supervisor::PING_TIMEOUT, attempt).await,
+        Ok(Some(true))
+    )
+}
+
 async fn try_ping_daemon(_window: tauri::Window) -> Result<String, String> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",

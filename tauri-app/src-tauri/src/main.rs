@@ -4,6 +4,7 @@
 mod commands;
 mod file_access;
 mod hotkey;
+mod supervisor;
 mod tray;
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -12,9 +13,22 @@ use std::sync::Mutex;
 use std::time::Duration;
 use sysinfo::Disks;
 use sysinfo::System;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 /// Global handle to the Python daemon process so we can kill it on exit.
 struct DaemonProcess(Mutex<Option<Child>>);
+/// Set when the app is exiting, so the supervisor does not start the daemon the app is stopping.
+static APP_EXITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// One supervisor thread at a time; cleared when it ends, so a later call (after first-run setup) can start one.
+static SUPERVISING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Clears SUPERVISING when the supervisor thread ends, however it ends.
+struct SupervisingGuard;
+
+impl Drop for SupervisingGuard {
+    fn drop(&mut self) {
+        SUPERVISING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 const DAEMON_HOST: &str = "127.0.0.1";
 const DAEMON_PORT: u16 = 8785;
@@ -344,6 +358,23 @@ fn spawn_daemon() -> Option<Child> {
         return None;
     }
 
+    if let Some(child) = launch_daemon() {
+        return Some(child);
+    }
+
+    // Strategy 3: background install if venv doesn't exist
+    if !get_venv_python().exists() {
+        println!("[Heliox OS] No daemon found. Starting background installation...");
+        setup_venv_in_background();
+    } else {
+        eprintln!("[Heliox OS] Warning: venv exists but daemon failed to start.");
+    }
+
+    None
+}
+
+/// Start the daemon from the app's venv, else from the system Python (strategies 1 and 2).
+fn launch_daemon() -> Option<Child> {
     let data_dir = get_app_data_dir();
     let _ = std::fs::create_dir_all(&data_dir);
 
@@ -380,18 +411,92 @@ fn spawn_daemon() -> Option<Child> {
         let _ = child.wait();
     }
 
-    // Strategy 3: background install if venv doesn't exist
-    if !venv_python.exists() {
-        println!("[Heliox OS] No daemon found. Starting background installation...");
-        setup_venv_in_background();
-    } else {
-        eprintln!("[Heliox OS] Warning: venv exists but daemon failed to start.");
-    }
-
     None
 }
 
+/// Watch the daemon this app started; restart it when it exits or stops answering (see supervisor.rs).
+/// A daemon the app did not start (`None` in DaemonProcess) is left alone. Safe to call again later, for example
+/// after first-run setup starts the daemon: a second call while a watcher runs does nothing.
+pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
+    use supervisor::{Observation, Step, Watch, CHECK_EVERY};
+
+    let owned = app
+        .state::<DaemonProcess>()
+        .0
+        .lock()
+        .map(|guard| guard.is_some())
+        .unwrap_or(false);
+    if !owned || SUPERVISING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let _guard = SupervisingGuard;
+        let mut watch = Watch::default();
+        watch.started();
+        loop {
+            std::thread::sleep(CHECK_EVERY);
+            if APP_EXITING.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            let state = app.state::<DaemonProcess>();
+            let exited = match state.0.lock() {
+                Ok(mut guard) => match guard.as_mut() {
+                    Some(child) => !matches!(child.try_wait(), Ok(None)),
+                    None => true, // a restart that failed to launch: keep trying
+                },
+                Err(_) => return,
+            };
+            let seen = if exited {
+                Observation::Exited
+            } else if tauri::async_runtime::block_on(commands::daemon_answers()) {
+                Observation::Answered
+            } else {
+                Observation::Silent
+            };
+            let step = watch.observe(seen, CHECK_EVERY);
+            if let Some(line) = supervisor::notice(step) {
+                eprintln!("[Heliox OS] {line}");
+                let _ = app.emit("daemon-supervisor", serde_json::json!({ "message": line }));
+            }
+            match step {
+                Step::Wait => {}
+                Step::KillHung => {
+                    if let Ok(mut guard) = state.0.lock() {
+                        if let Some(child) = guard.as_mut() {
+                            supervisor::kill_tree(child);
+                        }
+                    }
+                }
+                Step::Restart { after } => {
+                    std::thread::sleep(after);
+                    if APP_EXITING.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    if let Ok(mut guard) = state.0.lock() {
+                        if let Some(mut old) = guard.take() {
+                            // Only a live process is killed: an exited one's id may already belong to another.
+                            if matches!(old.try_wait(), Ok(None)) {
+                                supervisor::kill_tree(&mut old);
+                            } else {
+                                let _ = old.wait();
+                            }
+                        }
+                        if TcpStream::connect((DAEMON_HOST, DAEMON_PORT)).is_ok() {
+                            // Someone else started a daemon meanwhile (for example from a terminal): leave it.
+                            println!("[Heliox OS] Another daemon is listening; not starting one");
+                            return;
+                        }
+                        *guard = launch_daemon();
+                    }
+                    watch.started();
+                }
+            }
+        }
+    });
+}
+
 fn stop_daemon(state: &DaemonProcess) {
+    APP_EXITING.store(true, std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut guard) = state.0.lock() {
         if let Some(mut child) = guard.take() {
             match child.try_wait() {
@@ -399,14 +504,12 @@ fn stop_daemon(state: &DaemonProcess) {
                     println!("[Heliox OS] Python daemon already exited");
                 }
                 Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    supervisor::kill_tree(&mut child);
                     println!("[Heliox OS] Python daemon stopped");
                 }
                 Err(e) => {
                     eprintln!("[Heliox OS] Failed to inspect daemon before stop: {}", e);
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    supervisor::kill_tree(&mut child);
                 }
             }
         }
@@ -432,6 +535,7 @@ fn main() {
             window.set_focus().unwrap();
             tray::setup_tray(app)?;
             hotkey::register_hotkey(app)?;
+            supervise_daemon(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
