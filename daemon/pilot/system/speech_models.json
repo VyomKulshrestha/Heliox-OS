@@ -1,0 +1,163 @@
+{
+  "about": "Speech models Heliox can download, one source for the daemon (pilot/system/speech_models.py) and the first-run screen. Nothing here is downloaded unless the person chooses it.",
+  "models": [
+    {
+      "id": "whisper-base",
+      "title": "Speech recognition (Whisper base)",
+      "purpose": "Turns what you say into words, in 99 languages. Needed for speaking to Heliox.",
+      "language": "multilingual",
+      "size_bytes": 147882941,
+      "disk_bytes": 147882941,
+      "licence": "MIT",
+      "source": "OpenAI Whisper, converted by Systran (Hugging Face)",
+      "sources": [
+        "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/config.json",
+        "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/model.bin",
+        "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/tokenizer.json",
+        "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/vocabulary.txt"
+      ],
+      "folder": "faster-whisper-base",
+      "files": [
+        {
+          "name": "config.json",
+          "sha256": "56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a",
+          "bytes": 2309,
+          "url": "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/config.json"
+        },
+        {
+          "name": "model.bin",
+          "sha256": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9",
+          "bytes": 145217532,
+          "url": "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/model.bin"
+        },
+        {
+          "name": "tokenizer.json",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "bytes": 2203239,
+          "url": "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/tokenizer.json"
+        },
+        {
+          "name": "vocabulary.txt",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "bytes": 459861,
+          "url": "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/vocabulary.txt"
+        }
+      ],
+      "part_of_voice": true,
+      "required_for": "voice"
+    },
+    {
+      "id": "parakeet-tdt-0.6b-v2-int8",
+      "title": "Accurate English recognition (Parakeet)",
+      "purpose": "Hears English more accurately than Whisper base, dates and numbers especially, in about a tenth of a second per second of speech on the processor. English only; other languages keep using Whisper.",
+      "language": "en",
+      "size_bytes": 482440461,
+      "disk_bytes": 661288526,
+      "licence": "CC-BY-4.0",
+      "source": "NVIDIA Parakeet TDT 0.6B v2, exported by the sherpa-onnx project (GitHub releases)",
+      "sources": [
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2"
+      ],
+      "folder": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+      "files": [
+        {
+          "name": "encoder.int8.onnx",
+          "sha256": "92a10bd9c23936ea0566c29f963bc57c2a5df4261b6a8921c39abea66557ca8b",
+          "bytes": 652282309
+        },
+        {
+          "name": "decoder.int8.onnx",
+          "sha256": "4d097bae3bac5c96018d5293ba39f1b657296102b142affda40378f38b020f41",
+          "bytes": 7257753
+        },
+        {
+          "name": "joiner.int8.onnx",
+          "sha256": "77a29f3e5ac7d37074e0af465391b80f314015d5b97f0f90c6c7767f1d56f428",
+          "bytes": 1739080
+        },
+        {
+          "name": "tokens.txt",
+          "sha256": "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d",
+          "bytes": 9384
+        }
+      ],
+      "part_of_voice": false,
+      "required_for": "voice.final_pass = parakeet",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
+        "sha256": "6fc4426b54aa549a0019b8a75b8dea59164e71790a37ac56a045ad57f915f714",
+        "bytes": 482440461,
+        "root": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
+      }
+    },
+    {
+      "id": "streaming-zipformer-en",
+      "title": "Live captions (streaming recognition)",
+      "purpose": "Shows your words while you speak and helps Heliox tell when you have finished. English only.",
+      "language": "en",
+      "size_bytes": 72654782,
+      "disk_bytes": 72654782,
+      "licence": "Apache-2.0",
+      "source": "k2-fsa icefall Zipformer, sherpa-onnx export (Hugging Face)",
+      "sources": [
+        "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+        "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+        "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+        "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/tokens.txt"
+      ],
+      "folder": "sherpa-onnx-streaming-zipformer-en-2023-06-26",
+      "files": [
+        {
+          "name": "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+          "sha256": "563fde436d16cf7607cf408cd6b30909819d03162652ef389c2450ced3f45ac1",
+          "bytes": 71083163,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx"
+        },
+        {
+          "name": "decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+          "sha256": "98da299f471e38bb4e1a8df579b8cc9122d6039576a77e357b3c60f17dd83b02",
+          "bytes": 1307236,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx"
+        },
+        {
+          "name": "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+          "sha256": "d944208d660d67c8d72cd2acaeac971fa5ceb8c80e76c1968148846fedd6e297",
+          "bytes": 259335,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx"
+        },
+        {
+          "name": "tokens.txt",
+          "sha256": "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb",
+          "bytes": 5048,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/tokens.txt"
+        }
+      ],
+      "part_of_voice": false,
+      "required_for": "voice.transcription_engine = streaming"
+    },
+    {
+      "id": "smart-turn-v3",
+      "title": "End of sentence (Smart Turn)",
+      "purpose": "Tells a finished sentence from a pause to think, so Heliox answers sooner and does not cut you off.",
+      "language": "multilingual",
+      "size_bytes": 8679182,
+      "disk_bytes": 8679182,
+      "licence": "BSD-2-Clause",
+      "source": "Pipecat Smart Turn v3.2 (Hugging Face)",
+      "sources": [
+        "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx"
+      ],
+      "folder": "smart-turn-v3",
+      "files": [
+        {
+          "name": "smart-turn-v3.2-cpu.onnx",
+          "sha256": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",
+          "bytes": 8679182,
+          "url": "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx"
+        }
+      ],
+      "part_of_voice": false,
+      "required_for": "voice.turn_detection = smart_turn"
+    }
+  ]
+}

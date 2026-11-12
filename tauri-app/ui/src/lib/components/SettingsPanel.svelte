@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ShieldAlert, ShieldCheck } from "@lucide/svelte";
   import { settings, settingsLoadErrors, type SettingsSaveResult } from "../stores/settings";
+  import SpeechModels from "./SpeechModels.svelte";
   import { _, locale } from "svelte-i18n";
   import { session } from "../stores/session";
   import { call, requireOkResult, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
@@ -1937,6 +1938,8 @@
         >
       </div>
     {/each}
+
+    <SpeechModels />
 
     <div class="setting-row">
       <div class="setting-info">

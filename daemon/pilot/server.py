@@ -2132,6 +2132,10 @@ class PilotServer:
             "voice_listener_stats": self._handle_voice_listener_stats,
             "voice_listen_now": self._handle_voice_listen_now,
             "voice_new_conversation": self._handle_voice_new_conversation,
+            "speech_models_list": self._handle_speech_models_list,
+            "speech_model_download": self._handle_speech_model_download,
+            "speech_model_cancel": self._handle_speech_model_cancel,
+            "speech_model_remove": self._handle_speech_model_remove,
             "voice_recognition_test": self._handle_voice_recognition_test,
             "interaction_status": self._handle_interaction_status,
             "list_audio_input_devices": self._handle_list_audio_input_devices,
@@ -13394,6 +13398,40 @@ def handle_tool(tool_name, params):
         listener.note_interruption(seconds=float(params.get("seconds", 10.0) or 10.0), by_button=True)
         await self._broadcast_notification("voice_status", {"status": "listening", "message": "I'm listening..."})
         return {"status": "listening"}
+
+    def _speech_models(self) -> Any:
+        """Speech-model downloads (pilot.system.speech_model_service), started only by these RPCs."""
+        service = getattr(self, "_speech_model_service", None)
+        if service is None:
+            from pilot.system.speech_model_service import SpeechModelService
+
+            service = SpeechModelService(self._broadcast_notification, on_ready=self._speech_model_ready)
+            self._speech_model_service = service
+        return service
+
+    async def _speech_model_ready(self, model_id: str) -> None:
+        """Parakeet downloaded at the person's request becomes the final pass, unless they pointed it elsewhere."""
+        if model_id != "parakeet-tdt-0.6b-v2-int8":
+            return
+        voice = self.config.voice
+        if voice.final_pass != "parakeet" and not voice.parakeet_model_dir:
+            voice.final_pass = "parakeet"
+            self.config.save()
+            await self._broadcast_notification("config_updated", {"method": "voice", "section": "voice"})
+
+    async def _handle_speech_models_list(self, params: dict, ws: ServerConnection) -> dict:
+        """The downloadable speech models: what each is for, size, licence, source, and what is on disk."""
+        return await asyncio.to_thread(self._speech_models().list)
+
+    async def _handle_speech_model_download(self, params: dict, ws: ServerConnection) -> dict:
+        """Start (or resume) downloading one speech model; progress arrives as speech_model_progress."""
+        return await self._speech_models().download(str(params.get("id", "")))
+
+    async def _handle_speech_model_cancel(self, params: dict, ws: ServerConnection) -> dict:
+        return self._speech_models().cancel(str(params.get("id", "")))
+
+    async def _handle_speech_model_remove(self, params: dict, ws: ServerConnection) -> dict:
+        return await asyncio.to_thread(self._speech_models().remove, str(params.get("id", "")))
 
     async def _handle_voice_new_conversation(self, params: dict, ws: ServerConnection) -> dict:
         """Start a clean spoken conversation: the planner stops reading earlier voice turns.

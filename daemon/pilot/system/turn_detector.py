@@ -64,6 +64,11 @@ class SmartTurnDetector:
 
                 path = self._model_path
                 if path is None:
+                    from pilot.system.speech_models import local_path
+
+                    folder = local_path("smart-turn-v3")  # downloaded from Settings or the first-run screen
+                    path = str(folder / MODEL_FILE) if folder is not None else None
+                if path is None:
                     from huggingface_hub import hf_hub_download
 
                     path = hf_hub_download(REPO, MODEL_FILE)

@@ -72,9 +72,16 @@ class StreamingTranscriber:
                 return True
             try:
                 import sherpa_onnx
-                from huggingface_hub import hf_hub_download
 
-                paths = {key: hf_hub_download(REPO, name) for key, name in FILES.items()}
+                from pilot.system.speech_models import local_path
+
+                folder = local_path("streaming-zipformer-en")  # downloaded from Settings or the first-run screen
+                if folder is not None:
+                    paths = {key: str(folder / name) for key, name in FILES.items()}
+                else:
+                    from huggingface_hub import hf_hub_download
+
+                    paths = {key: hf_hub_download(REPO, name) for key, name in FILES.items()}
                 self._recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
                     tokens=paths["tokens"],
                     encoder=paths["encoder"],

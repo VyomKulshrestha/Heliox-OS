@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **322 WebSocket RPC methods**. That is the API
+The daemon currently registers **326 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1866,6 +1866,37 @@ the start of every take.
 
 **Params:** `{}`
 **Result:** `{ "status": "ok", "earlier_turns": number }` (how many voice turns the planner no longer sees)
+
+#### `speech_models_list`
+The speech models Heliox can download (the catalogue in `daemon/pilot/system/speech_models.json`, which the
+first-run screen also bundles), with what is on disk.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok", "active": id | "", "models": [{ "id", "title", "purpose", "languages", "licence",
+"source", "download_bytes", "disk_bytes", "required_for", "part_of_voice", "installed", "partial_bytes", "path" }] }`
+
+#### `speech_model_download`
+Start or resume downloading one model (HTTP Range into `.part` files; SHA-256 checked before it counts) into
+`<data dir>/models/<folder>`. Nothing is ever downloaded without this call. One model at a time. When Parakeet is
+ready and `voice.parakeet_model_dir` is empty, `voice.final_pass` becomes `parakeet`.
+
+**Params:** `{ "id": string }`
+**Result:** `{ "status": "started" | "ready" | "busy" | "error", "message"?, "total"? }`
+**Notification:** `speech_model_progress` `{ "id", "state": "queued" | "downloading" | "verifying" | "ready" |
+"failed" | "cancelled", "received", "total", "message" }` (at most two a second while downloading; `message` is a
+sentence for the person, including what to do after a failure).
+
+#### `speech_model_cancel`
+Stop the running download; what was downloaded is kept for the next `speech_model_download`.
+
+**Params:** `{ "id": string }`
+**Result:** `{ "status": "cancelling" | "idle" }`
+
+#### `speech_model_remove`
+Delete a downloaded model's folder.
+
+**Params:** `{ "id": string }`
+**Result:** `{ "status": "removed" | "error", "message"? }`
 
 #### `voice_recognition_test`
 Capture one utterance and return its transcript without executing it. If

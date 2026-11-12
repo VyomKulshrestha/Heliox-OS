@@ -1405,9 +1405,13 @@ def _get_faster_whisper_model(model_name: str) -> Any:
         if device == "cpu":
             # Measured on the rehearsal recording: 8 threads take base from 2.2 s to 1.1 s for a 6 s sentence.
             options["cpu_threads"] = max(1, min(8, os.cpu_count() or 4))
+        from pilot.system.speech_models import local_path
+
+        # Whisper base downloaded into Heliox's data folder (the Voice choice) is used from there.
+        local = local_path("whisper-base") if model_name == "base" else None
         try:
             _faster_whisper_model_cache[cache_key] = WhisperModel(
-                model_name,
+                str(local) if local is not None else model_name,
                 device=device,
                 compute_type=compute_type,
                 **options,
@@ -2438,7 +2442,7 @@ class ContinuousVoiceListener:
             return {
                 "final_pass": "whisper",
                 "final_pass_notice": f"Parakeet model not found in {folder} (missing {', '.join(missing)}); "
-                "using Whisper.",
+                "using Whisper. Download it in Settings, Voice.",
             }
         loaded = getattr(self, "_parakeet_transcriber", None)
         error = getattr(loaded, "error", "") if loaded is not None else ""
@@ -3106,6 +3110,8 @@ class ContinuousVoiceListener:
         """The Parakeet final pass when it is chosen and its files are present, else None (Whisper is used)."""
         if getattr(self.config.voice, "final_pass", "whisper") != "parakeet":
             return None
+        if str(getattr(self.config.voice, "language", "auto")).casefold() not in {"auto", "en", "english"}:
+            return None  # Parakeet is English-only: another language set in Settings keeps Whisper
         from pilot.config import DATA_DIR
         from pilot.system.parakeet_asr import ParakeetTranscriber, model_dir
 
