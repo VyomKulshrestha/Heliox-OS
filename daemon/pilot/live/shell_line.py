@@ -380,7 +380,8 @@ FISH_SCRIPT = """# Heliox Live: Enter asks Heliox first, so a risky command (for
 status is-interactive; or exit
 __NCTEST__; or exit
 set -g __heliox_sock __SOCKET__
-# Enter waits for Heliox at most 1 second (-w 1); with Heliox not running it does not wait at all. The nc and its
+# Enter waits for Heliox's answer at most 1 second (-w 1), plus starting nc; with Heliox not running it does
+# not wait at all. The nc and its
 # flags are the ones Settings' test found working on this computer.
 set -g __heliox_nc __NCFLAGS__
 function __heliox_enter

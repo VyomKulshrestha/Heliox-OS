@@ -73,8 +73,8 @@ take it out:
 
 | Shell | What it does | What is added |
 |---|---|---|
-| zsh (5.3 or later; only 5.9 has been run) | A ZLE `line-pre-redraw` hook sends the line being edited each time it changes; Live checks it like a terminal field and the card comes at the first pause, before Enter. In a real zsh: **Run for real: fails** (see below) | One line in `~/.zshrc` (or `$ZDOTDIR/.zshrc`) that sources `~/.local/share/heliox/shell/heliox-live.zsh`, marked "# Heliox Live terminal check" |
-| fish | fish has no hook on every change, so Enter asks Heliox first (through `nc -U -w 1`: at most one second, and no wait at all when Heliox is not running); a risky command is not run, its warning is printed, and Enter again runs it. In a real fish: **Run for real** on Linux; on macOS not available yet (see below) | `~/.config/fish/conf.d/heliox-live.fish`; no start-up file is changed |
+| zsh (5.3 or later; only 5.9 has been run) | A ZLE `line-pre-redraw` hook sends the line being edited each time it changes; Live checks it like a terminal field and the card comes at the first pause, before Enter. In a real zsh: **Run for real** on ubuntu and macOS, zsh 5.9 (see below) | One line in `~/.zshrc` (or `$ZDOTDIR/.zshrc`) that sources `~/.local/share/heliox/shell/heliox-live.zsh`, marked "# Heliox Live terminal check" |
+| fish | fish has no hook on every change, so Enter asks Heliox first (through `nc -U -w 1`: at most one second for Heliox plus the time to start `nc`, measured at 1.01 s on ubuntu and 1.13 s on macOS against a Heliox that never answers, and no wait at all when Heliox is not running); a risky command is not run, its warning is printed, and Enter again runs it. In a real fish: **Run for real** on ubuntu (fish 3.7, netcat-openbsd) and macOS (fish 4.9, the system's own nc) (see below) | `~/.config/fish/conf.d/heliox-live.fish`; no start-up file is changed |
 | bash | Nothing yet. Plain bash only offers hooks after Enter, too late; with ble.sh installed it could work like zsh, which is not built | Nothing |
 
 The line travels over a Unix socket in a folder only the person can open (mode 0700, owned by them; Heliox refuses a
@@ -86,13 +86,22 @@ first token-looking string onwards. It is kept in memory for 3 seconds and never
 What has been shown: **Run for real**, the socket folder 0700 and the socket 0600, and the socket gone once Heliox
 closes it (`platform-readers` on ubuntu, `tests/platform_real/shell_integration_check.py`). **Fakes only**, the
 decisions above (what is never sent, the 3 seconds) on all three systems, and the socket opening and closing with
-Live in unit tests on Linux and macOS. **Run for real** on ubuntu with fish 3.7 and netcat-openbsd (the
-`shell-check` workflow, 12 November): Enter on a risky command prints Heliox's warning and does not run it, Enter
-again runs it, an ordinary command runs at once. **Run for real: fails**: the zsh hook sent nothing in a real zsh on
-ubuntu or macOS (the socket was reachable; `add-zle-hook-widget` does nothing unless `zsh/zle` is already loaded,
-which the hook now loads itself, not yet re-run); fish on macOS, where the system's nc was called with a flag it
-lacks (the hook now uses the flags Settings' test found working, not yet re-run). Sudo and password prompts:
-**Not tested**.
+Live in unit tests on Linux and macOS. **Run for real** on ubuntu and macOS, all 26 checks passing on both
+(the `shell-check` workflow, run 43209835182 on e51aead, 12 November; `tests/platform_real/shell_integration_check.py` and `shell_prompts_check.py`):
+
+- zsh 5.9: the line being typed reaches Heliox before Enter; a line started with a space is never sent and clears
+  the last one; what is typed inside `vared`, at `read -s` and at a program's own password prompt is never sent
+  (Python's `getpass` stands in for sudo, which asks the runner for no password); with Live off nothing is taken;
+  `zsh/net/socket` and `zsh/zselect` load in `/bin/zsh` on macOS and `/usr/bin/zsh` on ubuntu.
+- fish 3.7 (ubuntu) and 4.9 (macOS): Settings' test offers Add; Enter on a risky command prints Heliox's warning and
+  does not run it; Enter again runs it; an ordinary command runs at once.
+- Both: the dry run reaches Heliox (zsh, and fish with netcat-openbsd and with Apple's own nc); fish with no nc is
+  refused and says what to do; with Heliox hung Enter runs the command after 1.01 s (ubuntu) and 1.13 s (macOS),
+  and with Heliox not running after 0.05 s and 0.15 s; zsh keeps taking keys with 2 MB of lines nobody reads; the
+  socket is gone once Heliox closes it.
+
+Earlier runs found and fixed: the zsh hook stayed silent where no start-up file had loaded `zsh/zle`, and fish on
+macOS called Apple's nc with a flag it lacks (the dry run now finds the flags by trying).
 
 **kitty and WezTerm, read directly.** For people who would rather not change their shell, kitty and WezTerm are
 read directly (`daemon/pilot/live/terminal_text.py`), while one of them is the window in front, Live is on and
@@ -119,12 +128,9 @@ Heliox is meant never to hold zsh either: the hook writes only when the socket i
 0`), and otherwise drops the line and leaves Heliox alone for 30 seconds. Settings states fish's bound, and what the
 test measured.
 
-What has been shown: **Run for real** only in part. On the development machine, in WSL, netcat-openbsd called
-directly with the hook's flags gave up at the 1 s bound on a socket that never answers, answered at once from
-Heliox's socket, and was refused at once by a dead one. The dry run, the hung and dead Heliox through a real fish,
-and zsh against a Heliox that stopped reading (`shell_integration_check.py`): **Not tested** yet; they are in the
-check whose first corrected run is pending. The decisions: **Fakes only** (unit tests, including an `nc` that never
-gives up).
+What has been shown: **Run for real** on ubuntu and macOS (the `shell-check` workflow, run 43209835182 on e51aead, 12 November): the dry run, the hung and dead Heliox through
+a real fish, and zsh against a Heliox that stopped reading, as listed above. The decisions: **Fakes only** (unit
+tests, including an `nc` that never gives up).
 
 Speech heard near the microphone but not said to Heliox (in an open conversation, a sentence for someone else)
 reaches Live only as text and is not checked: no card, nothing kept, never stored as conversation or sent to any

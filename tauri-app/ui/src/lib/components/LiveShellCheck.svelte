@@ -41,7 +41,7 @@
   /** fish's Enter asks Heliox first: how long it can wait, said plainly. */
   export function boundSentence(ready: ShellReady | undefined, boundMs = 1000): string {
     const bound = boundMs >= 1000 ? `${boundMs / 1000} second${boundMs === 1000 ? "" : "s"}` : `${boundMs} ms`;
-    let text = `Enter asks Heliox before running each command, and waits at most ${bound}, only while Live is on. If Heliox is not running, Enter does not wait at all.`;
+    let text = `Enter asks Heliox before running each command, and waits at most ${bound} for its answer, plus the moment it takes to start nc, only while Live is on. If Heliox is not running, Enter does not wait at all.`;
     if (ready?.answered_ms != null)
       text += ` In the test just now Heliox answered in ${ready.answered_ms} ms, counting the time to start fish.`;
     if (ready?.silent_ms != null)
