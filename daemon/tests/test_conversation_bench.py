@@ -259,11 +259,36 @@ def test_a_scenario_is_scored_against_its_expectations():
 
 
 def test_a_split_sentence_and_a_wrong_route_fail():
-    m = tl.measure(tl.parse(run_events()))
-    m.transcripts = ["Hey Heliox", "what can I say?"]
+    events = run_events() + [ev(3.5, tl.DISPATCH, "say")]  # the second half went on as a turn of its own
+    m = tl.measure(tl.parse(events))
     outcome = scoring.score(scenario(expect={"woken": True, "route": "planner"}), m)
     assert not outcome.passed
     assert ("1.3", True) in outcome.contributions
+
+
+def test_a_split_is_judged_by_what_ran_not_by_transcripts():
+    two_transcripts = tl.measure(tl.parse([
+        ev(1, tl.TRANSCRIPT, "Hey Heliox, remind me to"), ev(3, tl.TRANSCRIPT, "call the bank."),
+        ev(3.1, tl.DISPATCH, "remind me to call the bank."), ev(3.2, tl.PLANNER, "remind me to call the bank"),
+    ]))  # fmt: skip
+    assert len(two_transcripts.transcripts) == 2 and not scoring.split(two_transcripts, 1, "remind me to call the bank")
+    withdrawn = tl.measure(tl.parse([
+        ev(1, tl.DISPATCH, "remind me too"), ev(1.1, tl.PLANNER, "remind me too"),
+        ev(3, tl.WITHDRAW, "remind me too call the bank", status="withdrawn"),
+        ev(3.05, tl.PLANNER_CANCELLED, "remind me too"),
+        ev(3.1, tl.DISPATCH, "remind me too call the bank", joined=True), ev(3.2, tl.PLANNER, "remind me too call the bank"),
+    ]))  # fmt: skip
+    assert (withdrawn.turns, withdrawn.kept_actions, withdrawn.withdrawn) == (1, 1, 1)
+    assert not scoring.split(withdrawn, 1, "remind me to call the bank")
+    too_late = tl.measure(tl.parse([
+        ev(1, tl.DISPATCH, "close Chrome"), ev(1.1, tl.PLANNER, "close Chrome"),
+        ev(3, tl.WITHDRAW, "close Chrome it's slow", status="too_late"), ev(3.1, tl.DISPATCH, "it's slow"),
+    ]))  # fmt: skip
+    assert scoring.split(too_late, 1, "close Chrome, it's slow")
+    stop = tl.measure(tl.parse([ev(1, tl.DISPATCH, "the radio,"), ev(2, tl.DISPATCH, "Stop")]))
+    assert scoring.split(stop, 1, "He kept the radio, where it played") and not scoring.split(
+        tl.measure(tl.parse([ev(1, tl.DISPATCH, "Stop")])), 1, "Wait, stop."
+    )
 
 
 def test_per_model_expectations_override():

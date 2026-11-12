@@ -106,6 +106,14 @@ def _spoken_ok(expected: Any, spoken: list[str]) -> bool:
     return any(str(expected).casefold() in s.casefold() for s in spoken)
 
 
+def split(m: Measures, sentences: int, said: str) -> bool:
+    """A sentence cut in two, judged by what the product did, not by how many transcripts the recognisers wrote:
+    more turns went on than sentences were said (withdrawn turns do not count), more than one plan ran to the end
+    for one sentence, or a "Stop" was taken that the person did not say."""
+    said_stop = any(w.strip(" .,!").casefold() == "stop" for w in re.split(r"[,.]", said))
+    return m.turns > sentences or m.kept_actions > sentences or (m.stop_taken and not said_stop)
+
+
 def expectations_for(scenario: Scenario, model: str) -> dict[str, Any]:
     """The scenario's expectations with any per-model override (``expect_by_model``) applied."""
     expect = dict(scenario.expect)
@@ -150,9 +158,9 @@ def score(scenario: Scenario, measures: Measures, *, condition: str = "as-record
         contrib.append(("2.1c", m.follow_up and m.route not in ("ignored", "overheard")))
     if scenario.voice == "real" and said and scenario.set in ("understanding", "turn_taking"):
         sentences = sum(1 for s in scenario.steps if s.say)
-        contrib.append(("1.3", len(m.transcripts) > sentences))
+        contrib.append(("1.3", split(m, sentences, said)))
     elif scenario.set == "turn_taking" and expect.get("one_turn"):
-        contrib.append(("1.3", len(m.transcripts) > 1))
+        contrib.append(("1.3", split(m, 1, said)))
     if "card" in expect and expect["card"]:
         contrib.append(("3.1", m.card))
     addressed = scenario.set != "not_addressed"  # speech for someone else is scored by 2.2 alone

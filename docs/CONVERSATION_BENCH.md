@@ -365,6 +365,29 @@ to a colleague silent).
 The bench now logs a withdrawal (with the server's answer and the gap), a cancelled planner call, and a turn the
 server starts itself; before, it counted the cancelled first half as an action and missed the joined turn.
 
+## Split sentences on e8bf67c (synthetic voice, counts only)
+
+On e8bf67c the listener waits up to 2.5 s for the rest of a sentence that sounds unfinished before it ends the
+turn. On the four pause scenarios ("Hey Heliox, remind me to | call the bank tomorrow morning", 0.6 to 2.0 s) one
+dispatch reaches the server carrying the whole sentence, nothing is withdrawn, one planner call runs, and "I'm
+working out the steps." is said once. All 23 comma lines end as one sentence by the 1.3 rule below: 8 joined in
+the listener before any dispatch, 15 joined by withdrawal (13 once, two three-part sentences twice). No line led to
+two kept actions or to a "Stop".
+
+The withdrawal comes after Heliox has already answered the first half. In all 15 withdrawn lines a reply to the
+first half had been chosen; the withdrawal stopped its playback within 0.05 s, but in 3 lines between 0.07 and
+0.29 s of that reply had already played. These runs were taken while the machine was busy (Whisper took 4 to 8 s
+on a half), so on a quiet machine the first-half reply starts sooner and more of it is heard.
+
+The wait costs nothing on recorded speech: none of the 994 whole utterances in the replay cache sounds unfinished
+(merged words, Parakeet alone or Whisper alone), so no recorded request waits 2.5 s for a rest that never comes.
+Of 270 sentences in the bench, corpus and recorder sets, only the deliberate half "Hey Heliox, remind me to" does.
+
+Scorecard 1.3 now counts what the product did with the words, not how many transcripts the recognisers wrote. A
+sentence counts as split when more turns went on than sentences were said (withdrawn turns do not count, turns the
+server joined do), when more plans ran to the end than sentences were said, or when Heliox took a "Stop" the person
+did not say.
+
 ## Recording your own voice
 
 The bench needs more of your own voice before two lines mean anything: how many words Heliox gets wrong, and how

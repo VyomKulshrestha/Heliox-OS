@@ -112,6 +112,12 @@ class Measures:
     approval: str = ""
     stored: int = 0
     used_model: bool = False
+    # What the product did with the words: turns that went on (listener dispatches and turns the server started
+    # itself, less withdrawn ones), plans that ran to the end (planner calls less cancelled ones), a "Stop" taken.
+    turns: int = 0
+    kept_actions: int = 0
+    withdrawn: int = 0
+    stop_taken: bool = False
 
 
 def measure(events: list[Event]) -> Measures:
@@ -163,6 +169,10 @@ def measure(events: list[Event]) -> Measures:
     m.approval = approvals[-1].detail if approvals else ""
     m.stored = sum(int(e.data.get("rows", 0)) for e in all_of(events, STORED))
     m.used_model = bool(all_of(events, PLANNER))
+    m.withdrawn = sum(1 for e in all_of(events, WITHDRAW) if e.data.get("status") == "withdrawn")
+    m.turns = max(0, len(all_of(events, DISPATCH)) - m.withdrawn)
+    m.kept_actions = max(0, len(all_of(events, PLANNER)) - len(all_of(events, PLANNER_CANCELLED)))
+    m.stop_taken = any(e.detail.strip(" .,!").casefold() == "stop" for e in all_of(events, DISPATCH))
     m.route = _route(events)
     return m
 
