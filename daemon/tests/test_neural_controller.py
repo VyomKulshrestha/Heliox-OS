@@ -44,6 +44,23 @@ def _safe_assessment(*, requires_confirmation: bool = False) -> PlanRiskAssessme
     )
 
 
+class _Clock:
+    """The gate's monotonic clock in these tests: it moves only when a test says time has passed, so an intent's
+    expiry and the cancellation window never depend on how fast the machine runs the test."""
+
+    def __init__(self) -> None:
+        self.now_ns = time.monotonic_ns()
+
+    def __call__(self) -> int:
+        return self.now_ns
+
+
+async def _elapse(controller: NeuralController, ns: int) -> None:
+    """Let ``ns`` of the gate's time pass, and let other tasks run once, as the real pause did."""
+    controller.test_clock.now_ns += ns  # type: ignore[attr-defined]
+    await asyncio.sleep(0)
+
+
 async def _controller(
     scope: NeuralScope,
     *,
@@ -54,10 +71,12 @@ async def _controller(
     signer = NeuralIntentSigner(b"k" * 32)
     session_id = uuid.uuid4()
     goals = NeuralGoalRegistry()
+    clock = _Clock()
     gate = NeuralIntentGate(
         signer=signer,
         safe_goals={command_id: command_id for command_id in goals.command_ids},
         config=NeuralIntentGateConfig(cancellation_window_ns=1, cooldown_ns=1),
+        monotonic_ns=clock,
     )
     executor = AsyncMock()
     controller = NeuralController(
@@ -80,8 +99,9 @@ async def _controller(
         channel_names=("O1", "Oz", "O2"),
         reference="synthetic-common-reference",
         sequence_start=0,
-        started_monotonic_ns=time.monotonic_ns(),
+        started_monotonic_ns=clock(),
     )
+    controller.test_clock = clock  # type: ignore[attr-defined]
     await controller.connect(descriptor)
     await controller.begin_calibration(session_id)
     await controller.finish_calibration(session_id, calibration_id=CALIBRATION, subject_key=SUBJECT)
@@ -99,7 +119,7 @@ async def _intent(
     command_id: str | None = None,
 ) -> NeuralIntentV1:
     status = await controller.status()
-    now = time.monotonic_ns()
+    now = controller.test_clock()  # type: ignore[attr-defined]
     unsigned = NeuralIntentV1(
         session_id=session_id,
         intent_id=uuid.uuid4(),
@@ -148,7 +168,7 @@ async def test_navigation_commit_never_reaches_executor() -> None:
         scope=NeuralScope.NAVIGATE,
     )
     preview = await controller.preview(intent)
-    await asyncio.sleep(0.02)
+    await _elapse(controller, 20_000_000)
     result = await controller.commit(
         uuid.UUID(str(preview["preview_id"])),
         expected_revision=int(preview["state_revision"]),
@@ -178,7 +198,7 @@ async def test_safe_desktop_goal_rechecks_world_model_and_uses_neural_gateway() 
     ]
     with patch("pilot.neural.controller.assess_plan_risk", return_value=_safe_assessment()) as assess:
         preview = await controller.preview(intent)
-        await asyncio.sleep(0.02)
+        await _elapse(controller, 20_000_000)
         result = await controller.commit(
             uuid.UUID(str(preview["preview_id"])),
             expected_revision=int(preview["state_revision"]),
@@ -213,7 +233,7 @@ async def test_safe_desktop_select_resolves_only_the_daemon_owned_focused_goal()
     with patch("pilot.neural.controller.assess_plan_risk", return_value=_safe_assessment()):
         preview = await controller.preview(intent)
         assert preview["resolved_command_id"] == focused
-        await asyncio.sleep(0.02)
+        await _elapse(controller, 20_000_000)
         result = await controller.commit(
             uuid.UUID(str(preview["preview_id"])),
             expected_revision=int(preview["state_revision"]),
@@ -251,7 +271,7 @@ async def test_explicitly_staged_task_launches_autonomous_pipeline_from_neural_s
     assert preview["staged_task"]["goal"] == task["goal"]
     assert preview["requires_non_neural_approval"] is False
 
-    await asyncio.sleep(0.02)
+    await _elapse(controller, 20_000_000)
     result = await controller.commit(
         uuid.UUID(str(preview["preview_id"])),
         expected_revision=int(preview["state_revision"]),
@@ -288,7 +308,7 @@ async def test_failed_staged_task_dispatch_is_visible_and_kept_for_retry() -> No
         scope=NeuralScope.SAFE_DESKTOP,
     )
     preview = await controller.preview(intent)
-    await asyncio.sleep(0.02)
+    await _elapse(controller, 20_000_000)
 
     result = await controller.commit(
         uuid.UUID(str(preview["preview_id"])),
@@ -396,7 +416,7 @@ async def test_controller_audit_links_accepted_window_to_executed_plan(tmp_path)
     ]
     with patch("pilot.neural.controller.assess_plan_risk", return_value=_safe_assessment()):
         preview = await controller.preview(intent)
-        await asyncio.sleep(0.02)
+        await _elapse(controller, 20_000_000)
         result = await controller.commit(
             uuid.UUID(str(preview["preview_id"])),
             expected_revision=int(preview["state_revision"]),
@@ -466,7 +486,7 @@ async def test_simultaneous_cancel_after_preview_disarms_before_commit() -> None
         scope=NeuralScope.NAVIGATE,
     )
     preview = await controller.preview(intent)
-    await asyncio.sleep(0.02)
+    await _elapse(controller, 20_000_000)
     with pytest.raises(NeuralControlError, match="cancellation disarmed"):
         await controller.commit(
             uuid.UUID(str(preview["preview_id"])),
