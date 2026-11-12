@@ -122,6 +122,27 @@ def speaks_english(language: str, system_locale: str | None = None) -> bool:
     return not folded or folded.startswith(("en", "english", "c.", "posix")) or folded == "c"
 
 
+def _host_name(url: str) -> str:
+    """Where a download comes from, as a person would say it: "GitHub", "Hugging Face", else the bare host name
+    (a mirror or a company server: "models.example.com")."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").casefold()
+    if not host:
+        return ""
+    if host == "github.com" or host.endswith((".github.com", ".githubusercontent.com")):
+        return "GitHub"
+    if host == "huggingface.co" or host.endswith(".huggingface.co") or host.endswith(".hf.co"):
+        return "Hugging Face"
+    return host.removeprefix("www.")
+
+
+def _joined(names: list[str]) -> str:
+    if len(names) <= 2:
+        return " and ".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
 def recommended(language: str, data_dir: Path | None = None, *, path: Path = MANIFEST) -> dict[str, Any]:
     """The set of speech models recommended for this language setting, its download size and what is still
     missing: {"key", "title", "why", "ids", "download_bytes", "missing", "missing_bytes"}."""
@@ -142,6 +163,16 @@ def recommended(language: str, data_dir: Path | None = None, *, path: Path = MAN
         return False
 
     missing = [m for m in models if not present(m)]
+    partial = 0
+    for m in missing:
+        folder = model_path(m, data_dir)
+        partial += sum(f.stat().st_size for f in folder.glob("*.part")) if folder.is_dir() else 0
+    hosts: list[str] = []
+    for m in models:
+        for url in [m.archive_url, *(f.url for f in m.files)]:
+            host = _host_name(url)
+            if host and host not in hosts:
+                hosts.append(host)
     return {
         "key": key,
         "title": chosen.get("title", ""),
@@ -150,6 +181,10 @@ def recommended(language: str, data_dir: Path | None = None, *, path: Path = MAN
         "download_bytes": sum(m.download_bytes for m in models),
         "missing": [m.id for m in missing],
         "missing_bytes": sum(m.download_bytes for m in missing),
+        "partial_bytes": partial,  # already fetched by a stopped download: the next one continues from here
+        "from": _joined(hosts),
+        "where": (f"Downloaded once from {_joined(hosts)}; t" if hosts else "Downloaded once; t")
+        + "he models stay on this computer and recognise your speech here.",
     }
 
 

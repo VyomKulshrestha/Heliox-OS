@@ -335,3 +335,40 @@ def test_the_recommended_set_follows_the_language_setting():
     assert speech_models.speaks_english("auto", "C")  # a bare Linux container: nothing says otherwise
     assert not speech_models.speaks_english("auto", "de_DE")
     assert not speech_models.speaks_english("auto", "German_Germany")
+
+
+def test_the_recommended_set_says_where_it_comes_from_and_counts_a_stopped_download(tmp_path):
+    offer = speech_models.recommended("en", tmp_path)
+    assert offer["from"] == "GitHub and Hugging Face" and "stay on this computer" in offer["where"]
+    assert offer["partial_bytes"] == 0
+    parakeet = speech_models.BY_ID["parakeet-tdt-0.6b-v2-int8"]
+    folder = speech_models.model_path(parakeet, tmp_path)
+    folder.mkdir(parents=True)
+    (folder / "download.tar.bz2.part").write_bytes(b"x" * 1234)  # what Stop leaves behind
+    assert speech_models.recommended("en", tmp_path)["partial_bytes"] == 1234
+
+
+def test_a_mirror_or_company_server_is_named_by_its_host_and_the_sentence_has_no_hole(tmp_path, monkeypatch):
+    import json
+
+    mirror = SpeechModel(
+        id="mirror-model", title="Mirror (Whisper base)", purpose="", folder="mirror", licence="MIT", source="mirror",
+        languages=("en",),
+        files=(ModelFile("model.bin", 10, "0" * 64, "https://models.example.com/whisper/model.bin"),),
+    )  # fmt: skip
+    bare = SpeechModel(
+        id="bare-model", title="Bare", purpose="", folder="bare", licence="MIT", source="?", languages=("en",),
+        files=(ModelFile("model.bin", 10, "0" * 64, ""),),
+    )  # fmt: skip
+    monkeypatch.setitem(speech_models.BY_ID, mirror.id, mirror)
+    monkeypatch.setitem(speech_models.BY_ID, bare.id, bare)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"recommended": {"en": {"ids": ["mirror-model"]}, "other": {"ids": ["bare-model"]}}})
+    )
+    offer = speech_models.recommended("en", tmp_path, path=manifest)
+    assert offer["from"] == "models.example.com"
+    assert offer["where"].startswith("Downloaded once from models.example.com; the models stay on this computer")
+    nowhere = speech_models.recommended("de", tmp_path, path=manifest)  # no URL at all
+    assert nowhere["from"] == "" and nowhere["where"].startswith("Downloaded once; the models stay")
+    assert "from ;" not in nowhere["where"] and "  " not in nowhere["where"]

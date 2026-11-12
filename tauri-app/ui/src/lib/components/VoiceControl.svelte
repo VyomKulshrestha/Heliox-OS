@@ -240,21 +240,77 @@
   // No speech model on this computer: the voice bar offers the set recommended for the language setting, with its
   // size. Nothing downloads until the person presses the button and then confirms; the full list is in Settings.
   let modelsNeeded = $state(false);
-  let modelOffer = $state<{ ids: string[]; bytes: number } | null>(null);
+  let modelOffer = $state<{ ids: string[]; bytes: number; left: number; where: string } | null>(null);
   let confirmingDownload = $state(false);
+  // The offer's download under way: progress per model, and Stop (the partial is kept; the offer then continues it).
+  let offerProgress = $state<Record<string, { received: number; total: number; state: string }>>({});
+  let offerRunning = $state(false);
   function openSpeechModels() {
     window.dispatchEvent(new CustomEvent("heliox:open-settings", { detail: { section: "voice-models" } }));
   }
   function offerSize(bytes: number): string {
     return `${Math.max(1, Math.round(bytes / 1_048_576))} MB`;
   }
+  // After a stop, a failure or no answer: the offer again, for what is left (the daemon keeps the partial file).
+  function offerAgain(message: string) {
+    offerRunning = false;
+    const offer = modelOffer;
+    if (offer) {
+      const done = Object.values(offerProgress).reduce((sum, p) => sum + (p.received || 0), 0);
+      modelOffer = { ...offer, left: Math.max(0, offer.bytes - done) };
+    }
+    if (message) showDeviceNotice(message, 8000);
+  }
   async function downloadOffer() {
     const offer = modelOffer;
     confirmingDownload = false;
     if (!offer) return;
-    modelsNeeded = false;
-    showDeviceNotice(`Downloading ${offerSize(offer.bytes)} of speech models; progress is in Settings, Voice.`, 8000);
-    for (const id of offer.ids) await call("speech_model_download", { id }); // the daemon fetches them one at a time
+    offerRunning = true;
+    try {
+      for (const id of offer.ids) {
+        // The daemon fetches them one at a time; a second one waits its turn.
+        const result = await call<{ status?: string; message?: string }>("speech_model_download", { id });
+        if (result?.status === "error") {
+          offerAgain(result.message || "The download could not start.");
+          return;
+        }
+      }
+    } catch {
+      offerAgain("Heliox did not answer, so the download did not start. Try again in a moment.");
+    }
+  }
+  async function stopOffer() {
+    const offer = modelOffer;
+    if (!offer) return;
+    try {
+      for (const id of offer.ids) await call("speech_model_cancel", { id }); // the active one stops, waiting ones drop
+      offerAgain("");
+    } catch {
+      offerAgain("Heliox did not answer; the download may still be running. Settings, Voice shows it.");
+    }
+  }
+  const offerHandler = (method: string, params: unknown) => {
+    if (method !== "speech_model_progress" || !modelOffer) return;
+    const update = params as { id: string; received: number; total: number; state: string; message?: string };
+    if (!modelOffer.ids.includes(update.id)) return;
+    offerProgress = { ...offerProgress, [update.id]: update };
+    const states = modelOffer.ids.map((id) => offerProgress[id]?.state);
+    if (states.every((state) => state === "ready")) {
+      offerRunning = false;
+      modelsNeeded = false;
+      showDeviceNotice("Speech models ready.", 6000);
+    } else if (update.state === "failed") {
+      offerAgain(update.message || "The download stopped.");
+    } else if (update.state === "cancelled") {
+      // Stopped here or in Settings, Voice: the offer comes back for what is left.
+      offerAgain(offerRunning ? "Download stopped. It continues from here next time." : "");
+    }
+  };
+  function offerPercent(): number {
+    const offer = modelOffer;
+    if (!offer || !offer.bytes) return 0;
+    const received = Object.values(offerProgress).reduce((sum, p) => sum + (p.received || 0), 0);
+    return Math.min(100, Math.round((100 * received) / offer.bytes));
   }
   async function acceptInputOffer() {
     const offer = inputOffer;
@@ -321,8 +377,17 @@
     }
     if (status === "recogniser_missing") {
       showDeviceNotice(String(payload.message ?? "") || "Speech recognition needs a model.");
-      const offer = payload.recommended as { missing?: string[]; missing_bytes?: number } | null | undefined;
-      modelOffer = offer?.missing?.length ? { ids: offer.missing, bytes: Number(offer.missing_bytes ?? 0) } : null;
+      const offer = payload.recommended as
+        { missing?: string[]; missing_bytes?: number; partial_bytes?: number; where?: string } | null | undefined;
+      const bytes = Number(offer?.missing_bytes ?? 0);
+      modelOffer = offer?.missing?.length
+        ? {
+            ids: offer.missing,
+            bytes,
+            left: Math.max(0, bytes - Number(offer.partial_bytes ?? 0)),
+            where: String(offer.where ?? ""),
+          }
+        : null;
       modelsNeeded = true;
       return;
     }
@@ -400,12 +465,14 @@
   };
 
   onNotification(voiceStatusHandler);
+  onNotification(offerHandler);
   onDestroy(() => {
     if (captionTimer) clearTimeout(captionTimer);
     if (preparingTimer) clearTimeout(preparingTimer);
     if (replyTimer) clearTimeout(replyTimer);
     if (deviceTimer) clearTimeout(deviceTimer);
     offNotification(voiceStatusHandler);
+    offNotification(offerHandler);
     window.removeEventListener("heliox:voice-command-request", handleVoiceCommandRequest);
     if (listenerHealthTimer) clearInterval(listenerHealthTimer);
   });
@@ -613,16 +680,23 @@
       {#if deviceNotice}
         <span class="holding">{deviceNotice}</span>
       {/if}
-      {#if modelsNeeded && modelOffer && confirmingDownload}
+      {#if modelsNeeded && modelOffer && offerRunning}
+        <span class="holding" aria-live="polite">Downloading speech models… {offerPercent()}%</span>
+        <button type="button" class="input-offer" onclick={stopOffer}>Stop</button>
+      {:else if modelsNeeded && modelOffer && confirmingDownload}
         <button type="button" class="input-offer" onclick={downloadOffer}>
-          Yes, download {offerSize(modelOffer.bytes)}
+          Yes, download {offerSize(modelOffer.left)}
         </button>
         <button type="button" class="input-offer" onclick={() => (confirmingDownload = false)}>Not now</button>
+        {#if modelOffer.where}<span class="holding">{modelOffer.where}</span>{/if}
       {:else if modelsNeeded && modelOffer}
         <button type="button" class="input-offer" onclick={() => (confirmingDownload = true)}>
-          Download the recommended speech models ({offerSize(modelOffer.bytes)})
+          {modelOffer.left < modelOffer.bytes ? "Continue downloading" : "Download"} the recommended speech models ({offerSize(
+            modelOffer.left,
+          )})
         </button>
         <button type="button" class="input-offer" onclick={openSpeechModels}>Choose</button>
+        {#if modelOffer.where}<span class="holding">{modelOffer.where}</span>{/if}
       {:else if modelsNeeded}
         <button type="button" class="input-offer" onclick={openSpeechModels}>Download a speech model</button>
       {/if}

@@ -468,7 +468,10 @@ only if all of these hold:
   where the old 30 s window let a room in);
 - it did not begin while Heliox was still talking, unless it is a control word ("Stop", "Wait");
 - it is plausibly meant for Heliox: a control word, a reply to the question Heliox just asked, or a direct request
-  or question (imperative, or second person);
+  or question (imperative, or second person), or, within 4 seconds of Heliox's answer, a short elliptical follow-up
+  on it: a repeat or shorter phrase the conversation layer answers in code ("again", "say that again", "shorter",
+  "in short") or a continuation of at most six words starting with "and", "or", "what about", "how about" or
+  "what if" ("And tomorrow?", "What about the second one?");
 - it is not third-person talk, narration ("So then we went...", "I'll send Priya the deck") or a monologue of more
   than 8 seconds of voice.
 A running task the person started, or an approval waiting, keeps the conversation open for control words and
@@ -479,6 +482,15 @@ the conversation layer says one short "Sorry?" at most per conversation, sends i
 calls `note_not_understood()`, which closes the window. Only a confidently addressed utterance keeps the
 conversation open. After 20 seconds without one the conversation is closed and the wake phrase is needed again.
 During a call the conversation is closed and nothing is taken.
+
+**Other languages.** The wake phrase and the microphone button work in any language. A follow-up without the
+wake phrase is taken only when the rule can read it, and it reads English (imperatives, question starts, narration),
+so in another language a follow-up is more often answered with "Sorry?" or not taken. One part needs no words: a
+short answer (at most 4 seconds of voice) that starts within 2 seconds of a question Heliox asked, and did not begin
+over Heliox's voice, is a reply in any language ("Ja, die blaue Datei.", "हाँ, नीली वाली फ़ाइल।", "はい、青いほうです。"),
+unless it is a line Whisper writes from noise ("Thanks for watching.", one word over and over): right after Heliox's
+question is when noise or Heliox's own voice through open speakers is most likely to be read as words.
+Control words ("Stop", "Wait") are English only; talking over Heliox for a moment stops it in any language.
 
 **Overheard speech** goes only to Heliox Live, marked not addressed, which gives silent cards at most. It is never
 stored as conversation and never sent to a cloud model.
@@ -497,11 +509,20 @@ unless someone opened the conversation.
 `ContinuousVoiceListener.note_not_understood()` after a "Sorry?".
 
 Measured on the Conversation Bench's transcript replay (2026-11-12, both recognisers' words cached through the
-listener's own calls): of 456 utterances not addressed to Heliox (the first six blocks of the 62 minutes), the old
-behaviour dispatched 186 and this rule 0, with nothing spoken. The owner's wake sentences were taken as before: desk
+listener's own calls): of the 981 utterances not addressed to Heliox (all 62 minutes), the old behaviour
+dispatched 397 and this rule 0, with nothing spoken; with the elliptical follow-ups added it is still 0 (none of the
+981 opens a window, and none matches the elliptical phrases at all). The owner's wake sentences were taken as before: desk
 microphone 4 of 4, Bluetooth headset 3 of 5 (in the two misses neither recogniser heard the wake phrase). The four
 "Wait, stop." cut-offs over Heliox stop it. Still to measure: the whole hour and the control words at audio level,
 and a real follow-up recording.
+
+**Not done: whose voice.** Nothing checks that a follow-up comes from the person who said the wake phrase. The
+cheapest evidence is the speech level of the follow-up against the wake utterance that opened the conversation: the
+same person at the same distance from a desk microphone should be within a few decibels, a television or someone
+across the room usually not. None of the installed recognisers gives a speaker embedding, so anything stronger
+needs a download. Measuring the level rule needs recordings that do not exist yet: two people taking turns at one
+desk microphone (one addressing Heliox, the other talking to them), and a television or video playing in the room
+while the owner talks to Heliox, each on a desk microphone and a headset.
 
 ## 6. Ending the turn early (`early_turn_threshold`): measured and left off
 
@@ -529,3 +550,20 @@ Even with it off, 23 of the 159 longer corpus lines were cut at a pause, mostly 
 requests ("Close Chrome, it's eating all the memory.", "No, don't send it yet, I want Priya to read it first.",
 "Run the install command again and wait for it to finish."). These are synthetic voices, which pause at commas;
 whether people pause as long has not been measured, but a long request with a thinking pause can be cut today.
+
+**Holding when the words so far are unfinished** (measured, not adopted). The streaming recogniser writes no
+punctuation, so "the words end at a comma" cannot be read from its partial words. The hold that can be read was
+measured the same way, by lowering Smart Turn's answer when the partial words end on a word that cannot end a
+sentence, on the 49 synthetic addressed sentences and 159 corpus lines:
+
+| hold | addressed split | corpus lines split | finished sentences ended later | by |
+|---|---|---|---|---|
+| none (today) | 0 | 23 | 0 of 182 | - |
+| last word is an article, preposition, conjunction or possessive ("to", "and", "the", "my") | 0 | 15 | 35 of 182 (4 of 46 addressed) | 600 ms each |
+| wider list, with pronouns and modals ("it", "you", "can") | 0 | 14 | 49 of 173 | mean 179 ms, up to 2.1 s |
+| after 2 s of voice, end only at 0.95 | 0 | 20 | 24 of 177 | mean 132 ms, up to 2.1 s |
+
+The narrow list fixes 8 of the 23 cuts and costs 600 ms (one more Smart Turn check) on one long finished sentence in
+five, never on a sentence under 2 s. The cost comes from the streaming recogniser's words lagging the audio: at the
+400 ms check its last word is often one before the real last word. Not adopted; the next thing to measure is the same
+hold on the recogniser's flushed words at the check.

@@ -2009,7 +2009,9 @@
       <div class="setting-info">
         <span class="setting-label">Recognition language</span>
         <span class="setting-desc"
-          >Automatic supports multilingual speech; selecting a language can improve speed and accuracy.</span
+          >Automatic supports multilingual speech; selecting a language can improve speed and accuracy. "Hey Heliox" and
+          the microphone button work in every language. Replies without the wake phrase are read in English; in another
+          language Heliox takes a short answer right after its own question, otherwise say "Hey Heliox" again.</span
         >
       </div>
       <select

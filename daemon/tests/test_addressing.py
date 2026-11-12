@@ -82,10 +82,11 @@ def test_a_follow_up_soon_after_heliox_spoke_needs_no_wake_phrase():
     rule.heliox_finished(asked=False)
     clock.now += 2
     decision = rule.decide(heard("And tomorrow?", clock.now))
-    assert not decision.act  # third-person-ish fragment: not a direct request
-    clock.now += 1
+    assert decision.act and decision.why == "follow-up: elliptical"  # right after Heliox's answer
+    rule.heliox_finished(asked=False)
+    clock.now += 6
     decision = rule.decide(heard("What about tomorrow?", clock.now))
-    assert decision.act and decision.why == "follow-up: question"
+    assert decision.act and decision.why == "follow-up: question"  # later: read as a question
 
 
 def test_after_the_window_the_wake_phrase_is_needed_again():
@@ -228,3 +229,96 @@ def test_a_word_or_two_over_heliox_is_a_stop_whatever_it_reads_as():
     decision = rule.decide(heard("Great score.", clock.now, heliox_was_speaking=True, voiced=0.74))
     assert decision.act and decision.command == "Stop" and decision.why == "cut-off"
     assert not rule.decide(heard("Great score.", clock.now, heliox_was_speaking=False, voiced=0.74)).act
+
+
+# ── other languages: the follow-up words are read in English; a quick short reply to a question needs no words ──
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["Ja, die blaue Datei.", "Sí, la segunda.", "हाँ, नीली वाली फ़ाइल।", "はい、青いほうです。"],
+)
+def test_a_quick_short_answer_to_heliox_s_question_is_a_reply_in_any_language(answer):
+    clock = Clock()
+    rule = Addressing(clock=clock)
+    rule.decide(Heard("Hey Heliox, open the file.", clock(), clock(), 1.5))
+    clock.now += 2.0
+    rule.heliox_finished(asked=True)  # Heliox: "Which file, the blue one or the red one?"
+    clock.now += 1.2
+    decision = rule.decide(Heard(answer, clock(), clock() + 1.4, 1.4))
+    assert decision.act and decision.why == "follow-up: reply"
+
+
+@pytest.mark.parametrize("answer", ["हाँ, नीली वाली फ़ाइल।", "はい、青いほうです。"])
+def test_the_word_free_reply_needs_heliox_s_question_a_quick_start_a_short_answer_and_a_clear_floor(answer):
+    def asked(after: float, voiced: float = 1.4, *, question: bool = True, over: bool = False):
+        clock = Clock()
+        rule = Addressing(clock=clock)
+        rule.decide(Heard("Hey Heliox, open the file.", clock(), clock(), 1.5))
+        clock.now += 2.0
+        rule.heliox_finished(asked=question)
+        clock.now += after
+        return rule.decide(Heard(answer, clock(), clock() + voiced, voiced, heliox_was_speaking=over))
+
+    assert asked(1.5).act
+    assert not asked(3.0).act  # not quick: the words would have to say it, and these are not read
+    assert not asked(1.0, voiced=6.0).act  # not short
+    assert not asked(1.0, question=False).act  # Heliox asked nothing
+    assert not asked(0.5, voiced=2.5, over=True).act  # began over Heliox's voice (longer than a cut-off)
+
+
+@pytest.mark.parametrize("noise", ["Thanks for watching.", "Thank you for watching!", "Open, open, open, open."])
+def test_a_line_whisper_invents_from_noise_is_never_a_quick_reply(noise):
+    from pilot.system.voice import looks_hallucinated
+
+    assert looks_hallucinated(noise)
+    clock = Clock()
+    rule = Addressing(clock=clock)
+    rule.decide(Heard("Hey Heliox, open the file.", clock(), clock(), 1.5))
+    clock.now += 2.0
+    rule.heliox_finished(asked=True)  # a question is open: the quick-reply window
+    clock.now += 0.5
+    assert not rule.decide(Heard(noise, clock(), clock() + 1.0, 1.0)).act
+
+
+# ── elliptical follow-ups right after Heliox's answer ──
+
+
+def answered(after: float, text: str, *, over: bool = False, in_call: bool = False, voiced: float = 1.2):
+    clock = Clock()
+    rule = Addressing(clock=clock)
+    rule.decide(heard("Hey Heliox, what's the weather today?", clock.now))
+    clock.now += 3
+    rule.heliox_finished(asked=False)  # Heliox answered; no question open
+    clock.now += after
+    return rule.decide(Heard(text, clock.now, clock.now + voiced, voiced, heliox_was_speaking=over, in_call=in_call))
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["And tomorrow?", "What about the second one?", "Shorter.", "In short.", "Once more.", "Again.", "Say that again.",
+     "How about Friday?", "Or the red one?"],
+)  # fmt: skip
+def test_a_short_elliptical_follow_up_right_after_heliox_s_answer_is_taken(text):
+    decision = answered(1.0, text)
+    assert decision.act and decision.why == "follow-up: elliptical"
+
+
+def test_an_elliptical_follow_up_is_not_taken_late_over_heliox_or_in_a_call():
+    assert not answered(6.0, "And tomorrow?").act  # later than 4 s: read as words, and "And ..." is narration
+    assert not answered(0.5, "And tomorrow?", over=True, voiced=2.0).act  # began over Heliox's voice
+    assert not answered(1.0, "And tomorrow?", in_call=True).act
+    assert not answered(1.0, "And then we went home after the movie.").act  # too long: narration
+    assert answered(6.0, "Say that again.").act  # later it still reads as a request ("Say ...")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Say that again.", "What did you say?", "Pardon?", "Repeat that, please.", "One more time.", "Do that again.",
+     "Run it again.", "Repeat my last task.", "Make it shorter.", "The gist.", "TL;DR", "Just the short version."],
+)  # fmt: skip
+def test_the_repeat_and_shorter_phrases_the_conversation_layer_answers_are_elliptical(text):
+    # The phrases pilot/conversation/followups.py answers in code (its AGAIN-like and SHORTER lists).
+    from pilot.system.addressing import elliptical_kind
+
+    assert elliptical_kind(text) in {"again", "shorter"}

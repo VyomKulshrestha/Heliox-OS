@@ -81,4 +81,56 @@ describe("Speech models in Settings", () => {
     await waitFor(() => expect(screen.getByText(/Check the internet connection/)).toBeTruthy());
     expect(await screen.findByRole("button", { name: "Download 460 MB" })).toBeTruthy();
   });
+
+  describe("the recommended set", () => {
+    const WHERE =
+      "Downloaded once from GitHub and Hugging Face; the models stay on this computer and recognise your speech here.";
+    function listWithRecommended(download: () => Promise<unknown>) {
+      mocks.call.mockImplementation(async (method: string) => {
+        if (method === "speech_models_list")
+          return {
+            status: "ok",
+            models: [{ ...PARAKEET, installed: false }],
+            recommended: {
+              title: "Recommended for English: Parakeet with Whisper base",
+              why: "Parakeet hears the words.",
+              ids: [PARAKEET.id],
+              missing: [PARAKEET.id],
+              missing_bytes: PARAKEET.download_bytes,
+              partial_bytes: 0,
+              where: WHERE,
+            },
+          };
+        if (method === "speech_model_download") return download();
+        return { status: "ok" };
+      });
+    }
+
+    it("says where it comes from and starts on one press", async () => {
+      listWithRecommended(async () => ({ status: "started" }));
+      render(SpeechModels);
+      const button = await screen.findByRole("button", { name: "Download · 460 MB" });
+      expect(screen.getByText(WHERE)).toBeTruthy();
+      await fireEvent.click(button);
+      expect(mocks.call).toHaveBeenCalledWith("speech_model_download", { id: PARAKEET.id });
+    });
+
+    it("a refusal is said under the model", async () => {
+      listWithRecommended(async () => ({ status: "error", message: "There is not enough free space." }));
+      render(SpeechModels);
+      await fireEvent.click(await screen.findByRole("button", { name: "Download · 460 MB" }));
+      await waitFor(() => expect(screen.getByText("There is not enough free space.")).toBeTruthy());
+    });
+
+    it("no answer from Heliox is said instead of an unhandled rejection", async () => {
+      listWithRecommended(async () => {
+        throw new Error("socket closed");
+      });
+      render(SpeechModels);
+      await fireEvent.click(await screen.findByRole("button", { name: "Download · 460 MB" }));
+      await waitFor(() =>
+        expect(screen.getByText("Heliox did not answer, so the download did not start. Try again.")).toBeTruthy(),
+      );
+    });
+  });
 });

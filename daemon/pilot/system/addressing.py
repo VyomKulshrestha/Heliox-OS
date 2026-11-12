@@ -12,6 +12,11 @@ just asked, or a direct request or question (imperative or second person). Third
 monologues do not count. A follow-up that might be for Heliox but is not clearly so gets one short "Sorry?" and does
 not keep the conversation open. Only a confidently addressed utterance keeps it open; CLOSE_SECONDS without one
 closes it, and a call closes it at once.
+
+Language: the wake phrase and the button work in any language. The words of a follow-up are read in English
+(imperatives, question starts, narration), so in another language a follow-up is more often "Sorry?" or nothing.
+One part needs no words: a short reply that starts within QUICK_REPLY_SECONDS of Heliox's own question, and did
+not begin over Heliox's voice, is a reply in any language ("Ja, die blaue.", "हाँ, नीली वाली", "はい、青いほう").
 """
 
 from __future__ import annotations
@@ -25,6 +30,10 @@ FOLLOW_UP_SECONDS = 8.0  # people answer within about a second; 8 s leaves room 
 CLOSE_SECONDS = 20.0  # no confidently addressed utterance for this long: the wake phrase is needed again
 MONOLOGUE_SECONDS = 8.0  # a follow-up with more voice than this is talk, not a reply
 CUT_OFF_SECONDS = 1.6  # a word or two said over Heliox's voice is "stop", whatever it reads as (voice.is_cut_off_stop)
+QUICK_REPLY_SECONDS = 2.0  # an answer to Heliox's question starts within this, in any language
+QUICK_REPLY_VOICE_SECONDS = 4.0  # and is short: an answer, not a story
+ELLIPTICAL_SECONDS = 4.0  # "and tomorrow?", "again", "shorter": said right after Heliox's answer, not later
+ELLIPTICAL_WORDS = 6  # "what about the second one?" is short; a sentence starting with "and" is narration
 EXACT_NAME = re.compile(r"^heliox(?:'s)?$", re.I)
 LOOSE_NAME = re.compile(r"^h[ei]l{1,2}[iy][a-z]{0,5}$", re.I)  # "Heliocs", "Helios", "Hilliox": recogniser spellings
 LEADS = {"hey", "hay", "hi", "hei", "okay", "ok", "oh", "here", "dear", "hello", "a", "eh", "ay"}
@@ -59,6 +68,38 @@ CONTROL = re.compile(
 # Acknowledgements are replies only as a whole short utterance: "Okay, thanks" is to Heliox, "okay so anyway we went
 # to lunch" is not.
 SHORT_REPLY = re.compile(r"^(?:yes|yeah|yep|sure|okay|ok|thanks|thank you|great|perfect|got it|sorry)\b", re.I)
+# Follow-ups on Heliox's last answer that read as talk out of context. The repeat and shorter phrases are the ones
+# the conversation layer answers in code (pilot/conversation/followups.py, AGAIN and SHORTER; copied, not imported:
+# importing pilot.conversation loads the whole layer; its WORDS_ONLY, EITHER and TASK_AGAIN together are AGAIN here).
+AGAIN = re.compile(
+    r"^(?:please )?(?:say (?:that|it) again|repeat (?:that|it)|repeat|again|once more|one more time|"
+    r"what did you say|what was that|come again|pardon|sorry what|do (?:that|it) again|run (?:that|it) again|"
+    r"repeat (?:the|my) last task)(?: please)?$"
+)
+SHORTER = re.compile(
+    r"^(?:please )?(?:shorter|make it shorter|say it shorter|in short|briefly|short version|the short version|"
+    r"just the short version|tl ?dr|give me the short version|the gist|just the gist)(?: please)?$"
+)
+CONTINUATION = re.compile(r"^(?:and|or|what about|how about|what if)\b")
+
+
+def _normalize(text: str) -> str:
+    return " ".join(re.sub(r"[^\w\s']", " ", text.casefold()).replace("'", " ").split())
+
+
+def elliptical_kind(text: str) -> str:
+    """ "again" or "shorter" (the conversation layer answers these in code), "continuation" for a short "and
+    tomorrow?" / "what about the second one?", or "" when it is neither."""
+    said = _normalize(text)
+    if AGAIN.match(said):
+        return "again"
+    if SHORTER.match(said):
+        return "shorter"
+    if CONTINUATION.match(said) and len(said.split()) <= ELLIPTICAL_WORDS:
+        return "continuation"
+    return ""
+
+
 NARRATION = re.compile(r"^(?:i|we|he|she|they|it|this|that|there|so|and|but|then|now|first|next|well)\b", re.I)
 
 
@@ -124,7 +165,7 @@ def _agrees(command: str, other_text: str) -> bool:
     return first in [m.group(0).casefold().split("'")[0] for m in _words(other_text)[:6]]
 
 
-def plausibly_addressed(text: str, *, question_open: bool) -> str:
+def plausibly_addressed(text: str, *, question_open: bool, elliptical: bool = True) -> str:
     """How a follow-up reads: "control", "reply", "request", "question" (confident), "unclear", or "talk"."""
     words = _words(text)
     if not words:
@@ -138,6 +179,8 @@ def plausibly_addressed(text: str, *, question_open: bool) -> str:
         return "control"
     if len(words) <= 3 and SHORT_REPLY.match(normalized):
         return "control"
+    if elliptical and elliptical_kind(text):
+        return "elliptical"  # taken only right after Heliox's answer (Addressing.decide); otherwise talk
     if question_open and len(words) <= 12:
         return "reply"
     if NARRATION.match(normalized):
@@ -239,6 +282,11 @@ class Addressing:
         if not self.conversation_open:
             return self._not_taken(heard, "no conversation open")
         kind = plausibly_addressed(heard.text, question_open=self.question_open)
+        if kind != "control" and self._quick_reply(heard):
+            kind = "reply"  # read without the words: any language
+        if kind == "elliptical" and not self._soon_after_answer(heard):
+            # Not right after Heliox's answer: read as any other follow-up ("What about tomorrow?" is a question).
+            kind = plausibly_addressed(heard.text, question_open=self.question_open, elliptical=False)
         if heard.heliox_was_speaking and kind != "control":
             return Decision(False, why="began while Heliox was talking")
         if not self.task_open:
@@ -246,13 +294,38 @@ class Addressing:
                 return self._not_taken(heard, "too long after Heliox spoke")
         if heard.voiced_seconds > MONOLOGUE_SECONDS and kind not in {"control"}:
             return Decision(False, why="talk, not a reply")
-        if kind in CONFIDENT:
+        if kind in CONFIDENT or kind == "elliptical":
             self._addressed()
             return Decision(True, heard.text.strip(" \t,.:;!?-"), f"follow-up: {kind}")
         if kind == "unclear" and not self._sorry_given:
             self._sorry_given = True
             return Decision(False, why="unclear", say_sorry=True)
         return Decision(False, why=f"follow-up: {kind}")
+
+    def _quick_reply(self, heard: Heard) -> bool:
+        """A short answer that starts right after Heliox's own question and not over its voice."""
+        if not self.question_open or heard.heliox_was_speaking or self.heliox_ended_at is None:
+            return False
+        if not 0 <= heard.started - self.heliox_ended_at <= QUICK_REPLY_SECONDS:
+            return False
+        text = heard.text.strip()
+        if not text:
+            return False
+        from pilot.system.voice import looks_hallucinated
+
+        if looks_hallucinated(text):
+            # Noise, or Heliox's own voice through open speakers, right after its question is when Whisper writes
+            # "Thanks for watching." or "Open, open, open": never a reply.
+            return False
+        if heard.voiced_seconds:
+            return heard.voiced_seconds <= QUICK_REPLY_VOICE_SECONDS
+        return len(text.split()) <= 12 and len(text) <= 80  # no voice measure: judge by length (no spaces in some)
+
+    def _soon_after_answer(self, heard: Heard) -> bool:
+        """An elliptical follow-up counts only right after Heliox's own answer and not over its voice."""
+        if heard.heliox_was_speaking or self.heliox_ended_at is None:
+            return False
+        return 0 <= heard.started - self.heliox_ended_at <= ELLIPTICAL_SECONDS
 
     def _addressed(self) -> None:
         self.open_since = self.clock()

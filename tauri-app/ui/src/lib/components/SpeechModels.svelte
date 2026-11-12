@@ -17,7 +17,15 @@
     partial_bytes: number;
   };
   type Progress = { id: string; state: string; received: number; total: number; message: string };
-  type Recommended = { title: string; why: string; ids: string[]; missing: string[]; missing_bytes: number };
+  type Recommended = {
+    title: string;
+    why: string;
+    ids: string[];
+    missing: string[];
+    missing_bytes: number;
+    partial_bytes?: number;
+    where?: string;
+  };
 
   let models = $state<Model[]>([]);
   let recommended = $state<Recommended | null>(null);
@@ -44,7 +52,12 @@
       ...progress,
       [model.id]: { id: model.id, state: "queued", received: 0, total: 0, message: "Starting…" },
     };
-    const result = await call<{ status: string; message?: string }>("speech_model_download", { id: model.id });
+    let result: { status?: string; message?: string };
+    try {
+      result = (await call<{ status: string; message?: string }>("speech_model_download", { id: model.id })) ?? {};
+    } catch {
+      result = { status: "error", message: "Heliox did not answer, so the download did not start. Try again." };
+    }
     if (result.status === "busy" || result.status === "error") {
       progress = {
         ...progress,
@@ -60,6 +73,7 @@
     for (const id of recommended?.missing ?? []) {
       const model = models.find((m) => m.id === id);
       if (model && !busy(id)) await download(model);
+      if (progress[id]?.state === "failed") return; // said under that model; the next one is not asked for
     }
   }
 
@@ -100,10 +114,15 @@
       <div class="setting-info">
         <span class="setting-label">{recommended.title}</span>
         <span class="setting-desc">{recommended.why}</span>
+        {#if recommended.where}<span class="setting-desc">{recommended.where}</span>{/if}
       </div>
       {#if recommended.missing.length}
         <button type="button" class="btn-secondary" onclick={downloadRecommended}>
-          {recommended.missing.length > 1 ? "Download both" : "Download"} · {megabytes(recommended.missing_bytes)}
+          {#if recommended.partial_bytes}
+            Continue · {megabytes(recommended.missing_bytes - recommended.partial_bytes)} left
+          {:else}
+            {recommended.missing.length > 1 ? "Download both" : "Download"} · {megabytes(recommended.missing_bytes)}
+          {/if}
         </button>
       {:else}
         <span class="setting-desc">Downloaded</span>
