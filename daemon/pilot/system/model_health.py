@@ -85,8 +85,10 @@ def voice_entry(voice_config: Any, manager: Any, last_fault: dict[str, Any] | No
         state, reason = "loading", "Getting the voice ready."
     else:
         state, reason = "not_loaded", "Loads when someone speaks to Heliox."
-    if device == "cpu" and configured != "cpu":
-        reason = (reason + " On the CPU: the graphics card was hot, busy or switched off when it started.").strip()
+    where = str(getattr(manager, "device_reason", "") or "") if same else ""
+    if not where and device == "cpu" and configured != "cpu":
+        where = "On the processor: the graphics card was hot, busy or switched off when it started."
+    reason = f"{reason} {where}".strip()
     return _entry(
         "Voice",
         state,
@@ -121,7 +123,14 @@ def recogniser_entries(stats: dict[str, Any] | None, whisper_devices: list[str])
     # Why Whisper is on the CPU or the graphics card (the GPU arbiter's reason), unless a notice says more.
     reason = notice or str(stats.get("whisper_device_reason") or "")
     if final_pass == "parakeet":
-        entries.append(_entry("Final pass (Parakeet)", "loaded", device="cpu"))
+        entries.append(
+            _entry(
+                "Final pass (Parakeet)",
+                "loaded",
+                device=str(stats.get("parakeet_device") or "cpu"),
+                reason=str(stats.get("parakeet_device_reason") or ""),
+            )
+        )
         # Whisper still reads each utterance for the wake phrase alongside Parakeet.
         entries.append(_entry("Wake check (Whisper)", state, reason=reason, device=device))
     else:
@@ -174,6 +183,30 @@ def platform_name() -> str:
     return "linux"
 
 
+def gpu_entry(reading: Any, disabled_reason: str = "") -> dict[str, Any]:
+    """Whether the speech models can use a graphics card, and why not: no NVIDIA card, its GPU path not installed
+    (what is missing, per model, from pilot.system.gpu_paths), or switched off for the session after faults."""
+    from pilot.system import gpu_paths
+
+    kind = str(getattr(reading, "kind", "") or "")
+    if kind == "apple":
+        return _entry("Graphics card", "loaded", device="mps", reason="Apple Silicon: the voice can use Metal.")
+    if kind != "nvidia":
+        reason = "No NVIDIA graphics card: speech recognition and the voice run on the processor."
+        return _entry("Graphics card", "not_supported", device="cpu", reason=reason)
+    if disabled_reason:
+        return _entry("Graphics card", "off", device="cpu", reason=disabled_reason)
+    missing = [
+        f"{label}: {gpu_paths.not_installed(component)}"
+        for component, label in (("whisper", "Whisper"), ("voice", "the voice"), ("parakeet", "Parakeet"))
+        if gpu_paths.not_installed(component)
+    ]
+    if missing:
+        reason = f"Not installed for {'; '.join(missing)} missing. {gpu_paths.INSTALL_HINT}."
+        return _entry("Graphics card", "unavailable", device="cuda", reason=reason)
+    return _entry("Graphics card", "loaded", device="cuda", reason="Available to the speech models.")
+
+
 def local_models(
     *,
     gnomon_status: dict[str, Any],
@@ -191,4 +224,5 @@ def local_models(
         voice_entry(voice_config, voice_manager, fault("voice")),
         *recogniser_entries(listener_stats, whisper_devices()),
         ocr_entry(platform_name(), easyocr_devices(), fault("ocr")),
+        gpu_entry(arbiter.reading(fresh=False), getattr(arbiter, "disabled_reason", "")),
     ]

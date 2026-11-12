@@ -77,6 +77,16 @@ def _no_real_output_line(monkeypatch):
     monkeypatch.setattr("pilot.system.voice.warm_output_line", lambda *_args, **_kwargs: None)
 
 
+@pytest.fixture(autouse=True)
+def _gpu_paths_forgotten():
+    """What one test found not installed on its fake card is not what the next test's machine has."""
+    from pilot.system import gpu_paths
+
+    gpu_paths.reset()
+    yield
+    gpu_paths.reset()
+
+
 @pytest.fixture
 def smtp_mock(monkeypatch):
     """Mocks smtplib.SMTP for testing without real network calls."""

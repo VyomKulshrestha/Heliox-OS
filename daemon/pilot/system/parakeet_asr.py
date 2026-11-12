@@ -14,6 +14,7 @@ pass. sherpa-onnx is imported only when the model is loaded.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -103,12 +104,41 @@ def parakeet_threads(cores: int | None = None) -> int:
     return max(1, min(4, cores // 2))
 
 
+PARAKEET_GPU_BYTES = 1200 * 1024 * 1024  # the int8 0.6B transducer and a sentence's activations, on the card
+
+
+def choose_provider(check: Any = None) -> tuple[str, str]:
+    """("cuda" | "cpu", why) for Parakeet, before it loads. The card only when the GPU arbiter offers it and the
+    installed sherpa-onnx is its CUDA build (PyPI's is CPU-only: then it is "not installed", never a fault)."""
+    from pilot.system import gpu_paths
+
+    if check is None:
+        from pilot.system.gpu_arbiter import Needs, arbiter
+
+        def check() -> Any:
+            return arbiter().check("parakeet", Needs(gpu_bytes=PARAKEET_GPU_BYTES, default_device_only=True))
+
+    decision = check()
+    if getattr(decision, "kind", "") != "nvidia":
+        return "cpu", "On the processor: no NVIDIA graphics card."
+    if not gpu_paths.sherpa_onnx_cuda():
+        gpu_paths.note_not_installed("parakeet", "the CUDA build of sherpa-onnx")
+        return "cpu", gpu_paths.on_processor_because_missing("the CUDA build of sherpa-onnx")
+    if not decision.use_gpu:
+        return "cpu", f"On the processor: {decision.reason or 'the graphics card is not available.'}"
+    return "cuda", "On the graphics card."
+
+
 class ParakeetTranscriber:
     """Loads the model on first use (about 4 s) and keeps it; safe to call from worker threads."""
 
-    def __init__(self, folder: Path, threads: int | None = None) -> None:
+    def __init__(self, folder: Path, threads: int | None = None, provider: str = "cpu", reason: str = "") -> None:
         self.folder = folder
         self.threads = threads or parakeet_threads()
+        # Where it runs ("cpu" or "cuda") and why, for the model health status (choose_provider).
+        self.provider = provider
+        self.device_reason = reason
+        self.on_gpu_fault: Any = None  # callable(component, message): the GPU arbiter's record_fault
         self._recognizer: Any = None
         self._lock = threading.Lock()
         self.error = ""
@@ -128,14 +158,7 @@ class ParakeetTranscriber:
             try:
                 import sherpa_onnx
 
-                self._recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
-                    encoder=str(self.folder / "encoder.int8.onnx"),
-                    decoder=str(self.folder / "decoder.int8.onnx"),
-                    joiner=str(self.folder / "joiner.int8.onnx"),
-                    tokens=str(self.folder / "tokens.txt"),
-                    model_type="nemo_transducer",
-                    num_threads=self.threads,
-                )
+                self._recognizer = self._open(sherpa_onnx)
                 self.error = ""
                 # One decode of silence: the first real sentence otherwise pays for the runtime's first-run setup.
                 import numpy as np
@@ -149,6 +172,37 @@ class ParakeetTranscriber:
                 self.error = f"{type(error).__name__}: {error}"[:200]
                 logger.warning("Parakeet final pass unavailable: %s", self.error)
                 return False
+
+    def _open(self, sherpa_onnx: Any) -> Any:
+        def build(provider: str) -> Any:
+            return sherpa_onnx.OfflineRecognizer.from_transducer(
+                encoder=str(self.folder / "encoder.int8.onnx"),
+                decoder=str(self.folder / "decoder.int8.onnx"),
+                joiner=str(self.folder / "joiner.int8.onnx"),
+                tokens=str(self.folder / "tokens.txt"),
+                model_type="nemo_transducer",
+                num_threads=self.threads,
+                provider=provider,
+            )
+
+        if self.provider == "cpu":
+            return build("cpu")
+        try:
+            return build(self.provider)
+        except Exception as error:
+            from pilot.system import gpu_paths
+
+            missing = gpu_paths.missing_library(str(error))
+            if missing:
+                gpu_paths.note_not_installed("parakeet", missing)
+                self.device_reason = gpu_paths.on_processor_because_missing(missing)
+            else:
+                if self.on_gpu_fault is not None:
+                    with contextlib.suppress(Exception):
+                        self.on_gpu_fault("parakeet", f"Parakeet: {str(error)[:200]}")
+                self.device_reason = "On the processor: the graphics card failed for Parakeet this session."
+            self.provider = "cpu"
+            return build("cpu")
 
     def transcribe(self, samples: Any) -> str:
         """Text for one utterance (16 kHz mono float32); "" for a filler or when the model cannot load."""

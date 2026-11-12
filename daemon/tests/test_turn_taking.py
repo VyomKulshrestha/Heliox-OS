@@ -335,13 +335,19 @@ async def test_a_gpu_without_cuda_libraries_falls_back_to_the_cpu(tmp_path, monk
         def transcribe(self, audio, **kwargs):
             return [_Segment()], type("Info", (), {"language": "en"})()
 
+    from pilot.system import gpu_paths
+
+    def on_processor() -> bool:  # a missing library is "not installed" (gpu_paths), a device error a fault
+        return voice._faster_whisper_cuda_unusable or bool(gpu_paths.not_installed("whisper"))
+
     def model(name):
-        built.append(voice._faster_whisper_cuda_unusable)
-        return Cpu() if voice._faster_whisper_cuda_unusable else Broken()
+        built.append(on_processor())
+        return Cpu() if on_processor() else Broken()
 
     monkeypatch.setattr(voice, "_get_faster_whisper_model", model)
     result = await voice._transcribe_faster_whisper(_wav(tmp_path), "en", "small")
     assert result["text"] == "open chrome" and built == [False, True]
+    assert gpu_paths.not_installed("whisper") == "cublas64_12.dll" and not voice._faster_whisper_cuda_unusable
 
 
 @pytest.mark.asyncio

@@ -1,15 +1,29 @@
 <script lang="ts">
   import { invoke } from "../api/invoke";
   import { isNativeTauriRuntime } from "../hotkey";
-  import { catalog, formatMb, type GroupId } from "../firstRun";
+  import { onMount } from "svelte";
+  import { catalog, formatMb, type GroupId, type SetupState } from "../firstRun";
 
   interface Props {
     /** For tests: render even outside the desktop app. */
     force?: boolean;
+    /** For tests: the NVIDIA card the setup probe found. */
+    gpu?: string;
   }
 
-  let { force = false }: Props = $props();
-  const groups = catalog(typeof navigator !== "undefined" ? navigator.platform : "");
+  let { force = false, gpu: given = "" }: Props = $props();
+  let gpu = $state("");
+  const groups = $derived(catalog(typeof navigator !== "undefined" ? navigator.platform : "", given || gpu));
+
+  onMount(async () => {
+    if (given || !isNativeTauriRuntime()) return;
+    try {
+      // The setup probe looks for an NVIDIA card when the app starts; the GPU group is offered only with one.
+      gpu = (await invoke<SetupState>("setup_status"))?.gpu ?? "";
+    } catch {
+      gpu = "";
+    }
+  });
   let message = $state("");
 
   async function install(id: GroupId) {

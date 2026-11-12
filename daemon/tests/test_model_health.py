@@ -90,6 +90,8 @@ def test_autonomy_review_status_carries_every_local_model_and_the_gpu(monkeypatc
     assert names[:2] == ["Gnomon", "Voice"] and any(name.startswith("Screen text") for name in names)
     assert all(set(entry) == KEYS for entry in status["local_models"])
     assert status["gpu"]["machine"]["kind"] == "cpu" and status["gpu"]["disabled"] is False
+    card = next(entry for entry in status["local_models"] if entry["name"] == "Graphics card")
+    assert card["device"] == "cpu" and card["reason"].startswith("No NVIDIA graphics card")
 
 
 async def test_the_voice_starts_on_the_cpu_when_the_arbiter_says_the_card_is_hot_and_counts_gpu_faults():

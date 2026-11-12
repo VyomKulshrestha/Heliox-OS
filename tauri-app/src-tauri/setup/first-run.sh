@@ -16,6 +16,7 @@
 # Output: lines starting with "@@" are for the app; everything else is detail shown as progress.
 #   @@python system <version> <path>      a suitable Python was found
 #   @@python download <bytes> <url>       uv will be downloaded to fetch a private Python
+#   @@gpu nvidia <name> | @@gpu none      an NVIDIA graphics card the voice could use (Linux only; never on macOS)
 #   @@step <id> <running|done|failed|skipped> <message>
 #   @@hint <id> <what the person can do>
 #   @@size <id> <KiB>                     with HELIOX_MEASURE_PIP_CACHE set (CI): pip's download cache so far
@@ -94,7 +95,17 @@ if [ -n "$ASSET" ]; then
   URL="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${ASSET_NAME}"
 fi
 
+gpu_line() {
+  # The NVIDIA card's name from its driver's own tool; nothing else is read, nothing is installed.
+  name=""
+  if [ "$(uname -s)" = "Linux" ] && command -v nvidia-smi >/dev/null 2>&1; then
+    name="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '\r')"
+  fi
+  if [ -n "$name" ]; then say "@@gpu nvidia $name"; else say "@@gpu none"; fi
+}
+
 if [ "$MODE" = "probe" ]; then
+  gpu_line
   if [ -n "$PY" ]; then
     say "@@python system $("$PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])') $PY"
   elif [ -n "$URL" ]; then

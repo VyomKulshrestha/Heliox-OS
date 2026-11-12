@@ -72,7 +72,17 @@ if ($PythonMode -eq "auto") { $Py = Find-Python }
 $Asset = Get-UvAsset
 $Url = "https://github.com/astral-sh/uv/releases/download/$UvVersion/$($Asset[0])"
 
+function Get-NvidiaName {
+  # The NVIDIA card's name from its driver's own tool (installed with the driver); nothing is installed here.
+  $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+  $path = if ($smi) { $smi.Source } else { Join-Path $env:SystemRoot "System32\nvidia-smi.exe" }
+  if (-not (Test-Path $path)) { return "" }
+  try { return ((& $path --query-gpu=name --format=csv,noheader 2>$null) | Select-Object -First 1).Trim() } catch { return "" }
+}
+
 if ($Mode -eq "probe") {
+  $gpu = Get-NvidiaName
+  if ($gpu) { Say "@@gpu nvidia $gpu" } else { Say "@@gpu none" }
   if ($Py) {
     $version = (& $Py -c "import sys; print('%d.%d.%d' % sys.version_info[:3])").Trim()
     Say "@@python system $version $Py"
@@ -191,6 +201,15 @@ foreach ($pair in ("$env:HELIOX_GROUPS" -split ";")) {
       & $EnvPython -m playwright install chromium 2>&1 | ForEach-Object { "$_" }
       if ($LASTEXITCODE -eq 0) { Say "@@step $id done Installed, with Chromium" }
       else { Say "@@step $id failed Chromium could not be downloaded."; Say "@@hint $id Press Retry; the rest of Heliox works without it."; $status = 2 }
+    } elseif ($id -eq "voicegpu") {
+      # PyPI's PyTorch for Windows is a CPU build: the same version's CUDA 12.6 build from download.pytorch.org.
+      $torch = (& $EnvPython -c "import importlib.metadata as m; print(m.version('torch').split('+')[0])" 2>$null)
+      if (-not $torch) { $torch = "2.6.0" }
+      Say "Downloading PyTorch $torch with CUDA 12.6 from download.pytorch.org (about 2.5 GB)"
+      & $EnvPython -m pip --disable-pip-version-check install --progress-bar off --force-reinstall --no-deps "torch==$torch+cu126" --index-url https://download.pytorch.org/whl/cu126 2>&1 |
+        ForEach-Object { [Console]::Out.WriteLine("$_") }
+      if ($LASTEXITCODE -eq 0) { Say "@@step $id done Installed, with PyTorch for CUDA" }
+      else { Say "@@step $id failed PyTorch for CUDA could not be installed."; Say "@@hint $id Press Retry; the voice works on the processor without it."; $status = 2 }
     } else {
       Say "@@step $id done Installed"
     }

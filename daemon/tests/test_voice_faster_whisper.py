@@ -104,6 +104,8 @@ def gpu_world(monkeypatch):
     monkeypatch.setattr(gpu_arbiter, "_shared", shared)
     monkeypatch.setitem(__import__("sys").modules, "ctranslate2", SimpleNamespace(get_cuda_device_count=lambda: 1))
     monkeypatch.setattr(voice, "_faster_whisper_cuda_unusable", False)
+    # Its CUDA 12 libraries are there (the real machine's are not read: that is test_gpu_paths).
+    monkeypatch.setattr("pilot.system.gpu_paths.whisper_gpu_missing", lambda: [])
     return card, shared
 
 
@@ -149,7 +151,7 @@ def test_a_cuda_error_while_loading_counts_as_a_fault_and_moves_to_the_cpu(gpu_w
 async def test_a_cuda_error_while_transcribing_frees_the_card_and_retries_on_the_cpu(gpu_world, monkeypatch):
     _card, shared = gpu_world
     gpu_model = MagicMock()
-    gpu_model.transcribe.side_effect = RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+    gpu_model.transcribe.side_effect = RuntimeError("CUDA failed with error out of memory")
     cpu_model = MagicMock()
     cpu_model.transcribe.return_value = (iter([SimpleNamespace(text=" open notes ")]), SimpleNamespace(language="en"))
 
@@ -162,3 +164,44 @@ async def test_a_cuda_error_while_transcribing_frees_the_card_and_retries_on_the
     assert result["text"] == "open notes"
     assert not any(key[1] == "cuda" for key in voice._faster_whisper_model_cache)
     assert len(shared.faults()) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_missing_cuda_library_while_transcribing_is_not_installed_and_never_a_fault(gpu_world, monkeypatch):
+    """12 November, the owner's laptop: a healthy card, and no cublas64_12.dll. The processor for Whisper, said in
+    the health status as "not installed", and nothing counted against the card."""
+    from pilot.system import gpu_paths
+
+    _card, shared = gpu_world
+    gpu_model = MagicMock()
+    gpu_model.transcribe.side_effect = RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+    cpu_model = MagicMock()
+    cpu_model.transcribe.return_value = (iter([SimpleNamespace(text=" open notes ")]), SimpleNamespace(language="en"))
+
+    def whisper_model(name, device, compute_type, **_options):
+        return gpu_model if device == "cuda" else cpu_model
+
+    monkeypatch.setattr(voice, "_load_pcm_wav_for_whisper", lambda _path: None)
+    with patch.dict("sys.modules", {"faster_whisper": SimpleNamespace(WhisperModel=whisper_model)}):
+        result = await voice._transcribe_faster_whisper("utterance.wav", "en", "base")
+    assert result["text"] == "open notes"
+    assert shared.faults() == [] and gpu_paths.not_installed("whisper") == "cublas64_12.dll"
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")
+    assert "not installed" in voice._faster_whisper_device_reason and "cublas64_12.dll" in (
+        voice._faster_whisper_device_reason
+    )
+
+
+def test_a_card_without_its_cuda_libraries_is_not_tried_at_all(gpu_world, monkeypatch):
+    from pilot.system import gpu_paths
+
+    _card, shared = gpu_world
+    monkeypatch.setattr(gpu_paths, "whisper_gpu_missing", lambda: ["cublas64_12.dll", "cudnn64_9.dll"])
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")
+    assert shared.faults() == []
+    assert voice._faster_whisper_device_reason.startswith("On the processor, because its GPU libraries are not")
+
+
+def test_a_healthy_card_with_its_libraries_says_so(gpu_world):
+    assert voice._faster_whisper_runtime("base") == ("cuda", "float16")
+    assert voice._faster_whisper_device_reason == "On the graphics card."

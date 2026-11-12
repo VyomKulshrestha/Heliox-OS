@@ -5,7 +5,7 @@
 import sizeData from "./firstRunSizes.json";
 import speechManifest from "../../../../daemon/pilot/system/speech_models.json";
 
-export type GroupId = "platform" | "voice" | "screen" | "browser" | "local" | "more";
+export type GroupId = "platform" | "voice" | "voicegpu" | "screen" | "browser" | "local" | "more";
 
 export interface Group {
   id: GroupId;
@@ -48,7 +48,8 @@ export function sizePhrase(id: string, platform: string): string {
   return disk ? `${download}, ${formatMb(disk)} on disk` : download;
 }
 
-export function catalog(platform: string): Group[] {
+/** The groups this computer can install. ``gpu``: the NVIDIA card the setup probe found ("" when none). */
+export function catalog(platform: string, gpu = ""): Group[] {
   const groups: Group[] = [];
   const mac = platform.includes("Mac");
   const linux = platform.includes("Linux");
@@ -63,15 +64,27 @@ export function catalog(platform: string): Group[] {
       source: mac ? "PyPI (pyobjc)" : "PyPI (jeepney)",
     });
   }
+  groups.push({
+    id: "voice",
+    label: "Voice",
+    gives: "Talk to Heliox and hear it answer: local speech recognition and local voices.",
+    downloadMb: sizeMb("voice", platform),
+    source: "PyPI (faster-whisper, Kokoro, Pocket TTS, PyTorch)",
+    note: "Speech models are offered below, each with its size; Whisper base comes with voice.",
+  });
+  if (gpu && !mac) {
+    // Only with a card, never preselected: it is large, and the voice works on the processor without it.
+    groups.push({
+      id: "voicegpu",
+      label: "Voice on the graphics card",
+      gives: `Speech recognition and the local voice run on your ${gpu}, so Heliox answers sooner. Needs Voice.`,
+      downloadMb: sizeMb("voicegpu", platform),
+      source: linux
+        ? "PyPI (NVIDIA cuBLAS and cuDNN, already part of Voice's PyTorch on Linux)"
+        : "PyPI (NVIDIA cuBLAS and cuDNN) and download.pytorch.org (PyTorch with CUDA)",
+    });
+  }
   groups.push(
-    {
-      id: "voice",
-      label: "Voice",
-      gives: "Talk to Heliox and hear it answer: local speech recognition and local voices.",
-      downloadMb: sizeMb("voice", platform),
-      source: "PyPI (faster-whisper, Kokoro, Pocket TTS, PyTorch)",
-      note: "Speech models are offered below, each with its size; Whisper base comes with voice.",
-    },
     {
       id: "screen",
       label: "Screen reading extras",
@@ -153,6 +166,8 @@ export interface SetupState {
   steps: SetupStep[];
   log_tail: string[];
   update?: UpdatePlan;
+  /** The NVIDIA graphics card the setup probe found ("" or absent when none). */
+  gpu?: string;
 }
 
 /** One sentence about Python for the first screen. */
@@ -211,7 +226,7 @@ export function stepLabel(id: string, groups: Group[]): string {
 
 /** Optional groups that failed, for "Retry" (the core and Python are retried as part of setup itself). */
 export function failedGroups(state: SetupState): GroupId[] {
-  const ids = new Set<string>(["platform", "voice", "screen", "browser", "local", "more"]);
+  const ids = new Set<string>(["platform", "voice", "voicegpu", "screen", "browser", "local", "more"]);
   return state.steps.filter((s) => s.status === "failed" && ids.has(s.id)).map((s) => s.id as GroupId);
 }
 

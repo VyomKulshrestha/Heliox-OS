@@ -1557,8 +1557,14 @@ def _faster_whisper_runtime(model_name: str = "base") -> tuple[str, str]:
     a second on the CPU (measured on the owner's sentences), so the CPU is never a bad place to be.
     """
     global _faster_whisper_device_reason
+    from pilot.system import gpu_paths
+
+    missing = gpu_paths.not_installed("whisper")
+    if missing:
+        _faster_whisper_device_reason = gpu_paths.on_processor_because_missing(missing)
+        return "cpu", "int8"
     if _faster_whisper_cuda_unusable:
-        _faster_whisper_device_reason = "The graphics card failed for Whisper earlier this session."
+        _faster_whisper_device_reason = "On the processor: the graphics card failed for Whisper earlier this session."
         return "cpu", "int8"
     try:
         import ctranslate2
@@ -1567,22 +1573,37 @@ def _faster_whisper_runtime(model_name: str = "base") -> tuple[str, str]:
     except (ImportError, RuntimeError, OSError):
         cards = 0
     if cards <= 0:
-        _faster_whisper_device_reason = "No CUDA graphics card."
+        _faster_whisper_device_reason = "On the processor: no NVIDIA graphics card."
+        return "cpu", "int8"
+    # A card is there; its CUDA 12 libraries may not be. Their absence is "not installed", not a fault of the card.
+    libraries = gpu_paths.whisper_gpu_missing()
+    if libraries:
+        gpu_paths.note_not_installed("whisper", ", ".join(libraries))
+        _faster_whisper_device_reason = gpu_paths.on_processor_because_missing(", ".join(libraries))
         return "cpu", "int8"
     from pilot.system.gpu_arbiter import MIB, Needs, arbiter
 
     needs = Needs(gpu_bytes=WHISPER_GPU_NEEDS_MB.get(model_name.split(".")[0], 1500) * MIB, default_device_only=True)
     decision = arbiter().check("whisper", needs)
     if not decision.use_gpu or decision.device != "cuda":
-        _faster_whisper_device_reason = decision.reason or "The graphics card is not available."
+        _faster_whisper_device_reason = f"On the processor: {decision.reason or 'the graphics card is not available.'}"
         return "cpu", "int8"
-    _faster_whisper_device_reason = "The graphics card is healthy and free."
+    _faster_whisper_device_reason = "On the graphics card."
     return "cuda", "float16"
 
 
 def _whisper_gpu_failed(error: BaseException) -> None:
-    """A CUDA error in Whisper: the CPU for the rest of the session, and a fault for the arbiter."""
+    """A CUDA error in Whisper: the CPU for the rest of the session, and a fault for the arbiter, unless the error
+    says a library or runtime is not installed: then the GPU path is "not installed", never a fault of the card."""
     global _faster_whisper_cuda_unusable
+    from pilot.system import gpu_paths
+
+    missing = gpu_paths.missing_library(str(error))
+    if missing:
+        gpu_paths.note_not_installed("whisper", missing)
+        for key in [key for key in _faster_whisper_model_cache if key[1] == "cuda"]:
+            _faster_whisper_model_cache.pop(key, None)
+        return
     _faster_whisper_cuda_unusable = True
     try:
         from pilot.system.gpu_arbiter import arbiter
@@ -3708,7 +3729,17 @@ class ContinuousVoiceListener:
         folder = model_dir(getattr(self.config.voice, "parakeet_model_dir", ""), DATA_DIR)
         current = getattr(self, "_parakeet_transcriber", None)
         if current is None or current.folder != folder:
-            current = ParakeetTranscriber(folder)
+            from pilot.system.parakeet_asr import choose_provider
+
+            try:
+                provider, reason = choose_provider()
+            except Exception:
+                provider, reason = "cpu", ""
+            current = ParakeetTranscriber(folder, provider=provider, reason=reason)
+            with contextlib.suppress(Exception):
+                from pilot.system.gpu_arbiter import arbiter
+
+                current.on_gpu_fault = arbiter().record_fault
             self._parakeet_transcriber = current
             if not current.available:
                 logger.warning("voice.final_pass is parakeet but its model is missing; using Whisper (%s)", folder)
@@ -4051,6 +4082,8 @@ class ContinuousVoiceListener:
             # Where the loaded Whisper runs ("cpu"/"cuda"; "" before it loads) and why (the GPU arbiter's reason).
             "whisper_device": next(iter(sorted({key[1] for key in _faster_whisper_model_cache})), ""),
             "whisper_device_reason": _faster_whisper_device_reason,
+            "parakeet_device": getattr(getattr(self, "_parakeet_transcriber", None), "provider", None),
+            "parakeet_device_reason": getattr(getattr(self, "_parakeet_transcriber", None), "device_reason", ""),
             "turn_detection": getattr(self.config.voice, "turn_detection", "smart_turn"),
             "turn_detector_ready": bool(self._turn_detector is not None and self._turn_detector.ready),
             "turn_detector_error": self._turn_detector.error if self._turn_detector is not None else "",

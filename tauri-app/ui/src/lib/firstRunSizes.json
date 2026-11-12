@@ -16,6 +16,7 @@
       "linux": { "mb": 1, "disk_mb": 1, "measured": "run 43162118953" }
     },
     "voice": { "all": { "mb": 900 } },
+    "voicegpu": { "windows": { "mb": 3750 }, "linux": { "mb": 1 } },
     "screen": { "all": { "mb": 450 } },
     "browser": { "all": { "mb": 200 } },
     "local": { "all": { "mb": 60 } },

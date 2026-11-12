@@ -197,6 +197,7 @@ async def main(timeout: float, timings_label: str = "") -> int:
                         if (ready.get("result") or {}).get("state") == "ready":
                             ready_seen_at = time.monotonic()
                             print(f"CHECK first-run/daemon-ready: PASS - after {time.monotonic() - started:.0f} s")
+                            print(gpu_check((await request(ws, "autonomy_review_status", 90)).get("result") or {}))
                             if not timings_label:
                                 return 0
                             for line in await ask_on_demand(token, timings_label, ready_seen_at):
@@ -234,6 +235,18 @@ async def main(timeout: float, timings_label: str = "") -> int:
     )
     report_daemon()
     return 1
+
+
+def gpu_check(status: dict) -> str:
+    """The health status says where the speech models run and why. On the runners there is no NVIDIA card: the
+    processor, said in so many words; with a card, its entry says whether the GPU path is installed."""
+    entry = next((e for e in status.get("local_models") or [] if e.get("name") == "Graphics card"), None)
+    if entry is None:
+        return "CHECK first-run/gpu-status: FAIL - no Graphics card entry in the model health status"
+    if entry.get("state") == "not_supported":
+        ok = entry.get("device") == "cpu" and "processor" in str(entry.get("reason"))
+        return f"CHECK first-run/gpu-status: {'PASS' if ok else 'FAIL'} - {entry.get('reason')}"
+    return f"CHECK first-run/gpu-status: PASS - {entry.get('state')}: {entry.get('reason')}"
 
 
 async def request_auth(ws, token: str) -> dict:

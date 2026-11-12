@@ -12,6 +12,7 @@ import {
   type SetupState,
 } from "../firstRun";
 import FirstRunInstall from "./FirstRunInstall.svelte";
+import OptionalParts from "./OptionalParts.svelte";
 
 const invoke = vi.fn(async (..._args: unknown[]) => undefined);
 vi.mock("../api/invoke", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
@@ -40,6 +41,34 @@ describe("first-run choices", () => {
     expect(defaultChoice(mac, false)).toEqual(["platform"]);
     expect(defaultChoice(mac, true)).toEqual(["platform", "voice"]);
     expect(defaultChoice(catalog("Win32"), false)).toEqual([]);
+  });
+
+  it("offers the voice on the graphics card only with an NVIDIA card, never on macOS, and never preselects it", () => {
+    expect(catalog("Win32").some((g) => g.id === "voicegpu")).toBe(false);
+    const windows = catalog("Win32", "NVIDIA GeForce RTX 4060 Laptop GPU");
+    const gpu = windows.find((g) => g.id === "voicegpu");
+    expect(gpu?.gives).toContain("RTX 4060");
+    expect(gpu?.source).toContain("download.pytorch.org");
+    expect(formatMb(gpu?.downloadMb ?? 0)).toBe("about 3.8 GB");
+    expect(defaultChoice(windows, true)).toEqual(["voice"]);
+    expect(catalog("Linux x86_64", "NVIDIA RTX A2000").find((g) => g.id === "voicegpu")?.downloadMb).toBe(1);
+    expect(catalog("MacIntel", "NVIDIA something").some((g) => g.id === "voicegpu")).toBe(false);
+    expect(
+      failedGroups(state({ steps: [{ id: "voicegpu", status: "failed", message: "", hint: "", detail: "" }] })),
+    ).toEqual(["voicegpu"]);
+  });
+
+  it("shows the group on the first screen once the probe has found a card", async () => {
+    render(FirstRunInstall, { initial: state({ gpu: "NVIDIA GeForce RTX 4060 Laptop GPU" }) });
+    expect(await screen.findByText("Voice on the graphics card")).toBeTruthy();
+  });
+
+  it("offers it in Settings > Optional parts with a card, and not without one", async () => {
+    const { unmount } = render(OptionalParts, { force: true, gpu: "NVIDIA GeForce RTX 4060 Laptop GPU" });
+    expect(await screen.findByText("Voice on the graphics card")).toBeTruthy();
+    unmount();
+    render(OptionalParts, { force: true });
+    expect(screen.queryByText("Voice on the graphics card")).toBeNull();
   });
 
   it("says what Python will be used and what a private one costs", () => {

@@ -42,6 +42,14 @@ pub fn python_versions() -> (String, String, String) {
 pub fn group_extras(id: &str) -> Option<&'static str> {
     match id {
         "voice" => Some("voice"),
+        // Voice on an NVIDIA card: offered only when the probe found one (`gpu`); there is no CUDA on macOS.
+        "voicegpu" => {
+            if cfg!(target_os = "macos") {
+                None
+            } else {
+                Some("voice-gpu")
+            }
+        }
         "screen" => Some("vision"),
         "browser" => Some("browser"),
         "local" => Some("llamacpp"),
@@ -115,6 +123,8 @@ pub struct SetupState {
     pub steps: Vec<Step>,
     pub log_tail: Vec<String>,
     pub update: UpdatePlan,
+    /// The NVIDIA graphics card the probe found ("" when none, or not looked for yet).
+    pub gpu: String,
 }
 
 impl SetupState {
@@ -196,6 +206,11 @@ impl SetupState {
                     bytes: bytes.parse().unwrap_or(0),
                 });
             }
+        } else if let Some(rest) = line.strip_prefix("@@gpu ") {
+            self.gpu = rest
+                .strip_prefix("nvidia ")
+                .map(|name| name.trim().to_string())
+                .unwrap_or_default();
         } else if line.starts_with("@@") {
             // Measurements for CI (@@size, @@disk) and anything newer: not shown to the person.
         } else if !line.trim().is_empty() {
@@ -303,7 +318,19 @@ pub fn probe_in_background(app: AppHandle) {
         .unwrap_or(false);
     if !needed {
         let app = app.clone();
-        std::thread::spawn(move || check_for_update(&app));
+        std::thread::spawn(move || {
+            // Whether an NVIDIA card is there, for Settings > Optional parts; the probe installs nothing.
+            if let Ok(out) = script_command("probe").and_then(|mut command| command.output()) {
+                if let Ok(mut state) = app.state::<Setup>().0.lock() {
+                    for line in String::from_utf8_lossy(&out.stdout).lines() {
+                        if line.starts_with("@@gpu ") {
+                            state.apply(line);
+                        }
+                    }
+                }
+            }
+            check_for_update(&app)
+        });
         return;
     }
     std::thread::spawn(move || {
@@ -594,11 +621,13 @@ pub fn base_python(pyvenv_cfg: &str, windows: bool) -> Option<PathBuf> {
 }
 
 fn extras_argument() -> String {
-    ["platform", "voice", "screen", "browser", "local", "more"]
-        .iter()
-        .map(|id| format!("{id}={}", group_extras(id).unwrap_or("")))
-        .collect::<Vec<_>>()
-        .join(";")
+    [
+        "platform", "voice", "voicegpu", "screen", "browser", "local", "more",
+    ]
+    .iter()
+    .map(|id| format!("{id}={}", group_extras(id).unwrap_or("")))
+    .collect::<Vec<_>>()
+    .join(";")
 }
 
 fn update_command(mode: &str) -> std::io::Result<Command> {
@@ -879,6 +908,26 @@ pub fn setup_run(app: AppHandle, groups: Vec<String>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_probe_names_an_nvidia_card_or_none() {
+        let mut state = SetupState::default();
+        state.apply("@@gpu nvidia NVIDIA GeForce RTX 4060 Laptop GPU");
+        assert_eq!(state.gpu, "NVIDIA GeForce RTX 4060 Laptop GPU");
+        state.apply("@@gpu none");
+        assert_eq!(state.gpu, "");
+        assert!(state.log_tail.is_empty());
+    }
+
+    #[test]
+    fn the_gpu_group_installs_the_voice_gpu_extra_except_on_macos() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(group_extras("voicegpu"), None);
+        } else {
+            assert_eq!(group_extras("voicegpu"), Some("voice-gpu"));
+        }
+        assert!(extras_argument().contains("voicegpu="));
+    }
 
     #[test]
     fn script_lines_become_steps_hints_and_progress() {

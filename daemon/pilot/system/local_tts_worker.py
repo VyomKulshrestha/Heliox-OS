@@ -385,6 +385,8 @@ class LocalTTSWorkerManager:
         self.on_gpu_fault: Callable[[str, str], Any] | None = None
         # Why the voice runs on the CPU for the rest of the session ("" while the GPU may still be used).
         self.cpu_for_session = ""
+        # Where the running worker's voice runs and why, in plain words, for the model health status.
+        self.device_reason = ""
         self.gpu_lease = False  # the running worker holds Heliox's GPU lease (the arbiter said the card is usable)
         # Free system memory now, or None: the worker is not started when less than VOICE_HOST_RAM_BYTES is free
         # (on an 8 GB machine the model's 1.6-1.9 GB can push everything into swap); the system voice speaks.
@@ -487,6 +489,14 @@ class LocalTTSWorkerManager:
                     device, gpu_lease = await asyncio.to_thread(self.choose_device, self.device)
                 except Exception:
                     logger.debug("GPU check for the local voice failed; using the configured device", exc_info=True)
+            if gpu_lease and engine == "kokoro_tts":
+                from pilot.system import gpu_paths
+
+                if gpu_paths.torch_build() == "cpu":
+                    # A card the arbiter would give the voice, and a PyTorch that cannot use it: not installed.
+                    gpu_paths.note_not_installed("voice", "a CUDA build of PyTorch")
+                    device, gpu_lease = "cpu", False
+            self.device_reason = self._describe(device, gpu_lease)
             try:
                 if gpu_lease:
                     process = await asyncio.to_thread(self._spawn, engine, device, True)
@@ -567,8 +577,34 @@ class LocalTTSWorkerManager:
             )
         self._failed_until = self._clock() + RETRY_AFTER_SECONDS
 
+    def _describe(self, device: str, gpu_lease: bool) -> str:
+        from pilot.system import gpu_paths
+
+        missing = gpu_paths.not_installed("voice")
+        if device != "cpu":
+            return "On the graphics card." if gpu_lease else ""
+        if self.device == "cpu":
+            return "On the processor, as chosen in Settings."
+        if missing:
+            return gpu_paths.on_processor_because_missing(missing)
+        if self.cpu_for_session:
+            return "On the processor for this session: the graphics card failed for the voice."
+        if cuda_hidden():
+            return "On the processor: CUDA_VISIBLE_DEVICES hides every graphics card."
+        return "On the processor: the graphics card was hot, busy or switched off when it started."
+
     async def _fail(self, process: Any, engine: str, reason: str) -> LocalTTSUnavailable:
         on_gpu = process is self.process and self.effective_device not in {None, "cpu"}
+        from pilot.system import gpu_paths
+
+        missing = gpu_paths.missing_library(reason) if on_gpu else ""
+        if missing:
+            # The worker on the card found a library or runtime not installed: the same voice goes on on the
+            # processor for the session, and the card is not blamed (no fault for the arbiter, no message).
+            gpu_paths.note_not_installed("voice", missing)
+            self.cpu_for_session = reason[-300:]
+            await self._close(process)
+            return _MovedToCpu(f"{engine} moved to the CPU: its GPU path is not installed ({missing})")
         if on_gpu and self.on_gpu_fault is not None:
             # A voice worker on the GPU that died or hung counts toward switching the GPU off for the session.
             with contextlib.suppress(Exception):

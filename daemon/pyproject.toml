@@ -135,6 +135,19 @@ voice = [
     "openai-whisper>=20231117",
 ]
 
+# Voice on an NVIDIA graphics card (Windows and Linux): the CUDA 12 cuBLAS and cuDNN libraries Faster-Whisper's
+# runtime (ctranslate2) loads, which nothing else installs on Windows. On Linux, PyPI's PyTorch already requires
+# them, so this adds nothing there. On Windows the first-run script also replaces PyPI's PyTorch (a CPU build) with
+# the same version's CUDA build from download.pytorch.org, which an extra cannot name. Offered only when a card is
+# found, never preselected, with its size (docs/FIRST_RUN.md). cuBLAS stops at 12.9.2 on Windows: 12.9.3 has no
+# Windows wheel.
+voice-gpu = [
+    "pilot-daemon[voice]",
+    "nvidia-cublas-cu12>=12.4,<12.9.3; sys_platform == 'win32'",
+    "nvidia-cublas-cu12>=12.4,<13; sys_platform == 'linux'",
+    "nvidia-cudnn-cu12>=9.1,<10; sys_platform == 'win32' or sys_platform == 'linux'",
+]
+
 # Neural acquisition runs in the least-privileged neurod sidecar. BrainFlow
 # supplies supported-board, synthetic, and playback drivers. pylsl supplies the
 # LSL source shown by the desktop UI; a missing native liblsl still fails closed

@@ -40,9 +40,14 @@
   let followUpRunning = false;
 
   const platform = typeof navigator !== "undefined" ? navigator.platform : "";
-  const groups = catalog(platform);
   let setupState = $state<SetupState | null>(untrack(() => initial));
-  let chosen = $state<GroupId[]>(defaultChoice(groups, false));
+  const groups = $derived(catalog(platform, setupState?.gpu ?? ""));
+  let chosen = $state<GroupId[]>(
+    defaultChoice(
+      untrack(() => groups),
+      false,
+    ),
+  );
   let startError = $state("");
   let dismissed = $state(false);
   let showDetails = $state(false);

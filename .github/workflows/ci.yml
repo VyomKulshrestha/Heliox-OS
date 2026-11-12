@@ -716,11 +716,17 @@ jobs:
           start=$(date +%s)
           if [ "$RUNNER_OS" = "Windows" ]; then
             export HELIOX_SETUP_DIR="$(cygpath -w "$HELIOX_SETUP_DIR")" HELIOX_CORE_REQ="$(cygpath -w "$HELIOX_CORE_REQ")"
-            powershell -NoProfile -ExecutionPolicy Bypass -File tauri-app/src-tauri/setup/first-run.ps1 probe
+            powershell -NoProfile -ExecutionPolicy Bypass -File tauri-app/src-tauri/setup/first-run.ps1 probe | tee "$RUNNER_TEMP/probe.log"
             powershell -NoProfile -ExecutionPolicy Bypass -File tauri-app/src-tauri/setup/first-run.ps1 run | tee "$RUNNER_TEMP/setup.log"
           else
-            sh tauri-app/src-tauri/setup/first-run.sh probe
+            sh tauri-app/src-tauri/setup/first-run.sh probe | tee "$RUNNER_TEMP/probe.log"
             sh tauri-app/src-tauri/setup/first-run.sh run | tee "$RUNNER_TEMP/setup.log"
+          fi
+          # The runners have no NVIDIA card: the probe says so, and the voice on the graphics card is not offered.
+          if grep -q "^@@gpu none" "$RUNNER_TEMP/probe.log"; then
+            echo "CHECK first-run/gpu-probe: PASS - no NVIDIA card found, so the voice on the graphics card is not offered"
+          else
+            echo "CHECK first-run/gpu-probe: FAIL - $(grep '^@@gpu' "$RUNNER_TEMP/probe.log" || echo 'no @@gpu line')"
           fi
           status=${PIPESTATUS[0]}
           echo "setup exit code $status after $(( $(date +%s) - start )) s"
