@@ -19,6 +19,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
+
 DEFAULT_NAME = "Heliox"
 MAX_NAME = 24
 
@@ -96,6 +98,7 @@ class Companion:
         }
 
     def _save(self, data: dict[str, str]) -> None:
+        note_change("changed how I talk to you")  # a voice turn that did this cannot be withdrawn
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")

@@ -19,6 +19,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
+
 logger = logging.getLogger("pilot.workflows.focus_guard")
 
 CHECK_EVERY_SECONDS = 10.0
@@ -75,6 +77,7 @@ class FocusGuard:
         return [str(word) for word in data if isinstance(word, str) and word.strip()] if isinstance(data, list) else []
 
     def _save(self, words: list[str]) -> None:
+        note_change("updated your focus list")  # a voice turn that did this cannot be withdrawn
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(words, indent=1, ensure_ascii=False), encoding="utf-8")

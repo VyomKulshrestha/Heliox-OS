@@ -26,6 +26,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
 from pilot.workflows.clipboard_history import looks_secret
 
 # "the wifi password is hunter2": the value itself may not look like a key, but the sentence says it is one.
@@ -238,6 +239,7 @@ class UserProfile:
         return len(lapsed)
 
     def _save(self, profile: dict[str, Any]) -> None:
+        note_change("remembered that")  # a voice turn that did this cannot be withdrawn
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(profile, indent=1, ensure_ascii=False), encoding="utf-8")

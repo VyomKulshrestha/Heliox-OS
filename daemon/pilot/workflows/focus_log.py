@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
+
 KEEP_DAYS = 365
 MAX_SESSIONS = 5000
 MIN_SECONDS = 60
@@ -70,6 +72,7 @@ class FocusLog:
         return [item for item in data if isinstance(item, dict) and "started_at" in item and "seconds" in item]
 
     def _save(self, items: list[dict[str, Any]]) -> None:
+        note_change("logged the focus session")  # a voice turn that did this cannot be withdrawn
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(items, indent=1), encoding="utf-8")

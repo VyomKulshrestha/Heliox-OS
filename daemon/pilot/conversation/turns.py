@@ -9,7 +9,8 @@ withdrawn, from what the server recorded about the turn, never from its wording:
   plan not yet run): withdrawn; the reply stops, the call is cancelled, a waiting approval is denied quietly, and
   the joined sentence is dispatched in its place. If it leads to the same action, the acknowledgement is not said
   again.
-* an action sent to the executor, or a change kept by a handler that answers in code (a reminder, a note): too
+* an action sent to the executor, or anything a handler that answers in code recorded as changed
+  (pilot.turn_changes: a reminder, a note, a setting, a habit, the clipboard, a focus session ...): too
   late; Heliox says what was done, and the listener takes the second half as a new turn.
 * no such turn, or it began more than WITHDRAW_SECONDS ago: unknown; the second half is a new turn.
 """
@@ -27,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pilot.system.voice import voice_turn_addressed, voice_turn_id  # set per dispatch by the listener
+from pilot.turn_changes import turn_changes
 
 WITHDRAW_SECONDS = 6.0
 KEEP_TURNS = 20
@@ -60,7 +62,7 @@ class TurnState:
     started: float
     approvals_before: frozenset[str] = frozenset()
     ran: list[tuple[str, str]] = field(default_factory=list)  # (action type, target) sent to the executor
-    kept: bool = False  # a handler that answers in code kept a change (a reminder, a note, a to-do)
+    kept: list[str] = field(default_factory=list)  # what code-answered handlers changed ("set the reminder")
     signature: str = ""  # what the turn leads to: the quick plan's action and target, or the hand-over's verb/object
     acknowledged: bool = False  # an acknowledgement for this sentence was started ("I'm on it"), here or earlier
     addressed: str = ""  # how the first half was addressed; the joined sentence keeps it
@@ -85,9 +87,9 @@ def signature_of(turn: Any) -> str:
     return ""
 
 
-def said_about(ran: list[tuple[str, str]]) -> str:
-    """ "I've already opened Notepad." from what was sent to the executor."""
-    parts = []
+def said_about(ran: list[tuple[str, str]], kept: list[str] | None = None) -> str:
+    """ "I've already opened Notepad." from what was sent to the executor and what code-answered handlers changed."""
+    parts = list((kept or [])[:2])
     for kind, target in ran[:2]:
         phrase = _DONE.get(kind)
         if phrase is None:
@@ -120,6 +122,7 @@ class TurnLog:
         voice_turn_id.set(turn_id)
         state = TurnState(turn_id, asyncio.current_task(), self._clock(), frozenset(approvals))
         state.addressed = voice_turn_addressed.get()
+        turn_changes.set(state.kept)  # every change this turn's code makes is recorded here (note_change)
         self._turns[turn_id] = state
         while len(self._turns) > KEEP_TURNS:
             self._turns.popitem(last=False)
@@ -136,11 +139,6 @@ class TurnLog:
         for action in getattr(plan, "actions", None) or []:
             kind = getattr(getattr(action, "action_type", None), "value", "")
             state.ran.append((kind, str(getattr(action, "target", "") or "")))
-
-    def note_kept(self) -> None:
-        state = self.current()
-        if state is not None:
-            state.kept = True
 
     def rest_of_split(self, text: str) -> str:
         """The second half the listener dispatches after "too_late", with the first half's verb when it needs it."""
@@ -173,11 +171,9 @@ class TurnLog:
         state = self.get(turn_id, gap)
         if state is None:
             return Withdrawal("unknown")
-        if state.ran:
+        if state.ran or state.kept:
             self.carried = (state.verb, self._clock())
-            return Withdrawal("too_late", said_about(state.ran), tuple(kind for kind, _ in state.ran))
-        if state.kept:
-            return Withdrawal("too_late")
+            return Withdrawal("too_late", said_about(state.ran, state.kept), tuple(kind for kind, _ in state.ran))
         task = state.task
         if task is not None and not task.done() and task is not asyncio.current_task():
             task.cancel()

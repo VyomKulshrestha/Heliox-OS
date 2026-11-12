@@ -22,6 +22,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
+
 logger = logging.getLogger("pilot.workflows.app_reminders")
 
 CHECK_EVERY_SECONDS = 10.0
@@ -85,6 +87,7 @@ class AppReminders:
         return [item for item in data if isinstance(item, dict) and item.get("app") and item.get("text")]
 
     def _save(self, items: list[dict[str, Any]]) -> None:
+        note_change("set the app reminder")  # a voice turn that did this cannot be withdrawn
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(items, indent=1, ensure_ascii=False), encoding="utf-8")

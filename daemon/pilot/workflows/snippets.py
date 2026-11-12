@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
 from pilot.workflows.clipboard_history import looks_secret
 
 MAX_SNIPPETS = 50
@@ -72,6 +73,7 @@ class SnippetStore:
         return [item for item in data if isinstance(item, dict) and item.get("name") and item.get("text")]
 
     def _save(self, items: list[dict[str, Any]]) -> None:
+        note_change("saved the snippet")  # a voice turn that did this cannot be withdrawn
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(items, indent=1, ensure_ascii=False), encoding="utf-8")
@@ -110,6 +112,7 @@ class SnippetStore:
         if item is None or self._write is None:
             return None
         await self._write(item["text"])
+        note_change("copied it to the clipboard")
         return item
 
     async def answer_async(self, text: str) -> str | None:

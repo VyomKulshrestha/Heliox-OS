@@ -106,6 +106,7 @@ from pilot.system.companion_speech import (
 from pilot.system.interaction import InteractionPhase, InteractionRuntime, acknowledgement_for
 from pilot.system.startup import ServerGroup
 from pilot.task_request import ATTACHED_CONTEXT_MARKER, TaskRequest, readable_request
+from pilot.turn_changes import note_change
 from pilot.workflows.durable_tasks import (
     ApprovalStatus,
     DurableTaskStore,
@@ -2844,21 +2845,6 @@ class PilotServer:
             return "Okay, I've dropped that. Nothing ran."
         short = " ".join(words.split()[:10])
         return f"Okay, I've dropped that: {short[:1].lower() + short[1:]}. Nothing ran."
-
-    def _kept_fingerprint(self) -> tuple[int, int, int]:
-        """How many reminders, to-dos and notes are kept: a change means a handler kept something."""
-
-        def count(store: Any, method: str) -> int:
-            try:
-                return len(getattr(store, method)()) if store is not None else 0
-            except Exception:
-                return 0
-
-        return (
-            count(self._reminders, "list"),
-            count(self._todos, "open_items"),
-            count(getattr(self, "_notes", None), "list"),
-        )
 
     async def withdraw_voice_turn(self, turn_id: str, joined: str, gap: float | None = None) -> Any:
         """The listener heard the rest of a sentence it had split at a pause (conv_interfaces.md, section b).
@@ -7341,6 +7327,8 @@ class PilotServer:
         answer = await self._live.handle_reply(normalize_phrase(text))
         if answer is None:
             return None
+        if not normalize_phrase(text).startswith(("why", "what")):
+            note_change("noted that for Heliox Live")  # "not now", "thanks", "don't mention these": Live keeps it
         if answer.delegate:
             # The background model does the work, through the same path and approvals as a typed request.
             asyncio.create_task(self._live_delegate(answer.delegate))
@@ -7955,6 +7943,7 @@ class PilotServer:
             return "The activity timeline is not ready yet."
         start, end, label = window
         removed = await asyncio.to_thread(self._activity_timeline.forget, start, end)
+        note_change("removed that stretch of your timeline")
         return f"Done. I removed {removed} timeline entr{'y' if removed == 1 else 'ies'} from {label}."
 
     async def _privacy_counts(self) -> dict[str, int | None]:
@@ -9092,7 +9081,7 @@ class PilotServer:
         return {"status": "ok", "values": cleaned}
 
     async def _handle_update_config(self, params: dict, ws: ServerConnection) -> dict:
-        """Update server configuration.
+        """Update server configuration. A setting changed by voice (pilot.turn_changes) cannot be withdrawn.
 
         Args:
             params: JSON-RPC parameters with section and values.
@@ -9101,6 +9090,7 @@ class PilotServer:
         Returns:
             A dict with status.
         """
+        note_change("changed the setting")
         section = params.get("section", "")
         values = params.get("values", {})
 
@@ -14484,12 +14474,9 @@ def handle_tool(tool_name, params):
             again_action = True
             command_text = repeated[0]
         if not self._interactive_request_active and not again_action:
-            kept_before = self._kept_fingerprint()
             timeline_answer = await self._control_reply(command_text)
             if timeline_answer is not None:
                 self._last_turn_kind = "answer"
-                if self._kept_fingerprint() != kept_before:
-                    self._voice_turns.note_kept()  # a reminder, note or to-do was kept: too late to withdraw
                 await self._broadcast_notification(
                     "voice_result", {"command": command_text, "status": "answered", "message": timeline_answer}
                 )
@@ -14523,6 +14510,8 @@ def handle_tool(tool_name, params):
         if not self._interactive_request_active and normalized_command in VOICE_STOP_PHRASES:
             # "Stop" with no interactive task stops background work instead of becoming a new task.
             stopped = await self._stop_background_jobs()
+            if stopped:
+                note_change("stopped the background tasks")
             message = (
                 f"Stopped {stopped} background task{'s' if stopped != 1 else ''}." if stopped else "Okay, stopped."
             )

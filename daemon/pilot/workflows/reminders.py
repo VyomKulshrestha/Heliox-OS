@@ -25,6 +25,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
+
 logger = logging.getLogger("pilot.workflows.reminders")
 
 CHECK_EVERY_SECONDS = 15.0
@@ -348,6 +350,7 @@ class ReminderStore:
         return sorted(items, key=lambda item: item["due"])
 
     def _save(self, items: list[dict[str, Any]]) -> None:
+        note_change("updated your reminders")  # a voice turn that did this cannot be withdrawn
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(items, indent=1, ensure_ascii=False), encoding="utf-8")

@@ -19,6 +19,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
+
 MAX_HABITS = 30
 MAX_LOGS = 2000  # per habit
 KEEP_DAYS = 366
@@ -104,6 +106,7 @@ class HabitStore:
         }
 
     def _save(self, data: dict[str, list[float]]) -> None:
+        note_change("logged the habit")  # a voice turn that did this cannot be withdrawn
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")

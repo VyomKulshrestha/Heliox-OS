@@ -12,6 +12,7 @@ from pilot.actions import Action, ActionPlan
 from pilot.config import PilotConfig
 from pilot.conversation.turns import WITHDRAW_SECONDS, TurnLog, said_about, voice_turn_id
 from pilot.server import PilotServer
+from pilot.turn_changes import note_change
 
 
 def plan_of(kind: str, target: str) -> ActionPlan:
@@ -54,7 +55,7 @@ async def test_once_the_executor_has_the_plan_it_is_too_late_and_heliox_says_wha
 async def test_a_change_kept_in_code_is_too_late_without_a_sentence():
     log = TurnLog()
     await _begin(log, "t3")
-    log.note_kept()
+    note_change("set the reminder")
     assert (await log.withdraw("t3", deny_quietly=AsyncMock(), pending=list)).status == "too_late"
 
 

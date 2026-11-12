@@ -17,6 +17,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from pilot.turn_changes import note_change
 from pilot.workflows.clipboard_history import looks_secret
 
 PASSWORD_REQUEST = re.compile(
@@ -123,6 +124,7 @@ class Generators:
             if self._on_password is not None:
                 self._on_password(generated)  # before the write, so a clipboard poll can never see it first
             await self._write(generated)
+            note_change("copied it to the clipboard")
             return (
                 f"I put a new {length}-character password on the clipboard. Paste it where you need it; "
                 "I didn't keep a copy, and it isn't in your clipboard history."

@@ -24,6 +24,8 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from pilot.turn_changes import note_change
+
 logger = logging.getLogger("pilot.workflows.clipboard_history")
 
 CHECK_EVERY_SECONDS = 2.0
@@ -272,6 +274,7 @@ class ClipboardHistory:
         if item is None or self._write is None:
             return None
         await self._write(item["text"])
+        note_change("copied it to the clipboard")
         self._last_seen = item["text"]
         self._items = [item] + [other for other in self._items if other["id"] != item_id]
         item["at"] = self._clock()

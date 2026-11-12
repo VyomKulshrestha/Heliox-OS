@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
+
 logger = logging.getLogger("pilot.workflows.watchers")
 
 CHECK_EVERY_SECONDS = 5.0
@@ -234,6 +236,7 @@ class WatcherStore:
         return None
 
     def add(self, sentence: str) -> dict[str, Any]:
+        note_change("set the watch")  # a voice turn that did this cannot be withdrawn
         planned = self.plan(sentence)
         if planned is None:
             raise ValueError('Say what to watch for, for example "tell me when Chrome closes".')

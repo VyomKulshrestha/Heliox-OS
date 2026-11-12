@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
+
 ROUTINE_REQUEST = re.compile(
     r"^(?:please )?(?:do|repeat|run) (?:that|this|it|the last task|my last task) (?P<schedule>every .+)$"
 )
@@ -180,6 +182,7 @@ class ShortcutStore:
         return [item for item in data if isinstance(item, dict) and item.get("phrase") and item.get("command")]
 
     def _save(self, items: list[dict[str, Any]]) -> None:
+        note_change("saved the shortcut")  # a voice turn that did this cannot be withdrawn
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(items, indent=1, ensure_ascii=False), encoding="utf-8")

@@ -26,6 +26,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from pilot.turn_changes import note_change
+
 logger = logging.getLogger("pilot.workflows.focus")
 
 MAX_FOCUS_MINUTES = 8 * 60
@@ -110,6 +112,7 @@ class FocusSession:
             self._break_minutes = int(data.get("break_minutes", 0))
 
     def _persist(self) -> None:
+        note_change("changed the focus session")  # a voice turn that did this cannot be withdrawn
         try:
             if self._until:
                 self._state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -309,6 +312,7 @@ class QuietHours:
         return [item for item in data if isinstance(item, dict) and "start" in item] if isinstance(data, list) else []
 
     def _save(self, items: list[dict[str, Any]]) -> None:
+        note_change("changed your quiet hours")  # a voice turn that did this cannot be withdrawn
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(items, indent=1), encoding="utf-8")

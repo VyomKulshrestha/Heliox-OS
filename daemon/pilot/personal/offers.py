@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from pilot.live.sequence import next_seq
+from pilot.turn_changes import note_change
 
 logger = logging.getLogger("pilot.personal.offers")
 
@@ -479,6 +480,7 @@ class Offers:
         self._save()
 
     def _save(self) -> None:
+        note_change("silenced that offer")  # a voice turn that did this cannot be withdrawn
         if not self.state_path:
             return
         try:
