@@ -12,7 +12,7 @@ from pilot.system import gpu_arbiter, model_health
 from pilot.system.gpu_arbiter import GpuArbiter, MachineReading
 from pilot.system.local_tts_worker import LocalTTSUnavailable, LocalTTSWorkerManager
 
-KEYS = {"name", "state", "reason", "device", "process", "last_fault"}
+KEYS = {"name", "state", "reason", "device", "process", "retrying", "last_fault"}
 CUDA_FAULT = json.dumps({"status": "error", "error": "RuntimeError: CUDA error: unknown error"}).encode() + b"\n"
 
 
@@ -47,6 +47,7 @@ def test_voice_on_the_cpu_because_the_card_was_hot_says_so():
     assert entry["state"] == "loaded" and entry["device"] == "cpu" and "hot, busy or switched off" in entry["reason"]
     failing = model_health.voice_entry(voice, _manager(failing=True), {"component": "voice", "message": "exit"})
     assert failing["state"] == "unavailable" and failing["last_fault"]["message"] == "exit"
+    assert failing["retrying"] is True
     system = model_health.voice_entry(VoiceConfig(tts_engine="os_native"), _manager(), None)
     assert system["state"] == "loaded" and system["device"] == "system"
 

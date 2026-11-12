@@ -29,6 +29,7 @@
   import VoiceShortcutsPanel from "./VoiceShortcutsPanel.svelte";
   import YourDataPanel from "./YourDataPanel.svelte";
   import LiveCompanionPanel from "./LiveCompanionPanel.svelte";
+  import LocalModelsPanel from "./LocalModelsPanel.svelte";
   import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
   import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
   import RecordedWorkflowsPanel from "./RecordedWorkflowsPanel.svelte";
@@ -2748,6 +2749,7 @@
   <VoiceShortcutsPanel />
   <YourDataPanel />
   <LiveCompanionPanel />
+  <LocalModelsPanel />
 </div>
 
 <style>

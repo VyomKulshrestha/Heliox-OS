@@ -6,7 +6,8 @@ stats, the OCR readers) and the GPU arbiter's fault log; nothing here loads or p
 
 Each entry: ``name``, ``state`` ("loaded" | "loading" | "not_loaded" | "unavailable" | "off" | "not_supported"),
 ``reason`` (plain words when the state is not "loaded"), ``device`` ("cuda", "mps", "cpu", "system" or None),
-``process`` ("daemon", "worker" or "system": where a fault would land) and ``last_fault`` ({at, message} or None).
+``process`` ("daemon", "worker" or "system": where a fault would land), ``retrying`` (it comes back by itself)
+and ``last_fault`` ({at, message} or None).
 The same keys and words on Windows, macOS and Linux; "not_supported" says why when that is the truth.
 """
 
@@ -33,6 +34,7 @@ def _entry(
     device: str | None = None,
     process: str = "daemon",
     last_fault: dict[str, Any] | None = None,
+    retrying: bool = False,
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -40,6 +42,7 @@ def _entry(
         "reason": reason,
         "device": device,
         "process": process,
+        "retrying": retrying,
         "last_fault": last_fault,
     }
 
@@ -60,6 +63,7 @@ def gnomon_entry(status: dict[str, Any]) -> dict[str, Any]:
         device=status.get("device"),
         process="worker" if status.get("process") == "separate" else "daemon",
         last_fault=status.get("last_fault"),
+        retrying=bool(status.get("retrying")) and state == "unavailable",
     )
 
 
@@ -81,7 +85,15 @@ def voice_entry(voice_config: Any, manager: Any, last_fault: dict[str, Any] | No
         state, reason = "not_loaded", "Loads when someone speaks to Heliox."
     if device == "cpu" and configured != "cpu":
         reason = (reason + " On the CPU: the graphics card was hot, busy or switched off when it started.").strip()
-    return _entry("Voice", state, reason=reason, device=device, process="worker", last_fault=last_fault)
+    return _entry(
+        "Voice",
+        state,
+        reason=reason,
+        device=device,
+        process="worker",
+        last_fault=last_fault,
+        retrying=state == "unavailable",  # the local voice is tried again in the background
+    )
 
 
 def recogniser_entries(stats: dict[str, Any] | None, whisper_devices: list[str]) -> list[dict[str, Any]]:
