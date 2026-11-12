@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pilot.security import credential_cleanup as cc
+from pilot.system import credential_cleanup as cc
 
 ROOT = Path(__file__).resolve().parents[2]
 

@@ -10,7 +10,7 @@
 //! The person chooses between removing the app's files and keeping their data (settings, memory, timeline,
 //! receipts, undo copies, persona, quarantined files, voice calibration, and the keys in the system credential
 //! store), or removing everything, in which case the keys Heliox saved in the credential store are removed first by
-//! the daemon's own code (`pilot.security.credential_cleanup`, which knows the services and accounts), and whatever
+//! the daemon's own code (`pilot.system.credential_cleanup`, which knows the services and accounts), and whatever
 //! remains is listed by name. Things Heliox cannot or should not remove itself are listed with what the person can
 //! do. See docs/FIRST_RUN.md.
 
@@ -425,7 +425,7 @@ fn remove_credentials(home: &Path, os: &str) -> Credentials {
     };
     let mut command = Command::new(python);
     command
-        .args(["-m", "pilot.security.credential_cleanup", "remove"])
+        .args(["-m", "pilot.system.credential_cleanup", "remove"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

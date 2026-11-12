@@ -114,7 +114,7 @@ Every folder in the list carries a name that is Heliox's alone, and the code say
 | `~/.local/state/heliox-os` | logs | app |
 | `~/.cache/heliox`, `~/.heliox` | persona, voice calibration, plugins, screenshots, quarantined files | data |
 | `~/.pilot/usage_patterns.json`, `~/.pilot/failure_memory.json` | usage patterns and failure memory: only these two files, because another program could use a folder called `.pilot`; the folder goes only if that leaves it empty | data |
-| The system credential store, under four services named in `pilot.security.credential_cleanup` | API keys, SSH keys and passphrases, paired devices, the receipt signing key, study and recording keys | data |
+| The system credential store, under four services named in `pilot.system.credential_cleanup` | API keys, SSH keys and passphrases, paired devices, the receipt signing key, study and recording keys | data |
 | Runtime folder: `%LOCALAPPDATA%\heliox-os`, `~/Library/Caches/heliox-os` | runtime files | app |
 | The app's web view data: `%LOCALAPPDATA%\com.helioxos.app`; `~/Library/Application Support`, `Caches` and `WebKit` under `com.helioxos.app`; `~/.local/share` and `~/.cache` under `com.helioxos.app` | interface settings stored in the browser view | app |
 
@@ -123,7 +123,7 @@ Every folder in the list carries a name that is Heliox's alone, and the code say
 **Before deleting**, the daemon is stopped and the supervisor paused.
 
 **Saved keys.** With "remove everything", the saved keys go before any file is deleted:
-- They are removed from the credential store by the daemon's own code, `python -m pilot.security.credential_cleanup remove`, using the environment that still exists, with a 30 s limit.
+- They are removed from the credential store by the daemon's own code, `python -m pilot.system.credential_cleanup remove`, using the environment that still exists, with a 30 s limit.
 - The daemon finds the entries by service where the store allows it: Windows' credential list, macOS's `security` tool, the Linux Secret Service. It also tries the accounts it knows by name.
 - Anything it cannot remove is listed by service and account, with how to remove it on that system.
 - If the environment cannot run, or the step fails or runs out of time, the screen lists the four services by name instead. That list is `setup/credential_services.json`, which a test keeps equal to the daemon's own list.

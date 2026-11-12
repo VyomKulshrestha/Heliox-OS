@@ -14,7 +14,7 @@ so the store is searched by service where the system allows it (Windows: the cre
 ``security`` tool; Linux: Secret Service attributes) and the accounts Heliox knows of are tried by name as well.
 What could not be removed is reported with the exact service and account and how to remove it by hand.
 
-The desktop app runs ``python -m pilot.security.credential_cleanup remove`` with the environment's Python before
+The desktop app runs ``python -m pilot.system.credential_cleanup remove`` with the environment's Python before
 it deletes the environment, with a time limit; it prints one JSON object. ``list`` prints the same without removing.
 """
 
