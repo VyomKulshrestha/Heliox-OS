@@ -130,6 +130,19 @@ the head 1.1 to 2.0 s, and every later piece was ready before the one before had
 person keeps Kokoro as the default: it runs at under half real time, so speaking clause by clause never waits
 for it. What it costs them is the head's synthesis, about 1 s, against about 0.1 s on a GPU.
 
+**Whisper on an NVIDIA card.** Whisper's runtime needs NVIDIA's CUDA 12 cuBLAS and cuDNN libraries, which only the
+"Voice on the graphics card" part installs (docs/FIRST_RUN.md). Measured on the owner's laptop on 12 November with
+those two libraries added to the development environment (an RTX 4060 Laptop GPU; Whisper base; the libraries'
+folders added the way the daemon adds them):
+- On the card: 1.6 s to load, then 0.10 s a pass for 2, 4 and 6.5 s of speech alike.
+- On the processor: about 0.5 to 1 s a pass (about 1 s for 6.5 s of speech at a third of the CPU busy).
+- So a person with a working card has the Whisper wake check and the Whisper final pass in about 0.1 s instead of
+  0.5 to 1 s. With Parakeet as the final pass (it stays on the processor: its GPU build is not on PyPI), only the
+  wake check gets faster.
+- Temperature: this card idles at 79 to 80 °C, and the GPU arbiter's limit is 83 °C. Whisper base on it ended at
+  80 °C; Whisper small was not measured on it, because the card reached 83 °C before its turn. On a laptop like this
+  one the arbiter will often keep Whisper on the processor, and that is the intended result.
+
 ### Starting the answer before the turn is confirmed (`conversation.provisional_answers`)
 
 A cloud model's first word takes about 1.0 s (Claude Haiku 5.5: median 1.04 to 1.18 s over three paid runs). Before
@@ -179,8 +192,32 @@ $0.03 an hour; the 6-a-minute limit holds the most it can waste to about $0.05 a
   recognition pass. With a cloud model, on only when the measured adoption rate on the recorded corpus is at least
   80%. The adoption rate is how often the streaming words at the last pause equal the final words after the
   normalising above.
-- Measured adoption rate: **not measured yet** (the speech agent's corpus measurement). Until it is, "auto" is off
-  and `provisional.MEASURED_ADOPTION_RATE` stays `None`.
+- Measured adoption rate: none that buys time, so "auto" is off and `provisional.MEASURED_ADOPTION_RATE` stays
+  `None`. What was measured (12 November, the replay corpus's 981 unaddressed lines, the owner's 13 addressed
+  recordings and 35 synthetic "Hey Heliox ..." clips; the listener's side is not built):
+
+  | Words the listener could hand over at the last pause | Same as the final words | Head start before the final dispatch | Unaddressed lines that would start one |
+  |---|---|---|---|
+  | The streaming recogniser it has (zipformer), as it stands | 0 of 4 | about 0.7 s on the runner | 0 of 981 |
+  | The same, flushed with 200 ms of silence | 1 of 10 | about 0.7 s | 0 of 981 |
+  | The speculative Parakeet pass | 19 of 21 (90 %) | none in the median case, at most about 0.2 s: the final dispatch waits for this same pass | 0 of 981 |
+  | Nemotron Speech Streaming EN 0.6B (sherpa-onnx's int8 export, 560 ms chunks), flushed | 17 of 20 (85 %; 19 of 20 counting "tomorrow" and "to morrow" as equal); call-mode headset 0 of 5 | median -0.05 s (-0.28 to +0.21): flushing its last chunk costs about what the Parakeet pass does | 0 of 981; and 0 of 981 dispatched with its words acted on |
+
+  "Unaddressed lines that would start one" counts the predicate a provisional call must pass: the early opening read
+  holds the wake phrase, `early_wake_agrees` with the words, the addressing rule's wake check on the merged words
+  says "wake" (without it, 3 of 981 passed: "Helix is a nice name for a project", read as "Heliox is a nice
+  name."), at least three words, and not `sounds_unfinished`. The predicate needs the opening read, so an utterance
+  shorter than 1.6 s never starts one.
+  Nemotron, on this laptop's CPU (4 threads, the turn detector beside it; the machine was 92 to 98 % busy with other
+  work, so the times are pessimistic): it decodes at 0.53 of real time (0.64 at the 90th percentile), the flush at
+  the candidate end takes 0.34 s (0.54 s), it holds about 0.7 GB of memory, and its files take 0.63 GB. It ran on
+  half of four cores whenever anyone spoke, in or out of a conversation.
+  **Why it is parked:** none of these gives words that are both early and right. The ones that are right come no
+  sooner than the final dispatch, and the early ones are wrong. Even a few tenths of a second would be small beside
+  the 2.1 to 2.9 s to a model's first sound on the runner.
+  **What would reopen it:** a streaming recogniser whose words at the last pause match the final words in at least
+  80 % of addressed lines (call-mode headsets included) and arrive at least 0.3 s before the final dispatch, at a
+  cost on a 4-core CPU the voice and the turn detector can share. Measured the same way, against the same gate.
 
 **What has been tested.** **Fakes only**: `tests/test_conversation_provisional.py`, on the real server and the real
 streaming client over a stubbed transport, driven by a fake listener through the interface the real one will call.
