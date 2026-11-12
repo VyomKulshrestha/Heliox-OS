@@ -435,6 +435,16 @@ class ExperienceLedger:
             raise ValueError(f"idempotency key {event_key!r} is already bound to a different event identity")
         return existing
 
+    async def last_sequence(self) -> int:
+        """The newest event's sequence (0 when empty): how much a replay from a given point has to read."""
+
+        pool = self._require_pool()
+        async with pool.read() as db:
+            cursor = await db.execute("SELECT COALESCE(MAX(sequence), 0) FROM experience_events")
+            row = await cursor.fetchone()
+            await cursor.close()
+        return int(row[0]) if row else 0
+
     async def list_events(
         self,
         *,

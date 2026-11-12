@@ -600,10 +600,20 @@ class RiskGate:
     def evaluate_plan(self, plan: ActionPlan, config: PilotConfig, *, source: str = "") -> tuple[float, list[str]]:
         """Returns (worst risk in [0,1] seen across the plan's actions,
         the reasons that fired for that worst action, empty if none)."""
+        self._wait_for_learner(source)  # outside the lock: other evaluations are not held up by this wait
         with self._evaluate_lock:
             result = self._evaluate_plan_locked(plan, config, source=source)
             self._thread_state.evaluation = self._last_evaluation
         return result
+
+    def _wait_for_learner(self, source: str) -> None:
+        """First resort while the learner loads: hold the decision for it, bounded (pilot.system.late_start). The
+        caller then reads whichever learner is attached: the loaded one, or still the placeholder, in which case the
+        approval it could have added is added."""
+        learner = self._online_learner
+        wait = getattr(learner, "wait_until_ready", None)
+        if source and learner is not None and not getattr(learner, "is_ready", True) and wait is not None:
+            wait(time.monotonic())
 
     def _evaluate_plan_locked(
         self, plan: ActionPlan, config: PilotConfig, *, source: str = ""

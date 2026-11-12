@@ -29,6 +29,10 @@ MAX_PENDING_PLANS = 256
 MAX_PENDING_ACTIONS = 512
 DECAY_HALF_LIFE_DAYS = 30.0
 REPLAY_PAGE = 1000
+# Events replayed per second, measured low (about 25,000 a second here with learning): used only to tell the risk
+# gate whether waiting for the learner is worth it, never for a decision itself.
+REPLAY_EVENTS_PER_SECOND = 20_000.0
+LOAD_OVERHEAD_SECONDS = 0.5
 # Everything the learner knows; a snapshot saves exactly these, so a loaded learner decides as a full replay would.
 STATE_FIELDS = (
     "_suggestions",
@@ -228,6 +232,7 @@ class VerifiedOnlineLearner:
         *,
         snapshot: Path | None = None,
         key: bytes | None = None,
+        expect: Any = None,
     ) -> dict[str, Any]:
         """Rebuild after the last explicit reset: from the saved state when there is a trusted one (only the events
         after it are read), else from the whole ledger. Then learn the events that arrived meanwhile, in order."""
@@ -252,6 +257,13 @@ class VerifiedOnlineLearner:
                 summary["from_snapshot"] = True
             except (learner_snapshot.SnapshotRefused, KeyError) as refused:
                 summary["refused"] = str(refused)
+        if expect is not None:
+            # How much there is to read now decides whether the gate should wait for this learner at all.
+            last = getattr(ledger, "last_sequence", None)
+            tip = await last() if last is not None else None
+            to_read = max(0, tip - after) if isinstance(tip, int) else None
+            summary["to_read"] = to_read
+            expect(LOAD_OVERHEAD_SECONDS + to_read / REPLAY_EVENTS_PER_SECOND if to_read is not None else float("inf"))
         while True:
             events = await ledger.list_events(after_sequence=after, limit=REPLAY_PAGE)
             summary["reads"] += 1

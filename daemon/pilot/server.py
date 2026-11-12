@@ -118,6 +118,7 @@ logger = logging.getLogger("pilot.server")
 # The online learner's saved state (pilot.intelligence.learner_snapshot) and the vault entry that keys it.
 LEARNER_SNAPSHOT_FILE = "online_learning_snapshot.bin"
 LEARNER_SNAPSHOT_KEY = "heliox_learner_snapshot"
+LEARNER_SNAPSHOT_KEY_FILE = "learner_snapshot_key"  # in the runtime folder, owner-only, when there is no keyring
 
 
 async def _accessibility_observation(limit: int = 40, excluded: tuple[str, ...] = ()) -> str:
@@ -10729,19 +10730,31 @@ class PilotServer:
             self._after_ready_task = asyncio.create_task(self._after_ready(), name="after_ready")
 
     async def _learner_key(self) -> bytes | None:
-        """The snapshot key from the key vault; made once. None without a vault: then every start replays fully."""
+        """The snapshot key: from the key vault (the system keyring), made once; where there is no usable keyring, from
+        an owner-only file in the runtime folder (pilot.system.key_file). None only when neither works, and then
+        every start replays in full after ready."""
         vault = self._vault
-        if vault is None or not vault.available:
-            return None
+        if vault is not None and vault.available:
+            try:
+                secret = await vault.get_key(LEARNER_SNAPSHOT_KEY)
+                if not secret:
+                    secret = secrets.token_hex(32)
+                    await vault.store_key(LEARNER_SNAPSHOT_KEY, secret)
+                return secret.encode("utf-8")
+            except Exception:
+                logger.warning(
+                    "The keyring could not give the learner's snapshot key; using the key file", exc_info=True
+                )
+        from pilot.config import RUNTIME_DIR
+        from pilot.system.key_file import KeyFileRefused, load_or_create
+
         try:
-            secret = await vault.get_key(LEARNER_SNAPSHOT_KEY)
-            if not secret:
-                secret = secrets.token_hex(32)
-                await vault.store_key(LEARNER_SNAPSHOT_KEY, secret)
-            return secret.encode("utf-8")
-        except Exception:
-            logger.warning("The key vault could not give the learner's snapshot key; replaying in full", exc_info=True)
-            return None
+            return await asyncio.to_thread(load_or_create, RUNTIME_DIR / LEARNER_SNAPSHOT_KEY_FILE)
+        except KeyFileRefused as refused:
+            logger.warning("%s Every start replays the learner in full until it is fixed.", refused)
+        except OSError:
+            logger.warning("The learner's key file could not be used; replaying in full", exc_info=True)
+        return None
 
     async def _save_learner_snapshot(self) -> None:
         learner = self._online_learning
@@ -10763,14 +10776,22 @@ class PilotServer:
             try:
                 from pilot.intelligence.online_learning import VerifiedOnlineLearner
 
+                placeholder = self._online_learning
+                self._wire_waiting_line(placeholder)
                 learner = VerifiedOnlineLearner(DATA_DIR / "online_learning_state.json")
                 learner.begin_loading()  # events that arrive while it replays are held, then learned in order
                 self._experience_ledger.subscribe(learner.consume)
                 key = await self._learner_key()
                 loaded = await learner.initialize(
-                    self._experience_ledger, snapshot=DATA_DIR / LEARNER_SNAPSHOT_FILE, key=key
+                    self._experience_ledger,
+                    snapshot=DATA_DIR / LEARNER_SNAPSHOT_FILE,
+                    key=key,
+                    expect=getattr(placeholder, "expect", None),  # tells the gate whether waiting is worth it
                 )
                 self._install_learner(learner)
+                set_ready = getattr(placeholder, "set_ready", None)
+                if set_ready is not None:
+                    set_ready()  # a decision held for the learner now goes ahead with it
                 logger.info("Learner loaded after ready: %s", loaded)
                 late.mark("online_learning", "ready")
                 if not loaded.get("from_snapshot"):
@@ -10787,6 +10808,33 @@ class PilotServer:
             learner = self._online_learning
             if getattr(learner, "is_ready", False) and learner.snapshot_due():
                 await self._save_learner_snapshot()
+
+    def _wire_waiting_line(self, placeholder: Any) -> None:
+        """While a decision waits for the learner, say one plain line once, aloud and in the window."""
+        from pilot.system.late_start import WAITING_LINE
+
+        if placeholder is None or not hasattr(placeholder, "on_wait"):
+            return
+        loop = asyncio.get_running_loop()
+
+        async def say() -> None:
+            await self._broadcast_notification("daemon_speech", {"text": WAITING_LINE})
+            try:
+                await self._speak_companion_text(WAITING_LINE, SpeechChannel.TASK_NARRATION, "startup_wait")
+            except Exception:
+                logger.debug("Could not say the waiting line aloud", exc_info=True)
+
+        def from_any_thread() -> None:
+            # The gate waits in a worker thread; the line is said on the event loop.
+            loop.call_soon_threadsafe(lambda: self._spawn_background_task(say()))
+
+        placeholder.on_wait = from_any_thread
+
+    def _spawn_background_task(self, coroutine: Any) -> None:
+        tasks: set[asyncio.Task[Any]] = self.__dict__.setdefault("_waiting_line_tasks", set())
+        task = asyncio.get_running_loop().create_task(coroutine)
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
     def _install_learner(self, learner: Any) -> None:
         """The loaded learner replaces the placeholder everywhere it is read."""

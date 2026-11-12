@@ -195,20 +195,71 @@ HELIOX_PARTS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
 )
 
 
+# How long the risk gate holds a decision for the learner, from the moment it is asked, before it adds the
+# approval the learner could have added.
+LEARNER_WAIT_SECONDS = 5.0
+WAITING_LINE = "One moment, Heliox is still starting."
+
+
 class LearnerLoading:
     """Stands in for the online learner until it has loaded after ready, without importing its model library.
 
-    Readers ask ``is_ready`` first: the risk gate then adds the approval the learner could have added (absent means
-    more careful, never neutral) and proactive suggestions wait. It never claims to know anything.
+    Readers ask ``is_ready`` first. The risk gate then holds its decision for the learner, bounded
+    (``wait_until_ready``), and only if it is still loading adds the approval the learner could have added: absent
+    means more careful, never neutral. Proactive suggestions wait. It never claims to know anything.
     """
 
     is_ready = False
+
+    def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
+        import threading
+        import time
+
+        self._ready = threading.Event()
+        self._clock = clock or time.monotonic
+        self.expected_ready_at: float | None = None  # monotonic; set once the learner knows what it must read
+        self.on_wait: Callable[[], None] | None = None  # says WAITING_LINE once; set by the server
+        self._said = False
 
     def status(self) -> dict[str, Any]:
         return {"enabled": True, "loading": True, "suggestions": None, "transitions": None}
 
     def snapshot_due(self, every: int = 0) -> bool:
         return False
+
+    def expect(self, seconds: float) -> None:
+        """The learner's estimate of how long it still needs (a saved state is quick; a full replay is not)."""
+        self.expected_ready_at = self._clock() + max(0.0, seconds)
+
+    def set_ready(self) -> None:
+        self._ready.set()
+
+    def wait_until_ready(self, asked_at: float, window: float | None = None) -> bool:
+        """Hold a decision for the learner: at most ``window`` from ``asked_at``, and not at all when the learner
+        will not be ready by then. Only from a worker thread: on the event loop's own thread waiting would hold up
+        the loading it waits for. True when the learner is ready."""
+        if self._ready.is_set():
+            return True
+        try:
+            asyncio.get_running_loop()
+            return False  # on the loop thread: never block it
+        except RuntimeError:
+            pass
+        deadline = asked_at + (LEARNER_WAIT_SECONDS if window is None else window)
+        if self.expected_ready_at is not None:
+            if self.expected_ready_at > deadline:
+                return False  # it will not make it: ask for approval now rather than after a pointless wait
+            deadline = min(deadline, self.expected_ready_at + 1.0)
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            return False
+        if not self._said and self.on_wait is not None:
+            self._said = True
+            try:
+                self.on_wait()
+            except Exception:
+                logger.debug("Could not say the waiting line", exc_info=True)
+        return self._ready.wait(remaining)
 
 
 def heliox_parts(**options: Any) -> LateStarts:
