@@ -25,6 +25,8 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
+from pilot.timeouts import bounded
+
 logger = logging.getLogger("pilot.system.streaming_asr")
 
 REPO = "csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26"
@@ -139,7 +141,7 @@ class StreamingTranscriber:
         """The final text of the utterance, normally available at once."""
         started = time.perf_counter()
         try:
-            text = await asyncio.wait_for(asyncio.wrap_future(self.finish_future()), timeout=timeout)
+            text = await bounded(asyncio.wrap_future(self.finish_future()), timeout=timeout)
         except (TimeoutError, Exception):
             text = ""
         self.last_finish_ms = (time.perf_counter() - started) * 1000

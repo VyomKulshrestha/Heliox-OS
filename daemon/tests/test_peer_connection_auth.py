@@ -172,7 +172,7 @@ async def test_mesh_closes_silent_inbound_peer_using_configured_timeout(monkeypa
         awaitable.close()
         raise asyncio.TimeoutError
 
-    monkeypatch.setattr("pilot.network.mesh.asyncio.wait_for", timeout_immediately)
+    monkeypatch.setattr("pilot.network.mesh.bounded", timeout_immediately)
 
     await mesh._handle_inbound_peer(websocket)
 

@@ -367,33 +367,39 @@ def _hanging(started: _Started):
 async def test_a_request_cancelled_while_open_is_recorded_as_an_estimate(tmp_path):
     started = _Started()
     h = await _harness(tmp_path, _hanging(started))
-    task = asyncio.create_task(h.router.generate(PROMPT, system="Review the plan."))
-    await asyncio.wait_for(started.sent.wait(), timeout=5)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        task = asyncio.create_task(h.router.generate(PROMPT, system="Review the plan."))
+        await asyncio.wait_for(started.sent.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-    [(provider, model, input_tokens, output_tokens, _, _, cost, source)] = await _rows(h.tracker)
-    body = json.dumps(started[0], ensure_ascii=False)
-    assert (provider, model, source) == ("claude", "claude-opus-5-5", "abandoned_estimate")
-    assert input_tokens == -(-len(body) // 4)  # the whole request body, system prompt included
-    assert output_tokens <= 1  # open for well under a hundredth of a second
-    assert cost > 0
+        [(provider, model, input_tokens, output_tokens, _, _, cost, source)] = await _rows(h.tracker)
+        body = json.dumps(started[0], ensure_ascii=False)
+        assert (provider, model, source) == ("claude", "claude-opus-5-5", "abandoned_estimate")
+        assert input_tokens == -(-len(body) // 4)  # the whole request body, system prompt included
+        assert output_tokens <= 1  # open for well under a hundredth of a second
+        assert cost > 0
+    finally:
+        await h.tracker.close()  # its SQLite worker threads must not outlive this test's loop
 
 
 @pytest.mark.asyncio
 async def test_a_request_that_times_out_is_recorded_with_output_bounded_by_its_open_time(tmp_path):
     started = _Started()
     h = await _harness(tmp_path, _hanging(started))
-    loop = asyncio.get_running_loop()
-    begin = loop.time()
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(h.router.generate(PROMPT), timeout=0.3)
-    waited = loop.time() - begin
+    try:
+        loop = asyncio.get_running_loop()
+        begin = loop.time()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(h.router.generate(PROMPT), timeout=0.3)
+        waited = loop.time() - begin
 
-    [row] = await _rows(h.tracker)
-    assert row[7] == "abandoned_estimate"
-    assert 20 <= row[3] <= -(-waited * cloud_module.ABANDONED_OUTPUT_TOKENS_PER_SECOND // 1) + 1
+        [row] = await _rows(h.tracker)
+        assert row[7] == "abandoned_estimate"
+        assert 20 <= row[3] <= -(-waited * cloud_module.ABANDONED_OUTPUT_TOKENS_PER_SECOND // 1) + 1
+    finally:
+        await h.tracker.close()
 
 
 @pytest.mark.asyncio
@@ -402,9 +408,12 @@ async def test_a_request_that_never_connected_is_not_billed(tmp_path):
         raise httpx.ConnectTimeout("no route", request=request)
 
     h = await _harness(tmp_path, refuse)
-    with pytest.raises(RuntimeError):
-        await h.router.generate(PROMPT)
-    assert await _rows(h.tracker) == []
+    try:
+        with pytest.raises(RuntimeError):
+            await h.router.generate(PROMPT)
+        assert await _rows(h.tracker) == []
+    finally:
+        await h.tracker.close()
 
 
 def test_the_output_estimate_never_exceeds_the_requests_own_limit():

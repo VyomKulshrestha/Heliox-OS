@@ -27,6 +27,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from pilot.timeouts import bounded
+
 logger = logging.getLogger("pilot.network.peer_connection")
 
 _HEARTBEAT_INTERVAL = 15  # seconds between heartbeat pings
@@ -349,7 +351,7 @@ class PeerConnection:
         """Drain the outbound send queue."""
         while self._connected:
             try:
-                raw = await asyncio.wait_for(self._send_queue.get(), timeout=1.0)
+                raw = await bounded(self._send_queue.get(), timeout=1.0)
                 await self._ws.send(raw)
             except asyncio.TimeoutError:
                 continue

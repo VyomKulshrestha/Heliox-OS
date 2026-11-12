@@ -27,6 +27,7 @@ from pilot.config import PilotConfig
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
 from pilot.system.vad import AdaptiveEnergyThreshold, EndpointEvent, UtteranceEndpointer, frame_rms
 from pilot.system.voice_calibration import WakeWordCalibrator
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.system.voice")
 
@@ -2260,7 +2261,7 @@ class _ContinuousRecorder:
             if remaining is not None and remaining <= 0:
                 return False
             try:
-                frame, _captured = _unwrap(await asyncio.wait_for(queue.get(), timeout=remaining))
+                frame, _captured = _unwrap(await bounded(queue.get(), timeout=remaining))
             except asyncio.TimeoutError:
                 return False
 
@@ -2304,7 +2305,7 @@ class _ContinuousRecorder:
             if remaining is not None and remaining <= 0:
                 return None
             try:
-                frame, captured_at = _unwrap(await asyncio.wait_for(queue.get(), timeout=remaining))
+                frame, captured_at = _unwrap(await bounded(queue.get(), timeout=remaining))
             except asyncio.TimeoutError:
                 self.user_is_speaking = False
                 return None
@@ -3349,7 +3350,7 @@ class ContinuousVoiceListener:
         waiter: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._diagnostic_waiter = waiter
         try:
-            return await asyncio.wait_for(waiter, timeout=max(1.0, float(timeout_seconds)))
+            return await bounded(waiter, timeout=max(1.0, float(timeout_seconds)))
         finally:
             if self._diagnostic_waiter is waiter:
                 self._diagnostic_waiter = None

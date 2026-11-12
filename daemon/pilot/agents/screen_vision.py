@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pilot.config import SCREENSHOTS_DIR
+from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
@@ -247,7 +248,7 @@ class ScreenVisionAgent:
         """Main capture loop with timeout and display-off handling."""
         while self._running:
             try:
-                state = await asyncio.wait_for(
+                state = await bounded(
                     self._capture_state(),
                     timeout=self._capture_timeout,
                 )
@@ -488,7 +489,7 @@ class ScreenVisionAgent:
         """
         if not self._running or self._paused:
             return None
-        return await asyncio.wait_for(asyncio.to_thread(self._sync_world_feature), timeout=self._capture_timeout)
+        return await bounded(asyncio.to_thread(self._sync_world_feature), timeout=self._capture_timeout)
 
     @staticmethod
     def _sync_world_feature() -> dict[str, Any] | None:
@@ -517,7 +518,7 @@ class ScreenVisionAgent:
         control cannot wait for that cadence after opening a window or clicking
         a control, so task loops request one bounded observation explicitly.
         """
-        state = await asyncio.wait_for(self._capture_state(), timeout=self._capture_timeout)
+        state = await bounded(self._capture_state(), timeout=self._capture_timeout)
         self._context.add(state)
         self._consecutive_timeouts = 0
         self._last_active_timestamp = time.time()
@@ -534,7 +535,7 @@ class ScreenVisionAgent:
         from pilot.system.vision import screen_ocr
 
         try:
-            text = await asyncio.wait_for(screen_ocr(), timeout=ACTIVE_TASK_OCR_TIMEOUT_SECONDS)
+            text = await bounded(screen_ocr(), timeout=ACTIVE_TASK_OCR_TIMEOUT_SECONDS)
         except Exception:
             logger.debug("Active-task OCR unavailable", exc_info=True)
             return ""

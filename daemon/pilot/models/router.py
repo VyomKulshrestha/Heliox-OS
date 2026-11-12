@@ -20,6 +20,7 @@ from pilot.models.cloud import (
 from pilot.models.ollama import OllamaClient
 from pilot.models.rate_limiter import TokenBucketRateLimiter
 from pilot.models.subscription_cli import SubscriptionCLIClient
+from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
@@ -420,7 +421,7 @@ class ModelRouter:
                     logger.info("Acquired local Ollama slot")
 
                     try:
-                        response = await asyncio.wait_for(
+                        response = await bounded(
                             self._ollama.generate(
                                 model,
                                 prompt,
@@ -458,7 +459,7 @@ class ModelRouter:
                     logger.info("Acquired llama.cpp slot")
 
                     try:
-                        response = await asyncio.wait_for(
+                        response = await bounded(
                             self._llamacpp_generate(
                                 prompt,
                                 system=system,
@@ -494,7 +495,7 @@ class ModelRouter:
                 logger.info("Acquired fallback Ollama slot")
 
                 try:
-                    response = await asyncio.wait_for(
+                    response = await bounded(
                         self._ollama.generate(
                             model,
                             prompt,

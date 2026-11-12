@@ -20,6 +20,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from pilot.timeouts import bounded
+
 logger = logging.getLogger("pilot.system.startup")
 
 # How long a request waits for start-up before it is answered with the reason start-up has not finished.
@@ -78,7 +80,7 @@ class StartupProgress:
             return ""
         if self.state != "failed":
             try:
-                await asyncio.wait_for(self._event().wait(), timeout=timeout)
+                await bounded(self._event().wait(), timeout=timeout)
             except TimeoutError:
                 return f"Heliox is still starting ({self.stage}). Try again in a moment."
         if self.state == "failed":

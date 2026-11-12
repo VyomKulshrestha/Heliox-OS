@@ -30,6 +30,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from pilot.intelligence.experience import get_experience_context
+from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
     from pilot.actions import Action, ActionPlan, ActionResult
@@ -232,7 +233,7 @@ class ExecutionNarrator:
         )
 
         try:
-            await asyncio.wait_for(pending.event.wait(), timeout=effective_timeout)
+            await bounded(pending.event.wait(), timeout=effective_timeout)
         except TimeoutError:
             logger.warning("Execution interrupt timed out (plan_id=%s)", plan_id)
             await self._broadcast_fn("execution_interrupt_timeout", {"plan_id": plan_id})

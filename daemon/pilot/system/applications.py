@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from pilot.timeouts import bounded
+
 
 class ApplicationResolutionError(RuntimeError):
     """Raised when an application label cannot be resolved safely."""
@@ -216,7 +218,7 @@ async def _start_and_check(command: list[str], display_name: str) -> int:
         raise ApplicationLaunchError(f"Could not launch {display_name}: {exc}") from exc
 
     try:
-        return_code = await asyncio.wait_for(process.wait(), timeout=0.8)
+        return_code = await bounded(process.wait(), timeout=0.8)
     except TimeoutError:
         # The process remained alive past startup, which is the normal GUI-app
         # case.  asyncio will reap it later without blocking the command.

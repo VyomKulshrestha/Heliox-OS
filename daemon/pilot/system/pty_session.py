@@ -14,6 +14,8 @@ import threading
 import time
 from typing import ClassVar
 
+from pilot.timeouts import bounded
+
 logger = logging.getLogger("pilot.system.pty_session")
 
 _SENTINEL = "PILOT_PTY_DONE"
@@ -152,7 +154,7 @@ class PtySession:
                 return self._run_command(command, float(timeout))
 
             # run_in_executor timeout is generous — _run_command self-limits via select
-            return await asyncio.wait_for(
+            return await bounded(
                 loop.run_in_executor(None, _run),
                 timeout=timeout + 10,
             )

@@ -28,6 +28,7 @@ from typing import Any, Protocol
 
 from pilot.live.focused_text_policy import MAX_CHARS, ElementFacts, FocusedText, ReaderStatus, admit
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform
+from pilot.timeouts import bounded
 
 __all__ = ["FocusedText", "FocusedTextReader", "FocusedTextSource", "create_reader", "parse_reply"]
 
@@ -232,7 +233,7 @@ class WindowsFocusedTextReader:
                 proc.stdin.write(b"read\n")
                 await proc.stdin.drain()
                 timeout = STARTUP_TIMEOUT_SECONDS if self._fresh else READ_TIMEOUT_SECONDS
-                raw = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
+                raw = await bounded(proc.stdout.readline(), timeout=timeout)
                 self._fresh = False
                 if not raw:
                     raise ConnectionError("UI Automation helper exited")
@@ -280,7 +281,7 @@ class WindowsFocusedTextReader:
                 proc.stdin.write(b"quit\n")
                 await proc.stdin.drain()
         with contextlib.suppress(Exception):
-            await asyncio.wait_for(proc.wait(), timeout=1.0)
+            await bounded(proc.wait(), timeout=1.0)
         if proc.returncode is None:
             with contextlib.suppress(Exception):
                 proc.kill()

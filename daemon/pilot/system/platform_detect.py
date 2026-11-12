@@ -11,6 +11,8 @@ import platform
 import sys
 from enum import StrEnum
 
+from pilot.timeouts import bounded
+
 logger = logging.getLogger("pilot.system.platform")
 
 
@@ -73,7 +75,7 @@ async def run_command(
             cwd=cwd,
             stdin=asyncio.subprocess.PIPE if input_data else None,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(input_data), timeout=timeout)
+        stdout, stderr = await bounded(proc.communicate(input_data), timeout=timeout)
         return (
             proc.returncode or 0,
             stdout.decode("utf-8", errors="replace"),

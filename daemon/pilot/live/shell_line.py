@@ -49,6 +49,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pilot.timeouts import bounded
+
 logger = logging.getLogger("pilot.live.shell_line")
 
 PROTOCOL = "HLX1"
@@ -258,7 +260,7 @@ class ShellLineServer:
                     writer.close()
             self._clients.clear()
             with contextlib.suppress(Exception):
-                await asyncio.wait_for(server.wait_closed(), 2.0)
+                await bounded(server.wait_closed(), 2.0)
         with contextlib.suppress(OSError):
             self.path.unlink()
         self.lines.clear()
@@ -588,7 +590,7 @@ async def _run(
         env=env,
     )
     try:
-        out, err = await asyncio.wait_for(proc.communicate(stdin), timeout)
+        out, err = await bounded(proc.communicate(stdin), timeout)
     except asyncio.TimeoutError:
         with contextlib.suppress(ProcessLookupError):
             proc.kill()
@@ -606,7 +608,7 @@ async def _close_all(servers: list[Any], held: list[Any]) -> None:
     for server in servers:
         server.close()
         with contextlib.suppress(Exception):
-            await asyncio.wait_for(server.wait_closed(), 2.0)
+            await bounded(server.wait_closed(), 2.0)
 
 
 ZSH_PROBE = """zmodload zsh/net/socket 2>/dev/null || exit 3

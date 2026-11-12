@@ -106,6 +106,7 @@ from pilot.system.companion_speech import (
 from pilot.system.interaction import InteractionPhase, InteractionRuntime, acknowledgement_for
 from pilot.system.startup import ServerGroup
 from pilot.task_request import ATTACHED_CONTEXT_MARKER, TaskRequest, readable_request
+from pilot.timeouts import bounded
 from pilot.turn_changes import note_change
 from pilot.workflows.durable_tasks import (
     ApprovalStatus,
@@ -2533,7 +2534,7 @@ class PilotServer:
         # Wait up to 10 s for the first message; reject if it's not a valid
         # auth request with the correct token.
         try:
-            first_raw = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+            first_raw = await bounded(websocket.recv(), timeout=10.0)
         except asyncio.TimeoutError:
             logger.warning("Auth handshake timeout from %s — closing", remote)
             await websocket.close()
@@ -8959,7 +8960,7 @@ class PilotServer:
             try:
                 from pilot.system.vision import screen_ocr
 
-                visible_text = await asyncio.wait_for(screen_ocr(), timeout=12)
+                visible_text = await bounded(screen_ocr(), timeout=12)
                 message = (
                     f"Visible screen text: {visible_text[:2000]}"
                     if visible_text.strip()
@@ -8985,7 +8986,7 @@ class PilotServer:
             )
             try:
                 message = (
-                    await asyncio.wait_for(
+                    await bounded(
                         self._model_router.generate(
                             prompt,
                             system=(
@@ -10804,7 +10805,7 @@ class PilotServer:
         if not changes_state(plan):
             return False, [], {}  # only reads: nothing for Gnomon to weigh
         try:
-            verdict = await asyncio.wait_for(
+            verdict = await bounded(
                 reviewer.review_plan(
                     user_input,
                     plan,

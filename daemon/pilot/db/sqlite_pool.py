@@ -11,6 +11,8 @@ from pathlib import Path
 
 import aiosqlite
 
+from pilot.timeouts import bounded
+
 logger = logging.getLogger("pilot.db.sqlite_pool")
 
 
@@ -59,7 +61,7 @@ class AsyncSqlitePool:
     async def read(self) -> AsyncIterator[aiosqlite.Connection]:
         self._ensure_started()
 
-        conn = await asyncio.wait_for(
+        conn = await bounded(
             self._read_pool.get(),
             timeout=self._timeout,
         )

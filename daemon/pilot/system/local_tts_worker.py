@@ -37,6 +37,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from pilot.timeouts import bounded
+
 logger = logging.getLogger("pilot.system.local_tts_worker")
 
 LOCAL_ENGINES = frozenset({"kokoro_tts", "pocket_tts"})
@@ -598,7 +600,7 @@ class LocalTTSWorkerManager:
         self._background.add(exchange)
         exchange.add_done_callback(self._background.discard)
         try:
-            line = await asyncio.wait_for(asyncio.shield(exchange), timeout)
+            line = await bounded(asyncio.shield(exchange), timeout)
         except TimeoutError:
             raise await self._fail(process, engine, f"no answer within {timeout:.0f} s") from None
         except asyncio.CancelledError:

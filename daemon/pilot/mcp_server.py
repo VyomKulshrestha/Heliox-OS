@@ -27,6 +27,7 @@ from pydantic import Field, StringConstraints
 
 from pilot import __version__
 from pilot.config import RUNTIME_DIR, PilotConfig
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.mcp")
 
@@ -157,7 +158,7 @@ class HelioxDaemonClient:
         timeout_seconds: float,
     ) -> dict[str, Any]:
         for _ in range(100):
-            raw = await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
+            raw = await bounded(websocket.recv(), timeout=timeout_seconds)
             try:
                 payload = json.loads(raw)
             except (TypeError, json.JSONDecodeError):

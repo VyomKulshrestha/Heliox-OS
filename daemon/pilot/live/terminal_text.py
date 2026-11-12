@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from pilot.live.shell_line import readable
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.live.terminal_text")
 
@@ -225,7 +226,7 @@ async def run(argv: list[str], timeout: float) -> tuple[int | None, str]:
     except OSError:
         return None, ""
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        out, _ = await bounded(proc.communicate(), timeout)
     except asyncio.TimeoutError:
         with contextlib.suppress(ProcessLookupError):
             proc.kill()

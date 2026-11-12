@@ -43,6 +43,7 @@ from pilot.network.peer_connection import (
     PeerConnection,
     decode_peer_message,
 )
+from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
     from pilot.agents.executor import Executor
@@ -343,7 +344,7 @@ class HelioxMesh:
         try:
             while True:
                 try:
-                    raw = await asyncio.wait_for(iterator.__anext__(), timeout=timeout_seconds)
+                    raw = await bounded(iterator.__anext__(), timeout=timeout_seconds)
                 except StopAsyncIteration:
                     break
                 except asyncio.TimeoutError:

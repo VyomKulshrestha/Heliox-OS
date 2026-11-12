@@ -29,6 +29,8 @@ import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from pilot.timeouts import bounded
+
 logger = logging.getLogger("pilot.system.sandbox_exec")
 
 # ---------------------------------------------------------------------------
@@ -149,7 +151,7 @@ class DockerBackend(_SandboxBackend):
             )
 
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+                stdout, stderr = await bounded(proc.communicate(), timeout=config.timeout)
             except TimeoutError:
                 try:
                     proc.kill()
@@ -407,7 +409,7 @@ class RestrictedBackend(_SandboxBackend):
             return f"ERROR: Failed to initialize environment runtime context."
 
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await bounded(proc.communicate(), timeout=timeout)
         except TimeoutError:
             try:
                 proc.kill()

@@ -48,6 +48,7 @@ from pilot.actions import (
     ProcessParams,
     ShellCommandParams,
 )
+from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
     from pilot.agents.orchestrator import AgentOrchestrator
@@ -401,7 +402,7 @@ class ThreatContainmentBridge:
 
         # --- Wait for user Y/N ------------------------------------------
         try:
-            await asyncio.wait_for(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
+            await bounded(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
         except TimeoutError:
             logger.warning(
                 "[ThreatContainment] Confirmation timed out after %ds for plan_id=%s — threat containment ABORTED.",

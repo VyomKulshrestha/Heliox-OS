@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from pilot.security.risk_patterns import match_risk_pattern
 from pilot.system.vision import screen_ocr
+from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
     from pilot.agents.screen_vision import ScreenVisionAgent
@@ -174,7 +175,7 @@ class UserSupervisionEngine:
         """OCR with the fast engines only. Returns None when screen reading failed."""
         self._ocr_running = True
         try:
-            text = await asyncio.wait_for(screen_ocr(allow_slow_fallback=False), timeout=_OCR_TIMEOUT_SECONDS)
+            text = await bounded(screen_ocr(allow_slow_fallback=False), timeout=_OCR_TIMEOUT_SECONDS)
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:

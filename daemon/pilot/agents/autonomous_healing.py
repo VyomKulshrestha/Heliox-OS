@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from pilot.actions import ActionPlan
 from pilot.security.gateway import InvocationSource
+from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
     from pilot.agents.executor import Executor
@@ -279,7 +280,7 @@ class AutonomousHealingEngine:
             )
 
         try:
-            await asyncio.wait_for(pending.event.wait(), timeout=cfg.confirm_timeout_seconds)
+            await bounded(pending.event.wait(), timeout=cfg.confirm_timeout_seconds)
         except TimeoutError:
             logger.warning("Self-healing: confirmation timed out for %s (plan_id=%s)", attempt.metric, plan_id)
             attempt.outcome = HealingOutcome.TIMED_OUT.value

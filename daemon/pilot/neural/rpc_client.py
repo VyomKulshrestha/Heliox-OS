@@ -33,6 +33,7 @@ from pilot.neural.recording import (
 from pilot.neural.service import NeuralDecoderService
 from pilot.neural.simulator import ensure_synthetic_calibration_artifact
 from pilot.security.rpc_identity import derive_neural_signing_key
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.neural.rpc_client")
 
@@ -93,7 +94,7 @@ class NeuralRpcTransport:
             )
         )
         try:
-            raw = await asyncio.wait_for(self._connection.recv(), timeout=self._timeout)
+            raw = await bounded(self._connection.recv(), timeout=self._timeout)
         except TimeoutError as exc:
             raise NeuralRpcError(f"RPC timed out: {method}") from exc
         response = json.loads(str(raw))
@@ -169,7 +170,7 @@ class NeurodBridge:
                     self._activated_revision = -1
                     self._last_marker_sequence = -1
                     with contextlib.suppress(TimeoutError):
-                        await asyncio.wait_for(stop.wait(), timeout=delay)
+                        await bounded(stop.wait(), timeout=delay)
         finally:
             self.status = {"state": "stopped"}
             self._service.stop()
@@ -238,7 +239,7 @@ class NeurodBridge:
                     if preview.get("status") not in {"previewed", "cancelled", "rejected"}:
                         raise NeuralRpcError("daemon returned an invalid preview state")
             try:
-                await asyncio.wait_for(stop.wait(), timeout=self._poll_seconds)
+                await bounded(stop.wait(), timeout=self._poll_seconds)
             except TimeoutError:
                 pass
 

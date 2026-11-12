@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pilot.timeouts import bounded
+
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
@@ -222,7 +224,7 @@ class SubscriptionCLIClient:
         )
         self._processes.add(proc)
         try:
-            stdout, stderr = await asyncio.wait_for(
+            stdout, stderr = await bounded(
                 proc.communicate(stdin.encode("utf-8")),
                 timeout=timeout,
             )
@@ -361,7 +363,7 @@ class SubscriptionCLIClient:
 
     async def _watch_login(self, provider: str, proc: asyncio.subprocess.Process) -> None:
         try:
-            await asyncio.wait_for(proc.wait(), timeout=300.0)
+            await bounded(proc.wait(), timeout=300.0)
         except TimeoutError:
             await self._terminate_process(proc)
         except asyncio.CancelledError:
@@ -380,7 +382,7 @@ class SubscriptionCLIClient:
         except ProcessLookupError:
             return
         try:
-            await asyncio.wait_for(proc.wait(), timeout=2.0)
+            await bounded(proc.wait(), timeout=2.0)
         except TimeoutError:
             try:
                 proc.kill()

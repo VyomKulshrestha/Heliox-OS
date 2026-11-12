@@ -41,6 +41,8 @@ from dataclasses import dataclass, field
 from pathlib import PureWindowsPath
 from typing import Any
 
+from pilot.timeouts import bounded
+
 logger = logging.getLogger("pilot.intelligence.gnomon_reviewer")
 
 SCOPE_QUESTION = "Would carrying out the proposed action stay inside what the user explicitly asked?"
@@ -724,7 +726,7 @@ class GnomonReviewer:
         async with self._lock:
             started = time.monotonic()
             try:
-                result = await asyncio.wait_for(
+                result = await bounded(
                     asyncio.to_thread(engine.score, state, kind, question, options), self._call_timeout
                 )
             except Exception as error:

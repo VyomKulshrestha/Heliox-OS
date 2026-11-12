@@ -32,6 +32,7 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 
 from pilot.actions import ActionType
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.security.human_control")
 
@@ -227,7 +228,7 @@ class HumanControlGate:
         if not self.holds_control():
             return True
         try:
-            await asyncio.wait_for(self._released.wait(), timeout)
+            await bounded(self._released.wait(), timeout)
         except TimeoutError:
             return False
         return True

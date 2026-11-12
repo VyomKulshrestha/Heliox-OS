@@ -17,6 +17,7 @@ import sys
 import tempfile
 
 from pilot.system.sandbox_exec import SandboxConfig, SecureExecutionSandbox
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.system.code_exec")
 
@@ -205,7 +206,7 @@ async def _direct_python(code: str, timeout: int, capture_output: bool) -> str:
             stderr=asyncio.subprocess.PIPE if capture_output else None,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await bounded(proc.communicate(), timeout=timeout)
         except TimeoutError:
             proc.kill()
             return f"ERROR: Script timed out after {timeout}s"
@@ -244,7 +245,7 @@ async def _direct_powershell(code: str, timeout: int) -> str:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await bounded(proc.communicate(), timeout=timeout)
         except TimeoutError:
             proc.kill()
             return f"ERROR: Script timed out after {timeout}s"
@@ -277,7 +278,7 @@ async def _direct_bash(code: str, timeout: int) -> str:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await bounded(proc.communicate(), timeout=timeout)
         except TimeoutError:
             proc.kill()
             return f"ERROR: Script timed out after {timeout}s"
@@ -310,7 +311,7 @@ async def _execute_cmd(code: str, timeout: int = 30) -> str:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await bounded(proc.communicate(), timeout=timeout)
         except TimeoutError:
             proc.kill()
             return f"ERROR: Script timed out after {timeout}s"
@@ -339,7 +340,7 @@ async def _execute_node(code: str, timeout: int = 30) -> str:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await bounded(proc.communicate(), timeout=timeout)
         except TimeoutError:
             proc.kill()
             return f"ERROR: Script timed out after {timeout}s"

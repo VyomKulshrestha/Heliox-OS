@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pilot.actions import Action, ActionPlan, ActionResult, ActionType, PermissionTier
+from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
     from pilot.agents.executor import Executor
@@ -293,7 +294,7 @@ class CollabExecutor:
                 await callback(action)
 
         try:
-            results = await asyncio.wait_for(future, timeout=_REMOTE_TIMEOUT)
+            results = await bounded(future, timeout=_REMOTE_TIMEOUT)
             # Integrity check: if the peer returned fewer results than actions
             # in the batch (e.g. due to silent deserialisation failures), fall
             # back to local execution to avoid silent task truncation.

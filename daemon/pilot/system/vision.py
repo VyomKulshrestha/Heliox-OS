@@ -23,6 +23,7 @@ from pathlib import Path
 from pilot.config import PilotConfig
 from pilot.system.http_client import create_httpx_client
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.system.vision")
 
@@ -749,7 +750,7 @@ async def _bounded_cloud_vision(
     call = calls.get(provider)
     if call is None:
         return None
-    return await asyncio.wait_for(
+    return await bounded(
         call(api_key, b64_image, prompt, configured_model),
         timeout=VISION_CLOUD_TIMEOUT_SECONDS,
     )
@@ -781,7 +782,7 @@ async def _bounded_local_vision(b64_image: str, prompt: str) -> str | None:
         return None
 
     try:
-        return await asyncio.wait_for(_run(), timeout=VISION_LOCAL_TIMEOUT_SECONDS)
+        return await bounded(_run(), timeout=VISION_LOCAL_TIMEOUT_SECONDS)
     except (TimeoutError, OSError):
         return None
 
@@ -791,7 +792,7 @@ async def _foreground_screen_fallback(detail: str) -> str:
     try:
         from pilot.agents.screen_vision import _get_active_window
 
-        app, title = await asyncio.wait_for(
+        app, title = await bounded(
             asyncio.to_thread(_get_active_window),
             timeout=VISION_FOREGROUND_TIMEOUT_SECONDS,
         )
@@ -875,7 +876,7 @@ async def screen_analyze(
         await asyncio.gather(*vision_tasks, return_exceptions=True)
 
     try:
-        ocr_text = await asyncio.wait_for(screen_ocr(region), timeout=VISION_OCR_TIMEOUT_SECONDS)
+        ocr_text = await bounded(screen_ocr(region), timeout=VISION_OCR_TIMEOUT_SECONDS)
         if ocr_text and not ocr_text.startswith("[OCR unavailable"):
             return f"[Vision model not available — falling back to OCR]\nScreen text content:\n{ocr_text[:2000]}"
     except (TimeoutError, OSError):

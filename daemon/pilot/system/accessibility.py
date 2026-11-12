@@ -24,6 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.system.accessibility")
 
@@ -440,9 +441,7 @@ async def _press_native(element: AccessibleElement, snapshot_id: str, excluded: 
         return None
     press = platforms.press_macos if CURRENT_PLATFORM == Platform.MACOS else platforms.press_linux
     try:
-        outcome, detail = await asyncio.wait_for(
-            asyncio.to_thread(press, handle, excluded), timeout=SNAPSHOT_TIMEOUT_SECONDS
-        )
+        outcome, detail = await bounded(asyncio.to_thread(press, handle, excluded), timeout=SNAPSHOT_TIMEOUT_SECONDS)
     except ImportError:
         return None
     if outcome == "refused":

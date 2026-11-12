@@ -60,6 +60,7 @@ from pilot.live.stuck import KIND as STUCK
 from pilot.live.stuck import StuckWatcher
 from pilot.live.timing import PersonalTiming, at_boundary
 from pilot.system.app_names import app_label
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.live.engine")
 
@@ -503,7 +504,7 @@ class LiveCompanion:
 
     async def _perceive(self, now: float) -> None:
         try:
-            obs = await asyncio.wait_for(self._observe(), timeout=2.0)
+            obs = await bounded(self._observe(), timeout=2.0)
         except (TimeoutError, Exception):
             obs = None
         if obs is None:

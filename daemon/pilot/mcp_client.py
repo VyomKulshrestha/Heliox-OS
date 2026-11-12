@@ -27,6 +27,7 @@ from typing import Any
 
 from pilot import __version__
 from pilot.actions import PermissionTier
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.mcp_client")
 
@@ -228,7 +229,7 @@ class McpStdioSession:
         self._pending[request_id] = future
         try:
             await self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
-            message = await asyncio.wait_for(future, timeout)
+            message = await bounded(future, timeout)
         except TimeoutError as error:
             raise McpClientError(f"MCP server {self.spec.name!r} did not answer {method} in {timeout:.0f}s") from error
         finally:
@@ -331,7 +332,7 @@ class McpStdioSession:
                 process.stdin.close()
             process.terminate()
         try:
-            await asyncio.wait_for(process.wait(), 5)
+            await bounded(process.wait(), 5)
         except TimeoutError:
             with contextlib.suppress(ProcessLookupError):
                 process.kill()
@@ -365,7 +366,7 @@ class McpClientManager:
             self._restarting = True
             try:
                 if self._active_calls:
-                    await asyncio.wait_for(self._calls_idle.wait(), CALL_TIMEOUT_SECONDS + 5)
+                    await bounded(self._calls_idle.wait(), CALL_TIMEOUT_SECONDS + 5)
             except TimeoutError:
                 logger.warning("MCP calls still running after %ss; restarting servers anyway", CALL_TIMEOUT_SECONDS)
             await self._close_sessions()
