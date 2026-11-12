@@ -11,6 +11,7 @@ the exit code is the number of failed checks.
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import shutil
 import statistics
@@ -112,6 +113,99 @@ def typer(wayland: bool, fixture: Fixture):
     return (lambda text: fixture.send(f"insert {text}")), "in-app insert"
 
 
+STATE_NAMES = {
+    L.STATE_ACTIVE: "active",
+    L.STATE_DEFUNCT: "defunct",
+    L.STATE_EDITABLE: "editable",
+    11: "focusable",
+    L.STATE_FOCUSED: "focused",
+    L.STATE_SHOWING: "showing",
+    30: "visible",
+    L.STATE_READ_ONLY: "read-only",
+}
+events_seen: list = []
+
+
+def count_events() -> None:
+    """Record every focus event the reader receives, to tell "no event" from "event but not focused"."""
+    client = L.SHARED.get()
+    if client is None:
+        return
+    original = client._t.events
+
+    def counted():
+        found = original()
+        events_seen.extend(found)
+        return found
+
+    client._t.events = counted
+
+
+def describe_tree(limit: int = 40) -> None:
+    """Print each application's windows and the fixture's widgets with their roles and states."""
+    client = L.SHARED.get()
+    if client is None:
+        print(f"diagnosis: no AT-SPI client ({L.SHARED.error})")
+        return
+    print(f"diagnosis: focus events received so far: {len(events_seen)} {events_seen[-3:]}")
+    try:
+        apps = client._children((L.REGISTRY, L.ROOT_PATH))
+    except Exception as exc:
+        print(f"diagnosis: registry children failed: {exc}")
+        return
+    for app in apps:
+        try:
+            name = client._get(app, L.ACCESSIBLE, "Name")
+        except Exception:
+            name = "?"
+        print(f"diagnosis: app {app[0]} {name!r} pid {client.pid(app[0])}")
+        stack = [(child, 1) for child in client._children(app)]
+        shown = 0
+        while stack and shown < limit:
+            ref, depth = stack.pop(0)
+            shown += 1
+            try:
+                state = client._state(ref)
+                names = sorted(STATE_NAMES.get(bit, str(bit)) for bit in state if bit in STATE_NAMES)
+                print(f"diagnosis: {'  ' * depth}{client._role(ref)} {ref[1]} {names}")
+                stack[:0] = [(child, depth + 1) for child in client._children(ref)]
+            except Exception as exc:
+                print(f"diagnosis: {'  ' * depth}{ref[1]} error {exc}")
+
+
+def sway_state() -> None:
+    """What sway says about seats and the focused window (Wayland only)."""
+    import glob
+
+    socks = glob.glob(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "sway-ipc.*.sock"))
+    if not socks or not shutil.which("swaymsg"):
+        return
+    env = dict(os.environ, SWAYSOCK=socks[0])
+    for kind in ("get_seats", "get_tree"):
+        done = subprocess.run(["swaymsg", "-t", kind, "-r"], capture_output=True, text=True, timeout=10, env=env)
+        text = done.stdout
+        if kind == "get_tree":
+            import json
+
+            def focused(node):
+                if node.get("focused"):
+                    return node
+                for child in node.get("nodes", []) + node.get("floating_nodes", []):
+                    hit = focused(child)
+                    if hit:
+                        return hit
+                return None
+
+            try:
+                node = focused(json.loads(text)) or {}
+                text = f"focused node: {node.get('type')} {node.get('app_id')!r} {node.get('name')!r}"
+            except ValueError:
+                pass
+        else:
+            text = " ".join(text.split())[:600]
+        print(f"diagnosis: sway {kind}: {text}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--wayland", action="store_true")
@@ -129,10 +223,32 @@ def main() -> int:
         type_keys, how = typer(args.wayland, fixture)
         print(f"typing with: {how}")
 
+        count_events()
         first = read_until(lambda r: r.editable)
         status = L.LinuxFocusedTextReader().status()
-        print(f"reader status: {status.as_dict()}")
-        if not check(f"{session}/focused-entry-found", first is not None and first.editable, repr(first)):
+        print(f"reader status: {status.as_dict()}; focus events: {len(events_seen)}")
+        found = first is not None and first.editable
+        if not found and args.wayland and shutil.which("wtype"):
+            # A headless compositor has no keyboard, so no window gets keyboard focus and GTK marks nothing focused.
+            # A virtual keyboard held open for the rest of the run gives the seat one, as a real machine has.
+            describe_tree()
+            sway_state()
+            keeper = subprocess.Popen(["wtype", "-s", "600000"])
+            atexit.register(keeper.kill)
+            print("diagnosis: holding a virtual keyboard open (wtype -s 600000) and reading again")
+            time.sleep(1.0)
+            first = read_until(lambda r: r.editable)
+            found = first is not None and first.editable
+            check(f"{session}/focused-entry-found-with-a-keyboard", found, repr(first))
+            if not found:
+                describe_tree()
+                sway_state()
+                keeper.kill()
+                return failures
+        elif not found:
+            describe_tree()
+            sway_state()
+        if not check(f"{session}/focused-entry-found", found, repr(first)):
             return failures
 
         type_keys("hello from ci")

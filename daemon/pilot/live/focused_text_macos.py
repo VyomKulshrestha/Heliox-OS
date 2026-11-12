@@ -28,6 +28,7 @@ import asyncio
 import ctypes
 import logging
 import threading
+import time
 from typing import Any
 
 from pilot.live.focused_text_policy import (
@@ -264,6 +265,32 @@ def launch_services_front_app(run=None) -> str:
         return ""
 
 
+def parse_lsappinfo_pid(output: str) -> int:
+    """The pid in ``lsappinfo info -only pid`` output ('"pid"=123'), or 0. Pure."""
+    _, sep, value = output.strip().partition("=")
+    try:
+        return int(value.strip()) if sep else 0
+    except ValueError:
+        return 0
+
+
+def launch_services_front_pid(run=None) -> int:
+    """The process id of the app LaunchServices has in front (0 when it cannot be told)."""
+    import subprocess
+
+    def default_run(args: list[str]) -> str:
+        done = subprocess.run(args, capture_output=True, text=True, timeout=1.0, check=False)
+        return done.stdout if done.returncode == 0 else ""
+
+    run = run or default_run
+    try:
+        asn = parse_lsappinfo_front(run(["/usr/bin/lsappinfo", "front"]))
+        return parse_lsappinfo_pid(run(["/usr/bin/lsappinfo", "info", "-only", "pid", asn])) if asn else 0
+    except Exception:
+        logger.debug("lsappinfo failed", exc_info=True)
+        return 0
+
+
 def window_list() -> list[dict]:
     """On-screen windows front to back from Quartz, as plain dicts ([] when Quartz is not available)."""
     try:
@@ -284,8 +311,20 @@ def frontmost_app_name() -> str:
     session, or a runner with nothing open), the likely reason the first CI run on macOS got "". NSWorkspace's
     frontmostApplication is not used: in a process without a running AppKit event loop, such as the daemon, it
     keeps the value from when it was first asked.
+
+    The answer is kept for ``FRONT_APP_CACHE_SECONDS`` so Live's look and the timeline's look in the same moment
+    share one pair of lsappinfo processes.
     """
-    return launch_services_front_app() or front_window_owner(window_list())
+    now = time.monotonic()
+    if now - _front_cache[0] < FRONT_APP_CACHE_SECONDS:
+        return _front_cache[1]
+    name = launch_services_front_app() or front_window_owner(window_list())
+    _front_cache[0], _front_cache[1] = now, name
+    return name
+
+
+FRONT_APP_CACHE_SECONDS = 0.5
+_front_cache: list = [-1e9, ""]
 
 
 def foreground_window() -> tuple[str, str] | None:

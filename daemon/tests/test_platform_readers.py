@@ -623,3 +623,19 @@ def test_macos_screen_ocr_says_screen_recording_is_missing(monkeypatch):
 
     monkeypatch.setattr(vision, "_ocr_macos_native", ocr)
     assert asyncio.run(vision.screen_ocr()) == "text"
+
+
+def test_macos_frontmost_app_is_cached_briefly(monkeypatch):
+    calls = []
+
+    def front(run=None):
+        calls.append(1)
+        return "Mail"
+
+    clock = [100.0]
+    monkeypatch.setattr(M, "launch_services_front_app", front)
+    monkeypatch.setattr(M, "_front_cache", [-1e9, ""])
+    monkeypatch.setattr(M.time, "monotonic", lambda: clock[0])
+    assert M.frontmost_app_name() == "Mail" and M.frontmost_app_name() == "Mail" and len(calls) == 1
+    clock[0] += M.FRONT_APP_CACHE_SECONDS + 0.01
+    assert M.frontmost_app_name() == "Mail" and len(calls) == 2

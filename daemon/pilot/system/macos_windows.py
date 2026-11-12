@@ -94,6 +94,25 @@ class Backend:
             running is not None and running.activateWithOptions_(self.appkit.NSApplicationActivateIgnoringOtherApps)
         )
 
+    def frontmost_pid(self) -> int:
+        """The process that owns the menu bar, asked fresh each time (0 when it cannot be told)."""
+        if self.trusted():
+            system = self.ax.AXUIElementCreateSystemWide()
+            err, app = self.ax.AXUIElementCopyAttributeValue(system, "AXFocusedApplication", None)
+            if err == 0 and app is not None:
+                err, pid = self.ax.AXUIElementGetPid(app, None)
+                if err == 0:
+                    return int(pid)
+        from pilot.live.focused_text_macos import launch_services_front_pid
+
+        return launch_services_front_pid()
+
+    def set_frontmost(self, pid: int) -> bool:
+        """Bring an app forward through the Accessibility API (AXFrontmost), which macOS 14 and later still
+        honour for a trusted process when activation requests from a background process are ignored."""
+        app = self.ax.AXUIElementCreateApplication(pid)
+        return self.ax.AXUIElementSetAttributeValue(app, "AXFrontmost", True) == 0
+
     def windows(self, pid: int) -> list[Any]:
         app = self.ax.AXUIElementCreateApplication(pid)
         self.ax.AXUIElementSetMessagingTimeout(app, 0.5)
@@ -171,14 +190,33 @@ class MacWindows:
                 rows.append((app.name, str(self.b.get(window, "AXTitle") or "")))
         return rows
 
-    def focus(self, target: str, title: str | None = None) -> str:
+    def focus(self, target: str, title: str | None = None, settle: float = 0.3) -> str:
+        """Bring the app forward. An app already in front is left as it is (macOS answers "not activated" for
+        it). Since macOS 14 a background process's activation request may be ignored ("cooperative activation"),
+        so when the app is still not in front and Heliox has Accessibility, AXFrontmost does it."""
         app = self._app(target)
-        if not self.b.activate(app.pid):
-            raise RuntimeError(f"macOS did not bring {app.name} to the front.")
+        if self.b.frontmost_pid() != app.pid:
+            self.b.activate(app.pid)
+            if not self._became_front(app.pid, settle) and self.b.trusted():
+                self.b.set_frontmost(app.pid)
+            if not self._became_front(app.pid, settle):
+                hint = "" if self.b.trusted() else " Turning on Accessibility for Heliox-OS lets it do this."
+                raise RuntimeError(f"macOS did not bring {app.name} to the front.{hint}")
         if title:
             self._need_access()
             self.b.raise_window(self._window(app, title))
         return app.name
+
+    def _became_front(self, pid: int, settle: float) -> bool:
+        import time
+
+        deadline = time.monotonic() + settle
+        while True:
+            if self.b.frontmost_pid() == pid:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
 
     def minimize(self, target: str, title: str | None = None) -> str:
         self._need_access()

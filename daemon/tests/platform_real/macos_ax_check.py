@@ -97,8 +97,32 @@ def window_checks(pid: int) -> None:
     check(
         "macos/windows-list-has-fixture", any(title == "Draft - edited" for _app, title in listing), repr(listing[:10])
     )
+    b = windows.b
+    print(
+        f"focus: front before: pid {b.frontmost_pid()} (fixture {pid}); LaunchServices {M.launch_services_front_pid()}"
+    )
     windows.focus(name, "Draft")
-    check("macos/windows-focus", M.launch_services_front_app().casefold().startswith("python"))
+    check("macos/windows-focus-already-front", b.frontmost_pid() == pid, f"front pid {b.frontmost_pid()}")
+    finder = [app for app in b.running_apps() if app.bundle_id == "com.apple.finder"]
+    if finder:
+        accepted = b.activate(finder[0].pid)
+        time.sleep(0.5)
+        print(f"focus: activateWithOptions(Finder) returned {accepted}; front now pid {b.frontmost_pid()}")
+        try:
+            windows.focus("Finder")
+            check("macos/windows-focus-another-app", b.frontmost_pid() == finder[0].pid, f"front {b.frontmost_pid()}")
+        except Exception as exc:
+            check("macos/windows-focus-another-app", False, f"{type(exc).__name__}: {exc}")
+        accepted = b.activate(pid)
+        time.sleep(0.5)
+        print(f"focus: activateWithOptions(fixture) returned {accepted}; front now pid {b.frontmost_pid()}")
+        try:
+            windows.focus(name, "Draft")
+            check("macos/windows-focus-back-to-fixture", b.frontmost_pid() == pid, f"front {b.frontmost_pid()}")
+        except Exception as exc:
+            check("macos/windows-focus-back-to-fixture", False, f"{type(exc).__name__}: {exc}")
+    else:
+        print("focus: Finder is not running; the switch-and-back check was skipped")
     windows.maximize(name, "Draft")
     time.sleep(0.5)
     window = windows._window(apps[0], "Draft")

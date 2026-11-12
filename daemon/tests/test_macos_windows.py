@@ -28,6 +28,9 @@ class FakeAX:
         self.raised: list[str] = []
         self.pressed: list[int] = []
         self.frames: list[tuple] = []
+        self.front = 0
+        self.honours_activation = True
+        self.frontmost_set: list[int] = []
 
     def trusted(self):
         return self.is_trusted
@@ -37,6 +40,16 @@ class FakeAX:
 
     def activate(self, pid):
         self.activated.append(pid)
+        if self.honours_activation:
+            self.front = pid
+        return self.honours_activation
+
+    def frontmost_pid(self):
+        return self.front
+
+    def set_frontmost(self, pid):
+        self.frontmost_set.append(pid)
+        self.front = pid
         return True
 
     def windows(self, pid):
@@ -142,3 +155,26 @@ def test_window_mgr_falls_back_to_applescript_without_pyobjc(monkeypatch):
     monkeypatch.setattr(window_mgr, "run_command", run)
     asyncio.run(window_mgr.window_focus(process_name="Notes"))
     assert calls == [["osascript", "-e", 'tell application "Notes" to activate']]
+
+
+def test_focus_leaves_a_front_app_alone_and_uses_axfrontmost_when_activation_is_ignored():
+    ax = FakeAX()
+    ax.front = 501
+    MacWindows(ax).focus("Notes", settle=0)
+    assert ax.activated == []  # already in front: macOS would answer "not activated", which is not a failure
+    ax.honours_activation = False  # macOS 14+: a background process's activation request is ignored
+    MacWindows(ax).focus("Visual Studio Code", settle=0)
+    assert ax.activated == [777] and ax.frontmost_set == [777] and ax.front == 777
+    ax.front = 501
+    ax.is_trusted = False
+    with pytest.raises(RuntimeError, match="Accessibility for Heliox-OS"):
+        MacWindows(ax).focus("Visual Studio Code", settle=0)
+
+
+def test_launch_services_front_pid_parsing():
+    from pilot.live import focused_text_macos as M
+
+    assert M.parse_lsappinfo_pid('"pid"=2257\n') == 2257
+    assert M.parse_lsappinfo_pid("") == 0 and M.parse_lsappinfo_pid('"pid"=[ NULL ]') == 0
+    outputs = {"front": "ASN:0x0-0x1:\n", "info": '"pid"=42\n'}
+    assert M.launch_services_front_pid(lambda args: outputs[args[1]]) == 42
