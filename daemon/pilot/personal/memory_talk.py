@@ -40,6 +40,15 @@ RECALL = re.compile(
     r"|what did i say about) (?P<what>.+?)\??$",
     re.IGNORECASE,
 )
+# What a person asks about the kinds of fact Heliox keeps, in their own words: "when do I stop work?", "where do I
+# live?", "who is my manager?", "what do I prefer?", "when is my flight?". Answered only when something stored
+# matches; anything else ("when is my meeting?" with nothing kept about it) goes on to the planner or the model.
+ASK = re.compile(
+    r"^(?:so |and |remind me,? )?(?:when|where|what time|who|what|how|which)(?:'s| is| are| do| does| did| am| was"
+    r"| were)? (?:i|my|me)\b ?(?P<what>.*?)\??$",
+    re.IGNORECASE,
+)
+_ASK_FILLER = frozenset({"i", "my", "me", "do", "does", "did", "usually", "normally", "again", "the", "a", "an", "at"})
 FORGET_LAST = re.compile(
     r"^(?:please )?forget (?:what i just (?:said|told you)|that last (?:one|thing)|the last thing i (?:said|told you))$"
 )
@@ -114,6 +123,15 @@ class MemoryTalk:
                 return None  # "what do you know about me" is the profile's own reply
             return self.recall(what)
 
+        asked = ASK.match(_normalize(raw))
+        if asked:
+            topic = " ".join(w for w in asked.group("what").split() if w not in _ASK_FILLER)
+            if topic and words(topic):
+                # Notes said in passing are left to the model, which sees them with the rest of the context.
+                found = self.recall(topic, passing=False)
+                if found.startswith("You told me"):
+                    return found
+
         remember = REMEMBER.match(raw)
         if remember:
             fact = _clean(remember.group("text"))
@@ -172,8 +190,9 @@ class MemoryTalk:
         until = f"until {note.until}" if note.until else "for a week"
         return f'Noted: "{said}". I\'ll keep that {until}; say "forget about my {note.thing}" to drop it sooner.'
 
-    def recall(self, what: str) -> str:
-        """Everything stored that mentions ``what``, read back in the second person."""
+    def recall(self, what: str, *, passing: bool = True) -> str:
+        """Everything stored that mentions ``what``, read back in the second person (``passing=False``: leaving out
+        notes said in passing)."""
         profile = self._profile()
         asked = words(what)
         if not asked:
@@ -182,6 +201,8 @@ class MemoryTalk:
         data = profile.get() if profile is not None else {}
         for key in ("about", "people", "prefers"):
             for item in data.get(key) or []:
+                if not passing and item.get("note_thing"):
+                    continue
                 body = f"{item.get('text', '')} {item.get('name', '')} {item.get('relation', '')}"
                 if asked <= words(body) or (len(asked) > 1 and len(asked & words(body)) >= 2):
                     text = str(item.get("text", ""))

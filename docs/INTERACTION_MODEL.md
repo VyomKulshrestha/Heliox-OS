@@ -296,6 +296,19 @@ and removed from it and from long-term memory the next time a profile phrase is 
 me" says once how many things were dropped and of which kind, without repeating them. **Fakes only**
 (`tests/test_never_kept.py`, and the "not learned: things never kept" personal session).
 
+A correction replaces the old fact: "no, call me Sam", "actually, my name is Sam", "not Alex, Sam", and "it's Sam"
+said within ten minutes of giving a name all rename, and the greeting, the context lines and "what's my name" use the
+new name. "Stay quiet unless I ask" (also "be quiet", "don't interrupt me", "only speak when I ask"), said any day,
+is a profile preference: offers stop, suggestions stop, and Live holds every catch except the urgent kinds (a risky
+command), the same hold a focus session gives; "you can speak up again" undoes it. Recall answers questions in a
+person's own words about what they told Heliox ("when do I stop work?", "where do I live?", "who is my manager?");
+a question about something never told goes on to the planner or the model, and so does one about a note said in
+passing, which the model sees in the context. Getting to know stores the same quiet preference and leaves the
+Settings for offers and Live's level as they were. "I stop work at six" is kept with its
+time, and from then until 05:00 offers and suggestions wait like quiet hours, with one sentence the first time each
+evening saying why (`pilot.personal.wiring.quiet_now`). **Fakes only** (`tests/test_personal_rules.py`, and the
+"corrected: the name", "told once: being interrupted" and "told once: when work ends" personal sessions).
+
 ### Handing over to the planner
 
 `take` returns `done=False` with a `HandoverIntent`: the verb, the object, the person's words, the request

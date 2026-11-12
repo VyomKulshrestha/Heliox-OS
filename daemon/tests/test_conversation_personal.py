@@ -21,21 +21,12 @@ from pilot.workflows.user_profile import UserProfile
 
 SESSIONS = load_pack(PERSONAL_PACK)
 
-_PROFILE_STORE = "the profile store (pilot.workflows.user_profile)"
 _EVERYONE = {
-    "told once: being interrupted": (
-        '"stay quiet unless I ask" is understood only inside getting-to-know (pilot.personal.getting_to_know); said '
-        "on its own it goes to the model and changes nothing"
-    ),
-    "corrected: the name": f'"No, call me Sam" is not a name request in {_PROFILE_STORE}: the leading "No," stops it',
     "forgotten: a fact, the forget said as a follow-up": (
         'the addressing rule (pilot.system.addressing) does not take "Forget that I\'m a founder." as a follow-up'
     ),
 }
 KNOWN: dict[tuple[str, str], str] = {(name, kind): cause for name, cause in _EVERYONE.items() for kind in KINDS}
-KNOWN[("told once: when work ends", "none")] = (
-    '"when do I stop work?" is not a recall phrase in pilot.personal.memory_talk, so with no model nothing answers it'
-)
 
 
 @pytest.mark.parametrize("kind", KINDS)

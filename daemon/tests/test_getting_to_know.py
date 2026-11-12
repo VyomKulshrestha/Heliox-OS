@@ -9,6 +9,7 @@ import pytest
 
 from pilot.personal.getting_to_know import QUESTIONS, GettingToKnow, parse_name, parse_preferences, parse_use
 from pilot.personal.offers import INTRO, Offers
+from pilot.personal.wiring import held_for_quiet, quiet_now
 from pilot.workflows.user_profile import UserProfile
 
 
@@ -146,7 +147,11 @@ async def test_by_voice_or_chat_and_from_the_app(tmp_path):
     assert await server._control_reply("call me Sam") == QUESTIONS[1]
     assert await server._control_reply("skip") == QUESTIONS[2]
     await server._control_reply("stay quiet unless I ask")
-    assert server.config.suggestions.offers == "off" and server.config.live.level == "quiet"
+    # One place for "quiet unless I ask": the profile, read by quiet_now; Settings stay as the person chose them.
+    assert quiet_now(server) == "asked" and held_for_quiet(server)
+    assert server.config.suggestions.offers != "off" and server.config.live.level != "quiet"
+    assert (await server._control_reply("you can speak up again")).startswith("Okay, I'll speak up again")
+    assert quiet_now(server) == ""
     saved = await server._handle_getting_to_know({"action": "save", "use": "spreadsheets"}, None)
     entry = next(item for item in saved["stored"] if "spreadsheets" in item["text"])
     removed = await server._handle_getting_to_know({"action": "remove", "id": entry["id"]}, None)

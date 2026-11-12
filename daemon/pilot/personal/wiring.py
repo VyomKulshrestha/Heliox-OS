@@ -6,9 +6,11 @@ it reads (tests build partial servers), and nothing here imports audio, speech o
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
+from datetime import datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger("pilot.personal.wiring")
@@ -224,6 +226,61 @@ def offers_for(server: Any, data_dir: Any = None) -> Any:
     return offers
 
 
+# Until this hour the evening's quiet holds after the end of the working day ("I stop work at six").
+WORK_QUIET_UNTIL_HOUR = 5
+
+
+def quiet_now(server: Any, now: datetime | None = None) -> str:
+    """Why Heliox holds back offers, suggestions and Live's non-urgent catches right now, or "": a focus session,
+    "stay quiet unless I ask", or after the end of the working day the person gave ("I stop work at six"), until
+    5 in the morning. The first time the working day's end applies on a day, one sentence goes to the chat."""
+    focus = getattr(server, "_focus", None)
+    if focus is not None and getattr(focus, "active", False):
+        return "focus"
+    profile = getattr(server, "_user_profile", None)
+    if profile is None:
+        return ""
+    try:
+        if profile.quiet():
+            return "asked"
+        end = profile.work_end_minute()
+    except Exception:
+        logger.debug("Could not read the quiet preferences", exc_info=True)
+        return ""
+    if end is None:
+        return ""
+    now = now or datetime.now()
+    minute = now.hour * 60 + now.minute
+    if not (minute >= end or now.hour < WORK_QUIET_UNTIL_HOUR):
+        return ""
+    day = (now - timedelta(hours=WORK_QUIET_UNTIL_HOUR)).date()  # the evening and the small hours are one evening
+    if getattr(server, "_work_end_said_on", None) != day:
+        server._work_end_said_on = day
+        sentence = (
+            f"It's after {end // 60:02d}:{end % 60:02d}, when you stop work, so offers and suggestions wait until "
+            "morning. Risky things still get flagged."
+        )
+        broadcast = getattr(server, "_broadcast_notification", None)
+        if callable(broadcast):
+            with contextlib.suppress(RuntimeError):
+                asyncio.get_running_loop().create_task(
+                    broadcast(
+                        "voice_result",
+                        {"command": "", "status": "answered", "message": sentence, "source": "working_day"},
+                    )
+                )
+    return "after_work"
+
+
+def held_for_quiet(server: Any) -> bool:
+    """For Live and suggestions (their ``focus_active``): hold everything that is not urgent."""
+    try:
+        return bool(quiet_now(server))
+    except Exception:
+        logger.debug("Quiet check failed", exc_info=True)
+        return False
+
+
 def quiet_moment(server: Any) -> bool:
     """A moment a person sitting next to you would choose: nobody talking, no conversation, no focus session, no
     call, not typing."""
@@ -235,9 +292,8 @@ def quiet_moment(server: Any) -> bool:
         return False
     if getattr(server, "config", None) is not None and call_watch_for(server)():
         return False  # in a call: no offer, by voice or on screen
-    focus = getattr(server, "_focus", None)
-    if focus is not None and getattr(focus, "active", False):
-        return False
+    if quiet_now(server):
+        return False  # a focus session, "stay quiet unless I ask", or after the working day
     if getattr(server, "_interactive_request_active", False) or getattr(server, "_pending_confirms", None):
         return False
     coordinator = getattr(server, "_speech_coordinator", None)
@@ -370,13 +426,10 @@ def getting_to_know_for(server: Any) -> Any:
     if gtk is None:
         from pilot.personal.getting_to_know import GettingToKnow
 
-        async def set_quiet(quiet: bool) -> None:
-            if not quiet:
-                return
-            await server._handle_update_config({"section": "suggestions", "values": {"offers": "off"}}, None)
-            await server._handle_update_config({"section": "live", "values": {"level": "quiet"}}, None)
-
-        gtk = GettingToKnow(profile=lambda: getattr(server, "_user_profile", None), set_quiet=set_quiet)
+        # No set_quiet: the preference getting to know stores is the one quiet_now reads (UserProfile.quiet), the
+        # same one "stay quiet unless I ask" said on its own sets, undone by "you can speak up again". The config's
+        # offers and Live level stay what the person chose in Settings.
+        gtk = GettingToKnow(profile=lambda: getattr(server, "_user_profile", None))
         server._getting_to_know = gtk
     return gtk
 

@@ -87,6 +87,57 @@ FORGET_REQUEST = re.compile(
     r"^(?:please )?(?:forget|delete|remove) (?:that )?(?:my )?(?P<what>.+?)(?: from my profile)?$"
     r"|^(?:please )?that(?:'s| is) (?:not right|wrong|incorrect)(?:,? i(?:'m| am)? (?P<correct>.+))?$"
 )
+# A correction said in front of a phrase: "No, call me Sam", "Actually, I live in Pune", "Sorry, I mean ...".
+CORRECTION = re.compile(r"^(?:no|nope|actually|sorry|oops|wait|i mean|correction)[,.!:]*\s+(?:i mean\s+)?(?P<rest>.+)$")
+# "not Alex, Sam" / "not Alex, call me Sam" / "it's Sam" (right after a name was set or corrected)
+NOT_THAT_NAME = re.compile(r"^not (?P<old>[\w'-]+),? (?:it'?s |call me |i'?m )?(?P<new>[\w .'-]{1,40})$")
+ITS_NAME = re.compile(r"^(?:it'?s|i'?m|it is) (?P<new>[a-z][\w'-]{0,39})$")
+NAME_QUESTION = re.compile(r"^(?:what(?:'s| is) my name|what do you call me|do you know my name|who am i)$")
+# How the person wants Heliox to behave between questions: one preference, kept in the profile (QUIET_PREF).
+QUIET_REQUEST = re.compile(
+    r"^(?:please )?(?:stay|be|keep) quiet(?: unless i ask(?: you)?| until i ask(?: you)?(?: something)?| please| for now)?$"
+    r"|^(?:please )?(?:don'?t|do not) (?:interrupt me|speak up|chime in|talk to me)(?: unless i ask(?: you)?)?$"
+    r"|^(?:please )?only (?:speak|talk)(?: up)? when i ask(?: you)?$"
+)
+SPEAK_REQUEST = re.compile(
+    r"^(?:you can |feel free to |please )?(?:speak up|chime in|talk|interrupt me)(?: again| when you notice something"
+    r"| whenever you like)?$|^(?:you can )?stop being quiet$|^you don'?t have to stay quiet(?: any ?more)?$"
+)
+# The end of the working day: "I stop work at six", "my working day ends at 18:00".
+WORK_END = re.compile(
+    r"\b(?:i (?:stop|finish|end|leave|knock off) work(?:ing)?|my (?:working day|work ?day) (?:ends|finishes|is over))"
+    r" (?:at |by |around )?(?P<time>[\w:.]+(?: (?:am|pm|p m|a m))?)",
+    re.IGNORECASE,
+)
+WORK_END_REQUEST = re.compile(
+    r"^(?:i (?:stop|finish|end|leave|knock off) work(?:ing)?|my (?:working day|work ?day) (?:ends|finishes|is over))"
+    r" (?:at |by |around )?[\w:.]+(?: (?:am|pm))?(?: (?:every day|on weekdays|most days))?$"
+)
+QUIET_PREF = "prefer that Heliox stays quiet unless I ask"
+SPEAK_UP_PREF = "prefer that Heliox speaks up when it notices something"
+_HOUR_WORDS = {w: i for i, w in enumerate(
+    ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"])}  # fmt: skip
+
+
+def parse_work_end(text: str) -> int | None:
+    """Minutes after midnight for "I stop work at six" (18:00), "at 5:30 pm", "at 17:30"; None when unclear. A bare
+    hour from 1 to 11 is the afternoon or evening: nobody ends work at six in the morning by default."""
+    found = WORK_END.search(text)
+    if not found:
+        return None
+    raw = found.group("time").casefold().replace(" ", "").replace(".", ":")
+    meridiem = "pm" if raw.endswith(("pm", "p")) else "am" if raw.endswith(("am", "a")) else ""
+    raw = raw.removesuffix("pm").removesuffix("am")
+    hour_text, _, minute_text = raw.partition(":")
+    hour = int(hour_text) if hour_text.isdigit() else _HOUR_WORDS.get(hour_text)
+    minute = int(minute_text) if minute_text.isdigit() else 0
+    if hour is None or not 0 <= minute <= 59:
+        return None
+    if meridiem == "pm" and hour < 12 or not meridiem and 1 <= hour <= 11:
+        hour += 12
+    return hour * 60 + minute if 0 <= hour <= 23 else None
+
+
 CLEAR_REQUEST = re.compile(
     r"^(?:please )?(?:forget everything about me|clear my profile|delete my profile|forget who i am)$"
 )
@@ -106,6 +157,7 @@ _SLOTS = (
                         r"i am based in|my home is in|i'm from|i am from)\b", re.IGNORECASE)),
     ("work", re.compile(r"\b(?:i work (?:at|for|as)|i'm working (?:at|for)|i am working (?:at|for)|my job is|"
                         r"i'm employed (?:at|by))\b", re.IGNORECASE)),
+    ("work_end", WORK_END),
 )  # fmt: skip
 
 
@@ -215,6 +267,8 @@ class UserProfile:
             profile["_mirror"] = {str(k): str(v) for k, v in data["_mirror"].items() if isinstance(v, str)}
         if isinstance(data.get("call_me"), str):
             profile["call_me"] = data["call_me"]
+        if isinstance(data.get("call_me_at"), (int, float)):
+            profile["call_me_at"] = float(data["call_me_at"])
         if isinstance(data.get("style"), dict):
             profile["style"] = {
                 k: v for k, v in data["style"].items() if k in ("length", "formality") and isinstance(v, str)
@@ -312,6 +366,7 @@ class UserProfile:
         profile = self._load()
         await self._mirror_forget(profile, "call_me")
         profile["call_me"] = name
+        profile["call_me_at"] = self._clock()
         await self._mirror_add(profile, "call_me", "profile:call_me", name)
         self._save(profile)
         return name
@@ -370,6 +425,10 @@ class UserProfile:
         entry = {"id": uuid.uuid4().hex[:10], "text": text, "at": max(self._clock(), newest + 1e-6), **extra}
         if slot:
             entry["slot"] = slot
+        if slot == "work_end":
+            minute = parse_work_end(text)
+            if minute is not None:
+                entry["minute"] = minute  # read by pilot.personal.wiring.quiet_now: no offers after it
         items.append(entry)
         # One memory label per slot, or per entry: a shared label made each new entry supersede every other one.
         await self._mirror_add(profile, entry["id"], f"profile:{kind}:{slot or entry['id']}", text)
@@ -402,6 +461,26 @@ class UserProfile:
                     pass
         self._save({"call_me": "", "style": {}, "_mirror": {}, **{key: [] for key in _LISTS}})
         return removed
+
+    def quiet(self) -> bool:
+        """The person asked Heliox to stay quiet unless they ask (said on its own, or while getting to know them)."""
+        return any(item.get("text") == QUIET_PREF for item in self._load()["prefers"])
+
+    def work_end_minute(self) -> int | None:
+        """When the person said their working day ends, in minutes after midnight, or None."""
+        for item in self._load()["about"]:
+            if item.get("slot") == "work_end" and isinstance(item.get("minute"), int):
+                return int(item["minute"])
+        return None
+
+    async def set_quiet(self, quiet: bool) -> None:
+        """Keep one of the two preferences about speaking up, replacing the other."""
+        profile = self._load()
+        for item in list(profile["prefers"]):
+            if item.get("text") in (QUIET_PREF, SPEAK_UP_PREF):
+                await self.delete(item["id"])
+        if quiet:
+            await self.add("prefers", QUIET_PREF)
 
     def people_by_relation(self) -> dict[str, str]:
         """Relation -> name, for relations the person named exactly one person for (the live layer checks these)."""
@@ -490,18 +569,53 @@ class UserProfile:
             await self.sweep()  # what is never kept leaves the file and long-term memory the next time it is used
         except Exception:
             logger.warning("Could not remove stored entries Heliox never keeps", exc_info=True)
+        corrected = CORRECTION.match(normalized)
+        if corrected:
+            # "No, call me Sam": the phrase after the correction, which replaces the old fact wherever it is used.
+            normalized = corrected.group("rest").strip(" .!")
+            raw = re.sub(
+                r"(?i)^\W*(?:no|nope|actually|sorry|oops|wait|i mean|correction)[,.!:]*\s+(?:i mean\s+)?", "", raw
+            )
         if READ_REQUEST.match(normalized):
             return self.describe()
+        if NAME_QUESTION.match(normalized):
+            current = self.name()
+            return f"I call you {current}." if current else 'You haven\'t told me your name yet. Say "call me" and it.'
+        renamed = await self._rename(normalized, corrected=bool(corrected))
+        if renamed:
+            return renamed
+        if QUIET_REQUEST.match(normalized):
+            await self.set_quiet(True)
+            # Under the spoken cap (pilot.conversation.layer.SPOKEN_WORD_CAP), so it is said whole.
+            return 'Okay, I\'ll stay quiet unless you ask: no offers, and Live only flags risky things. "You can speak up again" undoes it.'
+        if SPEAK_REQUEST.match(normalized) and self.quiet():
+            await self.set_quiet(False)
+            return "Okay, I'll speak up again when I notice something, and offers are back on."
+        if WORK_END_REQUEST.match(normalized):
+            minute = parse_work_end(normalized)
+            if minute is None:
+                return None
+            try:
+                await self.add("about", _clean(_strip_lead(raw).rstrip(".!")))
+            except ValueError as exc:
+                return str(exc)
+            return (
+                f"Noted: you stop work at {minute // 60:02d}:{minute % 60:02d}. After that I'll keep offers and "
+                "suggestions to myself until the morning."
+            )
         if CLEAR_REQUEST.match(normalized):
             removed = await self.clear()
             return "Done, I've forgotten what I knew about you." if removed else "I didn't have anything about you."
 
         name = NAME_REQUEST.match(normalized)
         if name:
+            had = self.name()
             try:
                 saved = await self.set_name(name.group("name"))
             except ValueError as exc:
                 return str(exc)
+            if corrected and had and had != saved:
+                return f"Sorry about that, {saved}. I'll call you {saved} from now on."
             return f"Nice to meet you, {saved}. I'll call you that."
 
         person = PERSON_REQUEST.match(normalized)
@@ -575,6 +689,27 @@ class UserProfile:
                 return f'Okay, I\'ve forgotten "{removed}".'
             return None  # not in the profile: let other handlers or the planner take it
         return None
+
+    async def _rename(self, normalized: str, *, corrected: bool) -> str:
+        """'not Alex, Sam', and "it's Sam" right after a name was set or corrected: the name replaced everywhere."""
+        current = self.name()
+        if not current:
+            return ""
+        new = ""
+        not_that = NOT_THAT_NAME.match(normalized)
+        if not_that and _normalize(not_that.group("old")) == _normalize(current):
+            new = not_that.group("new")
+        its = ITS_NAME.match(normalized)
+        recent = self._clock() - float(self._load().get("call_me_at", 0.0) or 0.0) < 600
+        if its and (corrected or recent):
+            new = its.group("new")
+        if not new or _normalize(new) == _normalize(current):
+            return ""
+        try:
+            saved = await self.set_name(new)
+        except ValueError:
+            return ""
+        return f"Sorry about that, {saved}. I'll call you {saved} from now on."
 
     async def forget_last(self) -> str:
         """Remove the most recently added list entry (what the person just told me). Returns its text, or ""."""

@@ -107,8 +107,7 @@ def parse_preferences(text: str) -> tuple[str, str]:
     return length, speaking
 
 
-SPEAK_UP_PREF = "prefer that Heliox speaks up when it notices something"
-QUIET_PREF = "prefer that Heliox stays quiet unless I ask"
+from pilot.workflows.user_profile import QUIET_PREF, SPEAK_UP_PREF  # noqa: E402  (one place for both)
 
 
 @dataclass

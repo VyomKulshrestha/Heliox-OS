@@ -1515,6 +1515,7 @@ class PilotServer:
 
         self._companion = Companion(DATA_DIR / "companion.json", on_change=self._companion_apply)
         await self._companion_apply()
+        from pilot.personal.wiring import held_for_quiet
         from pilot.workflows.suggestions import Suggester, SuggestionLoop
 
         suggester = Suggester(
@@ -1522,7 +1523,7 @@ class PilotServer:
             stale_goals=self._goals.stale if self._goals is not None else list,
             habits=self._habits.list if self._habits is not None else list,
             open_todos=self._todos.open_items if self._todos is not None else list,
-            focus_active=lambda: bool(self._focus is not None and self._focus.active),
+            focus_active=lambda: held_for_quiet(self),  # focus, "stay quiet unless I ask", after work
         )
         self._suggester = suggester
         self._suggestions = SuggestionLoop(
@@ -1554,7 +1555,7 @@ class PilotServer:
             speak=self._live_speak,
             user_speaking=lambda: bool(self._voice_listener is not None and self._voice_listener.user_is_speaking),
             heliox_speaking=lambda: bool(self._speech_coordinator.status().get("active")),
-            focus_active=lambda: bool(self._focus is not None and self._focus.active),
+            focus_active=lambda: held_for_quiet(self),  # focus, "stay quiet unless I ask", after work
             people=lambda: self._user_profile.people_by_relation() if self._user_profile is not None else {},
             mute_kind=self._live_mute_kind,
             on_disable=self._live_reader.close,
