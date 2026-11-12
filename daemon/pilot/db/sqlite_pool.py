@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
+import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import aiosqlite
+
+logger = logging.getLogger("pilot.db.sqlite_pool")
 
 
 class AsyncSqlitePool:
@@ -104,9 +108,14 @@ class AsyncSqlitePool:
         if not self._started or self._closed:
             return
 
-        # Final checkpoint before shutdown
+        # Final checkpoint before shutdown. A request cut off by the shutdown can leave a statement open on the
+        # write connection, and the checkpoint then fails ("database table is locked"). Closing goes on: the WAL
+        # stays valid and is applied when the database is next opened.
         if self._write_conn is not None:
-            await self.checkpoint()
+            try:
+                await self.checkpoint()
+            except sqlite3.OperationalError as error:
+                logger.info("Final WAL checkpoint of %s skipped at shutdown: %s", self._db_path.name, error)
             await self._write_conn.close()
             self._write_conn = None
 

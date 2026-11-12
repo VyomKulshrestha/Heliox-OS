@@ -102,3 +102,30 @@ async def test_sqlite_pool_checkpoint_returns_wal_stats(tmp_path):
         assert set(result) == {"mode", "busy", "log_frames", "checkpointed_frames"}
     finally:
         await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_close_does_not_raise_while_a_statement_is_still_open(tmp_path):
+    """A request cut off by shutdown can leave a statement open on the write connection. The final checkpoint then
+    fails ("database table is locked"); closing must go on, since the WAL stays valid for the next start."""
+    path = tmp_path / "pool.db"
+    pool = AsyncSqlitePool(path)
+    await pool.start()
+    async with pool.write() as db:
+        await db.execute("CREATE TABLE demo (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+        await db.executemany("INSERT INTO demo (value) VALUES (?)", [(str(n),) for n in range(50)])
+        await db.commit()
+    unfinished = await pool._write_conn.execute("SELECT value FROM demo")
+    assert await unfinished.fetchone() is not None  # one row read, the statement left open
+
+    await pool.close()
+
+    reopened = AsyncSqlitePool(path)
+    await reopened.start()
+    try:
+        async with reopened.read() as db:
+            cursor = await db.execute("SELECT COUNT(*) FROM demo")
+            assert (await cursor.fetchone())[0] == 50
+            await cursor.close()
+    finally:
+        await reopened.close()
