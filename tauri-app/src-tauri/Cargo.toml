@@ -25,7 +25,7 @@ dirs = "6"
 
 sysinfo = "0.39"
 
-opener = "0.8"
+opener = "0.9"
 enigo = "0.6"
 
 
