@@ -392,7 +392,8 @@ def _words(text: str) -> int:
     return len(text.split())
 
 
-async def run_session(session: dict[str, Any], kind: str) -> tuple[Record, list[str]]:
+async def run_session(session: dict[str, Any], kind: str, real_model: Any = None) -> tuple[Record, list[str]]:
+    """``real_model``: a real fast model to answer instead of the scripted replies (the --real run)."""
     from pilot.system.addressing import Heard
     from pilot.system.voice import voice_turn_addressed, voice_turn_id
 
@@ -403,6 +404,10 @@ async def run_session(session: dict[str, Any], kind: str) -> tuple[Record, list[
         patches = [*_isolate(folder), _track_tasks(record)]
         try:
             server = await build_server(kind, session, folder, record, clock)
+            if real_model is not None:
+                from pilot.conversation import layer_for
+
+                layer_for(server)._model = lambda: _counting(real_model, record)
             listener: Listener = server._voice_listener
             pending: list[asyncio.Task[Any]] = []
 
@@ -690,11 +695,26 @@ def load_pack(path: Path = PACK) -> list[dict[str, Any]]:
     return json.loads(path.read_text(encoding="utf-8"))["sessions"]
 
 
-async def run_all(sessions: list[dict[str, Any]], kinds: tuple[str, ...]) -> dict[str, Any]:
+class _counting:
+    """A real model that counts its calls per turn in the record, as the stub does."""
+
+    def __init__(self, model: Any, record: Record) -> None:
+        self._model, self._record = model, record
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._model, name)
+
+    def stream(self, system: str, messages: list[dict[str, Any]]) -> Any:
+        turn = _turn_of(self._record)
+        self._record.model_calls[turn] = self._record.model_calls.get(turn, 0) + 1
+        return self._model.stream(system, messages)
+
+
+async def run_all(sessions: list[dict[str, Any]], kinds: tuple[str, ...], real_model: Any = None) -> dict[str, Any]:
     rows = []
     for session in sessions:
         for kind in kinds:
-            record, failures = await run_session(session, kind)
+            record, failures = await run_session(session, kind, real_model)
             rows.append(
                 {
                     "session": session["name"],
@@ -709,16 +729,50 @@ async def run_all(sessions: list[dict[str, Any]], kinds: tuple[str, ...]) -> dic
     return {"table": table, "rows": rows}
 
 
+async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
+    """The Claude road against the real fast model, once, with the budget tracker on; scored by the same rules."""
+    from pilot.config import DB_FILE, PilotConfig
+    from pilot.conversation.fast_model import build_fast_model
+    from pilot.models.budget_tracker import BudgetTracker
+    from pilot.security.vault import KeyVault
+
+    config = PilotConfig.load()
+    config.save = lambda: None
+    if config.model.cloud_provider != "claude":
+        raise SystemExit("--real runs the Claude road only; the configured cloud provider is not Claude")
+    budget = BudgetTracker(config.model, str(DB_FILE))
+    await budget.initialize()
+    before = budget._monthly_cost
+    model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
+    summary = await run_all(sessions, ("claude",), real_model=model)
+    await asyncio.sleep(0.3)  # the last call's usage is recorded as its stream closes
+    summary["spent_usd"] = round(budget._monthly_cost - before, 5)
+    summary["calls"] = len(getattr(model, "calls", []))
+    summary["model"] = getattr(model, "name", "")
+    await budget.close()
+    return summary
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m benchmarks.conversation_eval.sessions")
     parser.add_argument("--only", default="")
     parser.add_argument("--kind", default="")
     parser.add_argument("--out", default="")
+    parser.add_argument(
+        "--real",
+        action="store_true",
+        help="the Claude road only, against the configured Claude fast model; costs money, recorded in the budget",
+    )
     args = parser.parse_args(argv)
     sessions = [s for s in load_pack() if args.only in s["name"]]
     kinds = (args.kind,) if args.kind else KINDS
-    summary = asyncio.run(run_all(sessions, kinds))
+    if args.real:
+        summary = asyncio.run(_real_run(sessions))
+    else:
+        summary = asyncio.run(run_all(sessions, kinds))
     print("sessions passed:", summary["table"])
+    if "spent_usd" in summary:
+        print("budget tracker:", summary["spent_usd"], "USD over", summary["calls"], "calls")
     for row in summary["rows"]:
         for failure in row["failures"]:
             print(f"[{row['kind']}] {row['session']}: {failure}")

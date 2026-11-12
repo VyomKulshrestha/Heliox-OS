@@ -26,7 +26,7 @@ the owner's; what that leaves unshown, and the recording that would show it, is 
    From the last word to the dispatch of the command: 1.3 s for a sentence Parakeet settled, 2.8 to 3.3 s when
    Whisper ran as well. A timing set on a quiet machine is still owed (below).
 3. **Dispatch** (`PilotServer._voice_command_dispatch`). In order: barge-in stops Heliox's voice; an approval
-   attempt is refused ("I can't approve that by voice"); a denial is applied; `_control_reply` tries sixteen
+   attempt is refused ("I can't approve that by voice"); a denial is applied; `_control_reply` tries nineteen
    handlers Heliox answers in code (help, live replies, profile, goals, the day, to-dos, reminders, undo,
    routines, shortcuts and others); stop and soft-stop words; corrections to a running task. These take tens of
    milliseconds (from the code's own logging), and a local answer was heard 0.2 s after dispatch plus synthesis
@@ -93,8 +93,8 @@ before. What reaches it is what used to go straight to the planner:
 * **Unclear** (a bare verb, the wake phrase alone, the recogniser repeating one word, "open it" with nothing to
   refer to): the fast model, which says what it heard and asks. It never acts on a guess.
 
-The table in `tests/test_conversation_router.py` has 110 utterances, 51 of them the owner's own recognised speech
-(text: the recognisers' words for one voice). None of the misheard ones reaches the planner as an action; how
+The table in `tests/test_conversation_router.py` has 120 utterances, 51 of them the owner's own recognised speech
+(text: the recognisers' words for one voice; **Fakes only** in the sense that no audio is involved). None of the misheard ones reaches the planner as an action; how
 other voices are misheard is not yet shown.
 
 ### Streaming into speech and cutting off
@@ -216,15 +216,28 @@ unchanged.
 
 When the fast model decides an action is needed it writes one line,
 `ACT {"verb": ..., "object": ..., "request": ..., "say": ..., "action": ...}`, which is never read aloud; `action`
-is optional, one action in the planner's own schema, used only on the quick road's terms below. The planner gets the
-written-out request (so "open it" arrives as "Open launch-notes.md in Notepad"); the person hears the `say`
-sentence. A malformed line is treated as unclear.
+is optional, one action in the planner's own schema, used only on the quick road's terms below. The planner's request is
+always the person's own words. The written-out request ("Open launch-notes.md in Notepad" for "open it") and
+the last few turns of the conversation go to it separately, as context under their own heading, at most six
+turns and 1,200 characters, with what Live read from the screen left out unless `share_screen_text` allows it
+(`pilot/conversation/planner_context.py`). The reviewers (Gnomon, the safety review, the double-check) judge the
+plan against the person's words and their own earlier lines, never Heliox's lines or the model's reading. The
+person hears the `say` sentence. A malformed line is treated as unclear, and a reply that declines or asks what
+was meant hands nothing over, even with a promise or an ACT line in it.
 
 While the planner works, `keep_company` speaks: the acknowledgement at once; if planning passes 2 s, one sentence
 from the interaction state ("I'm working out the steps.", "I'm checking the plan for risks."); another only when
 the state moves on and at least 6 s later, three at most; and, when an approval is needed, "This one needs your
 approval. It's on the screen; press Approve if you want it to go ahead." The server cancels it when the planner
-returns and speaks the result as before; the layer records the result so the next question can refer to it.
+returns and speaks the result as before; the layer records the result so the next question can refer to it. A
+sentence the listener split at a pause and joined is acknowledged once.
+
+**Run for real** for the hand-over decision after some talk: `benchmarks/conversation_eval/handover_context.py`,
+nine scripted conversations on Claude Haiku 5.5, text, two runs on 12 November ($0.0026 and $0.0038). The second
+run broke none of the cases' must-not rules; four of nine were handed over, carrying 9 of 14 earlier facts. Five
+paid planner calls (Claude Opus 5.5, about $0.11) checked two of those cases: with the context the planner
+listed Downloads before moving only the 2026 invoices, and still asked before deleting. Everything else in this
+section is **Fakes only** (unit tests).
 
 ### The quick road
 
@@ -286,8 +299,9 @@ free on drive C."); a failure says what failed ("That didn't work: Application '
 | Media keys | `pyautogui` | `pyautogui` (needs Accessibility) | `pyautogui` on X11; not under Wayland |
 | Battery, disk, memory, processor | `psutil` | `psutil` | `psutil` |
 
-The decisions (which plan for which words, on which system) are pure and tested on all three; running the actions
-was tested for real on Windows only.
+The decisions (which plan for which words, on which system) are pure and tested on all three (**Fakes only**).
+Running the actions is **Run for real** on Windows only (the owner's machine: Notepad opened, battery and disk
+read); on macOS and Linux it is **Not tested** by this layer (the platform agent's checks cover launching apps).
 
 ### Typed chat
 
@@ -302,7 +316,8 @@ take the same hand-over and the same quick road, with the same rules; a typed re
 opens the approval dialog exactly as before. Messages with attached files, revisions and expanded shortcuts keep
 the planner road. While the reply streams, the chat view renders it as markdown as it grows (an open code
 block is closed and a half-typed bold or code marker is held back until it closes), so it does not jump when it
-ends.
+ends. **Fakes only**: unit tests and an end-to-end test against the real server with a stubbed model; no typed
+conversation with a real model has been recorded.
 
 ### When the model fails
 
@@ -317,6 +332,10 @@ ends.
 | Heliox's own monthly budget is used up | "This month's model budget is used up..." | until the budget allows |
 | The connection drops part-way through a reply | what was said, then "I lost the connection there." | as for no network |
 
+**Fakes only**: every row is a test with the provider's own stream format stubbed (`tests/test_conversation_models.py`,
+`tests/test_conversation_every_person.py`). The out-of-credit and rate-limit replies are written from the
+providers' documented errors, not captured from a real account.
+
 ### Claude over plain HTTP
 
 Claude is reached like every other cloud provider: the Messages API with `stream: true`, read as server-sent
@@ -324,7 +343,7 @@ events with `httpx`, recorded in the budget the same way (input tokens from `mes
 `message_delta`, the abandoned-call estimate when cut off before either). The connection is opened ahead with the
 free token-counting call when the person starts talking, at most every 45 s.
 
-The Anthropic SDK was tried and dropped. Measured on 12 November, three calls each, alternating, both connections
+The Anthropic SDK was tried and dropped. **Run for real**, measured on 12 November, three calls each, alternating, both connections
 warmed (network time on a home connection; machine load not recorded): SDK first token median 0.88 s (0.72 to
 1.09 s), plain HTTP median 0.77 s (0.75 to 0.77 s); six calls cost $0.0005. Importing the SDK took 22 to 36 s on
 the owner's machine (load not recorded; about three minutes without compiled bytecode), which a turn would have waited
@@ -341,7 +360,7 @@ certain, otherwise the model the person already configured.
 | Claude key | `claude-haiku-5-5`, thinking off, effort low, over plain HTTP | yes | see section 3 | key rejected, budget used up, offline: one sentence each |
 | Another cloud (Gemini, OpenAI, OpenRouter, Meta) | the configured model (Gemini Flash with thinking off) | yes, server-sent events | about one round trip plus synthesis | the same |
 | Local only (Ollama) | the configured local model | yes, from the local server | seconds while the model loads; the holding phrase covers it | "the local one isn't running" or "isn't installed", with where to fix it |
-| No model at all | none | n/a | instant, in code | once per session: conversation needs a model, and where to set one up (a local one keeps everything on the computer); afterwards one short line |
+| No model at all | none | n/a | instant, in code | once per session: "That needs a language model, and none is set up. You can add a local model or a cloud key in Settings, under Model." (24 words); afterwards one short line |
 
 In every case control words, local answers and approvals work as before, and a request to act still reaches the
 planner with a specific acknowledgement. Every call is checked against and recorded in the budget tracker the
@@ -350,13 +369,23 @@ usage it had reported, or the existing abandoned-call estimate when it had repor
 
 No provider SDK is needed: every cloud provider is streamed over `httpx`, which Heliox already depends on.
 
+**Run for real** for the Claude key only (the evals in section 3, Claude Haiku 5.5, text). **Fakes only** for
+Gemini, OpenAI, OpenRouter and Meta: the eval's recorded replies replayed through each provider's own stream
+format; none of them has answered a real turn, so "about one round trip" is an expectation, not a measurement.
+**Not tested** with a real local model: the Ollama eval is owed until the machine is quiet enough to run it.
+**Fakes only** for no model at all (the session suite).
+
 ### Hooks in the server
 
-Seven small hooks, all in or next to `_voice_command_dispatch`: `interrupt()` at the top of dispatch; `take()` just
-before the planner road (a turn the layer finished broadcasts `voice_result` and returns); the planner input
-taken from the hand-over; the stock acknowledgement replaced by `keep_company()`; `finish()` after the result;
-`clear()` in the new-conversation handler; and `prewarm()` in `_prewarm_voice`, so the fast model is ready when
-listening starts. For the quick road: the dispatch passes the quick plan with the planner call and speaks the
+The hooks, all in or next to `_voice_command_dispatch` (from the code): `interrupt()` at the top of dispatch;
+every addressed turn offered to Heliox Live (`live_hold`) after approvals and denials and before any road, in
+voice and typed chat alike; "again", "shorter" and "say that again" answered from the last turn;
+`take()` before the planner road (a turn the layer finished broadcasts `voice_result` and returns); the
+person's words as the planner input, with the conversation passed as context; `keep_company()` in place of the
+stock acknowledgement; `finish()` after the result; one sentence when the person drops a plan that is waiting
+for approval ("Okay, I've dropped that: ... Nothing ran."); `clear()` and Live's `drop_held()` in the
+new-conversation handler; `withdraw_voice_turn` set on the listener for a sentence split at a pause; and
+`prewarm()` in `_prewarm_voice`, so the fast model is ready when listening starts. For the quick road: the dispatch passes the quick plan with the planner call and speaks the
 layer's result sentence; inside `_handle_execute_inner` four small hunks take the plan, use it on the first
 attempt, skip the model reviewers for it, and drop it for the planner when anything would ask for approval. The
 layer is active only once the server's model stack is up.
@@ -373,8 +402,8 @@ the three CI systems.
 
 ## 3. Measured
 
-Ten conversational turns (text: questions, a remark, a follow-up, a misheard line and a pronoun to resolve), Claude
-Haiku 5.5 through the Anthropic SDK (since replaced by plain HTTP, which measured slightly faster) on a home
+**Run for real**: ten conversational turns (text: questions, a remark, a follow-up, a misheard line and a pronoun
+to resolve), Claude Haiku 5.5 through the Anthropic SDK (since replaced by plain HTTP, which measured slightly faster) on a home
 connection, the real layer and context, 12 November 2026. The sink was silent and took as long as speech would;
 the machine had too little free memory to load Kokoro for the run, so the model times below are under load.
 
@@ -393,10 +422,10 @@ no recording yet times the last word to Heliox's first audio end to end on a qui
 
 The ten turns used 8,600 input and 400 output tokens, $0.0011, recorded in the budget tracker.
 
-The quick road, dispatch to action started: 0.02 s median over ten allow-listed requests with a stubbed executor
-(text; 2.2 s for the first in a fresh process, which loads the world model's weights), and 0.024 s median over
-three real ones on Windows only (Notepad opened; battery and disk read; load not recorded), against 10 to 15 s for
-a planned step before.
+The quick road, dispatch to action started: **Fakes only**, 0.02 s median over ten allow-listed requests with a
+stubbed executor (text; 2.2 s for the first in a fresh process, which loads the world model's weights); **Run for
+real** on Windows only, 0.024 s median over three requests (Notepad opened; battery and disk read; load not
+recorded), against 10 to 15 s for a planned step before.
 
 ### The conversation eval
 
@@ -418,7 +447,10 @@ rarely), in the post-processing (such sentences are dropped like a claimed actio
 a request). A second run lost the network part-way and showed that the short offline line was the same on every
 turn; it now alternates. Third run: 41 turns, hand-over precision 1.0 and recall 1.0, every check at 100% except
 one repeated opening ("I can't..." on two honest don't-know answers in a row), $0.0038. The three runs cost $0.009
-in all. First-sentence times are owed: the machine was at 76 to 78% CPU with about 1 GB free.
+in all. First-sentence times are owed: the machine was at 76 to 78% CPU with about 1 GB free. These runs are
+**Run for real** on Claude Haiku 5.5 only, text. `tests/test_conversation_eval_more.py` replays the recorded
+replies through the OpenAI-compatible, Gemini and Claude stream formats: **Fakes only**, so it shows the parsing,
+not what those models would say.
 
 ### When the fast model and the planner disagree
 
@@ -434,6 +466,12 @@ that was only asked about:
   the person's request, not an approval. With a plan waiting for approval, the server refuses a spoken "yes"
   before this layer is asked, exactly as before, so the two can never be confused. Anything else said closes the
   offer. A request phrased as a question ("Could you open the calculator?") is not held back.
+* **A reply that declines or asks what was meant** ("I can't tell which files you mean, so I won't delete anything
+  yet."): nothing is handed over, even with a promise or an ACT line after the words, and the ACT line is never
+  spoken.
+
+**Fakes only** for the rules (unit tests). The promise and decline cases also ran in the handover eval in section 2
+(**Run for real**, Claude Haiku 5.5, text).
 
 ### Spoken length, numbers and Live's remarks
 
@@ -445,7 +483,12 @@ of November") are turned into words a voice says well. A remark Heliox Live made
 conversation as Live's (`add_heliox(..., source="live")`), so "why?" is answered from its evidence rather than as
 Heliox's own mistake, and the model is told how its last reply began so it starts the next one differently.
 
-On the further checks (text: 53 turns on Claude Haiku 5.5), before these fixes and after:
+Since 12 November every road to the voice also says amounts, times, ordinals and percentages as a person does
+("4 200" and "4,200" as "four thousand two hundred", "3pm" as "three p m", "19th" as "nineteenth", "50%" as
+"fifty percent"; versions, addresses and plain years are left alone): **Fakes only**, unit tests of the
+conversion; no recording of Heliox's voice saying them has been checked.
+
+**Run for real** on the further checks (text: 53 turns on Claude Haiku 5.5), before these fixes and after:
 
 | Check | Before | After |
 |---|---|---|
@@ -463,19 +506,45 @@ The listener tells the layer how each turn reached it (`voice_turn_addressed`: "
 answered with a question, as before. A doubtful follow-up is probably speech that was not meant for Heliox: it is
 never sent to a model, never acted on and never kept as conversation; Heliox says one short "Sorry?" at most once
 per conversation, then tells the listener the turn was not understood (`note_not_understood()`), which closes the
-follow-up window instead of extending it. Control words still work.
+follow-up window instead of extending it. Control words still work. **Fakes only**: unit tests and the session
+suite; the Conversation Bench's audio-level re-run is the measurement that would show it.
 
 ### "What can I say?"
 
 Answered in two spoken sentences with three examples that work for this person right now: an app their system
 has, a reminder, and a question when a model is set up ("why did you say that?" when Live is on), then "Say 'more'
 for others." "More" within two minutes gives the next three. The command palette opens at the same time with the
-full list. Every example that needs no model is answered in code (a test checks each).
+full list. Every example that needs no model is answered in code (a test checks each). The two sentences are 23 words on
+Windows and macOS and 24 on Linux (from the code). **Fakes only**.
+
+### Whole sessions
+
+`python -m benchmarks.conversation_eval.sessions` runs 21 sessions of 6 to 8 turns (`sessions.json`: a morning, a
+task corrected and stopped, "shorter" and "again", an action repeated, a slip Live asks about, a vague destructive
+request, an approval voice must not grant, a note said in passing, a misheard turn, someone else talking, a call,
+the wake phrase needed again, a sentence split at a pause, and more). The real server, the listener's real
+addressing rule on an injected clock, the conversation layer, the quick road, the planner road with its approvals,
+Heliox Live's real checks, and the person's stores in a temporary folder all run. Each turn states what must be
+said, what must run, what must be asked for approval and what must never happen, and across a session nothing is
+said twice running, nothing over about 25 words unless asked for detail, nothing over the person, and nothing out
+of turn. Every session runs for a Claude key, an OpenAI-compatible endpoint, a local model and no model.
+
+**Fakes only**: the model streams are stubbed in each provider's own format with scripted replies, and the planner
+and the tools are stubs. On that, every session passes for every kind of person (12 November).
+
+**Run for real**, once (12 November, text, Claude Haiku 5.5 for the Claude road only, the budget tracker's own
+figure $0.00114 over 7 model calls): 16 of 21 sessions passed the same rules. The run mostly shows what happens
+when the model is slow. At least once a first word did not come within 4.5 s, the person heard "The language model isn't
+answering right now ...", and the model was then left alone for 30 s. The suite plays sessions back to back with
+one model, so every model turn for the next half minute heard the short fallback instead of an answer. Where the
+model did answer, the replies kept to the rules ("Tomorrow is Friday the thirteenth of November." after "and
+tomorrow?"). One rule in the pack was written for the stub's two-sentence reply: the real one-sentence answer
+made "shorter" say "That was the short version." The run says nothing yet about how often the first word is late
+on a quiet machine: that needs a timed run on a quiet machine, which is owed.
 
 ## 4. Not in this pass
 
 * The quick road covers single actions only; anything with two steps goes to the planner.
-* The planner does not see the conversation turns held here; it gets the written-out request instead.
 * The existing Claude provider (`models/cloud.py`) still calls the API over plain HTTP, non-streamed.
 
 ## 5. When Heliox takes speech as meant for it
