@@ -28,11 +28,13 @@ connections and messages. The exit code is the number of failed checks.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fcntl
 import os
 import pty
 import re
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -40,6 +42,7 @@ import sys
 import tempfile
 import termios
 import time
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -162,9 +165,38 @@ class Terminal:
         return repr(self.read()[start:][-size:])
 
     def close(self) -> None:
-        self.proc.kill()
-        self.proc.wait(timeout=10)
-        os.close(self.master)
+        """End the shell and everything it started; never raises.
+
+        Our side of the terminal is read while the shell exits: a process ending closes its terminal, and on macOS
+        that close waits for output nobody has read (CI on 0fcfc1d: a killed zsh still there 10 s later). If it
+        does not end, a DIAG line says what was on its screen and whether it was at a password prompt.
+        """
+        pid = self.proc.pid
+        try:
+            if self.proc.poll() is None:
+                try:
+                    os.killpg(pid, signal.SIGKILL)  # its own session and group: the shell and what it runs
+                except (ProcessLookupError, PermissionError):
+                    self.proc.kill()
+            deadline = time.monotonic() + 10.0
+            while self.proc.poll() is None and time.monotonic() < deadline:
+                self.read()
+                time.sleep(0.05)
+            if self.proc.poll() is None:
+                screen = plain(self.output)[-400:]
+                at_password = bool(re.search(r"(?i)(password|passphrase)[^\n]*:\s*$", screen))
+                diag(
+                    "terminal close",
+                    f"pid {pid} had not ended 10 s after SIGKILL; at a password prompt: {at_password}; "
+                    f"its last screen: {screen!r}",
+                )
+        except Exception as exc:
+            diag("terminal close", f"{type(exc).__name__}: {exc}")
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(self.master)  # a terminal with nobody on the other side: whatever still waits on it ends
+            with contextlib.suppress(Exception):
+                self.proc.wait(timeout=5)
 
 
 async def wait_for(condition, seconds: float = 5.0) -> bool:
@@ -547,6 +579,15 @@ async def zsh_hung_check(root: Path) -> None:
     await server.wait_closed()
 
 
+async def part(name: str, run) -> None:
+    """One part of the check: if it raises, that is one failed CHECK with the cause, and the next part still runs."""
+    try:
+        await run
+    except Exception as exc:
+        check(f"{name}: ran to its end", False, f"{type(exc).__name__}: {exc}")
+        diag(f"{name} traceback", traceback.format_exc()[-1500:])
+
+
 async def main() -> int:
     # Under /tmp: a socket's path must stay under 104 bytes, and macOS's own temp folder is long.
     with tempfile.TemporaryDirectory(prefix="hlx-sh-", dir="/tmp") as folder:
@@ -566,11 +607,11 @@ async def main() -> int:
                 mode == "0o700" and oct(server.path.stat().st_mode & 0o777) == "0o600",
                 mode,
             )
-            await zsh_checks(server, live_on, root)
-            await fish_checks(server, root)
-            await dry_run_checks(root)
-            await fish_bound_checks(root)
-            await zsh_hung_check(root)
+            await part("zsh", zsh_checks(server, live_on, root))
+            await part("fish", fish_checks(server, root))
+            await part("dry run", dry_run_checks(root))
+            await part("fish's bound", fish_bound_checks(root))
+            await part("zsh and a hung Heliox", zsh_hung_check(root))
             await server.close()
             check("the socket is gone when Heliox closes it", not server.path.exists())
     return failures

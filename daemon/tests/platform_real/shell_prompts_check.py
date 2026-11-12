@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -83,10 +84,14 @@ async def prompts(root: Path) -> None:
             ("a program's own password prompt", f"{sys.executable} -c 'import getpass; getpass.getpass()'"),
         ):
             since, start = len(S.LOG), len(term.read())
-            await term.type(command + "\r", gap=0.01)
-            await term.settle(1.5)
-            await term.type(SECRET + "\r")
-            back = await term.prompt(start + len(command), 10.0)
+            try:
+                await term.type(command + "\r", gap=0.01)
+                await term.settle(1.5)
+                await term.type(SECRET + "\r")
+                back = await term.prompt(start + len(command), 10.0)
+            except Exception as exc:  # one step that raises is one failed CHECK; the next still runs
+                check(f"zsh: what is typed at {name} is never sent", False, f"{type(exc).__name__}: {exc}")
+                continue
             leaked = [line for line in S.LOG[since:] if SECRET in line]
             check(
                 f"zsh: what is typed at {name} is never sent",
@@ -103,10 +108,18 @@ def main() -> int:
     if not (sys.platform == "darwin" or sys.platform.startswith("linux")):
         print("CHECK zsh prompts: SKIP - macOS and Linux only", flush=True)
         return 0
-    if shutil.which("zsh"):
-        modules()
+    # Each part reports on its own: one that raises is one failed CHECK with the cause, never the end of the rest.
+    try:
+        if shutil.which("zsh"):
+            modules()
+    except Exception as exc:
+        check("zsh modules: ran to its end", False, f"{type(exc).__name__}: {exc}")
     with tempfile.TemporaryDirectory(prefix="hlx-pr-", dir="/tmp") as folder:
-        asyncio.run(prompts(Path(folder)))
+        try:
+            asyncio.run(prompts(Path(folder)))
+        except Exception as exc:
+            check("zsh prompts: ran to its end", False, f"{type(exc).__name__}: {exc}")
+            S.diag("zsh prompts traceback", traceback.format_exc()[-1500:])
     return failures
 
 
