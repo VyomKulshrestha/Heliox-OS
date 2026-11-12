@@ -356,6 +356,15 @@ def loose_wake_prefix(transcript: str) -> str:
     return ""
 
 
+def opening_cannot_confirm(early: Any) -> bool:
+    """The early reading of the opening has finished and holds no wake phrase (or failed): it cannot confirm one."""
+    if not early.done():
+        return False
+    if early.cancelled() or early.exception() is not None:
+        return True
+    return not loose_wake_prefix(str(early.result() or ""))
+
+
 _ECHO_FREE_OUTPUTS = ("headphone", "headset", "earphone", "earbud", "airpods", "buds", "hands-free", "handsfree")
 
 
@@ -3686,7 +3695,11 @@ class ContinuousVoiceListener:
 
                 early_wake = getattr(self, "_early_wake", None)
                 # With an early reading of the opening under way, the whole-utterance check waits to see whether
-                # it is needed: two Whisper passes at once would slow both on a small machine.
+                # it is needed: two Whisper passes at once would slow both on a small machine. An early reading
+                # that has finished without the wake phrase can never confirm it, so the whole-utterance check
+                # starts now, beside Parakeet, instead of after it.
+                if early_wake is not None and opening_cannot_confirm(early_wake):
+                    early_wake = None
                 wake_check = whole_utterance_check() if early_wake is None else None
                 said = await asyncio.to_thread(_counted, parakeet.transcribe, samples)
                 self._last_parakeet_text = said

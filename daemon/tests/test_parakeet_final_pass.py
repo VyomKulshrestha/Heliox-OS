@@ -324,3 +324,34 @@ def test_the_merged_sentence_holds_the_wake_phrase_once(whisper, parakeet):
 )
 def test_the_hey_of_the_wake_phrase_is_not_kept_twice(whisper, parakeet, merged):
     assert merge_wake(whisper, parakeet, loose_wake_prefix) == merged
+
+
+@pytest.mark.asyncio
+async def test_an_opening_without_the_wake_phrase_starts_the_whole_check_beside_parakeet(tmp_path, monkeypatch):
+    """The early reading finished and heard no wake phrase: it can never confirm one, so Whisper reads the whole
+    utterance while Parakeet reads it, not after (the saving is one Whisper pass on that path)."""
+    import threading
+
+    item = _parakeet_listener(tmp_path, monkeypatch, "Hey Felix, what time is it?")
+    whisper_started = threading.Event()
+    seen_while_parakeet_ran: list[bool] = []
+
+    def parakeet(_samples):
+        seen_while_parakeet_ran.append(whisper_started.wait(5.0))
+        return "Hey Felix, what time is it?"
+
+    item._parakeet().transcribe.side_effect = parakeet
+
+    async def whisper(_path, **_kwargs):
+        whisper_started.set()
+        return "Hey Felix, what time is it?"
+
+    item._transcribe_whisper_text = whisper
+
+    async def opening():
+        return "Hey Felix, what"
+
+    item._early_wake = asyncio.ensure_future(opening())
+    await asyncio.sleep(0)  # the early reading has finished by the end of the turn
+    assert await item._transcribe_path("utterance.wav") == "Hey Felix, what time is it?"
+    assert seen_while_parakeet_ran == [True] and item.last_wake_source == "whole"

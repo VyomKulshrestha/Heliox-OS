@@ -113,6 +113,22 @@ model is told on the next turn that the rest was not heard.
 If the first sentence is not ready 2 s after the turn reached the layer, a short holding phrase is said ("One
 moment.", never the same one twice running). A cloud model rarely needs it; a local model loading into memory does.
 
+**The voice's first sound comes from the first clause.** Whatever hands it text, the local voice
+(`local_tts_worker.split_for_speech`) cuts a first sentence of more than 11 words at its first natural pause within
+nine words (after a comma, semicolon, colon or dash; else before "and", "but", "which" and the like from the fourth
+word on) and synthesises that head first. The rest follows in pieces of at most twice the words of the piece before,
+so each is made while the one before plays. A sentence with no such pause is made whole, as before. Kokoro pads every
+synthesis with 0.32 to 0.40 s of silence before its first word and 0.45 to 0.55 s after its last; each piece now keeps
+30 ms before its first sound, and a piece that ends mid-sentence keeps 0.25 s after it, so the seam (with the output
+line's hand-over of about 0.1 s) is about the 0.32 to 0.47 s Kokoro itself pauses at a comma inside one synthesis.
+The system voices (`say`, espeak-ng, Windows' speech) already speak as they go and are unchanged.
+Measured 12 November on the owner's machine (Kokoro on the CPU with 4 threads, the runner's core count; 15 to 40 %
+load from other work, so read these as about, not exact): Kokoro makes 0.38 to 0.45 s of work per second of speech,
+whatever the sentence length. Four replies of 15 to 20 words: the whole first sentence took 2.2 to 2.6 s to make,
+the head 1.1 to 2.0 s, and every later piece was ready before the one before had finished playing. So a CPU-only
+person keeps Kokoro as the default: it runs at under half real time, so speaking clause by clause never waits
+for it. What it costs them is the head's synthesis, about 1 s, against about 0.1 s on a GPU.
+
 ### The spoken style
 
 The system prompt (in `style.py`) asks for one to three short sentences, the answer first, no markdown or lists

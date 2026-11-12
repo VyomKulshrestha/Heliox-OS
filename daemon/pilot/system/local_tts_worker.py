@@ -192,7 +192,110 @@ def split_for_speech(text: str) -> list[str]:
             merged[-1] = f"{merged[-1]} {piece}"
         else:
             merged.append(piece)
+    if merged:
+        merged[:1] = clause_pieces(merged[0])  # the first sound comes from the first few words
     return merged or ([text] if text.strip() else [])
+
+
+# The first sound comes from the first clause of the first sentence: a head of 2 to FIRST_CLAUSE_MAX words, cut
+# where the sentence pauses anyway (after a comma, semicolon, colon or dash; else before a joining word from the
+# fourth word on), is synthesised and played while the rest is made. Kokoro on a CPU takes 0.38 to 0.45 s per second
+# of speech (measured 12 November on the owner's machine, 15 to 40 % load from other work): a 20-word sentence
+# 2.4 s before its first sound, a 5-word head 0.8 s. Each later piece has at most GROWTH times the words of the one
+# before, so it is ready before that one has finished playing (at 0.45 s per second of speech, twice the words take
+# 0.9 of the time the piece before plays). A sentence with no such pause is synthesised whole, as before.
+FIRST_CLAUSE_MAX = 9
+SHORT_SENTENCE_WORDS = 11  # nothing to gain: the whole sentence is about as quick as a head
+GROWTH = 2
+_JOINING = frozenset({"and", "but", "so", "because", "then", "which", "while", "or", "when", "if", "although"})
+_DASHES = ("-", "–", "—")
+
+
+def _pause_after(words: list[str], index: int) -> str:
+    """ "mark" when words[index - 1] ends with a pause mark, "join" when words[index] is a joining word, else ""."""
+    if words[index - 1].endswith((",", ";", ":", *_DASHES[1:])) or words[index] in _DASHES:
+        return "mark"
+    return "join" if words[index].casefold() in _JOINING else ""
+
+
+def _cut(words: list[str], low: int, high: int, *, first: bool) -> int:
+    """Where to cut ``words`` into a piece of ``low`` to ``high`` words (leaving at least three), or 0: a pause mark
+    before a joining word; the first place for the opening clause (sooner), the last for later pieces (fewer seams)."""
+    places = [(i, _pause_after(words, i)) for i in range(low, min(high, len(words) - 3) + 1)]
+    marked = [i for i, kind in places if kind == "mark"]
+    ranked = marked or [i for i, kind in places if kind == "join" and (first is False or i >= 4)]
+    if not ranked:
+        return 0
+    return ranked[0] if first else ranked[-1]
+
+
+def clause_pieces(sentence: str) -> list[str]:
+    """``sentence`` as the pieces to synthesise one after another: one piece when it is short or has no natural
+    pause where a head could end."""
+    words = sentence.split()
+    if len(words) <= SHORT_SENTENCE_WORDS:
+        return [sentence]
+    cut = _cut(words, 2, FIRST_CLAUSE_MAX, first=True)
+    if not cut:
+        return [sentence]
+    pieces = [" ".join(words[:cut])]
+    rest = words[cut:]
+    limit = GROWTH * cut
+    while len(rest) > limit + 2:
+        # The longest piece that is ready in time; with no pause that early, the first pause after it.
+        cut = _cut(rest, 3, limit, first=False) or _cut(rest, limit + 1, len(rest), first=True)
+        if not cut:
+            break  # no pause left: the rest as one piece
+        pieces.append(" ".join(rest[:cut]))
+        rest = rest[cut:]
+        limit = GROWTH * cut
+    pieces.append(" ".join(rest))
+    return pieces
+
+
+def ends_sentence(piece: str) -> bool:
+    return piece.rstrip("\"')]”’").endswith((".", "!", "?", "…"))
+
+
+# Kokoro pads every synthesis with 0.32 to 0.40 s of silence before the first word and 0.45 to 0.55 s after the
+# last (measured 12 November). Played as made, the first sound came that much after the audio began, and a clause
+# seam had about 0.8 s of silence where one synthesis pauses 0.3 to 0.5 s at a comma. So every piece keeps
+# KEEP_LEAD_SECONDS before its first sound, and a piece that ends mid-sentence keeps KEEP_CLAUSE_SECONDS after its
+# last (with the output line's hand-over, about 0.1 s, the seam is a comma's pause). A piece that ends a sentence
+# keeps its own pause.
+KEEP_LEAD_SECONDS = 0.03
+KEEP_CLAUSE_SECONDS = 0.25
+SILENCE_LEVEL = 0.002
+
+
+def silence_edges(audio: Any, rate: int, keep_lead: float, keep_tail: float | None) -> tuple[int, int]:
+    """The sample range to keep: from ``keep_lead`` before the first sound to ``keep_tail`` after the last (the
+    whole end when None). The whole buffer when it holds no sound."""
+    import numpy as np
+
+    level = np.abs(np.asarray(audio, dtype=np.float32))
+    if level.ndim > 1:
+        level = level.max(axis=1)
+    loud = np.flatnonzero(level > SILENCE_LEVEL)
+    if loud.size == 0:
+        return 0, len(level)
+    start = max(0, int(loud[0]) - int(keep_lead * rate))
+    stop = len(level) if keep_tail is None else min(len(level), int(loud[-1]) + 1 + int(keep_tail * rate))
+    return start, stop
+
+
+def trim_silence(path: Path, keep_lead: float, keep_tail: float | None) -> None:
+    """Cut a synthesised WAV's padding in place (see KEEP_LEAD_SECONDS). Without soundfile it is left as made."""
+    try:
+        import soundfile
+    except ImportError:
+        return
+    info = soundfile.info(str(path))
+    audio, rate = soundfile.read(str(path), dtype="float32")
+    start, stop = silence_edges(audio, rate, keep_lead, keep_tail)
+    if start == 0 and stop == len(audio):
+        return
+    soundfile.write(str(path), audio[start:stop], rate, subtype=info.subtype)
 
 
 def _default_spawn(engine: str, device: str, gpu_lease: bool = False) -> Any:
@@ -664,6 +767,11 @@ class LocalTTSWorkerManager:
 
     async def _make(self, engine: str, text: str, voice: str, target: Path, folder: Path) -> Path:
         await self.synthesize(engine, text, voice, target, folder)
+        keep_tail = None if ends_sentence(text) else KEEP_CLAUSE_SECONDS
+        try:
+            await asyncio.to_thread(trim_silence, target, KEEP_LEAD_SECONDS, keep_tail)
+        except Exception:
+            logger.debug("Could not trim the silence around a synthesised piece; playing it as made", exc_info=True)
         return target
 
     async def _notify(self, status: str, data: dict[str, Any]) -> None:
