@@ -70,7 +70,7 @@ pub struct SystemDirs {
     /// settings, data and logs under them (pilot.config CONFIG_DIR, DATA_DIR, STATE_DIR) on every system, so
     /// removal looks there too; unset, they are ~/.config, ~/.local/share and ~/.local/state.
     pub xdg: Xdg,
-    /// Linux: the daemon's runtime folder (token files and the port lock) where commands::daemon_runtime_dir finds
+    /// Linux: the daemon's runtime folder (token files and the port lock) where folders::Folders::runtime finds
     /// it, only when it is this person's own and named as the daemon names it (runtime_folder_is_ours). The one place
     /// removal touches outside the home folder; /run/user is cleared at logout, a $TMPDIR fallback may stay for days.
     pub linux_runtime: Option<PathBuf>,
@@ -84,14 +84,14 @@ pub fn runtime_folder_is_ours(path: &Path, uid: u32, owner: Option<u32>) -> bool
     let named = path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name == "heliox-os" || name == format!("heliox-os-runtime-{uid}"));
+        .is_some_and(|name| crate::folders::is_runtime_folder_name(name, uid));
     named && owner == Some(uid) && safe_location(path)
 }
 
 #[cfg(unix)]
 fn linux_runtime_folder() -> Option<PathBuf> {
     use std::os::unix::fs::MetadataExt;
-    let folder = crate::commands::daemon_runtime_dir()?;
+    let folder = crate::folders::Folders::here().runtime;
     // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
     let owner = std::fs::symlink_metadata(&folder)
@@ -114,17 +114,15 @@ pub struct Xdg {
 }
 
 impl Xdg {
-    /// From the environment. The XDG specification: an unset, empty or relative value is ignored.
+    /// From the environment, read as pilot.config reads it (folders::xdg_base): blanks around the value removed; an
+    /// unset, empty or relative value is ignored. Before 13 November 2026 a value with blanks around it was ignored
+    /// here and used by the daemon, so removal looked in the wrong place.
     pub fn from_env() -> Self {
-        Self::from_values(|name| std::env::var_os(name))
+        Self::from_values(|name| std::env::var(name).ok())
     }
 
-    pub fn from_values(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> Self {
-        let read = |name: &str| {
-            get(name)
-                .map(PathBuf::from)
-                .filter(|path| path.is_absolute())
-        };
+    pub fn from_values(get: impl Fn(&str) -> Option<String>) -> Self {
+        let read = |name: &str| crate::folders::xdg_base(get(name).as_deref());
         Xdg {
             config: read("XDG_CONFIG_HOME"),
             data: read("XDG_DATA_HOME"),
@@ -136,20 +134,19 @@ impl Xdg {
 /// Heliox's settings, data and logs folders: "heliox-os" under the XDG folder, or under its default in the home
 /// folder. Pure.
 pub fn heliox_folders(dirs: &SystemDirs) -> (PathBuf, PathBuf, PathBuf) {
+    use crate::folders::{config_dir, data_dir, state_dir};
     let home = &dirs.home;
-    let under =
-        |set: &Option<PathBuf>, default: PathBuf| set.clone().unwrap_or(default).join("heliox-os");
     (
-        under(&dirs.xdg.config, home.join(".config")),
-        under(&dirs.xdg.data, home.join(".local").join("share")),
-        under(&dirs.xdg.state, home.join(".local").join("state")),
+        config_dir(dirs.xdg.config.as_deref(), home),
+        data_dir(dirs.xdg.data.as_deref(), home),
+        state_dir(dirs.xdg.state.as_deref(), home),
     )
 }
 
 /// The folder setup and the app use for the environment, tools and setup files: always ~/.config/heliox-os
 /// (pilot.config SETUP_DIR; setup.rs data_dir), whatever XDG_CONFIG_HOME says.
 pub fn setup_folder(dirs: &SystemDirs) -> PathBuf {
-    dirs.home.join(".config").join("heliox-os")
+    crate::folders::setup_dir(&dirs.home)
 }
 
 /// Where removal may act: inside the home folder, or inside one of the XDG "heliox-os" folders, which may lie
@@ -267,7 +264,7 @@ pub fn locations(dirs: &SystemDirs) -> Vec<Place> {
     out.push(place(state, "Logs and the run record", App, Folder));
     // "heliox" under .cache and ".heliox": Heliox's name (cognitive caches, persona, plugins, quarantine).
     out.push(place(
-        home.join(".cache").join("heliox"),
+        crate::folders::cache_dir(home),
         "Persona, voice calibration and other learned data",
         Data,
         Folder,
@@ -293,7 +290,11 @@ pub fn locations(dirs: &SystemDirs) -> Vec<Place> {
                 .clone()
                 .unwrap_or_else(|| home.join("AppData").join("Local"));
             // "heliox-os" (the daemon's runtime folder) and "com.helioxos.app" (the app's identifier): Heliox's.
-            out.push(place(local.join("heliox-os"), "Runtime files", App, Folder));
+            if let Some(runtime) =
+                crate::folders::runtime_home("windows", Some(local.as_path()), home)
+            {
+                out.push(place(runtime, "Runtime files", App, Folder));
+            }
             out.push(place(
                 local.join(APP_ID),
                 "The app's web view data",
@@ -303,12 +304,9 @@ pub fn locations(dirs: &SystemDirs) -> Vec<Place> {
         }
         "macos" => {
             let library = home.join("Library");
-            out.push(place(
-                library.join("Caches").join("heliox-os"),
-                "Runtime files",
-                App,
-                Folder,
-            ));
+            if let Some(runtime) = crate::folders::runtime_home("macos", None, home) {
+                out.push(place(runtime, "Runtime files", App, Folder));
+            }
             for (folder, label) in [
                 ("Application Support", "The app's data"),
                 ("Caches", "The app's caches"),
@@ -429,7 +427,7 @@ pub fn dirs_from_home(home: Option<PathBuf>) -> Option<SystemDirs> {
     let home = home.filter(|h| h.is_absolute())?;
     Some(SystemDirs {
         home,
-        local_app_data: std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+        local_app_data: crate::folders::local_app_data(&|name| std::env::var(name).ok()),
         os: if cfg!(target_os = "windows") {
             "windows"
         } else if cfg!(target_os = "macos") {
@@ -584,7 +582,7 @@ pub fn parse_credentials(output: &str, os: &str) -> Credentials {
 
 /// Run the daemon's own cleanup with the environment's Python, bounded in time.
 fn remove_credentials(home: &Path, os: &str) -> Credentials {
-    let env = home.join(".config").join("heliox-os").join("env");
+    let env = crate::folders::setup_dir(home).join("env");
     let python = if os == "windows" {
         env.join("Scripts").join("python.exe")
     } else {
@@ -791,14 +789,14 @@ mod tests {
         }
     }
 
-    /// The three Linux cases of daemon/tests/runtime_dir_cases.json whose folder is outside the home: /run/user
+    /// The three Linux cases of daemon/tests/heliox_folders_cases.json whose folder is outside the home: /run/user
     /// writable, the $TMPDIR fallback, and $XDG_RUNTIME_DIR.
     #[cfg(unix)] // Linux paths: on Windows "/run/user/..." is not absolute, so safe_location refuses it there
     #[test]
     fn removal_takes_the_linux_runtime_folder_only_when_it_is_the_daemons_and_the_persons() {
         let table: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../daemon/tests/runtime_dir_cases.json"
+            "/../../daemon/tests/heliox_folders_cases.json"
         )))
         .unwrap();
         let mut seen = std::collections::BTreeSet::new();
@@ -809,14 +807,13 @@ mod tests {
             let env = case["env"].as_object().unwrap().clone();
             let uid = case["uid"].as_u64().unwrap() as u32;
             let writable = case["run_user_writable"].as_bool().unwrap();
-            let folder = crate::commands::runtime_dir_for(
+            let folder = crate::folders::runtime_for(
                 "linux",
-                |name| env.get(name).and_then(|v| v.as_str()).map(str::to_string),
-                Some(PathBuf::from("/home/sam")),
+                &|name| env.get(name).and_then(|v| v.as_str()).map(str::to_string),
+                Path::new("/home/sam"),
                 uid,
-                |_| writable,
-            )
-            .unwrap();
+                &|_| writable,
+            );
             let kind = if env.contains_key("XDG_RUNTIME_DIR")
                 && !env["XDG_RUNTIME_DIR"].as_str().unwrap().trim().is_empty()
             {
@@ -937,7 +934,7 @@ mod tests {
         assert!(safe_location(&root.join("home").join("sam")));
     }
 
-    fn os_values(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<std::ffi::OsString> {
+    fn os_values(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         let owned: Vec<(String, String)> = pairs
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -946,7 +943,7 @@ mod tests {
             owned
                 .iter()
                 .find(|(k, _)| k == name)
-                .map(|(_, v)| std::ffi::OsString::from(v))
+                .map(|(_, v)| v.clone())
         }
     }
 

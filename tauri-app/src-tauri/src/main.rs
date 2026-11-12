@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod commands;
 mod file_access;
+mod folders;
 mod hotkey;
 #[cfg(test)]
 mod real_supervision;
@@ -36,20 +37,17 @@ impl Drop for SupervisingGuard {
 
 const DAEMON_HOST: &str = "127.0.0.1";
 const DAEMON_PORT: u16 = 8785;
+/// The setup folder (folders::Folders::setup): the environment, tools, the single-instance lock.
 fn get_app_data_dir() -> std::path::PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    home.join(".config").join("heliox-os")
+    folders::Folders::here().setup
 }
+/// The daemon's log, under its state folder, which follows $XDG_STATE_HOME as the daemon does. Before 13 November
+/// 2026 this was always ~/.local/state/heliox-os/pilot.log: see docs/PLATFORM_SUPPORT.md, "The log panel".
 pub(crate) fn pilot_log_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local")
-        .join("state")
-        .join("heliox-os")
-        .join("pilot.log")
+    folders::Folders::here().log_file()
 }
 pub(crate) fn get_venv_python() -> std::path::PathBuf {
-    let venv_dir = get_app_data_dir().join("env");
+    let venv_dir = folders::Folders::here().env();
     #[cfg(target_os = "windows")]
     {
         venv_dir.join("Scripts").join("python.exe")

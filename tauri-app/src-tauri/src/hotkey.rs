@@ -43,8 +43,7 @@ fn set_registration_error(error: Option<String>) {
 }
 
 fn get_shortcut_path(_app: &AppHandle) -> std::path::PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    home.join(".config").join("heliox-os").join("shortcut.txt")
+    crate::folders::Folders::here().shortcut_file()
 }
 
 pub fn load_saved_shortcut(app: &AppHandle) -> String {

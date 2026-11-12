@@ -249,10 +249,7 @@ impl SetupState {
 pub struct Setup(pub Mutex<SetupState>);
 
 fn data_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".config")
-        .join("heliox-os")
+    crate::folders::Folders::here().setup
 }
 
 fn script_command(mode: &str) -> std::io::Result<Command> {
@@ -371,7 +368,10 @@ fn start_daemon_after_setup(app: &AppHandle) {
             let step = state.step("start");
             step.status = "failed".into();
             step.message = "Heliox was installed, but its background service did not start.".into();
-            step.hint = "Quit and reopen Heliox. If it happens again, the log is in ~/.local/state/heliox-os.".into();
+            step.hint = format!(
+                "Quit and reopen Heliox. If it happens again, the log is in {}.",
+                crate::folders::Folders::here().state.display()
+            );
             state.phase = "failed".into();
         }
         return;

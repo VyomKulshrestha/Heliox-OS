@@ -1017,7 +1017,9 @@ jobs:
 
       # The supervisor loop of the app (supervisor::tick) with a real daemon: a crash, a second crash (the back-off
       # doubles) and a hang (the process suspended), with short limits; startup_status read from Rust says what
-      # happened. Under a complete fake home of its own; the cargo and rustup folders stay the runner's.
+      # happened. Then the app's stop on purpose (quit, update, repair, removal) with a daemon that answers and with
+      # one that cannot, and the log panel's file under XDG_STATE_HOME. Under a complete fake home of its own; the
+      # cargo and rustup folders stay the runner's.
       - name: The app's supervisor restarts a real daemon after a crash and after a hang
         continue-on-error: true
         working-directory: tauri-app/src-tauri
@@ -1027,7 +1029,9 @@ jobs:
           export HOME="$RUNNER_TEMP/supervisor" USERPROFILE="$RUNNER_TEMP/supervisor"
           mkdir -p "$HOME"
           export LOCALAPPDATA="$HOME/AppData/Local" PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring
-          unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
+          unset XDG_CONFIG_HOME XDG_DATA_HOME
+          # Logs and the run record away from ~/.local/state: the log panel must read them there (folders.rs).
+          export XDG_STATE_HOME="$HOME/elsewhere/state"
           if [ "$RUNNER_OS" = "Linux" ]; then
             export XDG_RUNTIME_DIR="$HOME/.runtime"
             mkdir -p -m 700 "$XDG_RUNTIME_DIR"

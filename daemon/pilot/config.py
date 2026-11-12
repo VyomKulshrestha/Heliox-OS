@@ -89,11 +89,22 @@ CONFIG_DIR = _heliox_dir("XDG_CONFIG_HOME", ".config")
 DATA_DIR = _heliox_dir("XDG_DATA_HOME", ".local/share")
 STATE_DIR = _heliox_dir("XDG_STATE_HOME", ".local/state")
 RUNTIME_DIR = _default_runtime_dir()
-# Two places under the home folder that do not follow the XDG variables, as removal (uninstall.rs) knows them:
-# learned data some parts keep (voice calibration, persona, biometric, cloud hand-off) and the folder setup and the app
-# use (~/.config/heliox-os: the environment, tools such as the macOS screen-reading helper).
-CACHE_DIR = (_TEST_ROOT or Path.home()) / ".cache" / "heliox"
-SETUP_DIR = (_TEST_ROOT or Path.home()) / ".config" / "heliox-os"
+
+
+# Two places under the home folder that do not follow the XDG variables, as the app (folders.rs) knows them: learned
+# data some parts keep (voice calibration, persona, biometric, cloud hand-off) and the folder setup and the app use
+# (~/.config/heliox-os: the environment, tools such as the macOS screen-reading helper). Every folder here is in
+# daemon/tests/heliox_folders_cases.json, which the app's Rust test reads too.
+def _cache_dir() -> Path:
+    return (_TEST_ROOT or Path.home()) / ".cache" / "heliox"
+
+
+def _setup_dir() -> Path:
+    return (_TEST_ROOT or Path.home()) / ".config" / "heliox-os"
+
+
+CACHE_DIR = _cache_dir()
+SETUP_DIR = _setup_dir()
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"

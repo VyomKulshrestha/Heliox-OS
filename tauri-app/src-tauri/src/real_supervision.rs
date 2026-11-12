@@ -1,10 +1,13 @@
-//! The supervisor restarting a real daemon after a crash and after a hang, on a CI runner.
+//! The supervisor restarting a real daemon after a crash and after a hang, the app stopping it on purpose (quitting,
+//! an update, a repair, removal) when it answers and when it cannot, and the log panel reading the daemon's own log,
+//! on a CI runner.
 //!
 //!     cargo test real_supervisor -- --ignored --nocapture
 //!
 //! Needs HELIOX_REAL_SUPERVISOR_PYTHON (a Python with the daemon installed) and a complete fake home in the
-//! environment (HOME, USERPROFILE, LOCALAPPDATA, no XDG_CONFIG/DATA/STATE_HOME, XDG_RUNTIME_DIR inside it on
-//! Linux): the CI step sets them. The supervisor loop is the app's own (supervisor::tick); only the launcher, the
+//! environment (HOME, USERPROFILE, LOCALAPPDATA, no XDG_CONFIG/DATA_HOME, XDG_STATE_HOME outside the default
+//! ~/.local/state so the log panel is checked where it went wrong, XDG_RUNTIME_DIR inside it on Linux): the CI step
+//! sets them. The supervisor loop is the app's own (supervisor::tick); only the launcher, the
 //! notice sink and the time limits are the check's. The daemon runs under a small Python wrapper, the process the
 //! supervisor owns, which on request kills the daemon (a crash) or suspends it (a hang) and exits with the daemon's
 //! code, as a crashed interpreter would.
@@ -53,6 +56,8 @@ while daemon.poll() is None:
             for process in tree():
                 process.suspend()
     time.sleep(0.1)
+with open(control / "exits.txt", "a", encoding="utf-8") as codes:  # how the daemon itself ended
+    codes.write(f"{daemon.returncode}\n")
 sys.exit(daemon.returncode or 70)
 "#;
 
@@ -167,6 +172,61 @@ fn launches(control: &Path) -> usize {
         .unwrap_or(0)
 }
 
+/// The exit code of the last daemon that ended while its wrapper still ran ("0": it stopped by itself, cleanly).
+fn last_daemon_exit(control: &Path) -> String {
+    std::fs::read_to_string(control.join("exits.txt"))
+        .unwrap_or_default()
+        .lines()
+        .last()
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Every daemon process any wrapper started that is still running, as "pid name".
+fn still_running(control: &Path) -> Vec<String> {
+    let pids = std::fs::read_to_string(control.join("daemons.txt")).unwrap_or_default()
+        + &std::fs::read_to_string(control.join("children.txt")).unwrap_or_default();
+    let mut system = sysinfo::System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    pids.lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .filter_map(|pid| {
+            let process = system.process(sysinfo::Pid::from_u32(pid))?;
+            let gone = matches!(
+                process.status(),
+                sysinfo::ProcessStatus::Zombie | sysinfo::ProcessStatus::Dead
+            );
+            (!gone).then(|| format!("{pid} {}", process.name().to_string_lossy()))
+        })
+        .collect()
+}
+
+/// Stop the daemon the check owns as the app does on purpose; how long it took and how the wrapper ended.
+fn stop_now(host: &CheckHost, reason: &str) -> (Duration, Option<std::process::ExitStatus>) {
+    let mut child = host
+        .daemon
+        .lock()
+        .unwrap()
+        .take()
+        .expect("a daemon to stop");
+    let started = Instant::now();
+    supervisor::stop_on_purpose(&mut child, reason);
+    let took = started.elapsed();
+    (took, child.try_wait().ok().flatten())
+}
+
+/// Wait up to `limit` for every daemon process to be gone.
+fn all_gone(control: &Path, limit: Duration) -> Vec<String> {
+    let deadline = Instant::now() + limit;
+    loop {
+        let left = still_running(control);
+        if left.is_empty() || Instant::now() >= deadline {
+            return left;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
 fn order(control: &Path, what: &str) {
     let _ = std::fs::write(control.join("order"), what);
 }
@@ -265,6 +325,30 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
             format!("ready: {}", first.is_some()),
         );
 
+        // The log panel, "Clear logs" and "Open logs folder" use pilot_log_path: it must be the file this daemon
+        // writes, under $XDG_STATE_HOME when that is set (until 13 November 2026 it was always ~/.local/state).
+        let log = crate::pilot_log_path();
+        let lines = std::fs::read_to_string(&log)
+            .map(|text| text.lines().count())
+            .unwrap_or(0);
+        let expected = crate::folders::Folders::here().state.join("pilot.log");
+        let state_home = std::env::var("XDG_STATE_HOME").unwrap_or_default();
+        check(
+            "log-panel-reads-the-daemons-log",
+            lines > 0
+                && log == expected
+                && (state_home.is_empty() || log.starts_with(state_home.trim())),
+            format!(
+                "{} has {lines} lines; XDG_STATE_HOME {}",
+                log.display(),
+                if state_home.is_empty() {
+                    "unset".to_string()
+                } else {
+                    format!("\"{state_home}\"")
+                }
+            ),
+        );
+
         // A crash: the daemon ends; the wrapper exits with its code, as a crashed interpreter would.
         let crashed_at = Instant::now();
         order(&control, "crash");
@@ -361,6 +445,59 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
             said == "stopped answering",
             format!(
                 "last_run ended \"{said}\", notice \"{}\"",
+                notice_of(&after)
+            ),
+        );
+
+        // Stopped on purpose while it answers (quitting, an update, a repair, removal all call stop_on_purpose):
+        // the daemon is asked, ends by itself within STOP_ON_PURPOSE_WAIT, and the next start reports nothing.
+        let (took, wrapper) = stop_now(&host, "the check");
+        let code = last_daemon_exit(&control);
+        let left = all_gone(&control, Duration::from_secs(5));
+        check(
+            "stop-on-purpose-ends-cleanly",
+            code == "0" && took < supervisor::STOP_ON_PURPOSE_WAIT && left.is_empty(),
+            format!(
+                "the daemon ended by itself with code {code} after {took:?} (the fallback comes at {:?}); wrapper \
+                 {wrapper:?}; still running: {left:?}",
+                supervisor::STOP_ON_PURPOSE_WAIT
+            ),
+        );
+        *host.daemon.lock().unwrap() = host.launch();
+        let after = wait_ready(Duration::from_secs(180));
+        let last_run = after.as_ref().and_then(|s| s.get("last_run")).cloned();
+        check(
+            "stop-on-purpose-next-start-reports-nothing",
+            after.is_some() && matches!(last_run, None | Some(serde_json::Value::Null)),
+            format!("ready: {}, last_run {last_run:?}", after.is_some()),
+        );
+
+        // Stopped on purpose while it cannot answer (suspended, with everything under it): the request gets no
+        // answer within its own limit (3 s), so the app ends the daemon at once and does not wait the 5 s.
+        order(&control, "freeze");
+        std::thread::sleep(Duration::from_millis(1500)); // the wrapper looks for orders every 0.1 s
+        let (took, wrapper) = stop_now(&host, "the check");
+        let left = all_gone(&control, Duration::from_secs(5));
+        let ask_limit = Duration::from_secs(3);
+        check(
+            "stop-on-purpose-ends-a-daemon-that-cannot-answer",
+            took <= ask_limit + Duration::from_secs(2) && left.is_empty(),
+            format!(
+                "ended after {took:?} (asking waits at most {ask_limit:?}); wrapper {wrapper:?}; still running: \
+                 {left:?}"
+            ),
+        );
+        *host.daemon.lock().unwrap() = host.launch();
+        let after = wait_ready(Duration::from_secs(180));
+        let last_run = after.as_ref().and_then(|s| s.get("last_run")).cloned();
+        // Not a clean end: the daemon never marked its run as ended, so the next start says so.
+        check(
+            "stop-on-purpose-of-a-daemon-that-cannot-answer-is-reported",
+            after.is_some() && last_run.as_ref().is_some_and(|run| !run.is_null()),
+            format!(
+                "ready: {}, last_run ended \"{}\", notice \"{}\"",
+                after.is_some(),
+                ended(&after),
                 notice_of(&after)
             ),
         );
