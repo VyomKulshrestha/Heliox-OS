@@ -31,7 +31,7 @@ FASTER_WHISPER_REPOS = {
     "medium.en": "Systran/faster-whisper-medium.en",
     "large-v3": "Systran/faster-whisper-large-v3",
 }
-DOWNLOADED = {"base": "whisper-base"}  # whisper_model -> speech_models id offered in the app
+DOWNLOADED = {"base": "whisper-base", "small": "whisper-small"}  # whisper_model -> id offered in the app
 
 
 def hf_cached(repo: str, filename: str) -> str | None:
@@ -92,6 +92,23 @@ MISSING_MESSAGE = (
     "Speech recognition needs a model, which Heliox has not downloaded. Open Settings, Voice to download one "
     "(Whisper base, 148 MB, is smaller and faster; choose Parakeet for the best English). Typing works meanwhile."
 )
+
+
+def missing_message(language: str) -> tuple[str, dict]:
+    """What the voice bar says when no recogniser is on this computer, and the recommended set it offers for the
+    person's language setting (pilot.system.speech_models.recommended), downloaded only after they confirm."""
+    from pilot.system.speech_models import BY_ID, recommended
+
+    offer = recommended(language)
+    if not offer["missing"]:
+        return MISSING_MESSAGE, offer
+    names = " and ".join(BY_ID[i].title.split("(")[-1].rstrip(")") for i in offer["missing"])
+    size = max(1, round(offer["missing_bytes"] / 1_048_576))
+    english = offer["key"] == "en"
+    return (
+        f"Speech recognition needs a model, which Heliox has not downloaded. Recommended "
+        f"{'for English' if english else 'for your language'}: {names}, {size} MB. Typing works meanwhile."
+    ), offer
 
 
 def wake_route(present: dict[str, bool]) -> str:

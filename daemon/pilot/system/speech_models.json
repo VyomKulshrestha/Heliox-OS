@@ -4,7 +4,7 @@
     {
       "id": "whisper-base",
       "title": "Speech recognition (Whisper base)",
-      "purpose": "Turns what you say into words, in 99 languages, and listens for the wake phrase. Recommended to start: smaller and faster; choose Parakeet as well for the best English. Without a recogniser Heliox cannot hear you (typing still works).",
+      "purpose": "Turns what you say into words, in 99 languages, and listens for the wake phrase. On its own it works, with more mistakes in English than the recommended set (Parakeet with Whisper base); it is needed for every language. Without a recogniser Heliox cannot hear you (typing still works).",
       "language": "multilingual",
       "size_bytes": 147882941,
       "disk_bytes": 147882941,
@@ -49,7 +49,7 @@
     {
       "id": "parakeet-tdt-0.6b-v2-int8",
       "title": "Accurate English recognition (Parakeet)",
-      "purpose": "Hears English more accurately than Whisper base, dates and numbers especially, in about a tenth of a second per second of speech on the processor. English only; other languages keep using Whisper.",
+      "purpose": "Hears English more accurately than Whisper base, dates and numbers especially, in about a tenth of a second per second of speech on the processor. Recommended for English together with Whisper base, which still listens for the wake phrase. English only; other languages keep using Whisper.",
       "language": "en",
       "size_bytes": 482440461,
       "disk_bytes": 661288526,
@@ -89,6 +89,51 @@
         "bytes": 482440461,
         "root": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
       }
+    },
+    {
+      "id": "whisper-small",
+      "title": "Speech recognition for other languages (Whisper small)",
+      "purpose": "Recommended when you speak a language other than English: it makes fewer mistakes than Whisper base outside English, at about twice the computing time per sentence, so a reply comes a little later on the processor. Used instead of Whisper base for everything Heliox hears.",
+      "language": "multilingual",
+      "size_bytes": 486212372,
+      "disk_bytes": 486212372,
+      "licence": "MIT",
+      "source": "OpenAI Whisper, converted by Systran (Hugging Face)",
+      "sources": [
+        "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/config.json",
+        "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/model.bin",
+        "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/tokenizer.json",
+        "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/vocabulary.txt"
+      ],
+      "folder": "faster-whisper-small",
+      "files": [
+        {
+          "name": "config.json",
+          "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+          "bytes": 2370,
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/config.json"
+        },
+        {
+          "name": "model.bin",
+          "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+          "bytes": 483546902,
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/model.bin"
+        },
+        {
+          "name": "tokenizer.json",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "bytes": 2203239,
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/tokenizer.json"
+        },
+        {
+          "name": "vocabulary.txt",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "bytes": 459861,
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/vocabulary.txt"
+        }
+      ],
+      "part_of_voice": false,
+      "required_for": "voice.whisper_model = small"
     },
     {
       "id": "streaming-zipformer-en",
@@ -159,5 +204,22 @@
       "part_of_voice": false,
       "required_for": "voice.turn_detection = smart_turn"
     }
-  ]
+  ],
+  "recommended": {
+    "en": {
+      "ids": [
+        "parakeet-tdt-0.6b-v2-int8",
+        "whisper-base"
+      ],
+      "title": "Recommended for English: Parakeet with Whisper base",
+      "why": "Parakeet hears the words, Whisper base listens for the wake phrase. On real recordings the pair got 28% of the words of spoken requests wrong, Whisper base alone 43%; the gap was largest on a Bluetooth headset."
+    },
+    "other": {
+      "ids": [
+        "whisper-small"
+      ],
+      "title": "Recommended for your language: Whisper small",
+      "why": "Parakeet hears English only. Whisper small makes clearly fewer mistakes than base outside English and still runs on the processor; medium would be more accurate again but several times slower without a graphics card."
+    }
+  }
 }

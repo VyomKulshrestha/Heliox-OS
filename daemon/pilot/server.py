@@ -13738,12 +13738,13 @@ def handle_tool(tool_name, params):
         """Open one wake-free conversational turn after Heliox stops talking."""
         if not self._voice_listener or not self._voice_listener.is_running:
             return False
-        self._voice_listener.arm_follow_up_window()
+        if not self._voice_listener.arm_follow_up_window():
+            return False  # no conversation open (nobody said the wake phrase): the wake phrase is needed again
         await self._broadcast_notification(
             "voice_status",
             {
                 "status": "follow_up_ready",
-                "message": "Listening continuously",
+                "message": "Listening for your reply",
                 "seconds": self.config.voice.follow_up_window_seconds,
             },
         )
@@ -13799,18 +13800,25 @@ def handle_tool(tool_name, params):
         return service
 
     async def _speech_model_ready(self, model_id: str) -> None:
-        """Parakeet downloaded at the person's request becomes the final pass, unless they pointed it elsewhere."""
+        """Parakeet downloaded at the person's request becomes the final pass, unless they pointed it elsewhere;
+        Whisper small, the recommendation for other languages, replaces base unless another size was chosen."""
+        voice = self.config.voice
+        if model_id == "whisper-small" and voice.whisper_model == "base":
+            voice.whisper_model = "small"
+            self.config.save()
+            await self._broadcast_notification("config_updated", {"method": "voice", "section": "voice"})
+            return
         if model_id != "parakeet-tdt-0.6b-v2-int8":
             return
-        voice = self.config.voice
         if voice.final_pass != "parakeet" and not voice.parakeet_model_dir:
             voice.final_pass = "parakeet"
             self.config.save()
             await self._broadcast_notification("config_updated", {"method": "voice", "section": "voice"})
 
     async def _handle_speech_models_list(self, params: dict, ws: ServerConnection) -> dict:
-        """The downloadable speech models: what each is for, size, licence, source, and what is on disk."""
-        return await asyncio.to_thread(self._speech_models().list)
+        """The downloadable speech models: what each is for, size, licence, source, what is on disk, and the set
+        recommended for the voice language setting."""
+        return await asyncio.to_thread(self._speech_models().list, str(self.config.voice.language))
 
     async def _handle_speech_model_download(self, params: dict, ws: ServerConnection) -> dict:
         """Start (or resume) downloading one speech model; progress arrives as speech_model_progress."""

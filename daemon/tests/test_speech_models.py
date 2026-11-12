@@ -67,7 +67,13 @@ def catalogue(monkeypatch):
 
 def test_the_catalogue_says_what_each_model_is_its_size_licence_and_source():
     ids = [model.id for model in CATALOGUE]
-    assert ids == ["whisper-base", "parakeet-tdt-0.6b-v2-int8", "streaming-zipformer-en", "smart-turn-v3"]
+    assert ids == [
+        "whisper-base",
+        "parakeet-tdt-0.6b-v2-int8",
+        "whisper-small",
+        "streaming-zipformer-en",
+        "smart-turn-v3",
+    ]
     for model in CATALOGUE:
         assert model.title and model.purpose and model.licence and model.source and model.languages
         assert all(len(f.sha256) == 64 for f in model.files)
@@ -206,7 +212,8 @@ async def test_the_service_downloads_on_request_reports_progress_and_switches_wh
     assert service.list()["active"] == ""
     started = await service.download(model.id)
     assert started["status"] == "started"
-    assert (await service.download(model.id))["status"] == "busy"  # one at a time
+    assert (await service.download(model.id))["status"] == "started"  # already under way: not started twice
+    assert service.list()["waiting"] == []
     for _ in range(200):
         if ready:
             break
@@ -275,3 +282,56 @@ def test_the_loaders_use_a_downloaded_model_from_the_data_folder(tmp_path, monke
         voice._get_faster_whisper_model("base")
         voice._faster_whisper_model_cache.clear()
     assert made == [str(folder)]
+
+
+@pytest.mark.asyncio
+async def test_a_second_model_asked_for_during_a_download_waits_its_turn(tmp_path, catalogue):
+    import asyncio
+
+    from pilot.system.speech_model_service import SpeechModelService
+
+    first_bytes, second_bytes = {"model.bin": b"a" * 1_500_000}, {"model.bin": b"b" * 1_000}
+    first = catalogue(file_model(first_bytes))
+    import dataclasses
+
+    second = catalogue(
+        dataclasses.replace(
+            file_model(second_bytes),
+            id="test-second",
+            folder="test-second",
+            files=(ModelFile("model.bin", 1_000, sha(b"b" * 1_000), "https://example.test/second.bin"),),
+        )
+    )
+    ready: list[str] = []
+
+    async def broadcast(method, params):
+        return None
+
+    async def on_ready(model_id):
+        ready.append(model_id)
+
+    files = {
+        "https://example.test/model.bin": first_bytes["model.bin"],
+        "https://example.test/second.bin": b"b" * 1_000,
+    }
+    service = SpeechModelService(broadcast, data_dir=tmp_path, opener=Server(files), on_ready=on_ready)
+    assert (await service.download(first.id))["status"] == "started"
+    assert (await service.download(second.id))["status"] == "queued"
+    assert service.list()["waiting"] == [second.id]
+    for _ in range(300):
+        if len(ready) == 2:
+            break
+        await asyncio.sleep(0.02)
+    assert ready == [first.id, second.id]  # in the order asked, one at a time
+
+
+def test_the_recommended_set_follows_the_language_setting():
+    english = speech_models.recommended("en")
+    assert english["ids"] == ["parakeet-tdt-0.6b-v2-int8", "whisper-base"]
+    assert english["download_bytes"] == sum(speech_models.BY_ID[i].download_bytes for i in english["ids"])
+    assert speech_models.recommended("de")["ids"] == ["whisper-small"]
+    assert speech_models.speaks_english("auto", "English_United States")  # Windows
+    assert speech_models.speaks_english("auto", "en_GB")  # macOS, Linux
+    assert speech_models.speaks_english("auto", "C")  # a bare Linux container: nothing says otherwise
+    assert not speech_models.speaks_english("auto", "de_DE")
+    assert not speech_models.speaks_english("auto", "German_Germany")

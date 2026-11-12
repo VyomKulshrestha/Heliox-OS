@@ -237,10 +237,24 @@
   let deviceTimer: ReturnType<typeof setTimeout> | null = null;
   // A headset in Bluetooth call mode: listen with another microphone instead, if the person presses the button.
   let inputOffer = $state<{ headset: string; id: string; name: string } | null>(null);
-  // No speech model on this computer: a button to the download list in Settings, Voice (nothing downloads by itself).
+  // No speech model on this computer: the voice bar offers the set recommended for the language setting, with its
+  // size. Nothing downloads until the person presses the button and then confirms; the full list is in Settings.
   let modelsNeeded = $state(false);
+  let modelOffer = $state<{ ids: string[]; bytes: number } | null>(null);
+  let confirmingDownload = $state(false);
   function openSpeechModels() {
     window.dispatchEvent(new CustomEvent("heliox:open-settings", { detail: { section: "voice-models" } }));
+  }
+  function offerSize(bytes: number): string {
+    return `${Math.max(1, Math.round(bytes / 1_048_576))} MB`;
+  }
+  async function downloadOffer() {
+    const offer = modelOffer;
+    confirmingDownload = false;
+    if (!offer) return;
+    modelsNeeded = false;
+    showDeviceNotice(`Downloading ${offerSize(offer.bytes)} of speech models; progress is in Settings, Voice.`, 8000);
+    for (const id of offer.ids) await call("speech_model_download", { id }); // the daemon fetches them one at a time
   }
   async function acceptInputOffer() {
     const offer = inputOffer;
@@ -261,6 +275,7 @@
     deviceTimer = clearAfterMs ? setTimeout(() => (deviceNotice = ""), clearAfterMs) : null;
   }
   let preparingTimer: ReturnType<typeof setTimeout> | null = null;
+  let replyTimer: ReturnType<typeof setTimeout> | null = null;
   let captionTimer: ReturnType<typeof setTimeout> | null = null;
   function showCaption(text: string) {
     interimTranscript = text;
@@ -306,6 +321,8 @@
     }
     if (status === "recogniser_missing") {
       showDeviceNotice(String(payload.message ?? "") || "Speech recognition needs a model.");
+      const offer = payload.recommended as { missing?: string[]; missing_bytes?: number } | null | undefined;
+      modelOffer = offer?.missing?.length ? { ids: offer.missing, bytes: Number(offer.missing_bytes ?? 0) } : null;
       modelsNeeded = true;
       return;
     }
@@ -316,6 +333,11 @@
         payload.reason === "narrowband" && suggested?.id && suggested.name && payload.headset
           ? { headset: String(payload.headset), id: String(suggested.id), name: String(suggested.name) }
           : null;
+      return;
+    }
+    if (status === "not_addressed") {
+      // Someone clearly spoke to Heliox without the wake phrase. Sent once per session (pilot.system.addressing).
+      showDeviceNotice(String(payload.message ?? ""), 6000);
       return;
     }
     if (status === "microphone_recovered" || status === "speaker_changed") {
@@ -338,7 +360,16 @@
       transcript = String(payload.transcript ?? "");
       pulseIntensity = 1;
     } else if (status === "follow_up_ready") {
+      // A reply without the wake phrase is taken for these few seconds; then the bar goes back to plain listening.
       pulseIntensity = 0.6;
+      if (replyTimer) clearTimeout(replyTimer);
+      const seconds = Number(payload.seconds ?? 0);
+      replyTimer =
+        seconds > 0
+          ? setTimeout(() => {
+              if (pulseIntensity === 0.6) pulseIntensity = 0.4;
+            }, seconds * 1000)
+          : null;
     } else if (status === "timeout") {
       companion.humanSpeechEnded();
       error = String(payload.message ?? "Voice command timed out.");
@@ -372,6 +403,7 @@
   onDestroy(() => {
     if (captionTimer) clearTimeout(captionTimer);
     if (preparingTimer) clearTimeout(preparingTimer);
+    if (replyTimer) clearTimeout(replyTimer);
     if (deviceTimer) clearTimeout(deviceTimer);
     offNotification(voiceStatusHandler);
     window.removeEventListener("heliox:voice-command-request", handleVoiceCommandRequest);
@@ -581,7 +613,17 @@
       {#if deviceNotice}
         <span class="holding">{deviceNotice}</span>
       {/if}
-      {#if modelsNeeded}
+      {#if modelsNeeded && modelOffer && confirmingDownload}
+        <button type="button" class="input-offer" onclick={downloadOffer}>
+          Yes, download {offerSize(modelOffer.bytes)}
+        </button>
+        <button type="button" class="input-offer" onclick={() => (confirmingDownload = false)}>Not now</button>
+      {:else if modelsNeeded && modelOffer}
+        <button type="button" class="input-offer" onclick={() => (confirmingDownload = true)}>
+          Download the recommended speech models ({offerSize(modelOffer.bytes)})
+        </button>
+        <button type="button" class="input-offer" onclick={openSpeechModels}>Choose</button>
+      {:else if modelsNeeded}
         <button type="button" class="input-offer" onclick={openSpeechModels}>Download a speech model</button>
       {/if}
       {#if inputOffer}

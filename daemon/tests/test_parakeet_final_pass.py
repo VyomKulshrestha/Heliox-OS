@@ -149,6 +149,7 @@ async def test_mid_conversation_parakeet_runs_alone_and_whisper_checks_a_lone_wo
     fake.transcribe.return_value = said
     monkeypatch.setattr(item, "_parakeet", lambda: fake)
     monkeypatch.setattr("pilot.system.voice._load_pcm_wav_for_whisper", lambda _path: np.zeros(16000, np.float32))
+    item._addressing._addressed()  # a conversation someone opened with the wake phrase
     item.arm_follow_up_window(30)
     started = time.perf_counter()
     assert await item._transcribe_path("utterance.wav") == expected
@@ -181,6 +182,7 @@ async def test_mid_conversation_live_gets_parakeets_words_before_whisper_answers
     fake.transcribe.return_value = PARAKEET  # "Dear Yorks remind me…": not a reply as written
     monkeypatch.setattr(item, "_parakeet", lambda: fake)
     monkeypatch.setattr("pilot.system.voice._load_pcm_wav_for_whisper", lambda _path: np.zeros(16000, np.float32))
+    item._addressing._addressed()  # a conversation someone opened with the wake phrase
     item.arm_follow_up_window(30)
     await item._transcribe_path("utterance.wav")
     assert offered and offered[0][1] == PARAKEET and offered[0][0] < whisper_done[0]
@@ -287,3 +289,36 @@ async def test_the_recorder_hands_over_the_opening_once_while_the_person_speaks(
         rec._queue.put_nowait(frame)
     assert await rec.record_utterance(timeout=3, keep_backlog=True)
     assert openings == [10]
+
+
+def test_a_language_other_than_english_keeps_whisper(tmp_path):
+    item = listener(tmp_path, "parakeet", with_model=True)
+    item.config.voice.language = "fr"
+    assert item._parakeet() is None
+    item.config.voice.language = "en"
+    assert item._parakeet() is not None
+
+
+@pytest.mark.parametrize(
+    ("whisper", "parakeet"),
+    [
+        ("Hey Heliox, Hey Heliocs, undo that.", "Hey Heliocs, undo that."),  # the bench's doubled phrase
+        ("Hey Heliox, undo that.", "Hey Heliocs, undo that."),
+        ("Hey Heliox, undo that.", "Heliocs undo that"),
+    ],
+)
+def test_the_merged_sentence_holds_the_wake_phrase_once(whisper, parakeet):
+    merged = merge_wake(whisper, parakeet, loose_wake_prefix)
+    assert merged.casefold().count("heli") == 1 and merged.rstrip(".").endswith("undo that")
+
+
+@pytest.mark.parametrize(
+    ("whisper", "parakeet", "merged"),
+    [
+        # The owner's headset: Parakeet kept the "Hey" and lost the name; "what" and "what's" are the same start.
+        ("Hey Heliox, what can I do?", "Hey, what's not connecting?", "Hey Heliox, what's not connecting?"),
+        ("Hey Heliox, open the notes.", "Hey, I'll pin the notes.", "Hey Heliox, I'll pin the notes."),
+    ],
+)
+def test_the_hey_of_the_wake_phrase_is_not_kept_twice(whisper, parakeet, merged):
+    assert merge_wake(whisper, parakeet, loose_wake_prefix) == merged

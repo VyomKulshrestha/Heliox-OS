@@ -486,11 +486,44 @@ request or question in the second person was not taken because no conversation w
 Heliox' first."
 
 **Settings.** `voice.continuous_conversation_enabled`, which took sentences that looked like commands as addressed
-without the wake phrase, defaults to off; its text says that it makes Heliox act on what other people say.
+without the wake phrase, is no longer read and defaults to off; its text says that it made Heliox act on what other
+people say. `voice.follow_up_window_seconds` is 8. Heliox speaking (a reminder, a Live card) opens no reply window
+unless someone opened the conversation.
 
 **Hooks.** Each dispatch sets `pilot.system.voice.voice_turn_addressed` ("wake", "button", "follow_up",
 "doubtful_follow_up") beside `voice_turn_ended_at`; the conversation layer calls
 `ContinuousVoiceListener.note_not_understood()` after a "Sorry?".
 
-Measured: (to come, from the Conversation Bench: the 62 minutes not addressed to Heliox, the owner's wake sentences
-and follow-ups, and the control words).
+Measured on the Conversation Bench's transcript replay (2026-11-12, both recognisers' words cached through the
+listener's own calls): of 456 utterances not addressed to Heliox (the first six blocks of the 62 minutes), the old
+behaviour dispatched 186 and this rule 0, with nothing spoken. The owner's wake sentences were taken as before: desk
+microphone 4 of 4, Bluetooth headset 3 of 5 (in the two misses neither recogniser heard the wake phrase). The four
+"Wait, stop." cut-offs over Heliox stop it. Still to measure: the whole hour and the control words at audio level,
+and a real follow-up recording.
+
+## 6. Ending the turn early (`early_turn_threshold`): measured and left off
+
+The recorder can ask Smart Turn as soon as 200 ms of quiet follow a word and end the turn there when the model is
+at least `early_turn_threshold` sure the sentence is finished; otherwise it waits for the usual 400 ms check. The
+code stays in and the setting stays at 1.0 (off): on longer sentences it cuts them in two.
+
+Measured 2026-11-12 with `benchmarks/conversation_bench/turn_split.py`: the listener's own recorder fed one 50 ms
+frame at a time on the audio's own clock (the next frame only after the recorder has taken the last one and any
+Smart Turn call on it), so the numbers do not depend on the speed of the machine. "Split" means one sentence became
+two or more utterances.
+
+| `early_turn_threshold` | Owner's recordings (18 short sentences): split | ended at 200 ms | Synthetic addressed sentences (49): split | Corpus lines, not addressed (159): split |
+|---|---|---|---|---|
+| 1.0 (off) | 0 | 0 | 0 | 23 |
+| 0.99 | 0 | 0 | 0 | 24 |
+| 0.97 | 0 | 3 | 5 | 56 |
+| 0.95 | 0 | 12 | 10 | 63 |
+
+The owner's sentences are short ("Hey Heliox, what can I say?") and showed no split at any setting, which is why
+they cannot decide this. At 0.97 "Hey Heliox, remind me to call Priya at four" and "Hey Heliox, what did I do this
+morning" were cut in two; 0.99 saves nothing measurable (one early end in 67 sentences).
+
+Even with it off, 23 of the 159 longer corpus lines were cut at a pause, mostly at a comma, among them sentences shaped like
+requests ("Close Chrome, it's eating all the memory.", "No, don't send it yet, I want Priya to read it first.",
+"Run the install command again and wait for it to finish."). These are synthetic voices, which pause at commas;
+whether people pause as long has not been measured, but a long request with a thinking pause can be cut today.

@@ -147,8 +147,9 @@ async def test_with_no_recogniser_the_voice_bar_says_so_once_and_points_to_setti
     missing = [data for name, data in statuses if name == "recogniser_missing"]
     assert len(missing) == (1 if said else 0)
     if said:
-        assert missing[0]["settings"] == "voice-models" and "148 MB" in missing[0]["message"]
-        assert "Typing works" in missing[0]["message"]
+        assert missing[0]["settings"] == "voice-models" and "Typing works" in missing[0]["message"]
+        offer = missing[0]["recommended"]  # the set for the language setting, offered with its size
+        assert offer["missing"] and f"{round(offer['missing_bytes'] / 1_048_576)} MB" in missing[0]["message"]
 
 
 @pytest.mark.asyncio

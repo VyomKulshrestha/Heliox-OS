@@ -35,6 +35,10 @@ logger = logging.getLogger("pilot.system.voice")
 #     from pilot.system.voice import voice_turn_ended_at
 #     waited = time.monotonic() - (voice_turn_ended_at.get() or time.monotonic())
 voice_turn_ended_at: ContextVar[float | None] = ContextVar("voice_turn_ended_at", default=None)
+# How the utterance being handled was addressed (pilot.system.addressing), set for the whole of each voice dispatch:
+# "wake", "button", "follow_up", "doubtful_follow_up" (the conversation layer says one "Sorry?" at most, calls no
+# model and stores nothing), or "" (unknown).
+voice_turn_addressed: ContextVar[str] = ContextVar("voice_turn_addressed", default="")
 
 _VOICE_TRANSCRIPTION_PROMPT = (
     "Hey Heliox. Desktop command vocabulary: open, close, click, type, search, scroll, launch, switch, "
@@ -357,15 +361,6 @@ def _looks_like_autonomous_voice_intent(text: str) -> bool:
     """Reject ambient fragments while preserving natural hands-free intent."""
     normalized = " ".join(text.casefold().strip(" \t,.:;!?-").split())
     return normalized in _AUTONOMOUS_SHORT_DECISIONS or bool(_AUTONOMOUS_COMMAND_START.match(normalized))
-
-
-def _remove_phrase_case_insensitive(text: str, phrase: str) -> str:
-    """Remove one recognized phrase without lowercasing the remaining command."""
-    start = text.casefold().find(phrase.casefold())
-    if start < 0:
-        return text.strip(" \t,.:;!?-")
-    end = start + len(phrase)
-    return f"{text[:start]}{text[end:]}".strip(" \t,.:;!?-")
 
 
 # The currently in-flight speak() call, if any -- module-level so that ANY
@@ -1665,9 +1660,10 @@ class _ContinuousRecorder:
         self.opening_frames = max(1, int(EARLY_WAKE_SECONDS * 1000 / frame_ms))
         self.on_opening: Any = None  # callable(frames) -> None
         # Smart Turn can also be asked at the candidate end; at or above this it ends the turn 200 ms sooner.
-        # Off (1.0) until its effect on split sentences is measured on recorded speech: pauses between words on a
-        # noise-gated headset last 250 to 350 ms, and asking after 200 ms once ended the turn at every such pause.
-        # 0.95 is the value to measure: the owner's mid-sentence pauses scored 0.71 to 0.83, real ends 0.94 to 0.98.
+        # Off (1.0), measured: at 0.97 five and at 0.95 ten of 49 longer addressed sentences were cut in two at a
+        # pause ("Hey Heliox, remind me to call Priya | at four"), against none at 1.0; the owner's short sentences
+        # showed no split at any value, so they cannot decide it (docs/INTERACTION_MODEL.md section 6,
+        # benchmarks/conversation_bench/turn_split.py).
         self.early_turn_threshold = 1.0
         self.turn_hold_frames = 50  # 2.5 s
         # 0.85, not 0.5: on the owner's headset Smart Turn gave 0.71 to 0.83 at mid-sentence pauses ("...the launch call
@@ -1707,6 +1703,9 @@ class _ContinuousRecorder:
         self.input_device_notice = ""
         self._loop = asyncio.get_event_loop()
         self._queue = asyncio.Queue()
+        if self.capture_backend == "file":
+            self._soundcard_recorder = self._soundcard_recorder or object()  # is_active, fed by feed()
+            return True
         return self._open_capture()
 
     def effective_preferred_device(self) -> str:
@@ -1803,6 +1802,15 @@ class _ContinuousRecorder:
             logger.warning("Failed to open continuous audio input stream", exc_info=True)
             self._stream = None
             return False
+
+    def feed(self, block: Any) -> None:
+        """A supported audio source besides the microphone (the Conversation Bench's file pump): one block of
+        16 kHz int16 samples, handled exactly as a captured one. Call use_file_source() first."""
+        self._publish_audio_block(block)
+
+    def use_file_source(self) -> None:
+        """Take audio from feed() instead of a device: start() then opens nothing."""
+        self.capture_backend = "file"
 
     @property
     def zero_seconds(self) -> float:
@@ -2187,6 +2195,7 @@ class _ContinuousRecorder:
             logger.debug("Candidate end-of-turn callback failed", exc_info=True)
 
     def _note_voiced(self, frames: int) -> None:
+        self.last_endpoint_at = time.monotonic()
         self.last_turn_ended_at = self.last_voice_monotonic or None
         self.last_voiced_seconds = max(0.0, (frames * self.frame_ms - self.last_endpoint_ms) / 1000.0)
 
@@ -2326,10 +2335,22 @@ class ContinuousVoiceListener:
         self._capture_watchdog: Any = None
         self.capture_notice = ""
         self._early_wake: asyncio.Task[str] | None = None
-        # Off until the false-accept comparison has run on speech not addressed to Heliox (a wake phrase accepted
-        # wrongly would send overheard speech to a model): the opening is then never read early and the whole
-        # utterance is checked as before.
-        self.early_wake_enabled = False
+        # When speech is taken as meant for Heliox (pilot.system.addressing): the one authority.
+        from pilot.system.addressing import Addressing
+
+        self._addressing = Addressing()
+        self._last_parakeet_text = ""
+        self._last_wake_text = ""
+        self._busy = False
+        self._asr_started_at: float | None = None
+        self._asr_done_at: float | None = None
+        # The bench's hook: async callable(text, engine, endpoint_at, asr_started_at, asr_done_at, decision=...).
+        self.on_transcript: Any = None
+        # The wake phrase is read from the first 1.6 s while the person is still talking. Over 975 segments of speech
+        # not addressed to Heliox it accepted 3 (all "Helix is a nice name..." read as "Heliox is a nice...") and
+        # none that the whole-utterance check rejects; the vocative rule (pilot.system.addressing) turns all of them
+        # down, as it does today's 7. Off, the whole utterance is checked after the turn ends, as before.
+        self.early_wake_enabled = True
         # What the sound says about the microphone (pilot.system.mic_quality), judged once per device.
         from pilot.system.mic_quality import MicQuality
 
@@ -2393,21 +2414,138 @@ class ContinuousVoiceListener:
         """Seconds left in the bounded wake-free conversation turn."""
         return max(0.0, self._follow_up_until - time.monotonic())
 
-    def arm_follow_up_window(self, seconds: float | None = None, *, asked: bool = False) -> None:
-        """Allow exactly the next utterance to omit the wake word briefly.
+    def _decide_addressed(self, transcript: str, interruption: str, wake_free_allowed: bool) -> tuple[Any, Any]:
+        """Ask the addressing rule (pilot.system.addressing) about one utterance. Returns (Decision, Heard)."""
+        from pilot.system.addressing import Decision, Heard
+
+        rule = self._addressing
+        try:
+            rule.task_open = bool(self.task_open and self.task_open())
+        except Exception:
+            rule.task_open = False
+        recorder = self._recorder
+        voiced = getattr(recorder, "last_voiced_seconds", None)
+        ended = getattr(recorder, "last_turn_ended_at", None)
+        started = getattr(recorder, "speech_started_at", None)
+        now = time.monotonic()
+        text = self._canonical_wake(transcript)
+        heard = Heard(
+            text=text,
+            started=started if isinstance(started, float) else now,
+            ended=ended if isinstance(ended, float) else now,
+            voiced_seconds=voiced if isinstance(voiced, float) else 0.0,
+            other_text=getattr(self, "_last_parakeet_text", ""),
+            wake_text=self._canonical_wake(getattr(self, "_last_wake_text", "")),
+            by_button=interruption == "button",
+            heliox_was_speaking=interruption == "barge_in",
+            in_call=bool(self.in_call),
+        )
+        if not wake_free_allowed and not interruption:
+            # Heard while Heliox was talking and nobody talked over it: possibly Heliox's own voice. Only the wake
+            # phrase counts, as before.
+            from pilot.system.addressing import vocative_wake
+
+            wake = vocative_wake(heard.wake_text or heard.text, heard.other_text)
+            if wake is None:
+                return Decision(False, why="heard while Heliox was talking"), None
+        decision = rule.decide(heard)
+        if decision.act and decision.why == "wake":
+            self._wake_calibrator.confirm_pending_if_followed_by_hit()
+        elif not decision.act and self.config.adaptive_calibration.voice_wake_word_enabled:
+            # A near-miss of the wake phrase that did not count is remembered: if a real "Hey Heliox" follows, the
+            # calibrator learns how this person's voice is heard (voice_calibration.py).
+            near_miss = self._wake_calibrator.check_near_miss(text.casefold())
+            if isinstance(near_miss, str) and near_miss:
+                self._wake_calibrator.record_pending(near_miss)
+        self._wake_calibrator.tick()
+        return decision, heard
+
+    def _canonical_wake(self, text: str) -> str:
+        """A configured wake phrase other than the name ("hey pilot") or a variant the person's own voice taught
+        the calibrator, at the very start, written as "Hey Heliox" so one rule judges it."""
+        if not text:
+            return text
+        folded = text.casefold().lstrip()
+        offset = len(text) - len(text.lstrip())
+        for phrase in sorted(self.wake_words, key=len, reverse=True):
+            if "heliox" in phrase or not folded.startswith(phrase):
+                continue
+            after = folded[len(phrase) : len(phrase) + 1]
+            if not after or not after.isalnum():
+                return "Hey Heliox" + text[offset + len(phrase) :]
+        if self.config.adaptive_calibration.voice_wake_word_enabled:
+            variant = self._wake_calibrator.match_promoted_variant(folded)
+            if isinstance(variant, str) and variant and folded.startswith(variant):
+                return "Hey Heliox" + text[offset + len(variant) :]
+        return text
+
+    def _overheard_ok(self, decision: Any) -> bool:
+        """Overheard speech goes to Live only while a conversation was open (marked not addressed there)."""
+        return decision.why.startswith(("follow-up", "began while", "talk", "too long"))
+
+    @staticmethod
+    def _addressed_kind(decision: Any) -> str:
+        if decision.say_sorry:
+            return "doubtful_follow_up"
+        if decision.why in {"wake", "button"}:
+            return decision.why
+        return "follow_up"
+
+    async def _report_transcript(self, text: str, decision: Any) -> None:
+        """The bench's on_transcript hook: every utterance turned into words, addressed or not."""
+        callback = self.on_transcript
+        if callback is None:
+            return
+        recorder = self._recorder
+        try:
+            await callback(
+                text,
+                self.last_transcription_engine,
+                getattr(recorder, "last_endpoint_at", None),
+                self._asr_started_at,
+                self._asr_done_at,
+                decision={
+                    "act": bool(decision and (decision.act or decision.say_sorry)),
+                    "why": getattr(decision, "why", ""),
+                },
+            )
+        except Exception:
+            logger.debug("on_transcript callback failed", exc_info=True)
+
+    def note_not_understood(self) -> None:
+        """The conversation layer could not understand the last turn (it said "Sorry?" or nothing): the follow-up
+        window closes instead of being re-armed by that "Sorry?", and the wake phrase is needed again."""
+        self._addressing.note_not_understood()
+
+    @property
+    def busy(self) -> bool:
+        """An utterance is being recognised, decided or acted on (the bench waits on this instead of timers)."""
+        return self._busy or bool(self._command_tasks)
+
+    def arm_follow_up_window(self, seconds: float | None = None, *, asked: bool = False) -> bool:
+        """Heliox has finished speaking: in an open conversation the next utterance may omit the wake phrase for a
+        few seconds (pilot.system.addressing). Returns whether a window opened; after speech nobody asked for (a
+        reminder, a Live card) none does.
 
         The server calls this only after Heliox has finished speaking, which
-        avoids treating TTS echo as user intent. Accepting an utterance consumes
-        the window; a completed response arms a fresh turn.
+        avoids treating TTS echo as user intent.
         """
         configured = self.config.voice.follow_up_window_seconds if seconds is None else seconds
         duration = max(0.0, min(float(configured), 120.0))
-        self._follow_up_until = time.monotonic() + duration if duration else 0.0
-        self._question_until = self._follow_up_until if asked else 0.0
+        rule = self._addressing
+        rule.follow_up_seconds = duration
+        rule.heliox_finished(asked=asked)
+        if duration and rule.conversation_open and rule.heliox_ended_at is not None:
+            self._follow_up_until = rule.heliox_ended_at + duration
+            self._question_until = self._follow_up_until if asked else 0.0
+        else:
+            self._follow_up_until = self._question_until = 0.0
+        return self._follow_up_until > 0
 
     def clear_follow_up_window(self) -> None:
         self._follow_up_until = 0.0
         self._question_until = 0.0
+        self._addressing.close("cleared")
 
     @property
     def question_open(self) -> bool:
@@ -2415,15 +2553,15 @@ class ContinuousVoiceListener:
         return time.monotonic() < self._question_until
 
     def conversation_open(self) -> bool:
-        """The person is talking with Heliox: it spoke to them in the last follow-up window (30 s by default), or a
-        task they started is running, or an approval is waiting. Only then do replies without the wake word count;
-        the rest of the time other speech in the room is not addressed to Heliox."""
-        if self.follow_up_remaining_seconds > 0:
-            return True
+        """The person is talking with Heliox (pilot.system.addressing): they addressed it in the last 20 s and Heliox
+        has just answered, or a task they started is running, or an approval is waiting."""
         try:
-            return bool(self.task_open and self.task_open())
+            self._addressing.task_open = bool(self.task_open and self.task_open())
         except Exception:
-            return False
+            self._addressing.task_open = False
+        return self._addressing.conversation_open and (
+            self._addressing.task_open or self.follow_up_remaining_seconds > 0
+        )
 
     def note_interruption(self, seconds: float = 12.0, *, by_button: bool = False) -> None:
         """The person talked over Heliox, or pressed the microphone button. After the button the next sentence
@@ -2567,8 +2705,6 @@ class ContinuousVoiceListener:
             recorder_active,
         )
 
-        if self.config.voice.continuous_conversation_enabled:
-            return "Continuous voice listener started. Speak naturally; the wake phrase is optional."
         return f"Voice listener started. Say '{self.wake_words[0]}' to activate."
 
     def _schedule(self, callback: Any, *args: Any) -> None:
@@ -2895,147 +3031,56 @@ class ContinuousVoiceListener:
 
                 logger.debug("Heard: %s", transcript_lower)
 
-                wake_detected = False
-                command_text = transcript.strip()
                 wake_free_allowed = self._wake_free_suppression_depth == 0 and (
                     capture_generation == self._wake_free_suppression_generation
                     # The wait for this utterance began before Heliox spoke, but the person only started
                     # talking after it finished: a reply, not an echo.
                     or self._began_after_heliox_spoke()
                 )
-                conversational_follow_up = wake_free_allowed and (
-                    self.config.voice.continuous_conversation_enabled or self.follow_up_remaining_seconds > 0
-                )
-
                 interruption = self._take_interruption()
-                by_button = interruption == "button"
-                interrupted = bool(interruption)
-                # The whole leading phrase first ("Here Heliox, remind me…" leaves "remind me…", not "Here , remind").
-                heard_as = loose_wake_prefix(transcript)
-                if heard_as:
-                    wake_detected = True
-                    command_text = transcript[len(heard_as) :].strip(" \t,.:;!?-")
-                    logger.info("Wake phrase recognised: '%s'", heard_as)
-                for wake in () if wake_detected else self.wake_words:
-                    if wake in transcript_lower:
-                        wake_detected = True
-                        command_text = _remove_phrase_case_insensitive(transcript, wake)
-                        break
-
-                if wake_detected:
-                    # A real hit confirms any near-miss variant that was
-                    # pending from a recent failed wake attempt — see
-                    # voice_calibration.py.
-                    self._wake_calibrator.confirm_pending_if_followed_by_hit()
-                elif self.config.adaptive_calibration.voice_wake_word_enabled:
-                    variant_hit = self._wake_calibrator.match_promoted_variant(transcript_lower)
-                    if isinstance(variant_hit, str) and variant_hit:
-                        wake_detected = True
-                        command_text = _remove_phrase_case_insensitive(transcript, variant_hit)
-                        self._wake_calibrator.confirm_pending_if_followed_by_hit()
-                    else:
-                        near_miss = self._wake_calibrator.check_near_miss(transcript_lower)
-                        if isinstance(near_miss, str) and near_miss:
-                            # Whisper commonly renders a product wake word
-                            # phonetically (for example "Heliocs"). When a
-                            # close leading phrase is immediately followed by
-                            # a real command, accept it for this utterance.
-                            # The command still passes through the normal
-                            # voice policy/permission gates. A wake-only
-                            # near-miss keeps the conservative repeated-
-                            # confirmation calibration behavior.
-                            trailing_command = transcript[len(near_miss) :].strip(" \t,.:;-")
-                            if len(trailing_command) >= 3:
-                                wake_detected = True
-                                command_text = trailing_command
-                                logger.info(
-                                    "Accepted close wake-word transcription: '%s'",
-                                    near_miss,
-                                )
-                            else:
-                                self._wake_calibrator.record_pending(near_miss)
-
-                self._wake_calibrator.tick()
-
-                conversation = interrupted or (wake_free_allowed and self.conversation_open())
-                conversational_follow_up = conversational_follow_up or conversation
-
-                if not wake_detected and not conversational_follow_up:
-                    await asyncio.sleep(0.1)
-                    continue
-
-                voiced = getattr(self._recorder, "last_voiced_seconds", None)
-                cut_off = interruption == "barge_in" and is_cut_off_stop(voiced if isinstance(voiced, float) else None)
-                if cut_off:
-                    # Not shown or kept as the person's words: they are not what was said.
-                    logger.info("A short cut-off over Heliox (heard as %r) is taken as stop", transcript.strip())
-                    command_text = "Stop"
-                    wake_detected = False
-                    conversational_follow_up = True
-                elif conversational_follow_up and not wake_detected and conversation and not by_button:
-                    if not should_act_on_follow_up(transcript, question_open=self.question_open):
-                        # Said while talking with Heliox, but not to it as a request: Live may check it.
-                        logger.debug("Overheard in an open conversation: '%s'", transcript_lower)
+                decision, heard = self._decide_addressed(transcript, interruption, wake_free_allowed)
+                await self._report_transcript(transcript, decision)
+                self._busy = False
+                if decision is None or not (decision.act or decision.say_sorry):
+                    if decision is not None and decision.hint:
+                        await self._capture_status("not_addressed", "no conversation", decision.hint)
+                    if decision is not None and heard is not None and self._overheard_ok(decision):
+                        # Said near Heliox but not to it: Live may show a silent card; nothing else hears it.
+                        logger.debug("Overheard: '%s' (%s)", transcript_lower, decision.why)
                         if self._on_overheard:
                             try:
                                 await self._on_overheard(transcript.strip())
                             except Exception:
                                 logger.debug("Overheard-speech callback failed", exc_info=True)
-                        continue
-                    command_text = transcript.strip(" \t,.:;!?-")
-                    logger.info("Conversational reply detected: '%s'", command_text)
-                elif conversational_follow_up and not wake_detected and not interrupted:
-                    # With no conversation open, only a request counts: a bare "No" or "Yes" is someone else's.
-                    if self.config.voice.continuous_conversation_enabled and (
-                        not _looks_like_autonomous_voice_intent(transcript_lower) or is_short_decision(transcript_lower)
-                    ):
-                        logger.debug("Ignored ambient non-command speech: '%s'", transcript_lower)
-                        if self._on_status:
-                            try:
-                                await self._on_status(
-                                    "ambient_ignored",
-                                    {"transcript": transcript, "reason": "no command intent"},
-                                )
-                            except Exception:
-                                pass
-                        continue
-                    # Consume before dispatch so room speech cannot enqueue
-                    # multiple wake-free commands while this one is running.
-                    self.clear_follow_up_window()
-                    command_text = transcript.strip(" \t,.:;!?-")
-                    logger.info("Conversational voice follow-up detected: '%s'", command_text)
-                elif conversational_follow_up and not wake_detected:
-                    # After the microphone button: whatever the person says is for Heliox. The window stays open
-                    # for the rest of the conversation, so "No" after "Skip the backup" still counts.
-                    command_text = transcript.strip(" \t,.:;!?-")
-                    logger.info("Addressed with the microphone button: '%s'", command_text)
-
-                logger.info(
-                    "%s Command: '%s'",
-                    "Conversational follow-up detected."
-                    if conversational_follow_up and not wake_detected
-                    else "Wake word detected!",
-                    command_text,
-                )
+                    await asyncio.sleep(0.05)
+                    continue
+                addressed_as = self._addressed_kind(decision)
+                command_text = decision.command if decision.act else transcript.strip(" \t,.:;!?-")
+                cut_off = decision.why == "cut-off"
+                if cut_off:
+                    logger.info("A short cut-off over Heliox (heard as %r) is taken as stop", transcript.strip())
+                if addressed_as == "wake":
+                    logger.info("Wake word detected! Command: '%s'", command_text)
+                else:
+                    logger.info("Conversational follow-up detected (%s). Command: '%s'", decision.why, command_text)
 
                 if self._on_status:
                     try:
                         await self._on_status(
-                            (
-                                "follow_up_detected"
-                                if conversational_follow_up and not wake_detected
-                                else "wake_detected"
-                            ),
+                            "wake_detected" if addressed_as in {"wake", "button"} else "follow_up_detected",
                             {
                                 "transcript": "" if cut_off else transcript,
-                                "wake_free": conversational_follow_up and not wake_detected,
+                                "wake_free": addressed_as not in {"wake", "button"},
                                 "cut_off": cut_off,
+                                "addressed": addressed_as,
                             },
                         )
                     except Exception:
                         pass
 
-                if not command_text or (len(command_text) < 3 and not is_short_decision(command_text)):
+                if addressed_as in {"wake", "button"} and (
+                    not command_text or (len(command_text) < 3 and not is_short_decision(command_text))
+                ):
                     if self._on_status:
                         try:
                             await self._on_status(
@@ -3076,7 +3121,7 @@ class ContinuousVoiceListener:
                 if self._on_command:
                     ended = getattr(self._recorder, "last_turn_ended_at", None)
                     ended = ended if isinstance(ended, float) else None
-                    task = asyncio.create_task(self._dispatch_command(command_text, ended))
+                    task = asyncio.create_task(self._dispatch_command(command_text, ended, addressed_as))
                     self._command_tasks.add(task)
                     task.add_done_callback(self._command_tasks.discard)
                     # Give the newly scheduled command a chance to publish its
@@ -3096,9 +3141,12 @@ class ContinuousVoiceListener:
                 )
                 await asyncio.sleep(1.0)
 
-    async def _dispatch_command(self, command_text: str, turn_ended_at: float | None = None) -> None:
+    async def _dispatch_command(
+        self, command_text: str, turn_ended_at: float | None = None, addressed: str = ""
+    ) -> None:
         """Run a recognized command without pausing ambient listening."""
         started = time.perf_counter()
+        voice_turn_addressed.set(addressed)  # this task's own context: how this turn was addressed
         if turn_ended_at is not None:
             voice_turn_ended_at.set(turn_ended_at)  # this task's own context: one value per dispatch
             logger.info("Last word to dispatch: %.0f ms", 1000 * (time.monotonic() - turn_ended_at))
@@ -3162,6 +3210,7 @@ class ContinuousVoiceListener:
                 # it is needed: two Whisper passes at once would slow both on a small machine.
                 wake_check = whole_utterance_check() if early_wake is None else None
                 said = await asyncio.to_thread(_counted, parakeet.transcribe, samples)
+                self._last_parakeet_text = said
                 addressed = self._addressed()  # the microphone button, or talking over Heliox
                 in_conversation = addressed or self.conversation_open()
                 if addressed and self._button_until and len(said.split()) > 2:
@@ -3183,6 +3232,7 @@ class ContinuousVoiceListener:
                         heard_early = ""
                     if early_wake_agrees(heard_early, said):
                         self.last_wake_source = "opening"
+                        self._last_wake_text = heard_early
                         return merge_wake(heard_early, said, loose_wake_prefix)
                     wake_check = whole_utterance_check()
                 self.last_wake_source = "whole"
@@ -3192,6 +3242,7 @@ class ContinuousVoiceListener:
                     # and Live never acts, it only speaks up. The same sentence offered again later is not repeated.
                     self._schedule(self._on_overheard, said)
                 heard = await wake_check
+                self._last_wake_text = heard
                 if not said and not heard:
                     return ""
                 return merge_wake(heard, said, loose_wake_prefix)
@@ -3268,6 +3319,9 @@ class ContinuousVoiceListener:
                 audio_path = await _record_audio(duration)
 
             started = time.perf_counter()
+            self._busy = True
+            self._asr_started_at, self._asr_done_at = time.monotonic(), None
+            self._last_parakeet_text = self._last_wake_text = ""
             early = speculation.take() if self._recorder.is_active else None
             heard = await streaming.finish() if streaming is not None else ""
             if self._cutting_off(final=True):
@@ -3298,6 +3352,7 @@ class ContinuousVoiceListener:
             if self._recorder.is_active and not self._mic_quality.verdict:
                 self._schedule_mic_quality(audio_path)
             self.last_transcription_ms = (time.perf_counter() - started) * 1000
+            self._asr_done_at = time.monotonic()
             logger.info(
                 "Voice transcription completed (duration_ms=%.0f, characters=%d)",
                 self.last_transcription_ms,
@@ -3331,14 +3386,19 @@ class ContinuousVoiceListener:
         if present["parakeet"] or present["whisper"]:
             return
         self._recogniser_missing_said = True
-        from pilot.system.model_presence import MISSING_MESSAGE
+        from pilot.system.model_presence import MISSING_MESSAGE, missing_message
 
-        logger.warning("Voice: %s", MISSING_MESSAGE)
+        try:
+            message, offer = missing_message(str(self.config.voice.language))
+        except Exception:
+            logger.debug("Could not work out the recommended speech models", exc_info=True)
+            message, offer = MISSING_MESSAGE, {}
+        logger.warning("Voice: %s", message)
         if self._on_status and self._loop is not None:
             self._schedule(
                 self._on_status,
                 "recogniser_missing",
-                {"message": MISSING_MESSAGE, "settings": "voice-models", "recommended": "whisper-base"},
+                {"message": message, "settings": "voice-models", "recommended": offer},
             )
 
     def _schedule_mic_quality(self, audio_path: str) -> None:

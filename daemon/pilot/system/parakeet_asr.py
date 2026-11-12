@@ -59,17 +59,38 @@ def merge_wake(whisper_text: str, parakeet_text: str, wake_prefix: Any) -> str:
     heard = wake_prefix(whisper_text)
     if not heard:
         return parakeet_text or whisper_text.strip()
-    command = whisper_text[len(heard) :].strip(" \t,.:;!?-")
+    command = _without_wake(whisper_text[len(heard) :], wake_prefix)
     first = re.findall(r"[a-z']+", command.casefold())[:1]
-    words = parakeet_text.split()
-    plain = [re.sub(r"[^a-z']", "", word.casefold()) for word in words]
-    if first and first[0] in plain[:5]:
-        rest = " ".join(words[plain.index(first[0]) :])
+    words = _without_wake(parakeet_text, wake_prefix).split()
+
+    def stem(word: str) -> str:
+        return re.sub(r"[^a-z']", "", word.casefold()).split("'")[0]  # "what's" lines up with "what"
+
+    plain = [stem(word) for word in words]
+    if first and stem(first[0]) in plain[:5]:
+        rest = " ".join(words[plain.index(stem(first[0])) :])
         return f"{heard}, {rest}"
     if not command:
         return heard
+    if words and plain[0] in _LEADS:
+        words = words[1:]  # Parakeet kept the "Hey" of the wake phrase and lost the name: it is in ``heard`` already
     # The two cannot be lined up: keep Parakeet's words, which carry the dates and numbers, after the wake phrase.
-    return f"{heard}, {parakeet_text}" if parakeet_text else whisper_text.strip()
+    return f"{heard}, {' '.join(words)}" if words else whisper_text.strip()
+
+
+_LEADS = frozenset({"hey", "hi", "okay", "ok", "hello"})
+
+
+def _without_wake(text: str, wake_prefix: Any) -> str:
+    """``text`` without a wake phrase (or a recogniser's spelling of one) at its start, so the merged sentence holds
+    it once: "Hey Heliox, Hey Heliocs, undo that" sent an undo to the planner with the phrase twice."""
+    text = text.lstrip(" \t,.:;!?-").rstrip()
+    for _ in range(2):
+        prefix = wake_prefix(text)
+        if not prefix:
+            break
+        text = text[len(prefix) :].lstrip(" \t,.:;!?-")
+    return text
 
 
 class ParakeetTranscriber:

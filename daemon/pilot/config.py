@@ -185,15 +185,16 @@ class VoiceConfig:
     # UX improvement (doesn't expand what the system can do, unlike e.g.
     # gesture_cursor), so on by default like adaptive_calibration.
     barge_in_enabled: bool = True
-    # Autonomous companion mode: every completed user utterance is eligible
-    # for command routing while listening is on; the wake phrase remains an
-    # optional barge-in signal. Safety/approval policy still applies to the
-    # resulting action plan. The listener suppresses Heliox's own TTS audio.
-    continuous_conversation_enabled: bool = True
-    # Keep one bounded conversational turn open after Heliox finishes
-    # speaking, so the next instruction does not require the wake word.
-    # The listener arms this only after TTS stops to avoid self-triggering.
-    follow_up_window_seconds: float = 30.0
+    # No longer used. It made Heliox take any sentence that sounded like a command as meant for it, without the
+    # wake phrase, so it acted on what other people in the room or on a video said (264 dispatches in an hour of
+    # meetings and videos on the Conversation Bench). Speech is now taken as meant for Heliox only after the wake
+    # phrase or the microphone button, and in the short follow-up window below (pilot.system.addressing). Kept so
+    # older config files still load.
+    continuous_conversation_enabled: bool = False
+    # After Heliox answers someone who addressed it, a reply within this many seconds needs no wake phrase, if it is
+    # plausibly meant for Heliox (pilot.system.addressing). 8 s: people answer within about a second; 30 s let a
+    # room in.
+    follow_up_window_seconds: float = 8.0
     # Local model-backed speech or the existing OS-native TTS (Windows
     # SAPI/macOS say/Linux espeak). Kokoro is the more natural built-in
     # option; Pocket remains available for existing installations. Both

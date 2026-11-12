@@ -207,6 +207,8 @@ async def test_close_wake_transcription_with_command_dispatches_immediately():
     listener._wake_calibrator.match_promoted_variant.return_value = None
     listener._wake_calibrator.check_near_miss.return_value = "hey heliocs"
     listener._record_and_transcribe = AsyncMock(return_value="Hey Heliocs, open GitHub.")
+    # A loose spelling of the name counts only when the second recogniser heard the same sentence start.
+    listener._last_parakeet_text = "Hey Heliox, open GitHub."
     listener._running = True
 
     task = asyncio.create_task(listener._listen_loop())

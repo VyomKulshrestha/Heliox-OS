@@ -105,6 +105,54 @@ CATALOGUE: tuple[SpeechModel, ...] = load_catalogue()
 BY_ID = {model.id: model for model in CATALOGUE}
 
 
+def speaks_english(language: str, system_locale: str | None = None) -> bool:
+    """Whether the recommended set is the English one: the voice language setting, or for "auto" the system's
+    locale ("English_United States" on Windows, "en_GB" on macOS and Linux). Unknown counts as English."""
+    language = (language or "auto").strip().casefold()
+    if language != "auto":
+        return language.startswith("en")
+    if system_locale is None:
+        import locale
+
+        try:
+            system_locale = locale.getlocale()[0] or os.environ.get("LANG", "")
+        except (ValueError, TypeError):
+            system_locale = ""
+    folded = (system_locale or "").casefold()
+    return not folded or folded.startswith(("en", "english", "c.", "posix")) or folded == "c"
+
+
+def recommended(language: str, data_dir: Path | None = None, *, path: Path = MANIFEST) -> dict[str, Any]:
+    """The set of speech models recommended for this language setting, its download size and what is still
+    missing: {"key", "title", "why", "ids", "download_bytes", "missing", "missing_bytes"}."""
+    import json
+
+    sets = json.loads(path.read_text(encoding="utf-8")).get("recommended", {})
+    key = "en" if speaks_english(language) else "other"
+    chosen = sets.get(key) or {}
+    models = [BY_ID[i] for i in chosen.get("ids", []) if i in BY_ID]
+
+    def present(model: SpeechModel) -> bool:
+        if installed(model, data_dir):
+            return True
+        if model.id.startswith("whisper-"):  # also found in the Hugging Face cache, where Whisper puts it itself
+            from pilot.system.model_presence import whisper_present
+
+            return whisper_present(model.id.split("-", 1)[1])
+        return False
+
+    missing = [m for m in models if not present(m)]
+    return {
+        "key": key,
+        "title": chosen.get("title", ""),
+        "why": chosen.get("why", ""),
+        "ids": [m.id for m in models],
+        "download_bytes": sum(m.download_bytes for m in models),
+        "missing": [m.id for m in missing],
+        "missing_bytes": sum(m.download_bytes for m in missing),
+    }
+
+
 def models_dir(data_dir: Path | None = None) -> Path:
     if data_dir is None:
         from pilot.config import DATA_DIR

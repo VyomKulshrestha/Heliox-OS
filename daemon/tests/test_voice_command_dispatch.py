@@ -85,7 +85,7 @@ async def test_completed_voice_response_arms_bounded_conversational_follow_up():
         for call in server._broadcast_notification.await_args_list
         if call.args[0] == "voice_status" and call.args[1].get("status") == "follow_up_ready"
     )
-    assert follow_up_status["seconds"] == 30.0
+    assert follow_up_status["seconds"] == 8.0  # people answer within about a second; 30 s let a room in
 
 
 @pytest.mark.asyncio

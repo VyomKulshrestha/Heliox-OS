@@ -98,23 +98,23 @@ async def test_listener_accepts_one_wake_free_follow_up_inside_conversation_wind
     received: list[str] = []
     follow_up_received = asyncio.Event()
 
+    listener = ContinuousVoiceListener(wake_words=["hey heliox"], config=PilotConfig())
+
     async def dispatch(command: str) -> None:
         received.append(command)
+        listener.arm_follow_up_window()  # Heliox answered: the follow-up window opens
         if command == "Click on Launch on the website":
             follow_up_received.set()
 
-    listener = ContinuousVoiceListener(
-        wake_words=["hey heliox"],
-        on_command=dispatch,
-        config=PilotConfig(),
-    )
+    listener._on_command = dispatch
     listener._wake_calibrator = MagicMock()
-    listener.arm_follow_up_window(30)
-    transcripts = iter(["Click on Launch on the website"])
+    transcripts = iter(["Hey Heliox, open the launch page", "Click on Launch on the website"])
 
     async def transcribe(**_kwargs):
         try:
-            return next(transcripts)
+            text = next(transcripts)
+            await asyncio.sleep(0.05)  # the reply to the first one ends before the second is heard
+            return text
         except StopIteration:
             await follow_up_received.wait()
             listener._running = False
@@ -126,28 +126,27 @@ async def test_listener_accepts_one_wake_free_follow_up_inside_conversation_wind
     await listener._listen_loop()
     await asyncio.gather(*tuple(listener._command_tasks))
 
-    assert received == ["Click on Launch on the website"]
-    # The conversation stays open for the rest of its window, so the next reply needs no wake word either.
-    assert listener.follow_up_remaining_seconds > 25
+    assert received == ["open the launch page", "Click on Launch on the website"]
+    # Still open for the rest of the 8 s window after Heliox's reply, so another reply needs no wake word either.
+    assert 0 < listener.follow_up_remaining_seconds <= 8
 
 
 @pytest.mark.asyncio
-async def test_autonomous_listener_routes_natural_speech_without_wake_phrase():
-    received = asyncio.Event()
-    dispatch = AsyncMock(side_effect=lambda _command: received.set())
+async def test_a_command_without_the_wake_phrase_is_not_taken_as_meant_for_heliox():
+    """The bench's 28 wake-free "command intent" dispatches: a sentence that sounds like a command is not enough."""
+    dispatch = AsyncMock()
     listener = ContinuousVoiceListener(
         wake_words=["hey heliox"],
         on_command=dispatch,
         config=PilotConfig(),
     )
     listener._wake_calibrator = MagicMock()
-    transcripts = iter(["click launch"])
+    transcripts = iter(["click launch", "Open the deck so everyone can see it."])
 
     async def transcribe(**_kwargs):
         try:
             return next(transcripts)
         except StopIteration:
-            await received.wait()
             listener._running = False
             return "No speech detected"
 
@@ -157,7 +156,7 @@ async def test_autonomous_listener_routes_natural_speech_without_wake_phrase():
     await listener._listen_loop()
     await asyncio.gather(*tuple(listener._command_tasks))
 
-    dispatch.assert_awaited_once_with("click launch")
+    dispatch.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -309,3 +308,13 @@ async def test_companion_speech_suppresses_its_own_wake_free_transcription():
     assert result is outcome
     listener.suppress_wake_free_commands.assert_called_once_with()
     listener.resume_wake_free_commands.assert_called_once_with()
+
+
+def test_heliox_speaking_opens_a_reply_window_only_in_a_conversation_someone_opened():
+    listener = ContinuousVoiceListener(wake_words=["hey heliox"], config=PilotConfig())
+    # A reminder read out with nobody having said the wake phrase: the next sentence in the room is not a reply.
+    assert listener.arm_follow_up_window() is False
+    assert listener.follow_up_remaining_seconds == 0
+    listener._addressing._addressed()  # "Hey Heliox, ..." and Heliox answered
+    assert listener.arm_follow_up_window() is True
+    assert 0 < listener.follow_up_remaining_seconds <= 8

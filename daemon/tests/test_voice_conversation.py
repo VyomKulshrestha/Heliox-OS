@@ -155,6 +155,7 @@ def make_listener(transcripts: list[str], *, task_open=False, follow_up=0.0, sup
     listener._wake_calibrator.check_near_miss.return_value = None
     listener.task_open = lambda: task_open
     if follow_up:
+        listener._addressing._addressed()  # someone said "Hey Heliox" and Heliox has just answered
         listener.arm_follow_up_window(follow_up)
     if suppressed:
         listener.suppress_wake_free_commands()
@@ -206,8 +207,9 @@ async def test_after_heliox_speaks_the_conversation_stays_open_for_several_repli
 async def test_what_the_person_said_over_heliox_is_heard_even_while_its_own_voice_is_ignored():
     listener, run = make_listener(["Wait, stop."], suppressed=True)
     listener.note_interruption()
+    listener._recorder.last_voiced_seconds = 1.0
     dispatched, _ = await run()
-    assert dispatched == ["Wait, stop"]
+    assert dispatched == ["Stop"]  # a cut-off over Heliox is a stop
     quiet, run_quiet = make_listener(["Wait, stop."], suppressed=True, follow_up=30)
     assert await run_quiet() == ([], [])  # without an interruption, speech during Heliox's voice is its echo
 
@@ -215,7 +217,7 @@ async def test_what_the_person_said_over_heliox_is_heard_even_while_its_own_voic
 @pytest.mark.asyncio
 async def test_talking_over_heliox_stops_its_voice_but_only_a_reply_runs():
     # 19:58 rehearsal: the person talked over Heliox and "PowerShell" was planned as a new task.
-    listener, run = make_listener(["PowerShell", "Wait, stop."], suppressed=True)
+    listener, run = make_listener(["PowerShell", "Wait, stop."], suppressed=True, follow_up=30)
     listener.note_interruption()
     listener._recorder.last_voiced_seconds = 2.4  # long enough to be a sentence, not a cut-off
     dispatched, overheard = await run()
@@ -250,7 +252,8 @@ async def test_a_short_unreadable_cut_off_over_heliox_is_taken_as_stop(heard):
     dispatched, overheard = await run()
     assert dispatched == ["Stop"] and overheard == []  # acknowledged by the stop path; nothing goes to Live
     shown = [data for name, data in statuses if name == "follow_up_detected"]
-    assert shown == [{"transcript": "", "wake_free": True, "cut_off": True}]  # the misheard words are not shown
+    # The misheard words are not shown.
+    assert shown == [{"transcript": "", "wake_free": True, "cut_off": True, "addressed": "follow_up"}]
 
 
 @pytest.mark.asyncio
@@ -276,11 +279,15 @@ async def test_a_cut_off_stops_and_is_acknowledged_without_reaching_the_planner_
 
 @pytest.mark.asyncio
 async def test_a_sentence_said_over_heliox_is_still_heard_as_what_it_is():
-    listener, run = make_listener(["Can you also add the budget figures from March to that"], suppressed=True)
+    # Speech that began while Heliox was talking is not a follow-up (only a cut-off or a control word is): Live may
+    # hear it, nothing runs.
+    listener, run = make_listener(
+        ["Can you also add the budget figures from March to that"], suppressed=True, follow_up=30
+    )
     listener.note_interruption()
     listener._recorder.last_voiced_seconds = 2.8
-    assert await run() == (["Can you also add the budget figures from March to that"], [])
-    aside, run_aside = make_listener(["the meeting moved to Thursday afternoon"], suppressed=True)
+    assert await run() == ([], ["Can you also add the budget figures from March to that"])
+    aside, run_aside = make_listener(["the meeting moved to Thursday afternoon"], suppressed=True, follow_up=30)
     aside.note_interruption()
     aside._recorder.last_voiced_seconds = 2.2
     assert await run_aside() == ([], ["the meeting moved to Thursday afternoon"])  # not a stop: Live hears it
@@ -373,6 +380,7 @@ async def test_a_request_that_starts_like_a_stop_is_still_a_request(monkeypatch)
 @pytest.mark.asyncio
 async def test_after_a_question_a_short_answer_is_a_reply_and_a_story_is_not():
     listener, run = make_listener(["the other one, the blue file", "PowerShell"])
+    listener._addressing._addressed()
     listener.arm_follow_up_window(30, asked=True)  # Heliox: "Which file should I open?"
     dispatched, _ = await run()
     assert dispatched == ["the other one, the blue file", "PowerShell"]
@@ -416,10 +424,13 @@ async def test_in_an_open_conversation_only_replies_and_requests_run():
 
 
 @pytest.mark.asyncio
-async def test_a_misheard_wake_phrase_still_wakes_heliox():
-    _, run = make_listener(["Hay heliog, what's on my to-do list?"])
+async def test_a_misheard_wake_phrase_wakes_heliox_only_when_the_second_recogniser_agrees():
+    listener, run = make_listener(["Hay heliog, what's on my to-do list?"])
+    listener._last_parakeet_text = "Hey Heliox, what's on my to-do list?"
     dispatched, _ = await run()
     assert dispatched == ["what's on my to-do list"]
+    alone, run_alone = make_listener(["Hay heliog, what's on my to-do list?"])
+    assert (await run_alone())[0] == []  # one recogniser's misspelling is not enough
 
 
 @pytest.mark.asyncio
