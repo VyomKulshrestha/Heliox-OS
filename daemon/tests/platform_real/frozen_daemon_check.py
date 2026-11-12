@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import time
+import traceback
 from pathlib import Path
 
 from ci_only import require_runner
@@ -43,9 +44,10 @@ REMINDER_TEXT = "the frozen daemon check"
 results: list[bool] = []
 
 
-def check(name: str, ok: bool, detail: str) -> None:
+def check(name: str, ok: bool, detail: str) -> bool:
     print(f"CHECK frozen/{name}: {'PASS' if ok else 'FAIL'} - {detail}", flush=True)
     results.append(ok)
+    return ok
 
 
 def interpreter(pid: int) -> list[psutil.Process]:
@@ -146,5 +148,19 @@ async def run() -> int:
     return 0 if results and all(results) else 1
 
 
+def main() -> int:
+    """Every way out prints a CHECK line saying why: until 13 November 2026 check() returned nothing, so a passing
+    set-up ended the run with exit code 1 and no other line (CI on 2f6f461, all three systems)."""
+    try:
+        code = asyncio.run(run())
+    except BaseException as error:  # noqa: BLE001 - whatever ends the run is said, then it fails
+        traceback.print_exc(file=sys.stdout)
+        check("ran", False, f"{type(error).__name__}: {error}")
+        return 1
+    if code and all(results):
+        check("ran", False, "the run ended with a failure that no line above names")
+    return code
+
+
 if __name__ == "__main__":
-    sys.exit(asyncio.run(run()))
+    sys.exit(main())

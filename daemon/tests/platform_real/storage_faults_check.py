@@ -102,6 +102,7 @@ def diskpart(*lines: str) -> str:
 def mount_tmpfs(size: str, read_only: bool = False) -> None:
     """A small file system of ``size`` ("16m", "48m") on MOUNT, read-only if asked: a tmpfs on Linux, an HFS+ disk
     image on macOS, a VHD on Windows."""
+    clear_mount_point()
     MOUNT.mkdir(parents=True, exist_ok=True)
     megabytes = int(size.rstrip("m"))
     if IS_MAC:
@@ -131,6 +132,13 @@ def mount_tmpfs(size: str, read_only: bool = False) -> None:
         make_read_only()
 
 
+def clear_mount_point() -> None:
+    """Windows: a detached VHD leaves its mount folder behind as a mount point to nothing, which is not a folder to
+    Python, so mkdir(exist_ok=True) raised FileExistsError on the next case (CI on 2f6f461). It is removed first."""
+    if IS_WINDOWS and os.path.lexists(MOUNT) and not MOUNT.is_dir():
+        os.rmdir(MOUNT)
+
+
 def make_read_only() -> None:
     if IS_MAC:
         sudo("mount", "-u", "-r", str(MOUNT))
@@ -157,6 +165,7 @@ def unmount() -> None:
         elif IS_WINDOWS:
             diskpart(f'select vdisk file="{VHD}"', "detach vdisk")
             VHD.unlink(missing_ok=True)
+            clear_mount_point()
         else:
             sudo("umount", "-l", str(MOUNT))
 
