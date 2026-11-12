@@ -257,6 +257,8 @@ npm run dev
 
 To run the native desktop shell:
 
+On Linux the desktop shell needs Rust 1.99.1 for now (`rustup toolchain install 1.99.1`, then `rustup override set 1.99.1` in `tauri-app/src-tauri`): Rust 1.100.0 does not compile the `screenshots` crate it uses.
+
 ```bash
 cd Heliox-OS/tauri-app
 npm install
