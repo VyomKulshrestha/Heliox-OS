@@ -26,6 +26,7 @@ from typing import Any
 
 from pilot.personal.context import words
 from pilot.personal.passing import Note, never_kept, passing_note
+from pilot.workflows.user_profile import forgotten_sentence, kept_sentence, said_on, spoken_fact
 
 logger = logging.getLogger("pilot.personal.memory_talk")
 
@@ -49,6 +50,10 @@ ASK = re.compile(
     re.IGNORECASE,
 )
 _ASK_FILLER = frozenset({"i", "my", "me", "do", "does", "did", "usually", "normally", "again", "the", "a", "an", "at"})
+# "When did I tell you about my flight?": the one question whose answer includes the day it was said.
+WHEN_SAID = re.compile(
+    r"^(?:so )?when did i (?:tell you|say|mention)(?: that| about)? (?P<what>.+?)\??$", re.IGNORECASE
+)
 FORGET_LAST = re.compile(
     r"^(?:please )?forget (?:what i just (?:said|told you)|that last (?:one|thing)|the last thing i (?:said|told you))$"
 )
@@ -72,6 +77,33 @@ def _normalize(text: str) -> str:
 
 def _clean(text: str) -> str:
     return " ".join(text.split()).strip().rstrip(".!")
+
+
+_DAY_DATE = re.compile(
+    r"\b(?P<wd>Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) (?P<d>\d{1,2}) (?P<m>January|February|March"
+    r"|April|May|June|July|August|September|October|November|December)\b"
+)
+_MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+                "November", "December")  # fmt: skip
+
+
+def _ordinal(day: int) -> str:
+    return f"{day}{'th' if 10 <= day % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')}"
+
+
+def _near_date(text: str, now: datetime) -> str:
+    """ "Friday 13 November" said within a fortnight of it is "Friday the 13th", as a person says it."""
+
+    def near(found: re.Match[str]) -> str:
+        try:
+            when = datetime(now.year, _MONTH_NAMES.index(found["m"]) + 1, int(found["d"]))
+        except ValueError:
+            return found.group(0)
+        if abs((when.date() - now.date()).days) > 14:
+            return found.group(0)
+        return f"{found['wd']} the {_ordinal(int(found['d']))}"
+
+    return _DAY_DATE.sub(near, text)
 
 
 def _second_person(text: str) -> str:
@@ -114,7 +146,11 @@ class MemoryTalk:
 
         if FORGET_LAST.match(normalized):
             removed = await profile.forget_last()
-            return f'Okay, I\'ve forgotten "{removed}".' if removed else "You haven't told me anything to forget yet."
+            return forgotten_sentence(removed) if removed else "You haven't told me anything to forget yet."
+
+        when = WHEN_SAID.match(raw)
+        if when:
+            return self.recall(_clean(when.group("what")), when_said=True)
 
         recall = RECALL.match(raw)
         if recall:
@@ -149,7 +185,7 @@ class MemoryTalk:
                 entry = await profile.add("about", fact)
             except ValueError as error:
                 return str(error)
-            return f'Remembered: "{entry["text"]}".'
+            return kept_sentence(entry)
 
         forget = FORGET.match(normalized)
         if forget:
@@ -158,7 +194,7 @@ class MemoryTalk:
                 return None
             removed = await profile.forget_matching(what)
             if removed:
-                return f'Okay, I\'ve forgotten "{removed}".'
+                return forgotten_sentence(removed)
             return f"I don't have anything stored about {what}, so there was nothing to forget."
 
         if not self._notes_on():
@@ -186,13 +222,16 @@ class MemoryTalk:
             entry = await profile.add("about", note.text, note_thing=note.thing, expires=f"{note.expires:.0f}")
         except ValueError as error:
             return str(error)
-        said = entry["text"].split(" (said on ", 1)[0]
-        until = f"until {note.until}" if note.until else "for a week"
-        return f'Noted: "{said}". I\'ll keep that {until}; say "forget about my {note.thing}" to drop it sooner.'
+        until = f"until {_near_date(note.until, self._now())}" if note.until else "for a week"
+        fact = spoken_fact(entry["text"])
+        kept = (
+            f"Okay, {_near_date(fact, self._now())}." if fact else f'Noted: "{entry["text"].split(" (said on ")[0]}".'
+        )
+        return f'{kept} I\'ll keep that {until}; say "forget about my {note.thing}" to drop it sooner.'
 
-    def recall(self, what: str, *, passing: bool = True) -> str:
+    def recall(self, what: str, *, passing: bool = True, when_said: bool = False) -> str:
         """Everything stored that mentions ``what``, read back in the second person (``passing=False``: leaving out
-        notes said in passing)."""
+        notes said in passing). The day a note was said is named only when that was the question (``when_said``)."""
         profile = self._profile()
         asked = words(what)
         if not asked:
@@ -206,6 +245,10 @@ class MemoryTalk:
                 body = f"{item.get('text', '')} {item.get('name', '')} {item.get('relation', '')}"
                 if asked <= words(body) or (len(asked) > 1 and len(asked & words(body)) >= 2):
                     text = str(item.get("text", ""))
+                    day = said_on(text)
+                    text = _near_date(spoken_fact(text) or text.split(" (said on ")[0], self._now())
+                    if when_said and day:
+                        text = f"{text} (you told me on {day})"
                     if key == "people":
                         text = f"{item.get('name', '')} is your {item.get('relation', '')}"
                     elif key == "prefers":

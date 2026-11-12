@@ -53,9 +53,10 @@ GUIDE: list[dict[str, Any]] = [
     },
     {
         "group": "About you",
-        "about": "What you tell Heliox to remember about you, kept on this computer and used to personalize it.",
+        "about": "What you tell Heliox to remember about you, kept on this computer and used to personalize it. Say "
+        '"call me" and your name to be called by it.',
         "examples": [
-            "call me Vyom",
+            "what do you call me",
             "remember that I'm a founder",
             "my manager is Sarah",
             "I prefer short answers",

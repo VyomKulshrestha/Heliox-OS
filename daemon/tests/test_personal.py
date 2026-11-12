@@ -86,7 +86,7 @@ async def test_remember_facts_that_do_not_start_with_i_and_refuse_what_is_not_a_
     assert await talk.answer("Remember that the stand-up is at ten on Mondays") == (
         'Remembered: "the stand-up is at ten on Mondays".'
     )
-    assert await talk.answer("remember my car is a blue Corolla") == 'Remembered: "my car is a blue Corolla".'
+    assert await talk.answer("remember my car is a blue Corolla") == "Okay, your car is a blue Corolla."
     for not_a_fact in (
         "remember to buy milk",
         "remember when we went to Goa",

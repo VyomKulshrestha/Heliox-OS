@@ -141,7 +141,7 @@ def test_parse_work_end(said, minute):
 @pytest.mark.asyncio
 async def test_after_work_nothing_is_offered_and_it_says_so_once(profile):
     reply = await profile.answer_async("I stop work at six")
-    assert reply.startswith("Noted: you stop work at 18:00.")
+    assert reply.startswith("Okay, you stop work at 6 pm.")
     assert profile.work_end_minute() == 18 * 60
     said = []
 

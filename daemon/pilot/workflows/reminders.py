@@ -127,6 +127,156 @@ def _said_date(rest: str, now: datetime) -> tuple[datetime, str] | None:
     return due, rest.removeprefix("that ").strip()
 
 
+_DOW = "|".join(WEEKDAYS)
+_MON = "|".join(MONTHS)
+_B, _E = r"(?<![\w:])", r"(?![\w:])"
+_ON = r"(?:(?:on|for|by|this|next|before|until) )?"
+_ORDINAL = r"(?:st|nd|rd|th)"
+# Each kind of "when" a person puts around the thing to be reminded of, before it, after it or both. Every match of
+# a kind is taken out of the sentence, so what is left is only the thing ("on Thursday 19 November to send the
+# report" leaves "send the report").
+_DATE_FORMS = (
+    # "Thursday 19 November", "the 19th of November", "19 november"
+    _B
+    + _ON
+    + r"(?:(?P<wd>"
+    + _DOW
+    + r"),? )?(?:the )?(?P<d>\d{1,2})"
+    + _ORDINAL
+    + r"?(?: of)? (?P<m>"
+    + _MON
+    + r")"
+    + _E,
+    # "November 19th", "Thursday, November the 19th"
+    _B + _ON + r"(?:(?P<wd>" + _DOW + r"),? )?(?P<m>" + _MON + r") (?:the )?(?P<d>\d{1,2})" + _ORDINAL + r"?" + _E,
+    # "Thursday the 19th", "the 19th", "on the 19th": no month, so the ordinal or "the" says it is a day
+    _B + _ON + r"(?:(?P<wd>" + _DOW + r"),? )?the (?P<d>\d{1,2})" + _ORDINAL + r"?" + _E,
+    _B + _ON + r"(?:(?P<wd>" + _DOW + r"),? )?(?P<d>\d{1,2})" + _ORDINAL + _E,
+)
+_DATES = tuple(re.compile(form) for form in _DATE_FORMS)
+_IN = re.compile(
+    _B + r"in (?:(?P<half>half an hour)|(?P<amount>\d+|a|an|one|two|three|four|five|ten|fifteen|twenty|thirty"
+    r"|forty five|forty) (?P<unit>minutes?|mins?|hours?))" + _E
+)
+_DAY_WORD = re.compile(_B + r"(?P<day>tomorrow|today|tonight)(?: (?P<part>morning|afternoon|evening|night))?" + _E)
+_WEEKDAY = re.compile(
+    _B
+    + r"(?:on|this|next|by|for|before|until) (?P<wd>"
+    + _DOW
+    + r")(?: (?P<part>morning|afternoon|evening|night))?"
+    + _E
+)
+_CLOCK = re.compile(
+    _B + r"(?:(?:at|by|around) (?P<h>\d{1,2})(?::(?P<mi>\d{2}))? ?(?P<mer>am|pm|a m|p m)?(?: o clock)?"
+    r"|(?:at )?(?P<h2>\d{1,2})(?::(?P<mi2>\d{2}))? ?(?P<mer2>am|pm|a m|p m)|(?:at )?(?P<named>noon|midday|midnight))"
+    + _E
+)
+_PART_HOURS = {"morning": 9, "afternoon": 14, "evening": 18, "night": 20}
+_LEAD = re.compile(r"^(?:(?:to|that|about|and|then)\b[ ,]*)+")
+_TAIL = re.compile(r"(?:[ ,]+(?:to|on|at|by|for|and|then))+$")
+
+
+def _date_of(found: re.Match[str], now: datetime) -> datetime | None:
+    day, month_name = int(found["d"]), found.groupdict().get("m")
+    if month_name:
+        try:
+            when = datetime(now.year, MONTHS.index(month_name) + 1, day)
+        except ValueError:
+            return None
+        if when.date() < now.date():
+            when = when.replace(year=now.year + 1)
+        return when
+    for step in range(0, 3):  # "the 19th": the next 19th, this month or a later one
+        month0 = now.month - 1 + step
+        try:
+            when = datetime(now.year + month0 // 12, month0 % 12 + 1, day)
+        except ValueError:
+            continue
+        if when.date() >= now.date():
+            return when
+    return None
+
+
+def _take(pattern: re.Pattern[str], text: str) -> tuple[list[re.Match[str]], str]:
+    found = list(pattern.finditer(text))
+    for match in reversed(found):
+        text = text[: match.start()] + " " + text[match.end() :]
+    return found, " ".join(text.split())
+
+
+def _when_and_what(rest: str, now: datetime) -> tuple[float, str] | None:
+    """When the reminder is due and what it is about, from the words after "remind me", wherever the date and time
+    are put: "on Thursday 19 November at 9 to send the report", "to send the report on the 19th at 9", "tomorrow
+    morning to call mom", "in an hour to stretch". None when no time is named or the date or time does not exist."""
+    text = rest
+    dates: list[datetime] = []
+    for pattern in _DATES:
+        found, text = _take(pattern, text)
+        for match in found:
+            when = _date_of(match, now)
+            if when is None:
+                return None
+            dates.append(when)
+    if len({d.date() for d in dates}) > 1:
+        return None  # two different dates in one sentence: which one is for the model or the person to settle
+    spans, text = _take(_IN, text)
+    days, text = _take(_DAY_WORD, text)
+    weekdays, text = _take(_WEEKDAY, text)
+    clocks, text = _take(_CLOCK, text)
+    if not (dates or spans or days or weekdays or clocks):
+        return None
+    what = _TAIL.sub("", _LEAD.sub("", text.strip(" ,"))).strip(" ,")
+    if not what or len(what) > MAX_TEXT:
+        return None
+    if spans:
+        found = spans[0]
+        if found["half"]:
+            minutes = 30
+        else:
+            amount = int(found["amount"]) if found["amount"].isdigit() else NUMBER_WORDS[found["amount"]]
+            minutes = amount * (60 if found["unit"].startswith("h") else 1)
+        if not 1 <= minutes <= 7 * 24 * 60:
+            return None
+        return (now + timedelta(minutes=minutes)).timestamp(), what
+    part = next((m["part"] for m in (*days, *weekdays) if m["part"]), None)
+    clock: tuple[int, int] | None = None
+    if clocks:
+        found = clocks[0]
+        if found["named"]:
+            clock = (0, 0) if found["named"] == "midnight" else (12, 0)
+        else:
+            hour, minute, meridiem = (
+                (found["h"], found["mi"], found["mer"]) if found["h"] else (found["h2"], found["mi2"], found["mer2"])
+            )
+            clock = _parse_clock(hour, minute, meridiem, now)
+        if clock is None:
+            return None
+    elif part or (days and days[0]["day"] == "tonight"):
+        clock = (_PART_HOURS.get(part or "night", 9), 0)
+    hour, minute = clock or (9, 0)
+    if dates:
+        due = dates[0].replace(hour=hour, minute=minute)
+        if due <= now:
+            due = due.replace(year=due.year + 1)
+        if due - now > timedelta(days=366):
+            return None
+    elif days:
+        ahead = 1 if days[0]["day"] == "tomorrow" else 0
+        due = (now + timedelta(days=ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if due <= now:
+            return None  # "today at 9" said at ten: not guessed
+    elif weekdays:
+        ahead = (WEEKDAYS.index(weekdays[0]["wd"]) - now.weekday()) % 7
+        due = (now + timedelta(days=ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if due <= now:  # "on monday" said on a Monday afternoon means next Monday
+            due += timedelta(days=7)
+    else:
+        due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if due <= now:  # a time already past today means tomorrow
+            due += timedelta(days=1)
+    return due.timestamp(), what
+
+
 def parse_reminder(text: str, now: datetime) -> tuple[float, str] | None:
     """(due epoch, reminder text) from "remind me in 20 minutes to stretch" and similar; None if unclear.
 
@@ -142,73 +292,7 @@ def parse_reminder(text: str, now: datetime) -> tuple[float, str] | None:
     if said is not None:
         due, what = said
         return (due.timestamp(), what) if what and len(what) <= MAX_TEXT else None
-    when_patterns = (
-        # "on friday", "on friday at 10am": first, so "to call mom on friday at 5" is not read as today at 5
-        r"on (?P<weekday>monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
-        r"(?: (?:at|by) (?P<hour3>\d{1,2})(?::(?P<minute3>\d{2}))? ?(?P<meridiem3>am|pm|a m|p m)?)?",
-        # "on 18 november at 10am"
-        r"on (?P<dom>\d{1,2})(?:st|nd|rd|th)? (?P<month>january|february|march|april|may|june|july|august|"
-        r"september|october|november|december)"
-        r"(?: (?:at|by) (?P<hour4>\d{1,2})(?::(?P<minute4>\d{2}))? ?(?P<meridiem4>am|pm|a m|p m)?)?",
-        r"in (?P<amount>\d+|a|an|one|two|three|four|five|ten|fifteen) (?P<unit>minute|minutes|min|mins|hour|hours)",
-        r"(?P<tomorrow>tomorrow )?(?:at|by) (?P<hour>\d{1,2})(?::(?P<minute>\d{2}))? ?(?P<meridiem>am|pm|a m|p m)?",
-        r"(?P<tomorrow2>tomorrow)(?: morning)?",
-    )
-    for pattern in when_patterns:
-        # "<when> to <what>" or "to <what> <when>"
-        for layout in (
-            rf"^{pattern} (?:to |that |about )?(?P<what>.+)$",
-            rf"^(?:to |that |about )?(?P<what>.+?) {pattern}$",
-        ):
-            match = re.match(layout, rest)
-            if not match:
-                continue
-            groups = match.groupdict()
-            what = groups["what"].strip()
-            if groups.get("amount"):
-                amount = int(groups["amount"]) if groups["amount"].isdigit() else NUMBER_WORDS[groups["amount"]]
-                minutes = amount * (60 if groups["unit"].startswith("h") else 1)
-                if not 1 <= minutes <= 7 * 24 * 60:
-                    return None
-                due = now + timedelta(minutes=minutes)
-            elif groups.get("weekday"):
-                clock = (9, 0)
-                if groups.get("hour3"):
-                    clock = _parse_clock(groups["hour3"], groups.get("minute3"), groups.get("meridiem3"), now)
-                    if clock is None:
-                        return None
-                ahead = (WEEKDAYS.index(groups["weekday"]) - now.weekday()) % 7
-                due = (now + timedelta(days=ahead)).replace(hour=clock[0], minute=clock[1], second=0, microsecond=0)
-                if due <= now:  # "on monday" said on a Monday afternoon means next Monday
-                    due += timedelta(days=7)
-            elif groups.get("dom"):
-                clock = (9, 0)
-                if groups.get("hour4"):
-                    clock = _parse_clock(groups["hour4"], groups.get("minute4"), groups.get("meridiem4"), now)
-                    if clock is None:
-                        return None
-                month = MONTHS.index(groups["month"]) + 1
-                try:
-                    due = datetime(now.year, month, int(groups["dom"]), clock[0], clock[1])
-                    if due <= now:
-                        due = due.replace(year=now.year + 1)
-                except ValueError:
-                    return None
-                if due - now > timedelta(days=366):
-                    return None
-            elif groups.get("hour"):
-                clock = _parse_clock(groups["hour"], groups.get("minute"), groups.get("meridiem"), now)
-                if clock is None:
-                    return None
-                due = now.replace(hour=clock[0], minute=clock[1], second=0, microsecond=0)
-                if groups.get("tomorrow") or due <= now:  # a time already past today means tomorrow
-                    due += timedelta(days=1)
-            else:
-                due = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
-            if not what or len(what) > MAX_TEXT:
-                return None
-            return due.timestamp(), what
-    return None
+    return _when_and_what(rest, now)
 
 
 def _in_night(moment: datetime) -> bool:

@@ -51,12 +51,12 @@ async def test_kept_replaced_lapsed_and_forgotten(tmp_path):
     profile = UserProfile(tmp_path / "p.json", clock=lambda: clock[0])
     talk = MemoryTalk(profile=lambda: profile, now=lambda: datetime.fromtimestamp(clock[0]))
     assert await talk.answer("my meeting is at two") == (
-        'Noted: "My meeting is at two". I\'ll keep that for a week; say "forget about my meeting" to drop it sooner.'
+        'Okay, your meeting is at two. I\'ll keep that for a week; say "forget about my meeting" to drop it sooner.'
     )
-    assert (await talk.answer("I moved the meeting to three")).startswith('Noted: "My meeting is at three"')
+    assert (await talk.answer("I moved the meeting to three")).startswith("Okay, your meeting is at three.")
     assert [i["text"].split(" (")[0] for i in profile.get()["about"]] == ["My meeting is at three"]
     assert (await talk.answer("my flight is on Friday")).endswith(
-        'I\'ll keep that until Saturday 14 November; say "forget about my flight" to drop it sooner.'
+        'I\'ll keep that until Saturday the 14th; say "forget about my flight" to drop it sooner.'
     )
     clock[0] += timedelta(days=1).total_seconds()  # the next day: still there
     assert any("My flight is on Friday 13 November" in line for line in profile.context_lines())
@@ -64,7 +64,9 @@ async def test_kept_replaced_lapsed_and_forgotten(tmp_path):
     assert not any("flight" in line for line in profile.context_lines())
     await talk.answer("anything at all")  # every answer first drops lapsed notes from the file and memory
     assert "flight" not in (tmp_path / "p.json").read_text(encoding="utf-8")
-    assert (await talk.answer("forget about my meeting")).startswith("Okay, I've forgotten \"My meeting is at three")
+    assert (await talk.answer("forget about my meeting")).startswith(
+        "Okay, I've forgotten that your meeting is at three"
+    )
     assert profile.is_empty()
 
 
@@ -98,7 +100,9 @@ async def test_one_switch_turns_passing_notes_off(tmp_path):
     assert profile.is_empty()
     assert (await talk.answer("remember that the flight is on Friday")).startswith("Remembered")  # asked for: kept
     on[0] = True
-    assert (await talk.answer("my train is on Saturday")).startswith('Noted: "My train is on Saturday')
+    assert (await talk.answer("my train is on Saturday")).startswith(
+        "Okay, your train is on Saturday the 14th. I'll keep that until Sunday the 15th"
+    )
 
 
 def test_the_switch_defaults_on_and_loads_from_config():
@@ -125,6 +129,11 @@ async def test_typed_chat_shows_the_same_line(tmp_path):
     ws.send = AsyncMock()
     server._broadcast_notification = AsyncMock()
     result = await server._handle_execute({"input": "my flight is on Friday", "session_id": "chat"}, ws)
-    assert result["status"] == "success" and result["explanation"].startswith('Noted: "My flight is on Friday 13')
+    assert result["status"] == "success" and result["explanation"].startswith(
+        "Okay, your flight is on Friday the 13th."
+    )
     sent = [call.args[0] for call in ws.send.await_args_list]
-    assert any("conversation_response" in str(message) and "Noted:" in str(message) for message in sent)
+    assert any(
+        "conversation_response" in str(message) and "your flight is on Friday the 13th" in str(message)
+        for message in sent
+    )

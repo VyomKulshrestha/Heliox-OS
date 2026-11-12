@@ -385,6 +385,16 @@ time, and from then until 05:00 offers and suggestions wait like quiet hours, wi
 evening saying why (`pilot.personal.wiring.quiet_now`). **Fakes only** (`tests/test_personal_rules.py`, and the
 "corrected: the name", "told once: being interrupted" and "told once: when work ends" personal sessions).
 
+What was kept is said back in Heliox's own words where the rule that kept it knows the shape: "Okay, you stop
+work at 6 pm.", "Okay, you're a founder.", and a note said in passing on a Thursday, "Okay, your flight is on Friday
+the 13th." Words that are not about the person stay quoted (`Remembered: "the plumber is coming on Thursday".`), and
+"(said on ...)" is named only for "when did I tell you about ...". What is stored is unchanged, so the sentence, the
+turn's change record and what the model is later told was said all name the same thing. An empty profile is answered
+"Nothing yet." (or "Nothing at the moment." once something was kept and forgotten); how to tell Heliox things is said
+at most once a week, with no one's name in it. A reminder's date and time are taken out of the sentence wherever they
+sit, so "on Thursday 19 November to send the report" keeps "send the report". **Fakes only**
+(`tests/test_said_back.py`, `tests/test_reminder_when.py`).
+
 Suggestions, offers and Live are turned off, back on, down or up by voice from one table
 (`pilot.personal.spoken_settings`), each phrase family with the value it saves and the sentence said, and a request to
 stop something is answered by a sentence that says it stopped. "Stop suggesting things" (also "quit", "don't",

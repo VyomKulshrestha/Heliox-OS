@@ -37,9 +37,9 @@ def profile(tmp_path, mirror):
 
 @pytest.mark.asyncio
 async def test_learns_name_facts_people_preferences_and_style(profile):
-    assert await profile.answer_async("call me Vyom") == "Nice to meet you, Vyom. I'll call you that."
-    assert await profile.answer_async("remember that I'm a founder") == 'Remembered: "I\'m a founder".'
-    assert await profile.answer_async("remember I work in pharma sales") == 'Remembered: "I work in pharma sales".'
+    assert await profile.answer_async("call me Sam") == "Nice to meet you, Sam. I'll call you that."
+    assert await profile.answer_async("remember that I'm a founder") == "Okay, you're a founder."
+    assert await profile.answer_async("remember I work in pharma sales") == "Okay, you work in pharma sales."
     assert await profile.answer_async("my manager is Sarah") == "Got it, I'll remember your manager Sarah."
     assert await profile.answer_async("Priya is my wife") == "Got it, I'll remember your wife Priya."
     assert await profile.answer_async("I prefer short answers") == "Noted: you prefer short answers."
@@ -48,14 +48,14 @@ async def test_learns_name_facts_people_preferences_and_style(profile):
     assert await profile.answer_async("keep it formal") == "Okay, I'll keep a formal tone."
 
     data = profile.get()
-    assert data["call_me"] == "Vyom"
+    assert data["call_me"] == "Sam"
     assert data["style"] == {"length": "short", "formality": "formal"}
     assert [item["text"] for item in data["about"]] == ["I'm a founder", "I work in pharma sales"]
     assert [(p["name"], p["relation"]) for p in data["people"]] == [("Sarah", "manager"), ("Priya", "wife")]
 
     said = await profile.answer_async("what do you know about me")
     assert said == (
-        "I call you Vyom. I know that you're a founder; you work in pharma sales. "
+        "I call you Sam. I know that you're a founder; you work in pharma sales. "
         "People you've mentioned: Sarah (manager), Priya (wife). "
         "You prefer short answers; would rather use metric units. And I keep my answers short, formal."
     )
@@ -110,7 +110,7 @@ async def test_secrets_are_refused(profile):
 @pytest.mark.asyncio
 async def test_memory_mirror_adds_and_retracts(profile, mirror):
     store, _remember, _forget = mirror
-    await profile.answer_async("call me Vyom")
+    await profile.answer_async("call me Sam")
     await profile.answer_async("remember that I'm a founder")
     await profile.answer_async("my manager is Sarah")
     assert len(store) == 3
@@ -129,7 +129,7 @@ async def test_memory_mirror_adds_and_retracts(profile, mirror):
 
 def test_morning_greeting_uses_the_name():
     now = datetime(2026, 10, 31, 8, 30)
-    assert compose_morning(now, reminders=[], todos=[], habits=[], name="Vyom").startswith("Good morning, Vyom.")
+    assert compose_morning(now, reminders=[], todos=[], habits=[], name="Sam").startswith("Good morning, Sam.")
     assert compose_morning(now, reminders=[], todos=[], habits=[]).startswith("Good morning. It's")
 
 
@@ -144,9 +144,9 @@ async def test_rpcs_routing_and_reservation(tmp_path):
     server._user_profile = UserProfile(tmp_path / "p.json")
     ws = MagicMock()
 
-    assert (await server._control_reply("call me Vyom")).startswith("Nice to meet you, Vyom")
+    assert (await server._control_reply("call me Sam")).startswith("Nice to meet you, Sam")
     added = await server._handle_profile_add({"kind": "about", "text": "I run Dovel Lab"}, ws)
-    assert added["profile"]["call_me"] == "Vyom"
+    assert added["profile"]["call_me"] == "Sam"
     assert any(row["text"] == "I run Dovel Lab" for row in added["entries"])
     assert (await server._handle_profile_add({"kind": "bogus", "text": "x"}, ws))["status"] == "error"
     assert (await server._handle_profile_set_name({"name": "Hardik"}, ws))["profile"]["call_me"] == "Hardik"
@@ -167,9 +167,9 @@ async def test_forgetting_the_last_thing_holds_when_the_clock_has_not_moved(prof
     import pilot.workflows.user_profile as module
 
     monkeypatch.setattr(module.time, "time", lambda: 1_800_000_000.0)
-    assert await profile.answer_async("remember that I'm a founder") == 'Remembered: "I\'m a founder".'
+    assert await profile.answer_async("remember that I'm a founder") == "Okay, you're a founder."
     assert await profile.answer_async("my sister is Ana")
-    assert await profile.answer_async("remember that I'm left-handed") == 'Remembered: "I\'m left-handed".'
+    assert await profile.answer_async("remember that I'm left-handed") == "Okay, you're left-handed."
 
     assert await profile.forget_last() == "I'm left-handed"
     assert await profile.forget_last() == "Ana (sister)"

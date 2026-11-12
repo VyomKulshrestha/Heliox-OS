@@ -37,7 +37,7 @@
       "turns": [
         {
           "say": "Remember my car is a blue Corolla",
-          "reply": "Remembered: \"my car is a blue Corolla\"."
+          "reply": "Okay, your car is a blue Corolla."
         },
         {
           "say": "What did I tell you about my car?",
@@ -151,7 +151,7 @@
       "turns": [
         {
           "say": "my flight is on Friday",
-          "reply_starts": "Noted: \"My flight is on Friday "
+          "reply_starts": "Okay, your flight is on Friday "
         },
         {
           "next_day": true
@@ -170,11 +170,11 @@
       "turns": [
         {
           "say": "my meeting is at two",
-          "reply_starts": "Noted: \"My meeting is at two\""
+          "reply_starts": "Okay, your meeting is at two."
         },
         {
           "say": "I moved the meeting to three",
-          "reply_starts": "Noted: \"My meeting is at three\""
+          "reply_starts": "Okay, your meeting is at three."
         },
         {
           "next_day": true
@@ -199,14 +199,14 @@
       "turns": [
         {
           "say": "my haircut is tomorrow at four",
-          "reply_starts": "Noted: \"My haircut is tomorrow"
+          "reply_starts": "Okay, your haircut is tomorrow"
         },
         {
           "next_day": true
         },
         {
           "say": "forget about my haircut",
-          "reply_starts": "Okay, I've forgotten \"My haircut"
+          "reply_starts": "Okay, I've forgotten that your haircut"
         },
         {
           "say": "When is the haircut?",
@@ -225,7 +225,7 @@
       "turns": [
         {
           "say": "my train is on Friday",
-          "reply_starts": "Noted: \"My train is on Friday "
+          "reply_starts": "Okay, your train is on Friday "
         },
         {
           "later_days": 14

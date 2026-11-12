@@ -1,6 +1,6 @@
 """About you: a user-owned profile Heliox learns from what you tell it, and uses.
 
-"Call me Vyom", "remember that I'm a founder", "my manager is Sarah", "I prefer short
+"Call me Sam", "remember that I'm a founder", "my manager is Sarah", "I prefer short
 answers", "what do you know about me", "forget that I'm a founder". The profile is kept
 in ``DATA_DIR/user_profile.json`` on this computer: how to address you, short facts about
 you, the people you name, your stated preferences, and how you like to be spoken to. It
@@ -107,6 +107,9 @@ SPEAK_REQUEST = re.compile(
     r"^(?:you can |feel free to |please )?(?:speak up|chime in|talk|interrupt me)(?: again| when you notice something"
     r"| whenever you like)?$|^(?:you can )?stop being quiet$|^you don'?t have to stay quiet(?: any ?more)?$"
 )
+# Said when someone who has never told Heliox anything asks what it knows, at most once a week; no one's name.
+HOW_TO_TELL = 'Nothing yet. Say "call me" and your name, or "remember that" and something about you.'
+HOW_TO_TELL_EVERY_SECONDS = 7 * 24 * 3600
 # The end of the working day: "I stop work at six", "my working day ends at 18:00".
 WORK_END = re.compile(
     r"\b(?:i (?:stop|finish|end|leave|knock off) work(?:ing)?|my (?:working day|work ?day) (?:ends|finishes|is over))"
@@ -115,7 +118,7 @@ WORK_END = re.compile(
 )
 WORK_END_REQUEST = re.compile(
     r"^(?:i (?:stop|finish|end|leave|knock off) work(?:ing)?|my (?:working day|work ?day) (?:ends|finishes|is over))"
-    r" (?:at |by |around )?[\w:.]+(?: (?:am|pm))?(?: (?:every day|on weekdays|most days))?$"
+    r" (?:at |by |around )?(?:\d{1,2}(?:[ :.]\d{2})?|[a-z]+)(?: ?(?:am|pm))?(?: (?:every day|on weekdays|most days))?$"
 )
 QUIET_PREF = "prefer that Heliox stays quiet unless I ask"
 SPEAK_UP_PREF = "prefer that Heliox speaks up when it notices something"
@@ -214,10 +217,59 @@ def _lapsed(item: dict[str, Any], now: float) -> bool:
 
 def _you(text: str) -> str:
     """Turn a first-person "about" fact into second person for reading back: "I'm X" -> "you're X"."""
-    for first, second in (("I'm ", "you're "), ("I've ", "you've "), ("I ", "you "), ("my ", "your ")):
+    for first, second in (
+        ("I'm ", "you're "), ("I am ", "you are "), ("I've ", "you've "), ("I ", "you "), ("my ", "your "),
+        ("My ", "your "),
+    ):  # fmt: skip
         if text.startswith(first):
             return second + text[len(first) :]
     return text
+
+
+_SAID_ON = re.compile(r" \(said on (?P<day>[^)]*)\)$")
+
+
+def said_on(text: str) -> str:
+    """The day a note said in passing was said ("Thursday 12 November"), or ""."""
+    found = _SAID_ON.search(text)
+    return found["day"] if found else ""
+
+
+def spoken_fact(text: str) -> str | None:
+    """What was kept, as Heliox says it back: "I stop work at six" -> "you stop work at six", "My flight is on
+    Friday" -> "your flight is on Friday", without the "(said on ...)" a passing note carries. None when the words do
+    not start with the person ("the plumber is coming"): those are quoted, not reworded."""
+    body = _SAID_ON.sub("", text).strip().rstrip(".!")
+    you = _you(body)
+    return you if you != body else None
+
+
+def clock_words(minute: int) -> str:
+    """18:00 -> "6 pm", 17:30 -> "5:30 pm", 12:00 -> "12 pm"."""
+    hour, rest = divmod(minute, 60)
+    twelve = hour % 12 or 12
+    return f"{twelve}{f':{rest:02d}' if rest else ''} {'am' if hour < 12 else 'pm'}"
+
+
+def work_end_sentence(minute: int) -> str:
+    return f"Okay, you stop work at {clock_words(minute)}. After that I'll hold offers and suggestions until morning."
+
+
+def kept_sentence(entry: dict[str, Any]) -> str:
+    """What Heliox says once it has kept ``entry``: its own sentence where the rule that kept it knows the shape (the
+    end of the working day, anything the person said about themselves), the person's words in quotes where it does
+    not. It names only what was stored."""
+    minute = entry.get("minute")
+    if entry.get("slot") == "work_end" and isinstance(minute, int):
+        return work_end_sentence(minute)
+    text = str(entry.get("text", ""))
+    fact = spoken_fact(text)
+    return f"Okay, {fact}." if fact else f'Remembered: "{_SAID_ON.sub("", text)}".'
+
+
+def forgotten_sentence(text: str) -> str:
+    fact = spoken_fact(text)
+    return f"Okay, I've forgotten that {fact}." if fact else f'Okay, I\'ve forgotten "{_SAID_ON.sub("", text)}".'
 
 
 class UserProfile:
@@ -277,6 +329,12 @@ class UserProfile:
             profile["style"] = {
                 k: v for k, v in data["style"].items() if k in ("length", "formality") and isinstance(v, str)
             }
+        meta = data.get("_meta") if isinstance(data.get("_meta"), dict) else {}
+        hinted = meta.get("hinted_at")
+        profile["_meta"] = {
+            "known": bool(meta.get("known")),  # something was kept once: an empty profile now is not a new person
+            "hinted_at": float(hinted) if isinstance(hinted, (int, float)) else None,
+        }
         now = self._clock()
         for key in _LISTS:
             items = data.get(key)
@@ -341,15 +399,20 @@ class UserProfile:
         self._save(profile)
         return len(lapsed)
 
-    def _save(self, profile: dict[str, Any]) -> None:
-        note_change("remembered that")  # a voice turn that did this cannot be withdrawn
+    def _save(self, profile: dict[str, Any], *, change: bool = True) -> None:
+        """``change=False`` only for Heliox's own bookkeeping (when it last said how to tell it things): nothing the
+        person asked for, so a voice turn that did only that has changed nothing."""
+        if change:
+            note_change("remembered that")  # a voice turn that did this cannot be withdrawn
+        if profile.get("call_me") or any(profile.get(key) for key in _LISTS):
+            profile.setdefault("_meta", {})["known"] = True
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(profile, indent=1, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, self._path)
 
     def get(self) -> dict[str, Any]:
-        return self._load()
+        return {key: value for key, value in self._load().items() if key != "_meta"}
 
     def is_empty(self) -> bool:
         profile = self._load()
@@ -463,7 +526,8 @@ class UserProfile:
                     await self._forget(fact_id)
                 except Exception:
                     pass
-        self._save({"call_me": "", "style": {}, "_mirror": {}, **{key: [] for key in _LISTS}})
+        meta = {**profile["_meta"], "known": bool(profile["_meta"].get("known") or removed)}
+        self._save({"call_me": "", "style": {}, "_mirror": {}, "_meta": meta, **{key: [] for key in _LISTS}})
         return removed
 
     def quiet(self) -> bool:
@@ -542,13 +606,27 @@ class UserProfile:
             return f"{dropped} {self._describe()}"
         return self._describe()
 
+    def _nothing_yet(self, profile: dict[str, Any]) -> str:
+        """An empty profile, said short. How to tell Heliox things is said to someone who has never told it anything,
+        at most once a week; after a forget it is only "Nothing at the moment." The example names nobody."""
+        meta = profile.get("_meta") or {}
+        if meta.get("known"):
+            return "Nothing at the moment."
+        now = self._clock()
+        hinted = meta.get("hinted_at")
+        if hinted is not None and now - hinted < HOW_TO_TELL_EVERY_SECONDS:
+            return "Nothing yet."
+        profile["_meta"] = {**meta, "hinted_at": now}
+        try:
+            self._save(profile, change=False)
+        except OSError:
+            logger.debug("Could not note when the profile hint was said", exc_info=True)
+        return HOW_TO_TELL
+
     def _describe(self) -> str:
         profile = self._load()
         if self.is_empty():
-            return (
-                'I don\'t know anything about you yet. Tell me things like "call me Vyom", '
-                '"remember that I\'m a founder" or "I prefer short answers".'
-            )
+            return self._nothing_yet(profile)
         parts = []
         if profile["call_me"]:
             parts.append(f"I call you {profile['call_me']}")
@@ -596,17 +674,14 @@ class UserProfile:
             await self.set_quiet(False)
             return "Okay, I'll speak up again when I notice something, and offers are back on."
         if WORK_END_REQUEST.match(normalized):
-            minute = parse_work_end(normalized)
+            minute = parse_work_end(raw)  # the raw words: "5:30" keeps its colon
             if minute is None:
                 return None
             try:
                 await self.add("about", _clean(_strip_lead(raw).rstrip(".!")))
             except ValueError as exc:
                 return str(exc)
-            return (
-                f"Noted: you stop work at {minute // 60:02d}:{minute % 60:02d}. After that I'll keep offers and "
-                "suggestions to myself until the morning."
-            )
+            return work_end_sentence(minute)
         if CLEAR_REQUEST.match(normalized):
             removed = await self.clear()
             return "Done, I've forgotten what I knew about you." if removed else "I didn't have anything about you."
@@ -671,7 +746,7 @@ class UserProfile:
                 entry = await self.add("about", _clean(statement))
             except ValueError as exc:
                 return str(exc)
-            return f'Remembered: "{entry["text"]}".'
+            return kept_sentence(entry)
 
         forget = FORGET_REQUEST.match(normalized)
         if forget and (forget.group("what") or forget.group("correct")):
@@ -690,7 +765,7 @@ class UserProfile:
                 return f'Fixed. I\'ll remember instead: "{entry["text"]}".'
             if removed:
                 # Say exactly what went, so a wrong match is heard at once.
-                return f'Okay, I\'ve forgotten "{removed}".'
+                return forgotten_sentence(removed)
             return None  # not in the profile: let other handlers or the planner take it
         return None
 

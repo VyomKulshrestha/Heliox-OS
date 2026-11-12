@@ -7050,6 +7050,7 @@ class PilotServer:
             day_briefing.MORNING_REQUEST,
             day_briefing.NIGHT_REQUEST,
             user_profile.NAME_REQUEST,
+            user_profile.NAME_QUESTION,
             user_profile.ABOUT_REQUEST,
             user_profile.PERSON_REQUEST,
             user_profile.PREF_REQUEST,
@@ -7802,7 +7803,7 @@ class PilotServer:
         return await self._handle_goal_list({}, ws)
 
     async def _profile_request(self, text: str) -> str | None:
-        """ "Call me Vyom", "remember that I'm a founder", "what do you know about me" — the About you profile."""
+        """ "Call me Sam", "remember that I'm a founder", "what do you know about me" — the About you profile."""
         if self._user_profile is None:
             return None
         return await self._user_profile.answer_async(text)
