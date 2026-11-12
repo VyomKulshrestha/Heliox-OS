@@ -62,6 +62,7 @@ class TurnState:
     ran: list[tuple[str, str]] = field(default_factory=list)  # (action type, target) sent to the executor
     kept: bool = False  # a handler that answers in code kept a change (a reminder, a note, a to-do)
     signature: str = ""  # what the turn leads to: the quick plan's action and target, or the hand-over's verb/object
+    acknowledged: bool = False  # an acknowledgement for this sentence was started ("I'm on it"), here or earlier
     addressed: str = ""  # how the first half was addressed; the joined sentence keeps it
     verb: str = ""  # the request's verb ("open"), so a too-late "and Spotify" can be read as "open Spotify"
 
@@ -149,18 +150,27 @@ class TurnLog:
             return text
         return carried_verb(text, verb)
 
-    def get(self, turn_id: str) -> TurnState | None:
+    def get(self, turn_id: str, gap: float | None = None) -> TurnState | None:
+        """The recent turn, or None. ``gap``: seconds on the listener's capture clock from the end of the first half
+        to the start of the words that continue it; when given, the limit is counted on it, so a slow recogniser on
+        a busy machine does not turn one sentence into two actions. Without it, the time since the dispatch."""
         state = self._turns.get(turn_id)
-        if state is None or self._clock() - state.started > WITHDRAW_SECONDS:
+        if state is None:
             return None
-        return state
+        waited = gap if gap is not None else self._clock() - state.started
+        return None if waited > WITHDRAW_SECONDS else state
 
     async def withdraw(
-        self, turn_id: str, *, deny_quietly: Callable[[str], Any], pending: Callable[[], Any]
+        self,
+        turn_id: str,
+        *,
+        deny_quietly: Callable[[str], Any],
+        pending: Callable[[], Any],
+        gap: float | None = None,
     ) -> Withdrawal:
         """Stop the turn if nothing irreversible has run. The caller dispatches the joined sentence after
         "withdrawn", and the second half alone after "too_late" or "unknown"."""
-        state = self.get(turn_id)
+        state = self.get(turn_id, gap)
         if state is None:
             return Withdrawal("unknown")
         if state.ran:

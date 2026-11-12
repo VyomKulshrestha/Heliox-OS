@@ -439,7 +439,7 @@ async def run_session(session: dict[str, Any], kind: str) -> tuple[Record, list[
                     clock.t = record.ended.get(first, clock.t) + gap
                     token = SESSION_TURN.set(index)
                     try:
-                        result = await server.withdraw_voice_turn(f"v{first}", joined)
+                        result = await server.withdraw_voice_turn(f"v{first}", joined, gap=gap)
                     finally:
                         SESSION_TURN.reset(token)
                     clock.t = max(clock.t, after_first)

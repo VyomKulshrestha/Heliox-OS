@@ -1053,6 +1053,7 @@ class PilotServer:
         self._voice_turns = TurnLog()
         self.last_voice_turn_id = ""
         self._withdrawn_signature = ""  # what a withdrawn first half led to: its acknowledgement is not said twice
+        self._withdrawn_acknowledged = False  # the withdrawn first half had started its acknowledgement
         # What the last voice turn was, from what the server saw happen: "action" (an action ran), "answer" (Heliox
         # only spoke), "" (not known). Decides whether "again" means the words or the action.
         self._last_turn_kind = ""
@@ -2859,29 +2860,34 @@ class PilotServer:
             count(getattr(self, "_notes", None), "list"),
         )
 
-    async def withdraw_voice_turn(self, turn_id: str, joined: str) -> Any:
+    async def withdraw_voice_turn(self, turn_id: str, joined: str, gap: float | None = None) -> Any:
         """The listener heard the rest of a sentence it had split at a pause (conv_interfaces.md, section b).
 
         "withdrawn": nothing irreversible had run; the first half is stopped and ``joined`` is dispatched in its
         place, with the same addressing. "too_late": something ran or was kept; ``said`` is spoken here, and the
-        listener dispatches only the second half, as a new turn. "unknown": no such recent turn; the same."""
+        listener dispatches only the second half, as a new turn. "unknown": no such recent turn; the same.
+
+        ``gap``: seconds on the listener's capture clock from the end of the first half's turn to the start of the
+        words that continue it. The limit is counted on it when the listener gives it, not on processing time."""
         from pilot.conversation.turns import Withdrawal
 
-        state = self._voice_turns.get(turn_id)
+        state = self._voice_turns.get(turn_id, gap)
         signature = state.signature if state is not None else ""
         addressed = state.addressed if state is not None else ""
+        acknowledged = state.acknowledged if state is not None else False
 
         async def deny_quietly(plan_id: str) -> None:
             await self._resolve_pending_denied(plan_id, resolution_path="withdrawn")
 
         result: Withdrawal = await self._voice_turns.withdraw(
-            turn_id, deny_quietly=deny_quietly, pending=lambda: list(self._pending_confirms)
+            turn_id, deny_quietly=deny_quietly, pending=lambda: list(self._pending_confirms), gap=gap
         )
         if result.status == "withdrawn":
             from pilot.conversation import layer_for
 
             layer_for(self).interrupt()
             self._withdrawn_signature = signature
+            self._withdrawn_acknowledged = acknowledged
 
             async def joined_turn() -> None:
                 from pilot.conversation.turns import voice_turn_id
@@ -14695,8 +14701,13 @@ def handle_tool(tool_name, params):
 
         voice_turn.signature = signature_of(turn) if turn is not None else ""
         voice_turn.verb = turn.intent.verb if turn is not None and turn.intent is not None else ""
-        same_as_withdrawn = bool(voice_turn.signature) and voice_turn.signature == self._withdrawn_signature
-        self._withdrawn_signature = ""
+        # The person was already told "I'm on it" for this sentence (its first half, withdrawn a moment ago):
+        # not again, whatever the joined sentence turned out to ask for.
+        same_as_withdrawn = self._withdrawn_acknowledged or (
+            bool(voice_turn.signature) and voice_turn.signature == self._withdrawn_signature
+        )
+        self._withdrawn_signature, self._withdrawn_acknowledged = "", False
+        voice_turn.acknowledged = turn is not None  # said now, or said for the first half
         acknowledgement_task = (
             # A specific sentence now, progress if planning runs long, the approval pointer. When the joined sentence
             # leads where its withdrawn first half did, that half's acknowledgement stands and is not said again.

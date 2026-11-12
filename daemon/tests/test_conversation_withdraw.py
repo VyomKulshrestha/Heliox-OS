@@ -158,3 +158,34 @@ async def test_unknown_turns_change_nothing(turn_id):
 def test_the_interface_is_what_conv_interfaces_md_names():
     assert callable(PilotServer.withdraw_voice_turn)
     assert SimpleNamespace(status="withdrawn").status in {"withdrawn", "too_late", "unknown"}
+
+
+async def test_the_limit_counts_on_the_capture_clock_when_the_listener_gives_it():
+    now = [100.0]
+    log = TurnLog(clock=lambda: now[0])
+    await _begin(log, "slow")
+    now[0] += 6.1  # recognising the second half took long on a busy machine
+    assert log.get("slow") is None  # by processing time it would be over
+    assert log.get("slow", gap=2.6) is not None  # but the person paused only 2.6 s
+    assert log.get("slow", gap=WITHDRAW_SECONDS + 0.1) is None
+    assert (await log.withdraw("slow", deny_quietly=AsyncMock(), pending=list, gap=2.6)).status == "withdrawn"
+
+
+async def test_a_sentence_already_acknowledged_is_not_acknowledged_again_whatever_it_became():
+    server, heard, calls, release = server_with_stalled_planner()
+    first = asyncio.ensure_future(server._voice_command_dispatch("Open Notepad"))
+    for _ in range(50):
+        if calls:
+            break
+        await asyncio.sleep(0.01)
+    assert heard == ["Opening Notepad."]
+    result = await server.withdraw_voice_turn(server.last_voice_turn_id, "Open Spotify", gap=1.5)
+    assert result.status == "withdrawn" and first.cancelled()
+    for _ in range(50):
+        if len(calls) == 2:
+            break
+        await asyncio.sleep(0.01)
+    release.set()
+    await asyncio.sleep(0.05)
+    assert calls == ["Open Notepad", "Open Spotify"]
+    assert not any(line.startswith("Opening Spotify") for line in heard)  # one acknowledgement per sentence
