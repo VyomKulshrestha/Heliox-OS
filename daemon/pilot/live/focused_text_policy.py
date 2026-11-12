@@ -141,7 +141,9 @@ class PermissionGate:
         self._recheck = recheck_seconds
         self._clock = clock
         self._state: Permission | None = None
-        self._checked_at = 0.0
+        # Never checked. Only read after a check sets it, but 0.0 would read as "just checked" on a machine booted
+        # less than ``recheck_seconds`` ago (a daemon started at login), so it must never mean "never".
+        self._checked_at = float("-inf")
         self.prompted = False
 
     @property

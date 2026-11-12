@@ -103,7 +103,8 @@ SNOOZE_SECONDS = 1800.0
 # After a call ends, this long before the held catches are said: people say goodbye and breathe first.
 AFTER_CALL_SECONDS = 5.0
 # A speech outcome that means the remark was not heard; it must not count against the spoken rate limit.
-UNHEARD = frozenset({"suppressed", "held", "dropped", "error", "cancelled", "superseded"})
+# "no_voice": the voice failed or there is none on this system (pilot.system.companion_speech), so nobody heard it.
+UNHEARD = frozenset({"suppressed", "held", "dropped", "error", "cancelled", "superseded", "no_voice"})
 
 
 @dataclass(frozen=True)

@@ -100,9 +100,15 @@ async def test_an_urgent_risk_in_a_call_is_a_card_and_never_a_voice(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_remark_nobody_heard_does_not_count_against_the_next_one(tmp_path):
+@pytest.mark.parametrize(
+    "outcome",
+    # suppressed: a focus session or a call; no_voice: the voice failed or there is none on this system (as a status,
+    # and as the speech path's outcome object)
+    ["suppressed", "no_voice", SimpleNamespace(status="no_voice")],
+)
+async def test_a_remark_nobody_heard_does_not_count_against_the_next_one(tmp_path, outcome):
     call, text = [""], ["The total is 12 x 15 = 170 so we order more."]
-    live, clock, events, spoken = build(tmp_path, text, call, outcome="suppressed")
+    live, clock, events, spoken = build(tmp_path, text, call, outcome=outcome)
     before = live._last_spoken_at
     await run_for(live, clock, 8)
     assert len(spoken) == 1  # asked to speak; the speech path suppressed it (a focus session, a call)

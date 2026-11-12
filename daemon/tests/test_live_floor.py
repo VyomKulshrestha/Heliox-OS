@@ -300,6 +300,7 @@ def test_a_spoken_remark_becomes_a_heliox_turn_and_the_model_hears_of_recent_car
     memory.clear()
     assert link.context_line() == ""  # too long ago to be what they mean
     assert not link.record_spoken("x", "suppressed")
+    assert not link.record_spoken("x", "no_voice")  # the voice failed or there is none: nobody heard it
 
 
 # ── the person's replies ──
