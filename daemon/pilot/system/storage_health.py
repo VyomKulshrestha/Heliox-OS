@@ -27,6 +27,7 @@ MESSAGES = {
     "read_only": "Heliox's data folder cannot be written to, so it could not save {what}. Check the folder's "
     "permissions or that the drive is not read-only; Heliox keeps working meanwhile.",
 }
+RECOVERED = "Heliox can save again."
 _FULL_ERRNOS = {errno.ENOSPC, getattr(errno, "EDQUOT", -1)}
 _READ_ONLY_ERRNOS = {errno.EROFS, errno.EACCES, errno.EPERM}
 
@@ -127,11 +128,17 @@ class StorageHealth:
                     logger.debug("Could not announce the storage problem", exc_info=True)
         return text
 
-    def report_ok(self) -> None:
-        """A write succeeded: the problem is over; the next one is told again."""
-        if self._problem is not None:
-            with self._lock:
-                self._problem = None
+    def report_ok(self, *, announce: bool = True) -> None:
+        """A write succeeded: the problem is over (said once: "Heliox can save again."); the next one is told again."""
+        if self._problem is None:
+            return
+        with self._lock:
+            had, self._problem = self._problem, None
+        if announce and had is not None and self.notify is not None:
+            try:
+                self.notify({"kind": "", "component": had["component"], "message": RECOVERED})
+            except Exception:
+                logger.debug("Could not announce the storage recovery", exc_info=True)
 
     def status(self) -> dict[str, Any] | None:
         with self._lock:

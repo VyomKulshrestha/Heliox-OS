@@ -1439,7 +1439,11 @@ class PilotServer:
         self._quiet_hours.start()
         from pilot.workflows.reminders import ReminderStore
 
-        self._reminders = ReminderStore(DATA_DIR / "reminders.json", deliver=self._deliver_reminder)
+        self._reminders = ReminderStore(
+            DATA_DIR / "reminders.json",
+            deliver=self._deliver_reminder,
+            deliver_missed=self._deliver_missed_reminders,
+        )
         self._reminders.start()
         from pilot.workflows.daily_brief import DailyBriefScheduler
 
@@ -8077,6 +8081,38 @@ class PilotServer:
             spoken, channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=f"reminder:{reminder['id']}"
         )
 
+    async def _deliver_missed_reminders(self, items: list[dict[str, Any]], first_tick: bool) -> None:
+        """Reminders that came due while the computer slept or Heliox was off: one card, at most one sentence, each
+        with when it was due; any older than a week also goes into the activity log. Never dropped, never twice."""
+        from pilot.workflows.reminders import describe_missed
+
+        message, spoken = describe_missed(items, first_tick, now=time.time())
+        await self._broadcast_notification(
+            "reminders_missed",
+            {
+                "message": message,
+                "reminders": [
+                    {"id": item["id"], "text": item["text"], "due": item["due"], "repeat": bool(item.get("repeat"))}
+                    for item in items
+                ],
+            },
+        )
+        week = 7 * 86400
+        if self._memory is not None:
+            for item in items:
+                if item.get("late_seconds", 0) > week:
+                    due = time.strftime("%A %d %B at %H:%M", time.localtime(item["due"]))
+                    with contextlib.suppress(Exception):
+                        await self._memory.record_note(
+                            f"Reminder: {item['text']}",
+                            f"Came due on {due} while this computer was asleep or Heliox was off; shown when it was back.",
+                        )
+        await self._speak_companion_text(
+            spoken,
+            channel=SpeechChannel.PROACTIVE_SUGGESTION,
+            dedupe_key="reminders-missed:" + ",".join(item["id"] for item in items),
+        )
+
     async def _handle_reminder_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         from pilot.workflows.reminders import describe_repeat
 
@@ -10553,7 +10589,7 @@ class PilotServer:
         while self._running:
             await asyncio.sleep(STORAGE_RECHECK_SECONDS)
             if await asyncio.to_thread(preflight, DATA_DIR) is None:
-                storage().report_ok()
+                storage().report_ok(announce=False)  # said below, once the stores are up
                 logger.info("The data folder can be written again; starting Heliox's stores")
                 await self.initialize()
                 await self._broadcast_notification(

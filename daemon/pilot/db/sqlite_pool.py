@@ -85,6 +85,12 @@ class AsyncSqlitePool:
                 from pilot.system.storage_health import storage
 
                 storage().report(self._db_path.stem, error)
+                # A write that failed half-way (the WAL could not grow, the folder went read-only) can leave its
+                # transaction open on this, the only write connection; every later write would then fail with
+                # "cannot start a transaction within a transaction" even after space returns. Roll it back.
+                with contextlib.suppress(Exception):
+                    if self._write_conn.in_transaction:
+                        await self._write_conn.rollback()
                 raise
             else:
                 from pilot.system.storage_health import storage
@@ -103,10 +109,16 @@ class AsyncSqlitePool:
             raise ValueError(f"Unsupported WAL checkpoint mode: {mode}")
 
         async with self._write_lock:
-            cursor = await self._write_conn.execute(f"PRAGMA wal_checkpoint({mode})")
-            row = await cursor.fetchone()
-            await cursor.close()
-            await self._write_conn.commit()
+            try:
+                cursor = await self._write_conn.execute(f"PRAGMA wal_checkpoint({mode})")
+                row = await cursor.fetchone()
+                await cursor.close()
+                await self._write_conn.commit()
+            except (sqlite3.Error, OSError) as error:
+                from pilot.system.storage_health import storage
+
+                storage().report(self._db_path.stem, error)
+                raise
 
         busy, log_frames, checkpointed_frames = row
         return {

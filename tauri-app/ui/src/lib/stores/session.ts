@@ -414,7 +414,31 @@ interface SessionState {
   durableTask?: DurableTaskReference;
   /** A task Heliox stopped under (the daemon died and came back): offered, never restarted by itself. */
   interruptedTask: InterruptedTaskOffer | null;
+  /** Reminders that came due while the computer slept or Heliox was off: one card until each is answered. */
+  missedReminders: MissedReminders | null;
   queuedTasks: QueuedTask[];
+}
+
+export interface MissedReminder {
+  id: string;
+  text: string;
+  /** Epoch seconds. */
+  due: number;
+}
+
+export interface MissedReminders {
+  message: string;
+  reminders: MissedReminder[];
+}
+
+/** "Due Tuesday 14:30" for a reminder that came due while away. */
+export function describeMissedDue(due: number, now: Date = new Date()): string {
+  const when = new Date(due * 1000);
+  const time = when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const sameDay = when.toDateString() === now.toDateString();
+  if (sameDay) return `Due at ${time}`;
+  const day = when.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
+  return `Due ${day} at ${time}`;
 }
 
 /** What the daemon's resume_task reports for a task it stopped under; only the window's Continue restarts it. */
@@ -523,6 +547,7 @@ const initialState: SessionState = {
   terminalStatus: "",
   durableTask: loadedActiveChat.durableTask,
   interruptedTask: null,
+  missedReminders: null,
   queuedTasks: [],
 };
 
@@ -1280,6 +1305,30 @@ function createSession() {
         }));
         break;
 
+      case "reminders_missed": {
+        // Came due while the computer slept or Heliox was off: one card, each with Done and Remind me again.
+        const reminders = (Array.isArray(p.reminders) ? p.reminders : [])
+          .map((item) => item as Record<string, unknown>)
+          .filter((item) => typeof item.id === "string" && typeof item.text === "string")
+          .map((item) => ({ id: String(item.id), text: String(item.text), due: Number(item.due) || 0 }));
+        if (reminders.length) {
+          update((s) => {
+            const known = new Set((s.missedReminders?.reminders ?? []).map((item) => item.id));
+            return {
+              ...s,
+              missedReminders: {
+                message: String(p.message ?? ""),
+                reminders: [
+                  ...(s.missedReminders?.reminders ?? []),
+                  ...reminders.filter((item) => !known.has(item.id)),
+                ],
+              },
+            };
+          });
+          void notifyDesktop("Heliox reminders", String(p.message ?? ""));
+        }
+        break;
+      }
       case "storage_problem": {
         // A full disk or a read-only data folder, said once by the daemon in plain words; Heliox keeps working.
         const text = String(p.message ?? "").trim();
@@ -1458,6 +1507,16 @@ function createSession() {
    * daemon died and came back it only reports the task, and the card offers Continue / Leave it.
    * `choice` is the person's button: "continue" restarts the task, "leave" ends it.
    */
+  function dropMissedReminder(id: string) {
+    update((s) => {
+      const left = (s.missedReminders?.reminders ?? []).filter((item) => item.id !== id);
+      return {
+        ...s,
+        missedReminders: left.length && s.missedReminders ? { ...s.missedReminders, reminders: left } : null,
+      };
+    });
+  }
+
   async function resumeDurableTask(choice?: "continue" | "leave") {
     const current = get({ subscribe });
     if (!current.durableTask || !isConnected() || resumeInFlight) return;
@@ -2391,6 +2450,19 @@ function createSession() {
     cancelQueuedTask,
     resumeDurableTask,
     continueInterruptedTask: () => resumeDurableTask("continue"),
+    /** Done with one missed reminder: it leaves the card. */
+    dismissMissedReminder: (id: string) => dropMissedReminder(id),
+    /** Remind me again in ten minutes, then it leaves the card. */
+    remindAgain: async (id: string, minutes = 10) => {
+      const item = get({ subscribe }).missedReminders?.reminders.find((reminder) => reminder.id === id);
+      if (!item) return;
+      const result = (await call("reminder_add", { text: item.text, in_minutes: minutes })) as Record<string, unknown>;
+      if (result.status === "ok") {
+        dropMissedReminder(id);
+      } else {
+        addSystemMessage(String(result.message ?? "Could not set the reminder again."));
+      }
+    },
     leaveInterruptedTask: () => resumeDurableTask("leave"),
     addSystemMessage,
     clearMessages,

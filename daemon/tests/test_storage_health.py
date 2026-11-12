@@ -54,11 +54,14 @@ def test_told_once_per_problem_until_a_write_succeeds(health):
     store.report("timeline", full)
     assert len(told) == 1 and told[0]["kind"] == "full" and "keeps working" in told[0]["message"]
     store.report_ok()
-    store.report("memory", full)
+    assert told[1]["message"] == "Heliox can save again." and store.status() is None  # said once when it is over
+    store.report_ok()
     assert len(told) == 2
+    store.report("memory", full)
+    assert len(told) == 3
     store.report("memory", OSError(errno.EROFS, "Read-only file system"))
-    assert len(told) == 3 and store.status()["kind"] == "read_only"
-    assert store.report("memory", ValueError("not about the disk")) is None and len(told) == 3
+    assert len(told) == 4 and store.status()["kind"] == "read_only"
+    assert store.report("memory", ValueError("not about the disk")) is None and len(told) == 4
 
 
 async def test_a_failed_sqlite_write_is_reported_and_still_raised(health, tmp_path):
@@ -183,3 +186,64 @@ async def test_a_daemon_that_cannot_write_its_data_folder_keeps_answering_and_st
         assert said[-1][1]["message"] == "Heliox can save again and is fully started."
     finally:
         await server.stop()
+
+
+async def _pool_with_table(tmp_path):
+    pool = AsyncSqlitePool(tmp_path / "memory.db", read_pool_size=1)
+    await pool.start()
+    async with pool.write() as db:
+        await db.execute("CREATE TABLE notes (body BLOB)")
+        await db.commit()
+    return pool
+
+
+async def _write_blob(pool, size=64 * 1024):
+    async with pool.write() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        await db.execute("INSERT INTO notes VALUES (?)", (b"x" * size,))
+        await db.commit()
+
+
+async def test_sqlite_itself_running_out_of_room_is_said_once_and_recovers(health, tmp_path):
+    """A real SQLITE_FULL from inside SQLite (its page limit stands in for a disk that cannot grow), mid-transaction:
+    said once, the daemon's next writes fail cleanly instead of 'within a transaction', and it recovers."""
+    store, told = health
+    pool = await _pool_with_table(tmp_path)
+    try:
+        async with pool.write() as db:
+            cursor = await db.execute("PRAGMA page_count")
+            pages = (await cursor.fetchone())[0]
+            await cursor.close()
+            await db.execute(f"PRAGMA max_page_count = {pages + 2}")
+        for _ in range(3):
+            with pytest.raises(sqlite3.OperationalError, match="full"):
+                await _write_blob(pool)
+        assert [item["kind"] for item in told] == ["full"]  # once, not once per failed write
+
+        async with pool.write() as db:  # space returns
+            await db.execute("PRAGMA max_page_count = 1073741823")
+        await _write_blob(pool)
+        assert store.status() is None and told[-1]["message"] == "Heliox can save again."
+    finally:
+        await pool.close()
+
+
+async def test_a_database_that_turns_read_only_while_running_is_said_once_and_recovers(health, tmp_path):
+    """SQLite's own read-only refusal (query_only stands in for a folder or drive that became read-only)."""
+    store, told = health
+    pool = await _pool_with_table(tmp_path)
+    try:
+        async with pool.write() as db:
+            await db.execute("PRAGMA query_only = ON")
+        for _ in range(2):
+            with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                await _write_blob(pool)
+        assert [item["kind"] for item in told] == ["read_only"]
+        assert "cannot be written to" in store.status()["message"]
+
+        async with pool.write() as db:
+            await db.execute("PRAGMA query_only = OFF")
+        await _write_blob(pool)
+        assert store.status() is None and told[-1]["message"] == "Heliox can save again."
+    finally:
+        await pool.close()

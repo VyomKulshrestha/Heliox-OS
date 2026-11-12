@@ -88,8 +88,11 @@ async def test_repeating_reminder_is_rescheduled_not_removed(tmp_path):
     assert store._deliver.await_args.args[0]["text"] == "stand up"
     assert datetime.fromtimestamp(store.list()[0]["due"]) == datetime(2026, 10, 26, 16, 10)
 
-    # Away for three hours: the missed ones are skipped, the next keeps the same cadence.
+    # Away for three hours: the reminder is said once, marked late (never dropped silently, never once per missed
+    # hour), and the next keeps the same cadence.
     clock.return_value = datetime(2026, 10, 26, 19, 0).timestamp()
+    assert await store.tick() == 1
+    assert store._deliver.await_args.args[0]["late"] is True
     assert await store.tick() == 0
     assert datetime.fromtimestamp(store.list()[0]["due"]) == datetime(2026, 10, 26, 19, 10)
 

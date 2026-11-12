@@ -33,7 +33,7 @@
   import PluginsTab from "./lib/components/PluginsTab.svelte";
   import GitConflictResolver from "./lib/components/GitConflictResolver.svelte";
   import { airHandoff } from "./lib/stores/airHandoff";
-  import { describeInterruptedTask, session } from "./lib/stores/session";
+  import { describeInterruptedTask, describeMissedDue, session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
   import { tick, onDestroy, onMount, untrack } from "svelte";
@@ -511,6 +511,31 @@
               >
                 {$session.proactiveSuggestionPending ? $_("companion.starting") : $_("companion.accept")}
               </button>
+            </div>
+          </aside>
+        {/if}
+
+        {#if $session.missedReminders}
+          <!-- Reminders that came due while away: said once, listed here until each is answered. -->
+          <aside class="task-recovery missed-reminders" aria-live="polite" data-testid="missed-reminders">
+            <div>
+              <strong>Missed reminders</strong>
+              <span>{$session.missedReminders.message}</span>
+              <ul>
+                {#each $session.missedReminders.reminders as reminder (reminder.id)}
+                  <li>
+                    <span><strong>{reminder.text}</strong> · {describeMissedDue(reminder.due)}</span>
+                    <span class="task-recovery-actions">
+                      <button type="button" onclick={() => session.dismissMissedReminder(reminder.id)}>Done</button>
+                      <button
+                        type="button"
+                        disabled={!$session.daemonConnected}
+                        onclick={() => session.remindAgain(reminder.id)}>Remind me again</button
+                      >
+                    </span>
+                  </li>
+                {/each}
+              </ul>
             </div>
           </aside>
         {/if}
@@ -1231,6 +1256,22 @@
   .task-recovery div {
     display: grid;
     gap: 2px;
+  }
+
+  .missed-reminders ul {
+    display: grid;
+    gap: 6px;
+    margin: 4px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .missed-reminders li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
   }
 
   .task-recovery .task-recovery-actions {

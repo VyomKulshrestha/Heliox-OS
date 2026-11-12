@@ -30,7 +30,9 @@ logger = logging.getLogger("pilot.workflows.reminders")
 CHECK_EVERY_SECONDS = 15.0
 MAX_REMINDERS = 100
 MAX_TEXT = 300
-DROP_LATE_AFTER_SECONDS = 24 * 3600
+# A reminder more than this late came due while the computer was asleep or Heliox was off. Missed reminders are
+# never dropped, whatever their age: they go out once, together (``deliver_missed``).
+MISSED_AFTER_SECONDS = 120.0
 MIN_REPEAT_MINUTES = 15
 NIGHT_START, NIGHT_END = 22, 7  # repeating-by-interval reminders stay quiet in between
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -186,6 +188,32 @@ def next_due(repeat: dict[str, Any], after: datetime) -> datetime:
     raise ValueError("A repeating reminder needs at least one day")
 
 
+_COUNT_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine"}
+SPOKEN_MISSED_LIMIT = 3  # reminders named in the spoken sentence; the card lists them all
+
+
+def describe_missed(items: list[dict[str, Any]], first_tick: bool, *, now: float) -> tuple[str, str]:
+    """The card's line and the one spoken sentence for reminders that came due while away.
+
+    "While this computer was asleep, two reminders came due: call mum and stretch." At the first check after Heliox
+    started it says "While Heliox was off" instead. The sentence names at most three; the card lists every one with
+    when it was due.
+    """
+    where = "While Heliox was off" if first_tick else "While this computer was asleep"
+    texts = [str(item["text"]).rstrip(".") for item in sorted(items, key=lambda item: item["due"])]
+    count = len(texts)
+    if count == 1:
+        sentence = f"{where}, a reminder came due: {texts[0]}."
+    else:
+        named = texts[:SPOKEN_MISSED_LIMIT]
+        rest = count - len(named)
+        listed = ", ".join(named[:-1]) + (f", {named[-1]}" if rest else f" and {named[-1]}")
+        if rest:
+            listed += f" and {_COUNT_WORDS.get(rest, str(rest))} more"
+        sentence = f"{where}, {_COUNT_WORDS.get(count, str(count))} reminders came due: {listed}."
+    return sentence, sentence
+
+
 def describe_repeat(repeat: dict[str, Any]) -> str:
     if "minutes" in repeat:
         minutes = int(repeat["minutes"])
@@ -257,11 +285,16 @@ class ReminderStore:
         path: Path,
         *,
         deliver: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        deliver_missed: Callable[[list[dict[str, Any]], bool], Awaitable[None]] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._path = Path(path)
         self._deliver = deliver
+        # Every reminder that came due while the computer slept or Heliox was off, in one call:
+        # (items with "due" and "late_seconds", first_tick). ``first_tick``: the first check since Heliox started.
+        self._deliver_missed = deliver_missed
         self._clock = clock
+        self._ticked = False
         self._task: asyncio.Task[None] | None = None
 
     def list(self) -> list[dict[str, Any]]:
@@ -314,6 +347,7 @@ class ReminderStore:
         items = self.list()
         due = [item for item in items if item["due"] <= now]
         if not due:
+            self._ticked = True
             return 0
         kept = [item for item in items if item["due"] > now]
         for item in due:
@@ -324,17 +358,20 @@ class ReminderStore:
                     if upcoming.timestamp() > now:
                         break
                 kept.append({**item, "due": upcoming.timestamp()})
-        self._save(kept)
+        self._save(kept)  # saved before anything goes out, so no reminder ever fires twice
+        first_tick, self._ticked = not self._ticked, True
         sent = 0
+        missed = [{**item, "late": True, "late_seconds": now - item["due"]} for item in due
+                  if now - item["due"] > MISSED_AFTER_SECONDS]  # fmt: skip
         for item in due:
-            late = now - item["due"]
-            if late > DROP_LATE_AFTER_SECONDS:
+            if now - item["due"] > MISSED_AFTER_SECONDS and self._deliver_missed is not None:
                 continue
-            if item.get("repeat") and "minutes" in item["repeat"] and late > 15 * 60:
-                continue  # an hourly reminder missed while away is not worth repeating late
             if self._deliver is not None:
-                await self._deliver({**item, "late": late > 120})
+                await self._deliver({**item, "late": now - item["due"] > MISSED_AFTER_SECONDS})
             sent += 1
+        if missed and self._deliver_missed is not None:
+            await self._deliver_missed(missed, first_tick)
+            sent += len(missed)
         return sent
 
     async def _loop(self) -> None:

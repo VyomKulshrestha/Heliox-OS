@@ -89,15 +89,76 @@ async def test_due_reminders_are_delivered_once_and_late_ones_marked(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_reminders_older_than_a_day_are_dropped(tmp_path):
+async def test_missed_reminders_are_never_dropped_and_go_out_once_together(tmp_path):
     clock = Clock(NOW)
     deliver = AsyncMock()
-    store = ReminderStore(tmp_path / "r.json", deliver=deliver, clock=clock)
-    store.add(NOW.timestamp() + 60, "stale")
-    clock.when += 3 * 86400
+    missed: list = []
 
-    assert await store.tick() == 0
-    deliver.assert_not_awaited()
+    async def deliver_missed(items, first_tick):
+        missed.append(([item["text"] for item in items], first_tick, [item["late"] for item in items]))
+
+    store = ReminderStore(tmp_path / "r.json", deliver=deliver, deliver_missed=deliver_missed, clock=clock)
+    store.add(NOW.timestamp() + 60, "call mum")
+    store.add(NOW.timestamp() + 3600, "stretch")
+    store.add(NOW.timestamp() + 30 * 86400, "renew the passport")
+    clock.when += 3 * 86400  # the laptop was asleep for three days
+
+    assert await store.tick() == 2
+    assert missed == [(["call mum", "stretch"], True, [True, True])]  # the first check since Heliox started
+    deliver.assert_not_awaited()  # none goes out on its own as well
+    assert await store.tick() == 0  # never twice
+    assert [item["text"] for item in store.list()] == ["renew the passport"]
+
+
+@pytest.mark.asyncio
+async def test_after_the_first_check_a_missed_reminder_is_said_to_come_from_sleep(tmp_path):
+    clock = Clock(NOW)
+    missed: list = []
+
+    async def deliver_missed(items, first_tick):
+        missed.append(first_tick)
+
+    store = ReminderStore(tmp_path / "r.json", deliver=AsyncMock(), deliver_missed=deliver_missed, clock=clock)
+    await store.tick()  # Heliox started; nothing due
+    store.add(NOW.timestamp() + 60, "stand up")
+    clock.when += 4 * 3600  # asleep
+    await store.tick()
+    assert missed == [False]
+
+
+@pytest.mark.asyncio
+async def test_a_repeating_reminder_missed_while_away_goes_out_once_and_keeps_its_cadence(tmp_path):
+    clock = Clock(NOW)
+    missed: list = []
+
+    async def deliver_missed(items, first_tick):
+        missed.extend(item["text"] for item in items)
+
+    store = ReminderStore(tmp_path / "r.json", deliver=AsyncMock(), deliver_missed=deliver_missed, clock=clock)
+    store.add(NOW.timestamp() + 60, "drink water", repeat={"minutes": 30})
+    clock.when += 5 * 3600
+
+    await store.tick()
+    await store.tick()
+    assert missed == ["drink water"]
+    assert store.list()[0]["due"] > clock()
+
+
+def test_the_missed_sentence_names_at_most_three():
+    from pilot.workflows.reminders import describe_missed
+
+    def items(*texts):
+        return [{"text": text, "due": index} for index, text in enumerate(texts)]
+
+    assert describe_missed(items("call mum"), False, now=0)[1] == (
+        "While this computer was asleep, a reminder came due: call mum."
+    )
+    assert describe_missed(items("call mum", "stretch"), True, now=0)[1] == (
+        "While Heliox was off, two reminders came due: call mum and stretch."
+    )
+    assert describe_missed(items("a", "b", "c", "d", "e"), False, now=0)[1] == (
+        "While this computer was asleep, five reminders came due: a, b, c and two more."
+    )
 
 
 def _write(path, content):
