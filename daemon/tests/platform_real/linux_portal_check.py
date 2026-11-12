@@ -30,7 +30,27 @@ def check(name: str, ok: bool, detail: str = "") -> None:
     print(f"CHECK {name}: {'PASS' if ok else 'FAIL'}{' - ' + detail if detail else ''}", flush=True)
 
 
+def diagnose() -> None:
+    """Which portal services are on the session bus, and which interfaces the portal exports."""
+    try:
+        from jeepney import Introspectable
+        from jeepney.bus_messages import message_bus
+        from jeepney.io.blocking import open_dbus_connection
+
+        with open_dbus_connection("SESSION") as conn:
+            names = conn.send_and_get_reply(message_bus.ListNames(), timeout=5).body[0]
+            print(f"diagnosis: portal names on the bus: {sorted(n for n in names if 'portal' in n.lower())}")
+            xml = conn.send_and_get_reply(
+                Introspectable(portal.PORTAL_PATH, portal.PORTAL).Introspect(), timeout=10
+            ).body[0]
+            found = sorted({line.split('"')[1] for line in xml.splitlines() if "<interface name=" in line})
+            print(f"diagnosis: interfaces at {portal.PORTAL_PATH}: {found}")
+    except Exception as exc:
+        print(f"diagnosis: could not inspect the portal: {type(exc).__name__}: {exc}")
+
+
 def real() -> None:
+    diagnose()
     start = time.perf_counter()
     try:
         path = portal.screenshot(timeout=30)

@@ -9,9 +9,26 @@ $ProgressPreference = "SilentlyContinue"
 $UvVersion = "0.13.5"
 $Dir = $env:HELIOX_SETUP_DIR
 if (-not $Dir) { Write-Output "@@step python failed HELIOX_SETUP_DIR is required"; exit 1 }
-$Check = "import sys, venv, ensurepip; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
+$PyMin = $env:HELIOX_PYTHON_MIN
+$PyMax = $env:HELIOX_PYTHON_MAX
+$PyPrivate = $env:HELIOX_PYTHON_PRIVATE
+if (-not ($PyMin -and $PyMax -and $PyPrivate)) {
+  Write-Output "@@step python failed HELIOX_PYTHON_MIN, HELIOX_PYTHON_MAX and HELIOX_PYTHON_PRIVATE are required"; exit 1
+}
+# Inside the tested range only: a newer Python may have no prebuilt wheels for the core's dependencies (see the .sh).
+$Check = "import sys, venv, ensurepip; v = sys.version_info[:2]; lo = tuple(int(x) for x in '$PyMin'.split('.')); hi = tuple(int(x) for x in '$PyMax'.split('.')); sys.exit(0 if lo <= v <= hi else 1)"
 
 function Say([string]$line) { Write-Output $line }
+# CI measures download sizes from pip's cache (PIP_CACHE_DIR pointed at an empty folder): cumulative KiB.
+function Measure-Step([string]$id) {
+  $cache = $env:HELIOX_MEASURE_PIP_CACHE
+  if ($cache -and (Test-Path $cache)) {
+    $bytes = (Get-ChildItem -Recurse -File -Path $cache | Measure-Object -Property Length -Sum).Sum
+    Say "@@size $id $([math]::Round($bytes / 1024))"
+    $disk = (Get-ChildItem -Recurse -File -Path $Dir -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+    Say "@@disk $id $([math]::Round($disk / 1024))"
+  }
+}
 function Fail([string]$id, [string]$message, [string]$hint = "") {
   Say "@@step $id failed $message"
   if ($hint) { Say "@@hint $id $hint" }
@@ -31,7 +48,7 @@ function Get-UvAsset {
 function Find-Python {
   $candidates = @()
   if (Get-Command py -ErrorAction SilentlyContinue) {
-    foreach ($v in @("3.13", "3.12", "3.11")) {
+    foreach ($v in @("3.13", "3.12", "3.11")) {  # py tries each; the range check below decides
       $exe = (& py "-$v" -c "import sys; print(sys.executable)" 2>$null)
       if ($LASTEXITCODE -eq 0 -and $exe) { $candidates += $exe.Trim() }
     }
@@ -69,15 +86,14 @@ New-Item -ItemType Directory -Force -Path $Dir | Out-Null
 $EnvDir = Join-Path $Dir "env"
 $EnvPython = Join-Path $EnvDir "Scripts\python.exe"
 
-# ── Python ──
-if (Test-Path $EnvPython) {
-  Say "@@step python skipped Heliox's environment already exists."
-} elseif ($Py) {
+function New-SystemEnv {
   Say "@@step python running Using $Py"
-  & $Py -m venv $EnvDir 2>&1 | ForEach-Object { "$_" }
+  & $Py -m venv $EnvDir 2>&1 | ForEach-Object { [Console]::Out.WriteLine("$_") }
   if (-not (Test-Path $EnvPython)) { Fail python "Could not create the environment with $Py." "Press Retry." }
   Say "@@step python done Using $((& $EnvPython -c 'import sys; print(sys.version.split()[0])').Trim()) from $Py"
-} else {
+}
+
+function New-PrivateEnv {
   $Tools = Join-Path $Dir "tools"
   New-Item -ItemType Directory -Force -Path $Tools | Out-Null
   $Archive = Join-Path $Tools $Asset[0]
@@ -101,12 +117,24 @@ if (Test-Path $EnvPython) {
   $env:UV_PYTHON_INSTALL_DIR = Join-Path $Dir "python"
   $env:UV_CACHE_DIR = Join-Path $Dir "uv-cache"
   $env:UV_NO_CONFIG = "1"
-  Say "@@step python running Downloading a private Python 3.12 for Heliox (python-build-standalone, about 30 MB)"
-  & $Uv.FullName python install 3.12 2>&1 | ForEach-Object { "$_" }
+  Say "@@step python running Downloading a private Python $PyPrivate for Heliox (python-build-standalone)"
+  & $Uv.FullName python install $PyPrivate 2>&1 | ForEach-Object { [Console]::Out.WriteLine("$_") }
   if ($LASTEXITCODE -ne 0) { Fail python "uv could not download Python." "Check the internet connection and press Retry." }
-  & $Uv.FullName venv --seed --python 3.12 --python-preference only-managed $EnvDir 2>&1 | ForEach-Object { "$_" }
+  & $Uv.FullName venv --seed --python $PyPrivate --python-preference only-managed $EnvDir 2>&1 |
+    ForEach-Object { [Console]::Out.WriteLine("$_") }
   if (-not (Test-Path $EnvPython)) { Fail python "Could not create the environment." "Press Retry." }
   Say "@@step python done Private Python $((& $EnvPython -c 'import sys; print(sys.version.split()[0])').Trim()) in $(Join-Path $Dir 'python')"
+}
+
+# ── Python ──
+$UsedSystem = $false
+if (Test-Path $EnvPython) {
+  Say "@@step python skipped Heliox's environment already exists."
+} elseif ($Py) {
+  New-SystemEnv
+  $UsedSystem = $true
+} else {
+  New-PrivateEnv
 }
 
 # Its output goes straight to the console so that the function's only value is whether pip succeeded.
@@ -116,12 +144,22 @@ function Pip-Install([string]$requirement) {
   return ($LASTEXITCODE -eq 0)
 }
 
-# ── Core ──
+# ── Core: if it cannot be installed on this computer's Python, try once more with Heliox's own ──
 Say "@@step core running Installing Heliox's core"
 if (-not (Pip-Install $env:HELIOX_CORE_REQ)) {
-  Fail core "The core could not be installed." "Check the internet connection and press Retry. The full log is in the setup details."
+  if ($UsedSystem) {
+    Say "@@step core running The core could not be installed with $Py; trying again with Heliox's own Python"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $EnvDir
+    New-PrivateEnv
+    if (-not (Pip-Install $env:HELIOX_CORE_REQ)) {
+      Fail core "The core could not be installed, with this computer's Python or with Heliox's own." "Check the internet connection and press Retry. The full log is in the setup details."
+    }
+  } else {
+    Fail core "The core could not be installed." "Check the internet connection and press Retry. The full log is in the setup details."
+  }
 }
 Say "@@step core done Core installed"
+Measure-Step core
 
 # ── Optional groups: a failure is reported and the others carry on ──
 $status = 0
@@ -138,6 +176,7 @@ foreach ($pair in ("$env:HELIOX_GROUPS" -split ";")) {
     } else {
       Say "@@step $id done Installed"
     }
+    Measure-Step $id
   } else {
     Say "@@step $id failed Could not be installed."
     Say "@@hint $id Press Retry; the rest of Heliox works without it."

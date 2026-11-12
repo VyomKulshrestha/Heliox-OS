@@ -1,0 +1,6 @@
+{
+  "about": "The Python versions Heliox runs on. min and max bound an existing Python the first-run setup may use: the core's dependencies publish prebuilt wheels for these (numpy 2.2.6, scipy 1.15 and river 0.23 stop at 3.13 on 12 November 2026), so nothing is compiled on the person's machine. private is the version Heliox downloads when none fits. Read by setup.rs (passed to the setup scripts), the first-run CI job and daemon/tests/test_python_versions.py, which checks the CI test matrix stays inside the range.",
+  "min": "3.11",
+  "max": "3.13",
+  "private": "3.12"
+}

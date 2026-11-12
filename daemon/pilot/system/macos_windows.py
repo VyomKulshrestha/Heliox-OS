@@ -113,6 +113,15 @@ class Backend:
         app = self.ax.AXUIElementCreateApplication(pid)
         return self.ax.AXUIElementSetAttributeValue(app, "AXFrontmost", True) == 0
 
+    def open_with_launch_services(self, bundle_id: str) -> bool:
+        """Ask LaunchServices to open (and so activate) an app by its bundle id, as a click in the Dock does."""
+        import subprocess
+
+        if not bundle_id:
+            return False
+        done = subprocess.run(["/usr/bin/open", "-b", bundle_id], capture_output=True, timeout=5.0, check=False)
+        return done.returncode == 0
+
     def windows(self, pid: int) -> list[Any]:
         app = self.ax.AXUIElementCreateApplication(pid)
         self.ax.AXUIElementSetMessagingTimeout(app, 0.5)
@@ -153,6 +162,7 @@ class Backend:
 class MacWindows:
     def __init__(self, backend: Any | None = None) -> None:
         self.b = backend or Backend()
+        self.last_route = ""
 
     def _app(self, target: str, title: str | None = None) -> RunningApp:
         """The running app called ``target``. Several apps can share a name (every unbundled Python program is
@@ -211,22 +221,53 @@ class MacWindows:
                 rows.append((app.name, str(self.b.get(window, "AXTitle") or "")))
         return rows
 
-    def focus(self, target: str, title: str | None = None, settle: float = 0.3) -> str:
-        """Bring the app forward. An app already in front is left as it is (macOS answers "not activated" for
-        it). Since macOS 14 a background process's activation request may be ignored ("cooperative activation"),
-        so when the app is still not in front and Heliox has Accessibility, AXFrontmost does it."""
+    def focus(self, target: str, title: str | None = None, settle: float = 0.6) -> str:
+        """Bring the app forward, trying the routes macOS still honours for a background helper, in order.
+
+        Since macOS 14 activation is cooperative: a request from a process that is not in front may be accepted
+        ("returned True") and still ignored (CI on 12 November: Finder). So after asking, Heliox checks the front
+        app by pid and moves to the next route:
+
+        1. ``NSRunningApplication.activateWithOptions`` (no permission);
+        2. with Accessibility, ``AXFrontmost`` on the app and ``AXRaise`` on its window;
+        3. LaunchServices (``open -b <bundle id>``), as a click in the Dock, which macOS always honours.
+
+        ``last_route`` says which one brought it forward ("already" when it was in front).
+        """
         app = self._app(target, title)
+        self.last_route = "already"
         if self.b.frontmost_pid() != app.pid:
-            self.b.activate(app.pid)
-            if not self._became_front(app.pid, settle) and self.b.trusted():
-                self.b.set_frontmost(app.pid)
-            if not self._became_front(app.pid, settle):
+            routes = [("activate", lambda: self.b.activate(app.pid))]
+            if self.b.trusted():
+                routes.append(("ax-frontmost", lambda: self._ax_front(app, title)))
+            # Only when the bundle id names this app alone: for programs sharing one (every unbundled Python is
+            # org.python.python) LaunchServices would start another copy instead of bringing this one forward.
+            same_bundle = [a for a in self.b.running_apps() if a.bundle_id == app.bundle_id]
+            if app.bundle_id and len(same_bundle) == 1:
+                routes.append(("launch-services", lambda: self.b.open_with_launch_services(app.bundle_id)))
+            for name, route in routes:
+                try:
+                    route()
+                except Exception:
+                    continue
+                if self._became_front(app.pid, settle):
+                    self.last_route = name
+                    break
+            else:
                 hint = "" if self.b.trusted() else " Turning on Accessibility for Heliox-OS lets it do this."
                 raise RuntimeError(f"macOS did not bring {app.name} to the front.{hint}")
         if title:
             self._need_access()
             self.b.raise_window(self._window(app, title))
         return app.name
+
+    def _ax_front(self, app: RunningApp, title: str | None) -> bool:
+        moved = self.b.set_frontmost(app.pid)
+        windows = self.b.windows(app.pid)
+        chosen = [w for w in windows if title_matches(str(self.b.get(w, "AXTitle") or ""), title)] or windows
+        if chosen:
+            self.b.raise_window(chosen[0])
+        return moved
 
     def _became_front(self, pid: int, settle: float) -> bool:
         import time

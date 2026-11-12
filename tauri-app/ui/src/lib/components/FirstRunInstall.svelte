@@ -1,15 +1,23 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from "svelte";
+  import { call } from "../api/daemon";
   import { invoke } from "../api/invoke";
   import { isNativeTauriRuntime } from "../hotkey";
+  import { session } from "../stores/session";
   import {
+    afterSetup,
     catalog,
-    CORE_DOWNLOAD_MB,
     defaultChoice,
     failedGroups,
     formatMb,
+    GREET_KEY,
+    languageNote,
+    pendingModels,
     pythonSentence,
+    savePendingModels,
     screenFor,
+    sizePhrase,
+    speechModels,
     stepLabel,
     totalMb,
     type GroupId,
@@ -19,9 +27,15 @@
   interface Props {
     /** For tests and previews: the state to show instead of asking the desktop app. */
     initial?: SetupState | null;
+    /** For tests: how the daemon is called once it is up. */
+    daemonCall?: (method: string, params: Record<string, unknown>) => Promise<{ status?: string } | undefined>;
   }
 
-  let { initial = null }: Props = $props();
+  let { initial = null, daemonCall = (method, params) => call(method, params) }: Props = $props();
+  const storage = typeof localStorage !== "undefined" ? localStorage : null;
+  const models = speechModels();
+  let chosenModels = $state<string[]>([]);
+  let followUpRunning = false;
 
   const platform = typeof navigator !== "undefined" ? navigator.platform : "";
   const groups = catalog(platform);
@@ -55,12 +69,45 @@
 
   onDestroy(() => unlisten?.());
 
+  // After setup, once the daemon it started is connected: the ticked speech models, then the first conversation.
+  $effect(() => {
+    const phase = setupState?.phase;
+    if (!$session.daemonConnected || followUpRunning) return;
+    if (phase && phase !== "done" && phase !== "installed") return;
+    const pending = pendingModels(storage);
+    const greet = storage?.getItem(GREET_KEY) === "1";
+    if (!pending.length && !greet) return;
+    followUpRunning = true;
+    void afterSetup(daemonCall, pending, greet).then((left) => {
+      savePendingModels(storage, left);
+      try {
+        storage?.removeItem(GREET_KEY);
+      } catch {
+        /* storage unavailable */
+      }
+      followUpRunning = false;
+    });
+  });
+
+  function toggleModel(id: string, on: boolean) {
+    chosenModels = on ? [...new Set([...chosenModels, id])] : chosenModels.filter((m) => m !== id);
+  }
+
   function toggle(id: GroupId, on: boolean) {
     chosen = on ? [...new Set([...chosen, id])] : chosen.filter((g) => g !== id);
   }
 
   async function start(selection: GroupId[]) {
     startError = "";
+    // Kept until the daemon is up and has been asked for each (it is the only downloader of speech models).
+    if (screen === "choose") {
+      savePendingModels(storage, selection.includes("voice") ? chosenModels : []);
+      try {
+        storage?.setItem(GREET_KEY, "1");
+      } catch {
+        /* storage unavailable: the daemon still offers the first conversation as a card */
+      }
+    }
     try {
       await invoke("setup_run", { groups: selection });
     } catch (error) {
@@ -75,10 +122,10 @@
       {#if screen === "choose"}
         <h2 id="first-run-title">Set up Heliox</h2>
         <p>
-          Heliox installs its core first ({formatMb(CORE_DOWNLOAD_MB)} from PyPI). Choose anything else you want now; you
-          can add the rest later in Settings.
+          Heliox installs its core first ({sizePhrase("core", platform)}, from PyPI). Choose anything else you want now;
+          you can add the rest later in Settings.
         </p>
-        <p class="python">{pythonSentence(setupState?.python)}</p>
+        <p class="python">{pythonSentence(setupState?.python, platform)}</p>
         <ul class="groups">
           {#each groups as group (group.id)}
             <li>
@@ -94,11 +141,36 @@
                   <span class="group-source">From {group.source}.{group.note ? ` ${group.note}` : ""}</span>
                 </span>
               </label>
+              {#if group.id === "voice" && models.length}
+                <ul class="models" aria-label="Speech models">
+                  {#each models as model (model.id)}
+                    <li>
+                      <label class:disabled={!chosen.includes("voice")}>
+                        <input
+                          type="checkbox"
+                          disabled={!chosen.includes("voice")}
+                          checked={chosen.includes("voice") && chosenModels.includes(model.id)}
+                          onchange={(e) => toggleModel(model.id, (e.currentTarget as HTMLInputElement).checked)}
+                        />
+                        <span class="group-text">
+                          <span class="group-name"
+                            >{model.title} <span class="size">{formatMb(model.size_bytes / 1_000_000)}</span></span
+                          >
+                          <span class="group-gives">{model.purpose} {languageNote(model)}.</span>
+                          <span class="group-source">From {model.source}. Licence {model.licence}.</span>
+                        </span>
+                      </label>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
             </li>
           {/each}
         </ul>
         <div class="actions">
-          <span class="total">Download: {formatMb(totalMb(groups, chosen, setupState?.python))} in all</span>
+          <span class="total"
+            >Download: {formatMb(totalMb(groups, chosen, setupState?.python, platform, models, chosenModels))} in all</span
+          >
           <button
             class="primary"
             onclick={() => start(chosen)}
@@ -208,6 +280,23 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-md, 8px);
     cursor: pointer;
+  }
+
+  .models {
+    display: grid;
+    gap: 6px;
+    margin: 6px 0 0 26px;
+    padding: 0;
+    list-style: none;
+  }
+
+  .models label {
+    padding: 8px 10px;
+  }
+
+  .models label.disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
   }
 
   .groups input {

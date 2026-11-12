@@ -31,6 +31,9 @@ class FakeAX:
         self.front = 0
         self.honours_activation = True
         self.frontmost_set: list[int] = []
+        self.honours_ax = True
+        self.honours_launch_services = False
+        self.opened: list[str] = []
 
     def trusted(self):
         return self.is_trusted
@@ -49,7 +52,14 @@ class FakeAX:
 
     def set_frontmost(self, pid):
         self.frontmost_set.append(pid)
-        self.front = pid
+        if self.honours_ax:
+            self.front = pid
+        return True
+
+    def open_with_launch_services(self, bundle_id):
+        self.opened.append(bundle_id)
+        if self.honours_launch_services:
+            self.front = next(app.pid for app in self.apps if app.bundle_id == bundle_id)
         return True
 
     def windows(self, pid):
@@ -194,3 +204,47 @@ def test_apps_sharing_a_name_resolve_to_the_one_meant():
     assert ax.wins[901][0]["AXMinimized"] is True
     ax.front = 0
     assert MacWindows(ax)._app("Python").pid == 901  # no title, nothing in front: the one with a window
+
+
+def test_focus_falls_back_to_launch_services_when_activation_and_axfrontmost_are_ignored():
+    # CI on a real Mac, 12 November: activateWithOptions(Finder) returned True and Finder did not come forward.
+    ax = FakeAX()
+    ax.front = 501
+    ax.honours_activation = False
+    ax.honours_ax = False
+    ax.honours_launch_services = True
+    windows = MacWindows(ax)
+    windows.focus("Visual Studio Code", settle=0)
+    assert ax.activated == [777] and ax.frontmost_set == [777] and ax.opened == ["com.microsoft.VSCode"]
+    assert windows.last_route == "launch-services" and ax.front == 777
+    ax.front = 501
+    ax.honours_ax = True
+    windows.focus("Visual Studio Code", settle=0)
+    assert windows.last_route == "ax-frontmost"
+    windows.focus("Visual Studio Code", settle=0)
+    assert windows.last_route == "already"
+
+
+def test_without_accessibility_focus_skips_the_accessibility_route():
+    ax = FakeAX(trusted=False)
+    ax.front = 501
+    ax.honours_activation = False
+    ax.honours_launch_services = True
+    windows = MacWindows(ax)
+    windows.focus("Visual Studio Code", settle=0)
+    assert ax.frontmost_set == [] and windows.last_route == "launch-services"
+
+
+def test_launch_services_is_not_used_for_a_bundle_id_several_apps_share():
+    ax = FakeAX()
+    checker = RunningApp(900, "Python", "Python", "org.python.python")
+    fixture = RunningApp(901, "Python", "Python", "org.python.python")
+    ax.apps = [checker, fixture, NOTES]
+    ax.wins[901] = [{"AXTitle": "Draft", "AXMinimized": False, "AXCloseButton": {"button": 9}}]
+    ax.front = 501
+    ax.honours_activation = False
+    ax.honours_ax = False
+    ax.honours_launch_services = True
+    with pytest.raises(RuntimeError, match="did not bring Python"):
+        MacWindows(ax).focus("Python", "Draft", settle=0)
+    assert ax.opened == []  # "open -b org.python.python" would start another Python, not focus this one

@@ -15,6 +15,18 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const SCRIPT_SH: &str = include_str!("../setup/first-run.sh");
 const SCRIPT_PS1: &str = include_str!("../setup/first-run.ps1");
+const PYTHON_VERSIONS: &str = include_str!("../setup/python-versions.json");
+
+/// (min, max, private): the Python versions an existing install may be, and the one Heliox downloads.
+pub fn python_versions() -> (String, String, String) {
+    let data: serde_json::Value = serde_json::from_str(PYTHON_VERSIONS).unwrap_or_default();
+    let get = |key: &str, fallback: &str| data[key].as_str().unwrap_or(fallback).to_string();
+    (
+        get("min", "3.11"),
+        get("max", "3.13"),
+        get("private", "3.12"),
+    )
+}
 
 /// Optional groups the person can choose, and the daemon extras each installs. The UI cannot ask for anything
 /// outside this list.
@@ -122,6 +134,8 @@ impl SetupState {
         } else if let Some(rest) = line.strip_prefix("@@hint ") {
             let (id, hint) = rest.split_once(' ').unwrap_or((rest, ""));
             self.step(id).hint = hint.to_string();
+        } else if line.starts_with("@@") {
+            // Measurements for CI (@@size, @@disk) and anything newer: not shown to the person.
         } else if !line.trim().is_empty() {
             if let Some(step) = self.steps.iter_mut().rev().find(|s| s.status == "running") {
                 step.detail = line.chars().take(200).collect();
@@ -194,6 +208,9 @@ fn script_command(mode: &str) -> std::io::Result<Command> {
     }
     command
         .env("HELIOX_SETUP_DIR", data_dir())
+        .env("HELIOX_PYTHON_MIN", python_versions().0)
+        .env("HELIOX_PYTHON_MAX", python_versions().1)
+        .env("HELIOX_PYTHON_PRIVATE", python_versions().2)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -271,6 +288,8 @@ fn start_daemon_after_setup(app: &AppHandle) {
     if let Ok(mut guard) = app.state::<crate::DaemonProcess>().0.lock() {
         *guard = child;
     }
+    // At launch there was no daemon to watch, so the supervisor did not start; it watches this one from now on.
+    crate::supervise_daemon(app.clone());
 }
 
 fn emit(app: &AppHandle, state: &SetupState) {
@@ -403,6 +422,7 @@ mod tests {
         assert_eq!(state.python.download_bytes, 16682639);
         state.apply("@@step core running Installing Heliox's core");
         state.apply("Collecting numpy==2.2.6");
+        state.apply("@@size core 112640");
         assert_eq!(state.steps[0].detail, "Collecting numpy==2.2.6");
         state.apply("@@step core done Core installed");
         state.apply("@@step voice failed Could not be installed.");
@@ -427,6 +447,15 @@ mod tests {
         let mut silent = SetupState::default();
         silent.finish(Some(9));
         assert!(silent.steps[0].message.contains("exit code 9"));
+    }
+
+    #[test]
+    fn the_python_range_comes_from_the_shared_file() {
+        let (min, max, private) = python_versions();
+        let data: serde_json::Value = serde_json::from_str(PYTHON_VERSIONS).unwrap();
+        assert_eq!(min, data["min"].as_str().unwrap());
+        assert_eq!(max, data["max"].as_str().unwrap());
+        assert_eq!(private, data["private"].as_str().unwrap());
     }
 
     #[test]

@@ -14,6 +14,12 @@ import FirstRunInstall from "./FirstRunInstall.svelte";
 
 const invoke = vi.fn(async (..._args: unknown[]) => undefined);
 vi.mock("../api/invoke", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
+// The real session store and daemon client would open a WebSocket to a daemon on this machine.
+vi.mock("../api/daemon", () => ({ call: vi.fn(async () => ({ status: "ok" })) }));
+vi.mock("../stores/session", async () => {
+  const { writable } = await import("svelte/store");
+  return { session: writable({ daemonConnected: false }) };
+});
 
 function state(partial: Partial<SetupState>): SetupState {
   return {
@@ -48,7 +54,7 @@ describe("first-run choices", () => {
     expect(download).toContain("about 47 MB");
     expect(download).toContain("github.com/astral-sh/uv");
     expect(pythonSentence({ kind: "none", version: "", path: "", download_bytes: 0, source: "" })).toContain(
-      "Install Python 3.11",
+      "Install Python 3.12",
     );
     expect(formatMb(900)).toBe("about 900 MB");
     expect(formatMb(1500)).toBe("about 1.5 GB");
@@ -146,5 +152,111 @@ describe("OptionalParts", () => {
     render(OptionalParts, { force: true });
     await fireEvent.click(screen.getAllByRole("button", { name: "Install or repair" })[0]);
     expect(invoke).toHaveBeenCalledWith("setup_run", { groups: [expect.any(String)] });
+  });
+});
+
+describe("first-run sizes and speech models", () => {
+  it("reads every size from the data file, per system", async () => {
+    const { sizeMb, catalog: groupsFor } = await import("../firstRun");
+    const data = (await import("../firstRunSizes.json")).default as {
+      sizes: Record<string, Record<string, { mb: number }>>;
+    };
+    expect(sizeMb("core", "Linux x86_64")).toBe(data.sizes.core.linux.mb);
+    expect(sizeMb("core", "Win32")).toBe(data.sizes.core.windows.mb);
+    expect(sizeMb("voice", "MacIntel")).toBe(data.sizes.voice.all.mb);
+    expect(sizeMb("nothing", "Win32")).toBe(0);
+    const { sizePhrase, diskMb } = await import("../firstRun");
+    const linuxCore = data.sizes.core.linux as { mb: number; disk_mb?: number };
+    expect(diskMb("core", "Linux x86_64")).toBe(linuxCore.disk_mb ?? 0);
+    expect(sizePhrase("core", "Linux x86_64")).toContain("to download");
+    if (linuxCore.disk_mb) expect(sizePhrase("core", "Linux x86_64")).toContain("on disk");
+    expect(sizePhrase("voice", "Linux x86_64")).not.toContain("on disk"); // no disk size measured: none shown
+    for (const group of groupsFor("MacIntel")) expect(group.downloadMb).toBe(sizeMb(group.id, "MacIntel"));
+  });
+
+  it("offers the daemon's speech models except the one that comes with voice", async () => {
+    const { speechModels, languageNote } = await import("../firstRun");
+    const manifest = (await import("../../../../../daemon/pilot/system/speech_models.json")).default as {
+      models: { id: string; part_of_voice?: boolean }[];
+    };
+    const offered = speechModels();
+    expect(offered.map((m) => m.id)).toEqual(manifest.models.filter((m) => !m.part_of_voice).map((m) => m.id));
+    expect(offered.some((m) => m.id === "whisper-base")).toBe(false);
+    expect(languageNote({ ...offered[0], language: "en" })).toBe("English only");
+  });
+
+  it("keeps ticked models until the daemon is up, then asks for each and greets an empty profile once", async () => {
+    const { afterSetup, pendingModels, savePendingModels } = await import("../firstRun");
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    };
+    savePendingModels(storage, ["parakeet-tdt-0.6b-v2-int8", "smart-turn-v3"]);
+    expect(pendingModels(storage)).toEqual(["parakeet-tdt-0.6b-v2-int8", "smart-turn-v3"]);
+    const calls: [string, Record<string, unknown>][] = [];
+    const daemon = async (method: string, params: Record<string, unknown>) => {
+      calls.push([method, params]);
+      if (method === "speech_model_download") return { status: params.id === "smart-turn-v3" ? "busy" : "started" };
+      if (params.action === "status") return { status: "ok", profile_empty: true, active: false } as { status: string };
+      return { status: "ok" };
+    };
+    const left = await afterSetup(daemon, pendingModels(storage));
+    expect(left).toEqual(["smart-turn-v3"]); // one download at a time: asked again later
+    expect(calls.map(([m, p]) => `${m}:${p.id ?? p.action}`)).toEqual([
+      "speech_model_download:parakeet-tdt-0.6b-v2-int8",
+      "speech_model_download:smart-turn-v3",
+      "getting_to_know:status",
+      "getting_to_know:start",
+    ]);
+    calls.length = 0;
+    await afterSetup(daemon, [], false);
+    expect(calls).toEqual([]);
+    savePendingModels(storage, []);
+    expect(pendingModels(storage)).toEqual([]);
+  });
+
+  it("lets speech models be ticked only with voice, and keeps them for the daemon when setup starts", async () => {
+    invoke.mockClear();
+    localStorage.clear();
+    render(FirstRunInstall, { initial: state({}) });
+    const parakeet = screen.getByRole("checkbox", { name: /Parakeet/ }) as HTMLInputElement;
+    const voice = screen.getByRole("checkbox", { name: /^Voice/ }) as HTMLInputElement;
+    if (voice.checked) await fireEvent.click(voice);
+    expect(parakeet.disabled).toBe(true);
+    await fireEvent.click(voice);
+    await fireEvent.click(screen.getByRole("checkbox", { name: /Parakeet/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "Set up Heliox" }));
+    expect(JSON.parse(localStorage.getItem("heliox_first_run_speech_models") ?? "[]")).toEqual([
+      "parakeet-tdt-0.6b-v2-int8",
+    ]);
+    expect(localStorage.getItem("heliox_first_run_greet")).toBe("1");
+    expect(invoke).toHaveBeenCalledWith("setup_run", { groups: expect.arrayContaining(["voice"]) });
+  });
+});
+
+describe("after setup", () => {
+  it("asks the daemon for the kept models and the first conversation once it is connected", async () => {
+    const { session } = (await import("../stores/session")) as unknown as {
+      session: { set: (v: { daemonConnected: boolean }) => void };
+    };
+    localStorage.setItem("heliox_first_run_speech_models", JSON.stringify(["parakeet-tdt-0.6b-v2-int8"]));
+    localStorage.setItem("heliox_first_run_greet", "1");
+    const calls: string[] = [];
+    const daemonCall = async (method: string, params: Record<string, unknown>) => {
+      calls.push(`${method}:${String(params.id ?? params.action)}`);
+      if (params.action === "status")
+        return { status: "ok", profile_empty: false, active: false } as { status: string };
+      return { status: "started" };
+    };
+    render(FirstRunInstall, { initial: state({ phase: "done" }), daemonCall });
+    expect(calls).toEqual([]); // nothing before the daemon is connected
+    session.set({ daemonConnected: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toEqual(["speech_model_download:parakeet-tdt-0.6b-v2-int8", "getting_to_know:status"]);
+    expect(localStorage.getItem("heliox_first_run_speech_models")).toBeNull();
+    expect(localStorage.getItem("heliox_first_run_greet")).toBeNull();
+    session.set({ daemonConnected: false });
   });
 });

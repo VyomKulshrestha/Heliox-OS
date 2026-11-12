@@ -17,30 +17,42 @@ The desktop app used to set itself up in the background as soon as it opened. It
 
 1. **Nothing is installed when the app opens.** If Heliox's environment is missing and no daemon answers, the app shows one screen: "Set up Heliox" (`FirstRunInstall.svelte`).
 2. **The screen says what setting up Python will take on this machine.** The app learns this from the setup script's `probe` mode, which looks and installs nothing.
-   - **A suitable Python is already there** (3.11 or later, with `venv` and `ensurepip`). Heliox uses it to create its own environment and changes nothing about it.
+   - **A suitable Python is already there.** Suitable means a version inside the tested range in `tauri-app/src-tauri/setup/python-versions.json` (3.11 to 3.13 on 12 November 2026), with `venv` and `ensurepip`. Heliox uses it to create its own environment and changes nothing about it.
+     - The upper bound matters as much as the lower one. A newer Python can lack prebuilt wheels for the core's dependencies: numpy 2.2.6, scipy 1.15 and river 0.23 stop at 3.13. pip then tries to compile them, which failed on CI's Mac with Homebrew's Python 3.15 ("Unknown compiler(s): gfortran").
+     - The same file feeds `setup.rs`, which passes the range to the scripts, and the first-run CI job. `daemon/tests/test_python_versions.py` checks that the CI test matrix stays inside the range and that `requires-python` agrees with it.
      - On macOS, `/usr/bin/python3` is never run.
      - On Windows, the Store stub is skipped.
+   - **If the core still cannot be installed on that Python, Heliox falls back once.** It says so ("trying again with Heliox's own Python"), removes the environment, downloads its private Python and tries again. Only then does it report a failure.
    - **No suitable Python.** Heliox downloads a private one. Before that, the screen shows the size and the source:
-     - uv 0.13.5 from `github.com/astral-sh/uv`, about 15 to 17 MB. Its SHA-256 for each platform is fixed in the script and checked before uv is unpacked.
-     - Python 3.12 from python-build-standalone, about 30 MB, downloaded by `uv python install`, which checks its own checksums.
-     - Both stay in Heliox's folder: `~/.config/heliox-os/tools`, `python` and `env`.
+     - uv 0.13.5 from `github.com/astral-sh/uv`. The screen shows its exact size from the probe. Its SHA-256 for each platform is fixed in the script and checked before uv is unpacked.
+     - Python 3.12 from python-build-standalone, downloaded by `uv python install`, which checks its own checksums.
+     - Both stay in Heliox's folder: `~/.config/heliox-os/tools`, `python` and `env`. They take about 110 MB on disk, measured on CI.
      - The system Python and the PATH are not touched.
-3. **The person chooses the optional groups.** The core is always installed: about 110 MB from PyPI, an estimate until CI measures it. The optional groups are:
+3. **The person chooses the optional groups.** The core is always installed. The screen shows its download and, where CI has measured it, its size on disk: about 460 to 530 MB once installed. The optional groups are:
 
-   | Group | What it gives | About | Preselected |
-   |---|---|---|---|
-   | macOS readers / Linux readers (`macos` / `linux` extra) | Live reads the field you type in, the app in front, the screen text, window actions | 12 MB / 1 MB | yes, on macOS and Linux |
-   | Voice (`voice`) | speech in and out, locally; speech models are offered separately when voice is first turned on | 900 MB | yes, when the computer has a microphone |
-   | Screen reading extras (`vision`) | EasyOCR, OpenCV, MediaPipe, where the system's own text recognition is not enough | 450 MB | no |
-   | Browser automation (`browser` and Chromium) | Heliox works in web pages in its own Chromium | 200 MB | no |
-   | Built-in local model runner (`llamacpp`) | GGUF models inside Heliox; builds llama.cpp, so it needs a C and C++ compiler; not needed with Ollama or a cloud provider | 60 MB plus a build | no |
-   | Everything else | documents, network discovery, remote machines, plugin sandbox, typing supervision, memory search | 700 MB | no |
+   | Group | What it gives | Preselected |
+   |---|---|---|
+   | macOS readers / Linux readers (`macos` / `linux` extra) | Live reads the field you type in, the app in front, the screen text, window actions | yes, on macOS and Linux |
+   | Voice (`voice`) | speech in and out, locally, with Whisper base; the speech models below are offered with it | yes, when the computer has a microphone |
+   | Speech models (inside Voice: Parakeet, live captions, Smart Turn) | from the daemon's `speech_models.json`, each with its size, licence, source and language; the daemon downloads them, checks their checksums and can stop and resume | none, not even Parakeet |
+   | Screen reading extras (`vision`) | EasyOCR, OpenCV, MediaPipe, where the system's own text recognition is not enough | no |
+   | Browser automation (`browser` and Chromium) | Heliox works in web pages in its own Chromium | no |
+   | Built-in local model runner (`llamacpp`) | GGUF models inside Heliox; builds llama.cpp, so it needs a C and C++ compiler; not needed with Ollama or a cloud provider | no |
+   | Everything else | documents, network discovery, remote machines, plugin sandbox, typing supervision, memory search | no |
 
    Nothing is downloaded until the person presses "Set up Heliox". The total is shown next to the button.
+
+   **Where the sizes come from.** No number is written into the screen's text:
+   - The install groups' sizes are in `tauri-app/ui/src/lib/firstRunSizes.json`, per system. Each entry has a download size and, when known, a size on disk, and an entry measured by CI names the run.
+   - The first-run job measures them. It points pip's cache at an empty folder, and after each step the scripts print the cache's size (the download) and Heliox's folder's size (the disk).
+   - `daemon/tests/platform_real/first_run_sizes.py update` writes the job's log into the file.
+   - The speech models' sizes come from the daemon's manifest.
+   - Every number on screen says "about".
 4. **Each step shows its progress, and a failure shows its reason, what to do, and Retry.** Progress is the step and the last line of pip's output. "Show details" gives the last 40 lines.
-   - **The core decides whether setup succeeded.** When it is in, the app starts the daemon itself; no restart is needed.
+   - **The core decides whether setup succeeded.** When it is in, the app starts the daemon itself and its supervisor watches it from then on; no restart is needed.
    - **A failed optional group never blocks the app.** The person can retry it on the spot or later, from Settings > Optional parts.
-5. **Settings > Optional parts** offers every group again, each with its size and source. A group added there is used after Heliox restarts.
+5. **Once the daemon answers,** the screen asks it for each speech model the person ticked (`speech_model_download`). It keeps the ticks until each has been accepted, across a restart, because the daemon allows one download at a time. Progress then shows in Settings > Voice. The screen also starts the first conversation if the profile is empty (`getting_to_know`: status, then start). Otherwise the daemon offers that conversation later as a card.
+6. **Settings > Optional parts** offers every group again, each with its size and source. A group added there is used after Heliox restarts.
 
 The app can only ask for groups from a fixed list: `group_extras` in `src/setup.rs`. Each version is pinned to the app's own release (`pilot-daemon==<app version>`). `HELIOX_DAEMON_SOURCE` points the install at a local checkout, for development and CI.
 
@@ -68,6 +80,7 @@ The app can only ask for groups from a fixed list: `group_extras` in `src/setup.
   - It runs the script in an empty home folder with the core from the checkout, plus the platform readers on macOS and Linux.
   - It starts the daemon it installed and checks that the daemon answers an authenticated `ping` (`daemon/tests/platform_real/first_run_rpc_check.py`).
   - It prints the time taken and the size of each folder, which replaces the estimates above once measured.
+- **Real run on Windows (12 November, second round):** a Python range that excludes every Python on the machine leads to the private download, and a core that cannot be installed on the system Python falls back to a private Python once before failing.
 - **Not tested:**
   - The desktop app driving the scripts (Rust compiled only by CI's Rust job).
   - The real voice, screen, browser, local and "everything else" groups.

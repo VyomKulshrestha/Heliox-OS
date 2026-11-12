@@ -7,7 +7,10 @@
 #   HELIOX_SETUP_DIR   the Heliox data folder (the app uses ~/.config/heliox-os)
 #   HELIOX_CORE_REQ    the daemon requirement, e.g. "pilot-daemon==0.16.0" or a local path in CI
 #   HELIOX_GROUPS      optional groups as "id=requirement;id=requirement" (may be empty)
-#   HELIOX_PYTHON      "auto" (a suitable Python 3.11+ on this machine, else a private one) or "private"
+#   HELIOX_PYTHON      "auto" (a suitable Python on this machine, else a private one) or "private"
+#   HELIOX_PYTHON_MIN, HELIOX_PYTHON_MAX, HELIOX_PYTHON_PRIVATE
+#                      the Python versions Heliox is tested with and the one it downloads, from
+#                      setup/python-versions.json (the app passes them; CI reads the same file)
 #   $1                 "probe" prints only the Python plan; "run" (default) does the setup
 #
 # Output: lines starting with "@@" are for the app; everything else is detail shown as progress.
@@ -15,15 +18,29 @@
 #   @@python download <bytes> <url>       uv will be downloaded to fetch a private Python
 #   @@step <id> <running|done|failed|skipped> <message>
 #   @@hint <id> <what the person can do>
-#   @@progress <id> <percent>
+#   @@size <id> <KiB>                     with HELIOX_MEASURE_PIP_CACHE set (CI): pip's download cache so far
+#   @@disk <id> <KiB>                     with HELIOX_MEASURE_PIP_CACHE set (CI): Heliox's folder so far
 set -u
 
 UV_VERSION="0.13.5"
 DIR="${HELIOX_SETUP_DIR:?HELIOX_SETUP_DIR is required}"
 MODE="${1:-run}"
-CHECK='import sys, venv, ensurepip; sys.exit(0 if sys.version_info >= (3, 11) else 1)'
+PY_MIN="${HELIOX_PYTHON_MIN:?HELIOX_PYTHON_MIN is required}"
+PY_MAX="${HELIOX_PYTHON_MAX:?HELIOX_PYTHON_MAX is required}"
+PY_PRIVATE="${HELIOX_PYTHON_PRIVATE:?HELIOX_PYTHON_PRIVATE is required}"
+# Inside the tested range only: an older Python lacks what Heliox uses, and a newer one may have no prebuilt wheels
+# for the core's dependencies, so pip would try to compile them (CI on macOS, 12 November: Python 3.15 and scipy).
+CHECK="import sys, venv, ensurepip; v = sys.version_info[:2]; lo = tuple(int(x) for x in '$PY_MIN'.split('.')); hi = tuple(int(x) for x in '$PY_MAX'.split('.')); sys.exit(0 if lo <= v <= hi else 1)"
 
 say() { printf '%s\n' "$*"; }
+
+# CI measures sizes: pip's download cache (PIP_CACHE_DIR pointed at an empty folder) and Heliox's folder, cumulative.
+measure() {
+  if [ -n "${HELIOX_MEASURE_PIP_CACHE:-}" ] && [ -d "$HELIOX_MEASURE_PIP_CACHE" ]; then
+    say "@@size $1 $(du -sk "$HELIOX_MEASURE_PIP_CACHE" | cut -f1)"
+    say "@@disk $1 $(du -sk "$DIR" | cut -f1)"
+  fi
+}
 
 uv_asset() {
   case "$(uname -s)-$(uname -m)" in
@@ -35,8 +52,8 @@ uv_asset() {
   esac
 }
 
-# A Python 3.11 or later with venv and ensurepip, never /usr/bin/python3 on macOS: there it is a stub that opens
-# Apple's developer-tools installer, and the Python it installs is 3.9.
+# A Python in the tested range with venv and ensurepip, never /usr/bin/python3 on macOS: there it is a stub that
+# opens Apple's developer-tools installer, and the Python it installs is 3.9.
 find_python() {
   search="${PATH}:/opt/homebrew/bin:/usr/local/bin:/Library/Frameworks/Python.framework/Versions/Current/bin"
   saved_ifs="$IFS"
@@ -91,17 +108,16 @@ fi
 mkdir -p "$DIR" || fail python "Cannot create $DIR." "Check that your home folder is writable."
 ENV_DIR="$DIR/env"
 
-# ── Python ──
-if [ -x "$ENV_DIR/bin/python" ]; then
-  say "@@step python skipped Heliox's environment already exists."
-elif [ -n "$PY" ]; then
+env_from_system() {
   say "@@step python running Using $PY"
   "$PY" -m venv "$ENV_DIR" || fail python "Could not create the environment with $PY." \
     "On Debian or Ubuntu install python3-venv, or remove that Python from PATH so Heliox uses its own."
   say "@@step python done Using $("$ENV_DIR/bin/python" -c 'import sys; print(sys.version.split()[0])') from $PY"
-else
-  [ -n "$URL" ] || fail python "No Python 3.11 or later, and no private Python is available for $(uname -s) $(uname -m)." \
-    "Install Python 3.11 or later and open Heliox again."
+}
+
+env_from_private() {
+  [ -n "$URL" ] || fail python "No Python ${PY_MIN} to ${PY_MAX} here, and no private Python is available for $(uname -s) $(uname -m)." \
+    "Install Python ${PY_PRIVATE} and open Heliox again."
   TOOLS="$DIR/tools"
   mkdir -p "$TOOLS"
   ARCHIVE="$TOOLS/$ASSET_NAME"
@@ -122,19 +138,45 @@ else
   [ -n "$UV" ] || fail uv "uv was not found in the download." "Press Retry."
   say "@@step uv done uv ${UV_VERSION}, checksum verified"
   export UV_PYTHON_INSTALL_DIR="$DIR/python" UV_CACHE_DIR="$DIR/uv-cache" UV_NO_CONFIG=1
-  say "@@step python running Downloading a private Python 3.12 for Heliox (python-build-standalone, about 30 MB)"
-  "$UV" python install 3.12 2>&1 || fail python "uv could not download Python." "Check the internet connection and press Retry."
-  "$UV" venv --seed --python 3.12 --python-preference only-managed "$ENV_DIR" 2>&1 || fail python "Could not create the environment." "Press Retry."
+  say "@@step python running Downloading a private Python ${PY_PRIVATE} for Heliox (python-build-standalone)"
+  "$UV" python install "$PY_PRIVATE" 2>&1 || fail python "uv could not download Python." "Check the internet connection and press Retry."
+  "$UV" venv --seed --python "$PY_PRIVATE" --python-preference only-managed "$ENV_DIR" 2>&1 || fail python "Could not create the environment." "Press Retry."
   say "@@step python done Private Python $("$ENV_DIR/bin/python" -c 'import sys; print(sys.version.split()[0])') in $DIR/python"
+}
+
+install_core() {
+  "$ENV_DIR/bin/python" -m pip --disable-pip-version-check install --progress-bar off "$HELIOX_CORE_REQ" 2>&1
+}
+
+# ── Python ──
+USED_SYSTEM=0
+if [ -x "$ENV_DIR/bin/python" ]; then
+  say "@@step python skipped Heliox's environment already exists."
+elif [ -n "$PY" ]; then
+  env_from_system
+  USED_SYSTEM=1
+else
+  env_from_private
 fi
 
-PIP="$ENV_DIR/bin/python -m pip --disable-pip-version-check"
-
-# ── Core ──
+# ── Core: if it cannot be installed on this computer's Python, try once more with Heliox's own ──
 say "@@step core running Installing Heliox's core"
-$PIP install --progress-bar off "$HELIOX_CORE_REQ" 2>&1 || fail core "The core could not be installed." \
-  "Check the internet connection and press Retry. The full log is in the setup details."
+if ! install_core; then
+  if [ "$USED_SYSTEM" = "1" ] && [ -n "$URL" ]; then
+    say "@@step core running The core could not be installed with $PY; trying again with Heliox's own Python"
+    rm -rf "$ENV_DIR"
+    env_from_private
+    install_core || fail core "The core could not be installed, with this computer's Python or with Heliox's own." \
+      "Check the internet connection and press Retry. The full log is in the setup details."
+  else
+    fail core "The core could not be installed." \
+      "Check the internet connection and press Retry. The full log is in the setup details."
+  fi
+fi
 say "@@step core done Core installed"
+measure core
+
+PIP="$ENV_DIR/bin/python -m pip --disable-pip-version-check"
 
 # ── Optional groups: a failure is reported and the others carry on ──
 status=0
@@ -157,6 +199,7 @@ for pair in ${HELIOX_GROUPS:-}; do
     else
       say "@@step $id done Installed"
     fi
+    measure "$id"
   else
     say "@@step $id failed Could not be installed."
     say "@@hint $id Press Retry; the rest of Heliox works without it."

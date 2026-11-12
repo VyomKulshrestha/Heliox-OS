@@ -110,7 +110,11 @@ def window_checks(pid: int) -> None:
         print(f"focus: activateWithOptions(Finder) returned {accepted}; front now pid {b.frontmost_pid()}")
         try:
             windows.focus("Finder")
-            check("macos/windows-focus-another-app", b.frontmost_pid() == finder[0].pid, f"front {b.frontmost_pid()}")
+            check(
+                "macos/windows-focus-another-app",
+                b.frontmost_pid() == finder[0].pid,
+                f"front {b.frontmost_pid()}, route {windows.last_route}",
+            )
         except Exception as exc:
             check("macos/windows-focus-another-app", False, f"{type(exc).__name__}: {exc}")
         accepted = b.activate(pid)
@@ -118,7 +122,11 @@ def window_checks(pid: int) -> None:
         print(f"focus: activateWithOptions(fixture) returned {accepted}; front now pid {b.frontmost_pid()}")
         try:
             windows.focus(name, "Draft")
-            check("macos/windows-focus-back-to-fixture", b.frontmost_pid() == pid, f"front {b.frontmost_pid()}")
+            check(
+                "macos/windows-focus-back-to-fixture",
+                b.frontmost_pid() == pid,
+                f"front {b.frontmost_pid()}, route {windows.last_route}",
+            )
         except Exception as exc:
             check("macos/windows-focus-back-to-fixture", False, f"{type(exc).__name__}: {exc}")
     else:

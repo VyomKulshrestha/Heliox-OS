@@ -1,0 +1,24 @@
+{
+  "about": "Sizes in MB for the first-run screen, per system (windows, macos, linux) or 'all'. mb is the download, disk_mb what it takes on disk once installed. 'measured' names the CI run that measured an entry; values without it are estimates (the screen says 'about' for every number). Refresh with daemon/tests/platform_real/first_run_sizes.py from the first-run job's log. The core's disk sizes below are Heliox's environment after the core (and on macOS and Linux the platform readers) in run 43148203234; its downloads are still estimates until that job's next run reports @@size.",
+  "sizes": {
+    "core": {
+      "windows": { "mb": 110, "disk_mb": 489, "measured": "run 43148203234 (disk)" },
+      "macos": { "mb": 110, "disk_mb": 461, "measured": "run 43148203234 (disk)" },
+      "linux": { "mb": 110, "disk_mb": 529, "measured": "run 43148203234 (disk)" }
+    },
+    "private_python": {
+      "windows": { "mb": 30, "disk_mb": 114, "measured": "run 43148203234 (disk: python 68 MB, uv 46 MB)" },
+      "macos": { "mb": 30, "disk_mb": 111, "measured": "run 43148203234 (disk: python 70 MB, uv 41 MB)" },
+      "linux": { "mb": 30 }
+    },
+    "platform": {
+      "macos": { "mb": 12 },
+      "linux": { "mb": 1 }
+    },
+    "voice": { "all": { "mb": 900 } },
+    "screen": { "all": { "mb": 450 } },
+    "browser": { "all": { "mb": 200 } },
+    "local": { "all": { "mb": 60 } },
+    "more": { "all": { "mb": 700 } }
+  }
+}

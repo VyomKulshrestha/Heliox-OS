@@ -550,6 +550,10 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    fs: {
+      // The first-run screen imports the daemon's speech-model manifest, the one list both sides read.
+      allow: [CONFIG_DIR, join(CONFIG_DIR, "..", "..", "daemon", "pilot", "system", "speech_models.json")],
+    },
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {

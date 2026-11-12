@@ -392,7 +392,8 @@ jobs:
           set +e
           sudo apt-get install -y -q --no-install-recommends sway xdg-desktop-portal xdg-desktop-portal-wlr
           mkdir -p "$HOME/.config/xdg-desktop-portal"
-          printf "[preferred]\ndefault=wlr\n" > "$HOME/.config/xdg-desktop-portal/sway-portals.conf"
+          printf "[preferred]\ndefault=wlr\norg.freedesktop.impl.portal.Screenshot=wlr\n" > "$HOME/.config/xdg-desktop-portal/sway-portals.conf"
+          ls /usr/share/xdg-desktop-portal/portals/ /usr/share/dbus-1/services/ | grep -i portal || true
           dbus-run-session -- bash -c '
             export XDG_RUNTIME_DIR=$(mktemp -d) && chmod 700 "$XDG_RUNTIME_DIR"
             export XDG_CURRENT_DESKTOP=sway
@@ -407,8 +408,18 @@ jobs:
             unset DISPLAY
             export WAYLAND_DISPLAY=$sock
             dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_RUNTIME_DIR
+            # No systemd user session on the runner: start the backend and the portal here, with their logs, rather
+            # than relying on D-Bus activation, so the run shows which of them is missing if the portal is.
+            /usr/libexec/xdg-desktop-portal-wlr -l DEBUG >/tmp/xdpw.log 2>&1 &
+            sleep 1
+            /usr/libexec/xdg-desktop-portal -v -r >/tmp/xdp.log 2>&1 &
+            sleep 2
             python tests/platform_real/linux_portal_check.py real
             status=$?
+            if [ $status -ne 0 ]; then
+              echo "--- xdg-desktop-portal log"; tail -40 /tmp/xdp.log
+              echo "--- xdg-desktop-portal-wlr log"; tail -40 /tmp/xdpw.log
+            fi
             exit $status
           '
           real=$?
@@ -458,6 +469,15 @@ jobs:
           mkdir -p "$HOME"
           export HELIOX_SETUP_DIR="$HOME/.config/heliox-os"
           export HELIOX_CORE_REQ="$GITHUB_WORKSPACE/daemon"
+          # Download sizes for the first-run screen: pip's cache starts empty and the script reports it after each step.
+          export PIP_CACHE_DIR="$RUNNER_TEMP/pip-cache" HELIOX_MEASURE_PIP_CACHE="$RUNNER_TEMP/pip-cache"
+          # The Python range the app passes to the script (setup.rs reads the same file).
+          V=tauri-app/src-tauri/setup/python-versions.json
+          export HELIOX_PYTHON_MIN="$(sed -n 's/.*"min": *"\([0-9.]*\)".*/\1/p' $V)"
+          export HELIOX_PYTHON_MAX="$(sed -n 's/.*"max": *"\([0-9.]*\)".*/\1/p' $V)"
+          export HELIOX_PYTHON_PRIVATE="$(sed -n 's/.*"private": *"\([0-9.]*\)".*/\1/p' $V)"
+          echo "Python range ${HELIOX_PYTHON_MIN} to ${HELIOX_PYTHON_MAX}, private ${HELIOX_PYTHON_PRIVATE}"
+          mkdir -p "$PIP_CACHE_DIR"
           case "$RUNNER_OS" in
             Linux) export HELIOX_GROUPS="platform=$GITHUB_WORKSPACE/daemon[linux]" ;;
             macOS) export HELIOX_GROUPS="platform=$GITHUB_WORKSPACE/daemon[macos]" ;;
@@ -476,6 +496,8 @@ jobs:
           echo "setup exit code $status after $(( $(date +%s) - start )) s"
           grep "^@@" "$RUNNER_TEMP/setup.log"
           du -sh "$HOME/.config/heliox-os"/* 2>/dev/null || true
+          if [ "$RUNNER_OS" = "Windows" ]; then PY="$HOME/.config/heliox-os/env/Scripts/python.exe"; else PY="$HOME/.config/heliox-os/env/bin/python"; fi
+          echo "FIRST_RUN_SIZES $RUNNER_OS ${{ matrix.python }} $("$PY" daemon/tests/platform_real/first_run_sizes.py show "$RUNNER_TEMP/setup.log")"
           exit $status
 
       - name: Start the daemon it installed and check that it answers
@@ -488,3 +510,37 @@ jobs:
           status=$?
           if [ $status -ne 0 ]; then tail -60 "$RUNNER_TEMP/daemon.log"; fi
           exit $status
+
+  # ── macOS type check of the desktop app (non-blocking) ──
+  # The Rust job runs on Ubuntu and a Windows check is done locally; this compiles the app for macOS so a Mac-only
+  # error is found here, not by someone building a release.
+  rust-macos:
+    name: Rust check (macOS)
+    runs-on: macos-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "tauri-app/src-tauri -> target"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tauri-app/ui/package-lock.json
+
+      - name: Build frontend (Tauri embeds it)
+        working-directory: tauri-app/ui
+        run: npm ci && npx vite build
+
+      - name: Cargo check
+        working-directory: tauri-app/src-tauri
+        run: cargo check --all-targets
