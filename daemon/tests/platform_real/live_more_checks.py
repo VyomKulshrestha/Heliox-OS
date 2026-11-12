@@ -266,7 +266,9 @@ async def run(args: Any, folder: Path) -> None:
             if check("macos/never-read-fixture-started", fixture.stdout.readline().startswith("ready")):
                 threading.Thread(target=lambda: said.extend(fixture.stdout), daemon=True).start()
                 time.sleep(1.0)
-                await never_read_steps("macos", E.Live(folder / "never"), send, type_text, front=lambda: send("front"))
+                live = E.Live(folder / "never")
+                live.fixture_pid = fixture.pid  # for the DIAG lines: whose window is in front
+                await never_read_steps("macos", live, send, type_text, front=lambda: send("front"))
         finally:
             send("quit")
             fixture.kill()

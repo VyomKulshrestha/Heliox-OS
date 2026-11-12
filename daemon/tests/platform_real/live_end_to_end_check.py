@@ -122,6 +122,33 @@ class Live:
 
             shared = M.shared()
             say("the same read on the main thread", shared.read() if shared is not None else "(no reader)")
+            # Whose window is in front: the frontmost app's pid against the fixture's, and the on-screen windows.
+            try:
+                import AppKit
+
+                front = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+                say(
+                    "frontmost app",
+                    f"pid {front.processIdentifier()} {front.localizedName()!r} {front.bundleIdentifier()!r}"
+                    if front is not None
+                    else None,
+                )
+            except Exception as exc:
+                say("frontmost app raised", f"{type(exc).__name__}: {exc}")
+            say("the fixture's pid", getattr(self, "fixture_pid", None))
+            try:
+                windows = [
+                    (
+                        w.get("kCGWindowOwnerName"),
+                        w.get("kCGWindowOwnerPID"),
+                        w.get("kCGWindowName"),
+                        w.get("kCGWindowLayer"),
+                    )
+                    for w in M.window_list()
+                ]
+                say("on-screen windows (owner, pid, title, layer)", windows[:15])
+            except Exception as exc:
+                say("window list raised", f"{type(exc).__name__}: {exc}")
         try:
             say("reader.status()", self.reader.status().as_dict())
         except Exception as exc:
@@ -319,9 +346,9 @@ async def macos(folder: Path) -> None:
         threading.Thread(target=lambda: said.extend(fixture.stdout), daemon=True).start()
         time.sleep(1.0)
         print(f"reader shared: {M.shared() is not None}")
-        await steps(
-            "macos", Live(folder), type_text, lambda which: send(f"focus {which}"), close, front=lambda: send("front")
-        )
+        live = Live(folder)
+        live.fixture_pid = fixture.pid
+        await steps("macos", live, type_text, lambda which: send(f"focus {which}"), close, front=lambda: send("front"))
     finally:
         if fixture.poll() is None:
             fixture.kill()
