@@ -322,3 +322,34 @@ def test_the_repeat_and_shorter_phrases_the_conversation_layer_answers_are_ellip
     from pilot.system.addressing import elliptical_kind
 
     assert elliptical_kind(text) in {"again", "shorter"}
+
+
+def test_a_softened_imperative_is_a_request():
+    from pilot.system.addressing import plausibly_addressed
+
+    assert plausibly_addressed("Just delete all of that.", question_open=False) == "request"
+    assert plausibly_addressed("Okay so just open the deck.", question_open=False) == "request"
+    assert plausibly_addressed("So we went to lunch.", question_open=False) == "talk"  # narration stays talk
+
+
+@pytest.mark.parametrize(
+    ("said", "invites"),
+    [('Say "more" for others.', True), ("Which file?", True), ("Just say yes or no.", True),
+     ("You can say “stop” at any time.", True), ("Opened Notepad.", False), ("I can't say more about that.", False),
+     ("I'll say it once more.", False)],
+)  # fmt: skip
+def test_heliox_s_own_sentence_invites_a_reply_when_it_asks_or_names_a_word_to_say(said, invites):
+    from pilot.system.addressing import invites_reply
+
+    assert invites_reply(said) is invites
+
+
+def test_the_word_heliox_invited_is_taken_in_the_window():
+    clock = Clock()
+    rule = Addressing(clock=clock)
+    rule.decide(heard("Hey Heliox, what can I say?", clock.now))
+    clock.now += 4
+    rule.heliox_finished(asked=True)  # 'You can ask me for the time, ... Say "more" for others.'
+    clock.now += 1.5
+    decision = rule.decide(heard("More.", clock.now))
+    assert decision.act and decision.why == "follow-up: reply"

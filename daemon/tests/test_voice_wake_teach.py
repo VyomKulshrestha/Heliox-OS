@@ -131,12 +131,13 @@ async def test_downloading_whisper_base_switches_a_new_person_off_the_absent_def
     server = PilotServer(PilotConfig())
     server.config.save = lambda *a, **k: None
     server._broadcast_notification = AsyncMock()
-    assert server.config.voice.whisper_model == "small"
+    server.config.voice.whisper_model = "small"  # an older settings file
     await server._speech_model_ready("whisper-base")
     assert server.config.voice.whisper_model == "base"
     other = PilotServer(PilotConfig())
     other.config.save = lambda *a, **k: None
     other._broadcast_notification = AsyncMock()
+    other.config.voice.whisper_model = "small"
     present.add("small")
     await other._speech_model_ready("whisper-base")
     assert other.config.voice.whisper_model == "small"  # their chosen size is here: left alone
@@ -144,3 +145,14 @@ async def test_downloading_whisper_base_switches_a_new_person_off_the_absent_def
 
 def test_a_near_miss_is_compared_without_its_punctuation(tmp_path):
     assert calibrator(tmp_path).check_near_miss("hey heliocs, open my mail") == "hey heliocs"
+
+
+@pytest.mark.parametrize(
+    ("language", "system_locale", "size"),
+    [("auto", "English_United States", "base"), ("auto", "en_GB", "base"), ("en", "de_DE", "base"),
+     ("auto", "German_Germany", "small"), ("de", "en_US", "small"), ("auto", "C", "base")],
+)  # fmt: skip
+def test_the_default_whisper_is_what_the_recommended_download_brings(language, system_locale, size):
+    from pilot.system.speech_models import default_whisper_model
+
+    assert default_whisper_model(language, system_locale) == size

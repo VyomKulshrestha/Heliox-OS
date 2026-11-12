@@ -185,8 +185,8 @@ def plausibly_addressed(text: str, *, question_open: bool, elliptical: bool = Tr
         return "reply"
     if NARRATION.match(normalized):
         return "talk"
-    if IMPERATIVE_START.match(normalized):
-        return "request"
+    if IMPERATIVE_START.match(SOFTENER.sub("", normalized)):
+        return "request"  # "Just delete all of that.", "Okay, just open the deck."
     if QUESTION_START.match(normalized) and (SECOND_PERSON.search(normalized) or len(words) <= 10):
         return "question"
     if SECOND_PERSON.search(normalized) and len(words) <= 12:
@@ -195,6 +195,17 @@ def plausibly_addressed(text: str, *, question_open: bool, elliptical: bool = Tr
 
 
 CONFIDENT = {"control", "reply", "request", "question"}
+
+SOFTENER = re.compile(r"^(?:(?:just|okay|ok|so|right|then|now|and)\s+)+", re.I)  # "okay so just open ..."
+# Heliox's own sentence names something to say: `Say "more" for others.`, "Just say yes or no."
+_INVITES = re.compile(r"(?:^|[.!?]\s+)(?:just\s+|you can\s+)?say\s+[\"“'‘]?\w", re.I)
+
+
+def invites_reply(heliox_said: str) -> bool:
+    """Whether what Heliox just said asks for a reply: a question, or a sentence that names a word to say
+    (`Say "more" for others.`). After it, a short answer in the follow-up window is a reply."""
+    text = heliox_said.strip()
+    return text.endswith("?") or bool(_INVITES.search(text))
 
 
 @dataclass(frozen=True)
@@ -274,6 +285,11 @@ class Addressing:
             # Heliox was talking and the person cut it off: it stops and acknowledges; the words go nowhere else.
             return Decision(True, "Stop", "cut-off")
         wake = vocative_wake(heard.wake_text or heard.text, heard.other_text)
+        if wake is None and heard.wake_text and heard.text != heard.wake_text:
+            # The wake check's own words can misread what follows the name ("Hey Heliox and do that." for "Hey
+            # Heliox, undo that.", which reads as talk about Heliox); the words acted on, which take the name from
+            # it and the rest from the second recogniser, are judged by the same rule.
+            wake = vocative_wake(heard.text, heard.other_text)
         if wake is not None:
             self._addressed()
             # The command in the words acted on (Parakeet's), the wake phrase decided by the wake check's.

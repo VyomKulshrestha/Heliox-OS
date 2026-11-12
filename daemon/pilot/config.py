@@ -143,6 +143,15 @@ class ServerConfig:
     auth_token: str = ""
 
 
+def _default_whisper_model() -> str:
+    try:
+        from pilot.system.speech_models import default_whisper_model
+
+        return default_whisper_model()
+    except Exception:  # the manifest unreadable: the English recommendation
+        return "base"
+
+
 @dataclass
 class VoiceConfig:
     language: str = "auto"  # auto detect or manual language code
@@ -150,7 +159,10 @@ class VoiceConfig:
     # memory use. "auto" retains the proven OpenAI Whisper fallback. "streaming" decodes while you speak
     # (sherpa-onnx, English only, pilot.system.streaming_asr) and falls back to Whisper when it has no text.
     transcription_engine: str = "auto"
-    whisper_model: str = "small"
+    # What the recommended download brings for the language of this computer: "base" for English (with
+    # Parakeet), "small" otherwise (pilot.system.speech_models.default_whisper_model). A size that is not on the
+    # computer falls back to one that is (model_presence.usable_whisper_model).
+    whisper_model: str = field(default_factory=_default_whisper_model)
     # Stable "host API::device name" identifier returned by
     # list_audio_input_devices. "auto" preserves automatic selection.
     input_device: str = "auto"

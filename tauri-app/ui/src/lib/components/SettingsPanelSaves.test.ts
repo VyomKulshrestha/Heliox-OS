@@ -107,7 +107,7 @@ const baseSettings = {
   voice: {
     input_device: "auto",
     transcription_engine: "auto",
-    whisper_model: "small",
+    whisper_model: "base",
     language: "auto",
     tts_engine: "kokoro_tts",
     tts_voice: "af_heart",

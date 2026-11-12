@@ -13980,8 +13980,11 @@ def handle_tool(tool_name, params):
             and resolved is not SpeechChannel.BACKGROUND_INSIGHT
         ):
             # Heliox just spoke to the person: a reply without the wake word is part of the conversation, and
-            # after a question ("Which file?") a short answer is a reply even when it is only a name.
-            listener.arm_follow_up_window(asked=text.rstrip().endswith("?"))
+            # after a question ("Which file?") or an invitation (`Say "more" for others.`) a short answer is a
+            # reply even when it is only a name or the word it named.
+            from pilot.system.addressing import invites_reply
+
+            listener.arm_follow_up_window(asked=invites_reply(text))
         if outcome.status == "interrupted":
             self._voice_cut_off_at = time.monotonic()
             await self._broadcast_notification("voice_status", {"status": "interrupted"})

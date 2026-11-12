@@ -1971,8 +1971,9 @@ continuous listening is off, a temporary listener is started for the test and
 stopped afterwards.
 
 **Params:** `{ "timeout_seconds": 12 }` (clamped to 3-30 seconds)
-**Result:** `{ "status": "ok", ... }` with the listener's diagnostic transcript
-fields, or `{ "status": "error", "message": "..." }` when nothing was recognized
+**Result:** `{ "status": "ok", "transcript": "...", "language": "en", "latency_ms": 840, "whisper": "...",
+"parakeet": "..." }` (`whisper` and `parakeet` are each recogniser's own words before the wake phrase is merged in,
+"" when that recogniser did not run), or `{ "status": "error", "message": "..." }` when nothing was recognized
 before the timeout.
 
 Recognized commands enter the same `execute` handler and observable
@@ -1984,7 +1985,7 @@ interrupting, and “next task …” queues a new guarded task.
 
 ### Voice Calibration (on-device continual learning)
 
-`reset_wake_calibration`/`list_wake_variants` back the Settings → Voice
+`reset_wake_calibration`/`list_wake_variants`/`voice_wake_teach`/`remove_wake_variant` back the Settings → Voice
 Calibration UI (see GESTURES.md's gesture-side "Gesture Calibration" for the
 parallel frontend feature). Both are direct handlers, bypassing Planner/
 Executor entirely — same pattern as `cursor_move`/`cursor_click` above.
@@ -2015,11 +2016,47 @@ List learned wake-word variants for the Settings transparency view.
 {
   "status": "ok",
   "variants": [
-    { "text": "hey iliox", "confirmed_count": 3, "first_seen": 1234567890.0, "last_confirmed": 1234567999.0 }
+    { "text": "hey iliox", "confirmed_count": 3, "first_seen": 1234567890.0, "last_confirmed": 1234567999.0,
+      "taught": false }
   ],
   "promotion_threshold": 5
 }
 ```
+`taught` is true for a spelling kept by `voice_wake_teach`; it counts as the name at once.
+
+#### `voice_wake_teach`
+"Teach Heliox how you say its name" (Settings → Voice). The running listener captures `tries` utterances as
+`voice_recognition_test` does (nothing is dispatched or sent anywhere); the person says the wake phrase alone each
+time. A spelling the wake check's recogniser (Whisper) wrote at least twice is kept, unless it is made only of
+ordinary words (Whisper's whole-word vocabulary plus a list of names and near-words), shorter than four letters, or
+more than four letters from "heliox". At most five taught spellings are kept; the oldest goes first. Only the
+spellings are stored, in the calibration file above.
+
+**Params:** `{ "tries": 4 }` (clamped to 2-8)
+**Result:**
+```json
+{
+  "status": "ok",
+  "heard": ["Hey Helios.", "Hey Helios!", "Hey Heliox.", "Hey Helios"],
+  "added": ["hey helios"],
+  "refused": { "hey alex": "“hey alex” is made of ordinary words; it would wake Heliox in everyday talk." },
+  "taught": ["hey helios"],
+  "already_heliox": 1
+}
+```
+`{ "status": "error", "message": "Turn on always listening first, then try again." }` when the listener is not
+running, or the recognition test's message when one is already running.
+
+While it runs, the daemon sends a `voice_status` notification after each try:
+`{ "status": "wake_teach", "try": 1, "of": 4, "heard": "Hey Helios." }` (`heard` is "" when nothing was
+recognised in time).
+
+#### `remove_wake_variant`
+Remove one learned or taught spelling; it no longer wakes Heliox. Works on the live listener's calibrator, or on
+the stored file when listening is off.
+
+**Params:** `{ "text": "hey helios" }`
+**Result:** `{ "status": "ok" | "not_found", "text": "hey helios" }`
 
 ---
 
@@ -3767,6 +3804,7 @@ Voice listener lifecycle updates.
 - `"in_call"` — the person is in a call (`app` names it; Windows only): Heliox says nothing and takes no speech as addressed to it until `"call_ended"`. `message` is the voice bar text, "Quiet while you're in a call". Off with `voice.quiet_in_calls = false`.
 - `"call_ended"` — the call is over; listening and speech are back to normal.
 - `"holding"` — the person paused mid-sentence and Smart Turn judged the sentence unfinished, so Heliox keeps listening (up to `voice.turn_hold_ms`) instead of answering. Sent once per utterance.
+- `"wake_teach"` — one try of `voice_wake_teach` was heard: `{ "status": "wake_teach", "try": 1, "of": 4, "heard": "Hey Helios." }` (`heard` is "" when nothing was recognised).
 
 ### `voice_partial`
 A live caption while the person is still talking, from the streaming recognizer (`voice.transcription_engine =

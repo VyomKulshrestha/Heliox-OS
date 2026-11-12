@@ -459,7 +459,10 @@ sounds like a command; "Open the deck" in a meeting is for the meeting.
 "Heliox's settings", "I asked Heliox"), for a web address ("Heliox.com"), or for words that only resemble it
 ("Helix", "Hello, Alex", "Helium"). Recognisers write the name in other ways ("Heliocs", "Helios"); such a spelling
 counts only when the second recogniser heard the same words after it, so a misheard name needs two opinions while
-the exact name needs one. The merged transcript holds the wake phrase once ("Hey Heliox, Hey Heliocs, undo that"
+the exact name needs one. When the wake check's own words misread what follows the name ("Hey Heliox and do that."
+for "Hey Heliox, undo that.", which by the rule is talk about Heliox), the words acted on (the name from Whisper, the
+rest from Parakeet) are judged by the same rule, so a wake-phrased request is taken in any state but a call. The
+merged transcript holds the wake phrase once ("Hey Heliox, Hey Heliocs, undo that"
 became an undo with the phrase twice).
 
 **A follow-up.** After Heliox finishes speaking in an open conversation, the next utterance needs no wake phrase
@@ -593,6 +596,36 @@ base (0.47), a telephone-band filter (0.57) or louder input (0.40) did not help;
 8 kHz did (0.74 to 0.49), on four sentences, too few to ship. The voice bar's warning for this microphone now says
 how much worse it is and offers the two fixes: the computer's own microphone for input, or the headset's stereo
 profile outside calls.
+
+**When the listener ended the turn too early.** No word list can hold a turn at a comma (section 6), so the
+listener recovers from an early end the way a person who started answering too soon does. If the person speaks
+again within 3 s of the end of their own turn (as the listener declared it) and Heliox, if it is talking, began
+after that end and at most 2 s before (it is the one who came in too early):
+- Heliox yields its voice at once (`BargeInWatcher`, `voice_status` "interrupted"). That is not a stop: nothing is
+  cancelled because of it, and the short cut-off rule does not read the words as "stop".
+- The new words are joined to the command they continue and dispatched as one sentence, marked as a continuation:
+  `voice_turn_addressed` is "continuation", `voice_turn_continues` and `voice_turn_continues_id` name the earlier
+  dispatch, `voice_turn_tail` holds the new words alone, and every dispatch carries its number in `voice_turn_id`.
+- A stop word ("Stop", "Wait") is never joined, a new "Hey Heliox, ..." is judged as a new request, and when Heliox
+  has been talking for longer the cut-off rule applies as before.
+The listener asks the server to withdraw the first half's dispatch (`withdraw_voice_turn(turn_id, joined)`,
+`ContinuousVoiceListener.withdraw_turn`): "withdrawn" means the server stopped it and dispatched the joined sentence
+in its place, with one acknowledgement when it leads to the same action; "too_late" (something already ran, and
+Heliox says what) or "unknown" means the listener dispatches the new words alone as a new turn. Until the server
+provides the call, the joined sentence is dispatched marked as a continuation. On the bench's four
+pause scenarios (0.6 to 2.0 s inside "Hey Heliox, remind me to | call the bank tomorrow morning") all four are now
+joined and none is taken as "Stop"; the 23 corpus lines cut at a pause (pauses of 0.40 to 0.72 s) all resume well
+inside the window.
+
+**Another voice in the room.** With a second voice behind the person, the wake phrase was taken 8 of 8 times at
+15 dB and above, 4 of 8 at 10 dB and 2 of 8 at 5 dB (bench sweep on the owner's desk recordings). The other voice's
+words replace the name; Parakeet never writes "Heliox", so the wake rests on Whisper alone. Reading only the first
+1.0 or 1.6 s of the utterance does not help (at 10 dB, 5 and 5 of 16 against 6 of 16 for the whole utterance, in a
+harsher mix of the same clips), and teaching the name cannot: what is lost is the name itself, not a spelling.
+In plain words for an open office: Heliox hears its name reliably when other conversations are clearly quieter
+than you at the microphone, roughly you within half a metre of it and other people three metres or more away. With
+someone talking at the next desk it misses about half the time; a headset microphone (USB or wired, not a
+Bluetooth headset in call mode) or the microphone button works there.
 
 ## 6. Ending the turn early (`early_turn_threshold`): measured and left off
 

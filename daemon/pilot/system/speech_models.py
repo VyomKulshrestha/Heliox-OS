@@ -143,6 +143,12 @@ def _joined(names: list[str]) -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
+def default_whisper_model(language: str = "auto", system_locale: str | None = None) -> str:
+    """The Whisper size a first-run person's settings start with: the one the recommended download brings for
+    their language ("base" with Parakeet for English, "small" otherwise; see the manifest's "recommended")."""
+    return "base" if speaks_english(language, system_locale) else "small"
+
+
 def recommended(language: str, data_dir: Path | None = None, *, path: Path = MANIFEST) -> dict[str, Any]:
     """The set of speech models recommended for this language setting, its download size and what is still
     missing: {"key", "title", "why", "ids", "download_bytes", "missing", "missing_bytes"}."""

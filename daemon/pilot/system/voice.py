@@ -39,6 +39,18 @@ voice_turn_ended_at: ContextVar[float | None] = ContextVar("voice_turn_ended_at"
 # "wake", "button", "follow_up", "doubtful_follow_up" (the conversation layer says one "Sorry?" at most, calls no
 # model and stores nothing), or "" (unknown).
 voice_turn_addressed: ContextVar[str] = ContextVar("voice_turn_addressed", default="")
+# For a "continuation" turn: the command it continues (dispatched a moment earlier from the first half of the same
+# sentence). The conversation layer withdraws that dispatch if nothing irreversible ran, or carries on.
+voice_turn_continues: ContextVar[str] = ContextVar("voice_turn_continues", default="")
+voice_turn_id: ContextVar[str] = ContextVar("voice_turn_id", default="")  # this dispatch's id ("v1", "v2", ...)
+voice_turn_continues_id: ContextVar[str] = ContextVar("voice_turn_continues_id", default="")  # the one it continues
+voice_turn_tail: ContextVar[str] = ContextVar("voice_turn_tail", default="")  # a continuation's own words
+# The person goes on within CONTINUATION_SECONDS of the end of their own turn (when the listener declared it over),
+# while Heliox, if it is talking, began at most JUST_BEGUN_SECONDS before: the turn was ended too early. On the
+# bench's pause scenarios (0.6 to 2.0 s pauses inside one sentence) the second half began 1.1 to 2.6 s after the
+# first half's turn end, and Heliox had been talking 0.0 to 1.4 s.
+CONTINUATION_SECONDS = 3.0
+JUST_BEGUN_SECONDS = 2.0
 
 _VOICE_TRANSCRIPTION_PROMPT = (
     "Hey Heliox. Desktop command vocabulary: open, close, click, type, search, scroll, launch, switch, "
@@ -368,6 +380,18 @@ class BargeInWatcher:
         deadline = None if timeout is None else self.clock() + timeout
         recorder = self.listener._recorder
         while deadline is None or self.clock() < deadline:
+            continuing = getattr(self.listener, "continuation_due", None)
+            if (
+                self.listener.user_is_speaking
+                and callable(continuing)
+                and continuing(getattr(recorder, "speech_started_at", None)) is True
+            ):
+                # The person is finishing the sentence Heliox started answering too soon: Heliox yields at once.
+                # Not a stop: nothing is cancelled because of it, and the words are joined to the turn they continue.
+                self.detected_at = self.clock()
+                self.listener.note_yield()
+                logger.info("The person went on with their sentence; Heliox yields")
+                return True
             if self.gate.push(self.clock(), self.listener.user_is_speaking, float(recorder.last_frame_rms)):
                 self.detected_at = self.clock()
                 self.listener.note_interruption()
@@ -2395,6 +2419,15 @@ class ContinuousVoiceListener:
         self._wake_free_suppression_depth = 0
         self._wake_free_suppression_generation = 0
         self._heliox_quiet_since = 0.0
+        self._heliox_started_at = 0.0  # when Heliox last began talking (monotonic)
+        # (end of the last dispatched turn, its command, its dispatch number)
+        self._last_turn: tuple[float, str, str] | None = None
+        self._turns = 0
+        # The server's withdraw_voice_turn(turn_id, joined) -> Withdrawal (status "withdrawn" | "too_late" | "unknown",
+        # docs: scratchpad conv_interfaces.md (b)); None until the conversation side wires it.
+        self.withdraw_turn: Any = None
+        self._continuation_of: tuple[str, str, str] = ("", "", "")  # (command, number, own words) of the next dispatch
+        self._yielded = False
         self._sample_rate = 16000
 
         # The daemon passes its live config instance so Settings changes take
@@ -2437,6 +2470,17 @@ class ContinuousVoiceListener:
     def _decide_addressed(self, transcript: str, interruption: str, wake_free_allowed: bool) -> tuple[Any, Any]:
         """Ask the addressing rule (pilot.system.addressing) about one utterance. Returns (Decision, Heard)."""
         from pilot.system.addressing import Decision, Heard
+
+        joined = self._continuation(transcript)
+        if joined is not None:
+            self._addressing._addressed()
+            if self.withdraw_turn is not None:
+                return joined, None  # the server withdraws the first half and runs the joined sentence
+            # No server call to withdraw the first half, which may already have run: the new words alone, judged
+            # like a follow-up right after the turn they continue (as for "unknown"). Never a cut-off "Stop".
+            self._continuation_of = ("", "", "")
+            self._addressing.heliox_finished()
+            wake_free_allowed, interruption = True, ""
 
         rule = self._addressing
         try:
@@ -2491,6 +2535,27 @@ class ContinuousVoiceListener:
         except Exception:
             return configured
 
+    def _continuation(self, transcript: str) -> Any:
+        """The Decision for an utterance that finishes the last dispatched turn ("remind me to | call the bank
+        tomorrow"), or None. A stop word is not a continuation: it stops Heliox as always."""
+        from pilot.system.addressing import CONTROL, Decision, vocative_wake
+
+        yielded, self._yielded = self._yielded, False
+        started = getattr(self._recorder, "speech_started_at", None)
+        if not (yielded or self.continuation_due(started)) or self._last_turn is None or self.in_call:
+            return None
+        text = transcript.strip()
+        if not text or looks_hallucinated(text) or CONTROL.match(text.lstrip(" ,.").casefold()):
+            return None
+        wake = vocative_wake(text)
+        if wake is not None:
+            return None  # "Hey Heliox, ..." again: a new request, judged as one
+        _ended, previous, number = self._last_turn
+        self._last_turn = None  # one continuation per turn
+        rest = text.strip(" \t,.:;!?-")
+        self._continuation_of = (previous, number, rest)
+        return Decision(True, f"{previous.rstrip(' .,;:')} {rest[:1].lower() + rest[1:]}".strip(), "continuation")
+
     def _canonical_wake(self, text: str) -> str:
         """A configured wake phrase other than the name ("hey pilot") or a variant the person's own voice taught
         the calibrator, at the very start, written as "Hey Heliox" so one rule judges it."""
@@ -2522,7 +2587,7 @@ class ContinuousVoiceListener:
     def _addressed_kind(decision: Any) -> str:
         if decision.say_sorry:
             return "doubtful_follow_up"
-        if decision.why in {"wake", "button"}:
+        if decision.why in {"wake", "button", "continuation"}:
             return decision.why
         return "follow_up"
 
@@ -2605,6 +2670,24 @@ class ContinuousVoiceListener:
         self._interrupted_until = time.monotonic() + seconds
         self._button_until = self._interrupted_until if by_button else 0.0
 
+    def continuation_due(self, started: float | None) -> bool:
+        """Speech that began at ``started`` goes on with the turn just dispatched: it began within
+        CONTINUATION_SECONDS of that turn's end, and Heliox, if talking, began after that end and at most
+        JUST_BEGUN_SECONDS before (it came in too early). Heliox talking for longer: the cut-off rule applies."""
+        last = self._last_turn
+        if last is None or not isinstance(started, float):
+            return False
+        ended = last[0]
+        if not 0.0 <= started - ended <= CONTINUATION_SECONDS:
+            return False
+        if self._wake_free_suppression_depth == 0:
+            return True
+        return ended <= self._heliox_started_at and started - self._heliox_started_at <= JUST_BEGUN_SECONDS
+
+    def note_yield(self) -> None:
+        """Heliox stopped its voice for a continuation: the next utterance is joined, never taken as "stop"."""
+        self._yielded = True
+
     def end_interruption(self) -> None:
         self._interrupted_until = 0.0
         self._button_until = 0.0
@@ -2647,6 +2730,8 @@ class ContinuousVoiceListener:
         to be a cut-off: its words are not shown as what the person said."""
         if not self._addressed() or self._button_until:
             return False
+        if self._yielded or self.continuation_due(getattr(self._recorder, "speech_started_at", None)):
+            return False  # the words are needed: they finish the sentence Heliox answered too soon
         if final:
             return self._is_short_cut_off()
         started = getattr(self._recorder, "speech_started_at", None)
@@ -2686,6 +2771,8 @@ class ContinuousVoiceListener:
         invalidates an utterance whose capture overlapped TTS, even if speech
         finished before transcription returned.
         """
+        if self._wake_free_suppression_depth == 0:
+            self._heliox_started_at = time.monotonic()
         self._wake_free_suppression_depth += 1
         self._wake_free_suppression_generation += 1
 
@@ -3186,7 +3273,22 @@ class ContinuousVoiceListener:
                 if self._on_command:
                     ended = getattr(self._recorder, "last_turn_ended_at", None)
                     ended = ended if isinstance(ended, float) else None
-                    task = asyncio.create_task(self._dispatch_command(command_text, ended, addressed_as))
+                    continues = self._continuation_of if addressed_as == "continuation" else ("", "", "")
+                    self._continuation_of = ("", "", "")
+                    if addressed_as == "continuation":  # only when the server can withdraw (_decide_addressed)
+                        status = await self._withdraw(continues[1], command_text)
+                        if status == "withdrawn":
+                            continue  # the server dispatched the joined sentence in place of the first half
+                        command_text, addressed_as = continues[2], "follow_up"  # the rest, as a new turn
+                        continues = ("", "", "")
+                    self._turns += 1
+                    turn_id = f"v{self._turns}"
+                    turn_end = getattr(self._recorder, "last_endpoint_at", None)
+                    if not cut_off and isinstance(turn_end, float):
+                        self._last_turn = (turn_end, command_text, turn_id)
+                    task = asyncio.create_task(
+                        self._dispatch_command(command_text, ended, addressed_as, continues=continues, turn=turn_id)
+                    )
                     self._command_tasks.add(task)
                     task.add_done_callback(self._command_tasks.discard)
                     # Give the newly scheduled command a chance to publish its
@@ -3206,12 +3308,33 @@ class ContinuousVoiceListener:
                 )
                 await asyncio.sleep(1.0)
 
+    async def _withdraw(self, turn_id: str, joined: str) -> str:
+        """Ask the server to withdraw the first half's dispatch in favour of the joined sentence. "withdrawn",
+        "too_late" or "unknown"; any failure counts as "unknown" (the second half then runs as a new turn)."""
+        try:
+            result = await self.withdraw_turn(turn_id, joined)
+        except Exception:
+            logger.warning("Withdrawing the first half of a split sentence failed", exc_info=True)
+            return "unknown"
+        status = str(getattr(result, "status", "") or "unknown")
+        logger.info("Split sentence: the first half's dispatch %s is %s", turn_id, status)
+        return status
+
     async def _dispatch_command(
-        self, command_text: str, turn_ended_at: float | None = None, addressed: str = ""
+        self,
+        command_text: str,
+        turn_ended_at: float | None = None,
+        addressed: str = "",
+        continues: tuple[str, str, str] = ("", "", ""),
+        turn: str = "",
     ) -> None:
         """Run a recognized command without pausing ambient listening."""
         started = time.perf_counter()
         voice_turn_addressed.set(addressed)  # this task's own context: how this turn was addressed
+        voice_turn_id.set(turn)
+        voice_turn_continues.set(continues[0])
+        voice_turn_continues_id.set(continues[1])
+        voice_turn_tail.set(continues[2])
         if turn_ended_at is not None:
             voice_turn_ended_at.set(turn_ended_at)  # this task's own context: one value per dispatch
             logger.info("Last word to dispatch: %.0f ms", 1000 * (time.monotonic() - turn_ended_at))

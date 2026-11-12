@@ -1997,7 +1997,7 @@
       <select
         class="input-md"
         name="whisper_model"
-        value={$settings.voice?.whisper_model ?? "small"}
+        value={$settings.voice?.whisper_model ?? "base"}
         onchange={updateSpeechRecognition}
         disabled={speechSaving}
       >
