@@ -13550,7 +13550,7 @@ def handle_tool(tool_name, params):
     async def _voice_overheard(self, text: str) -> None:
         """Said during an open conversation but not as a request (a promise, a date): Live checks it, nothing runs."""
         if self._live is not None:
-            self._live.offer_speech(text)
+            self._live.offer_speech(text, addressed=False)  # a silent card at most: it was not said to Heliox
 
     async def _voice_turn(self, command_text: str) -> None:
         """One addressed utterance holds the conversation floor until it is answered (pilot.live.floor)."""

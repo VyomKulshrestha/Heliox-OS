@@ -565,6 +565,8 @@ Offers are computed on this computer (`pilot.personal.offers`), at most one an h
   true while `auto` waits for that.
 - `offers {action: "set", mode}` changes the mode and returns the status.
 - `offers {action: "unsilence", key}` lets a silenced offer be made again and returns the status.
+- `offers {action: "intro", on}` turns the getting-to-know offer (made while the profile is empty) on or off;
+  the status carries it as `intro` and leaves it out of `silenced`.
 - `offers {action: "answer", id, answer}` with `yes` (the request goes down the normal road, approvals unchanged),
   `not_today`, `silence` (never this offer again) or `why` -> `{status, reply, ...status}`; `reply` is the
   sentence to show (for `why`, the evidence).

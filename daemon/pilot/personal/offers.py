@@ -294,12 +294,13 @@ class Offers:
             start = (now - timedelta(days=HISTORY_DAYS)).timestamp()
             try:
                 found += usual_apps(self.spans(start, now.timestamp()), now, label=self.label)
-            except Exception:
-                logger.debug("Could not read the timeline for offers", exc_info=True)
+            except Exception:  # one source failing never stops the others
+                logger.warning("Usual-app offers failed; the other offer sources still ran", exc_info=True)
         if not self.legacy_suggestions_on():
             try:
                 offer = from_suggestion(self.suggestion())
             except Exception:
+                logger.warning("Suggestion offers failed; the other offer sources still ran", exc_info=True)
                 offer = None
             if offer is not None:
                 found.append(offer)
@@ -400,7 +401,11 @@ class Offers:
             "mode": mode if mode in MODES else "auto",
             "active": self.active(),
             "waiting_for_profile": mode == "auto" and empty,
-            "silenced": [{"key": key, "label": label} for key, label in sorted(self.silenced.items())],
+            "silenced": [
+                {"key": key, "label": label} for key, label in sorted(self.silenced.items()) if key != INTRO.key
+            ],
+            # The getting-to-know offer has its own switch in Settings rather than a line in the silenced list.
+            "intro": INTRO.key not in self.silenced,
             "per_hour": MAX_PER_HOUR,
             "per_day": MAX_PER_DAY,
         }

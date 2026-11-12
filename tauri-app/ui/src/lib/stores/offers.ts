@@ -30,6 +30,8 @@ export interface OffersStatus {
   active: boolean;
   waiting_for_profile: boolean;
   silenced: SilencedOffer[];
+  /** Whether the getting-to-know offer may be made while the profile is empty. */
+  intro?: boolean;
   per_hour: number;
   per_day: number;
   reply?: string;
@@ -93,6 +95,10 @@ export async function offersStatus(): Promise<OffersStatus> {
 
 export async function setOffersMode(mode: OffersStatus["mode"]): Promise<OffersStatus> {
   return call<OffersStatus>("offers", { action: "set", mode });
+}
+
+export async function setIntroOffer(on: boolean): Promise<OffersStatus> {
+  return call<OffersStatus>("offers", { action: "intro", on });
 }
 
 export async function unsilenceOffer(key: string): Promise<OffersStatus> {

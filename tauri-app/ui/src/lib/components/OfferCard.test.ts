@@ -128,4 +128,17 @@ describe("the offers settings", () => {
     render(OffersPanel);
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("mode must be auto, on or off"));
   });
+
+  it("turns the getting-to-know offer off and on", async () => {
+    mocks.call.mockImplementation(async (_method: string, params?: Record<string, unknown>) => {
+      if (params?.action === "intro") return status({ intro: Boolean(params.on) });
+      return status({ intro: true });
+    });
+    render(OffersPanel);
+    const box = await screen.findByRole("checkbox", { name: /get to know me/ });
+    expect((box as HTMLInputElement).checked).toBe(true);
+    await fireEvent.click(box);
+    await waitFor(() => expect(mocks.call).toHaveBeenCalledWith("offers", { action: "intro", on: false }));
+    await waitFor(() => expect((box as HTMLInputElement).checked).toBe(false));
+  });
 });

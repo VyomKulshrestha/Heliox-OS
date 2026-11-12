@@ -9,11 +9,14 @@ a false correction costs more trust than a missed one.
 from __future__ import annotations
 
 import calendar
+import logging
 import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 
 from pilot.live import spoken as sp
+
+logger = logging.getLogger("pilot.live.detectors")
 
 URGENT, NORMAL, LOW = "urgent", "normal", "low"
 
@@ -335,6 +338,7 @@ _DATE_NEGATION_BEFORE = re.compile(
     r"\b(?:no|not|never|isn'?t|aren'?t|wasn'?t|doesn'?t|invalid|impossible|non-?existent|fake)\b[^.!?\n]{0,12}$",
     re.IGNORECASE,
 )
+_LEAP_TALK = re.compile(r"\bleap\s+year", re.IGNORECASE)
 _DATE_NEGATION_AFTER = re.compile(r"^\W{0,3}(?:doesn'?t|does not|isn'?t|is not|never)\b", re.IGNORECASE)
 
 
@@ -389,6 +393,8 @@ def _impossible_dates(text: str, ctx: TextContext, covered: set[tuple[int, int]]
                 continue
             if _DATE_NEGATION_AFTER.search(text[match.end() : match.end() + 20]):
                 continue
+            if day == 29 and month == 2 and _LEAP_TALK.search(text[match.end() : match.end() + 60]):
+                continue  # "29 February in a year that isn't a leap year": about the rule, not a date
             evidence = match.group(0).strip()
             correction = _no_such_date(evidence, day, month, int(match["y"]) if match["y"] else None, ctx)
             if correction.key not in keys:
@@ -1312,7 +1318,10 @@ def missing_attachment(text: str, ctx: TextContext) -> list[Correction]:
 # ── Doubled words ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 _REPEAT = re.compile(r"\b(?P<w>[A-Za-z]{2,})\s+(?P=w)\b", re.IGNORECASE)
-_LEGIT_REPEATS = {"had", "that", "is", "do", "bye", "no", "so", "very", "ha", "go", "knock", "tut", "chop", "yada"}
+_LEGIT_REPEATS = {
+    "had", "that", "is", "do", "bye", "no", "so", "very", "ha", "go", "knock", "tut", "chop", "yada", "okay", "yes",
+    "hey", "well", "now", "come", "there",
+}  # fmt: skip
 
 
 def repeated_word(text: str, ctx: TextContext) -> list[Correction]:
@@ -1326,6 +1335,13 @@ def repeated_word(text: str, ctx: TextContext) -> list[Correction]:
         key = f"repeated_word:{match.group(0).casefold()}"
         if word.casefold() in _LEGIT_REPEATS or key in found:
             continue
+        before = text[match.start() - 1] if match.start() else ""
+        after = text[match.end()] if match.end() < len(text) else ""
+        if before == "-" or after == "-":
+            continue  # part of a compound: "read-only only", "opt-in in", "twenty twenty-six", "public public-corpus"
+        second = match.group(0).split()[-1]
+        if word.islower() and second[:1].isupper():
+            continue  # "[object Object]": a different word that happens to be spelled the same
         if len(found) == 3:
             break
         found[key] = Correction(
@@ -1402,6 +1418,41 @@ def _in_said_words(correction: Correction, norm: sp.Spoken) -> Correction:
     return replace(correction, evidence=said, key=key, fix=fix, fix_kind=fix_kind)
 
 
+# Kinds about how the person uses words and numbers. Inside quotation marks the person is mentioning the words,
+# not using them: a commit message quoting "Tuesday 14 November" as an example, an email quoting someone's "could of".
+# Risky commands and keys are not in it: quoting one does not make it safe.
+MENTION_KINDS = frozenset(
+    {"weekday_date", "arithmetic", "repeated_word", "community_catch", "profile_fact", "missing_attachment"}
+)
+_QUOTE_MARKS = frozenset('"`\u201c\u201d')
+_QUOTED = re.compile(
+    r'"[^"\n]{1,300}"'
+    "|\u201c[^\u201d\n]{1,300}\u201d"
+    "|`[^`\n]{1,300}`"
+    r"|(?<![\w])'[^'\n]{1,300}'(?![\w])"
+)
+
+
+def only_quoted(text: str, evidence: str) -> bool:
+    """Every place ``evidence`` appears in ``text`` is inside a quotation (straight, curly or backticks)."""
+    if not evidence:
+        return False
+    spans = [m.span() for m in _QUOTED.finditer(text)]
+    start, seen = 0, False
+    folded, needle = text.casefold(), evidence.casefold()
+    while True:
+        at = folded.find(needle, start)
+        if at < 0:
+            return seen
+        seen = True
+        end = at + len(needle)
+        # A quote mark right before and after also counts: a quotation inside a quotation pairs its marks wrongly.
+        hugged = at > 0 and end < len(text) and text[at - 1] in _QUOTE_MARKS and text[end] in _QUOTE_MARKS
+        if not hugged and not any(a < at and end <= b for a, b in spans):
+            return False
+        start = at + 1
+
+
 def detect(text: str, ctx: TextContext, *, kinds: tuple[str, ...] = KINDS) -> list[Correction]:
     """Every correction the enabled detectors find, most urgent first.
 
@@ -1421,9 +1472,12 @@ def detect(text: str, ctx: TextContext, *, kinds: tuple[str, ...] = KINDS) -> li
             continue
         try:
             results.extend(DETECTORS[kind](read, where))
-        except Exception:  # a detector bug must never take the live layer down
+        except Exception:  # a detector bug must never take the live layer down, or the other detectors with it
+            logger.warning("Live detector %s failed; the others still ran", kind, exc_info=True)
             continue
     if norm is not None:
         results = [_in_said_words(c, norm) for c in results]
+    else:
+        results = [c for c in results if c.kind not in MENTION_KINDS or not only_quoted(read, c.evidence)]
     order = {URGENT: 0, NORMAL: 1, LOW: 2}
     return sorted(results, key=lambda c: order.get(c.urgency, 3))

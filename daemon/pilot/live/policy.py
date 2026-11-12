@@ -93,6 +93,8 @@ class Pending:
     held_in_call: bool = False
     # When it was noticed, as a pilot.live.sequence number: orders it against a conversation turn.
     noted_seq: int = 0
+    # Heard but not said to Heliox: a card at most, never a voice.
+    silent: bool = False
     # How long the person had stopped when it was delivered, and the wait Live required (pilot.live.timing).
     paused_for: float | None = None
     needed_pause: float | None = None
@@ -120,7 +122,7 @@ def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: 
         if act.heliox_speaking:
             return SHOW
         speak = urgent or (correction.urgency in level.speak and relevance >= MIN_RELEVANCE_TO_SPEAK)
-        return SPEAK if speak else SHOW
+        return SPEAK if speak and not item.silent else SHOW
     needed_pause = URGENT_PAUSE_SECONDS if urgent else level.pause_seconds
     if not urgent and act.personal_pause is not None:
         needed_pause = act.personal_pause

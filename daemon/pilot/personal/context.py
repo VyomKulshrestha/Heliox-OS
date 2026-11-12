@@ -18,10 +18,13 @@ lines (the privacy table in docs/INTERACTION_MODEL.md).
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections.abc import Callable
 from typing import Any
+
+logger = logging.getLogger("pilot.personal.context")
 
 PROFILE_LINES = 8  # what pilot.conversation.context already sends (kept in step with its PROFILE_LINES)
 MAX_CHARS = 360
@@ -243,10 +246,12 @@ class PersonalContext:
         try:
             goals = list(self._goals() or [])
         except Exception:
+            logger.warning("Could not read goals for the conversation context", exc_info=True)
             goals = []
         try:
             habits = list(self._habits() or [])
         except Exception:
+            logger.warning("Could not read habits for the conversation context", exc_info=True)
             habits = []
         return relevant_lines(text, profile=data, goals=goals, habits=habits, already=already)
 

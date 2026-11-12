@@ -327,6 +327,13 @@ async def offers_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
         result = await server._handle_update_config({"section": "suggestions", "values": {"offers": mode}}, None)
         if result.get("status") != "ok":
             return result
+    elif action == "intro":
+        from pilot.personal.offers import INTRO
+
+        if params.get("on"):
+            offers.unsilence(INTRO.key)
+        else:
+            offers.silence(INTRO)
     elif action == "unsilence":
         if not offers.unsilence(str(params.get("key") or "")):
             return {"status": "error", "message": "That offer is not silenced."}
@@ -341,7 +348,7 @@ async def offers_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
             )
         return {"status": "ok", "reply": answer.reply, **offers.status()}
     elif action != "status":
-        return {"status": "error", "message": "action must be status, set, unsilence or answer"}
+        return {"status": "error", "message": "action must be status, set, intro, unsilence or answer"}
     return {"status": "ok", **offers.status()}
 
 

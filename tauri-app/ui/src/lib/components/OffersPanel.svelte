@@ -21,7 +21,7 @@
 
 <script lang="ts">
   import { onMount } from "svelte";
-  import { offersStatus, setOffersMode, unsilenceOffer } from "../stores/offers";
+  import { offersStatus, setIntroOffer, setOffersMode, unsilenceOffer } from "../stores/offers";
 
   let status = $state<OffersStatus | null>(null);
   let error = $state("");
@@ -81,6 +81,18 @@
       {/each}
     </div>
     {#if stateLine(status)}<p class="state" data-testid="offers-state">{stateLine(status)}</p>{/if}
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={status?.intro !== false}
+        disabled={busy || !status}
+        onchange={(event) => void run(() => setIntroOffer(event.currentTarget.checked))}
+      />
+      <span
+        >Ask a few questions to get to know me while Heliox knows nothing about me (three, each one skippable; the
+        answers stay on this computer)</span
+      >
+    </label>
   </div>
 
   <div class="block">
@@ -196,6 +208,21 @@
 
   .state {
     font-size: var(--text-xs);
+  }
+
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    font-size: var(--text-sm);
+    line-height: 1.45;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .check input {
+    margin-top: 3px;
+    accent-color: var(--accent);
   }
 
   .silenced {

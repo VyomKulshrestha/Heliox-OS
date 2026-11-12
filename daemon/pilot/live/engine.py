@@ -219,6 +219,8 @@ def because(entry: dict[str, Any]) -> str:
             else "I spoke up because of this"
         )
         return join(lead, title, message, detail)
+    if kind == SAID_VS_TYPED:  # what they said, what they wrote, and where they wrote it
+        return join(f"{message.rstrip('.')}, and {_lower_first(title)}", detail)
     if title.endswith("?"):  # an offer: a promise without a reminder, or signs of being stuck
         reason = message.rstrip(".")
         if kind == COMMITMENT:
@@ -576,7 +578,7 @@ class LiveCompanion:
                 verdict, item.resumed_after, paused_for=item.paused_for, needed=item.needed_pause
             )
 
-    def _note(self, correction: Correction, source: str, window: str, now: float) -> None:
+    def _note(self, correction: Correction, source: str, window: str, now: float, *, silent: bool = False) -> None:
         if any(item.correction.key == correction.key for item in self._visible.values()):
             for item in self._visible.values():
                 if item.correction.key == correction.key:
@@ -590,37 +592,44 @@ class LiveCompanion:
             # Keep the latest reading: a slip first seen at the end of the text stops trailing once they type on.
             existing.correction = correction
             return
-        self._pending[correction.key] = Pending(correction, source, now, now, window=window, noted_seq=next_seq())
+        self._pending[correction.key] = Pending(
+            correction, source, now, now, window=window, noted_seq=next_seq(), silent=silent
+        )
 
-    def offer_speech(self, text: str) -> None:
-        """Check a sentence the person said. Spoken corrections land as soon as they stop talking."""
+    def offer_speech(self, text: str, *, addressed: bool = True) -> None:
+        """Check a sentence the person said. Spoken corrections land as soon as they stop talking.
+
+        ``addressed=False``: heard during an open conversation but not said to Heliox (a promise to a colleague, a
+        date said in a meeting). Catches from it are silent cards: Heliox says nothing about speech that was not
+        meant for it, and it is never sent to a model."""
         cfg = self._config()
         if not getattr(cfg, "enabled", False) or self._paused or not getattr(cfg, "listen_to_speech", True):
             return
         now = self._clock()
         kinds = tuple(kind for kind in self._kinds() if kind in SPEECH_KINDS)
         ctx = self._context(None, "speech")
+        silent = not addressed
         for correction in detect(text, ctx, kinds=kinds):
-            self._note(correction, "speech", "speech", now)
+            self._note(correction, "speech", "speech", now, silent=silent)
         if SAID_VS_TYPED in self._kinds():
             # "Remind me about the dentist on Friday" minutes after typing "Dentist, Thursday 12 November".
             try:
                 found = said_vs_typed(spoken.to_written(text), list(self._typed_log.values()), now, self._today())
             except Exception:
-                logger.debug("Said-versus-typed check failed", exc_info=True)
+                logger.warning("Said-versus-typed check failed; the other checks still ran", exc_info=True)
                 found = []
             for correction in found:
-                self._note(correction, "speech", "speech", now)
+                self._note(correction, "speech", "speech", now, silent=silent)
         if COMMITMENT in self._kinds():
             # "I'll send Priya the deck by Friday", said to Heliox or while talking with it: offer the reminder.
             try:
                 promises = find_commitments(text, ctx, self._wallclock(), self._reminders())
             except Exception:
-                logger.debug("Spoken commitment check failed", exc_info=True)
+                logger.warning("Spoken commitment check failed; the other checks still ran", exc_info=True)
                 promises = []
             for promise in promises:
-                self._note(promise, "speech", "speech", now)
-        if self._grounding() and "personal_fact" in self._kinds():
+                self._note(promise, "speech", "speech", now, silent=silent)
+        if addressed and self._grounding() and "personal_fact" in self._kinds():
             # What they asked for, against their calendar and lists, while the planner gets going.
             asyncio.ensure_future(self._ground(text, "speech", "speech"))
         if any(item.source == "speech" for item in self._pending.values()):
