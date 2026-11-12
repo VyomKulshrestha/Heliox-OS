@@ -14,9 +14,6 @@ from benchmarks.conversation_eval.sessions import KINDS, Record, check_session, 
 SESSIONS = load_pack()
 
 # (session, kind) -> the cause, owned elsewhere.
-LISTENER = (
-    "pilot/system/addressing.py reads it as talk inside the follow-up window (plausibly_addressed): '{}' after {}"
-)
 KNOWN: dict[tuple[str, str], str] = {
     **{
         ("Live raises a slip mid-conversation", kind): (
@@ -26,11 +23,6 @@ KNOWN: dict[tuple[str, str], str] = {
         )
         for kind in KINDS
     },
-    **{
-        ("a vague destructive request", kind): LISTENER.format("Just delete all of that.", "Heliox's answer")
-        for kind in KINDS
-    },
-    **{("what can I say", kind): LISTENER.format("More.", 'Say "more" for others.') for kind in KINDS},
     ("a long answer and enough", "none"): (
         "pilot/workflows/quick_answers.py: 'what's two plus two?' (numbers in words) is not answered in code, so a "
         "person with no model gets no answer"
