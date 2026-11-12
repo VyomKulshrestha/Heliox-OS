@@ -360,3 +360,22 @@ def test_cpu_device_is_passed_to_kokoro(monkeypatch) -> None:
         kokoro_tts._get_pipeline()
     assert module.KPipeline.call_args.kwargs == {"lang_code": "a", "repo_id": "hexgrad/Kokoro-82M", "device": "cpu"}
     kokoro_tts._pipeline_cache.clear()
+
+
+@pytest.mark.asyncio
+async def test_too_little_free_memory_speaks_with_the_system_voice_and_starts_no_worker() -> None:
+    clock = FakeClock()
+    spawner = Spawner(FakeWorker())
+    manager = _manager(spawner, clock)
+    manager.free_memory = lambda: int(1.2 * 1024**3)  # an 8 GB machine with little left
+
+    with pytest.raises(LocalTTSUnavailable) as raised:
+        await manager.speak("kokoro_tts", "Hello.", "af_heart", None, AsyncMock())
+
+    assert "not enough free memory" in str(raised.value) and spawner.calls == []
+    assert manager.failing  # the system voice speaks; the local voice is tried again later
+    manager.free_memory = lambda: 6 * 1024**3
+    await clock.advance(121)
+    await manager.ensure_ready("kokoro_tts", "af_heart")
+    assert spawner.calls == [("kokoro_tts", "auto")]
+    await manager.shutdown()

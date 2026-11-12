@@ -254,10 +254,19 @@ def test_several_cards_the_worker_sees_only_the_chosen_one():
 
 
 def test_no_cuda_in_the_worker_means_not_supported_never_retried():
+    # An NVIDIA card, but a torch build without CUDA: the worker finds out and says so once.
     spawner = Spawner(FakeWorker(load_error={"error": "CUDA is required for this opt-in local research model"}))
     with pytest.raises(GpuUnavailableError) as raised:
-        _engine(spawner, _arbiter(MachineReading("cpu", host_free_bytes=8 * GIB))).load()
+        _engine(spawner, _arbiter(COOL)).load()
     assert raised.value.code == "unsupported" and raised.value.retry_seconds is None
+
+
+def test_a_machine_without_an_nvidia_card_starts_no_worker_to_find_out():
+    spawner = Spawner()
+    with pytest.raises(GpuUnavailableError) as raised:
+        _engine(spawner, _arbiter(MachineReading("cpu", host_free_bytes=3 * GIB, host_total_bytes=8 * GIB))).load()
+    assert raised.value.code == "unsupported" and raised.value.retry_seconds is None
+    assert spawner.started == []
 
 
 # ── Through the reviewer: fail closed, restart, switch the GPU off ─────────────

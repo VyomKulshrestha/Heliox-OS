@@ -47,6 +47,7 @@ RETRY_AFTER_SECONDS = 120.0
 LOAD_TIMEOUT_SECONDS = 180.0
 REQUEST_TIMEOUT_SECONDS = 120.0
 LOADING_MESSAGE = "Getting my voice ready…"
+VOICE_HOST_RAM_BYTES = 2 * 1024**3  # Kokoro's worker holds 1.6-1.9 GB once loaded
 
 # ── Worker side ──────────────────────────────────────────────────────
 
@@ -246,6 +247,9 @@ class LocalTTSWorkerManager:
         self.effective_device: str | None = None
         self.choose_device: Callable[[str], tuple[str, bool]] | None = None
         self.on_gpu_fault: Callable[[str, str], Any] | None = None
+        # Free system memory now, or None: the worker is not started when less than VOICE_HOST_RAM_BYTES is free
+        # (on an 8 GB machine the model's 1.6-1.9 GB can push everything into swap); the system voice speaks.
+        self.free_memory: Callable[[], int | None] | None = None
         self.loaded = False
         self._spawn_lock = asyncio.Lock()
         self._io_lock = asyncio.Lock()
@@ -328,6 +332,14 @@ class LocalTTSWorkerManager:
                 return self.process
             if self.process is not None:
                 await self._close(self.process)
+            free = self.free_memory() if self.free_memory is not None else None
+            if free is not None and free < VOICE_HOST_RAM_BYTES:
+                reason = (
+                    f"not enough free memory for the local voice ({free / 1024**3:.1f} GB free, "
+                    f"{VOICE_HOST_RAM_BYTES / 1024**3:.0f} GB needed)"
+                )
+                self._mark_failed(engine, reason)
+                raise LocalTTSUnavailable(f"{engine}: {reason}")
             device, gpu_lease = self.device, False
             if self.choose_device is not None:
                 try:
@@ -628,6 +640,7 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
 
     _manager.choose_device = gpu_arbiter.voice_device
     _manager.on_gpu_fault = gpu_arbiter.arbiter().record_fault
+    _manager.free_memory = lambda: gpu_arbiter.probe_host_memory()[0]
     engine = str(getattr(voice_config, "tts_engine", ""))
     if _manager.running and (_manager.engine != engine or _manager.process_device != _manager.device):
         with contextlib.suppress(RuntimeError):

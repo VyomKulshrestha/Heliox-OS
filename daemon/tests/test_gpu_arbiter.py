@@ -146,11 +146,11 @@ def test_apple_silicon_unified_memory_counts_the_model_against_free_system_memor
 
 @pytest.mark.parametrize(
     ("total_gb", "free_gb", "code"),
-    [(8, 1.8, "low_host_memory"), (8, 3.0, "no_gpu"), (16, 2.0, "low_host_memory"), (32, 20.0, "no_gpu")],
+    [(8, 1.8, "unsupported"), (8, 3.0, "unsupported"), (16, 2.0, "unsupported"), (32, 20.0, "unsupported")],
 )
 def test_cpu_only_machines_8_16_and_32_gb(total_gb, free_gb, code):
-    """Without an NVIDIA card the arbiter has nothing to arbitrate ("no_gpu"), but Gnomon's 2.5 GiB of free memory
-    is still checked first: it is the worker's own peak, the same on every machine size, so on 8 GB it decides."""
+    """Without an NVIDIA card Gnomon is not supported, said at once whatever the memory (no worker is started to
+    find out); the voice has nothing to arbitrate ("no_gpu")."""
     reading = MachineReading("cpu", host_free_bytes=int(free_gb * GIB), host_total_bytes=total_gb * GIB)
     assert decide("gnomon", GNOMON, reading).code == code
     assert decide("voice", VOICE, reading).code == "no_gpu"

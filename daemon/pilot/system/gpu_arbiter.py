@@ -57,6 +57,9 @@ COMPONENT_NAMES = {"gnomon": "Gnomon", "voice": "the voice", "ocr": "screen text
 BLOCKING_CODES = frozenset({"hot", "busy", "low_memory", "low_host_memory", "disabled", "unreadable", "unsupported"})
 
 NO_CUDA_ON_MAC = "Not supported on this system: Gnomon's 4-bit model needs an NVIDIA graphics card with CUDA."
+NO_NVIDIA_CARD = (
+    "Not supported on this system: Gnomon's 4-bit model needs an NVIDIA graphics card with CUDA, and none was found."
+)
 
 
 # ── Readings ─────────────────────────────────────────────────────────────────
@@ -267,6 +270,10 @@ def decide(
     kind = reading.kind
     if needs.requires_cuda and kind == "apple":
         return GpuDecision("unsupported", NO_CUDA_ON_MAC, kind=kind)
+    if needs.requires_cuda and kind == "cpu" and not reading.error:
+        # No nvidia-smi: the NVIDIA driver installs it with CUDA on Windows and Linux, so there is no CUDA here.
+        # Said at once, instead of starting a worker that imports torch (about 1 GB on an 8 GB machine) to find out.
+        return GpuDecision("unsupported", NO_NVIDIA_CARD, kind=kind)
     if disabled_reason:
         return GpuDecision("disabled", disabled_reason, kind=kind)
     host_need = needs.host_bytes + (needs.gpu_bytes if reading.unified_memory else 0)
