@@ -97,6 +97,24 @@ describe("VoiceControl live captions", () => {
     expect(screen.getByText("Listening on Microphone (USBAudio1.0).")).toBeTruthy();
   });
 
+  it("with no speech model, says so and opens the download list only when pressed", async () => {
+    const opened = vi.fn();
+    window.addEventListener("heliox:open-settings", opened);
+    render(VoiceControl);
+    emit("voice_status", {
+      status: "recogniser_missing",
+      message: "Speech recognition needs a model, which Heliox has not downloaded.",
+      settings: "voice-models",
+    });
+    await tick();
+    expect(screen.getByText("Speech recognition needs a model, which Heliox has not downloaded.")).toBeTruthy();
+    expect(mocks.call).not.toHaveBeenCalledWith("speech_model_download", expect.anything());
+    await fireEvent.click(screen.getByRole("button", { name: "Download a speech model" }));
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect((opened.mock.calls[0][0] as CustomEvent).detail).toEqual({ section: "voice-models" });
+    window.removeEventListener("heliox:open-settings", opened);
+  });
+
   it("offers another microphone for a headset in call mode, and switches only when pressed", async () => {
     render(VoiceControl);
     emit("voice_status", {

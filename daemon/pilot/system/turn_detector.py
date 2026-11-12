@@ -5,8 +5,9 @@ finished still waits out the full silence timeout. Smart Turn listens to the las
 sentence ends, its intonation) and returns the probability that the person is done. The listener asks it after a
 short silence: done means answer now, not done means keep listening while they think.
 
-The model downloads once from Hugging Face (pipecat-ai/smart-turn-v3) the first time it is needed and runs on the
-CPU in tens of milliseconds. If it cannot load, the listener falls back to plain silence endpointing.
+The model (pipecat-ai/smart-turn-v3, 9 MB) is downloaded only when the person asks (Settings, Voice) or used when
+it is already in the Hugging Face cache, and runs on the CPU in tens of milliseconds. Without it, the listener judges
+the end of a sentence by silence alone.
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ class SmartTurnDetector:
         return self._session is not None
 
     def load(self) -> bool:
-        """Download (first use only) and open the model. Blocking: call it from a worker thread."""
+        """Open the model if it is on this computer (never downloads). Blocking: call it from a worker thread."""
         with self._lock:
             if self._session is not None:
                 return True
@@ -71,7 +72,8 @@ class SmartTurnDetector:
                 if path is None:
                     from huggingface_hub import hf_hub_download
 
-                    path = hf_hub_download(REPO, MODEL_FILE)
+                    # Already in the Hugging Face cache from before; never downloaded from here.
+                    path = hf_hub_download(REPO, MODEL_FILE, local_files_only=True)
                 options = ort.SessionOptions()
                 options.inter_op_num_threads = 1
                 options.intra_op_num_threads = 2

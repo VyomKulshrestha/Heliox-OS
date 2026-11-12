@@ -79,7 +79,7 @@
   }
 </script>
 
-<div class="speech-models">
+<div class="speech-models" id="voice-models">
   {#if loadError}
     <p class="setting-desc">{loadError}</p>
   {/if}

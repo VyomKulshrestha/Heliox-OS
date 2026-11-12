@@ -14,8 +14,11 @@ import pilot.system.voice as voice
 
 
 @pytest.fixture(autouse=True)
-def _clear_model_cache():
+def _clear_model_cache(monkeypatch):
     voice._whisper_model_cache.clear()
+    # Whisper is loaded only from a file already on this computer (pilot.system.model_presence); here every
+    # model counts as cached, at a made-up path, so the tests do not depend on this machine's cache.
+    monkeypatch.setattr("pilot.system.model_presence.openai_whisper_cached", lambda name: f"cache/{name}.pt")
     yield
     voice._whisper_model_cache.clear()
 
@@ -33,8 +36,20 @@ def test_loads_model_once_across_repeated_calls():
         first = voice._get_whisper_model("base")
         second = voice._get_whisper_model("base")
 
-    load_model.assert_called_once_with("base")
+    load_model.assert_called_once_with("cache/base.pt")
     assert first is second
+
+
+def test_a_model_that_is_not_on_this_computer_is_never_fetched(monkeypatch):
+    from pilot.system.model_presence import SpeechModelMissing
+
+    monkeypatch.setattr("pilot.system.model_presence.openai_whisper_cached", lambda name: None)
+    load_model = MagicMock()
+
+    with patch.dict(sys.modules, {"whisper": _fake_whisper_module(load_model)}), pytest.raises(SpeechModelMissing):
+        voice._get_whisper_model("base")
+
+    load_model.assert_not_called()
 
 
 def test_different_model_names_get_separate_cache_entries():
@@ -62,7 +77,7 @@ async def test_transcribe_whisper_uses_cached_model():
 
     assert result1["text"] == "hello world"
     assert result2["text"] == "hello world"
-    load_model.assert_called_once_with("base")
+    load_model.assert_called_once_with("cache/base.pt")
     assert fake_model.transcribe.call_count == 2
     kwargs = fake_model.transcribe.call_args.kwargs
     assert kwargs["initial_prompt"] == voice._VOICE_TRANSCRIPTION_PROMPT

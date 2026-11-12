@@ -167,6 +167,17 @@
     session.addSystemMessage(getJarvisGreeting());
   }
 
+  // A component asks for a Settings section (the voice bar's "Download a speech model").
+  function onOpenSettings(event: Event) {
+    const section = (event as CustomEvent<{ section?: string }>).detail?.section;
+    activeTab = "settings";
+    if (section) void tick().then(() => document.getElementById(section)?.scrollIntoView({ block: "start" }));
+  }
+  onMount(() => {
+    window.addEventListener("heliox:open-settings", onOpenSettings);
+    return () => window.removeEventListener("heliox:open-settings", onOpenSettings);
+  });
+
   // Handle gesture events for particle effects and navigation
   function onGestureDetected(gesture: string) {
     particleBurst?.gestureBurst(gesture);

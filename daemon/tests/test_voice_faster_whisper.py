@@ -9,8 +9,10 @@ import pilot.system.voice as voice
 
 
 @pytest.fixture(autouse=True)
-def _clear_model_cache():
+def _clear_model_cache(monkeypatch):
     voice._faster_whisper_model_cache.clear()
+    # These tests are about devices and decoding: the model counts as on this computer (presence has its own tests).
+    monkeypatch.setattr("pilot.system.model_presence.faster_whisper_source", lambda name: name)
     yield
     voice._faster_whisper_model_cache.clear()
 

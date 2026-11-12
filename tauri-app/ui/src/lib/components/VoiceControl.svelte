@@ -237,6 +237,11 @@
   let deviceTimer: ReturnType<typeof setTimeout> | null = null;
   // A headset in Bluetooth call mode: listen with another microphone instead, if the person presses the button.
   let inputOffer = $state<{ headset: string; id: string; name: string } | null>(null);
+  // No speech model on this computer: a button to the download list in Settings, Voice (nothing downloads by itself).
+  let modelsNeeded = $state(false);
+  function openSpeechModels() {
+    window.dispatchEvent(new CustomEvent("heliox:open-settings", { detail: { section: "voice-models" } }));
+  }
   async function acceptInputOffer() {
     const offer = inputOffer;
     if (!offer) return;
@@ -297,6 +302,11 @@
     }
     if (status === "microphone_problem") {
       showDeviceNotice(String(payload.message ?? "") || "The microphone stopped; reopening it.");
+      return;
+    }
+    if (status === "recogniser_missing") {
+      showDeviceNotice(String(payload.message ?? "") || "Speech recognition needs a model.");
+      modelsNeeded = true;
       return;
     }
     if (status === "microphone_quality") {
@@ -570,6 +580,9 @@
       {/if}
       {#if deviceNotice}
         <span class="holding">{deviceNotice}</span>
+      {/if}
+      {#if modelsNeeded}
+        <button type="button" class="input-offer" onclick={openSpeechModels}>Download a speech model</button>
       {/if}
       {#if inputOffer}
         <button type="button" class="input-offer" onclick={acceptInputOffer}>Use {inputOffer.name} for input</button>

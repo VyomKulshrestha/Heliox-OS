@@ -1331,9 +1331,14 @@ def _get_whisper_model(model_name: str) -> Any:
     the daemon; different model names (e.g. switching config.voice.
     whisper_model at runtime) just add another cache entry."""
     if model_name not in _whisper_model_cache:
+        from pilot.system.model_presence import SpeechModelMissing, openai_whisper_cached
+
+        cached = openai_whisper_cached(model_name)
+        if cached is None:
+            raise SpeechModelMissing(f"Whisper {model_name} is not on this computer")
         import whisper
 
-        _whisper_model_cache[model_name] = whisper.load_model(model_name)
+        _whisper_model_cache[model_name] = whisper.load_model(cached)
     return _whisper_model_cache[model_name]
 
 
@@ -1405,13 +1410,16 @@ def _get_faster_whisper_model(model_name: str) -> Any:
         if device == "cpu":
             # Measured on the rehearsal recording: 8 threads take base from 2.2 s to 1.1 s for a 6 s sentence.
             options["cpu_threads"] = max(1, min(8, os.cpu_count() or 4))
-        from pilot.system.speech_models import local_path
+        from pilot.system.model_presence import SpeechModelMissing, faster_whisper_source
 
-        # Whisper base downloaded into Heliox's data folder (the Voice choice) is used from there.
-        local = local_path("whisper-base") if model_name == "base" else None
+        # Downloaded into Heliox's data folder, or already in the Hugging Face cache: never fetched from here.
+        source = faster_whisper_source(model_name)
+        if source is None:
+            raise SpeechModelMissing(f"Whisper {model_name} is not on this computer")
+        options["local_files_only"] = True
         try:
             _faster_whisper_model_cache[cache_key] = WhisperModel(
-                str(local) if local is not None else model_name,
+                source,
                 device=device,
                 compute_type=compute_type,
                 **options,
@@ -2546,6 +2554,8 @@ class ContinuousVoiceListener:
             logger.warning("Continuous voice listener could not start: %s", detail)
             return f"Voice listener could not start: {detail}"
 
+        self._recogniser_missing_said = False
+        self._note_recogniser_missing()  # listening starts anyway: the voice bar says what is missing
         self._task = asyncio.create_task(self._listen_loop())
         self._transcriber_warmup_task = asyncio.create_task(self._warm_transcriber())
         self._call_watch_task = asyncio.create_task(self._watch_calls())
@@ -3188,6 +3198,8 @@ class ContinuousVoiceListener:
         return await self._transcribe_whisper_text(audio_path)
 
     async def _transcribe_whisper_text(self, audio_path: str, language: str | None = None) -> str:
+        from pilot.system.model_presence import SpeechModelMissing
+
         try:
             result = await _transcribe_speech(
                 audio_path,
@@ -3203,6 +3215,10 @@ class ContinuousVoiceListener:
 
             return result["text"]
 
+        except SpeechModelMissing:
+            # No Whisper on this computer: nothing is downloaded; with Parakeet its words still count.
+            self._note_recogniser_missing()
+            return ""
         except ImportError:
             pass
 
@@ -3295,6 +3311,35 @@ class ContinuousVoiceListener:
                 e,
             )
             return ""
+
+    def recogniser_presence(self) -> dict[str, bool]:
+        """Which recognisers can run now (nothing is downloaded to find out)."""
+        from pilot.config import DATA_DIR
+        from pilot.system.model_presence import recognisers
+        from pilot.system.parakeet_asr import model_dir
+
+        folder = model_dir(getattr(self.config.voice, "parakeet_model_dir", ""), DATA_DIR)
+        return recognisers(
+            str(self.config.voice.whisper_model), folder, str(getattr(self.config.voice, "final_pass", "whisper"))
+        )
+
+    def _note_recogniser_missing(self) -> None:
+        """Say once that speech recognition needs a model, unless Parakeet can still hear the words."""
+        if getattr(self, "_recogniser_missing_said", False):
+            return
+        present = self.recogniser_presence()
+        if present["parakeet"] or present["whisper"]:
+            return
+        self._recogniser_missing_said = True
+        from pilot.system.model_presence import MISSING_MESSAGE
+
+        logger.warning("Voice: %s", MISSING_MESSAGE)
+        if self._on_status and self._loop is not None:
+            self._schedule(
+                self._on_status,
+                "recogniser_missing",
+                {"message": MISSING_MESSAGE, "settings": "voice-models", "recommended": "whisper-base"},
+            )
 
     def _schedule_mic_quality(self, audio_path: str) -> None:
         """Judge the microphone from this utterance in a worker thread, off the path to dispatch."""

@@ -477,7 +477,10 @@ async def test_overheard_speech_goes_to_live_only():
     server = PilotServer(PilotConfig())
     server._live = MagicMock()
     await server._voice_overheard("I'll send Priya the deck by Friday")
-    server._live.offer_speech.assert_called_once_with("I'll send Priya the deck by Friday")
+    server._live.offer_speech.assert_called_once()
+    args, kwargs = server._live.offer_speech.call_args
+    assert args == ("I'll send Priya the deck by Friday",)
+    assert kwargs.get("addressed", False) is False  # Live may show a card, never treat it as said to Heliox
     assert not server._voice_task_open()
     server._pending_confirms["plan"] = MagicMock()
     assert server._voice_task_open()

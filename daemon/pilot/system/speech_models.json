@@ -4,7 +4,7 @@
     {
       "id": "whisper-base",
       "title": "Speech recognition (Whisper base)",
-      "purpose": "Turns what you say into words, in 99 languages. Needed for speaking to Heliox.",
+      "purpose": "Turns what you say into words, in 99 languages, and listens for the wake phrase. Recommended to start: smaller and faster; choose Parakeet as well for the best English. Without a recogniser Heliox cannot hear you (typing still works).",
       "language": "multilingual",
       "size_bytes": 147882941,
       "disk_bytes": 147882941,
@@ -93,7 +93,7 @@
     {
       "id": "streaming-zipformer-en",
       "title": "Live captions (streaming recognition)",
-      "purpose": "Shows your words while you speak and helps Heliox tell when you have finished. English only.",
+      "purpose": "Shows your words while you speak and helps Heliox tell when you have finished. English only. Without it there are no live captions.",
       "language": "en",
       "size_bytes": 72654782,
       "disk_bytes": 72654782,
@@ -138,7 +138,7 @@
     {
       "id": "smart-turn-v3",
       "title": "End of sentence (Smart Turn)",
-      "purpose": "Tells a finished sentence from a pause to think, so Heliox answers sooner and does not cut you off.",
+      "purpose": "Tells a finished sentence from a pause to think, so Heliox answers sooner and does not cut you off. Without it, the end of a sentence is judged by silence alone.",
       "language": "multilingual",
       "size_bytes": 8679182,
       "disk_bytes": 8679182,

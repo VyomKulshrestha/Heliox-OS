@@ -5,7 +5,9 @@ transducer decodes while they speak, so the text is ready the moment the turn en
 as a live caption while they are still talking. Measured on a laptop CPU: a 6.6 s clip decoded in 0.37 s as it
 played, with nothing left to do at the end.
 
-The model (int8, about 73 MB) downloads once from Hugging Face the first time it is used. It is English-only, so
+The model (int8, about 73 MB) is downloaded only when the person asks (Settings, Voice; pilot.system.speech_models)
+and is also used when it is already in the Hugging Face cache; nothing is fetched by itself. Without it there are no
+live captions. It is English-only, so
 it is an opt-in engine (``voice.transcription_engine = "streaming"``); Whisper stays the default.
 
 Decoding runs on one worker thread, so the audio loop never waits on it.
@@ -66,7 +68,7 @@ class StreamingTranscriber:
         return self._recognizer is not None
 
     def load(self) -> bool:
-        """Download (first use only) and open the model. Blocking: call it from a worker thread."""
+        """Open the model if it is on this computer (never downloads). Blocking: call it from a worker thread."""
         with self._lock:
             if self._recognizer is not None:
                 return True
@@ -81,7 +83,8 @@ class StreamingTranscriber:
                 else:
                     from huggingface_hub import hf_hub_download
 
-                    paths = {key: hf_hub_download(REPO, name) for key, name in FILES.items()}
+                    # Already in the Hugging Face cache from before; never downloaded from here.
+                    paths = {key: hf_hub_download(REPO, name, local_files_only=True) for key, name in FILES.items()}
                 self._recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
                     tokens=paths["tokens"],
                     encoder=paths["encoder"],
