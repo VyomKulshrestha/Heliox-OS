@@ -93,9 +93,12 @@ class LiveConversationLink:
             return False
         entries = list(live.last_spoken_entries()) if live is not None else []
         setting, local = self._privacy()
-        memory.add_heliox(
-            remark_for_model(text, entries, setting=setting, model_local=local), cut_off=outcome == "interrupted"
-        )
+        said = remark_for_model(text, entries, setting=setting, model_local=local)
+        try:
+            # Marked as Live's own remark, so the model explains it from the evidence instead of taking the blame.
+            memory.add_heliox(said, cut_off=outcome == "interrupted", source="live")
+        except TypeError:  # a ConversationMemory without ``source``
+            memory.add_heliox(said, cut_off=outcome == "interrupted")
         self._recorded.update(str(e.get("id", "")) for e in entries)
         return True
 
