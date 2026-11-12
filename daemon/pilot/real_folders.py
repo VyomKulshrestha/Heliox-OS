@@ -207,28 +207,95 @@ def real_budget_tracker(model_config: Any) -> Any:
     return BudgetTracker(model_config, str(real_budget_db()))
 
 
-def owner_model_settings() -> dict[str, Any]:
-    """The [model] section of the person's settings (provider, cloud provider, model names), read and copied.
+# The sections a run outside the daemon may copy from the person's settings: the provider and model ([model]), how
+# the voice hears and speaks ([voice]) and the conversation's models and reply length ([conversation]).
+OWNER_SECTIONS = ("model", "voice", "conversation")
+# Never copied: this computer's devices. A bench feeds recorded files and chooses its own device.
+NOT_COPIED = {"voice": frozenset({"input_device", "headset_input_choices", "tts_device"})}
 
-    A paid run needs to talk to the provider the person chose, with the key the system keyring holds under that
-    provider's name. It reads these values here and applies them to a config of its own folder, so it never holds a
-    config object whose save would write the person's file. Empty when the file is missing or cannot be read."""
+
+def owner_settings(section: str) -> dict[str, Any]:
+    """One section of the person's settings, read only and returned as a copy; {} when missing or unreadable.
+
+    A run outside the daemon (a paid eval, the bench) needs the provider, the model and the voice the person chose.
+    It reads them here and applies them to a config of its own folder, so it never holds a config object whose save
+    would write the person's file. The file is found from the account's home as the system names it, not from HOME.
+    """
     import tomllib
 
+    if section not in OWNER_SECTIONS:
+        raise ValueError(f"not a section a run may copy: {section!r} (one of {', '.join(OWNER_SECTIONS)})")
     path = _owner_folder("XDG_CONFIG_HOME", ".config") / "config.toml"
     try:
-        section = tomllib.loads(path.read_text(encoding="utf-8")).get("model", {})
+        found = tomllib.loads(path.read_text(encoding="utf-8")).get(section, {})
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return {}
-    return dict(section) if isinstance(section, dict) else {}
+    return dict(found) if isinstance(found, dict) else {}
+
+
+def _owner_heliox_folders() -> list[Path]:
+    home = account_home() or Path.home()
+    return [
+        _owner_folder("XDG_CONFIG_HOME", ".config"),
+        _owner_folder("XDG_DATA_HOME", ".local/share"),
+        _owner_folder("XDG_STATE_HOME", ".local/state"),
+        home / ".config" / "heliox-os",
+        home / ".cache" / "heliox",
+        home / "AppData" / "Local" / "heliox-os",
+        home / "Library" / "Caches" / "heliox-os",
+    ]
+
+
+def _points_into_owner_folders(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        path = Path(value).expanduser()
+    except (TypeError, ValueError):
+        return False
+    return path.is_absolute() and any(_under(path, folder) for folder in _owner_heliox_folders())
+
+
+def apply_owner_settings(
+    config: Any,
+    sections: tuple[str, ...] = ("model",),
+    *,
+    only: tuple[str, ...] = (),
+    skip: tuple[str, ...] = (),
+) -> list[str]:
+    """Copy fields of the person's settings onto ``config`` (one whose files are in the run's own folder).
+
+    ``only`` names the fields to copy as "section.name". For [voice] and [conversation] it must name at least one: a
+    setting added to those sections later is then not copied into a run by default (ValueError otherwise). [model]
+    with no field named copies every field this version knows. ``skip`` leaves out "section.name" fields or whole
+    sections. Returns "section.name" for each field copied.
+
+    Never copied, even when named: a field this version does not know, the device fields (NOT_COPIED), and a text value
+    that is a path inside the person's Heliox folders (a model folder in their data folder, say): through it the run
+    would read or write their folder again."""
+    copied = []
+    for section in sections:
+        if section in skip:
+            continue
+        named = {entry.split(".", 1)[1] for entry in only if entry.startswith(f"{section}.")}
+        if not named and section != "model":
+            raise ValueError(f"name the [{section}] fields to copy with only=, as 'section.name'")
+        target = getattr(config, section)
+        for name, value in owner_settings(section).items():
+            if (named and name not in named) or f"{section}.{name}" in skip or name in NOT_COPIED.get(section, ()):
+                continue
+            if not hasattr(target, name) or _points_into_owner_folders(value):
+                continue
+            setattr(target, name, value)
+            copied.append(f"{section}.{name}")
+    return copied
+
+
+def owner_model_settings() -> dict[str, Any]:
+    """The [model] section of the person's settings, read and copied (see owner_settings)."""
+    return owner_settings("model")
 
 
 def apply_owner_model_settings(config: Any) -> list[str]:
-    """Copy the person's model settings onto ``config`` (one whose files are in the run's own folder). Returns the
-    names copied; settings this version does not know are left out."""
-    copied = []
-    for name, value in owner_model_settings().items():
-        if hasattr(config.model, name):
-            setattr(config.model, name, value)
-            copied.append(name)
-    return copied
+    """The person's [model] settings copied onto ``config``; returns the bare names (see apply_owner_settings)."""
+    return [name.split(".", 1)[1] for name in apply_owner_settings(config, ("model",))]

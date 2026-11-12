@@ -235,3 +235,88 @@ def test_the_guard_protects_the_accounts_own_folders_when_the_home_is_faked(monk
     if sys.platform == "win32":
         assert own / "AppData" / "Local" / "heliox-os" / "runtime" in folders
     assert folder_guard.true_home() == real_folders.account_home()
+
+
+def _owner_with(monkeypatch, tmp_path, text: str) -> Path:
+    own = tmp_path / "account"
+    (own / ".config" / "heliox-os").mkdir(parents=True)
+    (own / ".config" / "heliox-os" / "config.toml").write_text(text, encoding="utf-8")
+    monkeypatch.setattr(real_folders, "account_home", lambda: own)
+    for variable in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
+        monkeypatch.delenv(variable, raising=False)
+    return own
+
+
+VOICE = ("voice.final_pass", "voice.turn_hold_ms", "voice.input_device", "voice.parakeet_model_dir")
+
+
+def _voice_owner(monkeypatch, tmp_path) -> Path:
+    own = _owner_with(monkeypatch, tmp_path, "")
+    models = (own / ".local" / "share" / "heliox-os" / "models" / "parakeet").as_posix()
+    (own / ".config" / "heliox-os" / "config.toml").write_text(
+        f"""[model]
+provider = 'cloud'
+[voice]
+final_pass = 'parakeet'
+turn_hold_ms = 1800.0
+input_device = 'Headset (USB)'
+tts_device = 'cuda'
+parakeet_model_dir = '{models}'
+barge_in_enabled = false
+[conversation]
+claude_model = 'claude-haiku-5-5'
+share_screen_text = true
+[live]
+enabled = true
+""",
+        encoding="utf-8",
+    )
+    return own
+
+
+def test_a_run_copies_only_the_named_fields_and_never_devices_or_paths_into_their_folders(monkeypatch, tmp_path):
+    from pilot.config import PilotConfig
+
+    _voice_owner(monkeypatch, tmp_path)
+    run_config = PilotConfig()
+    device_before, barge_before = run_config.voice.input_device, run_config.voice.barge_in_enabled
+    share_before = run_config.conversation.share_screen_text
+
+    copied = real_folders.apply_owner_settings(
+        run_config, ("model", "voice", "conversation"), only=(*VOICE, "voice.tts_device", "conversation.claude_model")
+    )
+
+    assert sorted(copied) == ["conversation.claude_model", "model.provider", "voice.final_pass", "voice.turn_hold_ms"]
+    assert run_config.voice.final_pass == "parakeet" and run_config.voice.parakeet_model_dir == ""
+    assert run_config.voice.input_device == device_before  # a named device field is still this computer's own
+    assert run_config.voice.barge_in_enabled == barge_before  # set by the person, not named: not copied
+    assert run_config.conversation.share_screen_text == share_before
+    assert run_config.live.enabled is False  # [live] is not a section a run copies
+
+
+def test_a_voice_or_conversation_section_needs_its_fields_named(monkeypatch, tmp_path):
+    from pilot.config import PilotConfig
+
+    _voice_owner(monkeypatch, tmp_path)
+    for section in ("voice", "conversation"):
+        with pytest.raises(ValueError, match="only="):
+            real_folders.apply_owner_settings(PilotConfig(), ("model", section))
+
+
+def test_skip_leaves_a_named_field_or_section_alone(monkeypatch, tmp_path):
+    from pilot.config import PilotConfig
+
+    _owner_with(monkeypatch, tmp_path, "[model]\nprovider = 'cloud'\n[voice]\nfinal_pass = 'parakeet'\n")
+    run_config = PilotConfig()
+
+    copied = real_folders.apply_owner_settings(
+        run_config, ("model", "voice"), only=("voice.final_pass",), skip=("voice.final_pass", "model")
+    )
+
+    assert copied == [] and run_config.voice.final_pass != "parakeet"
+
+
+def test_only_the_named_sections_can_be_read(monkeypatch, tmp_path):
+    _owner_with(monkeypatch, tmp_path, "[live]\nenabled = true\n")
+    with pytest.raises(ValueError, match="not a section"):
+        real_folders.owner_settings("live")
