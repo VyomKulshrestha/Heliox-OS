@@ -277,6 +277,22 @@ Linux:
 5. Fixed: the `notify` action says when `notify-send` is missing instead of claiming success. Fakes only.
 6. Partly fixed: on Wayland, screenshots and the global shortcut go through the desktop's portals (where the desktop has them, and the desktop asks the person): the screenshot Run for real under sway (CI on 0a8edad), the shortcut Run for real only against a fake portal. The window tools (`wmctrl`, `xdotool`) are still X11-only and fail with an X11 hint.
 
+## Languages other than English
+
+Heliox is built and tested in English. A person who sets another voice language, or speaks one with the language on "auto", gets this today on every system. "Measured" means synthetic speech only (espeak-ng in Hindi, Spanish, German and Mandarin, and Windows' Microsoft Helena voice in Spanish), one clip per line, through Heliox's own Whisper settings, on 13 November 2026 with the machine 73 to 92 % busy. No recording of a person speaking these languages has been made, so none of this is known for a real voice.
+
+| Stage | What another language gets | How it is known |
+|---|---|---|
+| Hearing the words | Whisper alone (Whisper small is the recommended download). Parakeet, the live captions and the streaming recogniser are English only, so there are no captions and nothing for the early wake read or the warm-up before the turn ends. Whisper's prompt is an English command vocabulary in every language. In Hindi it pulled the words towards English ("नहीं" written as "Lucky.", "रुको" as "Roto."), and Whisper base sometimes wrote the prompt back ("Hey Heliox. Desktop command vocabulary.") | Code; measured |
+| The wake phrase | "Hey Heliox" (or "Hi" or "Hello Heliox") said inside a Hindi, Spanish, German or Mandarin sentence was found in every clip. "Oye Heliox" and "Hallo Heliox" were not wake phrases with Whisper small: only English greetings count before the name | Code; measured |
+| No, stop and deny by voice | English words only. Spanish "No" works because it is the same word. "Nein", "नहीं", "不要", "停", "Para" and "Basta" do not deny an approval or stop a task. Approving is never possible by voice in any language. Talking over Heliox for under 1.6 s stops its voice, and denies a waiting approval, whatever the words. In one Mandarin clip "停" ("stop") was written "Send.", which an open conversation takes as a request | Code; measured |
+| Follow-ups without the wake phrase, the unfinished-sentence wait, "forget that", spoken settings, the profile questions | English phrasing only. In Hindi and Mandarin script a follow-up never acts without the wake phrase or the microphone button | Code |
+| End of the turn | Smart Turn listens to the sound, not the words, and its makers describe version 3 as trained on many languages; how well it ends a Hindi, Spanish, German or Mandarin sentence has not been checked. The silence rule works in any language | Code; not measured |
+| The model's answers | No instruction about the language: the model usually answers in the language it was spoken to in, but nothing asks it to | Code; not measured |
+| Sentences Heliox's own code writes (confirmations, errors, the approval prompt) and Live's cards | English | Code |
+| Live's detectors | Risky commands, secrets and arithmetic work on any text. Dates, weekdays, promises, the profile facts and a missing attachment are read in English only | Code |
+| Heliox's voice | Kokoro always reads with its American English rules. Spanish and German come out in English sounds. Hindi is partly read. Mandarin was read as the words "Chinese letter" nine times over. Kokoro has Spanish, Hindi and Mandarin voices, but Heliox does not use them, and it has no German voice. The system voice (Windows, `say`, espeak-ng) speaks whatever voice the person picks in Settings | Code; measured |
+
 ## Gaps that remain
 
 | Gap | Documented route | What the person grants | Estimate |
