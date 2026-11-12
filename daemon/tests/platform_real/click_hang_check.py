@@ -88,6 +88,9 @@ def main() -> int:
     parser.add_argument("--python", default=sys.executable)
     args = parser.parse_args()
     if sys.platform == "darwin":
+        import mac_front
+
+        mac_front.diag("at the start of click_hang_check")
         fixture = Fixture([sys.executable, str(HERE / "click_hang_fixture_macos.py")])
         prefix = "macos"
     else:
@@ -99,9 +102,13 @@ def main() -> int:
         time.sleep(1.0)
         from pilot.system import accessibility
 
-        # The window must be in front first: a step before this one can leave another app there (CI on e51aead:
-        # "No window is in front to read" after the notification check), so ask the fixture forward until the
-        # snapshot is of its window, for up to 15 s.
+        # The window must be in front first: a step before this one can leave another app there (CI on e51aead and
+        # 105b573: "No window is in front to read"; on macOS the fixture asking for the front was ignored), so the
+        # check brings it forward the way Heliox's window focus does (mac_front), and asks until the snapshot is of
+        # its window, for up to 15 s.
+        if sys.platform == "darwin":
+            route = mac_front.bring_to_front(fixture.proc.pid)
+            check("macos/click-fixture-in-front", bool(route), f"route {route or 'none'}")
         snapshot, target, deadline = None, None, time.monotonic() + 15.0
         while target is None and time.monotonic() < deadline:
             fixture.send("front")
@@ -160,10 +167,16 @@ def main() -> int:
             f"reads took {[round(t, 2) for t in timings]} s; errors {errors}",
         )
     finally:
-        time.sleep(6.0)
-        fixture.send("quit")
-        time.sleep(0.5)
-        fixture.proc.kill()
+        time.sleep(6.0)  # let a hang still in progress end, so quit is heard
+        if sys.platform == "darwin":
+            import mac_front
+
+            mac_front.end(fixture.proc)
+            mac_front.diag("at the end of click_hang_check")
+        else:
+            fixture.send("quit")
+            time.sleep(0.5)
+            fixture.proc.kill()
     return failures
 
 

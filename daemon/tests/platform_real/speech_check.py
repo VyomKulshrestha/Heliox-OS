@@ -109,6 +109,12 @@ def no_voice() -> None:
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "no-voice":
         no_voice()
+    elif sys.platform == "darwin":
+        import mac_front
+
+        mac_front.diag("at the start of speech_check")
+        speak()
+        mac_front.diag("at the end of speech_check")
     else:
         speak()
     return failures

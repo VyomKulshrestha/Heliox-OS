@@ -60,6 +60,10 @@ def dunst_history() -> str:
 
 def main(argv: list[str]) -> int:
     mode = argv[0] if argv else "shown"
+    if sys.platform == "darwin":
+        import mac_front
+
+        mac_front.diag("at the start of notify_check")
     result = notify()
     platform = "macos" if sys.platform == "darwin" else "linux"
     if mode == "missing":
@@ -84,6 +88,9 @@ def main(argv: list[str]) -> int:
         )
     else:
         check("notify-macos/osascript-result", result == f"Notification sent: {SUMMARY}", result)
+        import mac_front
+
+        mac_front.diag("at the end of notify_check")
     return failures
 
 

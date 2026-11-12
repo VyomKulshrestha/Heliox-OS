@@ -136,7 +136,11 @@ def linux() -> None:
 
 def main() -> int:
     if sys.platform == "darwin":
+        import mac_front
+
+        mac_front.diag("at the start of apps_check")
         macos()
+        mac_front.diag("at the end of apps_check")
     else:
         linux()
     return failures

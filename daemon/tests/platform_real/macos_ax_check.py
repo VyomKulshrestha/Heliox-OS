@@ -219,6 +219,9 @@ def main() -> int:
         import Quartz  # noqa: F401
 
         check("macos/pyobjc-imports", True)
+        import mac_front
+
+        mac_front.diag("at the start of macos_ax_check")
     except ImportError as exc:
         check("macos/pyobjc-imports", False, str(exc))
         return failures
@@ -338,8 +341,12 @@ def main() -> int:
         timings.sort()
         check("macos/read-cost", timings[len(timings) // 2] < 50.0, f"median {timings[len(timings) // 2]:.1f} ms")
     finally:
-        send("quit")
-        fixture.kill()
+        import mac_front
+
+        # End the fixture process, not only its window: a process left running can hold the front for the next
+        # check (CI on 105b573: every later fixture stayed behind).
+        mac_front.end(fixture)
+        mac_front.diag("at the end of macos_ax_check")
     return failures
 
 
