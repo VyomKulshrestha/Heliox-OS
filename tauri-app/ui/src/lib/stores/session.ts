@@ -656,6 +656,9 @@ export async function listenToDaemonSupervisor(onLine: (text: string) => void): 
   }
 }
 
+export const STILL_STARTING_PHASE =
+  "Heliox is still starting. Your request is kept and answered as soon as it is ready.";
+
 export const CONNECTION_LOST_APPROVAL_MESSAGE =
   "Lost the connection to Heliox, so the approval dialog was closed. Nothing in it was approved.";
 
@@ -1854,6 +1857,10 @@ function createSession() {
       messages: [...s.messages, { type: "user", text: input, timestamp: Date.now() }],
     }));
 
+    if (!isConnected()) {
+      // Typed while Heliox is still starting: kept, and sent as soon as the daemon listens (it is answered once ready).
+      update((s) => ({ ...s, phase: STILL_STARTING_PHASE }));
+    }
     try {
       const result = (await call("execute", {
         input,

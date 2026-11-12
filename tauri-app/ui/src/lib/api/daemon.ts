@@ -199,6 +199,9 @@ export async function connect(): Promise<boolean> {
         if (ws !== socket) return;
         ws = null;
         notifyConnectionState(false);
+        // A refused connection (the daemon not listening yet) fires error before close, and close then sees an
+        // obsolete socket and returns: without this, nothing tried again and the window stayed "Connecting...".
+        scheduleReconnect();
         finish(false);
       };
     } catch {
@@ -209,10 +212,36 @@ export async function connect(): Promise<boolean> {
   return connectPromise;
 }
 
+/** How long a request made before the daemon listens waits for it: a first start on a small machine takes minutes. */
+export const START_WAIT_MS = 180_000;
+export const START_WAIT_FAILED = "Heliox did not start within 3 minutes, so this request was not sent. Try again.";
+
+/** Connect, or wait (bounded) until the reconnect loop connects: a request typed while Heliox is still starting is
+ * kept and sent once the daemon listens, where it waits for start-up to finish and is answered then. */
+export async function waitForConnection(limitMs: number = START_WAIT_MS): Promise<boolean> {
+  if (await connect()) return true;
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      offConnectionState(handler);
+      resolve(ok);
+    };
+    const handler = (connected: boolean) => {
+      if (connected) done(true);
+    };
+    onConnectionState(handler);
+    const timer = setTimeout(() => done(isConnected()), limitMs);
+    scheduleReconnect();
+  });
+}
+
 export async function call<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
   if (!isConnected()) {
-    const connected = await connect();
-    if (!connected) throw new Error("Cannot connect to Heliox OS daemon");
+    const connected = await waitForConnection();
+    if (!connected) throw new Error(START_WAIT_FAILED);
   }
 
   const id = ++messageId;

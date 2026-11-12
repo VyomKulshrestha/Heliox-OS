@@ -28,7 +28,41 @@ async def request(ws, method: str, request_id: int, timeout: float = 15.0) -> di
             return message
 
 
-async def main(timeout: float) -> int:
+HEAVY = ("scipy", "sklearn", "pandas", "river", "torch")
+
+
+def timing_checks(label: str, timings: dict, late_parts: dict) -> tuple[list[str], bool]:
+    """CHECK lines from the daemon's own start-up timings (pilot.system.startup_timing), and whether all passed:
+    the times are the daemon's, measured from its process start, not this checker's polling."""
+    lines: list[str] = []
+    ok = True
+    for point, words in (("listening", "listening"), ("ready", "ready"), ("all_started", "every late part started")):
+        found = timings.get(point)
+        if found is None:
+            lines.append(f"CHECK start-up/{label}/{point}: FAIL - never reached {words}")
+            ok = False
+            continue
+        lines.append(
+            f"CHECK start-up/{label}/{point}: PASS - {words} {found['seconds']:.1f} s after {found['since']}, "
+            f"{found['modules']} modules loaded"
+        )
+    if "learner_loaded" in timings:
+        lines.append(f"CHECK start-up/{label}/learner: PASS - loaded {timings['learner_loaded']['seconds']:.1f} s")
+    ready = timings.get("ready") or {}
+    heavy = [name for name in ready.get("heavy", []) if name in HEAVY]
+    if heavy:
+        lines.append(f"CHECK start-up/{label}/nothing-heavy-before-ready: FAIL - loaded at ready: {', '.join(heavy)}")
+        ok = False
+    elif ready:
+        lines.append(f"CHECK start-up/{label}/nothing-heavy-before-ready: PASS - none of {', '.join(HEAVY)} at ready")
+    failed = sorted(name for name, state in late_parts.items() if state != "ready")
+    if failed:
+        lines.append(f"CHECK start-up/{label}/late-parts: FAIL - not started: {', '.join(failed)}")
+        ok = False
+    return lines, ok
+
+
+async def main(timeout: float, timings_label: str = "") -> int:
     import websockets
 
     from pilot.config import RUNTIME_DIR
@@ -57,7 +91,20 @@ async def main(timeout: float) -> int:
                         request_id += 1
                         if (ready.get("result") or {}).get("state") == "ready":
                             print(f"CHECK first-run/daemon-ready: PASS - after {time.monotonic() - started:.0f} s")
-                            return 0
+                            if not timings_label:
+                                return 0
+                            # Then wait for every late part, and report the daemon's own times.
+                            status = ready.get("result") or {}
+                            while time.monotonic() < deadline and "all_started" not in status.get("timings", {}):
+                                await asyncio.sleep(2)
+                                status = (await request(ws, "startup_status", request_id)).get("result") or {}
+                                request_id += 1
+                            lines, ok = timing_checks(
+                                timings_label, status.get("timings") or {}, status.get("late_parts") or {}
+                            )
+                            for line in lines:
+                                print(line)
+                            return 0 if ok else 1
                         await asyncio.sleep(2)
                     print(f"CHECK first-run/daemon-ready: FAIL - still {ready} after {timeout:.0f} s")
                     return 1
@@ -80,4 +127,6 @@ async def request_auth(ws, token: str) -> dict:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main(float(sys.argv[1]) if len(sys.argv) > 1 else 180.0)))
+    arguments = [argument for argument in sys.argv[1:] if not argument.startswith("--timings=")]
+    label = next((argument.split("=", 1)[1] for argument in sys.argv[1:] if argument.startswith("--timings=")), "")
+    sys.exit(asyncio.run(main(float(arguments[0]) if arguments else 180.0, label)))

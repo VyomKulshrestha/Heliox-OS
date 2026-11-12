@@ -10222,7 +10222,12 @@ class PilotServer:
         startup = getattr(self, "_startup", None)
         if startup is None:
             return {"status": "ok", "state": "ready", "stage": "", "reason": "", "stages_done": []}
-        return {"status": "ok", **startup.snapshot()}
+        reply = {"status": "ok", **startup.snapshot()}
+        timings = self._startup_timings().snapshot()  # only with HELIOX_STARTUP_TIMINGS=1 (the first-run CI job)
+        if timings is not None:
+            reply["timings"] = timings
+            reply["late_parts"] = self._late_parts().snapshot()
+        return reply
 
     async def _handle_ping(self, params: dict, ws: ServerConnection) -> dict:
         """Ping the server to check connectivity.
@@ -10735,8 +10740,18 @@ class PilotServer:
             late.mark("online_learning", "starting")  # loaded by _after_ready, not by run()
         return late
 
+    def _startup_timings(self) -> Any:
+        """When start-up reached listening, ready and all-started, and what was loaded (pilot.system.startup_timing)."""
+        timings = self.__dict__.get("_timings")
+        if timings is None:
+            from pilot.system.startup_timing import StartupTimings
+
+            timings = self._timings = StartupTimings()
+        return timings
+
     def _begin_after_ready(self) -> None:
         if self.__dict__.get("_after_ready_task") is None:
+            self._startup_timings().mark("ready")
             self._after_ready_task = asyncio.create_task(self._after_ready(), name="after_ready")
 
     async def _learner_key(self) -> bytes | None:
@@ -10804,6 +10819,7 @@ class PilotServer:
                     set_ready()  # a decision held for the learner now goes ahead with it
                 logger.info("Learner loaded after ready: %s", loaded)
                 late.mark("online_learning", "ready")
+                self._startup_timings().mark("learner_loaded")
                 if not loaded.get("from_snapshot"):
                     await self._save_learner_snapshot()
             except Exception as error:
@@ -10813,6 +10829,7 @@ class PilotServer:
         else:
             late.mark("online_learning", "ready")
         await late.run()
+        self._startup_timings().mark("all_started")
         while True:
             await asyncio.sleep(snapshot_every)
             learner = self._online_learning
@@ -12977,6 +12994,7 @@ def handle_tool(tool_name, params):
                 ping_interval=30,  # send keepalive ping every 30s
                 ping_timeout=300,  # allow up to 5 min for pong (matches LLM timeout)
             )
+            self._startup_timings().mark("listening")
         except BaseException:
             for sock in claimed:
                 sock.close()  # an in-process restart on this port must work at once

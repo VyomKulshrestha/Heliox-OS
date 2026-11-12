@@ -156,3 +156,94 @@ describe("daemon application results", () => {
     );
   });
 });
+
+describe("a request typed while Heliox is still starting", () => {
+  class StartingDaemon {
+    static OPEN = 1;
+    static attempts = 0;
+    static listensFromAttempt = 3; // the first two connects find nothing listening yet
+    static sent: { method: string; id: number }[] = [];
+
+    readyState = 0;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(_url: string) {
+      StartingDaemon.attempts += 1;
+      const listening = StartingDaemon.attempts >= StartingDaemon.listensFromAttempt;
+      queueMicrotask(() => {
+        if (!listening) {
+          this.readyState = 3;
+          this.onerror?.();
+          this.onclose?.();
+          return;
+        }
+        this.readyState = StartingDaemon.OPEN;
+        this.onopen?.();
+      });
+    }
+
+    send(raw: string) {
+      const request = JSON.parse(raw);
+      StartingDaemon.sent.push({ method: request.method, id: request.id });
+      const result = request.method === "auth" ? { status: "authenticated" } : { status: "success", message: "Done." };
+      queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) }));
+    }
+
+    close() {
+      this.readyState = 3;
+      this.onclose?.();
+    }
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    StartingDaemon.attempts = 0;
+    StartingDaemon.sent = [];
+    vi.stubGlobal("WebSocket", StartingDaemon);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, text: async () => "local-auth-token" }));
+  });
+
+  it("is kept, sent once the daemon listens, and answered once", async () => {
+    const daemon = await import("./daemon");
+    const answer = daemon.call("execute", { input: "open my mail" });
+    let settled = false;
+    void answer.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false); // nothing listens yet: the request waits instead of failing
+    await vi.advanceTimersByTimeAsync(3_000); // the reconnect loop tries again: still nothing
+    await vi.advanceTimersByTimeAsync(3_000); // now the daemon listens
+    await expect(answer).resolves.toEqual({ status: "success", message: "Done." });
+    expect(StartingDaemon.sent.filter((request) => request.method === "execute")).toHaveLength(1);
+    daemon.disconnect();
+    vi.useRealTimers();
+  });
+
+  it("keeps trying after a refused connection, as at every start before the daemon listens", async () => {
+    const daemon = await import("./daemon");
+    const states: boolean[] = [];
+    daemon.onConnectionState((connected) => states.push(connected));
+    await expect(daemon.connect()).resolves.toBe(false); // refused: error, then close
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(daemon.isConnected()).toBe(true); // the window connects by itself, no request needed
+    expect(states.at(-1)).toBe(true);
+    daemon.disconnect();
+    vi.useRealTimers();
+  });
+
+  it("says so when Heliox never starts, instead of waiting for ever", async () => {
+    StartingDaemon.listensFromAttempt = Number.POSITIVE_INFINITY;
+    const daemon = await import("./daemon");
+    const answer = daemon.call("execute", { input: "open my mail" });
+    const failed = expect(answer).rejects.toThrow(daemon.START_WAIT_FAILED);
+    await vi.advanceTimersByTimeAsync(daemon.START_WAIT_MS);
+    await failed;
+    expect(StartingDaemon.sent.some((request) => request.method === "execute")).toBe(false);
+    daemon.disconnect();
+    vi.useRealTimers();
+    StartingDaemon.listensFromAttempt = 3;
+  });
+});

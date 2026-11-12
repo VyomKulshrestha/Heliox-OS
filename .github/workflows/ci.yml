@@ -548,16 +548,49 @@ jobs:
           echo "FIRST_RUN_SIZES $RUNNER_OS ${{ matrix.python }} $("$PY" daemon/tests/platform_real/first_run_sizes.py show "$RUNNER_TEMP/setup.log")"
           exit $status
 
+      # The start-up times below are the daemon's own (pilot.system.startup_timing: seconds from its process start to
+      # listening, ready and every late part started, and the modules loaded), on these small CPU-only runners. The
+      # keyring is off, as on a Linux machine without a secret service, so the learner's key is the owner-only file.
       - name: Start the daemon it installed and check that it answers
+        env:
+          PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+          HELIOX_STARTUP_TIMINGS: "1"
         run: |
           set +e
           export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
           if [ "$RUNNER_OS" = "Windows" ]; then PY="$HOME/.config/heliox-os/env/Scripts/python.exe"; else PY="$HOME/.config/heliox-os/env/bin/python"; fi
           "$PY" -m pilot.server > "$RUNNER_TEMP/daemon.log" 2>&1 &
-          "$PY" daemon/tests/platform_real/first_run_rpc_check.py 240
+          "$PY" daemon/tests/platform_real/first_run_rpc_check.py 240 --timings=first-run
           status=$?
+          grep "Start-up timing" "$RUNNER_TEMP/daemon.log"
           if [ $status -ne 0 ]; then tail -60 "$RUNNER_TEMP/daemon.log"; fi
           exit $status
+
+      - name: Start-up with 100,000 events in the ledger, with and without a saved learner state
+        env:
+          PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+          HELIOX_STARTUP_TIMINGS: "1"
+        run: |
+          set +e
+          export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
+          if [ "$RUNNER_OS" = "Windows" ]; then PY="$HOME/.config/heliox-os/env/Scripts/python.exe"; else PY="$HOME/.config/heliox-os/env/bin/python"; fi
+          stop_daemon() { pkill -f "pilot.server" 2>/dev/null || taskkill //F //IM python.exe >/dev/null 2>&1 || true; sleep 3; }
+          stop_daemon
+          "$PY" daemon/tests/platform_real/seed_ledger.py 100000 --snapshot
+          "$PY" -m pilot.server > "$RUNNER_TEMP/daemon-saved.log" 2>&1 &
+          "$PY" daemon/tests/platform_real/first_run_rpc_check.py 300 --timings=saved-state
+          saved=$?
+          grep "Start-up timing\|Learner loaded" "$RUNNER_TEMP/daemon-saved.log"
+          stop_daemon
+          # The same ledger with no saved state: the learner replays all of it after ready.
+          "$PY" -c "from pilot.config import DATA_DIR; (DATA_DIR / 'online_learning_snapshot.bin').unlink(missing_ok=True)"
+          "$PY" -m pilot.server > "$RUNNER_TEMP/daemon-replay.log" 2>&1 &
+          "$PY" daemon/tests/platform_real/first_run_rpc_check.py 600 --timings=full-replay
+          replay=$?
+          grep "Start-up timing\|Learner loaded" "$RUNNER_TEMP/daemon-replay.log"
+          [ $saved -eq 0 ] || tail -60 "$RUNNER_TEMP/daemon-saved.log"
+          [ $replay -eq 0 ] || tail -60 "$RUNNER_TEMP/daemon-replay.log"
+          [ $saved -eq 0 ] && [ $replay -eq 0 ]
 
       - name: Repair - an environment whose Python is gone is rebuilt with the same parts
         run: |
