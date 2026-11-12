@@ -72,6 +72,31 @@ def classify(role: str, subrole: str, value_settable: bool, bundle_id: str, secu
     return False, ""
 
 
+AX_ERROR_INVALID_ELEMENT = -25202
+AX_ERROR_CANNOT_COMPLETE = -25204
+
+
+def element_answer(err: int) -> bool | None:
+    """What an Accessibility error code says about whether an element still exists. Pure."""
+    if err == 0:
+        return True
+    if err == AX_ERROR_INVALID_ELEMENT:
+        return False
+    return None
+
+
+def pid_alive(pid: int) -> bool:
+    import os
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True  # it exists but belongs to someone else
+
+
 def field_id(pid: int, element_hash: int) -> str:
     return f"ax:{pid}:{element_hash & 0xFFFFFFFFFFFFFFFF:x}"
 
@@ -111,6 +136,12 @@ class AXBackend:
     def attr(self, element: Any, name: str) -> Any:
         err, value = self._ax.AXUIElementCopyAttributeValue(element, name, None)
         return value if err == 0 else None
+
+    def element_valid(self, element: Any) -> bool | None:
+        """False when the element no longer exists (kAXErrorInvalidUIElement), True when it answers, None when the
+        API cannot tell (for example the app is busy)."""
+        err, _value = self._ax.AXUIElementCopyAttributeValue(element, "AXRole", None)
+        return element_answer(err)
 
     def settable(self, element: Any, name: str) -> bool:
         err, value = self._ax.AXUIElementIsAttributeSettable(element, name, None)
@@ -172,11 +203,10 @@ class MacReader:
         settable = b.settable(element, "AXValue")
         secure, kind = classify(role, subrole, settable, b.bundle_id(pid) if pid else "", self._secure_input())
         text = b.text_tail(element) if kind and not secure else None
-        return admit(
-            ElementFacts(
-                role=role, pid=pid, secure=secure, kind=kind, field=field_id(pid, b.element_hash(element)), text=text
-            )
-        )
+        field = field_id(pid, b.element_hash(element))
+        if kind and not secure:
+            remember_element(field, element)
+        return admit(ElementFacts(role=role, pid=pid, secure=secure, kind=kind, field=field, text=text))
 
     def foreground(self) -> tuple[str, str] | None:
         """(app name, window title) of the frontmost application. The title needs Accessibility; "" without it."""
@@ -190,6 +220,32 @@ class MacReader:
         window = b.attr(app, "AXFocusedWindow")
         title = str(b.attr(window, "AXTitle") or "") if window is not None else ""
         return (name, title) if name else None
+
+
+# The last fields read, so Live can ask whether a field's element (and so its window) still exists.
+_ELEMENTS: dict[str, Any] = {}
+
+
+def remember_element(field: str, element: Any) -> None:
+    if field not in _ELEMENTS and len(_ELEMENTS) >= 64:
+        _ELEMENTS.pop(next(iter(_ELEMENTS)))
+    _ELEMENTS[field] = element
+
+
+def field_exists(field: str) -> bool | None:
+    """Whether the element behind a field id still exists: False once its window closed or its app quit."""
+    try:
+        pid = int(field.split(":")[1])
+    except (IndexError, ValueError):
+        return None
+    if not pid_alive(pid):
+        return False
+    element = _ELEMENTS.get(field)
+    reader = _reader
+    if element is None or reader is None:
+        return None
+    with _lock:
+        return reader.backend.element_valid(element)
 
 
 _lock = threading.Lock()

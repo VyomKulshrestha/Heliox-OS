@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from pilot.live import focused_text  # noqa: E402
 from pilot.live import focused_text_linux as L  # noqa: E402
 from pilot.live.focused_text_policy import same_field  # noqa: E402
 
@@ -206,6 +207,37 @@ def sway_state() -> None:
         print(f"diagnosis: sway {kind}: {text}")
 
 
+def snapshot_checks(prefix: str, check) -> None:
+    """Accessibility snapshot of the window in front: the button by name, the fields by label, never a value."""
+    import asyncio
+
+    from pilot.system import accessibility
+
+    try:
+        snapshot = asyncio.run(accessibility.capture_snapshot(max_elements=60))
+    except Exception as exc:
+        check(f"{prefix}/snapshot", False, f"{type(exc).__name__}: {exc}")
+        return
+    labels = [element.label for element in snapshot.elements]
+    print(f"snapshot {snapshot.snapshot_id} of {snapshot.title!r}: {labels[:12]}")
+    button = next((e for e in snapshot.elements if e.role == "Button" and e.name == "Press me"), None)
+    check(f"{prefix}/snapshot-finds-the-button", button is not None, repr(labels[:12]))
+    check(
+        f"{prefix}/snapshot-never-has-values",
+        not any("hello from ci" in label or "s3cret" in label for label in labels),
+    )
+    if button is not None:
+        try:
+            element = accessibility.default_store().resolve(snapshot.snapshot_id, button.ref)
+            check(
+                f"{prefix}/snapshot-ref-resolves-in-the-same-window",
+                element.ref == button.ref,
+                f"center {element.center}",
+            )
+        except Exception as exc:
+            check(f"{prefix}/snapshot-ref-resolves-in-the-same-window", False, f"{type(exc).__name__}: {exc}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--wayland", action="store_true")
@@ -287,6 +319,20 @@ def main() -> int:
             timings.append((time.perf_counter() - start) * 1000)
         median = statistics.median(timings)
         check(f"{session}/read-cost", median < 50.0, f"median {median:.1f} ms, max {max(timings):.1f} ms over 40 reads")
+
+        snapshot_checks(session, check)
+
+        # Live drops a card when its field's window has gone: the window exists now, and not once the app has quit.
+        if back is not None and back.field:
+            handle = focused_text.window_handle(back.field)
+            check(f"{session}/window-exists-while-open", handle is not None and focused_text.window_exists(handle))
+            fixture.close()
+            time.sleep(1.0)
+            check(
+                f"{session}/window-gone-after-close",
+                handle is not None and not focused_text.window_exists(handle),
+                f"field_exists says {L.field_exists(back.field)!r}",
+            )
     finally:
         fixture.close()
     return failures

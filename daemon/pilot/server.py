@@ -116,12 +116,13 @@ from pilot.workflows.durable_tasks import (
 logger = logging.getLogger("pilot.server")
 
 
-async def _accessibility_observation(limit: int = 40) -> str:
-    """Describe the focused window's UI elements for autonomous rounds, or "" when unavailable."""
+async def _accessibility_observation(limit: int = 40, excluded: tuple[str, ...] = ()) -> str:
+    """Describe the focused window's UI elements for autonomous rounds, or "" when unavailable or not to be read
+    (Heliox's own window, password managers, apps the person excluded)."""
     from pilot.system.accessibility import AccessibilityUnavailable, capture_snapshot
 
     try:
-        snapshot = await capture_snapshot(max_elements=limit)
+        snapshot = await capture_snapshot(max_elements=limit, excluded=excluded)
     except AccessibilityUnavailable:
         return ""
     return snapshot.describe(limit=limit) if snapshot.elements else ""
@@ -1778,7 +1779,9 @@ class PilotServer:
                 memory=self._memory,
                 orchestrator=self._orchestrator,
                 multi_agent_router=self._multi_agent,
-                accessibility_observer=_accessibility_observation,
+                accessibility_observer=lambda: _accessibility_observation(
+                    excluded=tuple(self.config.timeline.excluded_apps)
+                ),
                 human_control=self._human_control,
                 job_store=AutonomousJobStore(),
                 reviewer=AutonomousReviewer(

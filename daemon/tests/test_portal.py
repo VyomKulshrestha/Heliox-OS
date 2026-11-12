@@ -177,3 +177,14 @@ def test_wayland_shortcut_starts_only_in_a_linux_wayland_session(monkeypatch):
 
     monkeypatch.setattr(portal, "wayland_session", lambda env=None: False)
     assert wayland_shortcut.start_if_wayland(lambda *_a: None) is None
+
+
+def test_screenshot_portal_needs_an_access_backend_and_says_so():
+    # xdg-desktop-portal 1.18 exports Screenshot only when some backend implements Access (the consent dialog).
+    message = portal.no_portal("take a screenshot", "org.freedesktop.DBus.Error.UnknownMethod")
+    assert "xdg-desktop-portal-gtk" in message and "consent dialog" in message
+    assert "xdg-desktop-portal-gtk" not in portal.no_portal("use a global shortcut", "ServiceUnknown")
+    names = ["org.freedesktop.impl.portal.desktop.wlr", "org.freedesktop.portal.Desktop"]
+    assert portal.missing_access_backend(names, ["org.freedesktop.portal.ScreenCast"])
+    assert not portal.missing_access_backend(names, [portal.SCREENSHOT])
+    assert not portal.missing_access_backend(["org.freedesktop.portal.Desktop"], [])

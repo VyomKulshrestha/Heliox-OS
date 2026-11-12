@@ -29,7 +29,9 @@ def main() -> None:
     password = Gtk.Entry()
     password.set_visibility(False)
     password.get_accessible().set_name("password")
-    for widget in (label, entry, password):
+    button = Gtk.Button(label="Press me")
+    button.connect("clicked", lambda _b: print("pressed", flush=True))
+    for widget in (label, entry, password, button):
         box.pack_start(widget, False, False, 0)
     window.add(box)
     window.connect("destroy", Gtk.main_quit)

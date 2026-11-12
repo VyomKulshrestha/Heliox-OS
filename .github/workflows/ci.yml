@@ -390,9 +390,9 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          sudo apt-get install -y -q --no-install-recommends sway xdg-desktop-portal xdg-desktop-portal-wlr pipewire
+          sudo apt-get install -y -q --no-install-recommends sway xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk pipewire
           mkdir -p "$HOME/.config/xdg-desktop-portal"
-          printf "[preferred]\ndefault=wlr\norg.freedesktop.impl.portal.Screenshot=wlr\n" > "$HOME/.config/xdg-desktop-portal/sway-portals.conf"
+          printf "[preferred]\ndefault=wlr;gtk\norg.freedesktop.impl.portal.Screenshot=wlr\norg.freedesktop.impl.portal.Access=gtk\n" > "$HOME/.config/xdg-desktop-portal/sway-portals.conf"
           ls /usr/share/xdg-desktop-portal/portals/ /usr/share/dbus-1/services/ | grep -i portal || true
           dbus-run-session -- bash -c '
             export XDG_RUNTIME_DIR=$(mktemp -d) && chmod 700 "$XDG_RUNTIME_DIR"
@@ -415,6 +415,9 @@ jobs:
             pipewire >/tmp/pipewire.log 2>&1 &
             sleep 1
             /usr/libexec/xdg-desktop-portal-wlr -l DEBUG >/tmp/xdpw.log 2>&1 &
+            # The front end exports Screenshot only when some backend implements Access (the consent dialog);
+            # xdg-desktop-portal-gtk does. It must be on the bus before the front end starts.
+            GDK_BACKEND=wayland /usr/libexec/xdg-desktop-portal-gtk >/tmp/xdpg.log 2>&1 &
             xdpw=$!
             sleep 1
             if kill -0 $xdpw 2>/dev/null; then echo "xdg-desktop-portal-wlr is running"; else wait $xdpw; echo "xdg-desktop-portal-wlr exited with status $?"; fi
@@ -426,6 +429,7 @@ jobs:
               echo "--- xdg-desktop-portal log"; tail -40 /tmp/xdp.log
               echo "--- xdg-desktop-portal-wlr log"; tail -40 /tmp/xdpw.log
               echo "--- pipewire log"; tail -20 /tmp/pipewire.log
+              echo "--- xdg-desktop-portal-gtk log"; tail -20 /tmp/xdpg.log
               kill -0 $xdpw 2>/dev/null && echo "xdg-desktop-portal-wlr still running" || echo "xdg-desktop-portal-wlr not running"
             fi
             exit $status
@@ -518,6 +522,42 @@ jobs:
           status=$?
           if [ $status -ne 0 ]; then tail -60 "$RUNNER_TEMP/daemon.log"; fi
           exit $status
+
+      - name: Repair - an environment whose Python is gone is rebuilt with the same parts
+        run: |
+          set +e
+          export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
+          export HELIOX_SETUP_DIR="$HOME/.config/heliox-os" HELIOX_CORE_REQ="$GITHUB_WORKSPACE/daemon" HELIOX_PYTHON="${{ matrix.python }}"
+          V=tauri-app/src-tauri/setup/python-versions.json
+          export HELIOX_PYTHON_MIN="$(sed -n 's/.*"min": *"\([0-9.]*\)".*/\1/p' $V)"
+          export HELIOX_PYTHON_MAX="$(sed -n 's/.*"max": *"\([0-9.]*\)".*/\1/p' $V)"
+          export HELIOX_PYTHON_PRIVATE="$(sed -n 's/.*"private": *"\([0-9.]*\)".*/\1/p' $V)"
+          case "$RUNNER_OS" in
+            Linux) export HELIOX_GROUPS="platform=$GITHUB_WORKSPACE/daemon[linux]" ;;
+            macOS) export HELIOX_GROUPS="platform=$GITHUB_WORKSPACE/daemon[macos]" ;;
+            *) export HELIOX_GROUPS="" ;;
+          esac
+          # Stop the daemon the previous step started, then break the environment the way an upgrade of its base
+          # Python or a half-finished deletion does: its interpreter is gone.
+          pkill -f "pilot.server" 2>/dev/null || taskkill //F //IM python.exe >/dev/null 2>&1 || true
+          sleep 2
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export HELIOX_SETUP_DIR="$(cygpath -w "$HELIOX_SETUP_DIR")" HELIOX_CORE_REQ="$(cygpath -w "$HELIOX_CORE_REQ")"
+            rm -f "$HOME/.config/heliox-os/env/Scripts/python.exe"
+            powershell -NoProfile -ExecutionPolicy Bypass -File tauri-app/src-tauri/setup/first-run.ps1 run | tee "$RUNNER_TEMP/repair.log"
+            PY="$HOME/.config/heliox-os/env/Scripts/python.exe"
+          else
+            rm -f "$HOME/.config/heliox-os/env/bin/python"
+            sh tauri-app/src-tauri/setup/first-run.sh run | tee "$RUNNER_TEMP/repair.log"
+            PY="$HOME/.config/heliox-os/env/bin/python"
+          fi
+          status=${PIPESTATUS[0]}
+          grep "^@@step" "$RUNNER_TEMP/repair.log"
+          grep -q "no longer starts; building it again" "$RUNNER_TEMP/repair.log" || { echo "repair was not detected"; exit 1; }
+          [ ! -e "$HOME/.config/heliox-os/env.broken" ] || { echo "the broken environment was left behind"; exit 1; }
+          [ $status -eq 0 ] || exit $status
+          "$PY" -m pilot.server > "$RUNNER_TEMP/daemon2.log" 2>&1 &
+          "$PY" daemon/tests/platform_real/first_run_rpc_check.py 240
 
   # ── Update from the previous release (experimental, non-blocking) ──
   # Installs the released pilot-daemon 0.15.0 the way an older desktop app did, then runs the app's update path
@@ -630,3 +670,9 @@ jobs:
       - name: Cargo check
         working-directory: tauri-app/src-tauri
         run: cargo check --all-targets
+
+      # Real removal on a Mac's file system (APFS): app files go, data stays, a link out of Heliox's folders is not
+      # followed. The same test runs on Linux in the Rust job.
+      - name: Remove Heliox's files (unit tests on a real file system)
+        working-directory: tauri-app/src-tauri
+        run: cargo test --all-targets -- uninstall

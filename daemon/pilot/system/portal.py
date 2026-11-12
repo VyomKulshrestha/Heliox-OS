@@ -75,14 +75,32 @@ def file_from_uri(uri: str) -> str:
     return unquote(parsed.path)
 
 
+# xdg-desktop-portal (1.18) exports its Screenshot front end only when some backend also implements
+# org.freedesktop.impl.portal.Access, the consent dialog; xdg-desktop-portal-wlr and -hyprland implement Screenshot
+# but not Access, so on sway or Hyprland with only them installed there is no Screenshot portal at all.
+ACCESS_HINT = (
+    " On sway, Hyprland and other wlroots desktops also install xdg-desktop-portal-gtk: it provides the consent "
+    "dialog the screenshot portal needs, and without it the screenshot portal is not offered."
+)
+
+
 def no_portal(what: str, error: str) -> str:
     """What to say when the portal itself is missing."""
     if "UnknownMethod" in error or "UnknownInterface" in error or "ServiceUnknown" in error:
+        hint = ACCESS_HINT if "screenshot" in what else ""
         return (
             f"This desktop does not offer the portal Heliox needs to {what}. Install xdg-desktop-portal and the one "
-            "for your desktop (xdg-desktop-portal-gnome, -kde, -wlr or -hyprland), then log in again."
+            f"for your desktop (xdg-desktop-portal-gnome, -kde, -wlr or -hyprland), then log in again.{hint}"
         )
     return f"Heliox could not ask the desktop to {what}: {error}"
+
+
+def missing_access_backend(names: list[str], interfaces: list[str]) -> bool:
+    """Whether the screenshot portal is absent only for want of an Access backend: a backend that can take
+    screenshots is on the bus, but the front end exports no Screenshot. Pure (for diagnosis)."""
+    screenshot_backends = ("impl.portal.desktop.wlr", "impl.portal.desktop.hyprland")
+    has_backend = any(any(b in n for b in screenshot_backends) for n in names)
+    return has_backend and SCREENSHOT not in interfaces
 
 
 class Transport:

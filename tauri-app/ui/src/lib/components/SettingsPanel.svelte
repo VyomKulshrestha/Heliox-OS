@@ -51,6 +51,7 @@
     type HotkeyStatus,
   } from "../hotkey";
   import OptionalParts from "./OptionalParts.svelte";
+  import RemoveHelioxFiles from "./RemoveHelioxFiles.svelte";
   import { companion } from "../stores/companion";
 
   let {
@@ -2779,6 +2780,7 @@
   <LocalModelsPanel />
   <OffersPanel />
   <OptionalParts />
+  <RemoveHelioxFiles />
 </div>
 
 <style>

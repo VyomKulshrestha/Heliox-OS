@@ -624,9 +624,78 @@ fn update_command(mode: &str) -> std::io::Result<Command> {
     Ok(command)
 }
 
-/// At start, when Heliox is installed: an environment from an older version of the app is offered an update.
+/// Whether the environment's own Python starts and sees the daemon package (cheap: no daemon import).
+fn environment_works() -> bool {
+    let env = data_dir().join("env");
+    let python = if cfg!(target_os = "windows") {
+        env.join("Scripts").join("python.exe")
+    } else {
+        env.join("bin").join("python")
+    };
+    let mut command = Command::new(python);
+    command
+        .args([
+            "-c",
+            "import importlib.metadata as m; m.version('pilot-daemon')",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    command
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// What the start-up check found: nothing to do, an older daemon to update, or an environment to repair.
+pub fn startup_finding(
+    env_exists: bool,
+    works: bool,
+    installed: Option<&str>,
+    app: &str,
+) -> &'static str {
+    if !env_exists {
+        return "installed"; // a daemon from elsewhere answered, or first run handles it
+    }
+    if !works || installed.is_none() {
+        return "needs_repair";
+    }
+    if installed.map(|v| is_older(v, app)).unwrap_or(false) {
+        "needs_update"
+    } else {
+        "installed"
+    }
+}
+
+/// At start, when Heliox is installed: a broken environment is offered a repair, an older one an update.
 fn check_for_update(app: &AppHandle) {
-    let Some(installed) = installed_daemon_version() else {
+    let env_exists = data_dir().join("env").exists();
+    let installed = installed_daemon_version();
+    let finding = startup_finding(
+        env_exists,
+        env_exists && environment_works(),
+        installed.as_deref(),
+        env!("CARGO_PKG_VERSION"),
+    );
+    if finding == "needs_repair" {
+        if let Ok(mut state) = app.state::<Setup>().0.lock() {
+            state.phase = "needs_repair".into();
+            state.update = UpdatePlan {
+                installed: installed.unwrap_or_default(),
+                target: env!("CARGO_PKG_VERSION").into(),
+                groups: recorded_groups(),
+                ..UpdatePlan::default()
+            };
+            emit(app, &state);
+        }
+        return;
+    }
+    let Some(installed) = installed else {
         return;
     };
     if !is_older(&installed, env!("CARGO_PKG_VERSION")) {
@@ -743,6 +812,20 @@ pub fn setup_update_apply(app: AppHandle) -> Result<(), String> {
     update_apply(app)
 }
 
+/// Rebuild a broken environment with the groups it had; the setup script sets the broken one aside first.
+#[tauri::command]
+pub fn setup_repair(app: AppHandle) -> Result<(), String> {
+    DAEMON_PAUSED.store(true, Ordering::SeqCst);
+    if let Ok(mut guard) = app.state::<crate::DaemonProcess>().0.lock() {
+        if let Some(mut child) = guard.take() {
+            crate::supervisor::kill_tree(&mut child);
+            let _ = child.wait();
+        }
+    }
+    DAEMON_PAUSED.store(false, Ordering::SeqCst);
+    run(app, recorded_groups())
+}
+
 /// "Not now": keep using the installed version for this run; the offer comes back at the next start.
 #[tauri::command]
 pub fn setup_update_later(app: AppHandle) -> SetupState {
@@ -750,7 +833,7 @@ pub fn setup_update_later(app: AppHandle) -> SetupState {
     let Ok(mut state) = setup.0.lock() else {
         return SetupState::default();
     };
-    if state.phase == "needs_update" || state.phase == "failed" {
+    if state.phase == "needs_update" || state.phase == "needs_repair" || state.phase == "failed" {
         state.phase = "installed".into();
     }
     state.clone()
@@ -822,6 +905,24 @@ mod tests {
         assert!(is_older("0.9.1", "0.16.0"));
         assert!(!is_older("0.16.0", "0.16.0"));
         assert!(!is_older("0.17.0", "0.16.0"));
+    }
+
+    #[test]
+    fn a_broken_environment_is_repaired_before_anything_is_updated() {
+        assert_eq!(startup_finding(false, false, None, "0.16.0"), "installed");
+        assert_eq!(
+            startup_finding(true, false, Some("0.15.0"), "0.16.0"),
+            "needs_repair"
+        );
+        assert_eq!(startup_finding(true, true, None, "0.16.0"), "needs_repair");
+        assert_eq!(
+            startup_finding(true, true, Some("0.15.0"), "0.16.0"),
+            "needs_update"
+        );
+        assert_eq!(
+            startup_finding(true, true, Some("0.16.0"), "0.16.0"),
+            "installed"
+        );
     }
 
     #[test]

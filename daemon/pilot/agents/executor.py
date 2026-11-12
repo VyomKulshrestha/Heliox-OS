@@ -2492,7 +2492,9 @@ class Executor:
         from pilot.system.accessibility import capture_snapshot
 
         p: AccessibilitySnapshotParams = action.parameters  # type: ignore[assignment]
-        snapshot = await capture_snapshot(max_elements=p.element_limit)
+        # Apps the person excluded from the timeline are never read, here as everywhere else.
+        excluded = tuple(getattr(getattr(self._config, "timeline", None), "excluded_apps", ()) or ())
+        snapshot = await capture_snapshot(max_elements=p.element_limit, excluded=excluded)
         return snapshot.describe(limit=p.element_limit)
 
     async def _exec_screen_element_map(self, action: Action) -> str:

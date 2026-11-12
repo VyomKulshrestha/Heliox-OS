@@ -110,6 +110,15 @@
     }
   }
 
+  async function repair() {
+    startError = "";
+    try {
+      await invoke("setup_repair");
+    } catch (error) {
+      startError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
   async function updateLater() {
     try {
       setupState = await invoke<SetupState>("setup_update_later");
@@ -140,7 +149,19 @@
 {#if screen !== "hidden"}
   <div class="first-run" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
     <div class="panel">
-      {#if screen === "update" || screen === "planning"}
+      {#if screen === "repair"}
+        <h2 id="first-run-title">Repair Heliox</h2>
+        <p>
+          Heliox's environment on this computer no longer starts: its Python was removed or upgraded, or part of it was
+          deleted. Repair builds it again{setupState?.update?.groups?.length ? " with the same parts" : ""}; your
+          settings, memory and other data are not touched.
+        </p>
+        <p class="python">{keptGroups(setupState?.update, groups)}</p>
+        <div class="actions">
+          <button onclick={updateLater}>Not now</button>
+          <button class="primary" onclick={repair}>Repair Heliox</button>
+        </div>
+      {:else if screen === "update" || screen === "planning"}
         <h2 id="first-run-title">Update Heliox</h2>
         <p>
           This app is version {setupState?.update?.target}; the Heliox installed on this computer is

@@ -7,6 +7,7 @@ mod hotkey;
 mod setup;
 mod supervisor;
 mod tray;
+mod uninstall;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -479,6 +480,10 @@ fn main() {
             setup::setup_update_plan,
             setup::setup_update_apply,
             setup::setup_update_later,
+            setup::setup_repair,
+            uninstall::heliox_files_plan,
+            uninstall::heliox_files_remove,
+            uninstall::heliox_quit,
             commands::get_hotkey_status,
             commands::set_hotkey,
             commands::get_auth_token,

@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from pilot.live import focused_text  # noqa: E402
 from pilot.live import focused_text_macos as M  # noqa: E402
 from pilot.live.focused_text_policy import same_field  # noqa: E402
 from pilot.system import macos_permissions as mp  # noqa: E402
@@ -162,6 +163,37 @@ def fixture_alive(pid: int) -> bool:
         return False
 
 
+def snapshot_checks(prefix: str, check) -> None:
+    """Accessibility snapshot of the window in front: the button by name, the fields by label, never a value."""
+    import asyncio
+
+    from pilot.system import accessibility
+
+    try:
+        snapshot = asyncio.run(accessibility.capture_snapshot(max_elements=60))
+    except Exception as exc:
+        check(f"{prefix}/snapshot", False, f"{type(exc).__name__}: {exc}")
+        return
+    labels = [element.label for element in snapshot.elements]
+    print(f"snapshot {snapshot.snapshot_id} of {snapshot.title!r}: {labels[:12]}")
+    button = next((e for e in snapshot.elements if e.role == "Button" and e.name == "Press me"), None)
+    check(f"{prefix}/snapshot-finds-the-button", button is not None, repr(labels[:12]))
+    check(
+        f"{prefix}/snapshot-never-has-values",
+        not any("hello from ci" in label or "s3cret" in label for label in labels),
+    )
+    if button is not None:
+        try:
+            element = accessibility.default_store().resolve(snapshot.snapshot_id, button.ref)
+            check(
+                f"{prefix}/snapshot-ref-resolves-in-the-same-window",
+                element.ref == button.ref,
+                f"center {element.center}",
+            )
+        except Exception as exc:
+            check(f"{prefix}/snapshot-ref-resolves-in-the-same-window", False, f"{type(exc).__name__}: {exc}")
+
+
 def main() -> int:
     try:
         import AppKit  # noqa: F401
@@ -247,10 +279,22 @@ def main() -> int:
         send("insert s3cret")
         secret = read_until(lambda r: r.password)
         check("macos/secure-field-refused", secret is not None and secret.password and secret.text == "", repr(secret))
+        snapshot_checks("macos", check)
+
+        # Live drops a card when its field's window has gone; window_checks ends by closing the window.
+        handle = focused_text.window_handle(later.field) if later is not None and later.field else None
+        check("macos/window-exists-while-open", handle is not None and focused_text.window_exists(handle))
         try:
             window_checks(fixture.pid)
         except Exception as exc:
             check("macos/windows-actions", False, f"{type(exc).__name__}: {exc}")
+        if handle is not None:
+            time.sleep(0.5)
+            check(
+                "macos/window-gone-after-close",
+                not focused_text.window_exists(handle),
+                f"field_exists says {M.field_exists(later.field)!r}",
+            )
         timings = []
         for _ in range(30):
             start = time.perf_counter()

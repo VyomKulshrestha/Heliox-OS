@@ -1,7 +1,9 @@
 """Accessibility-tree grounding for desktop actions on the real desktop (no VM).
 
-A snapshot lists the foreground window's interactive UI Automation elements
-with short refs (``e1``, ``e2``...) under a snapshot id. A click can name
+A snapshot lists the foreground window's interactive elements (UI Automation on
+Windows, the Accessibility API on macOS, AT-SPI on Linux: see
+``pilot.system.ax_snapshot_platforms``) with short refs (``e1``, ``e2``...) under
+a snapshot id. A click can name
 ``element_ref`` and ``snapshot_id`` instead of guessed pixels, and it is refused
 with "re-snapshot required" when the window behind the snapshot has changed.
 
@@ -123,7 +125,15 @@ class AccessibilitySnapshot:
 
 
 def foreground_window() -> WindowIdentity | None:
-    """Return the foreground window handle and rectangle (Windows only)."""
+    """Return the foreground window's identity and rectangle (a handle on Windows, a stable key elsewhere)."""
+    if sys.platform == "darwin" or sys.platform.startswith("linux"):
+        from pilot.system import ax_snapshot_platforms as platforms
+
+        try:
+            found = platforms.front_window_macos() if sys.platform == "darwin" else platforms.front_window_linux()
+        except Exception:
+            return None
+        return WindowIdentity(found[0], found[1]) if found else None
     if sys.platform != "win32":
         return None
     import ctypes
@@ -292,15 +302,34 @@ async def capture_snapshot(
     max_elements: int = DEFAULT_MAX_ELEMENTS,
     *,
     store: SnapshotStore | None = None,
+    excluded: tuple[str, ...] = (),
 ) -> AccessibilitySnapshot:
-    """Snapshot the foreground window's interactive elements and remember it for ref clicks."""
-    if CURRENT_PLATFORM != Platform.WINDOWS:
-        raise AccessibilityUnavailable("Accessibility snapshots are currently available on Windows only")
+    """Snapshot the foreground window's interactive elements and remember it for ref clicks.
+
+    Heliox's own window, password managers, the system credential stores and ``excluded`` apps are never read.
+    """
     store = store or _default_store
+    limit = max(1, min(int(max_elements), MAX_ELEMENTS_LIMIT))
+    if CURRENT_PLATFORM in (Platform.MACOS, Platform.LINUX):
+        import asyncio
+
+        from pilot.system import ax_snapshot_platforms as platforms
+
+        capture = platforms.capture_macos if CURRENT_PLATFORM == Platform.MACOS else platforms.capture_linux
+        try:
+            payload, (key, rect) = await asyncio.to_thread(capture, limit, excluded)
+        except ImportError as error:
+            raise AccessibilityUnavailable(f"The {CURRENT_PLATFORM.value} reader is not installed: {error}") from error
+        except RuntimeError as error:
+            raise AccessibilityUnavailable(str(error)) from error
+        snapshot = parse_snapshot(json.dumps(payload), WindowIdentity(key, rect), captured_at=store.now())
+        store.add(snapshot)
+        return snapshot
+    if CURRENT_PLATFORM != Platform.WINDOWS:
+        raise AccessibilityUnavailable("Accessibility snapshots are not available on this system")
     window = foreground_window()
     if window is None:
         raise AccessibilityUnavailable("No foreground window to inspect")
-    limit = max(1, min(int(max_elements), MAX_ELEMENTS_LIMIT))
     code, stdout, stderr = await run_powershell(
         _snapshot_script(window.handle, limit), timeout=SNAPSHOT_TIMEOUT_SECONDS
     )
@@ -310,8 +339,22 @@ async def capture_snapshot(
         snapshot = parse_snapshot(stdout, window, captured_at=store.now())
     except (ValueError, TypeError) as error:
         raise AccessibilityUnavailable(f"UI Automation returned unreadable output: {error}") from error
+    from pilot.system.ax_snapshot_platforms import refuse_window
+
+    reason = refuse_window(_process_name(snapshot.process_id), snapshot.title, excluded)
+    if reason:
+        raise AccessibilityUnavailable(reason)
     store.add(snapshot)
     return snapshot
+
+
+def _process_name(pid: int) -> str:
+    try:
+        import psutil
+
+        return psutil.Process(pid).name().removesuffix(".exe")
+    except Exception:
+        return ""
 
 
 def _background_press_script(handle: int, runtime_id: str) -> str:

@@ -119,6 +119,23 @@ def field_id(ref: Ref) -> str:
     return f"atspi:{ref[0]}{ref[1]}"
 
 
+def ref_from_field(field: str) -> Ref | None:
+    """The (bus name, object path) a field id was made from. Pure."""
+    rest = field.removeprefix("atspi:")
+    if rest == field or "/" not in rest:
+        return None
+    bus, _, path = rest.partition("/")
+    return (bus, "/" + path) if bus else None
+
+
+GONE_ERRORS = ("UnknownObject", "ServiceUnknown", "UnknownMethod", "NameHasNoOwner", "Disconnected")
+
+
+def gone_from_error(text: str) -> bool:
+    """Whether a D-Bus error says the object or its application no longer exists. Pure."""
+    return any(name in text for name in GONE_ERRORS)
+
+
 def focus_from_event(body: tuple, sender: str, path: str) -> Ref | None:
     """The element that just took focus, from an ``object:state-changed`` signal, or None."""
     if len(body) >= 2 and body[0] == "focused" and int(body[1]) == 1 and sender and path:
@@ -480,6 +497,26 @@ def read_focused() -> FocusedText | None:
             # One application answered with an error or too slowly: the connection is fine, try again next look.
             logger.debug("AT-SPI read failed", exc_info=True)
             return None
+
+
+def field_exists(field: str) -> bool | None:
+    """Whether the accessible behind a field id still exists: False once its window closed or its app quit."""
+    ref = ref_from_field(field)
+    if ref is None or not SHARED.lock.acquire(timeout=1.0):
+        return None
+    try:
+        client = SHARED.get()
+        if client is None:
+            return None
+        try:
+            return STATE_DEFUNCT not in client._state(ref)
+        except (ConnectionError, EOFError):
+            SHARED.drop()
+            return None
+        except Exception as error:
+            return False if gone_from_error(f"{type(error).__name__} {error}") else None
+    finally:
+        SHARED.lock.release()
 
 
 def foreground_window() -> tuple[str, str] | None:

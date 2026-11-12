@@ -80,6 +80,75 @@ A person who installed an earlier version has an environment with an older daemo
   - It checks that the updated daemon answers an authenticated ping.
 - **Not tested:** the desktop app driving the update (Rust compiled and unit-tested here, not run as an app).
 
+## Repair
+
+At start, the app checks that the environment's own Python starts and sees the daemon package. This is cheap: it does not import the daemon.
+
+If the environment is broken, the first-run screen shows "Repair Heliox" and says which parts it will build again. Typical causes: Homebrew upgraded the Python it was made from, the private Python was deleted, or part of the environment was removed.
+
+Repair runs the first-run script with the recorded groups. The script then:
+- sets the broken environment aside as `env.broken`;
+- builds a new one, with the same Python rules as first run;
+- installs the core and the groups;
+- deletes `env.broken` only once the core is in.
+
+Settings and data are not touched.
+
+**How it is tested:**
+- **Real run on Windows (12 November).** A venv whose `python.exe` was deleted was detected ("no longer starts; building it again"), rebuilt from the system Python and given its core.
+- **CI, job `first-run`.** On all three systems, with the runner's Python and with a private one, the job deletes the environment's interpreter after setup. It then reruns the script and checks three things: that the repair was detected, that `env.broken` is gone, and that the rebuilt daemon answers.
+- **Unit tests.** The start-up decision (repair before update, nothing to do, update) has Rust unit tests; the screen has vitest.
+
+## Removing Heliox's files
+
+Settings > "Remove Heliox's files" lists everything Heliox put on this computer, with sizes, before anything is deleted. The list is computed by `src/uninstall.rs` from the home folder and the system's app-data folders. The UI cannot add a path to it.
+
+Every folder in the list carries a name that is Heliox's alone, and the code says why beside each one: `heliox-os`, `.heliox`, `heliox` under `.cache`, `com.helioxos.app`. When the home folder is not known, nothing is listed and nothing is removed. As a second lock, every path must be absolute and at least two folders below the root.
+
+| Where | What | Kind |
+|---|---|---|
+| `~/.config/heliox-os/env`, `python`, `tools`, `uv-cache`, `setup` | the environment, private Python, uv and setup scripts | app |
+| `~/.config/heliox-os` (the rest) | settings, keys, restrictions, shortcut | data |
+| `~/.local/share/heliox-os/models` | downloaded speech models | app |
+| `~/.local/share/heliox-os` (the rest) | memory, timeline, receipts, undo copies | data |
+| `~/.local/state/heliox-os` | logs | app |
+| `~/.cache/heliox`, `~/.heliox` | persona, voice calibration, plugins, screenshots, quarantined files | data |
+| `~/.pilot/usage_patterns.json`, `~/.pilot/failure_memory.json` | usage patterns and failure memory: only these two files, because another program could use a folder called `.pilot`; the folder goes only if that leaves it empty | data |
+| The system credential store, under four services named in `pilot.security.credential_cleanup` | API keys, SSH keys and passphrases, paired devices, the receipt signing key, study and recording keys | data |
+| Runtime folder: `%LOCALAPPDATA%\heliox-os`, `~/Library/Caches/heliox-os` | runtime files | app |
+| The app's web view data: `%LOCALAPPDATA%\com.helioxos.app`; `~/Library/Application Support`, `Caches` and `WebKit` under `com.helioxos.app`; `~/.local/share` and `~/.cache` under `com.helioxos.app` | interface settings stored in the browser view | app |
+
+**The person chooses** between "remove the app's files, keep my data" (the default) and "remove everything". They see the total size, and they tick that they understand the files will be deleted. Only then does the button work.
+
+**Before deleting**, the daemon is stopped and the supervisor paused.
+
+**Saved keys.** With "remove everything", the saved keys go before any file is deleted:
+- They are removed from the credential store by the daemon's own code, `python -m pilot.security.credential_cleanup remove`, using the environment that still exists, with a 30 s limit.
+- The daemon finds the entries by service where the store allows it: Windows' credential list, macOS's `security` tool, the Linux Secret Service. It also tries the accounts it knows by name.
+- Anything it cannot remove is listed by service and account, with how to remove it on that system.
+- If the environment cannot run, or the step fails or runs out of time, the screen lists the four services by name instead. That list is `setup/credential_services.json`, which a test keeps equal to the daemon's own list.
+
+With "keep my data", the keys stay, and the screen says which services hold them.
+
+**After the removal**, the window shows what was removed and what failed. On Windows, the app's own web view folder fails while the app runs; the screen says it goes when the app is uninstalled. It also shows which saved keys remain and the manual steps, with a Quit button instead of a reconnecting screen.
+
+**Deletion never follows a link out of Heliox's folders.** A symbolic link or junction inside them is removed as a link, and what it points to stays. Rust's `remove_dir_all` does not follow links (Rust 1.58 and later).
+
+**Heliox leaves these to the person, and the screen says so:**
+- the app itself (the system's own uninstall);
+- shared caches: pip's cache, and the Hugging Face cache that holds the local voice and Whisper models;
+- on macOS, the privacy grants: System Settings, or `tccutil reset All com.helioxos.app`;
+- on Wayland, the global shortcut the desktop stores.
+
+Heliox creates no login item, service or scheduled task.
+
+**How it is tested:**
+- **Rust tests on a real file system.** On Windows here, on Linux in the Rust job and on macOS in the `rust-macos` job, the tests build a home folder with an environment, settings and a quarantined file, plus a link pointing outside. Removing with "keep my data" deletes the environment and keeps the settings and the quarantined file. Removing everything deletes Heliox's folders. In both cases the file outside is untouched.
+- **Credential cleanup.** Tested with a fake keyring backend (`daemon/tests/test_credential_cleanup.py`): entries are removed by service search and by known name, an entry the store refuses is listed with how to remove it, and a store that cannot be searched still has its known names removed. The search by service ran for real on Windows here, listing names only. Removal has not run against a real credential store on any system.
+- **Rust tests** also cover no home folder, the safe-location lock, `.pilot` keeping another program's file, the credential report and the Windows web view note.
+- **Vitest:** the screen's choice, confirmation, the after-removal screen, and the three replies: a bare ok, a refusal, no reply.
+- **Not tested:** the desktop app driving a real removal (it would remove the runner's own install).
+
 ## Where the code is
 
 - **Steps:** `tauri-app/src-tauri/setup/first-run.sh` (macOS, Linux; POSIX sh) and `first-run.ps1` (Windows PowerShell 5.1). They take the same inputs and print the same `@@` lines. The app embeds them, writes them to `~/.config/heliox-os/setup/` and runs them; CI runs the same files.

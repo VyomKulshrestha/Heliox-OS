@@ -171,7 +171,7 @@ export function pythonSentence(plan: PythonPlan | undefined, platform = ""): str
   return "No Python Heliox can use was found, and Heliox has no private Python for this kind of computer. Install Python 3.12, then open Heliox again.";
 }
 
-export type Screen = "hidden" | "choose" | "installing" | "failed" | "done" | "update" | "planning";
+export type Screen = "hidden" | "choose" | "installing" | "failed" | "done" | "update" | "planning" | "repair";
 
 /** Which screen to show for a setup state. "installed" means there was nothing to set up. */
 export function screenFor(state: SetupState | null): Screen {
@@ -181,6 +181,8 @@ export function screenFor(state: SetupState | null): Screen {
       return "choose";
     case "needs_update":
       return "update";
+    case "needs_repair":
+      return "repair";
     case "planning":
       return "planning";
     case "updating":

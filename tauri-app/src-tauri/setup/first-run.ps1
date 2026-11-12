@@ -127,6 +127,22 @@ function New-PrivateEnv {
 }
 
 # ── Python ──
+# Repair: an environment whose Python no longer starts, or that was half deleted, is set aside and built again.
+$Broken = $null
+if (Test-Path $EnvDir) {
+  $works = $false
+  if (Test-Path $EnvPython) {
+    & $EnvPython -c "import sys" 2>$null | Out-Null
+    $works = ($LASTEXITCODE -eq 0)
+  }
+  if (-not $works) {
+    $Broken = "$EnvDir.broken"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Broken
+    try { Move-Item -Path $EnvDir -Destination $Broken -ErrorAction Stop }
+    catch { Fail python "Heliox's environment is broken and could not be moved aside." "Close anything using $EnvDir and press Retry." }
+    Say "@@step python running Heliox's environment no longer starts; building it again"
+  }
+}
 $UsedSystem = $false
 if (Test-Path $EnvPython) {
   Say "@@step python skipped Heliox's environment already exists."
@@ -160,6 +176,8 @@ if (-not (Pip-Install $env:HELIOX_CORE_REQ)) {
 }
 Say "@@step core done Core installed"
 Measure-Step core
+# The rebuilt environment works: the broken one is no longer needed.
+if ($Broken) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Broken }
 
 # ── Optional groups: a failure is reported and the others carry on ──
 $status = 0

@@ -45,6 +45,11 @@ def diagnose() -> None:
             ).body[0]
             found = sorted({line.split('"')[1] for line in xml.splitlines() if "<interface name=" in line})
             print(f"diagnosis: interfaces at {portal.PORTAL_PATH}: {found}")
+            portal_names = sorted(n for n in names if "portal" in n.lower())
+            if portal.missing_access_backend(portal_names, found):
+                print(
+                    "diagnosis: a screenshot backend is on the bus but no Access backend: install xdg-desktop-portal-gtk"
+                )
     except Exception as exc:
         print(f"diagnosis: could not inspect the portal: {type(exc).__name__}: {exc}")
 

@@ -339,3 +339,21 @@ describe("update from an older installed version", () => {
     expect(invoke).toHaveBeenCalledWith("setup_update_later");
   });
 });
+
+describe("repair", () => {
+  it("offers to rebuild a broken environment with the same parts and runs repair only when asked", async () => {
+    const { screenFor: screenOf } = await import("../firstRun");
+    const broken = state({
+      phase: "needs_repair",
+      update: { installed: "", target: "0.16.0", groups: ["voice"], planned: false, changes: [], total_bytes: 0 },
+    });
+    expect(screenOf(broken)).toBe("repair");
+    invoke.mockClear();
+    render(FirstRunInstall, { initial: broken });
+    expect(screen.getByRole("heading", { name: "Repair Heliox" })).toBeTruthy();
+    expect(screen.getByText("Your parts stay installed: Voice.")).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Repair Heliox" }));
+    expect(invoke).toHaveBeenCalledWith("setup_repair");
+  });
+});

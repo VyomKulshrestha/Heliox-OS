@@ -149,6 +149,15 @@ install_core() {
 }
 
 # ── Python ──
+# Repair: an environment whose Python no longer starts (its base Python was upgraded or removed, or the private one
+# was deleted) or that was half deleted is set aside and built again; the groups asked for are installed into it.
+BROKEN=""
+if [ -e "$ENV_DIR" ] && ! "$ENV_DIR/bin/python" -c "import sys" >/dev/null 2>&1; then
+  BROKEN="$ENV_DIR.broken"
+  rm -rf "$BROKEN"
+  mv "$ENV_DIR" "$BROKEN" || fail python "Heliox's environment is broken and could not be moved aside." "Close anything using $ENV_DIR and press Retry."
+  say "@@step python running Heliox's environment no longer starts; building it again"
+fi
 USED_SYSTEM=0
 if [ -x "$ENV_DIR/bin/python" ]; then
   say "@@step python skipped Heliox's environment already exists."
@@ -175,6 +184,8 @@ if ! install_core; then
 fi
 say "@@step core done Core installed"
 measure core
+# The rebuilt environment works: the broken one is no longer needed.
+[ -n "$BROKEN" ] && rm -rf "$BROKEN"
 
 PIP="$ENV_DIR/bin/python -m pip --disable-pip-version-check"
 

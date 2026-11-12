@@ -23,6 +23,7 @@ import logging
 import os
 import subprocess
 import time
+import zlib
 from typing import Any, Protocol
 
 from pilot.live.focused_text_policy import MAX_CHARS, ElementFacts, FocusedText, ReaderStatus, admit
@@ -128,12 +129,30 @@ class FocusedTextSource(Protocol):
     async def close(self) -> None: ...
 
 
-def window_handle(field: str) -> int | None:
-    """The window a field lives in, from its UI Automation runtime id, or None when the id does not say.
+# macOS and Linux fields have no window handle in their id; Live gets a small number standing for the field, and
+# window_exists asks the platform reader whether that field's element still exists (its window is gone when not).
+_FIELD_KEYS: dict[int, str] = {}
+_MAX_FIELD_KEYS = 256
 
-    An element hosted in a window has a runtime id that starts with 42 and the window handle ("42.30540886" for
-    Notepad's editor, "42.88540834.4.7.4.212" for a text box inside a browser's render window).
+
+def _field_key(field: str) -> int:
+    key = (zlib.crc32(field.encode("utf-8")) & 0x3FFFFFFF) | 0x40000000
+    if key not in _FIELD_KEYS and len(_FIELD_KEYS) >= _MAX_FIELD_KEYS:
+        _FIELD_KEYS.pop(next(iter(_FIELD_KEYS)))
+    _FIELD_KEYS[key] = field
+    return key
+
+
+def window_handle(field: str) -> int | None:
+    """The window a field lives in, or None when the id does not say.
+
+    Windows: from the UI Automation runtime id. An element hosted in a window has a runtime id that starts with 42
+    and the window handle ("42.30540886" for Notepad's editor, "42.88540834.4.7.4.212" for a text box inside a
+    browser's render window). macOS ("ax:") and Linux ("atspi:") fields: a number standing for the field, which
+    ``window_exists`` resolves through the reader that produced it.
     """
+    if field.startswith(("ax:", "atspi:")):
+        return _field_key(field)
     parts = field.split(".")
     if len(parts) < 2 or parts[0] != "42":
         return None
@@ -145,7 +164,22 @@ def window_handle(field: str) -> int | None:
 
 
 def window_exists(handle: int) -> bool:
-    """Whether a window is still open (minimised or in the background counts). True where it cannot be checked."""
+    """Whether a window is still open (minimised or in the background counts). True where it cannot be checked.
+
+    macOS and Linux: whether the field's element still exists (it goes when its window closes or its app quits).
+    """
+    field = _FIELD_KEYS.get(handle)
+    if field is not None:
+        try:
+            if field.startswith("ax:"):
+                from pilot.live.focused_text_macos import field_exists
+
+                return field_exists(field) is not False
+            from pilot.live.focused_text_linux import field_exists as atspi_field_exists
+
+            return atspi_field_exists(field) is not False
+        except Exception:
+            return True
     if os.name != "nt":
         return True
     try:

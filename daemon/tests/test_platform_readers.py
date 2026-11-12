@@ -163,6 +163,8 @@ class FakeBus(L.Transport):
 
     def call(self, bus, path, interface, method, signature="", body=()):
         self.calls.append((path, method))
+        if path in getattr(self, "gone", ()):
+            raise RuntimeError("[org.freedesktop.DBus.Error.UnknownObject] No such object")
         if method == "GetConnectionUnixProcessID":
             return (4242,)
         if path == L.ROOT_PATH and method == "GetChildren":
@@ -639,3 +641,63 @@ def test_macos_frontmost_app_is_cached_briefly(monkeypatch):
     assert M.frontmost_app_name() == "Mail" and M.frontmost_app_name() == "Mail" and len(calls) == 1
     clock[0] += M.FRONT_APP_CACHE_SECONDS + 0.01
     assert M.frontmost_app_name() == "Mail" and len(calls) == 2
+
+
+# ── whether a field's window still exists (Live drops a card when it has gone) ──
+
+
+def test_window_handles_for_macos_and_linux_fields_resolve_through_their_readers(monkeypatch):
+    from pilot.live import focused_text_linux, focused_text_macos
+
+    assert focused_text.window_handle("42.30540886") == 30540886  # Windows unchanged
+    mac = focused_text.window_handle("ax:501:1f")
+    linux = focused_text.window_handle("atspi::1.42/org/a11y/atspi/accessible/4")
+    assert isinstance(mac, int) and isinstance(linux, int) and mac != linux
+    assert focused_text.window_handle("ax:501:1f") == mac  # stable for the same field
+    answers = {"mac": None, "linux": True}
+    monkeypatch.setattr(focused_text_macos, "field_exists", lambda field: answers["mac"])
+    monkeypatch.setattr(focused_text_linux, "field_exists", lambda field: answers["linux"])
+    assert focused_text.window_exists(mac) is True  # cannot tell: the card stays
+    assert focused_text.window_exists(linux) is True
+    answers.update(mac=False, linux=False)
+    assert focused_text.window_exists(mac) is False and focused_text.window_exists(linux) is False
+
+
+def test_macos_field_exists_from_the_element_and_its_process(monkeypatch):
+    assert M.element_answer(0) is True and M.element_answer(M.AX_ERROR_INVALID_ELEMENT) is False
+    assert M.element_answer(M.AX_ERROR_CANNOT_COMPLETE) is None
+
+    class Backend:
+        valid = True
+
+        def element_valid(self, element):
+            return self.valid
+
+    backend = Backend()
+    monkeypatch.setattr(M, "_reader", type("R", (), {"backend": backend})())
+    monkeypatch.setattr(M, "_ELEMENTS", {})
+    monkeypatch.setattr(M, "pid_alive", lambda pid: pid == 501)
+    M.remember_element("ax:501:1f", object())
+    assert M.field_exists("ax:501:1f") is True
+    backend.valid = False  # the window closed: its elements are invalid
+    assert M.field_exists("ax:501:1f") is False
+    assert M.field_exists("ax:777:2a") is False  # the app quit
+    assert M.field_exists("ax:501:99") is None  # never read here: cannot tell
+
+
+def test_linux_field_exists_from_the_accessibility_bus(monkeypatch):
+    assert L.ref_from_field("atspi::1.42/org/a11y/atspi/accessible/4") == (":1.42", "/org/a11y/atspi/accessible/4")
+    assert L.ref_from_field("ax:1:2") is None
+    assert L.gone_from_error("[org.freedesktop.DBus.Error.ServiceUnknown] The name :1.42 was not provided")
+    assert not L.gone_from_error("TimeoutError")
+    shared = L._Shared()
+    bus = FakeBus()
+    shared.make = lambda: bus
+    monkeypatch.setattr(L, "SHARED", shared)
+    field = f"atspi:{APP}/entry"
+    assert L.field_exists(field) is True
+    bus.nodes["/entry"]["state"] = [L.STATE_DEFUNCT]
+    assert L.field_exists(field) is False
+    bus.nodes["/entry"]["state"] = [L.STATE_EDITABLE]
+    bus.gone = {"/entry"}  # the window was destroyed
+    assert L.field_exists(field) is False

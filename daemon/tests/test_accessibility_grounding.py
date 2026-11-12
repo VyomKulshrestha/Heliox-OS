@@ -154,7 +154,7 @@ def test_store_keeps_only_recent_snapshots():
 async def test_capture_is_unavailable_off_windows(monkeypatch):
     monkeypatch.setattr(accessibility, "CURRENT_PLATFORM", object())
 
-    with pytest.raises(AccessibilityUnavailable, match="Windows only"):
+    with pytest.raises(AccessibilityUnavailable, match="not available on this system"):
         await accessibility.capture_snapshot()
 
 

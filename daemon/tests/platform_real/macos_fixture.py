@@ -33,6 +33,9 @@ class Driver(NSObject):
         self.window.setTitle_("Heliox AX fixture")
         self.entry = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(20, 80, 380, 24))
         self.password = AppKit.NSSecureTextField.alloc().initWithFrame_(AppKit.NSMakeRect(20, 30, 380, 24))
+        self.button = AppKit.NSButton.buttonWithTitle_target_action_("Press me", self, "pressed:")
+        self.button.setFrame_(AppKit.NSMakeRect(300, 105, 100, 28))
+        self.window.contentView().addSubview_(self.button)
         self.window.contentView().addSubview_(self.entry)
         self.window.contentView().addSubview_(self.password)
         self.window.makeKeyAndOrderFront_(None)
@@ -41,6 +44,9 @@ class Driver(NSObject):
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(0.1, self, "tick:", None, True)
         print("ready", flush=True)
         return self
+
+    def pressed_(self, _sender):
+        print("pressed", flush=True)
 
     def tick_(self, _timer):
         while not commands.empty():
