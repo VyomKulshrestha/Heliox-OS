@@ -886,6 +886,9 @@ class PlanHistoryStore:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# Each step of stopping what is in flight (speech, requests, a conversation turn, voice turns) waits at most this
+# long for cleanup; a step that does not finish in time is left behind so stop() always completes.
+STOP_IN_FLIGHT_SECONDS = 10.0
 GNOMON_WARM_AFTER_SECONDS = 45.0  # after start-up, so the daemon is answering before the model loads
 GNOMON_REQUEST_TIMEOUT = 4.0  # a review of a request never holds it up longer than this
 # Warm reviews took 0.7-1.5 s for 1-6 action plans on a free RTX 4060 (scripts/check_gnomon_review_timing.py,
@@ -12474,6 +12477,47 @@ def handle_tool(tool_name, params):
                 pending.event.set()
         self._pending_confirms.clear()
 
+    @staticmethod
+    async def _bounded_stop_step(step: str, awaitable: Any) -> None:
+        """Wait for one shutdown step at most STOP_IN_FLIGHT_SECONDS; what still runs after that is left behind.
+
+        asyncio.wait, not wait_for: wait_for waits for a cancelled awaitable to finish, so work that swallows
+        cancellation would hold stop() forever.
+        """
+        task = asyncio.ensure_future(awaitable)
+        done, _pending = await asyncio.wait({task}, timeout=STOP_IN_FLIGHT_SECONDS)
+        if not done:
+            logger.warning("Stopping: %s did not finish within %.0f s", step, STOP_IN_FLIGHT_SECONDS)
+        elif not task.cancelled() and task.exception() is not None:
+            logger.warning("Stopping: %s failed", step, exc_info=task.exception())
+
+    async def _stop_in_flight(self) -> None:
+        """First part of stop(), before any subsystem or store closes: fall silent and end the turns in flight.
+
+        Order: (1) speech stops, so a Live remark or a reply being spoken ends at once; (2) a turn the conversation
+        layer is still writing or speaking (typed or spoken) is interrupted; (3) voice turns still running are
+        cancelled. stop() then cancels the execute in flight (an approval it waited for was already released as
+        "shutdown", so nothing is approved), stops the subsystems, and closes the listener, which cancels every
+        other request in flight and awaits its cleanup, before any store closes. Each wait is bounded by
+        STOP_IN_FLIGHT_SECONDS. Before this the conversation layer and voice turns were never stopped, and speech
+        went on until the end of stop().
+        """
+        stop_speech = getattr(self._speech_coordinator, "stop_all", None)
+        if callable(stop_speech):
+            await self._bounded_stop_step("speech", stop_speech())
+        conversation = getattr(self, "_conversation", None)
+        if conversation is not None:
+            turn = getattr(conversation, "_active", None)
+            with contextlib.suppress(Exception):
+                conversation.interrupt()
+            if isinstance(turn, asyncio.Future) and not turn.done():
+                await self._bounded_stop_step("conversation turn", asyncio.gather(turn, return_exceptions=True))
+        turns = [task for task in self.__dict__.get("_voice_turn_tasks", ()) if not task.done()]
+        for task in turns:
+            task.cancel()
+        if turns:
+            await self._bounded_stop_step("voice turns", asyncio.gather(*turns, return_exceptions=True))
+
     async def stop(self) -> None:
         """Stop the Pilot daemon server and clean up all resources."""
         self._running = False
@@ -12488,6 +12532,7 @@ def handle_tool(tool_name, params):
         if self._recorded_workflows is not None:
             await self._recorded_workflows.stop_manual_visual_capture(save=False)
         await self._release_pending_confirmations_for_shutdown()
+        await self._stop_in_flight()
 
         queued_worker = self._queued_execute_worker
         if queued_worker is not None and not queued_worker.done():
@@ -12523,6 +12568,14 @@ def handle_tool(tool_name, params):
         if self._voice_listener is not None:
             await self._voice_listener.stop()
             self._voice_listener = None
+        # The local voice worker: closing its pipe ends it, and frees the thread waiting on its answer. Left open,
+        # that thread kept the interpreter from exiting for 300 s after stop (2-hour soak, 12 November 2026).
+        from pilot.system.local_tts_worker import manager as local_voice_manager
+
+        try:
+            await asyncio.wait_for(local_voice_manager().shutdown(), timeout=10.0)
+        except Exception:
+            logger.warning("Could not stop the local voice worker", exc_info=True)
         supervision_hook = getattr(self, "_supervision_hook", None)
         if supervision_hook is not None:
             supervision_hook.stop()
@@ -12561,7 +12614,8 @@ def handle_tool(tool_name, params):
 
         if self._server:
             self._server.close()
-            await self._server.wait_closed()
+            # Closing the listener cancels every request still in flight on every connection and awaits its cleanup.
+            await self._bounded_stop_step("requests in flight", self._server.wait_closed())
             self._server = None
         # ── Stop LAN mesh ──
         if self._mesh:
@@ -13489,9 +13543,16 @@ def handle_tool(tool_name, params):
         from pilot.personal.wiring import begin_turn, end_turn
 
         token = begin_turn(self, command_text)
+        # Known to stop(), which cancels a voice turn still running before any store closes.
+        turns: set[asyncio.Task[Any]] = self.__dict__.setdefault("_voice_turn_tasks", set())
+        current = asyncio.current_task()
+        if current is not None:
+            turns.add(current)
         try:
             await self._voice_command_dispatch(command_text)
         finally:
+            if current is not None:
+                turns.discard(current)
             end_turn(self, token)
 
     async def _voice_command_dispatch(self, command_text: str) -> None:
