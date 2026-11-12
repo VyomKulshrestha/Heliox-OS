@@ -595,6 +595,16 @@ minute of silence started cold. In the paid runs the first call of a fresh model
   opening read hears the wake phrase, and again at the end-of-speech candidate. The server warms as well when it
   reports a wake or a follow-up that the addressing rule took. A doubtful follow-up, a live caption of speech not yet
   known to be for Heliox, or anything else opens nothing. The listener's half is the speech agent's.
+- **A listener with Whisper alone warms later for a wake-phrase turn.** That is everyone whose voice language is
+  not English (the recommended set for them is Whisper small; Parakeet and the streaming recogniser are English
+  only), and English speakers who have not downloaded Parakeet or chose Whisper as the final pass (`final_pass` is
+  `whisper` until Parakeet's download finishes). It has no early opening read, so a wake-phrase turn is warmed only
+  when the server reports the wake, after Whisper's pass over the whole utterance; follow-ups and the microphone
+  button are still warmed at the end-of-speech candidate. No earlier signal comes free there: the wake check is that
+  same final pass, the English streaming captions are not reliable enough to call speech addressed and do not exist
+  in other languages, and an early Whisper read would add a 0.5 to 1 s processor pass to every utterance heard,
+  addressed or not. With connections now kept 120 s, this costs the 0.3 to 0.9 s only on the first wake-phrase turn
+  after two idle minutes.
 - **The session runner** warms before each dispatch, as the daemon does, so the bench no longer measures cold calls.
 
 Measured again on 13 November, before and after, with each provider's free warm request through the stored keys (CPU
