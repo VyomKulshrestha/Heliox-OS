@@ -15,6 +15,10 @@ on:
         description: "Repeats of every setting (0: 3 when comparing, 1 otherwise)"
         required: false
         default: "0"
+      only:
+        description: "Scenario id fragments, comma-separated (empty: the ones the compared setting can move, or all)"
+        required: false
+        default: ""
   schedule:
     - cron: "17 3 * * 1" # Mondays 03:17 UTC
 
@@ -66,16 +70,20 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[voice]" psutil
 
-      - name: Cache speech models
-        uses: actions/cache@v4
+      # Restored here and saved right after fetching and rendering, before the long timing step: a timing run that
+      # is stopped or fails (run 43290465258 hit the job's limit) must not cost the next run a full fetch.
+      - name: Restore speech models
+        id: models-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ${{ github.workspace }}/.heliox-bench/.local/share/heliox-os/models
             ~/.cache/huggingface
           key: speech-${{ runner.os }}-${{ hashFiles('daemon/pilot/system/speech_models.json', 'daemon/benchmarks/conversation_bench/ci_prefetch.py') }}
 
-      - name: Cache rendered synthetic speech
-        uses: actions/cache@v4
+      - name: Restore rendered synthetic speech
+        id: audio-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.bench-audio
           key: bench-audio-${{ runner.os }}-${{ hashFiles('daemon/benchmarks/conversation_bench/scenarios/*.json', 'daemon/benchmarks/conversation_bench/synth.py') }}
@@ -90,17 +98,48 @@ jobs:
           HF_HUB_OFFLINE: "1"
         run: python -m benchmarks.conversation_bench.synth --audio "$BENCH_AUDIO" --only scenarios
 
+      - name: Save speech models
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.heliox-bench/.local/share/heliox-os/models
+            ~/.cache/huggingface
+          key: ${{ steps.models-cache.outputs.cache-primary-key }}
+
+      - name: Save rendered synthetic speech
+        if: steps.audio-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.bench-audio
+          key: ${{ steps.audio-cache.outputs.cache-primary-key }}
+
       - name: Timing lines (load-checked before every scenario)
+        # Below the job's 150 minutes, so the summary, the timelines and the caches are still handled when it stops.
+        # ci_timing refuses a comparison whose estimate does not fit in 90 % of this limit (LIMIT_MINUTES).
+        timeout-minutes: 125
         env:
+          LIMIT_MINUTES: "125"
           HF_HUB_OFFLINE: "1"
           # The two inputs go through the environment, never pasted into the command: they are typed text. On
           # the weekly schedule both are empty and the run is the usual one.
           COMPARE_SETTINGS: ${{ inputs.settings }}
           COMPARE_REPEATS: ${{ inputs.repeats || '0' }}
+          COMPARE_ONLY: ${{ inputs.only }}
         run: >-
           python -m benchmarks.conversation_bench.ci_timing --audio "$BENCH_AUDIO"
-          --results "$RUNNER_TEMP/conversation-timing" --summary "$GITHUB_STEP_SUMMARY"
-          --settings "$COMPARE_SETTINGS" --repeats "${COMPARE_REPEATS:-0}"
+          --results "$RUNNER_TEMP/conversation-timing" --limit-minutes "$LIMIT_MINUTES"
+          --settings "$COMPARE_SETTINGS" --repeats "${COMPARE_REPEATS:-0}" --only "$COMPARE_ONLY"
+
+      # The summary is written after every repeat, so a stopped run still reports the repeats it finished.
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/conversation-timing/summary.md" ]; then
+            cat "$RUNNER_TEMP/conversation-timing/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The timing step wrote no summary." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # A real daemon stopped and killed while its Kokoro worker loads and while it is idle: how long the worker
       # outlives the daemon (it has no parent watch; it ends when its stdin closes). Uses the models fetched above.

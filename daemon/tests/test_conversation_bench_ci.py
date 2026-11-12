@@ -166,3 +166,73 @@ def test_the_parakeet_threads_setting_reloads_only_on_a_change():
     assert transcriber.threads == 4 and transcriber._recognizer is None and loads == [4]
     with pytest.raises(RuntimeError):
         compare_settings.SETTINGS["parakeet_threads"](SimpleNamespace(listener=None), "2")
+
+
+# ── A comparison that fits the job, and reports what it finished ──
+
+
+def args_for(settings="", repeats=0, only="", limit=0.0):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(settings=settings, repeats=repeats, only=only, limit_minutes=limit)
+
+
+def test_a_comparison_runs_only_the_scenarios_its_setting_can_move():
+    name, values, repeats, wanted, todo = ci_timing.plan(args_for("parakeet_threads=2,3,4"))
+    assert (name, values, repeats) == ("parakeet_threads", ["2", "3", "4"], 3)
+    assert wanted == ["u-syn-hey_heliox", "tt-syn-reply-model"]
+    assert todo and all(s.id.startswith(("u-syn-hey_heliox", "tt-syn-reply-model")) for s, _model in todo)
+    assert not any(s.id.startswith(("tt-syn-bargein-", "c-syn-")) for s, _model in todo)
+    # --only names others; with no setting the usual run takes every timing scenario
+    assert {s.id for s, _m in ci_timing.plan(args_for("parakeet_threads=2,3", only="c-syn-stop"))[4]} == {"c-syn-stop"}
+    usual = ci_timing.plan(args_for())
+    assert usual[3] == [] and len(usual[4]) == len([(s, m) for s in ci_timing.chosen(load_all()) for m in s.models])
+
+
+def test_a_comparison_that_cannot_finish_in_the_limit_is_refused_with_what_would():
+    from benchmarks.conversation_bench import compare_settings
+
+    # run 43290465258: 42 scenario passes x 3 settings x 3 repeats on a 150-minute job
+    sentence = compare_settings.refusal(42, 3, 3, 125)
+    assert sentence.startswith("Refused: 378 scenario passes")
+    assert "2 repeats of these 42 scenarios" in sentence and "at most 28 scenarios at 3 repeats" in sentence
+    assert compare_settings.refusal(25, 3, 3, 125) == ""  # the scoped comparison: about 100 minutes
+    assert compare_settings.refusal(42, 3, 3, 0) == ""  # no limit given: never refused
+    assert 98 < compare_settings.estimate_minutes(225) < 101
+
+
+def test_main_refuses_before_building_anything_and_says_so_in_the_summary(tmp_path, monkeypatch):
+    def no_run(*_a, **_k):
+        raise AssertionError("nothing may be built for a refused run")
+
+    monkeypatch.setattr(ci_timing, "run", no_run)
+    summary = tmp_path / "step_summary.md"
+    code = ci_timing.main([
+        "--audio", str(tmp_path), "--results", str(tmp_path / "out"), "--summary", str(summary),
+        "--settings", "parakeet_threads=2,3,4", "--only", "-", "--limit-minutes", "125",
+    ])  # fmt: skip
+    assert code == 2
+    assert "Refused:" in (tmp_path / "out" / "summary.md").read_text(encoding="utf-8")
+    assert "Refused:" in summary.read_text(encoding="utf-8")
+
+
+def test_the_summary_and_comparison_are_written_after_every_repeat(tmp_path):
+    from types import SimpleNamespace
+
+    per = {"2": {0: [{"final pass": 0.5}]}, "4": {0: [{"final pass": 0.8}]}}
+    args = SimpleNamespace(settings="parakeet_threads=2,4")
+    text = ci_timing.save(tmp_path, args, [], {g: [] for g in ci_timing.GROUPS}, set(), {"spoken requests": per},
+                          "CALIBRATION x", "u-syn-hey_heliox", 22, 1, 3, 0.0)  # fmt: skip
+    assert "Finished 1 of 3 repeats so far" in text and "Scenarios run: u-syn-hey_heliox (22 scenario passes" in text
+    assert (tmp_path / "summary.md").read_text(encoding="utf-8").strip() == text.strip()
+    assert "spoken requests" in (tmp_path / "compared.json").read_text(encoding="utf-8")
+
+
+def test_the_workflow_saves_its_caches_before_the_long_step_and_always_shows_the_summary():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "actions/cache/save" in text and "actions/cache/restore" in text and "uses: actions/cache@" not in text
+    assert text.index("actions/cache/save") < text.index("Timing lines (load-checked")
+    assert text.index("timeout-minutes: 125") > text.index("Timing lines (load-checked")
+    summary = text[text.index("- name: Summary") :]
+    assert "if: always()" in summary.split("- name:")[1] and "summary.md" in summary
+    assert '--only "$COMPARE_ONLY"' in text and "COMPARE_ONLY: ${{ inputs.only }}" in text

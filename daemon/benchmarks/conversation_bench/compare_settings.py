@@ -37,6 +37,51 @@ def _parakeet_threads(harness: Any, value: str) -> None:
 
 SETTINGS: dict[str, Callable[[Any, str], None]] = {"parakeet_threads": _parakeet_threads}
 
+# The scenarios each setting can move, as id prefixes: a comparison runs only these unless --only names others.
+# Parakeet's threads change the final pass, so the reply's start after a request; in run 43290465258 (all 42
+# scenario passes, threads 2, 3 and 4) the barge-in stop times moved 0.001 s between thread counts, so they are left
+# out of this comparison.
+SCOPE: dict[str, tuple[str, ...]] = {"parakeet_threads": ("u-syn-hey_heliox", "tt-syn-reply-model")}
+
+# What one scenario pass costs on a 4-core GitHub runner, the load check included: run 43290465258 did 330 passes
+# in 144.5 minutes (26.3 s each), after 1.7 minutes building the harness and calibrating.
+SECONDS_PER_PASS = 26.3
+SETUP_SECONDS = 105.0
+# The share of the step's limit an estimate may use: runners differ, and the summary must still be written.
+LIMIT_SHARE = 0.9
+
+
+def estimate_minutes(passes: int) -> float:
+    """How long ``passes`` scenario passes take on a 4-core runner, setup included (pure)."""
+    return (SETUP_SECONDS + passes * SECONDS_PER_PASS) / 60
+
+
+def refusal(scenarios: int, settings: int, repeats: int, limit_minutes: float) -> str:
+    """ "" when scenarios x settings x repeats fits in the step's limit; else one sentence saying what would (pure)."""
+    if limit_minutes <= 0:
+        return ""
+    passes = scenarios * settings * repeats
+    budget = limit_minutes * LIMIT_SHARE
+    need = estimate_minutes(passes)
+    if need <= budget:
+        return ""
+    per_repeat = scenarios * settings * SECONDS_PER_PASS / 60
+    fit_repeats = int((budget - SETUP_SECONDS / 60) // per_repeat) if per_repeat else 0
+    fit_scenarios = int((budget - SETUP_SECONDS / 60) * 60 // (settings * repeats * SECONDS_PER_PASS))
+    options = []
+    if fit_repeats >= 1:
+        options.append(f"{fit_repeats} repeat{'s' if fit_repeats != 1 else ''} of these {scenarios} scenarios")
+    if fit_scenarios >= 1:
+        options.append(f"at most {fit_scenarios} scenarios at {repeats} repeats (name them with --only)")
+    if settings > 2:
+        options.append("fewer settings")
+    what = "; or ".join(options) or "fewer settings"
+    return (
+        f"Refused: {passes} scenario passes ({scenarios} scenarios x {settings} settings x {repeats} repeats) take "
+        f"about {need:.0f} minutes at {SECONDS_PER_PASS:g} s each, more than the {budget:.0f} of this step's "
+        f"{limit_minutes:g}-minute limit that may be used; what fits: {what}."
+    )
+
 
 def parse(spec: str) -> tuple[str, list[str]]:
     """ "parakeet_threads=2,3,4" -> ("parakeet_threads", ["2", "3", "4"]) (pure). "" -> ("", [""])."""
