@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 from pilot.config import PilotConfig
@@ -313,9 +314,15 @@ try {{
 
 
 # Without pyobjc, Vision runs in a small Swift helper. Interpreting the script with `swift` compiled it on every
-# call: CI on e51aead timed out at 20 s while the in-process route took 3.3 s. The helper is compiled once with
-# `swiftc` (a cold compile can take a minute on a slow Mac, hence its own limit) and cached; each read then runs the
-# compiled helper within SWIFT_OCR_RUN_TIMEOUT.
+# read: CI on e51aead timed out at 20 s while the in-process route took 3.3 s. The helper is compiled once with
+# `swiftc` (a cold compile can take a minute or more on a slow Mac, hence its own limit) and kept; each read then
+# runs the compiled helper within SWIFT_OCR_RUN_TIMEOUT.
+#
+# The compile never holds a read: the read that finds no helper starts it in a background thread and goes on to the
+# next engine (tesseract) with a message that a one-time preparation is under way; later reads use the helper once
+# it exists. One compile at a time per process (Live's screen read and a request's read can come together), and a
+# compile that failed or ran out of time is remembered for the life of the process, so Live's repeated reads do not
+# each start another: a restart or a repair tries again.
 SWIFT_OCR_SOURCE = """
 import Vision
 import AppKit
@@ -350,6 +357,22 @@ SWIFT_OCR_NEEDS = (
     "Reading the screen on this Mac needs the macos extra (pip install 'pilot-daemon[macos]': in process, no "
     "developer tools) or the Xcode command-line tools for the swift route (xcode-select --install)."
 )
+SWIFT_OCR_PREPARING = (
+    "macOS text recognition is being prepared, a one-time step that can take a minute or two; until it is ready "
+    "Heliox reads the screen another way. Installing the macos extra (pip install 'pilot-daemon[macos]') avoids it."
+)
+
+
+class _SwiftHelperState:
+    """The background compile of the Vision helper, for the life of the daemon process."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.thread: threading.Thread | None = None
+        self.failed = ""  # why the compile failed; remembered until the process restarts
+
+
+_swift_state = _SwiftHelperState()
 
 
 def _swift_helper_dir() -> Path:
@@ -357,46 +380,97 @@ def _swift_helper_dir() -> Path:
     return Path.home() / ".config" / "heliox-os" / "tools" / "vision-ocr"
 
 
-async def _swift_ocr_helper() -> Path:
-    """The compiled Vision helper, compiling it the first time. Raises RuntimeError with what the person can do."""
+def _swift_helper_path() -> Path:
     import hashlib
 
-    folder = _swift_helper_dir()
-    helper = folder / f"vision-ocr-{hashlib.sha256(SWIFT_OCR_SOURCE.encode()).hexdigest()[:12]}"
+    return _swift_helper_dir() / f"vision-ocr-{hashlib.sha256(SWIFT_OCR_SOURCE.encode()).hexdigest()[:12]}"
+
+
+def _compile_swift_helper(source: Path, output: Path) -> tuple[int, str]:
+    """Run swiftc; (exit code, error text). A time-out is exit code -1 with "timed out" in the text."""
+    try:
+        done = subprocess.run(
+            ["swiftc", "-O", str(source), "-o", str(output)],
+            capture_output=True,
+            text=True,
+            timeout=SWIFT_OCR_COMPILE_TIMEOUT,
+            check=False,
+        )
+        return done.returncode, done.stderr or done.stdout
+    except subprocess.TimeoutExpired:
+        return -1, "timed out"
+    except OSError as error:
+        return -1, str(error)
+
+
+def _build_swift_helper(helper: Path) -> None:
+    """Compile the helper into a file of its own and move it into place; on failure, remember why."""
+    folder = helper.parent
+    source = output = None
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            os.chmod(folder, 0o700)
+        handle, source_name = tempfile.mkstemp(prefix="vision-ocr-", suffix=".swift", dir=folder)
+        os.close(handle)
+        source = Path(source_name)
+        source.write_text(SWIFT_OCR_SOURCE, encoding="utf-8")
+        output = source.with_suffix(".part")
+        code, error = _compile_swift_helper(source, output)
+        if code == 0 and output.exists():
+            os.replace(output, helper)
+            logger.info("macOS text recognition helper compiled: %s", helper)
+            return
+        if "timed out" in (error or "").casefold():
+            _swift_state.failed = (
+                f"Preparing macOS text recognition took longer than {SWIFT_OCR_COMPILE_TIMEOUT} s, so Heliox stopped "
+                f"it; restart Heliox to try again. {SWIFT_OCR_NEEDS}"
+            )
+        else:
+            detail = (error or "").strip().splitlines()[-1][:200] if (error or "").strip() else f"exit {code}"
+            _swift_state.failed = f"macOS text recognition could not be prepared ({detail}). {SWIFT_OCR_NEEDS}"
+        logger.warning("%s", _swift_state.failed)
+    except Exception as error:
+        _swift_state.failed = f"macOS text recognition could not be prepared ({error}). {SWIFT_OCR_NEEDS}"
+        logger.warning("%s", _swift_state.failed)
+    finally:
+        for leftover in (source, output):
+            if leftover is not None:
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+
+
+def _swift_ocr_helper() -> Path:
+    """The compiled Vision helper. When it is not there yet, start compiling it in the background (once) and raise,
+    so this read goes on to the next engine; raise the remembered reason when an earlier compile failed."""
+    helper = _swift_helper_path()
     if helper.exists():
         return helper
-    if not shutil.which("swiftc"):
-        raise RuntimeError(SWIFT_OCR_NEEDS)
-    folder.mkdir(parents=True, exist_ok=True)
-    source = folder / f"vision-ocr-{os.getpid()}.swift"
-    building = folder / f"{helper.name}.{os.getpid()}.part"
-    source.write_text(SWIFT_OCR_SOURCE, encoding="utf-8")
-    try:
-        code, _out, err = await run_command(
-            ["swiftc", "-O", str(source), "-o", str(building)], timeout=SWIFT_OCR_COMPILE_TIMEOUT
-        )
-        if code != 0 or not building.exists():
-            if "timed out" in (err or "").casefold():
-                raise RuntimeError(
-                    f"Preparing macOS text recognition took longer than {SWIFT_OCR_COMPILE_TIMEOUT} s (it is "
-                    f"compiled once, the first time). {SWIFT_OCR_NEEDS}"
-                )
-            raise RuntimeError(f"macOS text recognition could not be prepared: {(err or '').strip()[:200]}")
-        os.replace(building, helper)
-        return helper
-    finally:
-        for leftover in (source, building):
-            try:
-                leftover.unlink()
-            except OSError:
-                pass
+    with _swift_state.lock:
+        if helper.exists():
+            return helper
+        if _swift_state.failed:
+            raise RuntimeError(_swift_state.failed)
+        if not shutil.which("swiftc"):
+            _swift_state.failed = SWIFT_OCR_NEEDS
+            raise RuntimeError(SWIFT_OCR_NEEDS)
+        if _swift_state.thread is None or not _swift_state.thread.is_alive():
+            _swift_state.thread = threading.Thread(
+                target=_build_swift_helper, args=(helper,), name="heliox-vision-helper", daemon=True
+            )
+            _swift_state.thread.start()
+            logger.info("Preparing macOS text recognition: compiling its helper once, in the background")
+    raise RuntimeError(SWIFT_OCR_PREPARING)
 
 
 async def _ocr_macos_native(img_bytes: bytes) -> str:
     """Use macOS Vision framework for OCR (macOS 10.15+).
 
     In process through pyobjc when the ``macos`` extra is installed (no developer tools needed); otherwise a small
-    Swift helper, compiled once with ``swiftc`` (the Xcode command-line tools) and kept in Heliox's tools folder.
+    Swift helper, compiled once with ``swiftc`` (the Xcode command-line tools) in the background and kept in
+    Heliox's tools folder. Until it is ready, this raises so the caller goes on to the next engine.
     """
     try:
         from pilot.system.macos_vision_ocr import recognize_text
@@ -405,7 +479,7 @@ async def _ocr_macos_native(img_bytes: bytes) -> str:
     except ImportError:
         logger.debug("pyobjc Vision not installed; using the swift route")
 
-    helper = await _swift_ocr_helper()
+    helper = _swift_ocr_helper()
     tmp_img = os.path.join(tempfile.gettempdir(), f"pilot_ocr_{os.getpid()}.png")
     Path(tmp_img).write_bytes(img_bytes)
     try:

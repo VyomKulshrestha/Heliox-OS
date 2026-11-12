@@ -579,35 +579,92 @@ def test_vision_ocr_lines_come_out_in_reading_order():
     assert reading_order([]) == []
 
 
-def test_macos_ocr_without_pyobjc_uses_the_swift_route(monkeypatch, tmp_path):
-    import asyncio
+def _swift_route(monkeypatch, tmp_path, compile_result):
+    """vision with pyobjc missing, a fresh helper state, the helper folder in tmp_path and swiftc faked."""
     import sys
+    import threading
 
     from pilot.system import vision
 
     monkeypatch.setitem(sys.modules, "pilot.system.macos_vision_ocr", None)  # import fails like a missing extra
-    calls = []
+    monkeypatch.setattr(vision, "_swift_state", vision._SwiftHelperState())
+    monkeypatch.setattr(vision, "_swift_helper_dir", lambda: tmp_path / "vision-ocr")
+    monkeypatch.setattr(vision.shutil, "which", lambda name: "/usr/bin/swiftc" if name == "swiftc" else None)
+    compiles = []
+    release = threading.Event()
+
+    def compile_helper(source, output):
+        compiles.append(source.read_text(encoding="utf-8") == vision.SWIFT_OCR_SOURCE)
+        release.wait(5)
+        code, error = compile_result
+        if code == 0:
+            output.write_bytes(b"helper")
+        return code, error
+
+    monkeypatch.setattr(vision, "_compile_swift_helper", compile_helper)
+    return vision, compiles, release
+
+
+def test_macos_ocr_without_pyobjc_compiles_the_swift_helper_once_in_the_background(monkeypatch, tmp_path):
+    import asyncio
+
+    import pytest
+
+    vision, compiles, release = _swift_route(monkeypatch, tmp_path, (0, ""))
+    runs = []
 
     async def run(args, **kw):
-        calls.append((args, kw.get("timeout")))
-        if args[0] == "swiftc":
-            from pathlib import Path
-
-            Path(args[args.index("-o") + 1]).write_bytes(b"helper")
-            return (0, "", "")
+        runs.append(kw.get("timeout"))
         return (0, "from swift\n", "")
 
     monkeypatch.setattr(vision, "run_command", run)
-    monkeypatch.setattr(vision, "_swift_helper_dir", lambda: tmp_path)
-    monkeypatch.setattr(vision.shutil, "which", lambda name: "/usr/bin/swiftc" if name == "swiftc" else None)
+
+    async def two_reads_at_once():
+        return await asyncio.gather(
+            vision._ocr_macos_native(b"png"), vision._ocr_macos_native(b"png"), return_exceptions=True
+        )
+
+    # The read that finds no helper does not wait for the compile: it says a one-time preparation is under way,
+    # and a second read at the same moment neither waits nor starts another compile.
+    first, second = asyncio.run(two_reads_at_once())
+    assert isinstance(first, RuntimeError) and "one-time step" in str(first)
+    assert isinstance(second, RuntimeError) and "one-time step" in str(second)
+    release.set()
+    vision._swift_state.thread.join(5)
+    assert compiles == [True]
     assert asyncio.run(vision._ocr_macos_native(b"png")) == "from swift"
     assert asyncio.run(vision._ocr_macos_native(b"png")) == "from swift"
-    compiles = [c for c in calls if c[0][0] == "swiftc"]
-    runs = [c for c in calls if c[0][0] != "swiftc"]
-    # Compiled once with its own long limit, then the cached helper runs within the short one, each time.
-    assert len(compiles) == 1 and compiles[0][1] == vision.SWIFT_OCR_COMPILE_TIMEOUT
-    assert len(runs) == 2 and all(timeout == vision.SWIFT_OCR_RUN_TIMEOUT for _args, timeout in runs)
-    assert [p.name for p in tmp_path.iterdir() if p.suffix in (".swift", ".part")] == []
+    assert compiles == [True] and runs == [vision.SWIFT_OCR_RUN_TIMEOUT] * 2
+    folder = tmp_path / "vision-ocr"
+    assert [p.name for p in folder.iterdir() if p.suffix in (".swift", ".part")] == []
+    if __import__("os").name != "nt":
+        assert folder.stat().st_mode & 0o777 == 0o700
+
+
+def test_a_failed_swift_compile_is_remembered_and_never_retried_in_the_same_run(monkeypatch, tmp_path):
+    import asyncio
+
+    import pytest
+
+    vision, compiles, release = _swift_route(monkeypatch, tmp_path, (-1, "timed out"))
+    release.set()
+    with pytest.raises(RuntimeError, match="one-time step"):
+        asyncio.run(vision._ocr_macos_native(b"png"))
+    vision._swift_state.thread.join(5)
+    for _ in range(3):
+        with pytest.raises(RuntimeError, match="restart Heliox to try again"):
+            asyncio.run(vision._ocr_macos_native(b"png"))
+    assert compiles == [True]
+
+    # A quick failure (no licence accepted, no SDK) is remembered the same way, with the compiler's last line.
+    vision, compiles, release = _swift_route(monkeypatch, tmp_path, (1, "error: unable to find sdk 'macosx'"))
+    release.set()
+    with pytest.raises(RuntimeError, match="one-time step"):
+        asyncio.run(vision._ocr_macos_native(b"png"))
+    vision._swift_state.thread.join(5)
+    with pytest.raises(RuntimeError, match=r"unable to find sdk.*xcode-select --install"):
+        asyncio.run(vision._ocr_macos_native(b"png"))
+    assert compiles == [True]
 
 
 def test_macos_ocr_without_pyobjc_or_developer_tools_says_what_to_install(monkeypatch, tmp_path):
@@ -619,17 +676,10 @@ def test_macos_ocr_without_pyobjc_or_developer_tools_says_what_to_install(monkey
     from pilot.system import vision
 
     monkeypatch.setitem(sys.modules, "pilot.system.macos_vision_ocr", None)
+    monkeypatch.setattr(vision, "_swift_state", vision._SwiftHelperState())
     monkeypatch.setattr(vision, "_swift_helper_dir", lambda: tmp_path)
     monkeypatch.setattr(vision.shutil, "which", lambda name: None)
     with pytest.raises(RuntimeError, match=r"pilot-daemon\[macos\].*xcode-select --install"):
-        asyncio.run(vision._ocr_macos_native(b"png"))
-
-    async def slow(args, **_kw):
-        return (1, "", "Command timed out")
-
-    monkeypatch.setattr(vision.shutil, "which", lambda name: "/usr/bin/swiftc")
-    monkeypatch.setattr(vision, "run_command", slow)
-    with pytest.raises(RuntimeError, match="compiled once, the first time"):
         asyncio.run(vision._ocr_macos_native(b"png"))
 
 

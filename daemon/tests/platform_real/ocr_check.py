@@ -90,17 +90,42 @@ def mac_fallback(png: Path) -> None:
     except ImportError:
         check("ocr-macos/second-venv-has-no-pyobjc", True)
     data = png.read_bytes()
-    # The first read compiles the swift helper (its own limit, SWIFT_OCR_COMPILE_TIMEOUT); every later read runs
-    # the compiled helper within SWIFT_OCR_RUN_TIMEOUT. Both are timed and reported.
-    for attempt, name in ((1, "ocr-macos/vision-through-swift-first-read"), (2, "ocr-macos/vision-through-swift")):
-        start = time.perf_counter()
-        try:
-            text = asyncio.run(vision._ocr_macos_native(data))
-        except Exception as exc:
-            text = f"{type(exc).__name__}: {exc}"
-        took = (time.perf_counter() - start) * 1000
-        bound = vision.SWIFT_OCR_COMPILE_TIMEOUT if attempt == 1 else vision.SWIFT_OCR_RUN_TIMEOUT
-        check(name, found(text) and took <= bound * 1000, f"{text[:160]!r} in {took:.0f} ms (bound {bound} s)")
+    # The first read starts compiling the swift helper in the background and does not wait for it: it must come
+    # back at once, saying a one-time preparation is under way. Once the helper exists (within
+    # SWIFT_OCR_COMPILE_TIMEOUT), a read runs it within SWIFT_OCR_RUN_TIMEOUT. Both are timed and reported.
+    start = time.perf_counter()
+    try:
+        text = asyncio.run(vision._ocr_macos_native(data))
+    except Exception as exc:
+        text = f"{type(exc).__name__}: {exc}"
+    took = (time.perf_counter() - start) * 1000
+    check(
+        "ocr-macos/first-read-does-not-wait-for-the-compile",
+        "one-time step" in text and took < 5000,
+        f"{text[:160]!r} in {took:.0f} ms",
+    )
+    start = time.perf_counter()
+    thread = vision._swift_state.thread
+    if thread is not None:
+        thread.join(vision.SWIFT_OCR_COMPILE_TIMEOUT + 10)
+    compiled = (time.perf_counter() - start) * 1000
+    check(
+        "ocr-macos/swift-helper-compiled",
+        vision._swift_helper_path().exists(),
+        f"in {compiled:.0f} ms; failure remembered: {vision._swift_state.failed[:160]!r}",
+    )
+    start = time.perf_counter()
+    try:
+        text = asyncio.run(vision._ocr_macos_native(data))
+    except Exception as exc:
+        text = f"{type(exc).__name__}: {exc}"
+    took = (time.perf_counter() - start) * 1000
+    bound = vision.SWIFT_OCR_RUN_TIMEOUT
+    check(
+        "ocr-macos/vision-through-swift",
+        found(text) and took <= bound * 1000,
+        f"{text[:160]!r} in {took:.0f} ms (bound {bound} s)",
+    )
     if shutil.which("tesseract"):
         try:
             text = asyncio.run(vision._ocr_tesseract_cli(data, "eng"))
