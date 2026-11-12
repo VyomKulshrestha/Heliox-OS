@@ -1015,6 +1015,28 @@ jobs:
           sleep 3
           exit $status
 
+      # The supervisor loop of the app (supervisor::tick) with a real daemon: a crash, a second crash (the back-off
+      # doubles) and a hang (the process suspended), with short limits; startup_status read from Rust says what
+      # happened. Under a complete fake home of its own; the cargo and rustup folders stay the runner's.
+      - name: The app's supervisor restarts a real daemon after a crash and after a hang
+        continue-on-error: true
+        working-directory: tauri-app/src-tauri
+        run: |
+          export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+          export HELIOX_REAL_SUPERVISOR_PYTHON="$ENVPY"
+          export HOME="$RUNNER_TEMP/supervisor" USERPROFILE="$RUNNER_TEMP/supervisor"
+          mkdir -p "$HOME"
+          export LOCALAPPDATA="$HOME/AppData/Local" PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring
+          unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            export XDG_RUNTIME_DIR="$HOME/.runtime"
+            mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+          else
+            unset XDG_RUNTIME_DIR
+          fi
+          cargo test --all-targets -- --ignored --exact \
+            real_supervision::real_supervisor_restarts_a_crashed_and_a_hung_daemon --nocapture
+
       - name: Windows - after setup, nothing of Heliox starts by itself
         if: runner.os == 'Windows'
         run: python daemon/tests/platform_real/windows_autostart_check.py left "$RUNNER_TEMP/autostart-before.json"

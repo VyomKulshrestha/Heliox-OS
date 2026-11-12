@@ -4,6 +4,8 @@
 mod commands;
 mod file_access;
 mod hotkey;
+#[cfg(test)]
+mod real_supervision;
 mod setup;
 mod supervisor;
 mod tray;
@@ -360,7 +362,7 @@ fn daemon_port_answers() -> bool {
 /// A daemon the app did not start (`None` in DaemonProcess) is left alone. Safe to call again later, for example
 /// after first-run setup starts the daemon: a second call while a watcher runs does nothing.
 pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
-    use supervisor::{Observation, Step, Watch, CHECK_EVERY};
+    use supervisor::Watch;
 
     let owned = app
         .state::<DaemonProcess>()
@@ -380,135 +382,58 @@ pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
             watch.borrow();
             BORROW_AT_START.store(false, std::sync::atomic::Ordering::SeqCst);
         }
-        let paused = || setup::DAEMON_PAUSED.load(std::sync::atomic::Ordering::SeqCst);
-        let exiting = || APP_EXITING.load(std::sync::atomic::Ordering::SeqCst);
-        let mut was_paused = false;
-        loop {
-            std::thread::sleep(CHECK_EVERY);
-            if APP_EXITING.load(std::sync::atomic::Ordering::SeqCst) {
-                return;
-            }
-            if paused() {
-                // Setup is changing the daemon's environment (update, repair); it starts the daemon again itself.
-                was_paused = true;
-                continue;
-            }
-            let state = app.state::<DaemonProcess>();
-            if was_paused {
-                // Own what setup started, or quietly borrow what answers; decided once, when the pause ends.
-                was_paused = false;
-                let owns = state.0.lock().map(|guard| guard.is_some()).unwrap_or(false);
-                watch.resume_after_pause(owns);
-                continue;
-            }
-            let exited = if watch.borrowed {
-                None // another copy's daemon: only its port is watched
-            } else {
-                match state.0.lock() {
-                    Ok(mut guard) => match guard.as_mut() {
-                        Some(child) => match child.try_wait() {
-                            Ok(None) => None,
-                            Ok(Some(status)) => {
-                                supervisor::note_previous_exit(status.code());
-                                Some(supervisor::exit_observation(status.code()))
-                            }
-                            Err(_) => Some(Observation::Exited),
-                        },
-                        // A restart that failed to launch: keep trying, unless it found another copy serving.
-                        None if BORROW_AT_START
-                            .swap(false, std::sync::atomic::Ordering::SeqCst) =>
-                        {
-                            Some(Observation::AnotherCopy)
-                        }
-                        None => Some(Observation::Exited),
-                    },
-                    Err(_) => return,
-                }
-            };
-            let seen = if let Some(exit) = exited {
-                exit
-            } else if watch.borrowed {
-                if daemon_port_answers() {
-                    Observation::Answered
-                } else {
-                    Observation::Silent
-                }
-            } else if tauri::async_runtime::block_on(commands::daemon_answers()) {
-                Observation::Answered
-            } else {
-                Observation::Silent
-            };
-            let step = watch.observe(seen, CHECK_EVERY);
-            if let Some(line) = supervisor::notice(step) {
-                eprintln!("[Heliox OS] {line}");
-                let _ = app.emit("daemon-supervisor", serde_json::json!({ "message": line }));
-            }
-            match step {
-                Step::Wait => {}
-                Step::KillHung => {
-                    if let Ok(mut guard) = state.0.lock() {
-                        if let Some(child) = guard.as_mut() {
-                            supervisor::kill_tree(child);
-                            supervisor::note_hung();
-                        }
-                    }
-                }
-                Step::Restart { after } => {
-                    let stop = || paused() || exiting();
-                    supervisor::wait_unless(
-                        after,
-                        Duration::from_millis(250),
-                        stop,
-                        std::thread::sleep,
-                    );
-                    if exiting() {
-                        return;
-                    }
-                    if !supervisor::may_launch(paused(), exiting()) {
-                        continue; // an update or repair began during the back-off: setup starts the daemon
-                    }
-                    if let Ok(mut guard) = state.0.lock() {
-                        if let Some(mut old) = guard.take() {
-                            // Only a live process is killed: an exited one's id may already belong to another.
-                            if matches!(old.try_wait(), Ok(None)) {
-                                supervisor::kill_tree(&mut old);
-                            } else {
-                                let _ = old.wait();
-                            }
-                        }
-                        if TcpStream::connect((DAEMON_HOST, DAEMON_PORT)).is_ok() {
-                            // Someone else started a daemon meanwhile (for example from a terminal): leave it, and
-                            // watch it as a borrowed one.
-                            println!("[Heliox OS] Another daemon is listening; not starting one");
-                            watch.borrow();
-                            continue;
-                        }
-                        *guard = launch_daemon();
-                    }
-                    watch.started();
-                }
-                Step::Borrow => {
-                    if let Ok(mut guard) = state.0.lock() {
-                        if let Some(mut old) = guard.take() {
-                            let _ = old.wait(); // it has exited: reap it
-                        }
-                    }
-                }
-                Step::TakeOver => {
-                    if exiting() {
-                        return;
-                    }
-                    if !supervisor::may_launch(paused(), exiting()) {
-                        continue;
-                    }
-                    if let Ok(mut guard) = state.0.lock() {
-                        *guard = launch_daemon();
-                    }
-                    watch.started();
-                }
-            }
-        }
+        supervisor::run(&AppHost { app }, &mut watch);
     });
+}
+
+/// The app's side of the supervisor loop (supervisor::Host): its daemon slot, its pause and exit flags, the window.
+struct AppHost {
+    app: tauri::AppHandle,
+}
+
+impl supervisor::Host for AppHost {
+    fn exiting(&self) -> bool {
+        APP_EXITING.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn paused(&self) -> bool {
+        setup::DAEMON_PAUSED.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn daemon(&self) -> &Mutex<Option<Child>> {
+        &self.app.state::<DaemonProcess>().inner().0
+    }
+
+    fn take_borrow_at_start(&self) -> bool {
+        BORROW_AT_START.swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn port_answers(&self) -> bool {
+        daemon_port_answers()
+    }
+
+    fn daemon_answers(&self) -> bool {
+        tauri::async_runtime::block_on(commands::daemon_answers())
+    }
+
+    fn port_taken(&self) -> bool {
+        TcpStream::connect((DAEMON_HOST, DAEMON_PORT)).is_ok()
+    }
+
+    fn launch(&self) -> Option<Child> {
+        launch_daemon()
+    }
+
+    fn notice(&self, line: &str) {
+        eprintln!("[Heliox OS] {line}");
+        let _ = self
+            .app
+            .emit("daemon-supervisor", serde_json::json!({ "message": line }));
+    }
+
+    fn sleep(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
 }
 
 fn stop_daemon(state: &DaemonProcess) {

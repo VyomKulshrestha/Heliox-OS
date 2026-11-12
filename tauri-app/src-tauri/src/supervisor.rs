@@ -3,9 +3,11 @@
 //! The app starts the Python daemon at launch (`spawn_daemon` in main.rs). Before this, nothing watched it: if it
 //! crashed or hung, the window showed "Reconnecting..." until the person restarted the app. Now a thread checks the
 //! daemon the app owns every few seconds. A daemon that exited is started again after a back-off (2 s, doubling to
-//! 60 s, reset after five quiet minutes); one that stops answering its RPC ping for a minute after its start-up grace
-//! is killed and then started again. Each step is announced on the `daemon-supervisor` event in one plain line, and
-//! the window reconnects on its own as it always did.
+//! 60 s, reset after five quiet minutes); one that stops answering its RPC ping after its start-up grace is killed
+//! and then started again once HANG_AFTER worth of checks went unanswered (each counted as CHECK_EVERY, though an
+//! unanswered check also waits out PING_TIMEOUT: about three minutes of wall time today, not one). Each step is
+//! announced on the `daemon-supervisor` event in one plain line, and the window reconnects on its own as it always
+//! did.
 //!
 //! A daemon the app did not start (for example one run from a terminal during development, found already listening
 //! at launch) is never touched: `DaemonProcess` holds `None` and the supervisor only watches its port ("borrowed").
@@ -32,7 +34,9 @@ pub(crate) fn note_previous_exit(code: Option<i32>) {
     }
     let seen = code.map_or_else(|| "signal".to_string(), |code| code.to_string());
     if let Ok(mut slot) = PREVIOUS_EXIT.lock() {
-        *slot = Some(seen);
+        if slot.as_deref() != Some("hung") {
+            *slot = Some(seen); // the exit of a daemon ended for hanging is that end, already noted
+        }
     }
 }
 
@@ -107,12 +111,36 @@ pub(crate) enum Step {
     TakeOver,
 }
 
+/// The supervisor's time limits: the constants above, or shorter ones a real check sets so it does not wait out
+/// minutes on a CI runner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Limits {
+    pub(crate) check_every: Duration,
+    pub(crate) startup_grace: Duration,
+    pub(crate) hang_after: Duration,
+    pub(crate) stable_after: Duration,
+    pub(crate) take_over_after: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            check_every: CHECK_EVERY,
+            startup_grace: STARTUP_GRACE,
+            hang_after: HANG_AFTER,
+            stable_after: STABLE_AFTER,
+            take_over_after: TAKE_OVER_AFTER,
+        }
+    }
+}
+
 /// Pure bookkeeping for one owned daemon: what each observation means. Tested without processes or sockets.
 #[derive(Debug, Default)]
 pub(crate) struct Watch {
     pub(crate) restarts_in_row: u32,
     /// Watching a daemon another copy started; observations are "its port answers" or not.
     pub(crate) borrowed: bool,
+    pub(crate) limits: Limits,
     since_start: Duration,
     since_answer: Duration,
 }
@@ -153,7 +181,7 @@ impl Watch {
                 }
                 _ => {
                     self.since_answer += elapsed;
-                    if self.since_answer >= TAKE_OVER_AFTER {
+                    if self.since_answer >= self.limits.take_over_after {
                         Step::TakeOver
                     } else {
                         Step::Wait
@@ -173,14 +201,16 @@ impl Watch {
             }
             Observation::Answered => {
                 self.since_answer = Duration::ZERO;
-                if self.since_start >= STABLE_AFTER {
+                if self.since_start >= self.limits.stable_after {
                     self.restarts_in_row = 0;
                 }
                 Step::Wait
             }
             Observation::Silent => {
                 self.since_answer += elapsed;
-                if self.since_start >= STARTUP_GRACE && self.since_answer >= HANG_AFTER {
+                if self.since_start >= self.limits.startup_grace
+                    && self.since_answer >= self.limits.hang_after
+                {
                     Step::KillHung
                 } else {
                     Step::Wait
@@ -188,6 +218,169 @@ impl Watch {
             }
         }
     }
+}
+
+/// What the supervisor loop needs from the app, so a real check drives the same loop with its own launcher, notice
+/// sink and limits (main.rs's AppHost is the app's).
+pub(crate) trait Host {
+    fn exiting(&self) -> bool;
+    fn paused(&self) -> bool;
+    /// The daemon this app started, if any.
+    fn daemon(&self) -> &std::sync::Mutex<Option<Child>>;
+    /// A launch found another copy serving (exit code 3), or one was listening at launch; taken once.
+    fn take_borrow_at_start(&self) -> bool;
+    /// Borrowed mode: does anything answer on the daemon's port?
+    fn port_answers(&self) -> bool;
+    /// Owned mode: does the daemon answer an authenticated ping in time?
+    fn daemon_answers(&self) -> bool;
+    /// Right before a restart: is someone else already listening on the port?
+    fn port_taken(&self) -> bool;
+    fn launch(&self) -> Option<Child>;
+    /// The one line a person sees (the window's daemon-supervisor event).
+    fn notice(&self, line: &str);
+    fn sleep(&self, duration: Duration);
+}
+
+/// Whether the loop goes on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tick {
+    Continue,
+    Stop,
+}
+
+/// The supervisor until the app exits: one tick every `watch.limits.check_every`.
+pub(crate) fn run(host: &impl Host, watch: &mut Watch) {
+    let mut was_paused = false;
+    loop {
+        host.sleep(watch.limits.check_every);
+        if tick(host, watch, &mut was_paused) == Tick::Stop {
+            return;
+        }
+    }
+}
+
+/// One look at the daemon and what follows from it: a notice, a kill, a restart after the back-off, a borrow.
+pub(crate) fn tick(host: &impl Host, watch: &mut Watch, was_paused: &mut bool) -> Tick {
+    if host.exiting() {
+        return Tick::Stop;
+    }
+    if host.paused() {
+        // Setup is changing the daemon's environment (update, repair); it starts the daemon again itself.
+        *was_paused = true;
+        return Tick::Continue;
+    }
+    if *was_paused {
+        // Own what setup started, or quietly borrow what answers; decided once, when the pause ends.
+        *was_paused = false;
+        let owns = host
+            .daemon()
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false);
+        watch.resume_after_pause(owns);
+        return Tick::Continue;
+    }
+    let exited = if watch.borrowed {
+        None // another copy's daemon: only its port is watched
+    } else {
+        match host.daemon().lock() {
+            Ok(mut guard) => match guard.as_mut() {
+                Some(child) => match child.try_wait() {
+                    Ok(None) => None,
+                    Ok(Some(status)) => {
+                        note_previous_exit(status.code());
+                        Some(exit_observation(status.code()))
+                    }
+                    Err(_) => Some(Observation::Exited),
+                },
+                // A restart that failed to launch: keep trying, unless it found another copy serving.
+                None if host.take_borrow_at_start() => Some(Observation::AnotherCopy),
+                None => Some(Observation::Exited),
+            },
+            Err(_) => return Tick::Stop,
+        }
+    };
+    let seen = if let Some(exit) = exited {
+        exit
+    } else if watch.borrowed {
+        if host.port_answers() {
+            Observation::Answered
+        } else {
+            Observation::Silent
+        }
+    } else if host.daemon_answers() {
+        Observation::Answered
+    } else {
+        Observation::Silent
+    };
+    let step = watch.observe(seen, watch.limits.check_every);
+    if let Some(line) = notice(step) {
+        host.notice(&line);
+    }
+    match step {
+        Step::Wait => {}
+        Step::KillHung => {
+            if let Ok(mut guard) = host.daemon().lock() {
+                if let Some(child) = guard.as_mut() {
+                    kill_tree(child);
+                    note_hung();
+                }
+            }
+        }
+        Step::Restart { after } => {
+            wait_unless(
+                after,
+                Duration::from_millis(250),
+                || host.paused() || host.exiting(),
+                |duration| host.sleep(duration),
+            );
+            if host.exiting() {
+                return Tick::Stop;
+            }
+            if !may_launch(host.paused(), host.exiting()) {
+                return Tick::Continue; // an update or repair began during the back-off: setup starts the daemon
+            }
+            if let Ok(mut guard) = host.daemon().lock() {
+                if let Some(mut old) = guard.take() {
+                    // Only a live process is killed: an exited one's id may already belong to another.
+                    if matches!(old.try_wait(), Ok(None)) {
+                        kill_tree(&mut old);
+                    } else {
+                        let _ = old.wait();
+                    }
+                }
+                if host.port_taken() {
+                    // Someone else started a daemon meanwhile (for example from a terminal): leave it, and watch
+                    // it as a borrowed one.
+                    println!("[Heliox OS] Another daemon is listening; not starting one");
+                    watch.borrow();
+                    return Tick::Continue;
+                }
+                *guard = host.launch();
+            }
+            watch.started();
+        }
+        Step::Borrow => {
+            if let Ok(mut guard) = host.daemon().lock() {
+                if let Some(mut old) = guard.take() {
+                    let _ = old.wait(); // it has exited: reap it
+                }
+            }
+        }
+        Step::TakeOver => {
+            if host.exiting() {
+                return Tick::Stop;
+            }
+            if !may_launch(host.paused(), host.exiting()) {
+                return Tick::Continue;
+            }
+            if let Ok(mut guard) = host.daemon().lock() {
+                *guard = host.launch();
+            }
+            watch.started();
+        }
+    }
+    Tick::Continue
 }
 
 /// Right before the supervisor starts a daemon (after a restart's back-off, or to take over): only when setup has
@@ -320,6 +513,7 @@ mod tests {
 
     #[test]
     fn the_next_daemon_learns_once_what_ended_the_last_one() {
+        // One test for the one slot: tests run in parallel threads.
         let _ = take_previous_exit();
         note_previous_exit(Some(ANOTHER_COPY_EXIT_CODE));
         assert_eq!(
@@ -334,6 +528,16 @@ mod tests {
         assert_eq!(take_previous_exit().as_deref(), Some("signal"));
         note_hung();
         assert_eq!(take_previous_exit().as_deref(), Some("hung"));
+        // A hang the supervisor ended: the next tick sees the process it killed exit, which is not a second end.
+        note_hung();
+        note_previous_exit(Some(1));
+        assert_eq!(take_previous_exit().as_deref(), Some("hung"));
+        note_previous_exit(Some(1));
+        assert_eq!(
+            take_previous_exit().as_deref(),
+            Some("1"),
+            "a later crash is said as itself"
+        );
     }
 
     #[test]

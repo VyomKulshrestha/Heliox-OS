@@ -671,6 +671,20 @@ pub(crate) async fn ask_daemon_to_stop(reason: &str) -> bool {
     }
 }
 
+/// One authenticated request to the daemon and its result, within `limit` (the real supervisor check reads
+/// startup_status with it).
+#[cfg(test)]
+pub(crate) async fn daemon_result(
+    method: &str,
+    limit: std::time::Duration,
+) -> Result<serde_json::Value, String> {
+    let request =
+        serde_json::json!({"jsonrpc": "2.0", "method": method, "params": {}, "id": "native-check"});
+    let mut ws = connect_authenticated().await?;
+    let reply = request_reply(&mut ws, &request, limit).await?;
+    result_or_error(reply)
+}
+
 fn version_of(reply: &serde_json::Value) -> String {
     reply
         .get("result")
