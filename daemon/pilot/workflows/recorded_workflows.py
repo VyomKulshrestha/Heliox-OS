@@ -80,10 +80,12 @@ def _key_from_os_keyring() -> bytes:
         backend = keyring.get_keyring()
         if isinstance(backend, keyring.backends.fail.Keyring) or getattr(backend, "priority", 0) <= 0:
             raise RuntimeError("A working OS keyring is required for local workflow recordings")
-        value = keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
+        from pilot.security import keyring_guard  # bounded: a waiting keychain dialog cannot hold Heliox
+
+        value = keyring_guard.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
         if value is None:
             key = AESGCM.generate_key(bit_length=256)
-            keyring.set_password(KEYRING_SERVICE, KEYRING_ACCOUNT, base64.b64encode(key).decode("ascii"))
+            keyring_guard.set_password(KEYRING_SERVICE, KEYRING_ACCOUNT, base64.b64encode(key).decode("ascii"))
             return key
     except Exception as exc:
         raise RuntimeError("OS keyring is unavailable for local workflow recordings") from exc

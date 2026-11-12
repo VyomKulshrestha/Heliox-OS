@@ -44,7 +44,8 @@ def known_accounts() -> dict[str, list[str]]:
     from pilot.workflows.recorded_workflows import KEYRING_ACCOUNT, KEYRING_SERVICE
     from pilot.workflows.task_receipts import SIGNING_KEY_NAME
 
-    vault = [*KNOWN_PROVIDERS, SIGNING_KEY_NAME]
+    # heliox_learner_snapshot: the learner's snapshot key, which versions before the key file kept in the keyring.
+    vault = [*KNOWN_PROVIDERS, SIGNING_KEY_NAME, "heliox_learner_snapshot"]
     try:
         from pilot.config import PilotConfig
 

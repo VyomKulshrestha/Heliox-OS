@@ -115,9 +115,17 @@ from pilot.workflows.durable_tasks import (
 
 logger = logging.getLogger("pilot.server")
 
+
+def keyring_guard_status() -> dict[str, Any]:
+    from pilot.security import keyring_guard
+
+    return keyring_guard.status()
+
+
 # The online learner's saved state (pilot.intelligence.learner_snapshot) and the vault entry that keys it.
 LEARNER_SNAPSHOT_FILE = "online_learning_snapshot.bin"
 LEARNER_SNAPSHOT_KEY = "heliox_learner_snapshot"
+LEARNER_KEYRING_READ_SECONDS = 1.0  # a read of an earlier version's key; no write is ever made
 LEARNER_SNAPSHOT_KEY_FILE = "learner_snapshot_key"  # in the runtime folder, owner-only, when there is no keyring
 
 
@@ -10764,6 +10772,7 @@ class PilotServer:
             "world_model": {"enabled": bool(self.config.gateway.enabled and self.config.gateway.risk_gate_enabled)},
             "gnomon": gnomon,
             "storage": storage().status(),  # a full disk or read-only data folder, in plain words; None when fine
+            "credential_store": keyring_guard_status(),  # a keychain that did not answer in time, and what to do
             "local_models": local_models,
             "gpu": await asyncio.to_thread(arbiter.status),
         }
@@ -10850,21 +10859,26 @@ class PilotServer:
             self._after_ready_task = asyncio.create_task(self._after_ready(), name="after_ready")
 
     async def _learner_key(self) -> bytes | None:
-        """The snapshot key: from the key vault (the system keyring), made once; where there is no usable keyring, from
-        an owner-only file in the runtime folder (pilot.system.key_file). None only when neither works, and then
-        every start replays in full after ready."""
+        """The snapshot key: an owner-only file in the runtime folder (pilot.system.key_file), made once. Never written
+        to the system keyring: on macOS a keychain write can put up a dialog and wait for it, and at start nobody may
+        see it. A key an earlier version kept in the keyring is still used when the keyring answers a read quickly,
+        so its saved state stays valid. None only when the file cannot be used: every start then replays in full."""
         vault = self._vault
         if vault is not None and vault.available:
+            from pilot.security import keyring_guard
+            from pilot.security.vault import VAULT_SERVICE
+
             try:
-                secret = await vault.get_key(LEARNER_SNAPSHOT_KEY)
-                if not secret:
-                    secret = secrets.token_hex(32)
-                    await vault.store_key(LEARNER_SNAPSHOT_KEY, secret)
-                return secret.encode("utf-8")
-            except Exception:
-                logger.warning(
-                    "The keyring could not give the learner's snapshot key; using the key file", exc_info=True
+                earlier = await asyncio.to_thread(
+                    keyring_guard.get_password,
+                    VAULT_SERVICE,
+                    LEARNER_SNAPSHOT_KEY,
+                    timeout=LEARNER_KEYRING_READ_SECONDS,
                 )
+            except Exception:
+                earlier = None  # slow, locked or refusing: the key file instead, said once by keyring_guard
+            if earlier:
+                return earlier.encode("utf-8")
         from pilot.config import RUNTIME_DIR
         from pilot.system.key_file import KeyFileRefused, load_or_create
 

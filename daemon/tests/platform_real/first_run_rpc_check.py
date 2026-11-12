@@ -62,10 +62,43 @@ def timing_checks(label: str, timings: dict, late_parts: dict) -> tuple[list[str
     return lines, ok
 
 
+def report_daemon(lines: int = 80) -> None:
+    """When the daemon does not answer: its own log (the file, flushed per line, unlike its redirected stdout), the
+    last start-up stage it reached, so a CI failure says where it stopped."""
+    try:
+        from pilot.config import LOG_FILE
+
+        text = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception as error:
+        print(f"DAEMON-LOG unavailable: {type(error).__name__}: {error}")
+        return
+    marks = ("Start-up:", "Start-up timing", "Pilot daemon ready", "Learner loaded", "credential store")
+    stages = [line for line in text if any(mark in line for mark in marks)]
+    print(f"DAEMON-STAGE {stages[-1].strip() if stages else 'no start-up stage logged'}")
+    print(f"DAEMON-LOG last {min(lines, len(text))} lines of {LOG_FILE}:")
+    for line in text[-lines:]:
+        print(f"  {line}")
+
+
+def keyring_backend() -> str:
+    """The credential store this environment would use (PYTHON_KEYRING_BACKEND decides when set)."""
+    import os
+
+    chosen = os.environ.get("PYTHON_KEYRING_BACKEND", "")
+    try:
+        import keyring
+
+        return f"{type(keyring.get_keyring()).__name__} (PYTHON_KEYRING_BACKEND={chosen!r})"
+    except Exception as error:
+        return f"unavailable ({type(error).__name__}; PYTHON_KEYRING_BACKEND={chosen!r})"
+
+
 async def main(timeout: float, timings_label: str = "") -> int:
     import websockets
 
     from pilot.config import RUNTIME_DIR
+
+    print(f"INFO credential store for this start: {keyring_backend()}")
 
     token_file = RUNTIME_DIR / "auth_token"
     started = time.monotonic()
@@ -83,6 +116,7 @@ async def main(timeout: float, timings_label: str = "") -> int:
                         f"CHECK first-run/daemon-answers: {'PASS' if ok else 'FAIL'} - {pong} after {time.monotonic() - started:.0f} s"
                     )
                     if not ok:
+                        report_daemon()
                         return 1
                     ready = {}
                     request_id = 3
@@ -104,9 +138,12 @@ async def main(timeout: float, timings_label: str = "") -> int:
                             )
                             for line in lines:
                                 print(line)
+                            if not ok:
+                                report_daemon()
                             return 0 if ok else 1
                         await asyncio.sleep(2)
                     print(f"CHECK first-run/daemon-ready: FAIL - still {ready} after {timeout:.0f} s")
+                    report_daemon()
                     return 1
             except Exception as exc:  # not listening yet
                 last_error = f"{type(exc).__name__}: {exc}"
@@ -114,6 +151,7 @@ async def main(timeout: float, timings_label: str = "") -> int:
     print(
         f"CHECK first-run/daemon-answers: FAIL - no answer in {timeout:.0f} s ({last_error or 'no auth token written'})"
     )
+    report_daemon()
     return 1
 
 

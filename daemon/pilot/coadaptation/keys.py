@@ -16,6 +16,7 @@ from typing import Protocol, runtime_checkable
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from pilot.coadaptation.core.consent import PARTICIPANT_KEY_PATTERN
+from pilot.security import keyring_guard  # bounded: a waiting keychain dialog cannot hold Heliox
 
 _KEY_BYTES = 32
 _PARTICIPANT_KEY = re.compile(PARTICIPANT_KEY_PATTERN)
@@ -80,9 +81,9 @@ class OsKeyringKeyProvider:
 
     def get(self, participant_key: str) -> bytes:
         _check_participant_key(participant_key)
-        keyring = self._keyring()
+        self._keyring()
         try:
-            encoded = keyring.get_password(self.SERVICE, participant_key)
+            encoded = keyring_guard.get_password(self.SERVICE, participant_key)
         except Exception as exc:
             raise CoAdaptationKeyUnavailable(_UNAVAILABLE) from exc
         if not encoded:
@@ -100,21 +101,21 @@ class OsKeyringKeyProvider:
             return self.get(participant_key)
         except CoAdaptationKeyMissing:
             pass
-        keyring = self._keyring()
+        self._keyring()
         key = AESGCM.generate_key(bit_length=256)
         try:
-            keyring.set_password(self.SERVICE, participant_key, base64.b64encode(key).decode("ascii"))
+            keyring_guard.set_password(self.SERVICE, participant_key, base64.b64encode(key).decode("ascii"))
         except Exception as exc:
             raise CoAdaptationKeyUnavailable(_UNAVAILABLE) from exc
         return key
 
     def delete(self, participant_key: str) -> bool:
         _check_participant_key(participant_key)
-        keyring = self._keyring()
+        self._keyring()
         try:
-            if not keyring.get_password(self.SERVICE, participant_key):
+            if not keyring_guard.get_password(self.SERVICE, participant_key):
                 return False
-            keyring.delete_password(self.SERVICE, participant_key)
+            keyring_guard.delete_password(self.SERVICE, participant_key)
         except Exception as exc:
             raise CoAdaptationKeyUnavailable(_UNAVAILABLE) from exc
         return True

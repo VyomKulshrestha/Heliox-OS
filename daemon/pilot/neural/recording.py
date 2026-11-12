@@ -78,14 +78,16 @@ class NeuralRecordingKeyStore:
                 keyring.backends.fail.Keyring,  # type: ignore[attr-defined]
             ):
                 raise NeuralRecordingError("secure OS key storage is unavailable; recording fails closed")
-            encoded = keyring.get_password(self.SERVICE, subject_key)
+            from pilot.security import keyring_guard  # bounded: a waiting keychain dialog cannot hold Heliox
+
+            encoded = keyring_guard.get_password(self.SERVICE, subject_key)
             if encoded:
                 key = base64.b64decode(encoded, validate=True)
                 if len(key) != 32:
                     raise NeuralRecordingError("stored neural recording key is invalid")
                 return key
             key = AESGCM.generate_key(bit_length=256)
-            keyring.set_password(self.SERVICE, subject_key, base64.b64encode(key).decode("ascii"))
+            keyring_guard.set_password(self.SERVICE, subject_key, base64.b64encode(key).decode("ascii"))
             return key
         except NeuralRecordingError:
             raise
