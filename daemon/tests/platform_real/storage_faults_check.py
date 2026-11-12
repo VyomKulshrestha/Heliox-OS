@@ -48,6 +48,7 @@ RECHECK = 30.0  # STORAGE_RECHECK_SECONDS in pilot.server
 MARGIN = 15.0
 FULL_WORDS = "The disk is full"
 READ_ONLY_WORDS = "cannot be written to"
+IO_ERROR_WORDS = "The drive Heliox saves to is reporting errors"
 
 os.environ["XDG_DATA_HOME"] = str(MOUNT)  # before pilot.config is imported, here and in the daemon
 sys.path.insert(0, str(HERE))
@@ -129,10 +130,15 @@ async def both_ways(session, text: str) -> list[tuple[str, str, str]]:
     return found
 
 
-def said_by_both(found, words: str, kind: str) -> tuple[bool, str]:
-    """execute answers in its result; note_add with the storage error (-32010, data naming the kind)."""
-    ok = all(words in sentence for _method, _form, sentence in found)
-    ok = ok and found[0][1] == "result" and found[1][1].startswith("error -32010") and f"'{kind}'" in found[1][1]
+def said_by_both(found, words: str | dict[str, str], kind: str = "") -> tuple[bool, str]:
+    """execute answers in its result; note_add with the storage error (-32010, data naming the kind). ``words`` may
+    map each acceptable kind to its sentence: on a file system the kernel stopped, SQLite says "disk I/O error"
+    (io_error) while a plain file write says "read-only file system" (read_only), and each request is answered for
+    what it met."""
+    choices = words if isinstance(words, dict) else {kind: words}
+    ok = all(any(said in sentence for said in choices.values()) for _method, _form, sentence in found)
+    kinds = any(f"'{name}'" in found[1][1] for name in choices)
+    ok = ok and found[0][1] == "result" and found[1][1].startswith("error -32010") and kinds
     return ok, "; ".join(f"{method} answered as {form}: {sentence[:160]!r}" for method, form, sentence in found)
 
 
@@ -281,10 +287,10 @@ async def remounted_read_only() -> None:
         found = await both_ways(session, "the drive failed")
         took = time.monotonic() - began
         problem = await storage_status(session)
-        ok, how = said_by_both(found, READ_ONLY_WORDS, "read_only")
+        ok, how = said_by_both(found, {"read_only": READ_ONLY_WORDS, "io_error": IO_ERROR_WORDS})
         check(
             "remounted-read-only/says-so",
-            ok and (problem or {}).get("kind") == "read_only",
+            ok and (problem or {}).get("kind") in ("read_only", "io_error"),
             f"in {took:.1f} s: {how}; status storage={problem!r}",
         )
         pong, took = await session.timed("ping")

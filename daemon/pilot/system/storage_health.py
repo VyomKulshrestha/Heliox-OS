@@ -2,7 +2,8 @@
 
 Every SQLite write goes through ``AsyncSqlitePool.write`` and every local answer that saves (reminders, to-dos, notes,
 the profile) through the server's local-answer chain; both report a failed write here. ``report`` classifies it
-("full": no space left; "read_only": the folder or database cannot be written; "other"), logs it once and tells the
+("full": no space left; "read_only": the folder or database cannot be written; "io_error": the drive reports
+errors, as a failing disk or a file system the kernel stopped does; "other"), logs it once and tells the
 window once per problem (the ``storage_problem`` notification) until a write succeeds again. The words are the same
 on Windows, macOS and Linux.
 """
@@ -26,19 +27,28 @@ MESSAGES = {
     "full": "The disk is full, so Heliox could not save {what}. Free some space; Heliox keeps working meanwhile.",
     "read_only": "Heliox's data folder cannot be written to, so it could not save {what}. Check the folder's "
     "permissions or that the drive is not read-only; Heliox keeps working meanwhile.",
+    # A drive the system reports errors on (a failing disk, a stick pulled out, a file system the kernel stopped):
+    # SQLite says "disk I/O error", the file system EIO.
+    "io_error": "The drive Heliox saves to is reporting errors, so it could not save {what}. Heliox keeps answering "
+    "meanwhile. Check the drive (or plug it back in), then restart Heliox.",
 }
 RECOVERED = "Heliox can save again."
 _FULL_ERRNOS = {errno.ENOSPC, getattr(errno, "EDQUOT", -1)}
 _READ_ONLY_ERRNOS = {errno.EROFS, errno.EACCES, errno.EPERM}
+_IO_ERRNOS = {errno.EIO, getattr(errno, "ENXIO", -1)}
+# Windows: ERROR_CRC 23, ERROR_SECTOR_NOT_FOUND 27, ERROR_GEN_FAILURE 31, ERROR_IO_DEVICE 1117, ERROR_NOT_READY 21.
+_IO_WINERRORS = {21, 23, 27, 31, 1117}
 
 
 def classify(error: BaseException) -> str | None:
-    """ "full", "read_only", or None for an error that is not about the disk."""
+    """ "full", "read_only", "io_error" (the drive reports errors), or None for an error not about the disk."""
     if isinstance(error, OSError) and not isinstance(error, (TimeoutError, ConnectionError)):
         if error.errno in _FULL_ERRNOS or getattr(error, "winerror", None) in {112, 39}:  # ERROR_DISK_FULL
             return "full"
         if error.errno in _READ_ONLY_ERRNOS or getattr(error, "winerror", None) in {5, 19}:  # access denied, protect
             return "read_only"
+        if error.errno in _IO_ERRNOS or getattr(error, "winerror", None) in _IO_WINERRORS:
+            return "io_error"
         return None
     if isinstance(error, sqlite3.Error):
         text = str(error).lower()
@@ -46,6 +56,8 @@ def classify(error: BaseException) -> str | None:
             return "full"
         if "readonly" in text or "read-only" in text or "unable to open database" in text:
             return "read_only"
+        if "disk i/o error" in text:  # SQLITE_IOERR: the file system refused or lost the write
+            return "io_error"
     return None
 
 
@@ -56,6 +68,7 @@ def sentence(kind: str, what: str = "that") -> str:
 _FULL_WORDS = ("no space left", "errno 28", "not enough space on the disk", "disk is full", "disk full")
 _READ_ONLY_WORDS = ("read-only file system", "readonly database", "errno 30", "errno 13", "permission denied",
                     "access is denied")  # fmt: skip
+_IO_WORDS = ("input/output error", "disk i/o error", "errno 5]", "the device is not ready", "data error (cyclic")
 
 
 def plain_reason(text: str, what: str = "the model download") -> str:
@@ -66,6 +79,8 @@ def plain_reason(text: str, what: str = "the model download") -> str:
         return sentence("full", what)
     if any(word in lowered for word in _READ_ONLY_WORDS):
         return sentence("read_only", what)
+    if any(word in lowered for word in _IO_WORDS):
+        return sentence("io_error", what)
     return text
 
 

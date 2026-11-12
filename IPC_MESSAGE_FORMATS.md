@@ -42,8 +42,9 @@ contract.
 
 Standard JSON-RPC error codes: `-32700` parse error, `-32600` invalid request, `-32601` method not found, `-32603` internal error.
 `-32000`: Heliox could not finish starting (the message says why), or a request waited ten minutes for start-up.
-`-32010`: the disk is full or the data folder is read-only. The message is the plain sentence to show, and `data` is
-`{ "storage_problem": true, "kind": "full" | "read_only" }`. `execute` and `resume_task` answer such a failure in
+`-32010`: the disk is full, the data folder is read-only, or the drive reports errors. The message is the plain
+sentence to show, and `data` is `{ "storage_problem": true, "kind": "full" | "read_only" | "io_error" }`.
+`execute` and `resume_task` answer such a failure in
 their result instead: `{ "status": "error", "message": ..., "explanation": ..., "storage_problem": true }`.
 
 **While the daemon starts** it already listens: `ping`, `health`, `ready` and `startup_status` are answered at

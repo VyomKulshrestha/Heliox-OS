@@ -1001,6 +1001,7 @@ class PlanHistoryStore:
 LEAVE_INTERRUPTED_PHRASES = frozenset({"leave it", "leave it be", "leave that", "forget it", "drop it"})
 # A daemon that could not write its data folder at start-up checks again this often, then starts fully.
 STORAGE_RECHECK_SECONDS = 30.0
+STORAGE_RECHECK_MIN_GAP_SECONDS = 1.0  # checks asked for by requests: at most one a second
 # Each awaited step of stop() waits at most this long; a step that does not finish in time is left behind.
 STOP_IN_FLIGHT_SECONDS = 10.0
 # And the whole of stop() at most this long: steps after the deadline are not waited for at all.
@@ -2642,6 +2643,7 @@ class PilotServer:
                 startup = getattr(self, "_startup", None)
                 if startup is not None and not startup.is_ready and request.method not in EARLY_STARTUP_METHODS:
                     # Asked while Heliox is starting: wait for it, then answer as usual; never "not ready yet".
+                    self._recheck_storage_now()  # waiting for the data folder: check it now, not in 30 s
                     not_ready = await startup.wait_ready()
                     if not_ready:
                         if request.id is not None:
@@ -10472,6 +10474,7 @@ class PilotServer:
 
     async def _handle_startup_status(self, params: dict, ws: ServerConnection) -> dict:
         """Whether Heliox has finished starting, and which stage it is in ("opening Heliox's records")."""
+        self._recheck_storage_now()  # the window asking (it does on every connect) checks a blocked folder at once
         startup = getattr(self, "_startup", None)
         if startup is None:
             return {"status": "ok", "state": "ready", "stage": "", "reason": "", "stages_done": []}
@@ -11166,12 +11169,27 @@ class PilotServer:
         if self._proactive is not None:
             self._proactive.set_online_learner(learner)
 
+    def _recheck_storage_now(self) -> None:
+        """Someone is waiting on Heliox (a request, the window asking how start-up is going): check the data folder
+        at once instead of at the next 30 s recheck, so a person who has just fixed it is not kept waiting."""
+        startup = getattr(self, "_startup", None)
+        if startup is not None and startup.state == "waiting_for_storage":
+            self.__dict__.setdefault("_storage_recheck", asyncio.Event()).set()
+
     async def _initialize_when_storage_returns(self) -> None:
-        """Started without stores because the data folder could not be written: check every 30 s, then start."""
+        """Started without stores because the data folder could not be written: check every 30 s, and at once when
+        a request or the window asks (_recheck_storage_now; at most one check a second), then start."""
         from pilot.system.storage_health import preflight, storage
 
+        recheck: asyncio.Event = self.__dict__.setdefault("_storage_recheck", asyncio.Event())
         while self._running:
-            await asyncio.sleep(STORAGE_RECHECK_SECONDS)
+            try:
+                async with asyncio.timeout(STORAGE_RECHECK_SECONDS):
+                    await recheck.wait()
+                await asyncio.sleep(STORAGE_RECHECK_MIN_GAP_SECONDS)  # a burst of requests is one check
+            except TimeoutError:
+                pass
+            recheck.clear()
             if await asyncio.to_thread(preflight, DATA_DIR) is None:
                 storage().report_ok(announce=False)  # said below, once the stores are up
                 logger.info("The data folder can be written again; starting Heliox's stores")

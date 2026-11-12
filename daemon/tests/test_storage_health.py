@@ -29,6 +29,8 @@ def health(monkeypatch):
         (OSError(errno.ENOSPC, "No space left on device"), "full"),
         (sqlite3.OperationalError("database or disk is full"), "full"),
         (OSError(errno.EROFS, "Read-only file system"), "read_only"),
+        (OSError(errno.EIO, "Input/output error"), "io_error"),
+        (sqlite3.OperationalError("disk I/O error"), "io_error"),
         (OSError(errno.EACCES, "Permission denied"), "read_only"),
         (sqlite3.OperationalError("attempt to write a readonly database"), "read_only"),
         (sqlite3.OperationalError("database table is locked"), None),
@@ -350,3 +352,65 @@ def test_an_unwritable_data_folder_does_not_stop_the_daemon_before_it_listens(he
 
     monkeypatch.setattr(Path, "write_text", full)
     config_module.ensure_dirs()  # a full disk is left to start-up too
+
+
+def test_a_drive_that_reports_errors_is_its_own_problem_in_plain_words(health):
+    """CI, an ext4 file system the kernel stopped (errors=remount-ro): execute's store met SQLite's "disk I/O error"
+    and the person got "Internal error: disk I/O error". It is a storage problem of its own kind now."""
+    store, told = health
+    windows = OSError(errno.EINVAL, "The request could not be performed because of an I/O device error")
+    windows.winerror = 1117  # ERROR_IO_DEVICE
+    assert classify(windows) == "io_error"
+    said = store.report("durable_tasks", sqlite3.OperationalError("disk I/O error"))
+    assert said == (
+        "The drive Heliox saves to is reporting errors, so it could not save that. Heliox keeps answering meanwhile. "
+        "Check the drive (or plug it back in), then restart Heliox."
+    )
+    assert store.status()["kind"] == "io_error" and told[0]["kind"] == "io_error"
+    assert plain_reason("OSError: [Errno 5] Input/output error").startswith("The drive Heliox saves to is reporting")
+
+
+def test_an_io_error_is_answered_in_both_request_forms():
+    import json
+
+    from pilot.server import STORAGE_ERROR_CODE, _storage_answer
+
+    said = "The drive Heliox saves to is reporting errors, so it could not save that."
+    result = json.loads(_storage_answer(7, "execute", "io_error", said))["result"]
+    assert result == {"status": "error", "message": said, "explanation": said, "storage_problem": True}
+    error = json.loads(_storage_answer(8, "note_add", "io_error", said))["error"]
+    assert error == {"code": STORAGE_ERROR_CODE, "message": said, "data": {"storage_problem": True, "kind": "io_error"}}
+
+
+async def test_a_request_while_the_folder_is_blocked_checks_it_at_once_not_in_30_s(health, monkeypatch, tmp_path):
+    """CI: ready came 29.1 s after the folder became writable, the 30 s recheck. A person who has fixed the folder
+    and asks for something (or whose window reconnects) now gets it checked at once."""
+    from unittest.mock import AsyncMock
+
+    from pilot import server as server_module
+
+    checks = iter([OSError(errno.EROFS, "Read-only file system"), None])
+    monkeypatch.setattr(storage_health, "preflight", lambda _folder: next(checks))
+    monkeypatch.setattr(server_module, "STORAGE_RECHECK_SECONDS", 30.0)
+    monkeypatch.setattr(server_module, "STORAGE_RECHECK_MIN_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("pilot.config.RUNTIME_DIR", tmp_path / "runtime")
+    monkeypatch.setattr(server_module, "ensure_dirs", lambda: None)
+    config = PilotConfig()
+    config.server.host, config.server.port = "127.0.0.1", 0
+    server = PilotServer(config)
+    server.initialize = AsyncMock()
+    server._broadcast_notification = AsyncMock()
+    await server.start()
+    try:
+        assert server._startup.state == "waiting_for_storage"
+        loop = asyncio.get_running_loop()
+        began = loop.time()
+        await server._handle_startup_status({}, None)  # the window asks how start-up is going
+        for _ in range(200):
+            if server.initialize.await_count:
+                break
+            await asyncio.sleep(0.01)
+        server.initialize.assert_awaited_once()
+        assert loop.time() - began < 2.0  # not the 30 s recheck
+    finally:
+        await server.stop()
