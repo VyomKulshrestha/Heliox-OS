@@ -244,7 +244,7 @@ def fast_model(kind: str, replies: dict[str, Any], record: Record) -> Any:
     provider = {"claude": "claude", "openai": "openai", "local": "ollama"}[kind]
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/count_tokens"):
+        if request.method == "GET" or request.url.path.endswith("/count_tokens"):  # a warm-up, not a reply
             return httpx.Response(200, json={"input_tokens": 1})
         turn = _turn_of(record)
         record.model_calls[turn] = record.model_calls.get(turn, 0) + 1

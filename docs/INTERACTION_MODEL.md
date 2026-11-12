@@ -579,10 +579,34 @@ with free token-counting calls:
 - A client asking to keep idle connections 300 s reused the same connection at every interval up to 120 s
   (0.30 to 0.47 s), so the server keeps it at least that long.
 
-So a warm-up at the start of a ten-second sentence is gone when the person finishes, and the first question after a
-minute of silence starts cold. In the paid runs the first call of a fresh model took 1.2 to 1.9 s against about
-0.9 s warm. The session runner now warms before each dispatch, as the daemon does at a wake or a follow-up, so the
-bench no longer measures cold calls.
+So a warm-up at the start of a ten-second sentence was gone when the person finished, and the first question after a
+minute of silence started cold. In the paid runs the first call of a fresh model took 1.2 to 1.9 s against about
+0.9 s warm.
+
+**Now:**
+- **The connections stay open.** The fast model's client keeps an idle connection 120 s (`KEEPALIVE_SECONDS`, in the
+  one factory that serves every provider), and so does the planner's (`pilot.models.cloud.IDLE_CONNECTION_SECONDS`).
+  Only connections a request opened are kept: nothing connects for this. A person with a model only on this computer,
+  or none, gets no connection to any provider, as before.
+- **Every cloud provider is warmed.** Claude gets the free token-counting call; Gemini and the OpenAI-compatible
+  providers get the model list. A local model is never warmed. A warm-up runs at most every 3 s, in the background,
+  and is silent when it fails: it never holds the turn and never counts as a provider fault.
+- **It is warmed only for speech said to Heliox.** The listener asks (`PilotServer.warm_for_speech`) when the early
+  opening read hears the wake phrase, and again at the end-of-speech candidate. The server warms as well when it
+  reports a wake or a follow-up that the addressing rule took. A doubtful follow-up, a live caption of speech not yet
+  known to be for Heliox, or anything else opens nothing. The listener's half is the speech agent's.
+- **The session runner** warms before each dispatch, as the daemon does, so the bench no longer measures cold calls.
+
+Measured again on 13 November, before and after, with each provider's free warm request through the stored keys (CPU
+about 76%, so single timings are noisy):
+- With httpx's 5 s, every call after 6, 15, 40 or 120 s idle opened a new connection, for Claude, Gemini and
+  OpenRouter alike.
+- Keeping idle connections 120 s, all three reused their connection after 6, 15 and 40 s. A new one was opened only
+  after 120 s, which is the limit itself.
+- What a new connection costs shows best between the cold first call and a reuse 2 s later, on the old client:
+  Claude 1.36 s against 0.36 s, Gemini 0.76 s against 0.55 s, OpenRouter 1.14 s against 0.14 s.
+- That is the 0.2 to 1 s a person no longer waits on a long sentence or a question after a pause of up to two
+  minutes. OpenAI and Meta keys are not stored here, so those two are unmeasured.
 
 ### The model for each kind of person
 

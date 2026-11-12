@@ -487,6 +487,7 @@ def test_the_bench_wires_its_listener_exactly_as_the_server_does():
     # changes, this fails, and the bench (which reads the same source) must be checked against the new wiring.
     assert entry == "_voice_turn"
     assert attrs["withdraw_turn"] == "withdraw_voice_turn" and attrs["task_open"] == "_voice_task_open"
+    assert attrs["warm_model"] == "warm_for_speech"  # speech said to Heliox warms the fast model's connection
 
     class Server:
         def withdraw_voice_turn(self):
@@ -494,6 +495,9 @@ def test_the_bench_wires_its_listener_exactly_as_the_server_does():
 
         def _voice_task_open(self):
             return True
+
+        def warm_for_speech(self, addressed):
+            return addressed == "wake"
 
     class Listener:
         pass

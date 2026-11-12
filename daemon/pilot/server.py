@@ -629,6 +629,9 @@ CODE_ANSWERS_ANY_MODEL = frozenset(
     }
 )
 ANSWERED_ON_THIS_COMPUTER = "(answered on this computer)"
+# How an utterance must be known to be addressed before the fast model's connection is warmed for it.
+# A doubtful follow-up, or anything the addressing rule has not taken, never warms it.
+WARM_FOR = frozenset({"wake", "button", "follow_up", "continuation", "live_reply"})
 
 
 def answered_here(done: list[str] | tuple[str, ...] = ()) -> str:
@@ -14551,6 +14554,20 @@ def handle_tool(tool_name, params):
                 stopped += 1
         return stopped
 
+    def warm_for_speech(self, addressed: str) -> bool:
+        """The listener: speech now known to be said to Heliox ("wake" at the early opening read, "button", or
+        "follow_up" with the follow-up window open) is under way or has just ended. Open the fast model's connection
+        now, so the reply does not wait for it. Anything else (speech not yet known to be for Heliox, a doubtful
+        follow-up, overheard words) opens nothing: a connection made because someone spoke near the microphone would
+        still tell the provider something. Returns whether a warm-up was asked for (it runs in the background, never
+        holds the turn, and is silent when it fails)."""
+        if addressed not in WARM_FOR:
+            return False
+        from pilot.conversation import layer_for
+
+        layer_for(self).prewarm()
+        return True
+
     async def _voice_partial(self, text: str) -> None:
         """A live caption of the words so far, while the person is still talking (streaming engine)."""
         self._prewarm_voice()  # load the voice while they talk, so the reply is not silent
@@ -14643,14 +14660,16 @@ def handle_tool(tool_name, params):
         logger.info("Started a new voice conversation (%d earlier turns set aside)", hidden)
         return {"status": "ok", "earlier_turns": hidden}
 
-    def _prewarm_voice(self) -> None:
-        """Load the local voice and open the output line, so Heliox's next words wait for neither."""
+    def _prewarm_voice(self, *, model: bool = False) -> None:
+        """Load the local voice and open the output line, so Heliox's next words wait for neither. ``model``: also warm
+        the fast model's connection, only for speech already known to be said to Heliox (warm_for_speech)."""
         from pilot.system.local_tts_worker import LOCAL_ENGINES, prewarm_local_voice
 
         prewarm_local_voice(self.config.voice)
-        from pilot.conversation import layer_for
+        if model:
+            from pilot.conversation import layer_for
 
-        layer_for(self).prewarm()  # the fast model and its SDK, so a spoken reply waits for neither
+            layer_for(self).prewarm()  # the fast model's connection, so a spoken reply does not wait for it
         if self.config.voice.tts_engine in LOCAL_ENGINES:
             from pilot.system.voice import warm_output_line
 
@@ -15214,7 +15233,9 @@ def handle_tool(tool_name, params):
             data: Additional status data.
         """
         if status in {"wake_detected", "follow_up_detected"}:
-            self._prewarm_voice()  # load the voice now, so the reply is not silent
+            # Load the voice now, so the reply is not silent; warm the model only for speech the rule took as said to
+            # Heliox (a doubtful follow-up is reported with this status too).
+            self._prewarm_voice(model=str(data.get("addressed", "")) in WARM_FOR)
         await self._broadcast_notification("voice_status", {"status": status, **data})
         phase_map = {
             "wake_detected": InteractionPhase.UNDERSTANDING,
@@ -15254,6 +15275,7 @@ def handle_tool(tool_name, params):
         )
         replacement.task_open = self._voice_task_open
         replacement.withdraw_turn = self.withdraw_voice_turn  # a sentence it split at a pause (conv_interfaces.md b)
+        replacement.warm_model = self.warm_for_speech  # speech said to Heliox: open the fast model's connection
         self._voice_listener = replacement
         result = await replacement.start()
         if not replacement.is_running:
@@ -15291,6 +15313,9 @@ def handle_tool(tool_name, params):
         )
         self._voice_listener.task_open = self._voice_task_open
         self._voice_listener.withdraw_turn = self.withdraw_voice_turn  # a sentence split at a pause
+        self._voice_listener.warm_model = (
+            self.warm_for_speech
+        )  # speech said to Heliox: open the fast model's connection
         result = await self._voice_listener.start()
         if not self._voice_listener.is_running:
             self._voice_listener = None

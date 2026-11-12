@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.models.cloud")
 
+# How long the planner's client keeps an idle connection to a provider (httpx's default is 5 s; the providers keep
+# one at least 120 s, measured 13 November).
+IDLE_CONNECTION_SECONDS = 120.0
+
 PROVIDER_ENDPOINTS = {
     "openai": "https://api.openai.com/v1/chat/completions",
     "gemini": "https://generativelanguage.googleapis.com/v1beta",
@@ -363,7 +367,11 @@ class CloudClient:
     def __init__(self, config: PilotConfig, vault: KeyVault) -> None:
         self._config = config
         self._vault = vault
-        self._client = create_httpx_client(config, timeout=120.0)
+        # A plan request after a pause would otherwise open a new connection: httpx keeps an idle one 5 s; the
+        # providers keep it at least 120 s. Only connections a request opened are kept.
+        self._client = create_httpx_client(
+            config, timeout=120.0, limits=httpx.Limits(keepalive_expiry=IDLE_CONNECTION_SECONDS)
+        )
         self._key_cooldowns: dict[bytes, float] = {}
 
     @staticmethod

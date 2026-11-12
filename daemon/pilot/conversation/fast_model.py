@@ -40,7 +40,14 @@ DEFAULT_CLAUDE_FAST_MODEL = "claude-haiku-5-5"
 OFFLINE_HOLD_SECONDS = 30.0  # after a connection failure, answer at once from local rules for this long
 CREDIT_HOLD_SECONDS = 600.0  # an account out of credit does not refill in seconds
 BUSY_HOLD_SECONDS = 20.0  # a rate limit without a Retry-After header
-WARM_EVERY_SECONDS = 45.0  # an idle HTTPS connection is usually kept about this long
+# A warm-up opens the connection while the person is still talking; it is sent again at most this often (the
+# listener asks at the wake word and again at the end of the sentence).
+WARM_EVERY_SECONDS = 3.0
+# How long an idle connection to a provider is kept for the next turn. httpx's default is 5 s, which made every
+# sentence longer than a few seconds, and every first question after a pause, start on a new connection (the
+# provider keeps an idle one at least 120 s: measured 13 November). Only connections a request opened are kept;
+# nothing is opened for this.
+KEEPALIVE_SECONDS = 120.0
 LOCAL_PROVIDERS = frozenset({"ollama", "local"})
 LOCAL_CONNECT_TIMEOUT = 0.5
 OPENAI_COMPATIBLE = frozenset({"openai", "openrouter", "meta"})
@@ -440,10 +447,28 @@ class HttpFastModel(_StreamingBase):
             return ""
         return str((choices[0].get("delta") or {}).get("content") or "")
 
+    def warm_request(self, key: str) -> tuple[str, str, dict[str, str], dict[str, Any] | None]:
+        """The free request that opens the connection to this provider: (method, URL, headers, JSON body).
+
+        Claude: the token-counting call. Gemini and the OpenAI-compatible providers: the model list. None of them is
+        billed, none carries anything the person said."""
+        from pilot.models.cloud import PROVIDER_ENDPOINTS
+
+        if self.provider == "claude":
+            body = {"model": self.name, "messages": [{"role": "user", "content": "hi"}]}
+            return "POST", PROVIDER_ENDPOINTS["claude"] + "/count_tokens", _claude_headers(key), body
+        if self.provider == "gemini":
+            return "GET", f"{PROVIDER_ENDPOINTS['gemini']}/models?pageSize=1", {"x-goog-api-key": key}, None
+        base = PROVIDER_ENDPOINTS.get(self.provider, PROVIDER_ENDPOINTS["openai"]).rsplit("/chat/completions", 1)[0]
+        return "GET", f"{base}/models", {"Authorization": f"Bearer {key}"}, None
+
     async def warm(self) -> None:
-        """Open the connection before the turn ends (Claude: the free token-counting call), at most every 45 s."""
+        """Open the connection to a cloud provider before the turn ends, at most every WARM_EVERY_SECONDS.
+
+        Never for a model on this computer (no connection to open, nothing to gain). In the background: it never holds
+        the turn, and a warm-up that fails (no network, a slow provider) is silent and is not a provider fault."""
         now = self.clock()
-        if self.provider != "claude" or now - self._warmed_at < WARM_EVERY_SECONDS or now < self._offline_until:
+        if self.local or now - self._warmed_at < WARM_EVERY_SECONDS or now < self._offline_until:
             return
         self._warmed_at = now
         try:
@@ -452,16 +477,13 @@ class HttpFastModel(_StreamingBase):
                 return
             if self._client is None:
                 self._client = await asyncio.to_thread(self.client_factory)
-            from pilot.models.cloud import PROVIDER_ENDPOINTS
-
-            await self._client.post(
-                PROVIDER_ENDPOINTS["claude"] + "/count_tokens",
-                json={"model": self.name, "messages": [{"role": "user", "content": "hi"}]},
-                headers=_claude_headers(key),
-                timeout=5.0,
-            )
+            method, url, headers, body = self.warm_request(key)
+            if method == "POST":
+                await self._client.post(url, json=body, headers=headers, timeout=5.0)
+            else:
+                await self._client.get(url, headers=headers, timeout=5.0)
         except Exception:
-            logger.debug("Warming the Claude connection failed", exc_info=True)
+            logger.debug("Warming the %s connection failed", self.provider, exc_info=True)
 
     async def stream(self, system: str, messages: list[dict[str, str]]) -> AsyncIterator[str]:
         self._gate()
@@ -623,9 +645,11 @@ def build_fast_model(config: Any, *, vault: Any, router: Any, budget: Any, http_
     def client_factory() -> Any:
         if http_client is not None:
             return http_client
+        import httpx
+
         from pilot.system.http_client import create_httpx_client
 
-        return create_httpx_client(config, timeout=30.0)
+        return create_httpx_client(config, timeout=30.0, limits=httpx.Limits(keepalive_expiry=KEEPALIVE_SECONDS))
 
     if provider == "cloud" and cloud and vault is not None:
 

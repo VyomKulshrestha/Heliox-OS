@@ -415,7 +415,7 @@ def test_a_local_model_held_after_a_failure_still_says_it_is_the_local_one():
         assert caught.value.reason == "local_down"
 
 
-def test_warming_opens_the_connection_with_the_free_token_count_at_most_every_45_s():
+def test_warming_opens_the_connection_with_the_free_token_count_at_most_every_few_seconds():
     now = [100.0]
     model, client = http_model("claude", CLAUDE_SSE, name="claude-haiku-5-5")
     model.clock = lambda: now[0]
@@ -423,6 +423,6 @@ def test_warming_opens_the_connection_with_the_free_token_count_at_most_every_45
     asyncio.run(model.warm())
     assert len(client.posted) == 1 and client.posted[0][0].endswith("/v1/messages/count_tokens")
     assert client.posted[0][2]["x-api-key"] == "test-key"
-    now[0] += 50
+    now[0] += 5
     asyncio.run(model.warm())
     assert len(client.posted) == 2
