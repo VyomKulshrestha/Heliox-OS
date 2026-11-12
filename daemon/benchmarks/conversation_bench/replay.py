@@ -263,6 +263,11 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("build")
     b.add_argument("--audio", default=None)
     b.add_argument("--redo", action="store_true", help="recognise every utterance again")
+    b.add_argument(
+        "--real-folders",
+        action="store_true",
+        help="required: reads your real Heliox settings and models (the wake calibration is never saved)",
+    )
     r = sub.add_parser("run")
     r.add_argument("--audio", default=None)
     r.add_argument("--decide", required=True, help="module:function, e.g. pilot.system.addressing:decide")
@@ -270,6 +275,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = audio_refs.audio_root(args.audio)
     if args.command == "build":
+        from pilot.real_folders import require_real_folders_flag
+
+        require_real_folders_flag("conversation_bench.replay build")
         print("cache:", build(root, args.redo))
         return 0
     rows = replay(load_cache(Path(root) / CACHE_NAME), load_decide(args.decide))

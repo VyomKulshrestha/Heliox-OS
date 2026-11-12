@@ -10,14 +10,19 @@ from urllib.request import urlopen
 
 import websockets
 
-from pilot.actions import Action, ActionPlan, ActionType, BrowserParams
-from pilot.agents.executor import Executor
-from pilot.config import PilotConfig
-from pilot.security.audit import AuditLogger
-from pilot.security.permissions import PermissionChecker
-from pilot.security.validator import ActionValidator
-from pilot.server import PilotServer
-from pilot.system.browser import browser_close, browser_get_page_info, browser_screenshot
+from pilot.real_folders import use_scratch_folders
+
+# Every Heliox folder under a scratch root of its own, before pilot.config loads: never the person's real ones
+use_scratch_folders()  # a temporary root, removed when the script ends
+
+from pilot.actions import Action, ActionPlan, ActionType, BrowserParams  # noqa: E402
+from pilot.agents.executor import Executor  # noqa: E402
+from pilot.config import PilotConfig  # noqa: E402
+from pilot.security.audit import AuditLogger  # noqa: E402
+from pilot.security.permissions import PermissionChecker  # noqa: E402
+from pilot.security.validator import ActionValidator  # noqa: E402
+from pilot.server import PilotServer  # noqa: E402
+from pilot.system.browser import browser_close, browser_get_page_info, browser_screenshot  # noqa: E402
 
 
 def _record(path: Path, payload: dict) -> None:

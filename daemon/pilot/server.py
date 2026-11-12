@@ -1033,6 +1033,11 @@ class PilotServer:
         Args:
             config: PilotConfig instance containing server and model settings.
         """
+        from pilot.real_folders import refuse_real_folders
+
+        # The daemon (main below) runs on the person's folders; a bench, eval or script that builds a server runs
+        # on a test root or a fake home, or says --real-folders.
+        refuse_real_folders("Starting a Heliox server outside the daemon")
         self.config = config
         self._start_time = time.time()
         self._server: ServerGroup | None = None
@@ -16785,6 +16790,9 @@ def main() -> None:
 
         replace_existing_daemon(args.replace_pid)
 
+    from pilot.real_folders import enter_as_daemon
+
+    enter_as_daemon()  # the one process that uses the person's real folders without a flag
     ensure_dirs()
     _setup_logging()
     config = PilotConfig.load()

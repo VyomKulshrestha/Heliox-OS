@@ -11,7 +11,6 @@ import asyncio
 import cProfile
 import io
 import json
-import os
 import platform
 import pstats
 import statistics
@@ -20,12 +19,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pilot.real_folders import use_scratch_folders  # noqa: E402 - before pilot.config is imported
+
 BENCH_STATE_DIR = Path(__file__).resolve().parent / ".bench-state"
-BENCH_STATE_DIR.mkdir(parents=True, exist_ok=True)
-os.environ.setdefault("XDG_CONFIG_HOME", str(BENCH_STATE_DIR / "config"))
-os.environ.setdefault("XDG_DATA_HOME", str(BENCH_STATE_DIR / "data"))
-os.environ.setdefault("XDG_STATE_HOME", str(BENCH_STATE_DIR / "state"))
-os.environ.setdefault("XDG_RUNTIME_DIR", str(BENCH_STATE_DIR / "runtime"))
+# Every Heliox folder (cache and setup ones too) under the bench's own; the XDG variables set only if unset left a
+# person's own XDG folders, and ~/.cache/heliox always, in use.
+use_scratch_folders(BENCH_STATE_DIR)
 
 
 CPU_PLAN_JSON = """{

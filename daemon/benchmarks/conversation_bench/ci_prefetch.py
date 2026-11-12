@@ -5,7 +5,7 @@
 The speech models come from Heliox's catalogue (``pilot.system.speech_models``): the recommended English set
 (Parakeet for the words, Whisper base for the wake phrase) and the two models the listener needs for turn-taking
 (streaming Zipformer, Smart Turn), each checked against its SHA-256 and stored under Heliox's data folder
-(``XDG_DATA_HOME``), which the workflow caches between runs. The local voice (Kokoro) is not in the catalogue: its
+(under ``HELIOX_BENCH_ROOT``), which the workflow caches between runs. The local voice (Kokoro) is not in the catalogue: its
 weights and the voices the synthetic scenarios use load through Kokoro's own Hugging Face fetch, into the Hugging
 Face cache, also cached. Writes a Markdown table (model, size, source, fetched or already cached) for the job
 summary. Only for CI or a fresh machine: the bench itself never downloads.
@@ -65,6 +65,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m benchmarks.conversation_bench.ci_prefetch")
     parser.add_argument("--summary", default=None, help="append a Markdown table here (the job summary)")
     args = parser.parse_args(argv)
+    from pilot.real_folders import use_scratch_folders
+
+    # The same scratch root ci_timing runs on, so the models land where the timing run looks for them.
+    use_scratch_folders(Path(os.environ.get("HELIOX_BENCH_ROOT") or ".heliox-bench"))
     rows = [*fetch_catalogue(), fetch_voice()]
     from pilot.config import DATA_DIR
 

@@ -762,6 +762,12 @@ jobs:
           set +e
           export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
           if [ "$RUNNER_OS" = "Windows" ]; then PY="$HOME/.config/heliox-os/env/Scripts/python.exe"; else PY="$HOME/.config/heliox-os/env/bin/python"; fi
+          # The rest of a fake home (pilot.real_folders): the per-user Windows folder, the XDG folders a runner image
+          # may set, and the Linux runtime folder, none of which follow HOME. Without them a server built outside the
+          # daemon is refused.
+          export LOCALAPPDATA="$HOME/AppData/Local"
+          unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
+          if [ "$RUNNER_OS" = "Linux" ]; then export XDG_RUNTIME_DIR="$HOME/.runtime"; mkdir -p -m 700 "$XDG_RUNTIME_DIR"; fi
           stop_daemon() { pkill -f "pilot.server" 2>/dev/null || taskkill //F //IM python.exe >/dev/null 2>&1 || true; sleep 3; }
           stop_daemon
           "$PY" daemon/tests/platform_real/seed_ledger.py 100000 --snapshot
@@ -1096,8 +1102,14 @@ jobs:
       - name: Hard kills (a worker's parent, a task in the middle)
         continue-on-error: true
         run: |
-          export HOME="$RUNNER_TEMP/kill" USERPROFILE="$RUNNER_TEMP/kill" LOCALAPPDATA="$RUNNER_TEMP/kill/AppData/Local"
+          export HOME="$RUNNER_TEMP/kill" USERPROFILE="$RUNNER_TEMP/kill"
           mkdir -p "$HOME"
+          # The rest of a fake home (pilot.real_folders): the per-user Windows folder, the XDG folders a runner image
+          # may set, and the Linux runtime folder, none of which follow HOME. Without them a server built outside the
+          # daemon is refused.
+          export LOCALAPPDATA="$HOME/AppData/Local"
+          unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
+          if [ "$RUNNER_OS" = "Linux" ]; then export XDG_RUNTIME_DIR="$HOME/.runtime"; mkdir -p -m 700 "$XDG_RUNTIME_DIR"; fi
           python daemon/tests/platform_real/kill_checks.py
 
       - name: Two daemons started together

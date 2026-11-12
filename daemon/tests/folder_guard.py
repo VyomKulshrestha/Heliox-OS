@@ -9,7 +9,8 @@
    so ``pilot.config`` lays all of Heliox's folders out there (config, data, state, runtime, ``~/.cache/heliox`` and
    setup's ``~/.config/heliox-os``), for this process and every daemon a test starts. Without the marker the variable
    is ignored, so a real install never picks it up.
-3. An audit hook refuses (PermissionError) any open, SQLite connect, folder creation, rename or removal under the
+3. The system keyring is replaced by keyring's fail backend, here and in every process the suite starts.
+4. An audit hook refuses (PermissionError) any open, SQLite connect, folder creation, rename or removal under the
    real folders, and records which test asked. A refused open never touches the file.
 
 At the end of the session ``report()`` lists the tests that were refused and anything under the real folders that
@@ -45,10 +46,26 @@ _EVENTS_TWO_PATHS = {"os.rename", "os.replace", "os.link", "os.symlink", "shutil
 _state: dict = {"roots": (), "skip": (), "refused": {}, "before": {}, "session": None, "active": False}
 
 
-def real_folders(env: dict[str, str] | None = None) -> list[Path]:
-    """Heliox's folders for this person, computed as pilot.config does, without importing it."""
+def true_home() -> Path | None:
+    """This account's own home folder from the system (the profile folder on Windows, the password database on
+    POSIX), whatever HOME and USERPROFILE say. pilot.real_folders imports nothing of Heliox's configuration."""
+    from pilot.real_folders import account_home
+
+    return account_home()
+
+
+def real_folders(env: dict[str, str] | None = None, home: Path | None = None) -> list[Path]:
+    """Heliox's folders for this person, computed as pilot.config does, without importing it.
+
+    ``home``: compute them for that home folder (the account's true one) instead of the one the environment names;
+    its per-user Windows folder (LOCALAPPDATA) is then the one under that home."""
     env = dict(os.environ if env is None else env)
-    home = Path(env.get("USERPROFILE") if sys.platform == "win32" and env.get("USERPROFILE") else Path.home())
+    if home is not None:
+        env["LOCALAPPDATA"] = str(home / "AppData" / "Local")
+    elif sys.platform == "win32" and env.get("USERPROFILE"):
+        home = Path(env["USERPROFILE"])
+    else:
+        home = Path.home()
 
     def heliox(variable: str, fallback: str) -> Path:
         # The rule pilot.config._xdg follows: an unset, empty or relative value means the default under the home.
@@ -167,11 +184,36 @@ def listing(roots) -> dict[str, tuple[int, int]]:
     return found
 
 
+KEYRING_BACKEND = "keyring.backends.fail.Keyring"
+
+
+def _keep_off_the_keyring() -> None:
+    """The system keyring (Windows Credential Manager, the macOS keychain, the Secret Service) holds the person's
+    provider keys and Heliox's own signing keys; it is not a folder, so the audit hook cannot see it. The suite and
+    every process it starts get keyring's fail backend instead: a test that needs a key stores it in a fake it sets
+    up, and code that reaches for the real keyring meets "no keyring", which Heliox handles (keyring_guard)."""
+    os.environ["PYTHON_KEYRING_BACKEND"] = KEYRING_BACKEND  # read by keyring in this process and in subprocesses
+    try:
+        import keyring
+        import keyring.backends.fail
+    except ImportError:
+        return
+    keyring.set_keyring(keyring.backends.fail.Keyring())
+
+
 def install() -> Path:
     """Before any pilot import: list the real folders, point Heliox at a session folder, refuse the real ones."""
     if _state["session"] is not None:
         return _state["session"]
     roots = [root for root in real_folders()]
+    # With HOME and USERPROFILE pointed at a fake home, the folders above are the fake home's; the account's own
+    # are protected as well, found through the system rather than the environment.
+    homes = [Path(os.environ.get("USERPROFILE") or Path.home()) if sys.platform == "win32" else Path.home()]
+    own = true_home()
+    if own is not None and _key(own) != _key(homes[0]):
+        homes.append(own)
+        roots += real_folders(home=own)
+    _state["homes"] = homes
     session = Path(tempfile.mkdtemp(prefix="heliox-tests-"))
     # pilot.config's test root, not the XDG variables: PulseAudio, the accessibility bus and other programs the
     # platform tests talk to find their sockets and cookies through those. The marker file is what makes pilot.config
@@ -182,6 +224,7 @@ def install() -> Path:
         "Heliox's test suite; see daemon/tests/folder_guard.py", encoding="utf-8"
     )
     os.environ["HELIOX_TEST_ROOT"] = str(session)
+    _keep_off_the_keyring()
     session_key = _key(session)
     # A real folder that contains the session folder (TMPDIR under ~/.pilot, say) would refuse the session itself.
     kept = [root for root in roots if not session_key.startswith(_key(root) + os.sep)]
@@ -221,9 +264,11 @@ def report() -> tuple[list[str], bool]:
     before = _state["before"]
     changed = sorted(path for path, stamp in after.items() if before.get(path) != stamp)
     refused = _state["refused"]
+    homes = " and ".join(str(home) for home in _state.get("homes", ()))
     lines = [
         f"FOLDER-GUARD {len(refused)} tests reached Heliox's real folders and were refused; "
-        f"{len(changed)} files there were created or changed during the run"
+        f"{len(changed)} files there were created or changed during the run (protecting Heliox's folders under "
+        f"{homes or 'the home folder'})"
     ]
     for test, hits in sorted(refused.items()):
         lines.append(f"FOLDER-GUARD refused {test}: {'; '.join(sorted(hits)[:3])}")

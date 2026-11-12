@@ -247,7 +247,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sets", default="owner,synthetic")
     parser.add_argument("--thresholds", default="1.0,0.99,0.97,0.95")
     parser.add_argument("--out", default=None)
-    return asyncio.run(_main(parser.parse_args(argv)))
+    parser.add_argument(
+        "--real-folders",
+        action="store_true",
+        help="required: reads your real Heliox settings and models (the wake calibration is never saved)",
+    )
+    args = parser.parse_args(argv)
+    from pilot.real_folders import require_real_folders_flag
+
+    require_real_folders_flag("conversation_bench.turn_split")
+    return asyncio.run(_main(args))
 
 
 if __name__ == "__main__":

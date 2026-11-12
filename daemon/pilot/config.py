@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import os
@@ -1017,6 +1018,10 @@ class PilotConfig:
                 + " ".join(self.load_errors)
                 + " Fix the file and restart Heliox, or use Reset to defaults."
             )
+        from pilot.real_folders import refuse_real_folders
+
+        # Only the daemon saves the person's settings; a bench, eval or script on the real folders is refused here.
+        refuse_real_folders("Saving Heliox's settings outside the daemon")
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
         data = _config_to_dict(self)
@@ -1026,10 +1031,10 @@ class PilotConfig:
         restrictions = data.pop("restrictions", {})
 
         try:
-            _atomic_write_text(CONFIG_FILE, _carry_comments(_read_text(CONFIG_FILE), tomli_w.dumps(data)))
+            _save_with_backup(CONFIG_FILE, _carry_comments(_read_text(CONFIG_FILE), tomli_w.dumps(data)))
 
             if restrictions:
-                _atomic_write_text(
+                _save_with_backup(
                     RESTRICTIONS_FILE, _carry_comments(_read_text(RESTRICTIONS_FILE), tomli_w.dumps(restrictions))
                 )
         except OSError as error:
@@ -1121,6 +1126,65 @@ def _carry_comments(old_text: str, new_text: str) -> str:
         output.append(line)
     output.extend(pending)  # a comment block at the very end of the file
     return "\n".join(output) + "\n"
+
+
+# Every save that changes a settings file keeps the file it replaces beside it, as <name>.saved-<YYYYmmdd-HHMMSS>, in
+# the settings folder (so removal keeps them with "keep my data" and deletes them with everything else). Kept: the
+# newest SAVED_COPIES, and beyond those the earliest copy of each day for SAVED_DAYS days. Spoken settings ("stop
+# interrupting me", a Live mute) save the file, so a voice-first person can make many saves a day; the daily copies
+# still reach back a month. A save that wipes the person's values (a tool writing a fresh config over theirs, as
+# happened on 12 November 2026) can then be undone by copying a copy back.
+SAVED_COPIES = 10
+SAVED_DAYS = 30
+
+
+_SAVED_STAMP = re.compile(r"\d{8}-\d{6}(-\d{2})?")
+
+
+def _saved_copies(path: Path) -> list[Path]:
+    """The copies this module made (a file named otherwise, by the person say, is not one and is never removed)."""
+    return sorted(
+        copy
+        for copy in path.parent.glob(f"{path.name}.saved-*")
+        if _SAVED_STAMP.fullmatch(copy.name.rsplit(".saved-", 1)[1])
+    )
+
+
+def _copies_to_keep(copies: list[Path], today: str) -> set[Path]:
+    """The newest SAVED_COPIES, and the earliest copy of each of the last SAVED_DAYS days (names sort by time)."""
+    keep = set(copies[-SAVED_COPIES:]) if SAVED_COPIES else set()
+    first_of_day: dict[str, Path] = {}
+    for copy in copies:  # oldest first: the first seen for a day is its earliest
+        first_of_day.setdefault(copy.name.rsplit(".saved-", 1)[1][:8], copy)
+    newest = time.mktime(time.strptime(today, "%Y%m%d"))
+    for day, copy in first_of_day.items():
+        age_days = (newest - time.mktime(time.strptime(day, "%Y%m%d"))) / 86400
+        if age_days < SAVED_DAYS:
+            keep.add(copy)
+    return keep
+
+
+def _save_with_backup(path: Path, content: str) -> None:
+    """Write ``content`` to ``path``, first keeping the file it replaces when that differs."""
+    previous = _read_text(path) if path.exists() else None
+    if previous is not None and previous != content:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        copy = path.with_name(f"{path.name}.saved-{stamp}")
+        number = 1
+        while copy.exists():  # two saves in one second
+            number += 1
+            copy = path.with_name(f"{path.name}.saved-{stamp}-{number:02d}")
+        try:
+            shutil.copy2(path, copy)
+        except OSError:
+            logger.warning("Could not keep a copy of %s before saving", path, exc_info=True)
+        copies = _saved_copies(path)
+        keep = _copies_to_keep(copies, time.strftime("%Y%m%d"))
+        for old in copies:
+            if old not in keep:
+                with contextlib.suppress(OSError):
+                    old.unlink()
+    _atomic_write_text(path, content)
 
 
 def _atomic_write_text(path: Path, content: str) -> None:

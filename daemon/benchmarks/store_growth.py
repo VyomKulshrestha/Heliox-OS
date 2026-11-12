@@ -22,17 +22,22 @@ import tempfile
 import time
 from pathlib import Path
 
-from pilot.actions import Action, ActionPlan, ActionType, FileParams, SystemInfoParams, VerificationResult
-from pilot.agents.executor import Executor
-from pilot.config import PilotConfig
-from pilot.intelligence.experience import ExperienceLedger
-from pilot.security.audit import AuditLogger
-from pilot.security.permissions import PermissionChecker
-from pilot.security.validator import ActionValidator
-from pilot.server import PilotServer
-from pilot.system import sysinfo
-from pilot.workflows.checkpoints import WorkflowCheckpointStore
-from pilot.workflows.durable_tasks import DurableTaskStore
+from pilot.real_folders import use_scratch_folders
+
+# Every Heliox folder under a scratch root of its own, before pilot.config loads: never the person's real ones
+use_scratch_folders()  # a temporary root, removed when the script ends
+
+from pilot.actions import Action, ActionPlan, ActionType, FileParams, SystemInfoParams, VerificationResult  # noqa: E402
+from pilot.agents.executor import Executor  # noqa: E402
+from pilot.config import PilotConfig  # noqa: E402
+from pilot.intelligence.experience import ExperienceLedger  # noqa: E402
+from pilot.security.audit import AuditLogger  # noqa: E402
+from pilot.security.permissions import PermissionChecker  # noqa: E402
+from pilot.security.validator import ActionValidator  # noqa: E402
+from pilot.server import PilotServer  # noqa: E402
+from pilot.system import sysinfo  # noqa: E402
+from pilot.workflows.checkpoints import WorkflowCheckpointStore  # noqa: E402
+from pilot.workflows.durable_tasks import DurableTaskStore  # noqa: E402
 
 STORES = {
     "audit.jsonl": "Audit log",

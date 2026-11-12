@@ -300,7 +300,11 @@ class Harness:
     # Building -------------------------------------------------------------------------------------------
 
     async def build(self) -> None:
-        os.environ["XDG_DATA_HOME"] = str(self.data_dir)
+        from pilot.real_folders import use_scratch_folders
+
+        # Every Heliox folder (settings, data, state, runtime, ~/.cache/heliox, setup's folder) under data_dir,
+        # before pilot.config loads: never the person's. Raises if something imported pilot.config first.
+        use_scratch_folders(self.data_dir)
         os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")  # CPU only, for this process and the voice worker
         os.environ.setdefault("HF_HUB_OFFLINE", "1")  # never download: every model must already be on disk
         self.data_dir.mkdir(parents=True, exist_ok=True)

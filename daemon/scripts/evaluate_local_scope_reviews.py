@@ -38,7 +38,11 @@ def main() -> None:
     parser.add_argument("--reviewer", choices=("user", "codex"), default="user")
     parser.add_argument("--candidate", type=Path, default=root / "benchmarks/scope_semantic_candidate_v5.npz")
     parser.add_argument("--max-length", type=int, choices=(128, 512), default=512)
+    parser.add_argument("--real-folders", action="store_true", help="required: this reads your real Heliox data")
     args = parser.parse_args()
+    from pilot.real_folders import require_real_folders_flag
+
+    require_real_folders_flag("evaluate_local_scope_reviews.py")
     cases = read_cases(args.database)
     labels_by_id = read_labels(args.labels, cases, reviewer=args.reviewer)
     selected = {}

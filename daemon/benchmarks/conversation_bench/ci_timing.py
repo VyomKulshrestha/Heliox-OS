@@ -88,7 +88,8 @@ def configure(config: Any) -> None:
 async def run(args: argparse.Namespace, results: Path) -> tuple[list[scoring.Outcome], dict[str, list], set[str]]:
     from .driver import Harness
 
-    data_dir = Path(os.environ.get("XDG_DATA_HOME") or results / "data")
+    # The scratch root ci_prefetch filled (HELIOX_BENCH_ROOT, whose models the workflow caches), or a fresh one.
+    data_dir = Path(os.environ.get("HELIOX_BENCH_ROOT") or results / "data")
     harness = Harness(audio_root=args.audio, data_dir=data_dir, model=KINDS["cloud"], configure=configure)
     await harness.build()
     stack.enable(harness)

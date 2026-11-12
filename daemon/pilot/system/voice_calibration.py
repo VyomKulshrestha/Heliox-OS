@@ -207,6 +207,12 @@ class VoiceCalibrationStore:
 
     def save(self, variants: dict[str, WakeWordVariant]) -> None:
         try:
+            if self._data_dir == CACHE_DIR / "voice_calibration":
+                from pilot.real_folders import refuse_real_folders
+
+                # A replay or bench listener outside the daemon learns from recorded voices, not this person's: it
+                # must not change the calibration the daemon uses. Refused, this save is skipped and logged.
+                refuse_real_folders("Saving the wake-word calibration outside the daemon", honour_flag=False)
             self._data_dir.mkdir(parents=True, exist_ok=True)
             data = {text: asdict(v) for text, v in variants.items()}
             self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")

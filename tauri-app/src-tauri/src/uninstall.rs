@@ -966,6 +966,47 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_copies_a_save_keeps_go_with_the_settings_on_every_system() {
+        // pilot/config.py keeps <name>.saved-<time> beside config.toml and restrictions.toml before a save replaces
+        // them: settings history, kept with "keep my data" and removed with everything else.
+        for os in ["linux", "macos", "windows"] {
+            let root = std::env::temp_dir().join(format!(
+                "heliox-uninstall-copies-{os}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            let home = root.join("home");
+            let dirs = dirs_for(&home, os);
+            let config = home.join(".config").join("heliox-os"); // pilot.config CONFIG_DIR with no XDG variable
+            std::fs::create_dir_all(&config).unwrap();
+            let copies = [
+                "config.toml.saved-20261112-230412",
+                "restrictions.toml.saved-20261112-230412",
+            ];
+            for name in ["config.toml", "restrictions.toml"]
+                .iter()
+                .chain(copies.iter())
+            {
+                std::fs::write(config.join(name), "x = 1\n").unwrap();
+            }
+
+            let report = remove_files(&dirs, true, Credentials::default());
+            assert!(report.failed.is_empty(), "{os}: {:?}", report.failed);
+            for name in copies {
+                assert!(
+                    config.join(name).exists(),
+                    "{os}: {name} kept with the settings"
+                );
+            }
+
+            let report = remove_files(&dirs, false, Credentials::default());
+            assert!(report.failed.is_empty(), "{os}: {:?}", report.failed);
+            assert!(!config.exists(), "{os}: settings and their copies removed");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
     fn removal_keeps_data_when_asked_never_follows_a_link_and_spares_another_programs_pilot_files()
     {
         let root = std::env::temp_dir().join(format!("heliox-uninstall-{}", std::process::id()));

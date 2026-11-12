@@ -137,7 +137,11 @@ def main() -> None:
     parser.add_argument("--review", action="store_true", help="Show redacted local pairs and request labels")
     parser.add_argument("--reviewer", choices=("user", "codex"), default="user")
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--real-folders", action="store_true", help="required: this reads your real Heliox data")
     args = parser.parse_args()
+    from pilot.real_folders import require_real_folders_flag
+
+    require_real_folders_flag("review_local_scope.py")
     if args.limit < 1:
         parser.error("--limit must be positive")
     cases = read_cases(args.database)

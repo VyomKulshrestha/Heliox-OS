@@ -31,6 +31,12 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from pilot.real_folders import use_scratch_folders  # noqa: E402
+
+# Every Heliox folder in a temporary root (settings, data, caches): the planner runs on defaults plus the
+# provider and model given below; the key comes from the keyring, the spend goes to real_budget_tracker.
+use_scratch_folders()
+
 from benchmarks.planner_everyday import RULES, check_plan, load_cases, plan_steps, summarise  # noqa: E402
 
 # A fixed 15-request sample for the expensive model: the cases that exercise the prompt rules
@@ -93,20 +99,20 @@ class BudgetStop(RuntimeError):
 async def build_planner(provider: str, model: str, *, record_usage: bool = True):
     from pilot.agents.multi_agent import MultiAgentRouter
     from pilot.agents.planner import Planner
-    from pilot.config import DB_FILE, PilotConfig
-    from pilot.models.budget_tracker import BudgetTracker
+    from pilot.config import PilotConfig
     from pilot.models.router import ModelRouter
+    from pilot.real_folders import real_budget_tracker
     from pilot.security.vault import KeyVault
     from pilot.skills.loader import SkillRegistry
 
-    config = PilotConfig.load()  # in memory only; never saved by this script
+    config = PilotConfig.load()  # the scratch root's settings (defaults); never the person's file
     config.model.provider = "cloud"
     config.model.cloud_provider = provider
     config.model.cloud_model = model
     router = ModelRouter(config, KeyVault(config))
     router._cache = _NoCache()
     if record_usage:
-        tracker = BudgetTracker(config.model, str(DB_FILE))
+        tracker = real_budget_tracker(config.model)  # the one write to the person's folders: the spend
         await tracker.initialize()
         router.set_budget_tracker(tracker)
 

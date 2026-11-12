@@ -32,7 +32,9 @@ jobs:
         working-directory: daemon
         shell: bash
     env:
-      XDG_DATA_HOME: ${{ github.workspace }}/.heliox-data # Heliox's data folder; its models/ part is cached
+      # Every Heliox folder of the prefetch and the timing run (pilot.real_folders.use_scratch_folders); its
+      # .local/share/heliox-os/models part is cached. Never the runner's own folders.
+      HELIOX_BENCH_ROOT: ${{ github.workspace }}/.heliox-bench
       BENCH_AUDIO: ${{ github.workspace }}/.bench-audio # synthetic speech rendered by the bench, cached
       CUDA_VISIBLE_DEVICES: ""
       PYTHONUNBUFFERED: "1"
@@ -59,7 +61,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ${{ github.workspace }}/.heliox-data/heliox-os/models
+            ${{ github.workspace }}/.heliox-bench/.local/share/heliox-os/models
             ~/.cache/huggingface
           key: speech-${{ runner.os }}-${{ hashFiles('daemon/pilot/system/speech_models.json', 'daemon/benchmarks/conversation_bench/ci_prefetch.py') }}
 

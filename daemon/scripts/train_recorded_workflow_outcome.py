@@ -46,7 +46,11 @@ def main() -> None:
     parser.add_argument("--artifact", type=Path, default=output_dir / "workflow_outcome_candidate_v1.enc")
     parser.add_argument("--report", type=Path, default=output_dir / "workflow_outcome_candidate_v1.json")
     parser.add_argument("--seed", type=int, default=20260930)
+    parser.add_argument("--real-folders", action="store_true", help="required: this reads your real Heliox data")
     args = parser.parse_args()
+    from pilot.real_folders import require_real_folders_flag
+
+    require_real_folders_flag("train_recorded_workflow_outcome.py")
     if not args.recorded_store.is_file():
         parser.error(f"No encrypted local workflow store exists: {args.recorded_store}")
     if (
