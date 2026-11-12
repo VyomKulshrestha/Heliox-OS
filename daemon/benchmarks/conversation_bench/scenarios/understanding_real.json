@@ -1,0 +1,403 @@
+{
+ "scenarios": [
+  {
+   "id": "u-real-headset-utt00",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "bluetooth-headset-call-mode",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.3",
+    "1.1a",
+    "4.1"
+   ],
+   "reference_confirmed": true,
+   "note": "",
+   "steps": [
+    {
+     "say": "real/headset/utt00.wav",
+     "text": "Hey Heliox, remind me that the launch call is Monday the twelfth of November at ten."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true,
+    "card": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-headset-utt01",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "bluetooth-headset-call-mode",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.3",
+    "1.1a",
+    "4.1"
+   ],
+   "reference_confirmed": true,
+   "note": "",
+   "steps": [
+    {
+     "say": "real/headset/utt01.wav",
+     "text": "Hey Heliox, remind me that the launch call is Monday the twelfth of November at ten."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true,
+    "card": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-headset-utt02",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "bluetooth-headset-call-mode",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.3",
+    "1.1a",
+    "4.1"
+   ],
+   "reference_confirmed": false,
+   "note": "reference unconfirmed: the cue for this take was not kept",
+   "steps": [
+    {
+     "say": "real/headset/utt02.wav",
+     "text": "Hey Heliox, what's connected?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-headset-utt03",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "bluetooth-headset-call-mode",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.3",
+    "1.1a",
+    "4.1"
+   ],
+   "reference_confirmed": true,
+   "note": "",
+   "steps": [
+    {
+     "say": "real/headset/utt03.wav",
+     "text": "Hey Heliox, what can I say?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-headset-utt04",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "bluetooth-headset-call-mode",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.3",
+    "1.1a",
+    "4.1"
+   ],
+   "reference_confirmed": true,
+   "note": "",
+   "steps": [
+    {
+     "say": "real/headset/utt04.wav",
+     "text": "Hey Heliox, what can I say?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-desk-usb-cue-a",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.3",
+    "1.1a",
+    "4.1"
+   ],
+   "steps": [
+    {
+     "say": "real/desk/usb_cue_a.wav",
+     "text": "Hey Heliox, what can I say?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-desk-first-try",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.3",
+    "1.1a",
+    "4.1"
+   ],
+   "steps": [
+    {
+     "say": "real/desk/desk_first_try.wav",
+     "text": "Hey Heliox, what can I say?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-desk-take2204-a",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.3",
+    "1.1a",
+    "4.1"
+   ],
+   "steps": [
+    {
+     "say": "real/desk/take_2204.wav#3.6-6.4",
+     "text": "Hey Heliox, what can I say?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-desk-take2241-a",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.3",
+    "1.1a",
+    "4.1"
+   ],
+   "steps": [
+    {
+     "say": "real/desk/take_2241.wav#4.7-7.5",
+     "text": "Hey Heliox, what can I say?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-desk-take2204-invoice",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "2.1a",
+    "1.3",
+    "3.1"
+   ],
+   "setup": {
+    "conversation_open": true
+   },
+   "note": "said in an open conversation, not as a request: Live should raise the slip, nothing runs",
+   "steps": [
+    {
+     "say": "real/desk/take_2204.wav#33.8-38.0",
+     "text": "The invoice is due on the thirty-first of November."
+    }
+   ],
+   "expect": {
+    "route": [
+     "overheard"
+    ],
+    "card": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-desk-take2241-invoice1",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "2.1a",
+    "1.3",
+    "3.1"
+   ],
+   "setup": {
+    "conversation_open": true
+   },
+   "note": "said in an open conversation, not as a request: Live should raise the slip, nothing runs",
+   "steps": [
+    {
+     "say": "real/desk/take_2241.wav#35.1-38.7",
+     "text": "The invoice is due on the thirty-first of November."
+    }
+   ],
+   "expect": {
+    "route": [
+     "overheard"
+    ],
+    "card": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-desk-take2241-invoice2",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "2.1a",
+    "1.3",
+    "3.1"
+   ],
+   "setup": {
+    "conversation_open": true
+   },
+   "note": "said in an open conversation, not as a request: Live should raise the slip, nothing runs",
+   "steps": [
+    {
+     "say": "real/desk/take_2241.wav#41.2-44.8",
+     "text": "The invoice is due on the thirty-first of November."
+    }
+   ],
+   "expect": {
+    "route": [
+     "overheard"
+    ],
+    "card": true
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-desk-usb-cue-b",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "2.1a",
+    "1.3"
+   ],
+   "note": "a bare 'Wait, stop.' with nothing playing: heard, not acted on",
+   "steps": [
+    {
+     "say": "real/desk/usb_cue_b.wav",
+     "text": "Wait, stop."
+    }
+   ],
+   "expect": {
+    "woken": false,
+    "route": [
+     "ignored"
+    ],
+    "spoken": false
+   },
+   "models": [
+    "cloud"
+   ]
+  },
+  {
+   "id": "u-real-desk-wait-stop",
+   "set": "understanding",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "2.1a",
+    "1.3"
+   ],
+   "note": "a bare 'Wait, stop.' with nothing playing: heard, not acted on",
+   "steps": [
+    {
+     "say": "real/desk/desk_wait_stop.wav",
+     "text": "Wait, stop."
+    }
+   ],
+   "expect": {
+    "woken": false,
+    "route": [
+     "ignored"
+    ],
+    "spoken": false
+   },
+   "models": [
+    "cloud"
+   ]
+  }
+ ]
+}

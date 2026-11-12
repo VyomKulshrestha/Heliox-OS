@@ -1,0 +1,394 @@
+{
+ "scenarios": [
+  {
+   "id": "na-block-00",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_00.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-01",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_01.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-02",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_02.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-03",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_03.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-04",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_04.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-05",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_05.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-06",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_06.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-07",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_07.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-08",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_08.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-09",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_09.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-10",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_10.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-11",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_11.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-block-12",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "settle": 6,
+   "note": "about five minutes of meetings, tutorials, reading and known misfires",
+   "steps": [
+    {
+     "say": "synthetic/not_addressed/block_12.wav"
+    }
+   ],
+   "expect": {
+    "dispatched": 0
+   }
+  },
+  {
+   "id": "na-real-take2204-alright",
+   "set": "not_addressed",
+   "voice": "real",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "real/desk/take_2204.wav#28.7-30.2"
+    }
+   ],
+   "expect": {}
+  },
+  {
+   "id": "na-real-take2204-mutter",
+   "set": "not_addressed",
+   "voice": "real",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "real/desk/take_2204.wav#40.9-42.5"
+    }
+   ],
+   "expect": {}
+  },
+  {
+   "id": "na-real-headset-yeah",
+   "set": "not_addressed",
+   "voice": "real",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "real/headset/utt05.wav"
+    }
+   ],
+   "expect": {}
+  },
+  {
+   "id": "na-syn-open-conversation-0",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "setup": {
+    "conversation_open": true
+   },
+   "note": "said to a colleague while Heliox's follow-up window is open (the hardest case)",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.15/can_you_open_the_deck_so_everyone_can_see_it.wav",
+     "text": "Can you open the deck so everyone can see it?"
+    }
+   ],
+   "expect": {}
+  },
+  {
+   "id": "na-syn-open-conversation-1",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "setup": {
+    "conversation_open": true
+   },
+   "note": "said to a colleague while Heliox's follow-up window is open (the hardest case)",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/priya_could_you_stop_sharing_your_screen_for_a_s.wav",
+     "text": "Priya, could you stop sharing your screen for a second?"
+    }
+   ],
+   "expect": {}
+  },
+  {
+   "id": "na-syn-open-conversation-2",
+   "set": "not_addressed",
+   "voice": "synthetic",
+   "lines": [
+    "2.2"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "setup": {
+    "conversation_open": true
+   },
+   "note": "said to a colleague while Heliox's follow-up window is open (the hardest case)",
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/yes_approve_it_we_talked_about_this_last_week.wav",
+     "text": "Yes, approve it, we talked about this last week."
+    }
+   ],
+   "expect": {}
+  }
+ ]
+}

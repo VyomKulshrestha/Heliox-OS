@@ -1,0 +1,337 @@
+{
+ "scenarios": [
+  {
+   "id": "q-question-next-meeting",
+   "set": "conversation_quality",
+   "voice": "synthetic",
+   "lines": [
+    "Q"
+   ],
+   "pending": "the fast spoken layer (daemon/pilot/conversation/) does not exist yet",
+   "note": "answers from the screen context",
+   "quality": {
+    "kind": "question",
+    "turns": [],
+    "utterance": "What's my next meeting?",
+    "context": {
+     "screen": "Outlook calendar: Thursday 12 November. 10:00 Launch call (Teams). 14:00 Design review. 16:00 1:1 with Priya.",
+     "profile": "Prefers short answers. Works on the Heliox launch."
+    },
+    "required_facts": [
+     "10"
+    ],
+    "max_words": 35,
+    "claims_action": false
+   },
+   "expect": {
+    "by_model": {
+     "none": {
+      "must_mention_any": [
+       "model",
+       "set up",
+       "connect"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "q-question-priya",
+   "set": "conversation_quality",
+   "voice": "synthetic",
+   "lines": [
+    "Q"
+   ],
+   "pending": "the fast spoken layer (daemon/pilot/conversation/) does not exist yet",
+   "note": "",
+   "quality": {
+    "kind": "question",
+    "turns": [],
+    "utterance": "When am I seeing Priya?",
+    "context": {
+     "screen": "Outlook calendar: Thursday 12 November. 10:00 Launch call (Teams). 14:00 Design review. 16:00 1:1 with Priya.",
+     "profile": "Prefers short answers. Works on the Heliox launch."
+    },
+    "required_facts": [
+     "4"
+    ],
+    "max_words": 35,
+    "claims_action": false
+   },
+   "expect": {
+    "by_model": {
+     "none": {
+      "must_mention_any": [
+       "model",
+       "set up",
+       "connect"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "q-remark-tired",
+   "set": "conversation_quality",
+   "voice": "synthetic",
+   "lines": [
+    "Q"
+   ],
+   "pending": "the fast spoken layer (daemon/pilot/conversation/) does not exist yet",
+   "note": "a remark: short, human, no action offered as done",
+   "quality": {
+    "kind": "remark",
+    "turns": [],
+    "utterance": "I'm so tired today.",
+    "context": {
+     "screen": "Outlook calendar: Thursday 12 November. 10:00 Launch call (Teams). 14:00 Design review. 16:00 1:1 with Priya.",
+     "profile": "Prefers short answers. Works on the Heliox launch."
+    },
+    "required_facts": [],
+    "max_words": 35,
+    "claims_action": false
+   },
+   "expect": {
+    "by_model": {
+     "none": {
+      "must_mention_any": [
+       "model",
+       "set up",
+       "connect"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "q-remark-launch",
+   "set": "conversation_quality",
+   "voice": "synthetic",
+   "lines": [
+    "Q"
+   ],
+   "pending": "the fast spoken layer (daemon/pilot/conversation/) does not exist yet",
+   "note": "",
+   "quality": {
+    "kind": "remark",
+    "turns": [],
+    "utterance": "The launch is going to be fine, I think.",
+    "context": {
+     "screen": "Outlook calendar: Thursday 12 November. 10:00 Launch call (Teams). 14:00 Design review. 16:00 1:1 with Priya.",
+     "profile": "Prefers short answers. Works on the Heliox launch."
+    },
+    "required_facts": [],
+    "max_words": 35,
+    "claims_action": false
+   },
+   "expect": {
+    "by_model": {
+     "none": {
+      "must_mention_any": [
+       "model",
+       "set up",
+       "connect"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "q-followup-then",
+   "set": "conversation_quality",
+   "voice": "synthetic",
+   "lines": [
+    "Q"
+   ],
+   "pending": "the fast spoken layer (daemon/pilot/conversation/) does not exist yet",
+   "note": "depends on the previous turn",
+   "quality": {
+    "kind": "follow_up",
+    "turns": [
+     {
+      "who": "person",
+      "text": "What's after the launch call?"
+     },
+     {
+      "who": "heliox",
+      "text": "The design review at two."
+     }
+    ],
+    "utterance": "And after that?",
+    "context": {
+     "screen": "Outlook calendar: Thursday 12 November. 10:00 Launch call (Teams). 14:00 Design review. 16:00 1:1 with Priya.",
+     "profile": "Prefers short answers. Works on the Heliox launch."
+    },
+    "required_facts": [
+     "Priya"
+    ],
+    "max_words": 35,
+    "claims_action": false
+   },
+   "expect": {
+    "by_model": {
+     "none": {
+      "must_mention_any": [
+       "model",
+       "set up",
+       "connect"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "q-followup-move",
+   "set": "conversation_quality",
+   "voice": "synthetic",
+   "lines": [
+    "Q"
+   ],
+   "pending": "the fast spoken layer (daemon/pilot/conversation/) does not exist yet",
+   "note": "",
+   "quality": {
+    "kind": "follow_up",
+    "turns": [
+     {
+      "who": "person",
+      "text": "When's the design review?"
+     },
+     {
+      "who": "heliox",
+      "text": "At two this afternoon."
+     }
+    ],
+    "utterance": "Is that before or after lunch?",
+    "context": {
+     "screen": "Outlook calendar: Thursday 12 November. 10:00 Launch call (Teams). 14:00 Design review. 16:00 1:1 with Priya.",
+     "profile": "Prefers short answers. Works on the Heliox launch."
+    },
+    "required_facts": [
+     "after"
+    ],
+    "max_words": 35,
+    "claims_action": false
+   },
+   "expect": {
+    "by_model": {
+     "none": {
+      "must_mention_any": [
+       "model",
+       "set up",
+       "connect"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "q-explain-why-card",
+   "set": "conversation_quality",
+   "voice": "synthetic",
+   "lines": [
+    "Q"
+   ],
+   "pending": "the fast spoken layer (daemon/pilot/conversation/) does not exist yet",
+   "note": "explains its own interjection",
+   "quality": {
+    "kind": "explain",
+    "turns": [
+     {
+      "who": "heliox",
+      "text": "The twelfth of November is a Thursday. You said Monday."
+     }
+    ],
+    "utterance": "Why did you say that?",
+    "context": {
+     "screen": "Outlook calendar: Thursday 12 November. 10:00 Launch call (Teams). 14:00 Design review. 16:00 1:1 with Priya.",
+     "profile": "Prefers short answers. Works on the Heliox launch."
+    },
+    "required_facts": [
+     "Thursday"
+    ],
+    "max_words": 35,
+    "claims_action": false
+   },
+   "expect": {
+    "by_model": {
+     "none": {
+      "must_mention_any": [
+       "model",
+       "set up",
+       "connect"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "q-explain-undo",
+   "set": "conversation_quality",
+   "voice": "synthetic",
+   "lines": [
+    "Q"
+   ],
+   "pending": "the fast spoken layer (daemon/pilot/conversation/) does not exist yet",
+   "note": "",
+   "quality": {
+    "kind": "explain",
+    "turns": [],
+    "utterance": "How does undo work?",
+    "context": {
+     "screen": "Outlook calendar: Thursday 12 November. 10:00 Launch call (Teams). 14:00 Design review. 16:00 1:1 with Priya.",
+     "profile": "Prefers short answers. Works on the Heliox launch."
+    },
+    "required_facts": [
+     "undo"
+    ],
+    "max_words": 35,
+    "claims_action": false
+   },
+   "expect": {
+    "by_model": {
+     "none": {
+      "must_mention_any": [
+       "model",
+       "set up",
+       "connect"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "q-no-action-claim",
+   "set": "conversation_quality",
+   "voice": "synthetic",
+   "lines": [
+    "Q"
+   ],
+   "pending": "the fast spoken layer (daemon/pilot/conversation/) does not exist yet",
+   "note": "an action: must not claim it is done",
+   "quality": {
+    "kind": "question",
+    "turns": [],
+    "utterance": "Can you move the design review to three?",
+    "context": {
+     "screen": "Outlook calendar: Thursday 12 November. 10:00 Launch call (Teams). 14:00 Design review. 16:00 1:1 with Priya.",
+     "profile": "Prefers short answers. Works on the Heliox launch."
+    },
+    "required_facts": [],
+    "max_words": 35,
+    "claims_action": false,
+    "route": "action"
+   },
+   "expect": {
+    "by_model": {
+     "none": {
+      "must_mention_any": [
+       "model",
+       "set up",
+       "connect"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,658 @@
+{
+ "scenarios": [
+  {
+   "id": "u-syn-hey_heliox_what_s_on_my_to_do_-am_michael-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox_what_s_on_my_to_do_list.wav",
+     "text": "Hey Heliox, what's on my to-do list?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_what_s_on_my_to_do_-bm_lewis-1.15",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.15/hey_heliox_what_s_on_my_to_do_list.wav",
+     "text": "Hey Heliox, what's on my to-do list?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_remind_me_to_call_p-af_bella-0.9",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/af_bella/0.9/hey_heliox_remind_me_to_call_priya_at_four.wav",
+     "text": "Hey Heliox, remind me to call Priya at four."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_remind_me_to_call_p-am_michael-1.15",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.15/hey_heliox_remind_me_to_call_priya_at_four.wav",
+     "text": "Hey Heliox, remind me to call Priya at four."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_set_a_timer_for_ten-bm_lewis-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox_set_a_timer_for_ten_minutes.wav",
+     "text": "Hey Heliox, set a timer for ten minutes."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_set_a_timer_for_ten-af_bella-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/hey_heliox_set_a_timer_for_ten_minutes.wav",
+     "text": "Hey Heliox, set a timer for ten minutes."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_open_notepad-am_michael-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox_open_notepad.wav",
+     "text": "Hey Heliox, open Notepad."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_open_notepad-bm_lewis-1.15",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.15/hey_heliox_open_notepad.wav",
+     "text": "Hey Heliox, open Notepad."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_what_time_is_it-af_bella-0.9",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/af_bella/0.9/hey_heliox_what_time_is_it.wav",
+     "text": "Hey Heliox, what time is it?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_what_time_is_it-am_michael-1.15",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.15/hey_heliox_what_time_is_it.wav",
+     "text": "Hey Heliox, what time is it?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_find_the_invoice_fr-bm_lewis-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox_find_the_invoice_from_last_week.wav",
+     "text": "Hey Heliox, find the invoice from last week."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_find_the_invoice_fr-af_bella-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/hey_heliox_find_the_invoice_from_last_week.wav",
+     "text": "Hey Heliox, find the invoice from last week."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_what_did_i_do_this_-am_michael-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox_what_did_i_do_this_morning.wav",
+     "text": "Hey Heliox, what did I do this morning?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_what_did_i_do_this_-bm_lewis-1.15",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.15/hey_heliox_what_did_i_do_this_morning.wav",
+     "text": "Hey Heliox, what did I do this morning?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-heliox_turn_the_volume_down-af_bella-0.9",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/af_bella/0.9/heliox_turn_the_volume_down.wav",
+     "text": "Heliox, turn the volume down."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-heliox_turn_the_volume_down-am_michael-1.15",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.15/heliox_turn_the_volume_down.wav",
+     "text": "Heliox, turn the volume down."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_add_milk_to_my_shop-bm_lewis-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox_add_milk_to_my_shopping_list.wav",
+     "text": "Hey Heliox, add milk to my shopping list."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_add_milk_to_my_shop-af_bella-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/hey_heliox_add_milk_to_my_shopping_list.wav",
+     "text": "Hey Heliox, add milk to my shopping list."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_what_s_the_weather_-am_michael-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox_what_s_the_weather_like_tomorrow.wav",
+     "text": "Hey Heliox, what's the weather like tomorrow?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_what_s_the_weather_-bm_lewis-1.15",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.15/hey_heliox_what_s_the_weather_like_tomorrow.wav",
+     "text": "Hey Heliox, what's the weather like tomorrow?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_the_launch_call_is_-af_bella-0.9",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/af_bella/0.9/hey_heliox_the_launch_call_is_monday_the_twelfth.wav",
+     "text": "Hey Heliox, the launch call is Monday the twelfth of November at ten, remind me."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true,
+    "card": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_the_launch_call_is_-am_michael-1.15",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.15/hey_heliox_the_launch_call_is_monday_the_twelfth.wav",
+     "text": "Hey Heliox, the launch call is Monday the twelfth of November at ten, remind me."
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true,
+    "card": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_what_can_i_say-bm_lewis-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox_what_can_i_say.wav",
+     "text": "Hey Heliox, what can I say?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-hey_heliox_what_can_i_say-af_bella-1.0",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1a",
+    "2.1b",
+    "1.1a",
+    "1.1b",
+    "4.1"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/hey_heliox_what_can_i_say.wav",
+     "text": "Hey Heliox, what can I say?"
+    }
+   ],
+   "expect": {
+    "woken": true,
+    "reply": true,
+    "under_way": true
+   }
+  },
+  {
+   "id": "u-syn-follow-up-without-wake",
+   "set": "understanding",
+   "voice": "synthetic",
+   "lines": [
+    "2.1c"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox_what_can_i_say.wav",
+     "text": "Hey Heliox, what can I say?"
+    },
+    {
+     "say": "synthetic/bm_lewis/1.15/and_what_about_reminders.wav",
+     "text": "And what about reminders?",
+     "when": "previous_done",
+     "delay": 0.8
+    }
+   ],
+   "expect": {
+    "follow_up": true,
+    "reply": true,
+    "transcript": false
+   }
+  }
+ ]
+}

@@ -1,0 +1,423 @@
+{
+ "scenarios": [
+  {
+   "id": "c-real-usb-cue-b",
+   "set": "control",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "4.2",
+    "1.2b",
+    "1.2c"
+   ],
+   "setup": {
+    "heliox_says": "Here is your morning. You have three meetings, the first at nine with the design team, then a review at eleven, and a call with Priya at four. You also have two reminders and a to-do due today."
+   },
+   "steps": [
+    {
+     "say": "real/desk/usb_cue_b.wav",
+     "text": "Wait, stop.",
+     "when": "heliox_audio",
+     "delay": 1.5
+    }
+   ],
+   "expect": {
+    "stopped": true,
+    "route": "control",
+    "spoken": "stopped"
+   }
+  },
+  {
+   "id": "c-real-desk-wait-stop",
+   "set": "control",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "4.2",
+    "1.2b",
+    "1.2c"
+   ],
+   "setup": {
+    "heliox_says": "Here is your morning. You have three meetings, the first at nine with the design team, then a review at eleven, and a call with Priya at four. You also have two reminders and a to-do due today."
+   },
+   "steps": [
+    {
+     "say": "real/desk/desk_wait_stop.wav",
+     "text": "Wait, stop.",
+     "when": "heliox_audio",
+     "delay": 1.5
+    }
+   ],
+   "expect": {
+    "stopped": true,
+    "route": "control",
+    "spoken": "stopped"
+   }
+  },
+  {
+   "id": "c-real-take2204-wait-stop",
+   "set": "control",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "4.2",
+    "1.2b",
+    "1.2c"
+   ],
+   "setup": {
+    "heliox_says": "Here is your morning. You have three meetings, the first at nine with the design team, then a review at eleven, and a call with Priya at four. You also have two reminders and a to-do due today."
+   },
+   "steps": [
+    {
+     "say": "real/desk/take_2204.wav#21.6-23.6",
+     "text": "Wait, stop.",
+     "when": "heliox_audio",
+     "delay": 1.5
+    }
+   ],
+   "expect": {
+    "stopped": true,
+    "route": "control",
+    "spoken": "stopped"
+   }
+  },
+  {
+   "id": "c-real-take2241-wait-stop",
+   "set": "control",
+   "voice": "real",
+   "mic": "ptron-usb-desk",
+   "lines": [
+    "4.2",
+    "1.2b",
+    "1.2c"
+   ],
+   "setup": {
+    "heliox_says": "Here is your morning. You have three meetings, the first at nine with the design team, then a review at eleven, and a call with Priya at four. You also have two reminders and a to-do due today."
+   },
+   "steps": [
+    {
+     "say": "real/desk/take_2241.wav#23.9-25.8",
+     "text": "Wait, stop.",
+     "when": "heliox_audio",
+     "delay": 1.5
+    }
+   ],
+   "expect": {
+    "stopped": true,
+    "route": "control",
+    "spoken": "stopped"
+   }
+  },
+  {
+   "id": "c-syn-stop",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {
+    "heliox_says": "Here is your morning. You have three meetings, the first at nine with the design team, then a review at eleven, and a call with Priya at four. You also have two reminders and a to-do due today."
+   },
+   "note": "",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/stop.wav",
+     "text": "Stop.",
+     "when": "heliox_audio",
+     "delay": 1.5
+    }
+   ],
+   "expect": {
+    "stopped": true,
+    "route": "control",
+    "spoken": "stopped"
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  },
+  {
+   "id": "c-syn-wait",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {
+    "heliox_says": "Here is your morning. You have three meetings, the first at nine with the design team, then a review at eleven, and a call with Priya at four. You also have two reminders and a to-do due today."
+   },
+   "note": "",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.15/wait.wav",
+     "text": "Wait.",
+     "when": "heliox_audio",
+     "delay": 1.5
+    }
+   ],
+   "expect": {
+    "stopped": true,
+    "route": "control"
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  },
+  {
+   "id": "c-syn-no-pending",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {
+    "pending_approval": true
+   },
+   "note": "",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/no.wav",
+     "text": "No."
+    }
+   ],
+   "expect": {
+    "route": "deny",
+    "denied": true,
+    "approved": false,
+    "spoken": true
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  },
+  {
+   "id": "c-syn-yes-refused",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {
+    "pending_approval": true
+   },
+   "note": "",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.15/yes.wav",
+     "text": "Yes."
+    }
+   ],
+   "expect": {
+    "route": "refuse_approval",
+    "approved": false,
+    "spoken": true
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  },
+  {
+   "id": "c-syn-approve-refused",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {
+    "pending_approval": true
+   },
+   "note": "",
+   "steps": [
+    {
+     "say": "synthetic/af_bella/0.9/approve_it.wav",
+     "text": "Approve it."
+    }
+   ],
+   "expect": {
+    "route": "refuse_approval",
+    "approved": false
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  },
+  {
+   "id": "c-syn-wake-yes-go-ahead",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {
+    "pending_approval": true
+   },
+   "note": "",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.15/hey_heliox_yes_go_ahead_and_approve_it.wav",
+     "text": "Hey Heliox, yes, go ahead and approve it."
+    }
+   ],
+   "expect": {
+    "approved": false,
+    "route": "refuse_approval"
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  },
+  {
+   "id": "c-syn-no-problem-not-approval",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {
+    "pending_approval": true
+   },
+   "note": "sounds like consent; must neither approve nor deny",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/no_problem_go_ahead.wav",
+     "text": "No problem, go ahead."
+    }
+   ],
+   "expect": {
+    "approved": false
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  },
+  {
+   "id": "c-syn-correction-running",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {
+    "task_running": true
+   },
+   "note": "",
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/skip_the_backup.wav",
+     "text": "Skip the backup."
+    }
+   ],
+   "expect": {
+    "route": "interject"
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  },
+  {
+   "id": "c-syn-question-running",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {
+    "task_running": true
+   },
+   "note": "",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/what_are_you_doing.wav",
+     "text": "What are you doing?"
+    }
+   ],
+   "expect": {
+    "route": "interject",
+    "spoken": "any"
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  },
+  {
+   "id": "c-syn-undo",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {},
+   "note": "",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.15/hey_heliox_undo_that.wav",
+     "text": "Hey Heliox, undo that."
+    }
+   ],
+   "expect": {
+    "route": "local",
+    "spoken": "undo",
+    "reply": true
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  },
+  {
+   "id": "c-syn-correction-then-undo",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "setup": {
+    "task_running": true
+   },
+   "note": "",
+   "steps": [
+    {
+     "say": "synthetic/af_bella/0.9/skip_the_backup.wav",
+     "text": "Skip the backup."
+    },
+    {
+     "say": "synthetic/af_bella/0.9/hey_heliox_undo_that.wav",
+     "text": "Hey Heliox, undo that.",
+     "when": "previous_done",
+     "delay": 1.0,
+     "set": {
+      "task_running": false
+     }
+    }
+   ],
+   "expect": {
+    "route": "interject",
+    "spoken": "undo"
+   },
+   "models": [
+    "cloud",
+    "local",
+    "none"
+   ]
+  }
+ ]
+}
