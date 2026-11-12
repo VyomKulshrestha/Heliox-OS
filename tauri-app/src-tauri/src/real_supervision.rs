@@ -122,9 +122,12 @@ fn tick_until_relaunch(
     let mut paused = false;
     let deadline = Instant::now() + limit;
     let launches_before = launches(&host.control);
+    let mut last = Instant::now();
     while Instant::now() < deadline {
         host.sleep(watch.limits.check_every);
-        if supervisor::tick(host, watch, &mut paused) == Tick::Stop {
+        let elapsed = watch.limits.counted(last.elapsed()); // as supervisor::run counts a check
+        last = Instant::now();
+        if supervisor::tick(host, watch, &mut paused, elapsed) == Tick::Stop {
             return None;
         }
         let said = host
@@ -215,6 +218,10 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
         startup_grace: Duration::from_secs(20),
         hang_after: Duration::from_secs(8),
         stable_after: Duration::from_secs(3600), // two crashes in a row: the back-off must double
+        // a check counts for at most the pause, the ping's own limit and a second, as in the app
+        longest_counted_check: Duration::from_secs(1)
+            + supervisor::PING_TIMEOUT
+            + Duration::from_secs(1),
         ..Limits::default()
     };
     let _ = supervisor::take_previous_exit();
@@ -289,13 +296,15 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
         let _ = wait_ready(Duration::from_secs(180));
 
         // A hang: the daemon is suspended; after the grace and the hang rule it is ended and started again. The
-        // watch counts check_every per tick, so the grace is ticked through while the daemon answers (fast ticks);
-        // while it is suspended each tick also waits out the ping's own timeout (PING_TIMEOUT).
+        // grace is ticked through first, while the daemon answers.
         let mut paused = false;
-        let grace_ticks = watch.limits.startup_grace.as_secs() + 2;
-        for _ in 0..grace_ticks {
+        let grace_until = Instant::now() + watch.limits.startup_grace + Duration::from_secs(2);
+        let mut last = Instant::now();
+        while Instant::now() < grace_until {
             host.sleep(watch.limits.check_every);
-            supervisor::tick(&host, &mut watch, &mut paused);
+            let elapsed = watch.limits.counted(last.elapsed());
+            last = Instant::now();
+            supervisor::tick(&host, &mut watch, &mut paused, elapsed);
         }
         let frozen_at = Instant::now();
         order(&control, "freeze");
@@ -305,6 +314,20 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
             "stopped answering, so it is being restarted.",
             frozen_at,
             Duration::from_secs(240),
+        );
+        let told_after = host.notices.lock().ok().and_then(|notices| {
+            notices
+                .iter()
+                .find(|(at, line)| *at >= frozen_at && line.contains("stopped answering"))
+                .map(|(at, _)| at.duration_since(frozen_at))
+        });
+        // The rule in wall time: told within hang_after plus at most one check (the ping waits out its own limit).
+        let bound =
+            watch.limits.hang_after + watch.limits.longest_counted_check + Duration::from_secs(3);
+        check(
+            "hang-told-within-the-rule",
+            told_after.is_some_and(|took| took <= bound),
+            format!("told {told_after:?} after the freeze; the rule allows {bound:?}"),
         );
         check(
             "hang-ended-and-restarted",

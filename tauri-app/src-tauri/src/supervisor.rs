@@ -3,11 +3,11 @@
 //! The app starts the Python daemon at launch (`spawn_daemon` in main.rs). Before this, nothing watched it: if it
 //! crashed or hung, the window showed "Reconnecting..." until the person restarted the app. Now a thread checks the
 //! daemon the app owns every few seconds. A daemon that exited is started again after a back-off (2 s, doubling to
-//! 60 s, reset after five quiet minutes); one that stops answering its RPC ping after its start-up grace is killed
-//! and then started again once HANG_AFTER worth of checks went unanswered (each counted as CHECK_EVERY, though an
-//! unanswered check also waits out PING_TIMEOUT: about three minutes of wall time today, not one). Each step is
-//! announced on the `daemon-supervisor` event in one plain line, and the window reconnects on its own as it always
-//! did.
+//! 60 s, reset after five quiet minutes); one that stops answering its RPC ping for HANG_AFTER (a minute of wall
+//! time, measured between checks) after its start-up grace is killed and then started again. One check counts for
+//! at most LONGEST_COUNTED_CHECK, so a sleep and wake, which makes one gap between checks look long, is never a hang
+//! by itself. Each step is announced on the `daemon-supervisor` event in one plain line, and the window reconnects on
+//! its own as it always did.
 //!
 //! A daemon the app did not start (for example one run from a terminal during development, found already listening
 //! at launch) is never touched: `DaemonProcess` holds `None` and the supervisor only watches its port ("borrowed").
@@ -73,6 +73,10 @@ pub(crate) const HANG_AFTER: Duration = Duration::from_secs(60);
 /// After this long without a restart, the back-off starts again from 2 s.
 pub(crate) const STABLE_AFTER: Duration = Duration::from_secs(300);
 pub(crate) const PING_TIMEOUT: Duration = Duration::from_secs(10);
+/// The most one check counts for: the pause between checks, a ping that waited out its whole limit, and a second.
+/// A longer gap (the computer slept, the process was stopped) counts as this much, never as a minute of silence.
+pub(crate) const LONGEST_COUNTED_CHECK: Duration =
+    Duration::from_secs(CHECK_EVERY.as_secs() + PING_TIMEOUT.as_secs() + 1);
 /// The daemon's exit code when another copy already serves its port (pilot.server main, AlreadyRunningError).
 pub(crate) const ANOTHER_COPY_EXIT_CODE: i32 = 3;
 /// While borrowing another copy's daemon: how long its port may stay silent before this app starts its own. A minute,
@@ -120,6 +124,7 @@ pub(crate) struct Limits {
     pub(crate) hang_after: Duration,
     pub(crate) stable_after: Duration,
     pub(crate) take_over_after: Duration,
+    pub(crate) longest_counted_check: Duration,
 }
 
 impl Default for Limits {
@@ -130,7 +135,15 @@ impl Default for Limits {
             hang_after: HANG_AFTER,
             stable_after: STABLE_AFTER,
             take_over_after: TAKE_OVER_AFTER,
+            longest_counted_check: LONGEST_COUNTED_CHECK,
         }
+    }
+}
+
+impl Limits {
+    /// What a gap of `measured` between two checks counts for: its wall time, up to longest_counted_check.
+    pub(crate) fn counted(&self, measured: Duration) -> Duration {
+        measured.min(self.longest_counted_check)
     }
 }
 
@@ -248,19 +261,30 @@ pub(crate) enum Tick {
     Stop,
 }
 
-/// The supervisor until the app exits: one tick every `watch.limits.check_every`.
+/// The supervisor until the app exits: one tick every `watch.limits.check_every`, each counting the wall time since
+/// the one before (up to longest_counted_check).
 pub(crate) fn run(host: &impl Host, watch: &mut Watch) {
     let mut was_paused = false;
+    let mut last = std::time::Instant::now();
     loop {
         host.sleep(watch.limits.check_every);
-        if tick(host, watch, &mut was_paused) == Tick::Stop {
+        let now = std::time::Instant::now();
+        let elapsed = watch.limits.counted(now - last);
+        last = now;
+        if tick(host, watch, &mut was_paused, elapsed) == Tick::Stop {
             return;
         }
     }
 }
 
 /// One look at the daemon and what follows from it: a notice, a kill, a restart after the back-off, a borrow.
-pub(crate) fn tick(host: &impl Host, watch: &mut Watch, was_paused: &mut bool) -> Tick {
+/// `elapsed`: the time this look counts for since the last one.
+pub(crate) fn tick(
+    host: &impl Host,
+    watch: &mut Watch,
+    was_paused: &mut bool,
+    elapsed: Duration,
+) -> Tick {
     if host.exiting() {
         return Tick::Stop;
     }
@@ -313,7 +337,7 @@ pub(crate) fn tick(host: &impl Host, watch: &mut Watch, was_paused: &mut bool) -
     } else {
         Observation::Silent
     };
-    let step = watch.observe(seen, watch.limits.check_every);
+    let step = watch.observe(seen, elapsed);
     if let Some(line) = notice(step) {
         host.notice(&line);
     }
@@ -491,6 +515,43 @@ mod tests {
             assert_eq!(watch.observe(Observation::Silent, CHECK_EVERY), Step::Wait);
             elapsed += CHECK_EVERY;
         }
+    }
+
+    #[test]
+    fn the_hang_rule_counts_wall_time_and_a_sleep_counts_for_one_check_at_most() {
+        let limits = Limits::default();
+        let past_the_grace = || {
+            let mut watch = Watch::default();
+            watch.started();
+            let mut counted = Duration::ZERO;
+            while counted < STARTUP_GRACE {
+                assert_eq!(
+                    watch.observe(Observation::Answered, CHECK_EVERY),
+                    Step::Wait
+                );
+                counted += CHECK_EVERY;
+            }
+            watch
+        };
+        // Unanswered checks each take the pause and the ping's whole limit: a minute is four of them, not twelve.
+        let mut watch = past_the_grace();
+        let silent = limits.counted(CHECK_EVERY + PING_TIMEOUT);
+        let steps: Vec<Step> = (0..4)
+            .map(|_| watch.observe(Observation::Silent, silent))
+            .collect();
+        assert_eq!(
+            steps,
+            vec![Step::Wait, Step::Wait, Step::Wait, Step::KillHung]
+        );
+        // A sleep and wake: one gap of hours counts as one long check, never as a minute of silence.
+        let mut watch = past_the_grace();
+        let slept = limits.counted(Duration::from_secs(8 * 3600));
+        assert_eq!(slept, LONGEST_COUNTED_CHECK);
+        assert_eq!(watch.observe(Observation::Silent, slept), Step::Wait);
+        assert_eq!(
+            watch.observe(Observation::Answered, CHECK_EVERY),
+            Step::Wait
+        );
     }
 
     #[test]
