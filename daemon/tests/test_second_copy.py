@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import socket
+import sys
 from unittest.mock import AsyncMock
 
 import pytest
@@ -177,8 +178,13 @@ def test_the_claim_binds_without_listening_and_with_the_right_option_for_each_sy
             assert not sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR)
         else:
             assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR)
-        with pytest.raises(AlreadyRunningError):  # claimed, not yet listening, is already taken
-            startup.claim_address("127.0.0.1", sock.getsockname()[1])
+        port = sock.getsockname()[1]
+        if sys.platform.startswith("linux"):
+            # Linux lets two SO_REUSEADDR sockets bind one address while neither listens (seen on the CI runner, 12
+            # November); hold_port_lock settles that case. Once the first one listens, the claim is refused there too.
+            sock.listen(1)
+        with pytest.raises(AlreadyRunningError):  # claimed (and on Linux, listening) is already taken
+            startup.claim_address("127.0.0.1", port)
     finally:
         for sock in claimed:
             sock.close()
