@@ -639,6 +639,21 @@ Windows and macOS and 24 on Linux (from the code). **Fakes only**.
 
 ### Whole sessions
 
+**Where a session writes.** Every folder `pilot.config` names belongs to the session driver. It uses
+`pilot.config`'s marked test root (`HELIOX_TEST_ROOT` and `.heliox-test-root`):
+- under pytest, the folder guard's root;
+- run as a script, a new temporary root the driver makes before any `pilot` module reads a path, and removes at
+  exit.
+
+Each session gets its own folder inside that root. For the session, every `pilot.config` path points into that
+folder, so a settings phrase saves the session's own `config.toml`. The driver refuses to start a session when any
+path lies outside, and refuses to run at all if `pilot.config` was imported before it could set the root.
+
+Before this, the driver moved only the server's data folder. On 12 November a session server's settings save
+("stop interrupting me") overwrote the person's real `config.toml` and `restrictions.toml`. A paid run (`--real`)
+reads the person's model, conversation and budget settings once, read-only, into a config of its own inside the
+root. The only write it makes to the person's own folders is the budget tracker's record of what the run spent.
+
 `python -m benchmarks.conversation_eval.sessions` runs 21 sessions of 6 to 8 turns (`sessions.json`: a morning, a
 task corrected and stopped, "shorter" and "again", an action repeated, a slip Live asks about, a vague destructive
 request, an approval voice must not grant, a note said in passing, a misheard turn, someone else talking, a call,

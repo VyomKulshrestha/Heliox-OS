@@ -1,5 +1,5 @@
 {
-  "how_to_read": "Personal sessions: what a person tells Heliox, and whether it changes how Heliox talks and what it does after a restart. Read like sessions.json, plus: an 'event' of 'restart' starts a new session server over the same folder (what is on disk stays, the conversation does not); 'sent' and 'not_sent' are about what the fast model is sent in that turn (checked for every kind with a model); 'planned_with' is about what the planner is given; 'stored' and 'not_stored' are about everything on disk after the turn; 'never_sent' and 'never_stored' hold for the whole session. 'via': 'turn' dispatches as the listener does (PilotServer._voice_turn), with the personal context the daemon gives the layer. 'expect_cloud' holds for a model in the cloud only: a model on this computer may be sent more.",
+  "how_to_read": "Personal sessions: what a person tells Heliox, and whether it changes how Heliox talks and what it does after a restart. Read like sessions.json, plus: an 'event' of 'restart' starts a new session server over the same folder (what is on disk stays, the conversation does not); 'sent' and 'not_sent' are about what the fast model is sent in that turn (checked for every kind with a model); 'planned_with' is about what the planner is given; 'stored' and 'not_stored' are about everything on disk after the turn; 'never_sent' and 'never_stored' hold for the whole session. 'via': 'turn' dispatches as the listener does (PilotServer._voice_turn), with the personal context the daemon gives the layer. 'expect_cloud' holds for a model in the cloud only: a model on this computer may be sent more. 'config_saved_in_session' (turn): the turn saved the configuration, and every save went into the session's own folder; 'real_config_untouched' (session): the person's own config folders are listed before and after (by the pytest folder guard under pytest) and must not change.",
   "sessions": [
     {
       "name": "told once: the name to be called by",
@@ -897,6 +897,52 @@
             "not_sent": [
               "Priya",
               "Pune"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "settings said aloud are saved in the session's own folder",
+      "via": "turn",
+      "real_config_untouched": true,
+      "turns": [
+        {
+          "say": "Hey Heliox, stop suggesting things.",
+          "expect": {
+            "taken": true,
+            "model": false,
+            "config_saved_in_session": true
+          }
+        },
+        {
+          "say": "Hey Heliox, stop interrupting me.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "config_saved_in_session": true
+          }
+        },
+        {
+          "say": "Hey Heliox, be my live companion.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "config_saved_in_session": true
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what time is it?",
+          "gap": 5,
+          "expect": {
+            "taken": true,
+            "has": [
+              "9|nine"
             ]
           }
         }

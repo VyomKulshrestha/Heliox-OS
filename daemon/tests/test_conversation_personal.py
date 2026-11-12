@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +24,7 @@ from pilot.conversation.planner_context import build_context, people_meant
 from pilot.workflows.user_profile import UserProfile
 
 SESSIONS = load_pack(PERSONAL_PACK)
+DAEMON = Path(__file__).resolve().parents[1]
 
 _EVERYONE: dict[str, str] = {}
 KNOWN: dict[tuple[str, str], str] = {(name, kind): cause for name, cause in _EVERYONE.items() for kind in KINDS}
@@ -170,3 +175,89 @@ def test_words_asking_to_keep_or_change_something_that_reach_the_model_are_marke
 
     block, _ = assemble(ContextSources(), ConversationMemory(), text=words)
     assert (NOTHING_SAVED in block) is told
+
+
+# ── the session driver owns every Heliox folder ──
+
+
+def test_every_heliox_path_is_inside_the_drivers_test_root():
+    from benchmarks.conversation_eval import sessions as S
+
+    assert S.outside(S.TEST_ROOT) == {}
+    assert {
+        "CONFIG_FILE",
+        "RESTRICTIONS_FILE",
+        "DATA_DIR",
+        "STATE_DIR",
+        "CACHE_DIR",
+        "RUNTIME_DIR",
+        "SETUP_DIR",
+    } <= set(S.config_paths())
+
+
+def test_the_driver_refuses_a_session_when_a_path_is_outside(monkeypatch, tmp_path):
+    import pilot.config as config_module
+    from benchmarks.conversation_eval import sessions as S
+
+    elsewhere = tmp_path / "somewhere-else"
+    monkeypatch.setattr(config_module, "CONFIG_FILE", elsewhere / "config.toml")
+    with pytest.raises(RuntimeError, match="CONFIG_FILE"):
+        S.refuse_outside(S.TEST_ROOT)
+    with pytest.raises(RuntimeError, match="refusing to start a session"):
+        S._isolate(S.TEST_ROOT / "a-session")
+    assert elsewhere / "config.toml" == config_module.CONFIG_FILE  # nothing was moved before refusing
+
+
+def test_a_session_folder_outside_the_root_is_refused(tmp_path):
+    from benchmarks.conversation_eval import sessions as S
+
+    with pytest.raises(RuntimeError, match="not inside"):
+        S._isolate(tmp_path / "outside")
+
+
+def test_a_paid_run_copies_only_what_it_needs_into_its_own_config(tmp_path):
+    """The person's file is read once, read-only; the config built from it lives in the test root, so its save cannot
+    reach theirs."""
+    import pilot.config as config_module
+    from benchmarks.conversation_eval import sessions as S
+
+    theirs = tmp_path / "config.toml"
+    theirs.write_text(
+        '[model]\nprovider = "cloud"\ncloud_provider = "claude"\nbudget_monthly_limit_usd = 25.0\n'
+        'cloud_model = "claude-x"\n\n[conversation]\nclaude_model = "claude-haiku-5-5"\n\n'
+        "[security]\nroot_enabled = true\n",
+        encoding="utf-8",
+    )
+    before = theirs.stat().st_mtime_ns
+    settings = S.owner_settings(theirs)
+    assert set(settings) == {"model", "conversation"}  # nothing else is copied (no security, voice, Live...)
+    config = S.config_from_owner(settings)
+    assert config.model.cloud_provider == "claude" and config.model.budget_monthly_limit_usd == 25.0
+    assert config.conversation.claude_model == "claude-haiku-5-5"
+    assert config.security.root_enabled is False
+    assert config_module.CONFIG_FILE.resolve().is_relative_to(S.TEST_ROOT.resolve())  # where its save would go
+    assert theirs.stat().st_mtime_ns == before
+
+
+def _child(code: str) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if k != "HELIOX_TEST_ROOT"}  # as a script run by hand would start
+    return subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=DAEMON, timeout=120
+    )
+
+
+def test_run_as_a_script_the_driver_makes_its_own_marked_root_before_pilot_reads_a_path():
+    done = _child(
+        "import benchmarks.conversation_eval.sessions as S, pilot.config as c, pathlib\n"
+        "print(S.TEST_ROOT)\nprint(S.outside(S.TEST_ROOT))\nprint((S.TEST_ROOT / c.TEST_ROOT_MARKER).is_file())\n"
+        "print(c.CONFIG_FILE)\n"
+    )
+    assert done.returncode == 0, done.stderr
+    root, stray, marked, config_file = done.stdout.split("\n")[:4]
+    assert "heliox-sessions-root-" in root and stray == "{}" and marked == "True"
+    assert config_file.startswith(root)
+
+
+def test_run_as_a_script_after_pilot_read_the_real_paths_the_driver_refuses():
+    done = _child("import pilot.config\nimport benchmarks.conversation_eval.sessions\n")
+    assert done.returncode != 0 and "refusing to run sessions" in done.stderr

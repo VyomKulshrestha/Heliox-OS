@@ -115,7 +115,7 @@ CHANGES = [
 @pytest.mark.parametrize(("said", "what", "count"), CHANGES, ids=[c[0] for c in CHANGES])
 async def test_split_after_a_change_kept_in_code_is_too_late_and_says_what_it_did(said, what, count):
     record, clock = sessions.Record(), sessions.Clock()
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=sessions.TEST_ROOT) as tmp:  # inside the driver's root, or it refuses
         undo = sessions._isolate(Path(tmp))
         try:
             server = await sessions.build_server("none", {"turns": []}, Path(tmp), record, clock)
@@ -143,7 +143,7 @@ async def test_split_after_a_change_kept_in_code_is_too_late_and_says_what_it_di
 
 async def test_a_read_only_answer_can_still_be_withdrawn():
     record, clock = sessions.Record(), sessions.Clock()
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=sessions.TEST_ROOT) as tmp:  # inside the driver's root, or it refuses
         undo = sessions._isolate(Path(tmp))
         try:
             server = await sessions.build_server("none", {"turns": []}, Path(tmp), record, clock)
