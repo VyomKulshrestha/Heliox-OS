@@ -1,24 +1,36 @@
 # The spoken turn: how Heliox answers when you talk to it
 
 This note covers the fast conversational layer in `daemon/pilot/conversation/`: what a spoken turn did before it,
-where the time went, and what the layer does now. Numbers come from the owner's recorded speech and from the
-daemon log unless a line says otherwise.
+where the time went, and what the layer does now. Every measured number says where it comes from, in the sentence
+that carries it:
+- *owner recording*: the owner's own voice, with the microphone and the number of sentences;
+- *synthetic voice*: text-to-speech voices from the Conversation Bench;
+- *bench mix*: recordings mixed with synthetic noise or babble at a set level;
+- *transcript replay*: decisions run over cached recogniser words, no audio;
+- *text*: typed or written input, no audio at all;
+- *from the code*: what the code does, not a measurement;
+- *PortAudio's reported figure*: what the audio library says about a device, not measured;
+- *under load*: measured while the machine was busy; a time marked so is not a result.
+Settings (windows, limits, thresholds) are the code's own values. Almost everything here was heard from one voice,
+the owner's; what that leaves unshown, and the recording that would show it, is in the last section.
 
 ## 1. The path of a spoken turn before this layer
 
 1. **Listening and end of turn** (`pilot/system/voice.py`). The listener runs voice-activity detection on the
    microphone, a streaming recogniser for live captions, and the Smart Turn model to decide that the person has
-   finished. On the owner's recordings played through the real listener (`voice_probe.py`), the end of the turn
-   was declared 0.45 to 0.65 s after the last word.
-2. **The accurate pass.** Parakeet (or Whisper) re-reads the utterance. Measured on the same recordings: Parakeet
-   0.23 to 0.78 s; when the wake phrase needed Whisper's confirmation, 2.2 to 2.6 s. From the last word to the
-   dispatch of the command: 1.3 s for a sentence Parakeet settled, 2.8 to 3.3 s when Whisper ran as well.
+   finished. On the owner's rehearsal recordings played through the real listener (`voice_probe.py`; owner
+   recording, a handful of sentences, one voice, machine load not recorded), the end of the turn was declared 0.45
+   to 0.65 s after the last word.
+2. **The accurate pass.** Parakeet (or Whisper) re-reads the utterance. Measured on the same recordings (same
+   source and caveats): Parakeet 0.23 to 0.78 s; when the wake phrase needed Whisper's confirmation, 2.2 to 2.6 s.
+   From the last word to the dispatch of the command: 1.3 s for a sentence Parakeet settled, 2.8 to 3.3 s when
+   Whisper ran as well. A timing set on a quiet machine is still owed (below).
 3. **Dispatch** (`PilotServer._voice_command_dispatch`). In order: barge-in stops Heliox's voice; an approval
    attempt is refused ("I can't approve that by voice"); a denial is applied; `_control_reply` tries sixteen
    handlers Heliox answers in code (help, live replies, profile, goals, the day, to-dos, reminders, undo,
    routines, shortcuts and others); stop and soft-stop words; corrections to a running task. These take tens of
-   milliseconds, and a local answer was heard 0.2 s after dispatch plus synthesis (0.3 to 0.6 s to first audio in
-   the probe).
+   milliseconds (from the code's own logging), and a local answer was heard 0.2 s after dispatch plus synthesis
+   (0.3 to 0.6 s to first audio in the probe; same source and caveats).
 4. **Everything else went to the planner.** "How are you", "what do you think about this error", "explain what
    you just did" and "open Notepad" all took the same road: interaction state, `_handle_execute`, the configured
    cloud model writing a JSON plan, then the reviewers (world model, safety review, Gnomon), the executor and the
@@ -30,7 +42,8 @@ question from a request.
 
 ### Where the waits were
 
-From the daemon log of the November rehearsals, dispatch to the end of the turn on the planner road:
+From the daemon log of the November rehearsals (owner recording, live; the planner road's times are mostly the
+model's), dispatch to the end of the turn on the planner road:
 
 | Utterance (as recognised) | What it was | Dispatch to done |
 |---|---|---|
@@ -42,7 +55,7 @@ From the daemon log of the November rehearsals, dispatch to the end of the turn 
 
 For conversation, the first sound was the stock phrase at 2.5 s plus synthesis, and the answer came 10 to 60 s
 later. Noise and fragments became plans. The planner model itself (Claude Opus 5.5 on the owner's machine)
-returns a plan in 10 to 15 s before any review.
+returns a plan in 10 to 15 s before any review (daemon log).
 
 ## 2. The design
 
@@ -50,7 +63,7 @@ returns a plan in 10 to 15 s before any review.
 
 | Module | Job |
 |---|---|
-| `router.py` | Decides in code what an addressed utterance is: control, local, conversation, action or unclear. No model; about 0.02 ms per call. |
+| `router.py` | Decides in code what an addressed utterance is: control, local, conversation, action or unclear. No model; about 0.02 ms per call (a code timing). |
 | `style.py` | The fast model's instructions; cleaning model text for the ear (no markdown, paths, links, symbols, stock openers); cutting streamed text into sentences; reading the model's hand-over line. |
 | `context.py` | The short-term conversation (in memory only) and the context block the model gets each turn, within about 350 tokens. |
 | `fast_model.py` | One streamed model per provider kind, all counted in the same budget tracker as the planner. |
@@ -80,8 +93,9 @@ before. What reaches it is what used to go straight to the planner:
 * **Unclear** (a bare verb, the wake phrase alone, the recogniser repeating one word, "open it" with nothing to
   refer to): the fast model, which says what it heard and asks. It never acts on a guess.
 
-The table in `tests/test_conversation_router.py` has 110 utterances, 51 of them the owner's own recognised speech.
-None of the misheard ones reaches the planner as an action.
+The table in `tests/test_conversation_router.py` has 110 utterances, 51 of them the owner's own recognised speech
+(text: the recognisers' words for one voice). None of the misheard ones reaches the planner as an action; how
+other voices are misheard is not yet shown.
 
 ### Streaming into speech and cutting off
 
@@ -125,8 +139,8 @@ never reaches this layer, so it is never stored as conversation or sent to a mod
 
 Live (slips, risks, offers) and the conversation used to start speaking on their own checks, and Live's correction
 channel outranks an answer, so a Live remark could cut a reply mid-sentence. `pilot/live/floor.py` holds one rule,
-measured on the Live Bench's `converse` steps (spoken remarks over a reply: 3 per persona before, 0 after, recall
-and false alarms unchanged):
+measured on the Live Bench's `converse` steps (text; spoken remarks over a reply: 3 per persona before, 0 after,
+recall and false alarms unchanged):
 
 1. Nobody starts while the person is talking.
 2. A conversation turn holds the floor from dispatch until it is answered (`PilotServer._voice_turn`), plus 3 s.
@@ -295,9 +309,10 @@ events with `httpx`, recorded in the budget the same way (input tokens from `mes
 free token-counting call when the person starts talking, at most every 45 s.
 
 The Anthropic SDK was tried and dropped. Measured on 12 November, three calls each, alternating, both connections
-warmed: SDK first token median 0.88 s (0.72 to 1.09 s), plain HTTP median 0.77 s (0.75 to 0.77 s); six calls cost
-$0.0005. Importing the SDK took 22 to 36 s on the owner's machine (about three minutes without compiled
-bytecode), which a turn would have waited for.
+warmed (network time on a home connection; machine load not recorded): SDK first token median 0.88 s (0.72 to
+1.09 s), plain HTTP median 0.77 s (0.75 to 0.77 s); six calls cost $0.0005. Importing the SDK took 22 to 36 s on
+the owner's machine (load not recorded; about three minutes without compiled bytecode), which a turn would have waited
+for.
 
 ### The model for each kind of person
 
@@ -340,28 +355,30 @@ the three CI systems.
 
 ## 3. Measured
 
-Ten conversational turns (questions, a remark, a follow-up, a misheard line and a pronoun to resolve), Claude Haiku
-5.5 through the Anthropic SDK (since replaced by plain HTTP, which measured slightly faster) on a home connection,
-the real layer and context, 12 November 2026. The sink was silent and
-took as long as speech would; the machine had too little free memory to load Kokoro for the run.
+Ten conversational turns (text: questions, a remark, a follow-up, a misheard line and a pronoun to resolve), Claude
+Haiku 5.5 through the Anthropic SDK (since replaced by plain HTTP, which measured slightly faster) on a home
+connection, the real layer and context, 12 November 2026. The sink was silent and took as long as speech would;
+the machine had too little free memory to load Kokoro for the run, so the model times below are under load.
 
 | Stage | Before | Now |
 |---|---|---|
-| Last word to dispatch (owner's recordings, real listener) | 1.3 s (Parakeet), 2.8 to 3.3 s (with Whisper) | unchanged; not this layer |
-| Dispatch to first token | 10 to 15 s (a plan) | median 0.82 s, worst 1.61 s (first turn) |
-| Dispatch to first sentence handed to speech | stock phrase at 2.5 s; the answer 10 to 60 s | median 1.07 s, worst 1.66 s |
-| First sentence to first audio (Kokoro, owner's probe runs) | 0.15 to 0.63 s | the same path |
+| Last word to dispatch (owner recording, rehearsal probe, load not recorded) | 1.3 s (Parakeet), 2.8 to 3.3 s (with Whisper) | unchanged; not this layer |
+| Dispatch to first token (text, under load) | 10 to 15 s (a plan) | median 0.82 s, worst 1.61 s (first turn) |
+| Dispatch to first sentence handed to speech (text, under load) | stock phrase at 2.5 s; the answer 10 to 60 s | median 1.07 s, worst 1.66 s |
+| First sentence to first audio (Kokoro, owner's probe runs, load not recorded) | 0.15 to 0.63 s | the same path |
 | A request handed over: dispatch to its acknowledgement | stock phrase at 2.5 s | no model call; the sentence goes to speech at once (tested with fakes) |
 
-So for a model answer, the first sound now comes about 1.2 to 1.7 s after dispatch, and about 2.5 to 3 s after the
-last word once the recogniser's own time is added. The scorecard asks for 1.5 s from the last word; the remaining
-gap is mostly the end-of-turn and recognition stages, outside this layer.
+Adding those stages, which were measured separately and partly under load, a model answer's first sound would come
+about 1.2 to 1.7 s after dispatch and 2.5 to 3 s after the last word. That sum is an estimate, not a measurement:
+no recording yet times the last word to Heliox's first audio end to end on a quiet machine. The scorecard asks for
+1.5 s from the last word; the gap, if the estimate holds, is mostly the end-of-turn and recognition stages.
 
 The ten turns used 8,600 input and 400 output tokens, $0.0011, recorded in the budget tracker.
 
 The quick road, dispatch to action started: 0.02 s median over ten allow-listed requests with a stubbed executor
-(2.2 s for the first in a fresh process, which loads the world model's weights), and 0.024 s median over three
-real ones on Windows (Notepad opened; battery and disk read), against 10 to 15 s for a planned step before.
+(text; 2.2 s for the first in a fresh process, which loads the world model's weights), and 0.024 s median over
+three real ones on Windows only (Notepad opened; battery and disk read; load not recorded), against 10 to 15 s for
+a planned step before.
 
 ### The conversation eval
 
@@ -410,7 +427,7 @@ of November") are turned into words a voice says well. A remark Heliox Live made
 conversation as Live's (`add_heliox(..., source="live")`), so "why?" is answered from its evidence rather than as
 Heliox's own mistake, and the model is told how its last reply began so it starts the next one differently.
 
-On the further checks (53 turns on Claude Haiku 5.5), before these fixes and after:
+On the further checks (text: 53 turns on Claude Haiku 5.5), before these fixes and after:
 
 | Check | Before | After |
 |---|---|---|
@@ -467,11 +484,13 @@ became an undo with the phrase twice).
 
 **A follow-up.** After Heliox finishes speaking in an open conversation, the next utterance needs no wake phrase
 only if all of these hold:
-- it starts within 8 seconds of Heliox's last word (people reply within about a second; 8 s leaves room to think,
-  where the old 30 s window let a room in);
+- it starts within 8 seconds of Heliox's last word (a setting: people are thought to reply within about a second,
+  not yet measured on real replies; on the synthetic hour's transcript replay the old 30 s window let 229 room
+  sentences in as follow-ups);
 - it did not begin while Heliox was still talking, unless it is a control word ("Stop", "Wait");
 - it is plausibly meant for Heliox: a control word, a reply to the question Heliox just asked, or a direct request
-  or question (imperative, or second person), or, within 4 seconds of Heliox's answer, a short elliptical follow-up
+  or question (imperative, or second person), or, within 4 seconds of Heliox's answer (a setting, not yet measured
+  on real follow-ups), a short elliptical follow-up
   on it: a repeat or shorter phrase the conversation layer answers in code ("again", "say that again", "shorter",
   "in short") or a continuation of at most six words starting with "and", "or", "what about", "how about" or
   "what if" ("And tomorrow?", "What about the second one?");
@@ -492,8 +511,10 @@ so in another language a follow-up is more often answered with "Sorry?" or not t
 short answer (at most 4 seconds of voice) that starts within 2 seconds of a question Heliox asked, and did not begin
 over Heliox's voice, is a reply in any language ("Ja, die blaue Datei.", "हाँ, नीली वाली फ़ाइल।", "はい、青いほうです。"),
 unless it is a line Whisper writes from noise ("Thanks for watching.", one word over and over): right after Heliox's
-question is when noise or Heliox's own voice through open speakers is most likely to be read as words.
-Control words ("Stop", "Wait") are English only; talking over Heliox for a moment stops it in any language.
+question is when noise or Heliox's own voice through open speakers is most likely to be read as words. This is
+tested on written sentences only (text); no one has yet spoken to Heliox in another language.
+Control words ("Stop", "Wait") are English only; talking over Heliox for a moment stops it in any language (from
+the code: the cut-off is judged on the length of the voice, not its words; shown on English recordings only).
 
 **Overheard speech** goes only to Heliox Live, marked not addressed, which does not check it: no card, nothing kept.
 It is never stored as conversation and never sent to a cloud model.
@@ -524,18 +545,24 @@ unless someone opened the conversation.
 "doubtful_follow_up") beside `voice_turn_ended_at`; the conversation layer calls
 `ContinuousVoiceListener.note_not_understood()` after a "Sorry?".
 
-Measured on the Conversation Bench's transcript replay (2026-11-12, both recognisers' words cached through the
-listener's own calls): of the 981 utterances not addressed to Heliox (all 62 minutes), the old behaviour
-dispatched 397 and this rule 0, with nothing spoken; with the elliptical follow-ups added it is still 0 (none of the
-981 opens a window, and none matches the elliptical phrases at all). The owner's wake sentences were taken as before: desk
-microphone 4 of 4, Bluetooth headset 3 of 5 (in the two misses neither recogniser heard the wake phrase). The four
-"Wait, stop." cut-offs over Heliox stop it. Still to measure: the whole hour and the control words at audio level,
-and a real follow-up recording.
+Measured three ways, all on synthetic speech for the part that must not be taken:
+- Transcript replay (2026-11-12, both recognisers' words cached through the listener's own calls): of the 981
+  utterances not addressed to Heliox in the synthetic hour, the old behaviour dispatched 397 and this rule 0, with
+  nothing spoken; with the elliptical follow-ups added it is still 0 (none of the 981 opens a window, and none
+  matches the elliptical phrases at all).
+- Audio level, through the real listener (synthetic voice): 67 minutes and 1,130 utterances not addressed to
+  Heliox; 0 dispatched, 0 spoken, 0 stored.
+- The owner's wake sentences (owner recording): desk microphone 4 of 4, Bluetooth headset 3 of 5, nine sentences,
+  most of them "Hey Heliox, what can I say?" (in the two misses neither recogniser heard the wake phrase). The four
+  "Wait, stop." cut-offs over Heliox stop it (owner recording, desk microphone, four clips).
+No real room (a meeting, a television, a colleague talking) has been recorded yet, and no real follow-up
+conversation; the line that does not move is shown on synthetic speech, not yet on a real room.
 
 **A new person** (from the code, 2026-11-12). Nothing assumes the owner's voice, accent or microphone except the
 numbers each part was tuned on, listed here so they can be revisited:
-- *Wake phrase.* Whisper is prompted with "Hey Heliox" and its proper names, so it usually writes the name exactly,
-  and the exact name needs one recogniser. A spelling close to it ("Heliocs", "Helios", "Hilliox", anything matching
+- *Wake phrase.* Whisper is prompted with "Hey Heliox" and its proper names, so it usually writes the name exactly
+  (owner recording: on the owner's nine wake sentences; other voices and accents not yet shown), and the exact name
+  needs one recogniser. A spelling close to it ("Heliocs", "Helios", "Hilliox", anything matching
   `h[ei]l{1,2}[iy]` plus up to five letters) counts only when Parakeet heard the same next word. Any other spelling
   ("Hey Lux", "Dear Yorks") never wakes Heliox. A voice the recogniser writes differently every time is not helped
   by anything below; the microphone button always works.
@@ -548,17 +575,20 @@ numbers each part was tuned on, listed here so they can be revisited:
   Refused: spellings made only of ordinary words (Whisper's own 24,000 whole-word vocabulary plus a list of names
   and near-words such as "Alex", "Helix", "Hello"), shorter than four letters, or more than four letters from
   "heliox". Of the 5,868 opening phrases (one to three words) of the 981 utterances not addressed to Heliox, as
-  either recogniser wrote them, the guard refuses every one, so none could ever be taught. Only the spellings are
-  stored, on this computer.
-- *Whisper size.* The settings default is "small"; the recommended English download brings "base". The listener now
-  uses the size that is on the computer, and downloading Whisper base switches the setting when "small" is absent
-  (before, a new person who took the recommended set had no wake check at all).
-- *End of turn.* Smart Turn ends the turn at 0.85 after 400 ms of quiet (set on the owner's headset, where pauses
-  inside a sentence scored 0.71 to 0.83), holding up to 2.5 s otherwise. Same for everyone.
+  either recogniser wrote them (transcript replay, synthetic voice), the guard refuses every one, so none could
+  ever be taught. Only the spellings are stored, on this computer. No one but the owner has tried the step.
+- *Whisper size.* The settings default is what the recommended download brings for the computer's language: "base"
+  for English (with Parakeet), "small" otherwise. If the configured size is not on the computer, the listener uses
+  one that is, and downloading Whisper base switches the setting when the configured size is absent (before, a new
+  person who took the recommended set had no wake check at all).
+- *End of turn.* Smart Turn ends the turn at 0.85 after 400 ms of quiet (set on the owner's headset, owner
+  recording, one voice: pauses inside a sentence scored 0.71 to 0.83), holding up to 2.5 s otherwise. Same for
+  everyone; how it suits other voices is not yet shown.
 - *Speech level.* The VAD starts at 0.02 RMS and then follows the room: 2.5 times the 20th percentile of recent
-  levels outside speech, kept between a quarter and four times the start. A quiet voice on a quiet microphone is
-  heard once the room is learned (about half a second of frames); the voice bar warns when the voice is below
-  -48 dBFS, clips, or comes through a narrow-band headset.
+  levels outside speech, kept between a quarter and four times the start. From the code, a quiet voice on a quiet
+  microphone should be heard once the room is learned (about half a second of frames); not yet shown on a quiet
+  voice. The voice bar warns when the voice is below -48 dBFS (a setting; the owner's microphones sat at -35 to
+  -44 dBFS), clips, or comes through a narrow-band headset.
 
 **Not done: whose voice.** Nothing checks that a follow-up comes from the person who said the wake phrase. The
 cheapest evidence is the speech level of the follow-up against the wake utterance that opened the conversation: the
@@ -568,9 +598,10 @@ needs a download. Measuring the level rule needs recordings that do not exist ye
 desk microphone (one addressing Heliox, the other talking to them), and a television or video playing in the room
 while the owner talks to Heliox, each on a desk microphone and a headset.
 
-**Talking over Heliox (barge-in), where the time goes.** On the owner's four recorded "Wait, stop." cuts, fed
-through the listener's recorder and `BargeInGate` on the audio clock with the 2 s before each cut as Heliox's
-speech:
+**Talking over Heliox (barge-in), where the time goes.** On the owner's four recorded "Wait, stop." cuts (owner
+recording, desk microphone, four clips), fed through the listener's recorder and `BargeInGate` on the audio clock
+with the 2 s before each cut as Heliox's speech. That microphone is noise-gated: it gave digital silence while
+Heliox talked through the speakers, so these clips show the case where the microphone does not hear Heliox.
 
 | part | open speakers, before | open speakers, mic does not hear Heliox (now) | headset | ours to shorten |
 |---|---|---|---|---|
@@ -581,21 +612,23 @@ speech:
 | audio already in the output device | not measured (silent sink) | | | partly: see below |
 | first sound to stop decided | 0.53-0.54 s | 0.33-0.34 s | 0.33-0.34 s | |
 
-The open-speaker hold (0.4 s) is there because the microphone hears Heliox. When it does not (a noise-gated desk
-microphone gave digital silence while Heliox talked through the speakers), the gate now uses the headset's 0.25 s:
-the echo comparison still applies, a cough (about 0.15 s) still does not stop Heliox, and a microphone that hears
-Heliox at -50 dBFS or louder keeps the 0.4 s. The output stream is opened with PortAudio's default host API, which on
-Windows is MME, whose low output latency is 90 ms (WASAPI 3 ms, DirectSound 120 ms on the same Realtek speakers, as
-PortAudio reports them): up to 90 ms of Heliox's voice is already in the device when the stop is decided. Moving the
-output to WASAPI on Windows is ours to do but needs an audible test before it ships. macOS (Core Audio) and Linux
-(PulseAudio or PipeWire through ALSA) report their own low latencies; not measured here.
+The open-speaker hold (0.4 s) is there because the microphone hears Heliox. When it does not, the gate now uses
+the headset's 0.25 s: the echo comparison still applies, and a microphone that hears Heliox at -50 dBFS or louder
+keeps the 0.4 s (from the code; no recording of a microphone that hears Heliox exists yet). A cough of about 0.15 s
+does not stop Heliox in the unit tests (generated tones, not a recorded cough). The output stream is opened with
+PortAudio's default host API, which on Windows is MME, whose low output latency is 90 ms (WASAPI 3 ms, DirectSound
+120 ms on the same Realtek speakers; PortAudio's reported figures, not measured): up to that much of Heliox's voice
+may already be in the device when the stop is decided. Moving the output to WASAPI on Windows is ours to do but
+needs an audible test before it ships. macOS (Core Audio) and Linux (PulseAudio or PipeWire through ALSA) report
+their own low latencies; not measured here.
 
-**A headset in call mode.** On the owner's wake sentences, word error rate with both recognisers merged as the
-listener does: 0.42 through a Bluetooth headset in call mode, 0.04 on the desk microphone. Whisper small instead of
-base (0.47), a telephone-band filter (0.57) or louder input (0.40) did not help; for Whisper alone a round trip through
-8 kHz did (0.74 to 0.49), on four sentences, too few to ship. The voice bar's warning for this microphone now says
-how much worse it is and offers the two fixes: the computer's own microphone for input, or the headset's stereo
-profile outside calls.
+**A headset in call mode.** On the owner's wake sentences (owner recording: five through one Bluetooth headset in
+call mode, four on the desk microphone, mostly the same sentence), word error rate with both recognisers merged as
+the listener does: 0.42 through the headset, 0.04 on the desk microphone. Whisper small instead of base (0.47), a
+telephone-band filter (0.57) or louder input (0.40) did not help; for Whisper alone a round trip through 8 kHz did
+(0.74 to 0.49), on four sentences, too few to ship. The voice bar's warning for this microphone says how much worse
+it is ("four to seven words in ten", from these nine sentences on one headset and one voice) and offers the two
+fixes: the computer's own microphone for input, or the headset's stereo profile outside calls.
 
 **When the listener ended the turn too early.** No word list can hold a turn at a comma (section 6), so the
 listener recovers from an early end the way a person who started answering too soon does. If the person speaks
@@ -612,10 +645,15 @@ The listener asks the server to withdraw the first half's dispatch (`withdraw_vo
 `ContinuousVoiceListener.withdraw_turn`): "withdrawn" means the server stopped it and dispatched the joined sentence
 in its place, with one acknowledgement when it leads to the same action; "too_late" (something already ran, and
 Heliox says what) or "unknown" means the listener dispatches the new words alone as a new turn. Until the server
-provides the call, the joined sentence is dispatched marked as a continuation. On the bench's four
-pause scenarios (0.6 to 2.0 s inside "Hey Heliox, remind me to | call the bank tomorrow morning") all four are now
-joined and none is taken as "Stop"; the 23 corpus lines cut at a pause (pauses of 0.40 to 0.72 s) all resume well
-inside the window.
+provides the call, the listener does the same as for "unknown": it yields, never reads the second half as "Stop",
+and dispatches the second half as its own turn, judged like any follow-up. The joined sentence is dispatched only
+through the server's call, so one request now runs as two turns ("remind me to", then "call the bank tomorrow
+morning"); the single right action is owed until the server's call lands.
+Measured on the bench's four pause scenarios (synthetic voice, one sentence, pauses of 0.6 to 2.0 s inside "Hey
+Heliox, remind me to | call the bank tomorrow morning"), without the server's call: none is taken as "Stop" (before,
+the 1.5 and 2.0 s pauses cancelled the request) and each half runs once as its own turn. The 23 corpus lines cut at
+a pause (synthetic voice; pauses of 0.40 to 0.72 s) all resume well inside the window. Not yet shown on the owner's
+own long requests.
 
 **Times are when the sound arrived.** On a CPU-only laptop the recognisers can fall seconds behind the microphone.
 Every captured block therefore carries the time its last sample arrived, and every decision that compares times
@@ -623,8 +661,11 @@ uses it: the start of speech, the end of the turn and of the last word, the foll
 20 s close (the rule judges an utterance at the moment it began), quick replies, elliptical follow-ups,
 continuations and the cut-off. Barge-in reads voice activity worked out on the capture side, not the recorder's
 flag, which lags a backlog. With processing time instead, a continuation said 1.4 s after the first half was refused
-behind a 7 s backlog; it is now decided the same at 0, 7 and 25 s of backlog (tests/test_voice_capture_clock.py).
-Where the time comes from:
+behind a 7 s backlog; it is now decided the same at 0, 7 and 25 s of backlog (tests/test_voice_capture_clock.py:
+generated tones, scripted words, an injected clock). On the bench's 0.6 s pause scenario (synthetic voice, under
+load, with a 7.05 s recognition backlog) the second half is now taken as its own turn, where before it was lost.
+Where the time comes from (from the code and PortAudio's callback contract; not measured per device, and not yet
+run on macOS or Linux):
 - PortAudio (sounddevice: MME, DirectSound and WASAPI on Windows, Core Audio on macOS, ALSA on Linux) gives each
   input buffer's ADC time in the callback (`inputBufferAdcTime`, on the stream's clock), moved onto
   `time.monotonic()` with the callback's `currentTime`. A host API that reports 0 there (some ALSA plugins,
@@ -635,14 +676,16 @@ Where the time comes from:
 - The Conversation Bench's file source uses the sample count, or a capture time it passes in.
 
 **Another voice in the room.** With a second voice behind the person, the wake phrase was taken 8 of 8 times at
-15 dB and above, 4 of 8 at 10 dB and 2 of 8 at 5 dB (bench sweep on the owner's desk recordings). The other voice's
-words replace the name; Parakeet never writes "Heliox", so the wake rests on Whisper alone. Reading only the first
-1.0 or 1.6 s of the utterance does not help (at 10 dB, 5 and 5 of 16 against 6 of 16 for the whole utterance, in a
-harsher mix of the same clips), and teaching the name cannot: what is lost is the name itself, not a spelling.
-In plain words for an open office: Heliox hears its name reliably when other conversations are clearly quieter
-than you at the microphone, roughly you within half a metre of it and other people three metres or more away. With
-someone talking at the next desk it misses about half the time; a headset microphone (USB or wired, not a
-Bluetooth headset in call mode) or the microphone button works there.
+15 dB and above, 4 of 8 at 10 dB and 2 of 8 at 5 dB (bench mix: the owner's four desk wake sentences with
+synthetic two-voice babble, two offsets each). The other voice's words replace the name; Parakeet never writes
+"Heliox", so the wake rests on Whisper alone. Reading only the first 1.0 or 1.6 s of the utterance does not help
+(bench mix, harsher: at 10 dB, 5 and 5 of 16 against 6 of 16 for the whole utterance), and teaching the name
+cannot: what is lost is the name itself, not a spelling.
+In plain words for an open office (worked out from the levels above by the inverse-square law, not measured in a
+room): Heliox should hear its name reliably when other conversations are clearly quieter than you at the
+microphone, roughly you within half a metre of it and other people three metres or more away. With someone
+talking at the next desk it would miss about half the time; a headset microphone (USB or wired, not a Bluetooth
+headset in call mode) or the microphone button is the advice there.
 
 ## 6. Ending the turn early (`early_turn_threshold`): measured and left off
 
@@ -655,7 +698,7 @@ frame at a time on the audio's own clock (the next frame only after the recorder
 Smart Turn call on it), so the numbers do not depend on the speed of the machine. "Split" means one sentence became
 two or more utterances.
 
-| `early_turn_threshold` | Owner's recordings (18 short sentences): split | ended at 200 ms | Synthetic addressed sentences (49): split | Corpus lines, not addressed (159): split |
+| `early_turn_threshold` | Owner recording (desk and headset, 18 short sentences): split | ended at 200 ms | Synthetic voice, addressed sentences (49): split | Synthetic voice, corpus lines not addressed (159): split |
 |---|---|---|---|---|
 | 1.0 (off) | 0 | 0 | 0 | 23 |
 | 0.99 | 0 | 0 | 0 | 24 |
@@ -674,7 +717,7 @@ whether people pause as long has not been measured, but a long request with a th
 **Holding when the words so far are unfinished** (measured, not adopted). The streaming recogniser writes no
 punctuation, so "the words end at a comma" cannot be read from its partial words. The hold that can be read was
 measured the same way, by lowering Smart Turn's answer when the partial words end on a word that cannot end a
-sentence, on the 49 synthetic addressed sentences and 159 corpus lines:
+sentence, on the 49 synthetic addressed sentences and 159 corpus lines (synthetic voice):
 
 | hold | addressed split | corpus lines split | finished sentences ended later | by |
 |---|---|---|---|---|
@@ -692,4 +735,59 @@ Turn would end the turn, so no lag), the same narrow list fixes none of the 23 c
 split, 23 corpus lines split, 0 of 181 finished sentences later. The 8 "fixes" above came from the lag itself, holding
 at the wrong word. The cuts are at commas after a complete clause ("Close Chrome, | it's eating all the memory."),
 where the words so far are a finished sentence; no word list can see that the person is going on. Not adopted. The
-flush also cost a median 361 ms of computing per check on a busy machine.
+flush's computing cost per check was measured only under load, so it is not quoted.
+
+## 7. What is not yet shown, and the recording that would show it
+
+Almost everything above was heard from one voice, the owner's, on one desk microphone and one Bluetooth headset,
+or from synthetic voices. These recordings would turn the claims into measurements. The Conversation Bench's
+recorder (`python -m benchmarks.conversation_bench.record --mic <desk|headset|...>`) takes them per microphone; the
+bench agent is adding the follow-up and open-speaker sets to it, and their set names go here once that is out.
+
+**A real follow-up conversation** (the owner, desk microphone and headset): "Hey Heliox, ..." and then replies the
+way they come, quick and slow, short and long, with elliptical follow-ups ("and tomorrow?", "again", "shorter"),
+answers to Heliox's questions, a long request with a thinking pause, and a sentence said while Heliox is still
+answering. It would show:
+- how soon people reply, which the 8 s follow-up window, the 4 s elliptical window and the 2 s quick-reply window
+  assume;
+- what share of real follow-ups the rule takes, and what it refuses;
+- whether a long request with a thinking pause is cut, and whether the continuation recovers it (section 5, and
+  section 6's "a long request with a thinking pause can be cut today", shown only on synthetic voices);
+- the last word to Heliox's first audio, end to end, on a quiet machine with the speakers on (section 3's 2.5 to 3 s
+  is an estimate from separate stages, partly under load), along with section 1's end-of-turn and recognition times.
+
+**A real room with other voices and a television** (the owner's microphones): a meeting or call on speaker, a video
+or television, a colleague talking to the owner, the owner talking about Heliox, and the owner saying the wake
+phrase in the middle of it. It would show:
+- that nothing not said to Heliox is acted on, stored or sent to a model in a real room (section 5's line that does
+  not move is shown on synthetic speech, 1,130 utterances at audio level and 981 in the transcript replay);
+- wake recall with real background speech (section 5's babble numbers are a bench mix);
+- whether the speech level of a follow-up, against the wake utterance that opened the conversation, tells the
+  person from the television ("Not done: whose voice").
+
+**Open speakers with coughs** (the owner's desk microphone without a noise gate, and the laptop's own microphone,
+Heliox speaking through the speakers): coughs, a door, typing and the owner's "Wait, stop." during Heliox's speech,
+with a loopback of what the speakers played. It would show:
+- whether a cough or a door stops Heliox (shown only on generated tones);
+- the 0.4 s hold where the microphone hears Heliox, which no recording has yet;
+- the time from the stop being decided to the last sample at the speaker per host API (MME's 90 ms is PortAudio's
+  reported figure).
+
+**Other people.**
+- *Other speakers and accents*, on a desk microphone and a headset each: wake recall (the owner's nine sentences
+  are the only evidence, mostly one sentence), whether Whisper writes "Heliox" exactly, the teach step, the end of
+  turn tuned on the owner's headset, a quiet voice, how other voices are misheard by the router (section 2), and
+  the headset's error rate (section 5's "four to seven words in ten" comes from one headset and one voice).
+- *Other languages*, at least two: quick replies after Heliox's question and short cut-offs over its voice, tested
+  only on written sentences and English recordings.
+- *An office at measured distances*: a colleague talking at 1, 2 and 4 m while the owner says the wake phrase at
+  30 to 50 cm, on a desk microphone and a wired headset (section 5's "half a metre and three metres" is worked out,
+  not measured).
+
+**Not recordings, but still owed.**
+- A timing set on a quiet machine (the waiter is armed): every timing in sections 1 and 3 marked "load not
+  recorded" or "under load".
+- The capture clock on macOS and Linux (CI's first run, then click tracks with known onsets on each system).
+- The joined single action for a split sentence, once the server's `withdraw_voice_turn` is wired: the four pause
+  scenarios, right action once and one acknowledgement.
+- The quick road on macOS and Linux with real actions (section 2: tested for real on Windows only).
