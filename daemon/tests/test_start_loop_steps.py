@@ -28,6 +28,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -149,13 +150,17 @@ async def seed(ledger_file: Path, count: int) -> None:
     ledger = ExperienceLedger(ledger_file)
     await ledger.initialize()  # the daemon's own table
     await ledger.close()
-    with sqlite3.connect(ledger_file) as db:
-        db.executemany(
-            "INSERT INTO experience_events (event_id, event_type, occurred_at, schema_version, session_id, task_id, "
-            "user_id, plan_id, action_id, parent_event_id, idempotency_key, source, payload_json, provenance_json, "
-            "confidence, privacy_class) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            seed_ledger.rows(count),
-        )
+
+    def insert() -> None:
+        with sqlite3.connect(ledger_file) as db:
+            db.executemany(
+                "INSERT INTO experience_events (event_id, event_type, occurred_at, schema_version, session_id, "
+                "task_id, user_id, plan_id, action_id, parent_event_id, idempotency_key, source, payload_json, "
+                "provenance_json, confidence, privacy_class) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                seed_ledger.rows(count),
+            )
+
+    await asyncio.to_thread(insert)  # the test's own set-up, kept off the loop so the loop watch shows Heliox's steps
 
 
 @pytest.mark.asyncio
@@ -216,12 +221,15 @@ def test_the_learner_hands_the_loop_back_during_a_replay():
 
     class Ledger:
         def __init__(self, count):
-            self.events = [MagicMock(sequence=n) for n in range(1, count + 1)]
+            # Plain objects, made before the loop runs: 2,500 MagicMocks took 0.39 s inside the test's own task on
+            # the Windows runner, which the loop watch then reported as a slow step.
+            self.events = [SimpleNamespace(sequence=n) for n in range(1, count + 1)]
 
         async def list_events(self, *, after_sequence=0, limit=REPLAY_PAGE, **_filters):
             return [event for event in self.events if event.sequence > after_sequence][:limit]
 
     longest = 0
+    ledger = Ledger(2 * REPLAY_PAGE + REPLAY_PAGE // 2)
 
     async def run():
         nonlocal longest
@@ -242,7 +250,7 @@ def test_the_learner_hands_the_loop_back_during_a_replay():
                 await asyncio.sleep(0)
 
         task = asyncio.create_task(ticker())
-        await learner.initialize(Ledger(2 * REPLAY_PAGE + REPLAY_PAGE // 2))
+        await learner.initialize(ledger)
         task.cancel()
         longest = max(later - earlier for earlier, later in zip(ticks, ticks[1:], strict=False))
         return consumed
