@@ -475,6 +475,15 @@ def _highest_risk_evidence(prediction: WorldPrediction) -> RiskEvidence | None:
     return highest
 
 
+# While the online learner loads after start-up (pilot.server, after ready), every action with a source gets the
+# largest risk the learner can ever add (0.7, above the 0.3 approval threshold in destructive_critic), so the approval
+# it might have added is there; the reason says the learner was still loading.
+LEARNER_LOADING_RISK = 0.7
+LEARNER_LOADING_REASON = (
+    "Heliox was still loading what it has learned from past outcomes, so it asks for your approval to be safe."
+)
+
+
 class RiskGate:
     """Owns the (optional) learned transition model and evaluates whole
     plans against it. One instance is enough for the daemon's lifetime —
@@ -742,7 +751,12 @@ class RiskGate:
 
             online_risk = 0.0
             online_reason = ""
-            if self._online_learner is not None and source:
+            if self._online_learner is not None and source and not getattr(self._online_learner, "is_ready", True):
+                # Still loading after start-up: absent means more careful, never neutral. Add the most the learner
+                # could ever add, which always asks for approval, and say why.
+                online_risk = LEARNER_LOADING_RISK
+                online_reason = LEARNER_LOADING_REASON
+            elif self._online_learner is not None and source:
                 adaptation = self._online_adaptation(action.action_type.value, source)
                 if adaptation.state == "promoted" and adaptation.probability < 0.42:
                     online_risk = min(0.7, max(0.0, (0.5 - adaptation.probability) * 2.0))

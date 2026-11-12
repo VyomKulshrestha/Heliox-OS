@@ -63,6 +63,8 @@ def _collect(source: str, nodes: list[ast.stmt], stage: Stage, guards: tuple[str
     """Imports and awaited calls in order, each awaited call with the settings that must hold for it to run."""
 
     def visit(node: ast.AST, guards: tuple[str, ...]) -> None:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            return  # defined here, run later (for example after ready): not this stage's work
         if isinstance(node, ast.ImportFrom) and node.module:
             if node.module not in stage.imports:
                 stage.imports.append(node.module)

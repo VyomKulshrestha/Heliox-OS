@@ -28,6 +28,27 @@ MAX_ROUTINES = 256
 MAX_PENDING_PLANS = 256
 MAX_PENDING_ACTIONS = 512
 DECAY_HALF_LIFE_DAYS = 30.0
+REPLAY_PAGE = 1000
+# Everything the learner knows; a snapshot saves exactly these, so a loaded learner decides as a full replay would.
+STATE_FIELDS = (
+    "_suggestions",
+    "_transitions",
+    "_seen_sequences",
+    "_suggestion_features",
+    "_action_features",
+    "_plan_actions",
+    "_completed_actions",
+    "_routines",
+    "_routine_epoch",
+    "_workflow_outcomes",
+    "_prediction_errors",
+    "_corrections",
+    "_explicit_rules",
+    "_ignored_feedback",
+    "_unmatched_feedback",
+    "_cursor",
+    "_reset_before_sequence",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,25 +206,102 @@ class VerifiedOnlineLearner:
         self._unmatched_feedback = 0
         self._cursor = 0
         self._reset_before_sequence = 0
+        # Ready unless the server is loading it after start-up (begin_loading): until then the risk gate adds the
+        # approvals the learner could have added, proactive suggestions wait, and live events are held in order.
+        self._ready = True
+        self._pending: list[ExperienceEvent] = []
+        self._consumed_since_snapshot = 0
+        self.last_load: dict[str, Any] = {}
         self._load_checkpoint()
 
-    async def initialize(self, ledger: ExperienceLedger) -> None:
-        """Rebuild from the append-only ledger after the last explicit reset."""
+    @property
+    def is_ready(self) -> bool:
+        return self._ready
+
+    def begin_loading(self) -> None:
+        """From now until initialize() finishes, hold live events instead of learning from them out of order."""
+        self._ready = False
+
+    async def initialize(
+        self,
+        ledger: ExperienceLedger,
+        *,
+        snapshot: Path | None = None,
+        key: bytes | None = None,
+    ) -> dict[str, Any]:
+        """Rebuild after the last explicit reset: from the saved state when there is a trusted one (only the events
+        after it are read), else from the whole ledger. Then learn the events that arrived meanwhile, in order."""
+
+        from pilot.intelligence import learner_snapshot
 
         after = self._reset_before_sequence
+        summary: dict[str, Any] = {"from_snapshot": False, "reads": 0, "replayed": 0, "refused": ""}
+        if snapshot is not None and key is not None:
+            try:
+                sequence, state = await asyncio.to_thread(
+                    learner_snapshot.read,
+                    snapshot,
+                    key,
+                    model_version=MODEL_VERSION,
+                    reset_before=self._reset_before_sequence,
+                )
+                async with self._lock:
+                    for name in STATE_FIELDS:
+                        setattr(self, name, state[name])
+                after = sequence
+                summary["from_snapshot"] = True
+            except (learner_snapshot.SnapshotRefused, KeyError) as refused:
+                summary["refused"] = str(refused)
         while True:
-            events = await ledger.list_events(after_sequence=after, limit=1000)
-            if not events:
-                break
+            events = await ledger.list_events(after_sequence=after, limit=REPLAY_PAGE)
+            summary["reads"] += 1
             for event in events:
-                await self.consume(event)
-            after = events[-1].sequence
-            if len(events) < 1000:
+                await self.consume(event, replaying=True)
+            summary["replayed"] += len(events)
+            if len(events) < REPLAY_PAGE:
                 break
+            after = events[-1].sequence
+        while self._pending:
+            held, self._pending = sorted(self._pending, key=lambda event: event.sequence), []
+            for event in held:
+                await self.consume(event, replaying=True)
+        self._ready = True  # no await since the last check: nothing can be held and missed
+        self.last_load = summary
+        return summary
 
-    async def consume(self, event: ExperienceEvent) -> None:
+    def snapshot_due(self, every: int = 2000) -> bool:
+        return self._ready and self._consumed_since_snapshot >= every
+
+    async def save_snapshot(self, path: Path, key: bytes) -> None:
+        """Save what the learner knows (taken under its lock, written in a thread)."""
+
+        import pickle
+
+        from pilot.intelligence import learner_snapshot
+
+        if not self._ready:
+            return
+        async with self._lock:
+            # A deep copy through pickle, taken while nothing can change it.
+            state = pickle.loads(pickle.dumps({name: getattr(self, name) for name in STATE_FIELDS}, protocol=5))
+            sequence, reset_before = self._cursor, self._reset_before_sequence
+            self._consumed_since_snapshot = 0
+        await asyncio.to_thread(
+            learner_snapshot.write,
+            path,
+            key,
+            state,
+            model_version=MODEL_VERSION,
+            reset_before=reset_before,
+            sequence=sequence,
+        )
+
+    async def consume(self, event: ExperienceEvent, *, replaying: bool = False) -> None:
         """Learn from one event exactly once without creating any action."""
 
+        if not self._ready and not replaying:
+            self._pending.append(event)  # learned in sequence order once the replay has caught up
+            return
         async with self._lock:
             if event.sequence <= self._reset_before_sequence or event.sequence in self._seen_sequences:
                 return
@@ -212,6 +310,7 @@ class VerifiedOnlineLearner:
                 floor = max(0, self._cursor - 2048)
                 self._seen_sequences = {sequence for sequence in self._seen_sequences if sequence >= floor}
             self._cursor = max(self._cursor, event.sequence)
+            self._consumed_since_snapshot += 1
             self._consume_locked(event)
 
     def score_suggestion(

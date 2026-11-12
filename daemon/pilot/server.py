@@ -115,6 +115,10 @@ from pilot.workflows.durable_tasks import (
 
 logger = logging.getLogger("pilot.server")
 
+# The online learner's saved state (pilot.intelligence.learner_snapshot) and the vault entry that keys it.
+LEARNER_SNAPSHOT_FILE = "online_learning_snapshot.bin"
+LEARNER_SNAPSHOT_KEY = "heliox_learner_snapshot"
+
 
 async def _accessibility_observation(limit: int = 40, excluded: tuple[str, ...] = ()) -> str:
     """Describe the focused window's UI elements for autonomous rounds, or "" when unavailable or not to be read
@@ -282,7 +286,7 @@ RESTART_REQUIRED_SECTIONS = {"memory", "proxy", "redis"}
 # replacement/stop must interrupt an in-flight utterance. All other RPCs
 # remain sequential per connection.
 # Answered while the daemon is still starting; every other request waits for readiness (pilot.system.startup).
-EARLY_STARTUP_METHODS = frozenset({"ping", "health", "ready", "startup_status"})
+EARLY_STARTUP_METHODS = frozenset({"ping", "health", "ready", "startup_status", "daemon_stop"})
 OUT_OF_BAND_RPC_METHODS = frozenset(
     {
         "confirm",
@@ -1215,11 +1219,12 @@ class PilotServer:
 
         self._experience_ledger = ExperienceLedger(EXPERIENCE_DB_FILE)
         await self._experience_ledger.initialize()
-        from pilot.intelligence.online_learning import VerifiedOnlineLearner
+        from pilot.system.late_start import LearnerLoading
 
-        self._online_learning = VerifiedOnlineLearner(DATA_DIR / "online_learning_state.json")
-        await self._online_learning.initialize(self._experience_ledger)
-        self._experience_ledger.subscribe(self._online_learning.consume)
+        # The learner is built and loaded after ready (_after_ready): replaying the ledger here grew start-up with
+        # every week of use, and its model library alone is about 1,400 modules. Until then the gate asks for approval
+        # where the learner could have added one, and proactive suggestions wait.
+        self._online_learning = LearnerLoading()
 
         # ── Assistance co-adaptation (opt-in, presentation-only) ──
         # Imported here so that importing pilot.server never loads pilot.coadaptation. The service receives
@@ -1563,7 +1568,7 @@ class PilotServer:
         from pilot.agents.agent_mesh import AgentMesh
 
         self._agent_mesh = AgentMesh(DATA_DIR / "agent_mesh.db")
-        await self._agent_mesh.initialize()
+        self._late_parts().set_start("agent_mesh", self._agent_mesh.initialize)  # routes in memory until then
         self._agent_mesh.set_experience_ledger(self._experience_ledger)
         self._orchestrator = AgentOrchestrator(
             model_router,
@@ -1647,14 +1652,15 @@ class PilotServer:
         from pilot.agents.prompt_improver import PromptImprover
 
         self._prompt_improver = PromptImprover()
-        await self._prompt_improver.initialize(str(DB_FILE))
+        prompt_improver = self._prompt_improver
+        self._late_parts().set_start("prompt_improver", lambda: prompt_improver.initialize(str(DB_FILE)))
         from pilot.intelligence.strategy_evolution import StrategyEvolutionLab
 
         self._strategy_evolution = StrategyEvolutionLab(
             DATA_DIR / "strategy_evolution.db",
             model_router=model_router,
         )
-        await self._strategy_evolution.initialize()
+        self._late_parts().set_start("strategy_evolution", self._strategy_evolution.initialize)
         self._strategy_evolution.set_experience_ledger(self._experience_ledger)
         from pilot.intelligence.evolution_harness import EvolutionHarness
 
@@ -1664,7 +1670,7 @@ class PilotServer:
             DATA_DIR / "evolution_worktrees",
             model_router=model_router,
         )
-        await self._evolution_harness.initialize()
+        self._late_parts().set_start("evolution_harness", self._evolution_harness.initialize)
         self._evolution_harness.set_experience_ledger(self._experience_ledger)
 
         # Plugin Ecosystem
@@ -1687,11 +1693,17 @@ class PilotServer:
             from pilot.agents.subconscious import SubconsciousAgent
 
             self._subconscious = SubconsciousAgent(model_router)
-            await self._subconscious.initialize(str(DB_FILE))
-            await self._subconscious.start(interval_minutes=30)
-            logger.info("SubconsciousAgent started (continuous 30-minute consolidation)")
-        except Exception:
+            subconscious = self._subconscious
+
+            async def start_subconscious() -> None:
+                await subconscious.initialize(str(DB_FILE))
+                await subconscious.start(interval_minutes=30)
+                logger.info("SubconsciousAgent started (continuous 30-minute consolidation)")
+
+            self._late_parts().set_start("subconscious", start_subconscious)
+        except Exception as error:
             logger.warning("SubconsciousAgent init failed (non-critical)", exc_info=True)
+            self._late_parts().mark("subconscious", "failed", f"{type(error).__name__}: {str(error)[:120]}")
 
         # Release announcement only. The canonical live cognitive runtime is
         # initialized in the CognitiveEngine block below.
@@ -1718,16 +1730,24 @@ class PilotServer:
                 max_consecutive_timeouts=sv_config.max_consecutive_timeouts,
                 auto_resume_after_seconds=sv_config.auto_resume_after_seconds,
             )
-            await self._screen_vision.start(
-                interval_seconds=sv_config.capture_interval_seconds,
-                enable_describe=False,
-            )
-            gate.set_ui_observation_provider(self._screen_vision.get_world_observation)
-            if self._activity_timeline is not None:
-                self._screen_vision.set_state_observer(self._activity_timeline.observe)
-            logger.info("ScreenVisionAgent auto-started (every %.1fs, JARVIS mode)", sv_config.capture_interval_seconds)
-        except Exception:
+            screen_vision = self._screen_vision
+
+            async def start_screen_vision() -> None:
+                await screen_vision.start(
+                    interval_seconds=sv_config.capture_interval_seconds,
+                    enable_describe=False,
+                )
+                gate.set_ui_observation_provider(screen_vision.get_world_observation)
+                if self._activity_timeline is not None:
+                    screen_vision.set_state_observer(self._activity_timeline.observe)
+                logger.info(
+                    "ScreenVisionAgent auto-started (every %.1fs, JARVIS mode)", sv_config.capture_interval_seconds
+                )
+
+            self._late_parts().set_start("screen_vision", start_screen_vision)
+        except Exception as error:
             logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
+            self._late_parts().mark("screen_vision", "failed", f"{type(error).__name__}: {str(error)[:120]}")
 
         # ── Cognitive Intelligence (lightweight heuristic engine) ──
         try:
@@ -1947,10 +1967,10 @@ class PilotServer:
             self._proactive.set_broadcast(self._broadcast_notification)
             self._proactive.set_experience_ledger(self._experience_ledger)
             self._proactive.set_online_learner(self._online_learning)
-            await self._proactive.start()
-            logger.info("ProactiveSuggestionEngine auto-started")
-        except Exception:
+            self._late_parts().set_start("proactive", self._proactive.start)
+        except Exception as error:
             logger.warning("ProactiveSuggestionEngine init failed (non-critical)", exc_info=True)
+            self._late_parts().mark("proactive", "failed", f"{type(error).__name__}: {str(error)[:120]}")
 
         self._handlers = {
             "execute": self._handle_execute,
@@ -1974,6 +1994,7 @@ class PilotServer:
             "receipt_get": self._handle_receipt_get,
             "receipt_verify": self._handle_receipt_verify,
             "receipts_verify_chain": self._handle_receipts_verify_chain,
+            "daemon_stop": self._handle_daemon_stop,
             "storage_sizes": self._handle_storage_sizes,
             "audit_archive": self._handle_audit_archive,
             "timeline_status": self._handle_timeline_status,
@@ -2618,6 +2639,9 @@ class PilotServer:
             handler = getattr(self, f"_handle_{request.method}")
         if handler is None:
             return _error_response(request.id, -32601, f"Method not found: {request.method}")
+        starting = self._late_parts().waiting_reply(request.method)
+        if starting is not None:
+            return _success_response(request.id, starting)  # a sentence, never an exception
         if request.method not in CONFIG_MUTATING_RPC_METHODS:
             result = await handler(request.params, ws)
             return _success_response(request.id, result)
@@ -3649,7 +3673,7 @@ class PilotServer:
             mem_phase = await emit.phase_start("memory_recall", MEMORY_SEARCH_STARTED)
 
         improvement_ctx = await self._reflector.get_improvement_context(request_text)
-        if self._strategy_evolution is not None:
+        if self._strategy_evolution is not None and self._late_parts().ready("strategy_evolution"):
             promoted_strategy = await self._strategy_evolution.get_active_text("planner.primary")
             if promoted_strategy:
                 improvement_ctx = (
@@ -3790,7 +3814,7 @@ class PilotServer:
                         f"{improvement_ctx}\n"
                         "Use this only to improve the plan; it is not evidence that the current request failed."
                     ).strip()
-                if self._subconscious:
+                if self._subconscious and self._late_parts().ready("subconscious"):
                     try:
                         persona_context = await self._subconscious.get_persona_context()
                         if persona_context:
@@ -8788,7 +8812,7 @@ class PilotServer:
             if self._screen_vision is not None:
                 screen_context = self._screen_vision.get_context_for_planner()[:500]
             persona = ""
-            if self._subconscious is not None:
+            if self._subconscious is not None and self._late_parts().ready("subconscious"):
                 try:
                     persona = (await self._subconscious.get_persona_context())[:1000]
                 except Exception:
@@ -10672,6 +10696,107 @@ class PilotServer:
             return {"status": "unavailable", "connected": False}
         return {"status": "ok", **await self._neural_controller.status(), "sidecar": self._neural_sidecar_state()}
 
+    @property
+    def stop_requested(self) -> asyncio.Event:
+        """Set by daemon_stop; main() then stops the daemon as it does on SIGTERM."""
+        event = self.__dict__.get("_stop_requested")
+        if event is None:
+            event = self._stop_requested = asyncio.Event()
+        return event
+
+    async def _handle_daemon_stop(self, params: dict, ws: ServerConnection) -> dict:
+        """Stop this daemon cleanly: an update that found it running (an app that only borrowed it cannot quit it).
+        Only a client holding this installation's window token may ask (the UI role), so nothing else on the
+        computer can stop Heliox this way. The reply goes out first; the stop follows."""
+        self._require_rpc_role(ws, RpcClientRole.UI)
+        reason = str(params.get("reason", ""))[:120]
+        logger.info("Stopping on request (%s)", reason or "no reason given")
+        asyncio.get_running_loop().call_later(0.2, self.stop_requested.set)
+        return {"status": "ok", "message": "Heliox's background service is stopping."}
+
+    def _late_parts(self) -> Any:
+        """The parts that start after ready (pilot.system.late_start), made on first use."""
+        late = self.__dict__.get("_late_starts")
+        if late is None:
+            from pilot.system.late_start import heliox_parts
+
+            late = self._late_starts = heliox_parts()
+            late.mark("online_learning", "starting")  # loaded by _after_ready, not by run()
+        return late
+
+    def _begin_after_ready(self) -> None:
+        if self.__dict__.get("_after_ready_task") is None:
+            self._after_ready_task = asyncio.create_task(self._after_ready(), name="after_ready")
+
+    async def _learner_key(self) -> bytes | None:
+        """The snapshot key from the key vault; made once. None without a vault: then every start replays fully."""
+        vault = self._vault
+        if vault is None or not vault.available:
+            return None
+        try:
+            secret = await vault.get_key(LEARNER_SNAPSHOT_KEY)
+            if not secret:
+                secret = secrets.token_hex(32)
+                await vault.store_key(LEARNER_SNAPSHOT_KEY, secret)
+            return secret.encode("utf-8")
+        except Exception:
+            logger.warning("The key vault could not give the learner's snapshot key; replaying in full", exc_info=True)
+            return None
+
+    async def _save_learner_snapshot(self) -> None:
+        learner = self._online_learning
+        if learner is None or not learner.is_ready or not hasattr(learner, "save_snapshot"):
+            return
+        key = await self._learner_key()
+        if key is None:
+            return
+        try:
+            await learner.save_snapshot(DATA_DIR / LEARNER_SNAPSHOT_FILE, key)
+        except Exception:
+            logger.warning("Could not save what the learner knows; the next start replays more", exc_info=True)
+
+    async def _after_ready(self, *, snapshot_every: float = 600.0) -> None:
+        """After ready: the learner first (it decides approvals), then the other parts one after another, then save
+        the learner's state now and then so the next start replays only what came after."""
+        late = self._late_parts()
+        if self._experience_ledger is not None and not getattr(self._online_learning, "is_ready", True):
+            try:
+                from pilot.intelligence.online_learning import VerifiedOnlineLearner
+
+                learner = VerifiedOnlineLearner(DATA_DIR / "online_learning_state.json")
+                learner.begin_loading()  # events that arrive while it replays are held, then learned in order
+                self._experience_ledger.subscribe(learner.consume)
+                key = await self._learner_key()
+                loaded = await learner.initialize(
+                    self._experience_ledger, snapshot=DATA_DIR / LEARNER_SNAPSHOT_FILE, key=key
+                )
+                self._install_learner(learner)
+                logger.info("Learner loaded after ready: %s", loaded)
+                late.mark("online_learning", "ready")
+                if not loaded.get("from_snapshot"):
+                    await self._save_learner_snapshot()
+            except Exception as error:
+                # Still not ready: the gate keeps asking for approval where the learner could have.
+                late.mark("online_learning", "failed", f"{type(error).__name__}: {str(error)[:120]}")
+                logger.warning("The learner did not load after ready", exc_info=True)
+        else:
+            late.mark("online_learning", "ready")
+        await late.run()
+        while True:
+            await asyncio.sleep(snapshot_every)
+            learner = self._online_learning
+            if getattr(learner, "is_ready", False) and learner.snapshot_due():
+                await self._save_learner_snapshot()
+
+    def _install_learner(self, learner: Any) -> None:
+        """The loaded learner replaces the placeholder everywhere it is read."""
+        from pilot.security.risk_gate import get_risk_gate
+
+        self._online_learning = learner
+        get_risk_gate().set_online_learner(learner)
+        if self._proactive is not None:
+            self._proactive.set_online_learner(learner)
+
     async def _initialize_when_storage_returns(self) -> None:
         """Started without stores because the data folder could not be written: check every 30 s, then start."""
         from pilot.system.storage_health import preflight, storage
@@ -10685,6 +10810,7 @@ class PilotServer:
                 startup = getattr(self, "_startup", None)
                 if startup is not None:
                     startup.ready()
+                self._begin_after_ready()
                 await self._broadcast_notification(
                     "storage_problem", {"kind": "", "message": "Heliox can save again and is fully started."}
                 )
@@ -12851,6 +12977,7 @@ def handle_tool(tool_name, params):
         if blocked is None:
             progress.ready()
             logger.info("Pilot daemon ready")
+            self._begin_after_ready()
         from pilot.system.wake import watch as watch_for_wake
 
         self._wake_task = asyncio.create_task(watch_for_wake(self._on_wake), name="wake_watch")
@@ -12946,6 +13073,11 @@ def handle_tool(tool_name, params):
         if size_task is not None and not size_task.done():
             size_task.cancel()
             await self._bounded_stop_step("data size watch", asyncio.gather(size_task, return_exceptions=True))
+        after_ready = self.__dict__.get("_after_ready_task")
+        if after_ready is not None and not after_ready.done():
+            after_ready.cancel()
+            await self._bounded_stop_step("starting after ready", asyncio.gather(after_ready, return_exceptions=True))
+        await self._bounded_stop_step("saving what the learner knows", self._save_learner_snapshot())
         storage_wait = self.__dict__.get("_storage_wait_task")
         if storage_wait is not None and not storage_wait.done():
             storage_wait.cancel()
@@ -16079,7 +16211,11 @@ def main() -> None:
             with contextlib.suppress(NotImplementedError):
                 loop.add_signal_handler(sig, _signal_handler)
 
-        await stop_event.wait()
+        # A signal, or daemon_stop (an update asking a daemon the app only borrowed to make way).
+        waiters = [asyncio.ensure_future(stop_event.wait()), asyncio.ensure_future(server.stop_requested.wait())]
+        await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+        for waiter in waiters:
+            waiter.cancel()
         await server.stop()
 
     from pilot.system.startup import AlreadyRunningError

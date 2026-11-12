@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **333 WebSocket RPC methods**. That is the API
+The daemon currently registers **334 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -433,6 +433,12 @@ Anyone can check an exported receipt offline with
 #### `receipts_verify_chain`
 Check every stored receipt's signature and its link to the previous one.
 **Result:** `{"status": "ok", "result": {"valid": false, "count": 41, "problems": [{"file": "...", "reason": "The receipt before this one was changed or removed."}]}}`.
+
+#### `daemon_stop`
+Stop this daemon cleanly, as on SIGTERM. Window token only (UI role). Used by an update that finds a daemon the
+desktop app only borrowed (so quitting the app would not stop it). The reply goes out before the stop.
+**Params:** `{ "reason": "update" }`
+**Result:** `{"status": "ok", "message": "Heliox's background service is stopping."}`.
 
 #### `storage_sizes`
 How big Heliox's data folder is, and each store Heliox never prunes on its own. Saying this is also when the

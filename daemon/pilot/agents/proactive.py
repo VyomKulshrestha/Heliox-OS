@@ -393,6 +393,10 @@ class ProactiveSuggestionEngine:
             self._app_dwell_tracker = {k: v for k, v in self._app_dwell_tracker.items() if v > cutoff}
 
         dwell_seconds = now - self._app_dwell_tracker.get(dwell_key, now)
+        if self._online_learner is not None and not getattr(self._online_learner, "is_ready", True):
+            # Held, not dropped: nothing is suggested on what the learner may know until it has loaded. The dwell
+            # clock above keeps running, so a suggestion that came due meanwhile is made at the first check after.
+            return
 
         for pattern in _PATTERNS:
             learned = self._feedback.get(pattern["id"], {})

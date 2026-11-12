@@ -166,6 +166,174 @@ def installed_packages(env: Path) -> dict[str, str]:
         return {}
 
 
+# Run with the environment's own Python (it has websockets and pilot.config) before the update touches it: asks the
+# daemon on the port to stop with this installation's window token and prints one line of JSON with the outcome
+# ("stopping", "not_heliox", "cannot_stop" or "no_answer"). It never ends a process itself.
+STOP_HELPER = r'''
+import asyncio
+import json
+import sys
+
+PORT = 8785
+
+
+async def ask(port: int = PORT, timeout: float = 10.0) -> dict[str, str]:
+    import websockets
+
+    from pilot.config import RUNTIME_DIR
+
+    try:
+        token = (RUNTIME_DIR / "auth_token").read_text(encoding="utf-8").strip()
+    except OSError as error:
+        return {"outcome": "not_heliox", "detail": f"this installation has no window token ({error})"}
+
+    async def call(ws, method: str, params: dict, request_id: int) -> dict:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "id": request_id}))
+        while True:
+            message = json.loads(await ws.recv())
+            if message.get("id") == request_id:
+                return message
+
+    try:
+        async with asyncio.timeout(timeout):
+            async with websockets.connect(f"ws://127.0.0.1:{port}", open_timeout=timeout) as ws:
+                auth = await call(ws, "auth", {"token": token}, 1)
+                if "error" in auth:
+                    return {"outcome": "not_heliox", "detail": "it did not accept this installation's token"}
+                reply = await call(ws, "daemon_stop", {"reason": "update"}, 2)
+                if "error" in reply:
+                    return {"outcome": "cannot_stop", "detail": str(reply["error"].get("message", ""))[:200]}
+                return {"outcome": "stopping"}
+    except TimeoutError:
+        return {"outcome": "no_answer", "detail": f"no answer within {timeout:g} s"}
+    except (OSError, ValueError, websockets.exceptions.WebSocketException) as error:
+        return {"outcome": "not_heliox", "detail": f"{type(error).__name__}: {str(error)[:160]}"}
+
+
+if __name__ == "__main__":
+    print(json.dumps(asyncio.run(ask(int(sys.argv[1]) if len(sys.argv) > 1 else PORT))))
+'''
+STOP_WAIT_SECONDS = 30.0
+
+
+def ask_daemon_to_stop(python: Path, port: int = 8785) -> dict[str, str]:
+    code, output = run([str(python), "-c", STOP_HELPER, str(port)], echo=False)
+    for line in reversed(output.splitlines()):
+        try:
+            found = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(found, dict) and "outcome" in found:
+            return {"outcome": str(found["outcome"]), "detail": str(found.get("detail", ""))}
+    return {"outcome": "no_answer", "detail": f"the check did not finish (exit {code})"}
+
+
+def wait_until_free(seconds: float = STOP_WAIT_SECONDS, port: int = 8785, sleep=None, clock=None) -> bool:
+    import time
+
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    deadline = clock() + seconds
+    while daemon_running(port):
+        if clock() >= deadline:
+            return False
+        sleep(0.5)
+    return True
+
+
+def parse_port_holder(text: str, port: int, platform: str = sys.platform) -> tuple[str, str] | None:
+    """(program, process id) listening on ``port``, from ``netstat -ano`` and ``tasklist /FO CSV`` output joined on
+    Windows, ``lsof -nP -iTCP:<port> -sTCP:LISTEN`` on macOS, or ``ss -ltnpH sport = :<port>`` on Linux."""
+    import re
+
+    if platform == "win32":
+        pid = ""
+        for line in text.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[0] == "TCP" and parts[1].endswith(f":{port}") and parts[3] == "LISTENING":
+                pid = parts[4]
+                break
+        if not pid:
+            return None
+        for line in text.splitlines():
+            match = re.match(r'^"([^"]+)","(\d+)"', line.strip())
+            if match and match.group(2) == pid:
+                return match.group(1), pid
+        return "an unknown program", pid
+    if platform == "darwin":
+        for line in text.splitlines()[1:]:
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                return parts[0], parts[1]
+        return None
+    match = re.search(r'users:\(\("([^"]+)",pid=(\d+)', text)
+    return (match.group(1), match.group(2)) if match else None
+
+
+def port_holder(port: int = 8785) -> tuple[str, str] | None:
+    """Which program listens on the port, read with the system's own tools; None when that cannot be found."""
+    try:
+        if sys.platform == "win32":
+            netstat = run(["netstat", "-ano", "-p", "TCP"], echo=False)[1]
+            found = parse_port_holder(netstat, port, "win32")
+            if found is None:
+                return None
+            tasks = run(["tasklist", "/FI", f"PID eq {found[1]}", "/FO", "CSV", "/NH"], echo=False)[1]
+            return parse_port_holder(netstat + "\n" + tasks, port, "win32")
+        if sys.platform == "darwin":
+            listing = run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"], echo=False)[1]
+            return parse_port_holder(listing, port, "darwin")
+        return parse_port_holder(run(["ss", "-ltnpH", f"sport = :{port}"], echo=False)[1], port, "linux")
+    except OSError:
+        return None
+
+
+def how_to_stop(holder: tuple[str, str] | None, platform: str = sys.platform, port: int = 8785) -> str:
+    """What holds the port and how to stop it on this system; the update never ends a process it did not start."""
+    if holder is None:
+        what = f"Something on this computer is using port {port}, and the update could not tell what."
+        which = "it"
+    else:
+        what = f"Port {port} is held by {holder[0]} (process {holder[1]})."
+        which = f"process {holder[1]}"
+    if platform == "win32":
+        how = f"Open Task Manager (Ctrl+Shift+Esc), go to Details, select {which} and choose End task."
+    elif platform == "darwin":
+        how = f"Open Activity Monitor, find {which} and choose Quit."
+    elif holder is not None:
+        how = f"Stop it from your system monitor, or run: kill {holder[1]}"
+    else:
+        how = "Stop it from your system monitor."
+    return f"{what} {how} Then start the update again."
+
+
+def make_way(python: Path, port: int = 8785, ask=None, wait=None, holder=None, running=None) -> tuple[bool, str]:
+    """Before updating: if Heliox's own daemon still runs (for example one the app only borrowed, so quitting the
+    app would not stop it), ask it to stop through its RPC and wait, bounded. Otherwise say what holds the port and
+    how to stop it. Never ends a process. Returns (go ahead, the hint when not)."""
+    ask = ask or ask_daemon_to_stop
+    wait = wait or wait_until_free
+    holder = holder or port_holder
+    running = running or daemon_running
+    if not running(port):
+        return True, ""
+    asked = ask(python, port)
+    if asked["outcome"] == "stopping":
+        say("@@step update running Asking Heliox's background service to stop for the update")
+        if wait(port=port):
+            return True, ""
+        return False, (
+            f"Heliox's background service said it would stop but was still running after {STOP_WAIT_SECONDS:.0f} s. "
+            + how_to_stop(holder(port), port=port)
+        )
+    if asked["outcome"] == "cannot_stop":
+        return False, (
+            "Heliox's background service is from an older version that cannot be asked to stop. "
+            + how_to_stop(holder(port), port=port)
+        )
+    return False, how_to_stop(holder(port), port=port)
+
+
 def daemon_running(port: int = 8785) -> bool:
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=0.5):
@@ -299,9 +467,10 @@ def main(argv: list[str]) -> int:
     if args.mode == "plan":
         return 0
 
-    if daemon_running():
+    go_ahead, hint = make_way(python)
+    if not go_ahead:
         say("@@step update failed Heliox's background service is still running.")
-        say("@@hint update Quit Heliox completely and start the update again.")
+        say(f"@@hint update {hint}")
         return 1
     backup = env.with_name(env.name + ".previous")
     say("@@step update running Keeping a copy of the current environment")
