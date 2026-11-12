@@ -33,6 +33,15 @@ MAX_PAUSES = 400
 PRIOR_WEIGHT = 20.0  # pauses it takes for the person's rhythm to outweigh the level default
 QUANTILE = 0.9
 MARGIN = 1.2
+# Week one is patient: before the person's rhythm is known, a pause in the middle of a sentence has to last this many
+# times the level's default before Live speaks up (3.0 s at "balanced"), so a new person is interrupted late at
+# worst, never early. The person's own pauses pull it down (or up) as they come in (PRIOR_WEIGHT). The Live Bench's
+# slow "thinker" was cut off 16 times with the level's own 1.2 s before this. At a sentence's end the level's default
+# still applies: the person has finished a thought.
+PATIENT_FACTOR = 2.5
+# ... and the patience itself fades as the person's own pauses come in: half of it is gone after this many pauses, so
+# a fast typist is back near the level's default within their first hour or two of writing.
+PATIENT_DECAY = 5.0
 FLOOR_SECONDS = 0.7
 CEILING_SECONDS = 6.0
 CUT_OFF_SECONDS = 1.5  # typing resumed this soon after a card that then went unused: it interrupted them
@@ -125,17 +134,26 @@ class PersonalTiming:
 
     # ── the waits ──
 
-    def mid_sentence_pause(self, default: float) -> float:
+    def mid_sentence_pause(self, default: float, patient: bool = True) -> float:
+        """How long a pause mid-sentence has to last. ``patient``: the week-one patience, fading with evidence (the
+        wait for everything but a slip that is the last thing typed, which has its own, ``policy.TRAILING_*``)."""
         n = len(self.pauses)
-        learned = quantile(self.pauses, QUANTILE) * MARGIN if n else default
+        prior = default * (1 + (PATIENT_FACTOR - 1) * PATIENT_DECAY / (n + PATIENT_DECAY)) if patient else default
+        learned = quantile(self.pauses, QUANTILE) * MARGIN if n else prior
         weight = n / (n + PRIOR_WEIGHT)
-        return self._clamp((weight * learned + (1 - weight) * default) * self.scale)
+        return self._clamp((weight * learned + (1 - weight) * prior) * self.scale)
 
     def boundary_pause(self, default: float) -> float:
-        return self._clamp(min(default * self.scale, self.mid_sentence_pause(default)))
+        return self._clamp(min(default * self.scale, self.mid_sentence_pause(default, patient=False)))
 
-    def pause_for(self, text: str, default: float) -> float:
-        return self.boundary_pause(default) if at_boundary(text) else self.mid_sentence_pause(default)
+    def pause_for(self, text: str, default: float, patient: bool = True) -> float:
+        return self.boundary_pause(default) if at_boundary(text) else self.mid_sentence_pause(default, patient)
+
+    @staticmethod
+    def unlearned_pause(text: str, default: float) -> float:
+        """With personal timing off: the level's default at a sentence's end, the patient wait in the middle of one
+        (it never fades, as nothing is learned)."""
+        return default if at_boundary(text) else PersonalTiming._clamp(default * PATIENT_FACTOR)
 
     @staticmethod
     def _clamp(seconds: float) -> float:

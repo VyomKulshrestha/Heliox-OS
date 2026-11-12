@@ -67,6 +67,9 @@ class Activity:
     last_shown_at: float = float("-inf")
     # The pause this person needs before a non-urgent correction (pilot.live.timing); None uses the level's.
     personal_pause: float | None = None
+    # The same without week one's patience: what a slip that is the last thing typed stretches from, as it already
+    # waits longer on its own (TRAILING_*). None: ``personal_pause``.
+    trailing_pause: float | None = None
     # A conversation turn holds the floor (pilot.live.floor): Live may show a card but not start speaking, and a
     # non-urgent catch about typed text waits until the turn is over.
     floor_held: bool = False
@@ -125,7 +128,8 @@ def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: 
     if not urgent and act.personal_pause is not None:
         needed_pause = act.personal_pause
     if correction.trailing and not urgent:
-        stretched = min(needed_pause * TRAILING_PAUSE_FACTOR, needed_pause + TRAILING_MAX_EXTRA_SECONDS)
+        base = act.trailing_pause if act.trailing_pause is not None else needed_pause
+        stretched = min(base * TRAILING_PAUSE_FACTOR, base + TRAILING_MAX_EXTRA_SECONDS)
         needed_pause = max(stretched, TRAILING_MIN_PAUSE_SECONDS)
     if act.now - act.last_text_change < needed_pause:
         return WAIT

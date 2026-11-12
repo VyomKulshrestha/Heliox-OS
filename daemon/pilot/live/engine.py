@@ -905,10 +905,17 @@ class LiveCompanion:
         level = LEVELS.get(getattr(cfg, "level", DEFAULT_LEVEL), LEVELS[DEFAULT_LEVEL])
         muted = frozenset(getattr(cfg, "muted_kinds", []) or [])
         snoozed = self.snoozed_kinds(now)
+        # Patient in the middle of a sentence until the person's rhythm is learned, and for good with learning off.
+        learning = self._personal_timing()
         personal_pause = (
-            self.timing.pause_for(self._last_text, level.pause_seconds) if self._personal_timing() else None
+            self.timing.pause_for(self._last_text, level.pause_seconds)
+            if learning
+            else PersonalTiming.unlearned_pause(self._last_text, level.pause_seconds)
         )
-        self._needed_pause = personal_pause if personal_pause is not None else level.pause_seconds
+        trailing_pause = (
+            self.timing.pause_for(self._last_text, level.pause_seconds, patient=False) if learning else None
+        )
+        self._needed_pause = personal_pause
         order = {URGENT: 0}
         verdicts = []
         audio = self._heliox_speaking()
@@ -932,6 +939,7 @@ class LiveCompanion:
                 last_spoken_at=spoken_at,
                 last_shown_at=shown_at,
                 personal_pause=personal_pause,
+                trailing_pause=trailing_pause if learning else level.pause_seconds,
             )
             verdicts.append((key, item, decide(item, act, level, self.relevance.score(item.correction.kind), muted)))
         return verdicts

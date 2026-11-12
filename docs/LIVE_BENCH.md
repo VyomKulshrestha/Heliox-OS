@@ -97,6 +97,29 @@ OCR notice then). After it, all three give none, and the 34 earlier scenarios sc
 above. The fix: the focused-field reader passes text on only from writable fields and terminals, text already in
 a field when focus arrives is not counted as the person's slip, and OCR risk matches no longer become cards.
 
+## Update, 12 November 2026: a patient first week
+
+Before Live has learned a person's pauses, it used the level's wait (1.2 s at "balanced") everywhere, and the
+rules row above is that first week: 16 cut-offs for the thinker on the 105-scenario bench (precision 0.96), 5 for the
+steady typist. Now a pause in the middle of a sentence has to last 2.5 times the level's wait (3.0 s) until the
+person's own pauses say otherwise, and that patience fades as they come in (half gone after 5 mid-sentence pauses,
+then blended with the learned wait as before). At a sentence's end the level's wait still applies, a slip that is the
+last thing typed keeps its own longer wait (stretched from the level's, not from the patient one), and urgent
+catches (a risky command) keep their 0.6 s. With learning off the patient wait stays.
+
+| Policy | Persona | Cut-offs before | Cut-offs after | Precision before | Precision after | Median wait before | Median wait after |
+|---|---|---|---|---|---|---|---|
+| rules (nothing learned) | quick | 0 | 0 | 1.00 | 1.00 | 1.62 s | 1.51 s |
+| rules (nothing learned) | steady | 5 | 0 | 1.00 | 1.00 | 1.39 s | 1.61 s |
+| rules (nothing learned) | thinker | 16 | 0 | 0.96 | 1.00 | 1.20 s | 1.24 s |
+| personal timing | quick | 0 | 0 | 1.00 | 1.00 | 1.42 s | 1.42 s |
+| personal timing | steady | 1 | 1 | 1.00 | 1.00 | 1.37 s | 1.37 s |
+| personal timing | thinker | 2 | 2 | 1.00 | 1.00 | 1.18 s | 1.18 s |
+
+Recall is 55 of 56 in every row, before and after (the one miss is the known recogniser case). The cost falls on a
+fast typist who stops mid-sentence in their first days: the card comes after 3.0 s instead of 1.2 s, then 1.38 s after
+20 such pauses and 1.23 s after 60 (the quick persona's own rhythm). At a sentence's end nothing changes.
+
 ## What it does not show
 
 These are scripted sessions and simulated people, not recordings of real ones. The personas are three points on

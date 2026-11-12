@@ -90,7 +90,8 @@
   }
 
   function timingSummary(t: Timing): string {
-    if (!t.learned_from) return `Still learning how you type. Until then it waits the usual ${t.default_seconds} s.`;
+    if (!t.learned_from)
+      return `Still learning how you type. Until then it waits ${t.mid_sentence_seconds} s when you stop mid-sentence and ${t.boundary_seconds} s at the end of a sentence, so it does not cut in while you think.`;
     const pauses = t.learned_from === 1 ? "1 pause" : `${t.learned_from} pauses`;
     let text = `Mid-sentence it now waits ${t.mid_sentence_seconds} s before speaking up, learned from ${pauses}.`;
     if (t.cut_offs)

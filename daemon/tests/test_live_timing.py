@@ -39,12 +39,15 @@ def test_only_mid_sentence_pauses_that_ended_in_more_typing_are_learned():
 def test_a_slow_thinker_gets_more_room_and_a_quick_typist_is_not_slowed_down():
     default = 1.2
     thinker, quick = PersonalTiming(), PersonalTiming()
-    assert thinker.mid_sentence_pause(default) == default  # nothing learned: the level's pause
+    # Nothing learned: week one is patient, 2.5 times the level's pause mid-sentence (3.0 s at "balanced").
+    assert thinker.mid_sentence_pause(default) == 3.0
+    assert thinker.mid_sentence_pause(default, patient=False) == default  # what a slip typed last stretches from
     for i in range(60):
         thinker.observe_pause(2.4 + (i % 5) * 0.1, mid_sentence=True)
         quick.observe_pause(0.9 + (i % 3) * 0.05, mid_sentence=True)
     assert thinker.mid_sentence_pause(default) > 2.8  # waits past their usual hesitation
-    assert quick.mid_sentence_pause(default) <= 1.2
+    # The patience fades with the person's own pauses: a quick typist is near the level's pause after 60 of them.
+    assert quick.mid_sentence_pause(default) <= 1.25
     # At the end of a sentence the shorter of the two applies, so a finished thought is not kept waiting.
     assert thinker.boundary_pause(default) == default
     assert thinker.pause_for("We need eight seats and", default) > thinker.pause_for("We need eight seats.", default)
@@ -53,7 +56,7 @@ def test_a_slow_thinker_gets_more_room_and_a_quick_typist_is_not_slowed_down():
 def test_few_pauses_barely_move_it_and_the_limits_hold():
     timing = PersonalTiming()
     timing.observe_pause(6.0, mid_sentence=True)
-    assert 1.2 < timing.mid_sentence_pause(1.2) < 1.5  # one long pause is not a habit
+    assert 2.5 < timing.mid_sentence_pause(1.2) < 3.2  # one long pause is not a habit (still patient)
     for _ in range(400):
         timing.observe_pause(19.0, mid_sentence=True)
     assert timing.mid_sentence_pause(1.2) == 6.0  # the ceiling
@@ -63,7 +66,7 @@ def test_interruptions_grow_the_wait_and_well_timed_cards_shrink_it(tmp_path):
     path = tmp_path / "live_timing.json"
     timing = PersonalTiming(path)
     assert timing.record_outcome("dismissed", resumed_after=0.4) == "cut_off"
-    assert timing.mid_sentence_pause(1.2) == pytest.approx(1.38)
+    assert timing.mid_sentence_pause(1.2) == pytest.approx(3.45)  # the patient 3.0 s, grown by 15%
     assert timing.record_outcome("dismissed", resumed_after=6.0) == ""  # unwelcome, but not because of timing
     assert timing.record_outcome("dismissed", resumed_after=None) == ""
     assert timing.record_outcome("fixed", resumed_after=0.5) == "well_timed"  # they typed to fix it
@@ -71,7 +74,7 @@ def test_interruptions_grow_the_wait_and_well_timed_cards_shrink_it(tmp_path):
     assert reloaded.cut_offs == 1 and reloaded.well_timed == 1 and reloaded.scale == pytest.approx(1.15 * 0.98)
     assert set(json.loads(path.read_text(encoding="utf-8"))) == {"pauses", "scale", "cut_offs", "well_timed"}
     reloaded.forget()
-    assert reloaded.mid_sentence_pause(1.2) == 1.2
+    assert reloaded.mid_sentence_pause(1.2) == 3.0  # back to week one's patience
 
 
 def test_an_unreadable_file_is_ignored(tmp_path):
@@ -157,7 +160,7 @@ async def test_the_engine_learns_pauses_from_the_text_it_reads(tmp_path):
 async def test_a_card_that_cut_in_and_was_waved_away_counts_as_an_interruption(tmp_path):
     text = ["Chairs: 12 x 15 = 170 for the room and"]
     live, clock, events, _ = build(tmp_path, text)
-    await run_for(live, clock, 2.0)
+    await run_for(live, clock, 3.6)  # week one's patient mid-sentence wait (3.0 s), then the card
     [card] = cards(events)
     text[0] += " the rest"  # they were only thinking: typing resumes at once
     await run_for(live, clock, 0.6)
@@ -230,13 +233,18 @@ async def test_the_bench_scores_personal_timing_against_fixed_rules():
         assert personal.precision == 1.0, personal.as_dict()
         missed = {d["scenario"] for d in personal.details if d.get("missed")}
         assert missed <= KNOWN_MISSES, missed  # every miss is a case kept on purpose as a known miss
-        assert personal.cut_offs <= rules.cut_offs
-    # Fixed rules cut slow thinkers off mid-sentence; their own timing does not.
-    assert scores["rules", "thinker"].cut_offs >= 5
+        # Week one (rules: nothing learned) is patient; learning gives the speed back without cutting in more often
+        # than it did before the patient start (quick 0, steady 1, thinker 2).
+        assert personal.median_wait <= rules.median_wait, (persona, personal.median_wait, rules.median_wait)
+        assert personal.cut_offs <= {"quick": 0, "steady": 1, "thinker": 2}.get(persona, 2), persona
+    # Week one is patient: with nothing learned (rules) a slow thinker is no longer cut off mid-sentence (16 times
+    # before the patient start); their own timing keeps it as low as it was.
+    assert scores["rules", "thinker"].cut_offs <= 4
+    assert scores["rules", "thinker"].precision >= 0.96
     assert scores["personal", "thinker"].cut_offs <= 2
     personal = sum(s.cut_offs for (policy, _), s in scores.items() if policy == "personal")
     rules = sum(s.cut_offs for (policy, _), s in scores.items() if policy == "rules")
-    assert personal <= 3 and personal * 4 <= rules, (personal, rules)
+    assert personal <= 3 and rules <= 4, (personal, rules)
     # It is deterministic, so a change to the policy shows up as a change in these numbers.
     again = await bench.run("personal", bench.PERSONAS["thinker"], bench.load_scenarios())
     assert again.as_dict() == scores["personal", "thinker"].as_dict()
