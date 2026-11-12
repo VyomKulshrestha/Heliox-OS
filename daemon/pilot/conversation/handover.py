@@ -23,8 +23,7 @@ from typing import Any
 from pilot.conversation.router import ACTION_VERBS, Route
 
 PROGRESS_AFTER_SECONDS = 2.0
-PROGRESS_SPACING_SECONDS = 6.0
-MAX_PROGRESS_LINES = 3
+PROGRESS_SPACING_SECONDS = 9.0  # a new line every 8 to 10 seconds while the work goes on: never a long silence
 POLL_SECONDS = 0.2
 SIMPLE_OBJECT_WORDS = 6
 
@@ -145,6 +144,39 @@ def intent_from_route(route: Route, words: str) -> HandoverIntent:
 
 
 # What the interaction state's phase means, said aloud. Planning and reviewing are the long ones.
+# Said when the work has not moved on since the last line: true, specific, and never the same twice running.
+STILL = {
+    "planning": ("I'm still working out the steps.", "Still planning; this one takes a while.", "Still on the plan."),
+    "reviewing": ("I'm still checking the plan for risks.", "Still checking the plan."),
+    "acting": ("Still doing it.", "Still working through the steps."),
+    "verifying": ("Still checking that it worked.", "Still checking the result."),
+    "": ("Still working on it.", "I'm still on it."),
+}
+LOCAL_SLOW = "The model on this computer is slow the first time. I'm still planning."
+_STEP = re.compile(r"\bstep (\d+) of (\d+)\b", re.IGNORECASE)
+
+
+def _kind(phase: str, message: str) -> str:
+    text = message.casefold()
+    if "risk" in text or "review" in text or "double-check" in text or "gnomon" in text:
+        return "reviewing"
+    if phase in {"planning", "understanding"} or "plan" in text:
+        return "planning"
+    if phase in {"acting", "verifying"}:
+        return phase
+    return ""
+
+
+def still_sentence(phase: str, message: str, last: str) -> str:
+    """A line for work that has not moved on: which step it is on when the state says so, else a "still" line
+    for its kind, never ``last``."""
+    step = _STEP.search(message)
+    if step and f"On step {step.group(1)} of {step.group(2)}." != last:
+        return f"On step {step.group(1)} of {step.group(2)}."
+    options = [line for line in STILL[_kind(phase, message)] if line != last]
+    return options[0] if options else ""
+
+
 def progress_sentence(phase: str, message: str) -> str:
     text = message.casefold()
     if phase == "awaiting_approval":
@@ -177,8 +209,16 @@ async def keep_company(
     progress_after: float = PROGRESS_AFTER_SECONDS,
     spacing: float = PROGRESS_SPACING_SECONDS,
     poll: float = POLL_SECONDS,
+    user_speaking: Callable[[], bool] = lambda: False,
+    local_slow_once: Callable[[], bool] = lambda: False,
 ) -> None:
-    """Runs from the hand-over until the caller cancels it (the planner returned)."""
+    """Runs from the hand-over until the caller cancels it (the planner returned).
+
+    The acknowledgement at once; after ``progress_after`` a line saying what is happening; then, as long as the
+    work goes on, a new line every ``spacing`` seconds: what changed when the state moved on, which step it is on,
+    or a "still" line for the same work, never the same sentence twice running. Nothing is said while the person is
+    talking. ``local_slow_once``: True once per session when the plan comes from a model on this computer, so the
+    first long wait says why."""
     started = clock()
     key = f"conv-ack:{started}"
     if acknowledgement_text:
@@ -188,6 +228,7 @@ async def keep_company(
     said_at = clock()
     lines = 0
     last_line = acknowledgement_text
+    last_state = ("", "")
     approval_said = False
     while True:
         await asyncio.sleep(poll)
@@ -201,12 +242,20 @@ async def keep_company(
                 on_said(APPROVAL_SENTENCE)
             said_at = clock()
             continue
-        if lines >= MAX_PROGRESS_LINES or now - started < progress_after:
+        if now - started < progress_after or (lines and now - said_at < spacing) or phase == "awaiting_approval":
             continue
-        sentence = progress_sentence(phase, str(state.get("message") or ""))
-        # The first progress line once planning runs long; later ones only when the work has moved on.
-        if not sentence or sentence == last_line or (lines and now - said_at < spacing):
+        if user_speaking():
+            continue  # never over the person; the line waits for the next poll
+        message = str(state.get("message") or "")
+        moved_on = (phase, message) != last_state
+        sentence = progress_sentence(phase, message) if moved_on else ""
+        if lines and not moved_on and _kind(phase, message) == "planning" and local_slow_once():
+            sentence = LOCAL_SLOW
+        if not sentence or sentence == last_line:
+            sentence = still_sentence(phase, message, last_line)
+        if not sentence:
             continue
+        last_state = (phase, message)
         lines += 1
         outcome = await speak(sentence, "task_narration", f"conv-progress:{started}:{lines}")
         if outcome in ("spoken", "interrupted"):

@@ -80,9 +80,11 @@ FALLBACK = {
     "busy": "The language model is busy right now. Try me again in a moment.",
     "credit": "Your {provider} account is out of credit. Add credit there, or choose another model in Settings, "
     "under Model.",
-    "slow": "The language model isn't answering right now, so I can only do what I handle myself for the moment.",
+    "slow": "The language model is slow right now, so I stopped waiting. Ask me again.",
     "refused": "I can't help with that one.",
     "error": "Something went wrong reaching the language model. I can still do what I handle myself.",
+    "not_api": "I'm getting a web page instead of the language model. The network may want you to sign in first.",
+    "empty": "The language model sent back nothing that time. Ask me again?",
     "none": "That needs a language model, and none is set up. " + SETUP_HINT,  # under 25 words, said once
     "local_down": "Talking things through needs a language model, and the local one isn't running. "
     "Start Ollama, or choose another model in Settings, under Model.",
@@ -94,16 +96,20 @@ FALLBACK_AGAIN = {
     "offline": "Still offline, so I can't answer that one.",
     "busy": "The model is still busy. Try again in a moment.",
     "credit": "The model account is still out of credit.",
-    "slow": "The language model still isn't answering.",
+    "slow": "The language model is still slow. Ask me again in a moment.",
     "refused": "I can't help with that one.",
 }
 FALLBACK_AGAIN_DEFAULT = "I can't answer that without a language model."
 AGAIN_ALTERNATE = "Not without the language model, sorry."
+# A model that is only slow is there: its second plain line does not say it is missing.
+AGAIN_ALTERNATES = {"slow": "Still slow, sorry. Try again in a few seconds."}
 UNCLEAR_OFFLINE = "Sorry, I didn't catch that. Could you say it again?"
 HOLD_AFTER_SECONDS = 2.0  # no first sentence yet: a short holding phrase, so the wait is not silent
 HOLD_PHRASES = ("One moment.", "Let me think.", "Give me a second.")
 LOCAL_LOADING = "Loading the local model, one moment."
-SPOKEN_WORD_CAP = 30  # about 12 seconds of speech: a sentence that would go past it is not started
+SPOKEN_WORD_CAP = (
+    25  # about 10 seconds of speech: a sentence that would go past it is not started (the prompt asks for 20)
+)
 OFFER_SECONDS = 60.0  # how long "Do you want me to ...?" waits for a yes
 YES = frozenset(
     {
@@ -229,6 +235,7 @@ class ConversationLayer:
         self._addressed = addressed
         self._not_understood = not_understood
         self._sorry_said = False
+        self._said_local_slow = False  # "the model on this computer is slow the first time" said once
         self._search_url = search_url
         # Whether the planner's model may be given screen text (conversation.share_screen_text), and whether the
         # fast model was shown some in this conversation (then Heliox's lines may repeat it).
@@ -404,6 +411,9 @@ class ConversationLayer:
                             limit.reschedule(None)  # text arrived: no deadline for the rest of the reply
                         if "first_token_ms" not in result.timings:
                             result.timings["first_token_ms"] = (self._clock() - started) * 1000
+                            answered = getattr(model, "note_answered", None)
+                            if callable(answered):
+                                answered()
                         if mode is None:
                             head += fragment
                             mode = looks_like_act(head)
@@ -442,9 +452,9 @@ class ConversationLayer:
                 failure.append(error.reason)
             except TimeoutError:
                 failure.append("slow")
-                hold = getattr(model, "hold", None)
-                if callable(hold):
-                    hold(30.0, "slow")
+                note_slow = getattr(model, "note_slow", None)
+                if callable(note_slow):
+                    note_slow()  # one late answer costs this turn; only late answers in a row rest the provider
             finally:
                 # Closing the stream ends the request now (a cut-off reply stops costing tokens) and records usage.
                 with contextlib.suppress(Exception):
@@ -648,7 +658,8 @@ class ConversationLayer:
             sentence = FALLBACK_AGAIN.get(reason, FALLBACK_AGAIN_DEFAULT)
             if sentence == self._last_fallback:
                 # Never the same line twice running: the short form, then the plain one, in turn.
-                sentence = AGAIN_ALTERNATE if sentence != AGAIN_ALTERNATE else FALLBACK_AGAIN_DEFAULT
+                other = AGAIN_ALTERNATES.get(reason, AGAIN_ALTERNATE)
+                sentence = other if sentence != other else FALLBACK_AGAIN.get(reason, FALLBACK_AGAIN_DEFAULT)
         else:
             sentence = FALLBACK.get(reason, FALLBACK["error"]).replace(
                 "{provider}", PROVIDER_NAMES.get(provider, "model provider's")
@@ -726,7 +737,13 @@ class ConversationLayer:
         assert result.intent is not None
         if not acknowledge:
             return asyncio.ensure_future(
-                keep_company(acknowledgement_text="", speak=self._sink, status=self._task_status)
+                keep_company(
+                    acknowledgement_text="",
+                    speak=self._sink,
+                    status=self._task_status,
+                    user_speaking=self._user_speaking,
+                    local_slow_once=self._local_slow_once,
+                )
             )
         ack = (quick_acknowledgement(result.quick, result.intent.words) if result.quick is not None else "") or (
             acknowledgement(result.intent, last=self._last_ack) if result.intent.verb or result.intent.say else ""
@@ -741,8 +758,26 @@ class ConversationLayer:
             result.spoken.append(sentence)
 
         return asyncio.ensure_future(
-            keep_company(acknowledgement_text=ack, speak=self._sink, status=self._task_status, on_said=said)
+            keep_company(
+                acknowledgement_text=ack,
+                speak=self._sink,
+                status=self._task_status,
+                on_said=said,
+                user_speaking=self._user_speaking,
+                local_slow_once=self._local_slow_once,
+            )
         )
+
+    def _local_slow_once(self) -> bool:
+        """True the first time in a session a plan from a model on this computer runs long."""
+        if self._said_local_slow:
+            return False
+        try:
+            local = bool(getattr(self._model(), "local", False))
+        except Exception:
+            local = False
+        self._said_local_slow = local
+        return local
 
     def _finished(self, result: TurnResult, status: str, text: str) -> None:
         spoken = " ".join(result.spoken)

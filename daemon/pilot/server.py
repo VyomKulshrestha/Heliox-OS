@@ -602,6 +602,26 @@ def _error_response(req_id: str | int | None, code: int, message: str) -> str:
     return json.dumps({"jsonrpc": "2.0", "error": {"code": code, "message": message}, "id": req_id})
 
 
+# Answers Heliox gives in code that may go to a model in the cloud as part of the conversation: they hold nothing of
+# the person's own data. Every other code answer (the profile, goals, the day, the timeline, to-dos, reminders, notes,
+# memory talk, workspaces, suggestions, Live, settings, and any handler added later) stays on this computer: a cloud
+# model is told only that it was answered here. With a model on this computer, every answer is shared with it.
+CODE_ANSWERS_ANY_MODEL = frozenset(
+    {
+        "_local_answer:QuickAnswers",  # sums, units, dates and the time
+        "_help_request",  # "what can I say": examples only
+    }
+)
+ANSWERED_ON_THIS_COMPUTER = "(answered on this computer)"
+
+
+def _conversation_model_local(conversation: Any) -> bool:
+    try:
+        return bool(getattr(conversation._model(), "local", False))
+    except Exception:
+        return False
+
+
 def _notification(method: str, params: Any) -> str:
     return json.dumps({"jsonrpc": "2.0", "method": method, "params": params})
 
@@ -1105,6 +1125,10 @@ class PilotServer:
         # What the last voice turn was, from what the server saw happen: "action" (an action ran), "answer" (Heliox
         # only spoke), "" (not known). Decides whether "again" means the words or the action.
         self._last_turn_kind = ""
+        self._code_answer_by = (
+            ""  # the handler (and, for local answers, the source) that answered the last turn in code
+        )
+        self._local_answer_source = ""
         # The request a voice task is carrying out, and whether the person ended it by voice and was already told
         # so ("Okay, I've dropped that: ..."): then the task's own ending is not said a second time.
         self._voice_request = ""
@@ -7042,9 +7066,13 @@ class PilotServer:
             self._shortcut_request,
             self._memory_talk_request,
         )
+        self._code_answer_by = ""
         for handler in handlers:
             reply = await handler(text)
             if reply is not None:
+                self._code_answer_by = handler.__name__ + (
+                    f":{self._local_answer_source}" if handler.__name__ == "_local_answer" else ""
+                )
                 return reply
         if REPEAT_REQUEST.match(normalize_phrase(text)):
             return "There is no earlier task for me to repeat yet."
@@ -8481,6 +8509,7 @@ class PilotServer:
                 logger.warning("Local history answer failed", exc_info=True)
                 continue
             if answer is not None:
+                self._local_answer_source = type(source).__name__  # which kind of answer (CODE_ANSWERS_ANY_MODEL)
                 return answer
         return None
 
@@ -14124,7 +14153,9 @@ def handle_tool(tool_name, params):
             and str(channel) in {SpeechChannel.PROACTIVE_SUGGESTION.value, SpeechChannel.BACKGROUND_INSIGHT.value}
         ):
             return SpeechOutcome("suppressed", SpeechChannel(str(channel)), "Held during a focus session")
-        if str(channel) in REPEATABLE_SPEECH and text.strip():
+        from pilot.conversation.followups import SHORT_ALREADY
+
+        if str(channel) in REPEATABLE_SPEECH and text.strip() and text.strip() != SHORT_ALREADY:
             # A reply the conversation layer speaks sentence by sentence ("conv:<turn>:<n>") is kept whole, so "say
             # that again" and "shorter" are about all of it, not its last sentence.
             reply = dedupe_key.rsplit(":", 1)[0] if dedupe_key.startswith("conv:") else ""
@@ -14547,6 +14578,17 @@ def handle_tool(tool_name, params):
             timeline_answer = await self._control_reply(command_text)
             if timeline_answer is not None:
                 self._last_turn_kind = "answer"
+                if voice_turn_addressed.get() != "doubtful_follow_up":
+                    # Answered in code, but part of the conversation: "and times ten?" after "what's two plus two?"
+                    # needs the model to know the first answer. A turn the listener doubted is never kept. With a
+                    # model in the cloud only answers that hold none of the person's data go with it
+                    # (CODE_ANSWERS_ANY_MODEL); the others are a neutral line, so the turns still read in order.
+                    conversation.memory.add_user(command_text)
+                    conversation.memory.add_heliox(
+                        timeline_answer
+                        if self._code_answer_by in CODE_ANSWERS_ANY_MODEL or _conversation_model_local(conversation)
+                        else ANSWERED_ON_THIS_COMPUTER
+                    )
                 await self._broadcast_notification(
                     "voice_result", {"command": command_text, "status": "answered", "message": timeline_answer}
                 )

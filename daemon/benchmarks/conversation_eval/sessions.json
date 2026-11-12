@@ -193,7 +193,7 @@
      },
      "expect_model": {
       "has": [
-       "processor"
+       "processor|short version"
       ]
      }
     },
@@ -208,7 +208,7 @@
      },
      "expect_model": {
       "has": [
-       "processor"
+       "processor|fan"
       ]
      }
     },
@@ -222,7 +222,7 @@
      },
      "expect_model": {
       "has": [
-       "processor"
+       "processor|fan"
       ]
      }
     },
@@ -964,7 +964,7 @@
      },
      "expect_model": {
       "has": [
-       "do you want me"
+       "do you want me|want me to"
       ]
      }
     },

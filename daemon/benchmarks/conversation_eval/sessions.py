@@ -30,12 +30,15 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from pilot.conversation.layer import SPOKEN_WORD_CAP
+
 PACK = Path(__file__).with_name("sessions.json")
 KINDS = ("claude", "openai", "local", "none")
 NOW = datetime(2026, 11, 12, 9, 0)  # a Thursday
 WORDS_PER_SECOND = 2.5
 DEFAULT_GAP = 1.0
-REPLY_WORD_LIMIT = 25
+REPLY_WORD_LIMIT = SPOKEN_WORD_CAP  # one rule, the layer's own (pilot.conversation.layer)
+WAIT_SIGNS = {"One moment.", "Let me think.", "Give me a second.", "Loading the local model, one moment."}
 DEFAULT_OUTPUTS = {
     "battery_info": "=== Battery ===\n  Charge: 80%\n  Status: Charging",
     "volume_set": "Volume set to 60%",
@@ -684,8 +687,9 @@ def check_session(session: dict[str, Any], kind: str, record: Record) -> list[st
             called = record.model_calls.get(index, 0) > 0
             if called != expect["model"]:
                 failures.append(f"{where}: the model was {'called' if called else 'not called'}; expected the opposite")
-        if not turn.get("detail") and _words(heard) > REPLY_WORD_LIMIT:
-            failures.append(f"{where}: {_words(heard)} words said without being asked for detail: {heard!r}")
+        reply = " ".join(s.text for s in said if s.text not in WAIT_SIGNS)  # "One moment." is not the reply
+        if not turn.get("detail") and _words(reply) > REPLY_WORD_LIMIT:
+            failures.append(f"{where}: {_words(reply)} words said without being asked for detail: {reply!r}")
     everything = [line.text.casefold() for line in record.said]
     for phrase in session.get("said_once", []):
         times = sum(phrase.casefold() in line for line in everything)
@@ -778,12 +782,27 @@ async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     budget = BudgetTracker(config.model, str(DB_FILE))
     await budget.initialize()
     before = budget._monthly_cost
-    model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
-    summary = await run_all(sessions, ("claude",), real_model=model)
-    await asyncio.sleep(0.3)  # the last call's usage is recorded as its stream closes
+    rows: list[dict[str, Any]] = []
+    calls = 0
+    firsts: list[float | None] = []  # seconds to the first text, per call (None: no text came)
+    name = ""
+    for session in sessions:
+        # A fresh model per session, as a person's sessions are minutes apart: a slow answer's rest in one session
+        # must not answer the next session's turns.
+        model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
+        rows += (await run_all([session], ("claude",), real_model=model))["rows"]
+        calls += len(getattr(model, "calls", []))
+        firsts += [
+            round(c.first_text_at - c.started, 2) if c.first_text_at is not None else None
+            for c in getattr(model, "calls", [])
+        ]
+        name = getattr(model, "name", "")
+        await asyncio.sleep(0.3)  # the last call's usage is recorded as its stream closes
+    summary = {"table": {"claude": f"{sum(r['passed'] for r in rows)}/{len(sessions)}"}, "rows": rows}
     summary["spent_usd"] = round(budget._monthly_cost - before, 5)
-    summary["calls"] = len(getattr(model, "calls", []))
-    summary["model"] = getattr(model, "name", "")
+    summary["calls"] = calls
+    summary["first_text_seconds"] = firsts
+    summary["model"] = name
     await budget.close()
     return summary
 

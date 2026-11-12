@@ -621,10 +621,10 @@ def test_the_name_style_and_preferences_reach_the_model_first():
 
 
 @pytest.mark.asyncio
-async def test_a_provider_that_never_answers_is_given_up_on_and_held():
+async def test_a_provider_that_never_answers_is_given_up_on_and_told_it_was_late():
     model = FakeModel(["Too late. "], first_delay=1.0)
     model.held = []
-    model.hold = lambda seconds, reason: model.held.append(reason)
+    model.note_slow = lambda: model.held.append("slow")  # the model decides the rest (test_conversation_slow.py)
     sink = FakeSink()
     layer = make_layer(model, sink, hold_after=0.05, first_text_deadline=0.2)
     result = await layer.take("What do you think?")

@@ -201,6 +201,7 @@ Two more context sources, added with Heliox Live and the personal layer (`pilot/
 | Speech heard near the microphone but not said to Heliox (Live does not check it: no card) | never | never | never |
 | A note said in passing ("my flight is on Friday"), kept until the day after its date or for a week | yes, as a profile line | yes, as a profile line | yes |
 | What those answers stored (the name, "I mainly use the computer for ...", the answer style, a speak-up or stay-quiet preference) | yes, as profile lines with later turns | yes, as profile lines with later turns | yes |
+| An answer Heliox gave in code earlier in the conversation (the person's words always go) | the answer, whatever it was | only sums, units, dates, the time and the spoken help; every other code answer (the day, the timeline, to-dos, reminders, notes, the profile, goals, memory, workspaces, suggestions, Live, settings, and any handler added later) is sent as "(answered on this computer)" | the same as `auto` |
 
 "Why did you say that", "thanks", "not now", "don't mention these", "fix it", "remember that ...", "forget ...",
 "what did I tell you about ..." and the answers to an offer are handled in code before the layer and never reach a
@@ -226,8 +227,11 @@ person hears the `say` sentence. A malformed line is treated as unclear, and a r
 was meant hands nothing over, even with a promise or an ACT line in it.
 
 While the planner works, `keep_company` speaks: the acknowledgement at once; if planning passes 2 s, one sentence
-from the interaction state ("I'm working out the steps.", "I'm checking the plan for risks."); another only when
-the state moves on and at least 6 s later, three at most; and, when an approval is needed, "This one needs your
+from the interaction state ("I'm working out the steps.", "I'm checking the plan for risks."); then, as long as the
+work goes on, a new line every 9 s: what changed, which step it is on, or a "still" line ("Still planning; this one
+takes a while."), never the same sentence twice running and never while the person is talking; the first long
+plan from a model on this computer says once that it is slow the first time (**Fakes only**: a 40 s planner on an
+injected clock, `tests/test_conversation_company.py`); and, when an approval is needed, "This one needs your
 approval. It's on the screen; press Approve if you want it to go ahead." The server cancels it when the planner
 returns and speaks the result as before; the layer records the result so the next question can refer to it. A
 sentence the listener split at a pause and joined is acknowledged once.
@@ -324,16 +328,20 @@ conversation with a real model has been recorded.
 | What happens | What the person hears | Then |
 |---|---|---|
 | No network (DNS, refused, reset) | "I can't reach the language model right now..." once, then a short line | 30 s without asking the provider |
-| The provider accepts the connection but sends nothing for 4.5 s | the holding phrase at 2 s, at 4.5 s "The language model isn't answering right now..." | 30 s without asking |
+| The provider accepts the connection but sends nothing for 4.5 s | the holding phrase at 2 s, at 4.5 s "The language model is slow right now, so I stopped waiting. Ask me again." | the next turn asks again; only late answers in a row rest it (5 s after two, 15 s after three, then 30 s), and an answer resets the count |
 | A local model loading into memory | "Loading the local model, one moment." (once a session) | waits up to 90 s for the first word |
 | The local server is not running, or the model is not pulled | "...the local one isn't running" / "...isn't installed", with where to fix it | 30 s |
 | The provider account is out of credit (Anthropic 400 "credit balance", OpenAI 429 `insufficient_quota`, a 402) | "Your Anthropic account is out of credit. Add credit there, or choose another model in Settings, under Model." | 10 minutes without asking |
 | Rate limited (429) | "The language model is busy right now. Try me again in a moment." | the provider's `Retry-After`, else 20 s |
 | Heliox's own monthly budget is used up | "This month's model budget is used up..." | until the budget allows |
 | The connection drops part-way through a reply | what was said, then "I lost the connection there." | as for no network |
+| A Wi-Fi sign-in page (or any proxy's own page) answers instead of the provider: 200, not an event stream or JSON | "I'm getting a web page instead of the language model. The network may want you to sign in first." | 30 s without asking, as for no network |
+| A proper stream that carries no text at all | "The language model sent back nothing that time. Ask me again?" | the next turn asks again |
 
 **Fakes only**: every row is a test with the provider's own stream format stubbed (`tests/test_conversation_models.py`,
-`tests/test_conversation_every_person.py`). The out-of-credit and rate-limit replies are written from the
+`tests/test_conversation_every_person.py`, `tests/test_conversation_portal.py`), except the sign-in page and the
+stall, which `tests/platform_real/network_faults_check.py` checks with real sockets in front of the real client on
+the CI runners (**Run for real**, local servers, not a real portal). The out-of-credit and rate-limit replies are written from the
 providers' documented errors, not captured from a real account.
 
 ### Claude over plain HTTP
@@ -475,7 +483,8 @@ that was only asked about:
 
 ### Spoken length, numbers and Live's remarks
 
-A spoken reply stops before a sentence that would take it past about 30 words (about 12 seconds); the first
+A spoken reply stops before a sentence that would take it past 25 words (about 10 seconds; the model is asked for
+at most 20, and the session suite holds replies to the same 25); the first
 sentence is always said whole, a clause cut at a comma is never the last thing said, and the stream is closed so
 the rest is not generated. Typed replies keep their length and their markdown. Units glued to numbers ("16GB"),
 percentages, ISO dates and file names that carry one ("backup-2026-11-12.zip" becomes "the backup from the twelfth
@@ -541,6 +550,28 @@ model did answer, the replies kept to the rules ("Tomorrow is Friday the thirtee
 tomorrow?"). One rule in the pack was written for the stub's two-sentence reply: the real one-sentence answer
 made "shorter" say "That was the short version." The run says nothing yet about how often the first word is late
 on a quiet machine: that needs a timed run on a quiet machine, which is owed.
+
+A late first word no longer costs half a minute. One late answer costs its own turn; the next turn asks the model
+again, and only late answers in a row rest it (**Fakes only**: `tests/test_conversation_slow.py`).
+
+**Run for real**, a second time (12 November, a quiet machine at 9% CPU and 3.6 GB free, text, Claude Haiku 5.5,
+the Claude road only, a fresh model per session as a person's sessions are minutes apart; the budget tracker's
+figure $0.00479 over 35 calls): 18 of 21 sessions passed. The first text came 0.72 to 2.36 s after each request
+(median 1.18 s; the slowest was the first call of the run), so no turn reached the 4.5 s deadline. What failed is
+what the model said:
+- Three replies ran 26 to 30 words (a careful "I won't delete anything; which files do you mean?", a clarifying
+  question, an offer to note an amount down). The layer then allowed about 30 words; both are now 25, and the model is asked for 20.
+- "And times ten?" after "what's two plus two?" was asked about, because an answer Heliox gave in code was not part
+  of the conversation the model saw. It is now: an answer given in code is kept as a conversation turn (never for a
+  turn the listener doubted). **Fakes only** for the fix; not yet re-run on the real model.
+
+**Run for real**, a third time, after those fixes (12 November, a quiet machine at 21% CPU and 4.1 GB free, text,
+Claude Haiku 5.5, the Claude road only, a fresh model per session; the budget tracker's figure $0.00494 over 36
+calls): 20 of 21 sessions passed. The first text came 0.63 to 2.31 s after each request (median 1.04 s). Every reply
+kept to 25 words, and "And times ten?" after "what's two plus two?" was answered from the sum. The one failure was
+the pack's wording: asked "how do I open Notepad?", the model offered in its own words ("I can open Notepad for you.
+Want me to go ahead?") instead of the layer's "Do you want me to ...?", and the "yes" that followed opened it; the
+pack now accepts either.
 
 ## 4. Not in this pass
 

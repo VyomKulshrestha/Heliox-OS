@@ -104,6 +104,18 @@ class _Usage:
     reported: bool = False
 
 
+# What a provider's streamed answer is sent as: server-sent events, or JSON lines (Ollama). A web page is never an
+# answer (a Wi-Fi sign-in page, a proxy's own page). Any other type is read: some local and proxy servers stream
+# events as text/plain or a type of their own, and an answer is whatever parses.
+API_CONTENT_TYPES = frozenset({"text/event-stream", "application/json", "application/x-ndjson"})
+PAGE_CONTENT_TYPES = frozenset({"text/html", "application/xhtml+xml"})
+
+# The rest after late first words in a row: none after one (the next turn tries again; the spoken sign at 2 s
+# covers its wait), then a few seconds, then longer, never more than half a minute. A real outage (no network, a key
+# refused, no credit) keeps its own holds.
+SLOW_PAUSES = (0.0, 5.0, 15.0, 30.0)
+
+
 class _StreamingBase:
     """Budget gate, offline hold, timing and usage recording shared by every streamed provider."""
 
@@ -134,6 +146,21 @@ class _StreamingBase:
         requests, or a provider that stopped answering)."""
         self._offline_until = max(self._offline_until, self.clock() + max(0.0, seconds))
         self._hold_reason = reason
+
+    def note_slow(self) -> float:
+        """A first word did not come in time. One late answer costs that turn only: the next turn asks again. Late
+        answers in a row rest the provider a little longer each time (SLOW_PAUSES, 30 s at most); an answer resets
+        it. Returns the rest given, in seconds."""
+        in_row = getattr(self, "_slow_in_row", 0) + 1
+        self._slow_in_row = in_row
+        pause = SLOW_PAUSES[min(in_row, len(SLOW_PAUSES)) - 1]
+        if pause:
+            self.hold(pause, "slow")
+        return pause
+
+    def note_answered(self) -> None:
+        """A first word came: late answers before it no longer count."""
+        self._slow_in_row = 0
 
     def _after_failure(self, reason: str, error: BaseException) -> None:
         if reason in ("offline", "local_down"):
@@ -419,7 +446,7 @@ class HttpFastModel(_StreamingBase):
             if not key:
                 return
             if self._client is None:
-                self._client = self.client_factory()
+                self._client = await asyncio.to_thread(self.client_factory)
             from pilot.models.cloud import PROVIDER_ENDPOINTS
 
             await self._client.post(
@@ -439,12 +466,15 @@ class HttpFastModel(_StreamingBase):
             if not key:
                 raise FastModelUnavailable("no_key", f"no {self.provider} API key is stored")
         if self._client is None:
-            self._client = self.client_factory()
+            # Building the client loads certificates and a TLS context: about 0.1 s of blocking work, done off the
+            # event loop so nothing else (hearing the person, stopping a reply) waits for it.
+            self._client = await asyncio.to_thread(self.client_factory)
         url, headers, body = self.request(system, messages, key)
         record = CallRecord(model=self.name, started=self.clock())
         self.calls.append(record)
         usage = _Usage()
         finished = False
+        kind = ""
         try:
             import httpx
 
@@ -455,6 +485,12 @@ class HttpFastModel(_StreamingBase):
                 if resp.status_code != 200:
                     await resp.aread()
                     resp.raise_for_status()
+                kind = str(getattr(resp, "headers", {}).get("content-type", "") or "").split(";")[0].strip().casefold()
+                if kind in PAGE_CONTENT_TYPES:
+                    # A Wi-Fi sign-in page (or any proxy's own page) answers 200 with HTML: not the provider. Said
+                    # as such, like a network that is down, instead of being read as an empty reply.
+                    self.hold(OFFLINE_HOLD_SECONDS, "not_api")
+                    raise FastModelUnavailable("not_api", f"not from the API ({kind})")
                 async for line in resp.aiter_lines():
                     text = self.parse(line, usage)
                     if not text:
@@ -464,6 +500,13 @@ class HttpFastModel(_StreamingBase):
                     record.chars += len(text)
                     yield text
             finished = True
+            if not record.chars:
+                if kind and kind not in API_CONTENT_TYPES:
+                    # A type of its own and nothing in it parsed: not the provider's answer.
+                    self.hold(OFFLINE_HOLD_SECONDS, "not_api")
+                    raise FastModelUnavailable("not_api", f"not from the API ({kind})")
+                # A provider's stream (or one with no type) that carried no text: said, never silence.
+                raise FastModelUnavailable("empty", "the reply held no text")
         except FastModelUnavailable:
             raise
         except BaseException as error:

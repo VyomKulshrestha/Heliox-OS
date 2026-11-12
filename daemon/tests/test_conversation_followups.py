@@ -230,3 +230,21 @@ async def test_again_after_a_planned_task_goes_back_through_the_planner_road():
     sent = server._handle_execute.await_args.args[0]
     assert sent["input"] == "delete the old installers in my Downloads folder"
     assert "_quick_plan" not in sent  # not an allow-listed step: the planner, its reviews and approvals
+
+
+@pytest.mark.asyncio
+async def test_an_answer_given_in_code_is_part_of_the_conversation_unless_the_turn_was_doubted():
+    from pilot.conversation import layer_for
+    from pilot.system.voice import voice_turn_addressed
+    from pilot.workflows.quick_answers import QuickAnswers
+
+    server = voice_server("", "", 99.0)
+    server._quick_answers = QuickAnswers()
+    layer_for(server)._model = lambda: None
+    voice_turn_addressed.set("wake")
+    await server._voice_command_dispatch("what's two plus two")
+    kept = [(turn.role, turn.text) for turn in layer_for(server).memory.recent()]
+    assert ("user", "what's two plus two") in kept and ("assistant", "That's 4.") in kept
+    voice_turn_addressed.set("doubtful_follow_up")
+    await server._voice_command_dispatch("what's three plus three")
+    assert not any("three" in text for _, text in [(t.role, t.text) for t in layer_for(server).memory.recent()])
