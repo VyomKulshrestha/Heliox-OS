@@ -154,11 +154,16 @@ export async function mockTauriIpc(page: Page): Promise<void> {
           request.method === "subscription_login" ||
           request.method === "update_config" ||
           request.method === "co_adaptation_status" ||
+          request.method === "startup_status" ||
           request.method.startsWith("air_handoff_")
         ) {
           let result: Record<string, unknown>;
           if (request.method === "auth") {
             result = { status: "ok" };
+          } else if (request.method === "startup_status") {
+            // The mock stands for a daemon that has finished starting. Without an answer the voice bar keeps
+            // "Listening starts when Heliox is ready." beside the input, and every chat screenshot shifts.
+            result = { status: "ok", state: "ready" };
           } else if (request.method === "co_adaptation_status") {
             // Available, off, default settings, nobody has consented yet.
             result = {
