@@ -53,6 +53,19 @@
     },
   );
   let learnsTiming = $derived(cfg.personal_timing !== false);
+  // What is listened to, in one plain sentence for the model this person chose (pilot.live, pilot.system.addressing).
+  let listeningNote = $derived(listenedTo($settings.model?.provider ?? "", $settings.model?.cloud_provider ?? ""));
+
+  function listenedTo(provider: string, cloud: string): string {
+    const heard =
+      "Live checks what you say to Heliox. While a conversation is open it also checks sentences said near the " +
+      "microphone that were not for Heliox; those give at most a silent card, their words are kept in memory for " +
+      "90 seconds, and they are never stored as conversation or sent to any model.";
+    if (provider === "ollama" || provider === "local")
+      return `${heard} Your language model runs on this computer, so nothing you say leaves it.`;
+    const where = cloud ? `the cloud model you chose (${cloud})` : "the cloud model you chose";
+    return `${heard} What you say to Heliox goes to ${where} with your request, as it always does; speech that was not for Heliox never does.`;
+  }
 
   function timingSummary(t: Timing): string {
     if (!t.learned_from) return `Still learning how you type. Until then it waits the usual ${t.default_seconds} s.`;
@@ -227,6 +240,7 @@
       />
       <span>What you say to Heliox, so it can catch a wrong date before planning.</span>
     </label>
+    {#if cfg.listen_to_speech}<p class="listening-note" data-testid="live-listening-note">{listeningNote}</p>{/if}
     <label class="check">
       <input
         type="checkbox"
@@ -310,6 +324,11 @@
     color: var(--text-secondary);
     font-size: var(--text-sm);
     line-height: 1.5;
+  }
+
+  .listening-note {
+    padding-left: 26px;
+    font-size: var(--text-xs);
   }
 
   .reader-note {

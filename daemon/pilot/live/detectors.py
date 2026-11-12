@@ -393,7 +393,7 @@ def _impossible_dates(text: str, ctx: TextContext, covered: set[tuple[int, int]]
                 continue
             if _DATE_NEGATION_AFTER.search(text[match.end() : match.end() + 20]):
                 continue
-            if day == 29 and month == 2 and _LEAP_TALK.search(text[match.end() : match.end() + 60]):
+            if day == 29 and month == 2 and _LEAP_TALK.search(text[max(0, match.start() - 60) : match.end() + 60]):
                 continue  # "29 February in a year that isn't a leap year": about the rule, not a date
             evidence = match.group(0).strip()
             correction = _no_such_date(evidence, day, month, int(match["y"]) if match["y"] else None, ctx)

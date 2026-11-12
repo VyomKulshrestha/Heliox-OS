@@ -134,6 +134,13 @@ def _strip_lead(raw: str) -> str:
     return _LEAD.sub("", raw.strip(), count=1).strip()
 
 
+def _lapsed(item: dict[str, Any], now: float) -> bool:
+    try:
+        return "expires" in item and float(item["expires"]) <= now
+    except (TypeError, ValueError):
+        return False
+
+
 def _you(text: str) -> str:
     """Turn a first-person "about" fact into second person for reading back: "I'm X" -> "you're X"."""
     for first, second in (("I'm ", "you're "), ("I've ", "you've "), ("I ", "you "), ("my ", "your ")):
@@ -151,12 +158,14 @@ class UserProfile:
         *,
         remember: Callable[[str, str], Awaitable[str | None]] | None = None,
         forget: Callable[[str], Awaitable[None]] | None = None,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         self._path = Path(path)
         # remember(predicate, value) mirrors an explicit-user fact and returns its id;
         # forget(fact_id) retracts it. Ids are kept in the profile's "_mirror" map.
         self._remember = remember
         self._forget = forget
+        self._clock = clock  # for notes said in passing, which lapse (an "expires" field on the entry)
 
     async def _mirror_add(self, profile: dict[str, Any], key: str, predicate: str, value: str) -> None:
         if self._remember is None:
@@ -194,12 +203,39 @@ class UserProfile:
             profile["style"] = {
                 k: v for k, v in data["style"].items() if k in ("length", "formality") and isinstance(v, str)
             }
+        now = self._clock()
         for key in _LISTS:
             items = data.get(key)
             profile[key] = (
-                [item for item in items if isinstance(item, dict) and item.get("id")] if isinstance(items, list) else []
+                [item for item in items if isinstance(item, dict) and item.get("id") and not _lapsed(item, now)]
+                if isinstance(items, list)
+                else []
             )
         return profile
+
+    async def prune_lapsed(self) -> int:
+        """Remove notes said in passing whose time is over, here and in long-term memory. Returns how many."""
+        try:
+            data = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return 0
+        if not isinstance(data, dict):
+            return 0
+        now = self._clock()
+        lapsed = [
+            item["id"]
+            for key in _LISTS
+            for item in (data.get(key) or [])
+            if isinstance(item, dict) and item.get("id") and _lapsed(item, now)
+        ]
+        if not lapsed:
+            return 0
+        profile = self._load()  # already without the lapsed entries
+        profile["_mirror"] = {str(k): str(v) for k, v in (data.get("_mirror") or {}).items()}
+        for entry_id in lapsed:
+            await self._mirror_forget(profile, entry_id)
+        self._save(profile)
+        return len(lapsed)
 
     def _save(self, profile: dict[str, Any]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -281,7 +317,7 @@ class UserProfile:
         # Strictly later than every entry already kept. The Windows clock moves in steps of about 15 ms, so two
         # things said within one step tied, and "forget what I just told you" could remove the earlier one.
         newest = max((float(item.get("at", 0.0)) for key in _LISTS for item in profile[key]), default=0.0)
-        entry = {"id": uuid.uuid4().hex[:10], "text": text, "at": max(time.time(), newest + 1e-6), **extra}
+        entry = {"id": uuid.uuid4().hex[:10], "text": text, "at": max(self._clock(), newest + 1e-6), **extra}
         if slot:
             entry["slot"] = slot
         items.append(entry)

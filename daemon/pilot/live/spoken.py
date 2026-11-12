@@ -592,6 +592,8 @@ def _after_weekday(s: _Scan, i: int) -> bool:
         k -= 1
     while s.kind(k) == "o" and s.low(k) == ",":
         k -= 1
+    if s.low(k) in _MISHEARD_WEEKDAY and s.low(k - 1) in _DAY_PREPOSITIONS:
+        return True  # "for thirsday the fourteenth": the misheard weekday is read as a weekday too
     return s.low(k) in _WEEKDAYS
 
 
@@ -667,6 +669,20 @@ def _date(s: _Scan, i: int) -> list[Conversion] | None:
 # ── the pass over a transcript ────────────────────────────────────────────────────────────────────────────────────
 
 
+# Weekday names as recognisers mishear them, from transcripts of real speech ("I'll send Priya the deck by frida").
+# Only replaced right after a word that introduces a day ("by", "on", "until"...), so "lunch with Frida" stays a
+# name. A short explicit list, never fuzzy matching: a guessed weekday that was really a name would be a false catch.
+_MISHEARD_WEEKDAY = {
+    "frida": "Friday", "fryday": "Friday", "friady": "Friday",
+    "wensday": "Wednesday", "wenesday": "Wednesday", "wednsday": "Wednesday", "wendsday": "Wednesday",
+    "thurday": "Thursday", "thursdy": "Thursday", "thirsday": "Thursday",
+    "tuseday": "Tuesday", "tusday": "Tuesday", "teusday": "Tuesday",
+    "munday": "Monday", "mondy": "Monday",
+    "saterday": "Saturday", "satuday": "Saturday",
+}  # fmt: skip
+_DAY_PREPOSITIONS = frozenset({"by", "on", "until", "till", "before", "next", "this", "from", "for", "after"})
+
+
 def normalise(text: str) -> Spoken:
     """The written form of a transcript. Text with nothing to convert comes back as it is."""
     scan = _Scan(text)
@@ -685,6 +701,8 @@ def normalise(text: str) -> Spoken:
                     conversions = None
                 if conversions:
                     break
+            if not conversions and tok.low in _MISHEARD_WEEKDAY and i > 0 and scan.low(i - 1) in _DAY_PREPOSITIONS:
+                conversions = [(i, i + 1, _MISHEARD_WEEKDAY[tok.low])]
             if (
                 not conversions
                 and tok.low in _RELATIVE

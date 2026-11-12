@@ -18,11 +18,16 @@ English phrasing only; another language falls through to the conversation layer,
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from pilot.personal.context import words
+from pilot.personal.passing import Note, passing_note
+
+logger = logging.getLogger("pilot.personal.memory_talk")
 
 _NORM = re.compile(r"[^\w\s'-]")
 
@@ -70,9 +75,16 @@ def _second_person(text: str) -> str:
 class MemoryTalk:
     """Phrase handler over a ``UserProfile`` and the person's goals. ``answer`` returns None when not a phrase."""
 
-    def __init__(self, *, profile: Callable[[], Any], goals: Callable[[], list[dict[str, Any]]] = list) -> None:
+    def __init__(
+        self,
+        *,
+        profile: Callable[[], Any],
+        goals: Callable[[], list[dict[str, Any]]] = list,
+        now: Callable[[], datetime] = datetime.now,
+    ) -> None:
         self._profile = profile
         self._goals = goals
+        self._now = now
 
     async def answer(self, text: str) -> str | None:
         profile = self._profile()
@@ -82,6 +94,12 @@ class MemoryTalk:
         normalized = _normalize(raw)
         if not normalized:
             return None
+        prune = getattr(profile, "prune_lapsed", None)
+        if prune is not None:
+            try:
+                await prune()  # notes said in passing whose day is over leave the profile and long-term memory
+            except Exception:
+                logger.warning("Could not remove lapsed notes", exc_info=True)
 
         if FORGET_LAST.match(normalized):
             removed = await profile.forget_last()
@@ -122,7 +140,24 @@ class MemoryTalk:
             if removed:
                 return f'Okay, I\'ve forgotten "{removed}".'
             return f"I don't have anything stored about {what}, so there was nothing to forget."
+
+        note = passing_note(raw, self._now())
+        if note is not None:
+            return await self._keep(profile, note)
         return None
+
+    async def _keep(self, profile: Any, note: Note) -> str | None:
+        """Keep a note said in passing, replacing an older note about the same thing."""
+        for item in list(profile.get().get("about") or []):
+            if item.get("note_thing") == note.thing:
+                await profile.delete(item["id"])
+        try:
+            entry = await profile.add("about", note.text, note_thing=note.thing, expires=f"{note.expires:.0f}")
+        except ValueError as error:
+            return str(error)
+        said = entry["text"].split(" (said on ", 1)[0]
+        until = f"until {note.until}" if note.until else "for a week"
+        return f'Noted: "{said}". I\'ll keep that {until}; say "forget about my {note.thing}" to drop it sooner.'
 
     def recall(self, what: str) -> str:
         """Everything stored that mentions ``what``, read back in the second person."""

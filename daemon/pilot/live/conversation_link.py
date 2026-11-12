@@ -108,8 +108,8 @@ class LiveConversationLink:
         if live is None:
             return ""
         entry = live.last_raised()
-        if not entry:
-            return ""
+        if not entry or entry.get("overheard"):
+            return ""  # from speech not said to Heliox: never shared with any model, not even by kind
         age = self._clock() - float(entry.get("at", 0.0))
         if age > REPLY_WINDOW_SECONDS:
             return ""

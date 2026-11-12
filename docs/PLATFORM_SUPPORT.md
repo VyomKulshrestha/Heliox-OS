@@ -24,6 +24,31 @@ Heliox runs on Windows, macOS and Linux. This page says what each part of the co
 | Undo and protected folders | Works | Works: folder checks now ignore case, as APFS does | Works: case-sensitive, as Linux file systems are | `daemon/pilot/security/path_rules.py`, `daemon/pilot/security/validator.py`, `daemon/pilot/workflows/undo_journal.py` | Nothing | Both rule sets with fakes on every system |
 | Launching apps (simple actions) | Works: Start menu shortcuts, PATH, Store apps | Works: installed bundles matched by file name and the bundle's own name, then `open -a`; arguments after `--args` | Works: a path, PATH, then desktop entries by shown name or id, started from their `Exec` line with arguments in place of `%f %F %u %U`; terminal apps open in the system terminal; ambiguous names fail closed | `daemon/pilot/system/applications.py`, `daemon/pilot/system/desktop_entry.py` | Nothing | Windows: real run. macOS and Linux: fakes (Exec parsing, matching, the command started) |
 
+## What Heliox Live can notice on each system
+
+Live checks four things, each from a different source. What it can see depends on that source being available, so
+the same slip can be caught on one system and missed on another. From the code (`daemon/pilot/live/`) as of this
+page:
+
+| Slip | Comes from | Windows | macOS | Linux |
+|---|---|---|---|---|
+| In what you type: a weekday that doesn't match its date, a date that doesn't exist, a wrong sum, a wrong name for someone in your profile, a doubled word, "attached" with nothing attached, a key pasted into a message, catch-pack phrases, a promise with a deadline, rewriting the same sentence | The focused text field (the reader above) | Any app whose fields UI Automation exposes: Office, browsers, Notepad, chat apps, most of what people type in | Apps that expose their fields to Accessibility (native AppKit apps, Safari, Chrome, most Electron apps), once Accessibility is granted to Heliox-OS | GTK apps always; Qt, Chromium, Electron and Firefox apps once toolkit accessibility is on; nothing from apps outside the accessibility bus |
+| A risky command before you press Enter | The focused field of a terminal | Windows Terminal, the console, PowerShell windows | Terminal.app and iTerm2 only; other terminals expose nothing | VTE terminals (GNOME Terminal, Tilix, Terminator, Xfce Terminal), Konsole partly; not Alacritty, kitty, WezTerm, foot or xterm |
+| In what you say to Heliox: a wrong weekday or impossible date, a wrong sum, a wrong name, a promise without a reminder, a date that differs from the one you just typed | Speech, after the wake phrase, the microphone button, or in the 8 s follow-up | Works | Works where capture works (PortAudio, microphone permission) | Works where capture works (PortAudio with ALSA, PulseAudio or PipeWire) |
+| An error on screen, with the fix | Reading the screen (OCR); off by default | Windows OCR | The Vision framework, once Screen Recording is granted | tesseract on X11; on Wayland through the desktop's Screenshot portal, not yet proven (see above) |
+| A risky command or a key typed anywhere (supervision's keyboard hook) | A global keyboard hook (`pynput`); off by default, its own opt-in | Works | Needs Input Monitoring for Heliox-OS | X11 only; Wayland gives apps no global keyboard |
+| Switching back and forth between two windows | The foreground window | Works | Works | Works on X11; on Wayland through the accessibility bus |
+| Staying quiet in calls | Call detection (above) | Works | macOS 14 and later; partly before | With `pactl` (PulseAudio or PipeWire) |
+
+What Live never sees, on any system: password fields, Heliox's own window, password managers and apps you excluded
+from the timeline, text inside images or video without screen reading on, the body of a web page you are reading
+(only fields you type in), other fields of a form than the one you are in (so it cannot check a mail's recipients),
+and speech said near the microphone that was not for Heliox (see below).
+
+Speech heard near the microphone but not said to Heliox (in an open conversation, a sentence for someone else)
+reaches Live only as text, can give at most a silent card, is kept in memory for 90 seconds and then forgotten, and
+is never stored as conversation or sent to any model. Outside an open conversation Live does not hear it at all.
+
 ## Reading the focused field
 
 Every platform reader satisfies `FocusedTextSource` (`daemon/pilot/live/focused_text.py`): `read()`, `status()`, `close()` and `available`. `create_reader()` picks the one for the system. Each reader turns what its accessibility interface says about the focused element into `ElementFacts`, and `focused_text_policy.admit` makes the one decision for all three: text passes only from a writable field or a terminal, never from a secure field, and only the last 6,000 characters. The window-level rule, `never_read`, refuses Heliox's own window, password managers, the system credential stores (Keychain Access, Passwords, Seahorse, KDE Wallet) and apps the person excluded from the timeline before any reader runs.

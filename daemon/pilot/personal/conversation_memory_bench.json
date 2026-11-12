@@ -1,70 +1,244 @@
 {
   "about": "Conversational memory cases: what is said to Heliox in conversation, stored, recalled in a later turn, forgotten, and a preference that changes what reaches the fast model. Made-up people and facts only.",
   "filler": [
-    "Remember that I like jazz", "Remember that I am learning Spanish", "Remember that I cycle to work on Tuesdays",
-    "Remember that I drink oat milk", "Remember that I read before bed", "Remember that I use a standing desk",
-    "Remember that I keep a paper diary", "Remember that I grew up near the sea", "Remember that I play chess online",
-    "Remember that I collect vinyl records", "Remember that I prefer window seats", "Remember that I bake bread on Sundays"
+    "Remember that I like jazz",
+    "Remember that I am learning Spanish",
+    "Remember that I cycle to work on Tuesdays",
+    "Remember that I drink oat milk",
+    "Remember that I read before bed",
+    "Remember that I use a standing desk",
+    "Remember that I keep a paper diary",
+    "Remember that I grew up near the sea",
+    "Remember that I play chess online",
+    "Remember that I collect vinyl records",
+    "Remember that I prefer window seats",
+    "Remember that I bake bread on Sundays"
   ],
   "cases": [
     {
       "id": "remember-recall-later",
       "why": "a fact that does not start with I, stored by voice, reaches the model in a later turn about it",
       "turns": [
-        {"say": "Remember that the stand-up is at ten on Mondays", "reply": "Remembered: \"the stand-up is at ten on Mondays\"."},
-        {"say": "What time should I leave for the stand-up on Monday?", "model_expect": ["stand-up is at ten on Mondays"]}
+        {
+          "say": "Remember that the stand-up is at ten on Mondays",
+          "reply": "Remembered: \"the stand-up is at ten on Mondays\"."
+        },
+        {
+          "say": "What time should I leave for the stand-up on Monday?",
+          "model_expect": [
+            "stand-up is at ten on Mondays"
+          ]
+        }
       ]
     },
     {
       "id": "recall-by-phrase",
       "why": "\"what did I tell you about X\" answers locally from what was stored",
       "turns": [
-        {"say": "Remember my car is a blue Corolla", "reply": "Remembered: \"my car is a blue Corolla\"."},
-        {"say": "What did I tell you about my car?", "reply": "You told me your car is a blue Corolla."}
+        {
+          "say": "Remember my car is a blue Corolla",
+          "reply": "Remembered: \"my car is a blue Corolla\"."
+        },
+        {
+          "say": "What did I tell you about my car?",
+          "reply": "You told me your car is a blue Corolla."
+        }
       ]
     },
     {
       "id": "person-by-relation",
       "why": "an old person fact, buried under a dozen others, reaches the model when the relation is named",
       "turns": [
-        {"say": "My sister is Ana", "reply_starts": "Got it, I'll remember your sister Ana"},
-        {"filler": true},
-        {"say": "What would make a nice birthday present for my sister?", "model_expect": ["Ana (sister)"]}
+        {
+          "say": "My sister is Ana",
+          "reply_starts": "Got it, I'll remember your sister Ana"
+        },
+        {
+          "filler": true
+        },
+        {
+          "say": "What would make a nice birthday present for my sister?",
+          "model_expect": [
+            "Ana (sister)"
+          ]
+        }
       ]
     },
     {
       "id": "forget-really-forgets",
       "why": "after \"forget that\", the fact is not in the model's context and its words are gone from the memory database",
       "turns": [
-        {"say": "Remember that the spare key is under the blue pot", "reply": "Remembered: \"the spare key is under the blue pot\"."},
-        {"say": "Forget that the spare key is under the blue pot", "reply": "Okay, I've forgotten \"the spare key is under the blue pot\"."},
-        {"say": "Where did I leave the spare key?", "model_forbid": ["blue pot"], "store_forbid": ["blue pot"]}
+        {
+          "say": "Remember that the spare key is under the blue pot",
+          "reply": "Remembered: \"the spare key is under the blue pot\"."
+        },
+        {
+          "say": "Forget that the spare key is under the blue pot",
+          "reply": "Okay, I've forgotten \"the spare key is under the blue pot\"."
+        },
+        {
+          "say": "Where did I leave the spare key?",
+          "model_forbid": [
+            "blue pot"
+          ],
+          "store_forbid": [
+            "blue pot"
+          ]
+        }
       ]
     },
     {
       "id": "forget-last",
       "why": "\"forget what I just told you\" removes exactly the last thing, and says what it was",
       "turns": [
-        {"say": "Remember that the dentist is on Thursday", "reply": "Remembered: \"the dentist is on Thursday\"."},
-        {"say": "Forget what I just told you", "reply": "Okay, I've forgotten \"the dentist is on Thursday\"."},
-        {"say": "When is the dentist?", "model_forbid": ["dentist is on Thursday"]}
+        {
+          "say": "Remember that the dentist is on Thursday",
+          "reply": "Remembered: \"the dentist is on Thursday\"."
+        },
+        {
+          "say": "Forget what I just told you",
+          "reply": "Okay, I've forgotten \"the dentist is on Thursday\"."
+        },
+        {
+          "say": "When is the dentist?",
+          "model_forbid": [
+            "dentist is on Thursday"
+          ]
+        }
       ]
     },
     {
       "id": "preference-shapes-replies",
       "why": "a stated answer style reaches every later turn, even with a long profile in front of it",
       "turns": [
-        {"filler": true},
-        {"say": "Keep it short", "reply": "Okay, I'll keep my answers short."},
-        {"say": "How does compound interest work?", "model_expect": ["Answer style, length: short"]}
+        {
+          "filler": true
+        },
+        {
+          "say": "Keep it short",
+          "reply": "Okay, I'll keep my answers short."
+        },
+        {
+          "say": "How does compound interest work?",
+          "model_expect": [
+            "Answer style, length: short"
+          ]
+        }
       ]
     },
     {
       "id": "secret-refused",
       "why": "a key or password said aloud is refused and never stored",
       "turns": [
-        {"say": "Remember that the wifi password is hunter2-Xq9!vL3", "reply_starts": "That looks like a password or key"},
-        {"say": "What is the wifi password?", "model_forbid": ["hunter2"], "store_forbid": ["hunter2"]}
+        {
+          "say": "Remember that the wifi password is hunter2-Xq9!vL3",
+          "reply_starts": "That looks like a password or key"
+        },
+        {
+          "say": "What is the wifi password?",
+          "model_forbid": [
+            "hunter2"
+          ],
+          "store_forbid": [
+            "hunter2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "in-passing-next-day",
+      "why": "something said in passing (\"my flight is on Friday\") reaches the model a day later, in a new conversation",
+      "turns": [
+        {
+          "say": "my flight is on Friday",
+          "reply_starts": "Noted: \"My flight is on Friday "
+        },
+        {
+          "next_day": true
+        },
+        {
+          "say": "When is my flight?",
+          "model_expect": [
+            "My flight is on Friday"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "in-passing-changed",
+      "why": "\"I moved the meeting to three\" replaces what was said before, and the old time never comes back",
+      "turns": [
+        {
+          "say": "my meeting is at two",
+          "reply_starts": "Noted: \"My meeting is at two\""
+        },
+        {
+          "say": "I moved the meeting to three",
+          "reply_starts": "Noted: \"My meeting is at three\""
+        },
+        {
+          "next_day": true
+        },
+        {
+          "say": "What time is my meeting?",
+          "model_expect": [
+            "My meeting is at three"
+          ],
+          "model_forbid": [
+            "at two"
+          ],
+          "store_forbid": [
+            "meeting is at two"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "in-passing-forgotten",
+      "why": "a note said in passing is forgotten on request, and its words are gone from the memory database",
+      "turns": [
+        {
+          "say": "my dentist appointment is tomorrow at four",
+          "reply_starts": "Noted: \"My dentist appointment is tomorrow"
+        },
+        {
+          "next_day": true
+        },
+        {
+          "say": "forget about my dentist appointment",
+          "reply_starts": "Okay, I've forgotten \"My dentist appointment"
+        },
+        {
+          "say": "When is the dentist appointment?",
+          "model_forbid": [
+            "dentist appointment is"
+          ],
+          "store_forbid": [
+            "dentist appointment is tomorrow"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "in-passing-lapses",
+      "why": "a note lapses once its day is over: two weeks later it is neither in the context nor stored",
+      "turns": [
+        {
+          "say": "my train is on Friday",
+          "reply_starts": "Noted: \"My train is on Friday "
+        },
+        {
+          "later_days": 14
+        },
+        {
+          "say": "When is my train?",
+          "model_forbid": [
+            "My train is on"
+          ],
+          "store_forbid": [
+            "train is on friday"
+          ]
+        }
       ]
     }
   ]

@@ -72,12 +72,18 @@ _WHY = re.compile(
     r"|why are you (?:offering|suggesting|asking) (?:that|this)|what made you (?:offer|suggest) that)$"
 )
 _SILENCE = re.compile(
-    r"^(?:please )?(?:don'?t|do not|never) (?:offer|suggest|ask) (?:me )?(?:that|this|it)(?: again| any more| anymore)?$"
+    r"^(?:please )?(?:don(?:'| )?t|do not|never) (?:offer|suggest|ask) (?:me )?(?:that|this|it)(?: again| any more| anymore)?$"
     r"|^(?:please )?stop (?:offering|suggesting|asking) (?:me )?(?:that|this)$"
+)
+# Heliox Live's words for "never this kind again", said after an offer: every offer of that kind goes quiet.
+_SILENCE_KIND = re.compile(
+    r"^(?:please )?(?:don(?:'| )?t|do not|never) (?:mention|offer|suggest|bring up) (?:these|those|things like that"
+    r"|that kind of thing)(?: again| any more| anymore)?(?: please)?$"
+    r"|^(?:please )?stop (?:mentioning|offering|suggesting) (?:these|those)(?: please)?$"
 )
 _SILENCE_ALL = re.compile(
     r"^(?:please )?(?:stop (?:offering|suggesting) (?:me )?(?:things|stuff|anything)"
-    r"|(?:don'?t|do not) (?:offer|suggest) (?:me )?anything(?: else)?|no more (?:offers|suggestions)"
+    r"|(?:don(?:'| )?t|do not) (?:offer|suggest) (?:me )?anything(?: else)?|no more (?:offers|suggestions)"
     r"|turn off offers)$"
 )
 
@@ -193,6 +199,15 @@ def usual_apps(
         )
     offers.sort(key=lambda pair: -pair[0])
     return [offer for _, offer in offers]
+
+
+_KIND_WORDS = {
+    "usual_app": "opening the apps you usually open",
+    "habit": "logging your habits",
+    "todos": "reading your to-do list",
+    "stale_goal": "reminders for quiet goals",
+    "get_to_know": "questions to get to know you",
+}
 
 
 def _label(offer: Offer) -> str:
@@ -320,7 +335,11 @@ class Offers:
         return sum(m.day == today for m in self.made) < MAX_PER_DAY
 
     def _intro_due(self) -> bool:
-        if str(self.mode() or "auto").casefold() == "off" or INTRO.key in self.silenced:
+        if (
+            str(self.mode() or "auto").casefold() == "off"
+            or INTRO.key in self.silenced
+            or "kind:get_to_know" in self.silenced
+        ):
             return False
         try:
             empty = bool(self.profile_empty())
@@ -338,7 +357,12 @@ class Offers:
         today = self._today()
         offered_today = {m.offer.key for m in self.made if m.day == today}
         for offer in self.candidates():
-            if offer.key in self.silenced or offer.key in offered_today or self.declined.get(offer.key) == today:
+            if (
+                offer.key in self.silenced
+                or f"kind:{offer.kind}" in self.silenced
+                or offer.key in offered_today
+                or self.declined.get(offer.key) == today
+            ):
                 continue
             return offer
         return None
@@ -361,6 +385,10 @@ class Offers:
 
     def silence(self, offer: Offer) -> None:
         self.silenced[offer.key] = _label(offer)
+        self._save()
+
+    def silence_kind(self, kind: str) -> None:
+        self.silenced[f"kind:{kind}"] = f"All offers like this: {_KIND_WORDS.get(kind, kind)}"
         self._save()
 
     def unsilence(self, key: str) -> bool:
@@ -429,6 +457,10 @@ class Offers:
             self.silence(offer)
             self._answered(made)
             return OfferReply("Okay, I won't offer that again.")
+        if _SILENCE_KIND.match(normalized):
+            self.silence_kind(offer.kind)
+            self._answered(made)
+            return OfferReply(f"Okay, no more offers like that: {_KIND_WORDS.get(offer.kind, 'offers of that kind')}.")
         if made.answered or self.clock() - made.at > ANSWER_WINDOW_SECONDS:
             return None
         if _YES.match(normalized):

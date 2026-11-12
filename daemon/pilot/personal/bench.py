@@ -19,6 +19,8 @@ import json
 import sqlite3
 import sys
 import tempfile
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -104,8 +106,13 @@ async def run_case(case: dict[str, Any], filler: list[str], *, personal_layer: b
             except KeyError:
                 pass
 
-        profile = UserProfile(root / "user_profile.json", remember=remember, forget=forget)
-        talk = MemoryTalk(profile=lambda: profile)
+        days = [0.0]  # "next_day" and "later_days" steps move this run's clock forward
+
+        def clock() -> float:
+            return time.time() + days[0] * 86400
+
+        profile = UserProfile(root / "user_profile.json", remember=remember, forget=forget, clock=clock)
+        talk = MemoryTalk(profile=lambda: profile, now=lambda: datetime.fromtimestamp(clock()))
         personal = PersonalContext(profile=lambda: profile)
         model = RecordingModel()
 
@@ -121,6 +128,11 @@ async def run_case(case: dict[str, Any], filler: list[str], *, personal_layer: b
         )
         try:
             for turn in case["turns"]:
+                if turn.get("next_day") or turn.get("later_days"):
+                    # A day (or more) later: a new conversation, so only long-term memory can carry the fact.
+                    days[0] += float(turn.get("later_days") or 1)
+                    layer.memory.clear()
+                    continue
                 if turn.get("filler"):
                     for sentence in filler:
                         await profile.answer_async(sentence)

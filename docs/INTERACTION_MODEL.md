@@ -168,6 +168,8 @@ Two more context sources, added with Heliox Live and the personal layer (`pilot/
 | Up to five profile, goal and habit lines that share words with this utterance, plus the answer style and preferences (one line, at most 360 characters, picked by word overlap in code) | yes | yes, like the profile lines above | yes |
 | Offers ("You usually open Outlook about now"), as a Heliox turn | yes | yes (app names only, never window titles) | yes |
 | Answers to the getting-to-know questions (name, main use, how to talk) | never; parsed in code | never | never |
+| Speech heard near the microphone but not said to Heliox (Live may show a silent card for 90 s) | never | never | never |
+| A note said in passing ("my flight is on Friday"), kept until the day after its date or for a week | yes, as a profile line | yes, as a profile line | yes |
 | What those answers stored (the name, "I mainly use the computer for ...", the answer style, a speak-up or stay-quiet preference) | yes, as profile lines with later turns | yes, as profile lines with later turns | yes |
 
 "Why did you say that", "thanks", "not now", "don't mention these", "fix it", "remember that ...", "forget ...",

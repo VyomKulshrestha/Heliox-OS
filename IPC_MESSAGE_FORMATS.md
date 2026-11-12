@@ -551,10 +551,13 @@ than a minute is logged (`{"started_at", "ended_at", "seconds", "reason"}`, kept
 question on short or detailed answers and speaking up or staying quiet. Each can be skipped; parsed in code, never
 sent to a model. By voice or chat it starts with "get to know me" or from the intro offer card.
 
-- `getting_to_know {action: "status"}` -> `{status, active, profile_empty}`.
+- `getting_to_know {action: "status"}` -> `{status, active, profile_empty, intro}`; `intro` is false when the
+  person turned the questions off in Settings.
 - `getting_to_know {action: "start"}` -> `{status, question}`; the question also arrives as a `voice_result`
   chat message (spoken only while voice listening is on), and the answers are typed or said in the chat. When the
   questions are already open it changes nothing and returns the waiting question with `already_active: true`.
+  It asks nothing (`question: ""`, `skipped: "profile"` or `"intro_off"`) when the profile already has something
+  in it or the questions are turned off.
 - `getting_to_know {action: "stop"}` -> `{status, reply}`.
 - `getting_to_know {action: "save", name?, use?, length?, speaking?}` (the form; `length` is `short` or
   `detailed`, `speaking` is `speak_up` or `quiet`; empty fields are skipped) -> `{status, stored: [{id, text}],

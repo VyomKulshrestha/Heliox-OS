@@ -7303,7 +7303,8 @@ class PilotServer:
         verdict = str(params.get("verdict", ""))
         if self._live is None or verdict not in ("helpful", "dismissed", "used_fix", "mute"):
             return {"status": "error", "message": "verdict must be helpful, dismissed, used_fix or mute"}
-        return await self._live.feedback(str(params.get("id", "")), verdict)
+        # A button on the card is the person's own answer: "Not now" holds that kind back as saying it does.
+        return await self._live.feedback(str(params.get("id", "")), verdict, from_person=True)
 
     async def _handle_live_explain(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         if self._live is None:

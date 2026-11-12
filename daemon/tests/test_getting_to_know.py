@@ -142,7 +142,7 @@ async def test_by_voice_or_chat_and_from_the_app(tmp_path):
     assert again == {"status": "ok", "question": QUESTIONS[0], "already_active": True}
     assert server._broadcast_notification.await_count == 1  # the second start sent nothing
     status = await server._handle_getting_to_know({"action": "status"}, None)
-    assert status == {"status": "ok", "active": True, "profile_empty": True}
+    assert status == {"status": "ok", "active": True, "profile_empty": True, "intro": True}
     assert await server._control_reply("call me Sam") == QUESTIONS[1]
     assert await server._control_reply("skip") == QUESTIONS[2]
     await server._control_reply("stay quiet unless I ask")

@@ -122,6 +122,12 @@ class Score:
     waits: list[float] = field(default_factory=list)
     learned_mid_sentence_seconds: float = 0.0
     details: list[dict[str, Any]] = field(default_factory=list)
+    # Where the slip was: "typed" (the focused field), "speech" (said to Heliox) or "screen" (read off the screen),
+    # each [expected, caught, false alarms].
+    by_where: dict[str, list[int]] = field(default_factory=dict)
+
+    def where(self, name: str) -> list[int]:
+        return self.by_where.setdefault(name, [0, 0, 0])
 
     @property
     def precision(self) -> float:
@@ -156,6 +162,7 @@ class Score:
             "cut_off_rate": round(self.cut_off_rate, 3),
             "median_wait_seconds": self.median_wait,
             "learned_mid_sentence_seconds": self.learned_mid_sentence_seconds,
+            "by_where": {k: {"expected": v[0], "caught": v[1], "false": v[2]} for k, v in self.by_where.items()},
             "details": self.details,
         }
 
@@ -185,7 +192,7 @@ def validate(scenario: dict[str, Any], where: str = "") -> None:
         raise ValueError(f"{where}: {name}: needs steps")
     allowed = {
         "type", "pause", "replace", "paste", "send", "say", "label", "seconds", "switch", "text", "delete", "notice",
-        "source", "converse", "call", "reply",
+        "source", "converse", "call", "reply", "screen",
     }  # fmt: skip
     for step in steps:
         if not isinstance(step, dict) or not set(step) <= allowed:
@@ -257,6 +264,29 @@ def expand(scenario: dict[str, Any], persona: Persona, rng: random.Random) -> li
         t += seconds
     script.append(Step(t, t + SETTLE_SECONDS, "done", "pause", seconds=SETTLE_SECONDS))
     return script
+
+
+def where_of(scenario: dict[str, Any]) -> str:
+    """Where the scenario's slips are: on screen, said aloud (only speech steps), or typed."""
+    if scenario.get("screen"):
+        return "screen"
+    steps = scenario.get("steps", [])
+    if any("say" in step for step in steps) and not any("type" in step or "paste" in step for step in steps):
+        return "speech"
+    return "typed"
+
+
+def by_where_table(scores: list[Score]) -> str:
+    lines = [f"{'policy':<9} {'persona':<8} " + "  ".join(f"{w:<22}" for w in ("typed", "speech", "screen"))]
+    for s in scores:
+        cells = []
+        for w in ("typed", "speech", "screen"):
+            exp, caught, false = s.by_where.get(w, [0, 0, 0])
+            recall = caught / exp if exp else 1.0
+            precision = caught / (caught + false) if caught + false else 1.0
+            cells.append(f"{caught}/{exp} P{precision:.2f} R{recall:.2f}".ljust(22))
+        lines.append(f"{s.policy:<9} {s.persona:<8} " + "  ".join(cells))
+    return "\n".join(lines)
 
 
 def warm_up(persona: Persona) -> dict[str, Any]:
@@ -417,7 +447,9 @@ async def run(
             return None
         app, _, title = session.window.partition("|")
         # Page text is passed on here (the real reader never sends it) to show the engine ignores it anyway.
-        return Observation(text=session.doc, app=app, title=title, source="focused_field", editable=session.editable)
+        # "screen": true scenarios are read off the screen (OCR), where only errors are checked.
+        source = "screen_ocr" if session.scenario.get("screen") else "focused_field"
+        return Observation(text=session.doc, app=app, title=title, source=source, editable=session.editable)
 
     async def emit(event: str, payload: dict[str, Any]) -> None:
         if event == "live_interjection":
@@ -497,6 +529,7 @@ async def run(
                     score.deliveries += 1
                     score.catches += int(hit)
                     score.false_alarms += int(not hit)
+                    score.where(where_of(scenario))[1 if hit else 2] += 1
                     if busy and at not in cut_moments:
                         cut_moments.add(at)
                         score.cut_offs += 1
@@ -522,6 +555,7 @@ async def run(
             clock["t"] = round(clock["t"] + TICK_SECONDS, 3)
         if scored:
             score.expected += len(scenario.get("expect", []))
+            score.where(where_of(scenario))[0] += len(scenario.get("expect", []))
             score.missed += len(expected)
             for kind in expected:
                 score.details.append({"scenario": scenario["name"], "kind": kind, "missed": True})
@@ -595,6 +629,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"Heliox Live Bench: {len(scenarios)} scenarios, level {args.level}")
     print(table(scores))
+    print("\nBy where the slip was (caught/expected, precision, recall):")
+    print(by_where_table(scores))
     if args.json:
         args.json.write_text(json.dumps([s.as_dict() for s in scores], indent=2), encoding="utf-8")
     return 0

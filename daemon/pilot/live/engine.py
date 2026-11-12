@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
 import logging
 import re
 import time
@@ -98,6 +99,8 @@ NOTICE_SOURCES = frozenset({"keystroke"})
 NOTICE_QUIET_SECONDS = 3600.0
 # "Not now" holds that kind of catch back this long (urgent risks still show). "Don't mention these" mutes it.
 SNOOZE_SECONDS = 1800.0
+# How long a card from speech not said to Heliox keeps the words it quotes (in memory; never on disk).
+OVERHEARD_KEEP_SECONDS = REPLY_WINDOW_SECONDS
 # After a call ends, this long before the held catches are said: people say goodbye and breathe first.
 AFTER_CALL_SECONDS = 5.0
 # A speech outcome that means the remark was not heard; it must not count against the spoken rate limit.
@@ -265,18 +268,18 @@ _THANKS = re.compile(
     r"|oh thanks|good spot|well spotted)$"
 )
 _DISMISS = re.compile(
-    r"^(?:not now|not right now|later|maybe later|ignore (?:it|that)|i know|i know that|that'?s fine|it'?s fine"
+    r"^(?:not now|not right now|later|maybe later|ignore (?:it|that)|i know|i know that|that(?:'| )?s fine|it(?:'| )?s fine"
     r"|never mind|leave it|not now thanks|no thanks)$"
 )
 _MUTE = re.compile(
-    r"^(?:please )?(?:don'?t|do not|never) (?:mention|point out|tell me about|bring up|flag) "
+    r"^(?:please )?(?:don(?:'| )?t|do not|never) (?:mention|point out|tell me about|bring up|flag) "
     r"(?:these|those|this|that|it|them|that kind of thing|things like that)(?: again| any more| anymore)?"
     r"(?: please)?$"
     r"|^(?:please )?stop (?:mentioning|pointing out|flagging) (?:these|those|this|that|them)(?: please)?$"
 )
 _WHY = re.compile(
-    r"^(?:why|why is that|why not|how come|what do you mean|what did you mean|explain|explain that|what'?s wrong"
-    r"|what'?s wrong with (?:it|that)|why did you say (?:that|it)|why did you mention (?:that|it)"
+    r"^(?:why|why is that|why not|how come|what do you mean|what did you mean|explain|explain that|what(?:'| )?s wrong"
+    r"|what(?:'| )?s wrong with (?:it|that)|why did you say (?:that|it)|why did you mention (?:that|it)"
     r"|why are you telling me (?:that|this)|what was that|what was that about|what did you notice"
     r"|what are you talking about|what do you mean by that)$"
 )
@@ -325,6 +328,8 @@ class LiveCompanion:
         self._reminders = reminders
         self._window_exists = window_exists
         self.relevance = Relevance(relevance_path)
+        # "Not now" lasts half an hour, also across a restart: kept next to the relevance file, in wall-clock time.
+        self._snooze_path = relevance_path.with_name("live_snoozed.json") if relevance_path else None
         self.timing = PersonalTiming(timing_path)
         self.stuck = StuckWatcher(clock)
         self.grounded = grounded  # pilot.live.grounded.GroundedChecker, or None
@@ -360,6 +365,7 @@ class LiveCompanion:
         self._call_ended_at = float("-inf")
         self._needed_pause: float | None = None  # the wait the last decision required
         self._snoozed: dict[str, float] = {}
+        self._snooze_loaded = False
         # What the person typed lately, per field: (when, app, text, the text it held before), for said_vs_typed.
         self._typed_log: OrderedDict[str, tuple[float, str, str, str]] = (
             OrderedDict()
@@ -589,6 +595,10 @@ class LiveCompanion:
         existing = self._pending.get(correction.key)
         if existing:
             existing.last_seen = now
+            if not silent:
+                # Heard first while the listener was still deciding, then dispatched as said to Heliox: it was
+                # addressed after all, so it may be spoken and is no longer an overheard sentence.
+                existing.silent = False
             # Keep the latest reading: a slip first seen at the end of the text stops trailing once they type on.
             existing.correction = correction
             return
@@ -747,7 +757,21 @@ class LiveCompanion:
         now = self._clock() if now is None else now
         return bool(self._call) or now - self._call_ended_at < AFTER_CALL_SECONDS
 
+    def _forget_overheard(self, now: float) -> None:
+        """Words from speech not said to Heliox are kept only while the card can be asked about. After that the card
+        keeps its kind (for "thanks" and "not now" counts) but loses what was said."""
+        for entry in self._recent:
+            if entry.get("overheard") and not entry.get("forgotten") and now - entry["at"] > OVERHEARD_KEEP_SECONDS:
+                for field in ("title", "message", "detail", "evidence", "fix"):
+                    entry[field] = ""
+                entry["forgotten"] = True
+                # The card in the app goes too, so the words are not left on screen either.
+                asyncio.ensure_future(
+                    self._emit("live_interjection_withdrawn", {"id": entry["id"], "reason": "expired"})
+                )
+
     def _expire(self, now: float) -> None:
+        self._forget_overheard(now)
         if now - self._last_window_check >= WINDOW_CHECK_SECONDS:
             self._last_window_check = now
             for key, item in list(self._pending.items()):
@@ -898,6 +922,9 @@ class LiveCompanion:
                 "seq": next_seq(),  # order against offers and the floor, never by clock
                 "noted_seq": item.noted_seq,
                 "remark": remark if spoken else 0,
+                # From speech that was not said to Heliox: never shared with a model, and its words are dropped
+                # from memory after OVERHEARD_KEEP_SECONDS (see _forget_overheard).
+                "overheard": item.silent,
             }
         )
         self._last_shown_at = now
@@ -922,12 +949,44 @@ class LiveCompanion:
         return bool(self.floor.live_may_speak(about_this_turn=about))
 
     def snoozed_kinds(self, now: float | None = None) -> frozenset[str]:
+        if not self._snooze_loaded:
+            self._load_snoozes()
         now = self._clock() if now is None else now
         self._snoozed = {kind: until for kind, until in self._snoozed.items() if until > now}
         return frozenset(self._snoozed)
 
     def snooze(self, kind: str, seconds: float = SNOOZE_SECONDS) -> None:
+        if not self._snooze_loaded:
+            self._load_snoozes()
         self._snoozed[kind] = self._clock() + seconds
+        self._save_snoozes()
+
+    def _load_snoozes(self) -> None:
+        """Snoozes from the last run, turned from wall-clock expiry back into this run's clock."""
+        self._snooze_loaded = True
+        if self._snooze_path is None or not self._snooze_path.exists():
+            return
+        try:
+            raw = json.loads(self._snooze_path.read_text(encoding="utf-8"))
+            left = {str(k): float(v) - self._wallclock().timestamp() for k, v in raw.items()}
+        except (OSError, ValueError, TypeError, AttributeError):
+            logger.warning("Ignoring an unreadable Live snooze file", exc_info=True)
+            return
+        now = self._clock()
+        for kind, seconds in left.items():
+            if 0 < seconds <= SNOOZE_SECONDS:
+                self._snoozed[kind] = max(self._snoozed.get(kind, 0.0), now + seconds)
+
+    def _save_snoozes(self) -> None:
+        if self._snooze_path is None:
+            return
+        now, wall = self._clock(), self._wallclock().timestamp()
+        data = {kind: wall + (until - now) for kind, until in self._snoozed.items() if until > now}
+        try:
+            self._snooze_path.parent.mkdir(parents=True, exist_ok=True)
+            self._snooze_path.write_text(json.dumps(data), encoding="utf-8")
+        except OSError:
+            logger.warning("Could not save Live snoozes", exc_info=True)
 
     def current_observation(self) -> Observation | None:
         """Live's latest look at the focused window (already through Live's privacy gates), or None when Live is
@@ -963,10 +1022,14 @@ class LiveCompanion:
     def _find(self, correction_id: str) -> dict[str, Any] | None:
         return next((entry for entry in self._recent if entry["id"] == correction_id), None)
 
-    async def feedback(self, correction_id: str, verdict: str) -> dict[str, Any]:
+    async def feedback(self, correction_id: str, verdict: str, *, from_person: bool = False) -> dict[str, Any]:
+        """``from_person``: the person pressed the card's button (or said it), as opposed to a card that simply went
+        unread. "Not now" from the person holds that kind back, like saying it."""
         entry = self._find(correction_id)
         if entry is None:
             return {"status": "error", "message": "That correction is no longer available."}
+        if from_person and verdict == "dismissed" and entry.get("urgency") != URGENT:
+            self.snooze(entry["kind"])
         if verdict == "mute":
             self.relevance.update(entry["kind"], "dismissed")
             if self._mute_kind:
@@ -985,9 +1048,9 @@ class LiveCompanion:
             if correction_id:
                 return "That correction is no longer available."
             return "Nothing to explain: Live hasn't raised anything in the last minute and a half."
-        parts = [say(entry["title"], entry["message"], entry.get("source", ""))]
-        if entry.get("detail"):
-            parts.append(entry["detail"])
+        if entry.get("forgotten"):
+            return "That one came from something not said to me, so I no longer keep its words."
+        parts = [because(entry)]  # the same answer as "why did you say that", by voice or on the card
         if entry.get("fix") and entry.get("fix_kind") in ("replace", "command"):
             parts.append(f"The fix: {entry['fix']}.")
         return " ".join(parts)
@@ -1016,9 +1079,8 @@ class LiveCompanion:
                 f"Okay, I won't mention these again: {label}. You can turn them back on in Settings, under Live."
             )
         if _DISMISS.match(normalized):
-            await self.feedback(entry["id"], "dismissed")
+            await self.feedback(entry["id"], "dismissed", from_person=True)
             if entry.get("urgency") != URGENT:
-                self.snooze(entry["kind"])
                 return LiveReply("Okay. I won't bring that kind of thing up for the next half hour.")
             return LiveReply("Okay, leaving it.")
         if _FIX.match(normalized):
@@ -1065,6 +1127,8 @@ class LiveCompanion:
         """Drop learned state from memory after its file was deleted (Your data)."""
         if what == "live":
             self.relevance.counts = {}
+            self._snoozed = {}
+            self._save_snoozes()
         elif what == "live_timing":
             self.timing.forget()
 

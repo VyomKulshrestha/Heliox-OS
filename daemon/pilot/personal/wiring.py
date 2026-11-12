@@ -404,6 +404,12 @@ async def getting_to_know_rpc(server: Any, params: dict[str, Any]) -> dict[str, 
     if action == "start":
         if gtk.active:  # already asking: a second start (the first-run screen, a second click) changes nothing
             return {"status": "ok", "question": gtk.current_question(), "already_active": True}
+        # The first-run screen asks once after setup. It must not ask someone who already has a profile or who
+        # turned the questions off in Settings; a person who asks ("get to know me") goes through the chat instead.
+        if not profile.is_empty():
+            return {"status": "ok", "question": "", "skipped": "profile"}
+        if not offers_for(server).status().get("intro", True):
+            return {"status": "ok", "question": "", "skipped": "intro_off"}
         return {"status": "ok", "question": await start_getting_to_know(server)}
     if action == "stop":
         return {"status": "ok", "reply": gtk.stop()}
@@ -421,7 +427,12 @@ async def getting_to_know_rpc(server: Any, params: dict[str, Any]) -> dict[str, 
         return {"status": "ok", "profile_empty": profile.is_empty()}
     if action != "status":
         return {"status": "error", "message": "action must be status, start, stop, save or remove"}
-    return {"status": "ok", "active": gtk.active, "profile_empty": profile.is_empty()}
+    return {
+        "status": "ok",
+        "active": gtk.active,
+        "profile_empty": profile.is_empty(),
+        "intro": bool(offers_for(server).status().get("intro", True)),
+    }
 
 
 __all__ = [

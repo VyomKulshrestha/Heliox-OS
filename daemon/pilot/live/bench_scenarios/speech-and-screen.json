@@ -1,0 +1,85 @@
+[
+  {
+    "name": "speech: a promise with the weekday misheard by the recogniser (\"by frida\")",
+    "app": "",
+    "title": "",
+    "expect": ["commitment"],
+    "steps": [{"say": "I'll send pria the deck by frida", "seconds": 2.4}, {"pause": 4.0, "label": "done"}]
+  },
+  {
+    "name": "speech: a wrong weekday with the weekday misheard (\"on wensday the twelfth\")",
+    "app": "",
+    "title": "",
+    "expect": ["weekday_date"],
+    "steps": [{"say": "remind me on wensday the twelfth of november", "seconds": 2.8}, {"pause": 4.0, "label": "done"}]
+  },
+  {
+    "name": "speech: a misheard weekday with no month (\"for thirsday the fourteenth\")",
+    "app": "",
+    "title": "",
+    "expect": ["weekday_date"],
+    "steps": [{"say": "book it for thirsday the fourteenth", "seconds": 2.4}, {"pause": 4.0, "label": "done"}]
+  },
+  {
+    "name": "speech: a person called Frida is not a Friday (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [{"say": "have lunch with Frida after the stand up", "seconds": 2.4}, {"pause": 4.0, "label": "done"}]
+  },
+  {
+    "name": "speech: the right weekday, misheard (must not fire)",
+    "app": "",
+    "title": "",
+    "expect": [],
+    "steps": [{"say": "put the review on thirsday the twelfth of november", "seconds": 2.8}, {"pause": 4.0, "label": "done"}]
+  },
+  {
+    "name": "screen: a port already in use, read off a terminal with no readable field",
+    "app": "WindowsTerminal.exe",
+    "title": "npm run dev",
+    "screen": true,
+    "editable": true,
+    "expect": ["error_on_screen"],
+    "steps": [
+      {"paste": "> app@1.0.0 dev\nError: listen EADDRINUSE: address already in use :::4000"},
+      {"pause": 9.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "screen: a missing Python package in a browser build log",
+    "app": "chrome.exe",
+    "title": "Build #212 failed - CI",
+    "screen": true,
+    "editable": true,
+    "expect": ["error_on_screen"],
+    "steps": [
+      {"paste": "Step 4/9 : RUN python -m app\nModuleNotFoundError: No module named 'httpx'"},
+      {"pause": 9.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "screen: an article about errors is not an error (must not fire)",
+    "app": "chrome.exe",
+    "title": "Errors and exceptions - Python docs",
+    "screen": true,
+    "editable": true,
+    "expect": [],
+    "steps": [
+      {"paste": "How to handle errors in Python: wrap the call in try and except, and log what went wrong."},
+      {"pause": 9.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "screen: a wrong weekday read off the screen is not checked (must not fire)",
+    "app": "chrome.exe",
+    "title": "Team calendar",
+    "screen": true,
+    "editable": true,
+    "expect": [],
+    "steps": [
+      {"paste": "Offsite: Tuesday, 14 November, lake house"},
+      {"pause": 9.0, "label": "done"}
+    ]
+  }
+]

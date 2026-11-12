@@ -72,13 +72,15 @@ async def test_a_spoken_slip_is_caught_and_said_back(tmp_path):
 @pytest.mark.asyncio
 async def test_a_spoken_promise_gets_the_reminder_offer(tmp_path):
     live, clock, events, _ = build(tmp_path)
-    live.offer_speech("I'll send pria the deck by frida")  # what the recogniser made of it: no deadline, no offer
-    await run_for(live, clock, 1)
-    assert cards(events) == []
-    live.offer_speech("I'll send Priya the deck by Friday")
+    # What the recogniser made of it: "frida" after "by" is read as Friday (pilot.live.spoken), so the offer comes.
+    live.offer_speech("I'll send pria the deck by frida")
     await run_for(live, clock, 1)
     [card] = cards(events)
     assert card["kind"] == "commitment" and card["fix_kind"] == "ask" and "Friday" in card["fix"]
+    assert card["evidence"] == "I'll send pria the deck by frida"  # the card quotes what was heard
+    live.offer_speech("lunch with Frida after the stand up")  # a person called Frida is not a Friday
+    await run_for(live, clock, 1)
+    assert len(cards(events)) == 1
 
 
 @pytest.mark.asyncio
