@@ -76,4 +76,18 @@ describe("RunStatus", () => {
     expect(container.querySelector(".run-status")?.classList.contains("waiting")).toBe(true);
     expect(screen.getByText("It is 31 degrees")).toBeTruthy();
   });
+
+  it("renders a streamed reply as markdown while it arrives", async () => {
+    const fence = "`".repeat(3);
+    setSession({
+      phase: "generating",
+      streamingText: `Two ways:\n- **merge** keeps history\n${fence}bash\ngit rebase main`,
+    });
+    const { container } = render(RunStatus);
+    const stream = container.querySelector(".stream");
+    expect(stream?.querySelector("li strong")?.textContent).toBe("merge");
+    expect(stream?.querySelector("pre code")?.textContent).toContain("git rebase main");
+    expect(stream?.textContent).not.toContain(fence);
+    expect(stream?.querySelector(".caret")).toBeTruthy();
+  });
 });

@@ -266,7 +266,9 @@ is the task result, rendered as markdown as before. A typed reply keeps its mark
 cleaned for the ear; it uses a prompt for a chat window, has no holding phrase and no sentence limit. Requests
 take the same hand-over and the same quick road, with the same rules; a typed request whose plan needs approval
 opens the approval dialog exactly as before. Messages with attached files, revisions and expanded shortcuts keep
-the planner road. No UI code changed, so no visual baseline changes.
+the planner road. While the reply streams, the chat view renders it as markdown as it grows (an open code
+block is closed and a half-typed bold or code marker is held back until it closes), so it does not jump when it
+ends.
 
 ### When the model fails
 
@@ -357,9 +359,30 @@ The quick road, dispatch to action started: 0.02 s median over ten allow-listed 
 (2.2 s for the first in a fresh process, which loads the world model's weights), and 0.024 s median over three
 real ones on Windows (Notepad opened; battery and disk read), against 10 to 15 s for a planned step before.
 
+### The conversation eval
+
+`python -m benchmarks.conversation_eval` (in `daemon/`) runs 41 turns in 10 scripted conversations through the
+real layer and the configured fast model (`--provider` and `--model` pick another), with a silent sink. Every
+check is decided in code: length (one to three spoken sentences), nothing unspeakable (markdown, paths, links,
+symbols), no stock opener and never the same opening twice running, speaking to the person rather than about them,
+a pronoun resolved from the turn before, the screen described only from what the context holds, "I don't know"
+when the context cannot answer, a misheard line answered with a question and never an action, voice never
+approving, and the hand-over decision on a labelled set (talk stays talk; a request produces a hand-over; the
+quick road only where expected, never for a dangerous request). It prints the pass rate per check, the hand-over
+precision and recall, every failure quoted, the cost, and the first-sentence time, which it only quotes when the
+machine is not busy. About $0.004 a run on Claude Haiku 5.5.
+
+First run (12 November): every check passed except one hand-over. "Put on some music" was answered in words, and
+the words were the model thinking aloud ("The person asked to put on music, which is ambiguous... so I'll ask one
+short question."). Fixed in the prompt (speak to the person, never about them, never narrate; use their name
+rarely), in the post-processing (such sentences are dropped like a claimed action) and in the router ("put on X" is
+a request). A second run lost the network part-way and showed that the short offline line was the same on every
+turn; it now alternates. Third run: 41 turns, hand-over precision 1.0 and recall 1.0, every check at 100% except
+one repeated opening ("I can't..." on two honest don't-know answers in a row), $0.0038. The three runs cost $0.009
+in all. First-sentence times are owed: the machine was at 76 to 78% CPU with about 1 GB free.
+
 ## 4. Not in this pass
 
-* While a typed reply streams, the chat view shows it as plain text; it is rendered as markdown when it ends.
 * The quick road covers single actions only; anything with two steps goes to the planner.
 * The planner does not see the conversation turns held here; it gets the written-out request instead.
 * The existing Claude provider (`models/cloud.py`) still calls the API over plain HTTP, non-streamed.

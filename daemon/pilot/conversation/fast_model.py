@@ -42,6 +42,7 @@ CREDIT_HOLD_SECONDS = 600.0  # an account out of credit does not refill in secon
 BUSY_HOLD_SECONDS = 20.0  # a rate limit without a Retry-After header
 WARM_EVERY_SECONDS = 45.0  # an idle HTTPS connection is usually kept about this long
 LOCAL_PROVIDERS = frozenset({"ollama", "local"})
+LOCAL_CONNECT_TIMEOUT = 0.5
 OPENAI_COMPATIBLE = frozenset({"openai", "openrouter", "meta"})
 
 
@@ -301,6 +302,7 @@ class HttpFastModel(_StreamingBase):
                 "messages": [{"role": "system", "content": system}, *messages],
                 "stream": True,
                 "options": {"num_predict": self.max_tokens},
+                "think": False,  # a spoken reply needs no reasoning trace (Ollama 0.9 and later)
             }
             if self.keep_alive is not None:
                 body["keep_alive"] = self.keep_alive
@@ -444,9 +446,12 @@ class HttpFastModel(_StreamingBase):
         usage = _Usage()
         finished = False
         try:
-            async with self._client.stream(
-                "POST", url, json=body, headers=headers, timeout=self.request_timeout
-            ) as resp:
+            import httpx
+
+            # A server on this machine accepts at once when it runs; Windows takes about 2 s to report a refused
+            # local connection, so the local wait for a connection is short.
+            timeout = httpx.Timeout(self.request_timeout, connect=LOCAL_CONNECT_TIMEOUT if self.local else 10.0)
+            async with self._client.stream("POST", url, json=body, headers=headers, timeout=timeout) as resp:
                 if resp.status_code != 200:
                     await resp.aread()
                     resp.raise_for_status()

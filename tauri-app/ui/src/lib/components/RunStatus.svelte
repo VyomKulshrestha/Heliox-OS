@@ -8,6 +8,7 @@
   import { _ } from "svelte-i18n";
   import { session } from "../stores/session";
   import { describePhase, formatElapsed, RUN_STAGES } from "../utils/phase";
+  import { renderStreamingMarkdown } from "../utils/markdown";
   import mark from "../../assets/heliox-mark.webp";
 
   const SHOW_ELAPSED_AFTER_S = 3;
@@ -64,7 +65,10 @@
     </ol>
 
     {#if $session.streamingText}
-      <p class="stream">{$session.streamingText}<span class="caret" aria-hidden="true"></span></p>
+      <!-- The reply as it arrives, rendered as it will look when complete (open code blocks and emphasis closed). -->
+      <div class="stream">
+        {@html renderStreamingMarkdown($session.streamingText)}<span class="caret" aria-hidden="true"></span>
+      </div>
     {/if}
   </div>
 </div>
@@ -227,8 +231,28 @@
     color: var(--text-primary);
     font-size: var(--text-base);
     line-height: 1.6;
-    white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  /* Rendered markdown while it streams: blocks sit flush, and the caret follows the last line of text. */
+  .stream :global(:is(p, pre, ul, ol, .hlx-code-wrapper)) {
+    margin: 0;
+  }
+
+  .stream :global(* + :is(p, pre, ul, ol, .hlx-code-wrapper)) {
+    margin-top: 0.5em;
+  }
+
+  .stream :global(:is(ul, ol)) {
+    padding-left: 1.25em;
+  }
+
+  .stream :global(p:last-of-type) {
+    display: inline;
+  }
+
+  .stream :global(code) {
+    font-family: var(--font-mono);
   }
 
   .caret {

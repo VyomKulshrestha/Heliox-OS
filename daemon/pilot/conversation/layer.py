@@ -98,6 +98,7 @@ FALLBACK_AGAIN = {
     "refused": "I can't help with that one.",
 }
 FALLBACK_AGAIN_DEFAULT = "I can't answer that without a language model."
+AGAIN_ALTERNATE = "Not without the language model, sorry."
 UNCLEAR_OFFLINE = "Sorry, I didn't catch that. Could you say it again?"
 HOLD_AFTER_SECONDS = 2.0  # no first sentence yet: a short holding phrase, so the wait is not silent
 HOLD_PHRASES = ("One moment.", "Let me think.", "Give me a second.")
@@ -184,6 +185,7 @@ class ConversationLayer:
         self.memory = ConversationMemory(clock=clock)
         self._active: asyncio.Task[Any] | None = None
         self._explained: set[str] = set()
+        self._last_fallback = ""
         self._background: set[asyncio.Task[Any]] = set()
         self._last_hold = ""
         self._hold_after = hold_after
@@ -250,15 +252,11 @@ class ConversationLayer:
         self.turns = [*self.turns[-19:], result]
         logger.info("Conversation turn routed as %s (%s)", decided.kind.value, decided.reason)
 
-        if decided.kind in (TurnKind.ACTION, TurnKind.LOCAL):
-            # LOCAL here means the server's own handlers declined it; the planner gets it as before.
-            intent = (
-                intent_from_route(decided, text)
-                if decided.kind is TurnKind.ACTION
-                else HandoverIntent(verb="", object="", words=text, request=text, source="router")
-            )
+        if decided.kind is TurnKind.ACTION:
             self.memory.add_user(text)
-            return self._hand_over(result, intent)
+            return self._hand_over(result, intent_from_route(decided, text))
+        # LOCAL here means the server's own handlers had no answer ("why did you say that?" with no card to
+        # explain): it is talk, and the fast model answers from the conversation, as for any question.
         if decided.kind is TurnKind.CONTROL:
             self.memory.add_user(text)
             await self._say_one(result, "Okay.", started)
@@ -483,12 +481,16 @@ class ConversationLayer:
             sentence = UNCLEAR_OFFLINE
         elif reason in self._explained:
             sentence = FALLBACK_AGAIN.get(reason, FALLBACK_AGAIN_DEFAULT)
+            if sentence == self._last_fallback:
+                # Never the same line twice running: the short form, then the plain one, in turn.
+                sentence = AGAIN_ALTERNATE if sentence != AGAIN_ALTERNATE else FALLBACK_AGAIN_DEFAULT
         else:
             sentence = FALLBACK.get(reason, FALLBACK["error"]).replace(
                 "{provider}", PROVIDER_NAMES.get(provider, "model provider's")
             )
             if reason not in ("busy", "refused", "error"):
                 self._explained.add(reason)
+        self._last_fallback = sentence
         await self._say_one(result, sentence, started)
         result.done = True
 
@@ -532,6 +534,15 @@ class ConversationLayer:
             intent.source,
         )
         return result
+
+    def acknowledgement_for(self, result: TurnResult) -> str:
+        """What the person hears first for a hand-over (the same sentence keep_company says)."""
+        if result.intent is None:
+            return ""
+        ack = (quick_acknowledgement(result.quick, result.intent.words) if result.quick is not None else "") or (
+            acknowledgement(result.intent, last=self._last_ack) if result.intent.verb or result.intent.say else ""
+        )
+        return ack or "Working on it."
 
     def _start_company(self, result: TurnResult) -> asyncio.Task[None]:
         assert result.intent is not None

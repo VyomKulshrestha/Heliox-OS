@@ -168,7 +168,7 @@ def test_a_local_model_streams_from_the_local_server_and_nothing_leaves_the_mach
     assert asyncio.run(collect(model.stream("sys", [{"role": "user", "content": "hi"}]))) == ["Local ", "reply."]
     _m, url, body, headers = client.sent
     assert url == "http://127.0.0.1:11434/api/chat" and "Authorization" not in headers
-    assert body["options"] == {"num_predict": 400}
+    assert body["options"] == {"num_predict": 400} and body["think"] is False
     assert budget.checked == []  # a local model is never blocked by the money budget
     assert budget.records == [("ollama", "llama3.1:8b", 70, 5, "reported")]
 

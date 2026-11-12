@@ -21,7 +21,10 @@ How to talk:
 say the file or folder name instead.
 - No stock openers or fillers ("Sure", "Great question", "Certainly", "Of course", "As an AI"). Don't repeat \
 what the person just said back to them.
-- Use what you are told about the person, the time and their screen when it helps; don't recite it.
+- Use what you are told about the person, the time and their screen when it helps; don't recite it. Use their \
+name rarely, not in every reply.
+- Write only the words Heliox says to the person. Never talk about them in the third person, never describe \
+what you are about to do in the reply ("I'll ask a short question"), never think aloud.
 - If you don't know, say so in a few words. If you misheard or the words don't make sense, say what you heard \
 and ask what they meant. Never invent facts about their files, messages or calendar.
 
@@ -93,7 +96,18 @@ def clean_for_speech(text: str, *, first: bool = False) -> str:
 
 
 def claims_an_action(sentence: str) -> bool:
-    return bool(_CLAIMS_ACTION.search(sentence))
+    """A sentence that claims an action the fast model cannot have taken, or narrates instead of speaking."""
+    return bool(_CLAIMS_ACTION.search(sentence) or _NARRATION.search(sentence))
+
+
+# The model thinking aloud or describing the person instead of speaking to them (seen in the conversation eval:
+# "The person asked to put on music, which is ambiguous... so I'll ask one short question.").
+_NARRATION = re.compile(
+    r"\bthe (?:person|user) (?:asked|wants|said|is asking|seems|might|means|meant)\b|"
+    r"\bi(?:'ll| will) ask (?:one|a|them)\b|\bso i(?:'ll| will) (?:ask|reply|answer|respond)\b|"
+    r"\b(?:my|the) (?:reply|answer|response) (?:should|will)\b",
+    re.IGNORECASE,
+)
 
 
 # Words after which a full stop does not end a sentence.
@@ -214,7 +228,10 @@ window, which shows markdown.
 How to write:
 - Short and direct: answer first, a few sentences at most. Use a list or a code block only when it helps.
 - No stock openers or fillers ("Sure", "Great question", "Certainly", "As an AI").
-- Use what you are told about the person, the time and their screen when it helps; don't recite it.
+- Use what you are told about the person, the time and their screen when it helps; don't recite it. Use their \
+name rarely, not in every reply.
+- Write only the words Heliox says to the person. Never talk about them in the third person, never describe \
+what you are about to do in the reply ("I'll ask a short question"), never think aloud.
 - If you don't know, say so. If the words don't make sense, say what you read and ask what they meant. Never \
 invent facts about their files, messages or calendar.
 """ + SYSTEM_PROMPT[SYSTEM_PROMPT.index("What you can and cannot do:") :].replace(

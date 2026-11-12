@@ -368,6 +368,9 @@ def route(text: str, *, conversation_open: bool = False) -> Route:
         return Route(TurnKind.ACTION, "a question only the computer can answer", verb="check", target=body)
 
     verb = words[0]
+    if verb == "put" and words[1:2] == ["on"] and len(words) > 2:
+        # "Put on some music", "put on my playlist": a request, worked out by the planner.
+        return Route(TurnKind.ACTION, "put on", verb="play", target=" ".join(words[2:]))
     if verb in ACTION_VERBS:
         target = " ".join(words[1:])
         if verb == "look" and not re.match(r"^(?:for|up)\b", target):

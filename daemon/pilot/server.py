@@ -3344,26 +3344,6 @@ class PilotServer:
                     "explanation": timeline_answer,
                 }
 
-        # Typed chat goes through the conversation layer as voice does: talk is answered there (streamed into the
-        # chat view), a request comes back as the planner input, with a quick plan when it is one simple step.
-        # Only typed sources ("interactive", "text", "chat"); voice went through the layer in its own dispatch.
-        if not attachments and review_inputs is None and expansion is None and self._conversation_ready():
-            from pilot.conversation.adapters import TYPED_SOURCES, typed_turn
-
-            if interaction_source in TYPED_SOURCES:
-                # The chat view shows it is working from the first notification, as on the planner road.
-                await ws.send(_notification("status", {"phase": "receiving input"}))
-            typed = (
-                await typed_turn(self, str(user_input), ws, _notification)
-                if interaction_source in TYPED_SOURCES
-                else None
-            )
-            if typed is not None and typed.done and typed.response is not None:
-                await _emit_task_complete("success", typed.response["message"])
-                return typed.response
-            if typed is not None:
-                user_input, quick_plan = typed.planner_input, typed.quick_plan or quick_plan
-
         async def _prepare_durable_replan(reason: str) -> None:
             if self._durable_tasks is None or not self._active_task_id:
                 return
@@ -3567,6 +3547,30 @@ class PilotServer:
             await emit.phase_complete(
                 "user_input", "user_input_received", {"length": len(user_input)}, parent_id=input_phase
             )
+
+        # Typed chat goes through the conversation layer as voice does: talk is answered there (streamed into the
+        # chat view), a request comes back as the planner input, with a quick plan when it is one simple step.
+        # Only typed sources ("interactive", "text", "chat"); voice went through the layer in its own dispatch. It
+        # runs after the request is recorded and the first status is sent, so an answered turn ends like the
+        # planner's conversational reply: stored in the session history, the reply sent, the task completed.
+        if not attachments and review_inputs is None and expansion is None and self._conversation_ready():
+            from pilot.conversation.adapters import TYPED_SOURCES, typed_turn
+
+            typed = (
+                await typed_turn(self, str(user_input), ws, _notification)
+                if interaction_source in TYPED_SOURCES
+                else None
+            )
+            if typed is not None and typed.done and typed.response is not None:
+                reply = typed.response["message"]
+                if self._memory:
+                    reply_plan = ActionPlan(actions=[], explanation=reply, raw_input=request_text)
+                    self._spawn_post_execution_task(_record_memory(reply_plan, []), self._memory_record_tasks, "memory")
+                await ws.send(_notification("conversation_response", {"explanation": reply}))
+                await _emit_task_complete("success", reply)
+                return typed.response
+            if typed is not None:
+                user_input, quick_plan = typed.planner_input, typed.quick_plan or quick_plan
 
         mem_phase = ""
         await ws.send(_notification("status", {"phase": "recalling memory"}))

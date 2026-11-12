@@ -4,7 +4,8 @@ Nothing here needs an audio, speech or model package at import.
 """
 
 from pilot.conversation.adapters import layer_for
+from pilot.conversation.bench import bench_reply
 from pilot.conversation.layer import ConversationLayer, TurnResult
 from pilot.conversation.router import Route, TurnKind, route
 
-__all__ = ["ConversationLayer", "Route", "TurnKind", "TurnResult", "layer_for", "route"]
+__all__ = ["ConversationLayer", "bench_reply", "Route", "TurnKind", "TurnResult", "layer_for", "route"]
