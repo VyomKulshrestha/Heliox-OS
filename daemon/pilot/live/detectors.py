@@ -30,6 +30,7 @@ KINDS = (
     "community_catch",  # pilot.live.catches: rules from catch packs that passed the precision gate
     "stuck",  # pilot.live.stuck: offers help when the person seems stuck (not a detector over one text)
     "commitment",  # pilot.live.commitments: a promise with a deadline, with an offer to set a reminder
+    "said_vs_typed",  # pilot.live.crosscheck: a date said to Heliox against the date just typed for the same thing
 )
 
 KIND_LABELS = {
@@ -45,6 +46,7 @@ KIND_LABELS = {
     "community_catch": "Catches from catch packs",
     "stuck": "Offers to help when you seem stuck",
     "commitment": "Promises you make, with a reminder",
+    "said_vs_typed": "A date you say that differs from the one you just wrote",
 }
 # Kinds found by a model rather than a rule: still there while their quoted evidence is in the text.
 MODEL_KINDS = frozenset({"personal_fact"})

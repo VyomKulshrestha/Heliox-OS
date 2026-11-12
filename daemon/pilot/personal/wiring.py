@@ -147,7 +147,7 @@ async def live_speak(server: Any, text: str, urgent: bool) -> str:
     if floor is not None and live is not None:
         entries = live.last_spoken_entries()
         about = bool(entries) and all(
-            e.get("source") == "speech" and floor.about_this_turn(float(e.get("at", 0.0))) for e in entries
+            e.get("source") == "speech" and floor.about_this_turn(int(e.get("noted_seq") or 0)) for e in entries
         )
         if not floor.live_may_speak(about_this_turn=about):
             logger.info("Live remark held as a card: a conversation turn has the floor")
@@ -285,11 +285,11 @@ async def offer_reply(server: Any, text: str) -> str | None:
         return None
     from pilot.workflows.routines import normalize_phrase
 
-    offered_at = offers.last_offered_at()
+    offered = offers.last_offered_seq()
     live = getattr(server, "_live", None)
     raised = live.last_raised() if live is not None else None
-    if offered_at is not None and raised and float(raised.get("at", 0.0)) > offered_at:
-        return None  # Live spoke since: "why?" and "thanks" are about that
+    if offered is not None and raised and int(raised.get("seq") or 0) > offered:
+        return None  # Live spoke since: "why?" and "thanks" are about that (ordered by sequence, not clock)
     latest = offers.latest()
     answer = offers.reply(normalize_phrase(text))
     if answer is None:
@@ -300,9 +300,14 @@ async def offer_reply(server: Any, text: str) -> str | None:
     return answer.reply
 
 
-async def _act_on(server: Any, answer: Any) -> None:
+async def _act_on(server: Any, answer: Any, *, from_card: bool = False) -> None:
+    from pilot.personal.offers import INTRO
+
     if answer.silence_all:
         await server._handle_update_config({"section": "suggestions", "values": {"offers": "off"}}, None)
+    if answer.request == INTRO.request and from_card:
+        await start_getting_to_know(server)  # in the chat, and aloud only when they use voice
+        return
     if answer.request:
         task = asyncio.ensure_future(server._voice_turn(answer.request))
         task.add_done_callback(lambda t: t.cancelled() or t.exception())
@@ -329,7 +334,7 @@ async def offers_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
         answer = offers.answer(str(params.get("id") or ""), str(params.get("answer") or ""))
         if answer is None:
             return {"status": "error", "message": "That offer is no longer available."}
-        await _act_on(server, answer)
+        await _act_on(server, answer, from_card=True)
         if params.get("answer") != "why":
             await server._broadcast_notification(
                 "offer_withdrawn", {"id": params.get("id"), "reason": params.get("answer")}
@@ -340,11 +345,86 @@ async def offers_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", **offers.status()}
 
 
+# ── getting to know the person (pilot.personal.getting_to_know) ──
+
+
+def getting_to_know_for(server: Any) -> Any:
+    gtk = getattr(server, "_getting_to_know", None)
+    if gtk is None:
+        from pilot.personal.getting_to_know import GettingToKnow
+
+        async def set_quiet(quiet: bool) -> None:
+            if not quiet:
+                return
+            await server._handle_update_config({"section": "suggestions", "values": {"offers": "off"}}, None)
+            await server._handle_update_config({"section": "live", "values": {"level": "quiet"}}, None)
+
+        gtk = GettingToKnow(profile=lambda: getattr(server, "_user_profile", None), set_quiet=set_quiet)
+        server._getting_to_know = gtk
+    return gtk
+
+
+async def getting_to_know_reply(server: Any, text: str) -> str | None:
+    """An answer while the questions are open, or the phrase that starts them ("get to know me")."""
+    if getattr(server, "_user_profile", None) is None:
+        return None
+    return await getting_to_know_for(server).answer(text)
+
+
+async def start_getting_to_know(server: Any) -> str:
+    """Start from the app (the intro card or the form's "ask me instead"): the question goes to the chat, and is
+    said aloud only when the person is using voice."""
+    from pilot.system.companion_speech import SpeechChannel
+
+    question = getting_to_know_for(server).start()
+    await server._broadcast_notification(
+        "voice_result", {"command": "", "status": "answered", "message": question, "source": "getting_to_know"}
+    )
+    listener = getattr(server, "_voice_listener", None)
+    if listener is not None and getattr(listener, "is_running", False):
+        await server._speak_companion_text(question, channel=SpeechChannel.FINAL_ANSWER, dedupe_key="gtk:start")
+    return question
+
+
+async def getting_to_know_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """The app's side: ``action`` "status", "start", "stop", "save" (the form: name, use, length, speaking) or
+    "remove" with ``id`` (a stored line)."""
+    profile = getattr(server, "_user_profile", None)
+    if profile is None:
+        return {"status": "error", "message": "Your profile is not ready yet."}
+    gtk = getting_to_know_for(server)
+    action = str(params.get("action") or "status")
+    if action == "start":
+        if gtk.active:  # already asking: a second start (the first-run screen, a second click) changes nothing
+            return {"status": "ok", "question": gtk.current_question(), "already_active": True}
+        return {"status": "ok", "question": await start_getting_to_know(server)}
+    if action == "stop":
+        return {"status": "ok", "reply": gtk.stop()}
+    if action == "save":
+        result = await gtk.save_form(
+            name=str(params.get("name") or ""),
+            use=str(params.get("use") or ""),
+            length=str(params.get("length") or ""),
+            speaking=str(params.get("speaking") or ""),
+        )
+        return {"status": "ok", **result}
+    if action == "remove":
+        if not await profile.remove_item(str(params.get("id") or "")):
+            return {"status": "error", "message": "That is no longer stored."}
+        return {"status": "ok", "profile_empty": profile.is_empty()}
+    if action != "status":
+        return {"status": "error", "message": "action must be status, start, stop, save or remove"}
+    return {"status": "ok", "active": gtk.active, "profile_empty": profile.is_empty()}
+
+
 __all__ = [
     "begin_turn",
     "deliver_offer",
     "end_turn",
     "floor_for",
+    "getting_to_know_for",
+    "getting_to_know_reply",
+    "getting_to_know_rpc",
     "install",
     "link_for",
     "live_speak",

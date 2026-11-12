@@ -91,6 +91,8 @@ class Pending:
     resumed_after: float | None = None
     # Noticed or kept while the person was in a call: said after it, if it still applies.
     held_in_call: bool = False
+    # When it was noticed, as a pilot.live.sequence number: orders it against a conversation turn.
+    noted_seq: int = 0
     # How long the person had stopped when it was delivered, and the wait Live required (pilot.live.timing).
     paused_for: float | None = None
     needed_pause: float | None = None

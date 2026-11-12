@@ -1,0 +1,75 @@
+[
+  {
+    "name": "said vs typed: the dentist said for a different day than just written",
+    "app": "notepad.exe",
+    "title": "todo.txt - Notepad",
+    "expect": ["said_vs_typed"],
+    "steps": [
+      {"type": "Dentist appointment on Thursday 12 November at 4."},
+      {"pause": 20.0, "label": "done"},
+      {"say": "remind me about the dentist on Friday", "seconds": 2.4},
+      {"pause": 5.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "said vs typed: the same day said back (must not fire)",
+    "app": "notepad.exe",
+    "title": "plans.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "Physio session on Wednesday 11 November after work."},
+      {"pause": 20.0, "label": "done"},
+      {"say": "remind me about the physio on Wednesday", "seconds": 2.4},
+      {"pause": 5.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "said vs typed: moving it on purpose (must not fire)",
+    "app": "notepad.exe",
+    "title": "week.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "Haircut on Tuesday 10 November at noon."},
+      {"pause": 20.0, "label": "done"},
+      {"say": "move the haircut to Saturday", "seconds": 2.2},
+      {"pause": 5.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "said vs typed: a different thing on a different day (must not fire)",
+    "app": "notepad.exe",
+    "title": "errands.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "Plumber coming on Thursday 12 November."},
+      {"pause": 20.0, "label": "done"},
+      {"say": "remind me about the gym on Friday", "seconds": 2.2},
+      {"pause": 5.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "said vs typed: the date was already in the document, not typed (must not fire)",
+    "app": "OUTLOOK.EXE",
+    "title": "FW: workshop - Message (HTML)",
+    "start_text": "The workshop is on Thursday 12 November in hall B.",
+    "expect": [],
+    "steps": [
+      {"type": " Thanks, see you there."},
+      {"pause": 20.0, "label": "done"},
+      {"say": "put the workshop in my calendar for Friday", "seconds": 2.6},
+      {"pause": 5.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "said vs typed: two events with the same word on two days (must not fire)",
+    "app": "notepad.exe",
+    "title": "training.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "Training on Monday 16 November, and training again on Friday 13 November."},
+      {"pause": 20.0, "label": "done"},
+      {"say": "remind me about training on Friday", "seconds": 2.2},
+      {"pause": 5.0, "label": "done"}
+    ]
+  }
+]

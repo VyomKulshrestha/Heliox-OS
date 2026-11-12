@@ -240,6 +240,26 @@ class UserProfile:
         await self._mirror_add(profile, f"style:{field}", f"profile:style:{field}", value)
         self._save(profile)
 
+    async def remove_item(self, item_id: str) -> bool:
+        """Remove one row of ``list()`` by its id: "call_me", "style:<field>" or a list entry's id."""
+        profile = self._load()
+        if item_id == "call_me":
+            if not profile["call_me"]:
+                return False
+            await self._mirror_forget(profile, "call_me")
+            profile["call_me"] = ""
+            self._save(profile)
+            return True
+        if item_id.startswith("style:"):
+            field = item_id.split(":", 1)[1]
+            if field not in profile["style"]:
+                return False
+            await self._mirror_forget(profile, item_id)
+            del profile["style"][field]
+            self._save(profile)
+            return True
+        return await self.delete(item_id)
+
     async def add(self, kind: str, text: str, **extra: str) -> dict[str, Any]:
         if kind not in _LISTS:
             raise ValueError("Unknown profile list")

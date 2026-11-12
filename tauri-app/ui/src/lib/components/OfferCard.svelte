@@ -1,10 +1,14 @@
 <script lang="ts">
-  /** One offer Heliox made on its own: what it offers, and the four answers a person would give. */
+  /** One offer Heliox made on its own: what it offers, and the answers a person would give. The getting-to-know
+   * offer can also be filled in as a form, for anyone who would rather not answer in the chat. */
   import { Sparkles } from "@lucide/svelte";
   import { offers, type OfferCard } from "../stores/offers";
+  import GettingToKnowForm from "./GettingToKnowForm.svelte";
 
   let { card }: { card: OfferCard } = $props();
   const why = $derived($offers.whys[card.id]);
+  const intro = $derived(card.kind === "get_to_know");
+  let form = $state(false);
 </script>
 
 <article class="offer-card" role="status" aria-live="polite" data-testid="offer-card">
@@ -15,14 +19,25 @@
   {#if why}
     <p class="why" data-testid="offer-why">{why}</p>
   {/if}
-  <div class="actions">
-    <button type="button" class="primary" onclick={() => offers.answer(card, "yes")}>Yes</button>
-    <button type="button" onclick={() => offers.answer(card, "not_today")}>Not today</button>
-    {#if !why}
-      <button type="button" onclick={() => offers.answer(card, "why")}>Why?</button>
-    {/if}
-    <button type="button" class="quiet" onclick={() => offers.answer(card, "silence")}>Don't offer this</button>
-  </div>
+  {#if form}
+    <GettingToKnowForm ondone={() => offers.answer(card, "not_today")} />
+  {:else}
+    <div class="actions">
+      <button type="button" class="primary" onclick={() => offers.answer(card, "yes")}
+        >{intro ? "Ask me in the chat" : "Yes"}</button
+      >
+      {#if intro}
+        <button type="button" onclick={() => (form = true)}>Use a form</button>
+      {/if}
+      <button type="button" onclick={() => offers.answer(card, "not_today")}>{intro ? "Not now" : "Not today"}</button>
+      {#if !why}
+        <button type="button" onclick={() => offers.answer(card, "why")}>Why?</button>
+      {/if}
+      <button type="button" class="quiet" onclick={() => offers.answer(card, "silence")}
+        >{intro ? "Don't ask again" : "Don't offer this"}</button
+      >
+    </div>
+  {/if}
 </article>
 
 <style>

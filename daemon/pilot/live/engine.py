@@ -28,6 +28,9 @@ from typing import Any
 from pilot.live import focused_text, spoken
 from pilot.live.commitments import KIND as COMMITMENT
 from pilot.live.commitments import find_commitments
+from pilot.live.crosscheck import KIND as SAID_VS_TYPED
+from pilot.live.crosscheck import MAX_LOG as TYPED_LOG_LIMIT
+from pilot.live.crosscheck import said_vs_typed
 from pilot.live.detectors import (
     KIND_LABELS,
     KINDS,
@@ -50,6 +53,7 @@ from pilot.live.policy import (
     Relevance,
     decide,
 )
+from pilot.live.sequence import next_seq
 from pilot.live.stuck import KIND as STUCK
 from pilot.live.stuck import StuckWatcher
 from pilot.live.timing import PersonalTiming, at_boundary
@@ -339,6 +343,7 @@ class LiveCompanion:
         self._last_detect = float("-inf")
         self._last_window_check = float("-inf")
         self._last_spoken_at = float("-inf")
+        self._last_remark = 0  # which spoken remark was last (a sequence number, never a clock stamp)
         self._last_shown_at = float("-inf")
         self._state: dict[str, Any] = {}
         # Each field's text when it was first seen, or after it was emptied (see OWN_WORDS_KINDS).
@@ -352,7 +357,11 @@ class LiveCompanion:
         self._call = ""
         self._call_ended_at = float("-inf")
         self._needed_pause: float | None = None  # the wait the last decision required
-        self._snoozed: dict[str, float] = {}  # kind -> until when "not now" holds it back
+        self._snoozed: dict[str, float] = {}
+        # What the person typed lately, per field: (when, app, text, the text it held before), for said_vs_typed.
+        self._typed_log: OrderedDict[str, tuple[float, str, str, str]] = (
+            OrderedDict()
+        )  # kind -> until when "not now" holds it back
 
     # ── lifecycle ──
 
@@ -422,6 +431,7 @@ class LiveCompanion:
                 self._pending.clear()
                 self._last_obs = None
                 self._baselines.clear()
+                self._typed_log.clear()
                 self._field_text.clear()
                 self._writing_seen = False
                 if self._on_disable:
@@ -470,6 +480,16 @@ class LiveCompanion:
             self._last_text = obs.text
         self._last_obs = obs
         self._remember_baseline(obs)
+        if changed and same_field and obs.source == "focused_field":
+            self._typed_log[obs.field_key] = (
+                now,
+                app_label(obs.app),
+                obs.text[-2000:],
+                self._baselines.get(obs.field_key, ""),
+            )
+            self._typed_log.move_to_end(obs.field_key)
+            while len(self._typed_log) > TYPED_LOG_LIMIT:
+                self._typed_log.popitem(last=False)
         if obs.source == "focused_field" and STUCK in self._kinds():
             ctx = self._context(obs, obs.source)
             for offer in self.stuck.observe(obs.text, obs.window, ctx, now, field=obs.field):
@@ -570,7 +590,7 @@ class LiveCompanion:
             # Keep the latest reading: a slip first seen at the end of the text stops trailing once they type on.
             existing.correction = correction
             return
-        self._pending[correction.key] = Pending(correction, source, now, now, window=window)
+        self._pending[correction.key] = Pending(correction, source, now, now, window=window, noted_seq=next_seq())
 
     def offer_speech(self, text: str) -> None:
         """Check a sentence the person said. Spoken corrections land as soon as they stop talking."""
@@ -582,6 +602,15 @@ class LiveCompanion:
         ctx = self._context(None, "speech")
         for correction in detect(text, ctx, kinds=kinds):
             self._note(correction, "speech", "speech", now)
+        if SAID_VS_TYPED in self._kinds():
+            # "Remind me about the dentist on Friday" minutes after typing "Dentist, Thursday 12 November".
+            try:
+                found = said_vs_typed(spoken.to_written(text), list(self._typed_log.values()), now, self._today())
+            except Exception:
+                logger.debug("Said-versus-typed check failed", exc_info=True)
+                found = []
+            for correction in found:
+                self._note(correction, "speech", "speech", now)
         if COMMITMENT in self._kinds():
             # "I'll send Priya the deck by Friday", said to Heliox or while talking with it: offer the reminder.
             try:
@@ -792,12 +821,13 @@ class LiveCompanion:
         said: list[str] = []
         urgent_said = False
         after_call = False
+        remark = next_seq()  # the catches said in this turn are one remark
         for key, item, verdict in verdicts:
             if verdict == DROP:
                 del self._pending[key]
             elif verdict in (SHOW, SPEAK):
                 del self._pending[key]
-                await self._deliver(item, spoken=verdict == SPEAK, now=now)
+                await self._deliver(item, spoken=verdict == SPEAK, now=now, remark=remark)
                 if verdict == SPEAK:
                     after_call = after_call or item.held_in_call
                     said.append(say(item.correction.title, item.correction.message, item.source))
@@ -807,12 +837,13 @@ class LiveCompanion:
         if said:
             # Several catches in one turn are said as one reply, not as a queue of interruptions.
             self._last_spoken_at = now
+            self._last_remark = remark
             text = " ".join(said)
             if after_call:
                 text = "While you were on the call: " + _lower_first(text)
-            asyncio.ensure_future(self._say_aloud(text, urgent_said, now, spoken_at))
+            asyncio.ensure_future(self._say_aloud(text, urgent_said, remark, spoken_at))
 
-    async def _say_aloud(self, text: str, urgent: bool, now: float, before: float) -> None:
+    async def _say_aloud(self, text: str, urgent: bool, remark: int, before: float) -> None:
         """Speak, and when the remark was not heard (a call, a focus session, held by the floor) give the spoken
         rate limit back, so the next real remark is not held up by one nobody heard."""
         try:
@@ -820,13 +851,13 @@ class LiveCompanion:
         except Exception:
             outcome = "error"
         status = str(getattr(outcome, "status", outcome) or "")
-        if status in UNHEARD and self._last_spoken_at == now:
+        if status in UNHEARD and self._last_remark == remark:  # nothing was said since
             self._last_spoken_at = before
             for entry in self._recent:
-                if entry.get("at") == now and entry.get("spoken"):
+                if entry.get("remark") == remark:
                     entry["spoken"] = False
 
-    async def _deliver(self, item: Pending, *, spoken: bool, now: float) -> None:
+    async def _deliver(self, item: Pending, *, spoken: bool, now: float, remark: int = 0) -> None:
         correction = item.correction
         item.id = uuid.uuid4().hex[:10]
         item.delivered = True
@@ -850,7 +881,16 @@ class LiveCompanion:
             "source": item.source,
             "app": "" if item.source == "notice" else app_label(item.window.split("|", 1)[0]),
         }
-        self._recent.append({**payload, "key": correction.key, "at": now})
+        self._recent.append(
+            {
+                **payload,
+                "key": correction.key,
+                "at": now,
+                "seq": next_seq(),  # order against offers and the floor, never by clock
+                "noted_seq": item.noted_seq,
+                "remark": remark if spoken else 0,
+            }
+        )
         self._last_shown_at = now
         await self._emit("live_interjection", payload)
         if spoken:
@@ -869,7 +909,7 @@ class LiveCompanion:
         about the words that opened the turn, before the turn has said anything."""
         if self.floor is None:
             return True
-        about = item is not None and item.source == "speech" and self.floor.about_this_turn(item.first_seen)
+        about = item is not None and item.source == "speech" and self.floor.about_this_turn(item.noted_seq)
         return bool(self.floor.live_may_speak(about_this_turn=about))
 
     def snoozed_kinds(self, now: float | None = None) -> frozenset[str]:
@@ -893,7 +933,7 @@ class LiveCompanion:
         return [
             {k: v for k, v in entry.items() if k != "key"}
             for entry in self._recent
-            if entry.get("spoken") and entry.get("at") == self._last_spoken_at
+            if entry.get("spoken") and self._last_remark and entry.get("remark") == self._last_remark
         ]
 
     def last_raised(self) -> dict[str, Any] | None:

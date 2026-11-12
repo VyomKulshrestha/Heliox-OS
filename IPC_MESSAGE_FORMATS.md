@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **326 WebSocket RPC methods**. That is the API
+The daemon currently registers **327 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -540,6 +540,22 @@ than a minute is logged (`{"started_at", "ended_at", "seconds", "reason"}`, kept
 `{"status": "ok", "today": {"seconds", "sessions"}, "this_week": {"seconds", "sessions"},
 "recent": [<up to 20 sessions, newest first>]}`. "How long did I focus this week" and
 "how many focus sessions today" work by voice and in chat.
+
+#### `getting_to_know` (three questions that fill an empty profile)
+`pilot.personal.getting_to_know`: "What should I call you?", "What do you mainly use this computer for?" and one
+question on short or detailed answers and speaking up or staying quiet. Each can be skipped; parsed in code, never
+sent to a model. By voice or chat it starts with "get to know me" or from the intro offer card.
+
+- `getting_to_know {action: "status"}` -> `{status, active, profile_empty}`.
+- `getting_to_know {action: "start"}` -> `{status, question}`; the question also arrives as a `voice_result`
+  chat message (spoken only while voice listening is on), and the answers are typed or said in the chat. When the
+  questions are already open it changes nothing and returns the waiting question with `already_active: true`.
+- `getting_to_know {action: "stop"}` -> `{status, reply}`.
+- `getting_to_know {action: "save", name?, use?, length?, speaking?}` (the form; `length` is `short` or
+  `detailed`, `speaking` is `speak_up` or `quiet`; empty fields are skipped) -> `{status, stored: [{id, text}],
+  reply, problems}`.
+- `getting_to_know {action: "remove", id}` removes one stored line (`call_me`, `style:length` or a profile entry
+  id) -> `{status, profile_empty}`.
 
 #### `offers` (offers from routines, habits and goals, `[suggestions] offers`)
 Offers are computed on this computer (`pilot.personal.offers`), at most one an hour and three a day, at a quiet moment.

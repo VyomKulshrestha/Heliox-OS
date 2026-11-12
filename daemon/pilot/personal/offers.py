@@ -41,6 +41,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from pilot.live.sequence import next_seq
+
 logger = logging.getLogger("pilot.personal.offers")
 
 MAX_PER_HOUR = 1
@@ -89,6 +91,20 @@ class Offer:
     why: str  # the evidence, in a sentence
 
 
+# The one offer made while the profile is still empty: three questions to get to know the person
+# (pilot.personal.getting_to_know). Every other offer waits until the profile has something in it.
+INTRO = Offer(
+    key="get_to_know",
+    kind="get_to_know",
+    text="Would you like to tell me a little about yourself? Three short questions, and you can skip any of them.",
+    request="get to know me",
+    why=(
+        "I don't know anything about you yet, so I can't suggest anything useful or talk the way you like. "
+        "It stays on this computer; nothing you answer is sent to a language model."
+    ),
+)
+
+
 @dataclass(frozen=True)
 class OfferReply:
     reply: str
@@ -103,6 +119,7 @@ class _Made:
     day: str
     answered: bool = False
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
+    seq: int = field(default_factory=next_seq)  # order against Live's cards, never by clock
 
 
 def _day_type(day: datetime) -> str:
@@ -188,6 +205,8 @@ def _label(offer: Offer) -> str:
         return "Reading your to-do list in the evening"
     if offer.kind == "stale_goal":
         return f"A reminder to {offer.request.split(' to ', 1)[-1]}"
+    if offer.kind == "get_to_know":
+        return "Questions to get to know you"
     return offer.text[:80]
 
 
@@ -299,8 +318,21 @@ class Offers:
             return False
         return sum(m.day == today for m in self.made) < MAX_PER_DAY
 
+    def _intro_due(self) -> bool:
+        if str(self.mode() or "auto").casefold() == "off" or INTRO.key in self.silenced:
+            return False
+        try:
+            empty = bool(self.profile_empty())
+        except Exception:
+            return False
+        return empty and not any(m.offer.key == INTRO.key for m in self.made)
+
     def next_offer(self) -> Offer | None:
-        if not self.active() or not self.room():
+        if not self.room():
+            return None
+        if self._intro_due():
+            return INTRO  # once a run, until the person answers, says "don't offer this" or tells Heliox something
+        if not self.active():
             return None
         today = self._today()
         offered_today = {m.offer.key for m in self.made if m.day == today}
@@ -373,8 +405,8 @@ class Offers:
             "per_day": MAX_PER_DAY,
         }
 
-    def last_offered_at(self) -> float | None:
-        return self.made[-1].at if self.made else None
+    def last_offered_seq(self) -> int | None:
+        return self.made[-1].seq if self.made else None
 
     def reply(self, normalized: str) -> OfferReply | None:
         """The person's answer to the latest offer, or None when it is not one."""
@@ -435,8 +467,8 @@ class OfferLoop:
         self._task: Any = None
 
     async def tick(self) -> Offer | None:
-        if not self._offers.active():
-            return None
+        if str(self._offers.mode() or "auto").casefold() == "off":
+            return None  # next_offer decides the rest: the one intro while the profile is empty, then the others
         try:
             if not self._quiet():
                 return None
@@ -478,4 +510,4 @@ class OfferLoop:
                 await task
 
 
-__all__ = ["MODES", "Offer", "OfferLoop", "OfferReply", "Offers", "from_suggestion", "usual_apps"]
+__all__ = ["INTRO", "MODES", "Offer", "OfferLoop", "OfferReply", "Offers", "from_suggestion", "usual_apps"]

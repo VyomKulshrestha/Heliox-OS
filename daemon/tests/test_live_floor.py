@@ -82,7 +82,9 @@ def test_the_floor_rule():
     assert floor.live_may_speak(about_this_turn=True)  # rule 3: about its words, before it has spoken
     floor.heliox_spoke()
     assert not floor.live_may_speak(about_this_turn=True)  # once the reply started, never
-    assert floor.about_this_turn(clock.t) and not floor.about_this_turn(clock.t - 1)
+    from pilot.live.sequence import next_seq
+
+    assert floor.about_this_turn(next_seq()) and not floor.about_this_turn(0)
     floor.close_turn(token)
     assert not floor.live_may_speak() and floor.held()  # the grace period
     clock.t += GRACE_SECONDS
@@ -392,7 +394,9 @@ async def test_offer_answers_go_down_the_normal_road_and_live_wins_when_it_spoke
 
     offers.mark_offered(offer)
     server._live = MagicMock()
-    server._live.last_raised.return_value = {"at": time.monotonic() + 1}
+    from pilot.live.sequence import next_seq
+
+    server._live.last_raised.return_value = {"seq": next_seq()}
     server._live.handle_reply = AsyncMock(return_value=None)
     from pilot.personal.wiring import offer_reply
 
@@ -415,3 +419,29 @@ async def test_on_the_bench_live_no_longer_speaks_over_a_reply_and_still_catches
     [after] = await bench.run_all(pack, personas=["steady"], policies=("personal",), floor=True)
     assert before.over_reply >= 2 and after.over_reply == 0
     assert after.catches == after.expected == before.catches and after.false_alarms == 0
+
+
+def test_order_does_not_depend_on_the_clock_moving():
+    """Windows clocks move in steps of about 15 ms: two events in one step must still keep their order."""
+    clock = Clock()  # never advanced
+    floor = Floor(clock=clock)
+    from pilot.live.sequence import next_seq
+
+    before = next_seq()
+    floor.open_turn()
+    after = next_seq()
+    assert not floor.about_this_turn(before) and floor.about_this_turn(after)
+
+
+@pytest.mark.asyncio
+async def test_with_a_frozen_clock_the_latest_remark_is_still_the_one_recorded(tmp_path):
+    clock, text = Clock(), ["nothing here"]
+    live, events, spoken, _ = build(tmp_path, text, None, clock)
+    live.offer_speech("put lunch on Tuesday 14 November")
+    await run_for(live, clock, 0.4)
+    live.offer_speech("remind me on the thirty first of November to pay rent")
+    for _ in range(3):
+        await live._deliver_due(clock.t)  # the same clock reading as before
+        await asyncio.sleep(0)
+    [entry] = live.last_spoken_entries()
+    assert entry["kind"] == "weekday_date" and "thirty" in entry["evidence"].casefold()

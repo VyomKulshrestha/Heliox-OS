@@ -25,11 +25,8 @@ EVERY_SECONDS = 5.0
 def _detect() -> str:
     from pilot.system import call_detection
 
-    try:
-        # Heliox is not listening here (the listener would answer itself), which older macOS needs to know.
-        return str(call_detection.current_call(heliox_listening=False) or "")
-    except TypeError:  # an older detection without the argument
-        return str(call_detection.current_call() or "")
+    # Heliox is not listening here (the listener would answer itself), which older macOS needs to know.
+    return str(call_detection.current_call(heliox_listening=False) or "")
 
 
 class CallWatch:

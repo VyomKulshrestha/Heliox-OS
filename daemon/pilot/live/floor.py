@@ -36,6 +36,7 @@ GRACE_SECONDS = 3.0  # after Heliox has answered, the person gets this long to c
 @dataclass
 class _Turn:
     opened_at: float
+    seq: int = 0  # pilot.live.sequence: what was noticed after this opened is about this turn
     spoke: bool = False
 
 
@@ -51,8 +52,10 @@ class Floor:
 
     def open_turn(self) -> int:
         """An addressed utterance reached dispatch. Returns a token for ``close_turn``."""
+        from pilot.live.sequence import next_seq
+
         self._next += 1
-        self._turns[self._next] = _Turn(self._clock())
+        self._turns[self._next] = _Turn(self._clock(), next_seq())
         return self._next
 
     def close_turn(self, token: int) -> None:
@@ -86,10 +89,12 @@ class Floor:
             return False
         return not any(turn.spoke for turn in self._turns.values())
 
-    def about_this_turn(self, noted_at: float) -> bool:
-        """A catch noted at ``noted_at`` is about the words that opened the current turn."""
-        opened = self.opened_at()
-        return opened is not None and noted_at >= opened
+    def about_this_turn(self, noted_seq: int) -> bool:
+        """A catch noticed with sequence number ``noted_seq`` (pilot.live.sequence) is about the words that opened
+        the current turn: it was noticed after the turn opened. A number, not a clock stamp, so two events in the
+        same clock step still come in the order they happened."""
+        opened = min((turn.seq for turn in self._turns.values()), default=None)
+        return opened is not None and noted_seq > opened
 
     def status(self) -> dict[str, object]:
         return {

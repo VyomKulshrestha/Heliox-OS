@@ -2010,6 +2010,7 @@ class PilotServer:
             "live_set": self._handle_live_set,
             "live_feedback": self._handle_live_feedback,
             "offers": self._handle_offers,
+            "getting_to_know": self._handle_getting_to_know,
             "live_explain": self._handle_live_explain,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
@@ -6723,6 +6724,7 @@ class PilotServer:
             return None
 
         handlers = (
+            self._getting_to_know_request,  # while its three questions are open, answers go to it first
             self._offer_reply,
             self._live_reply,
             self._help_request,
@@ -7086,6 +7088,18 @@ class PilotServer:
         from pilot.personal.wiring import offers_rpc
 
         return await offers_rpc(self, params)
+
+    async def _getting_to_know_request(self, text: str) -> str | None:
+        """ "Get to know me" and the answers to its three questions (pilot.personal.getting_to_know)."""
+        from pilot.personal.wiring import getting_to_know_reply
+
+        return await getting_to_know_reply(self, text)
+
+    async def _handle_getting_to_know(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """The three questions from the app: start them in the chat, or fill them in as a form."""
+        from pilot.personal.wiring import getting_to_know_rpc
+
+        return await getting_to_know_rpc(self, params)
 
     async def _offer_reply(self, text: str) -> str | None:
         """Yes, no, why, "don't offer that" after an offer (pilot.personal.offers)."""

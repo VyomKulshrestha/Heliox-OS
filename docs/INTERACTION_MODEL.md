@@ -167,6 +167,8 @@ Two more context sources, added with Heliox Live and the personal layer (`pilot/
 | A Live remark or card about what the person *typed* (it quotes screen text), as a Heliox turn or the "Live raised this" line | as said, with the evidence | only the kind and the app ("pointed out a weekday that doesn't match its date in Notepad"); the words stay here | as said, with the evidence |
 | Up to five profile, goal and habit lines that share words with this utterance, plus the answer style and preferences (one line, at most 360 characters, picked by word overlap in code) | yes | yes, like the profile lines above | yes |
 | Offers ("You usually open Outlook about now"), as a Heliox turn | yes | yes (app names only, never window titles) | yes |
+| Answers to the getting-to-know questions (name, main use, how to talk) | never; parsed in code | never | never |
+| What those answers stored (the name, "I mainly use the computer for ...", the answer style, a speak-up or stay-quiet preference) | yes, as profile lines with later turns | yes, as profile lines with later turns | yes |
 
 "Why did you say that", "thanks", "not now", "don't mention these", "fix it", "remember that ...", "forget ...",
 "what did I tell you about ..." and the answers to an offer are handled in code before the layer and never reach a

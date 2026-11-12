@@ -237,7 +237,8 @@ def _offers(tmp_path, **overrides):
 
 def test_default_is_on_only_with_a_profile_and_never_doubles_the_old_suggestions(tmp_path):
     offers, _, _ = _offers(tmp_path, profile_empty=lambda: True)
-    assert not offers.active() and offers.next_offer() is None
+    # An empty profile gets only the one getting-to-know offer (pilot.personal.getting_to_know).
+    assert not offers.active() and offers.next_offer().key == "get_to_know"
     offers, _, _ = _offers(tmp_path, profile_empty=lambda: True, mode=lambda: "on")
     assert offers.active()
     offers, _, _ = _offers(tmp_path, mode=lambda: "off")
@@ -357,3 +358,17 @@ async def test_the_offers_rpc(tmp_path):
     assert silenced["silenced"] == [{"key": "usual_app:outlook.exe", "label": "Opening Outlook at the usual time"}]
     undone = await server._handle_offers({"action": "unsilence", "key": "usual_app:outlook.exe"}, None)
     assert undone["silenced"] == []
+
+
+def test_with_a_frozen_clock_answers_go_to_the_latest_offer(tmp_path):
+    offers, state, picks = _offers(tmp_path)
+    first = offers.next_offer()
+    offers.mark_offered(first)
+    offers.made[-1].at -= MIN_GAP_SECONDS  # let a second offer through without moving the clock
+    picks[0] = {"kind": "todos", "key": "todos", "text": "Two open.", "say": "what's on my list"}
+    offers.room = lambda: True
+    second = offers.next_offer()
+    offers.mark_offered(second)
+    assert offers.made[-1].at == offers.made[-2].at + MIN_GAP_SECONDS  # the clock did not move
+    assert offers.last_offered_seq() == offers.made[-1].seq > offers.made[-2].seq
+    assert offers.reply("yes").request == "what's on my list"
