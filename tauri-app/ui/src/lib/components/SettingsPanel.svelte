@@ -1212,8 +1212,6 @@
     </div>
   </section>
 
-  <OptionalParts />
-
   <section class="settings-group">
     <h3>Keyboard Shortcut</h3>
     <div class="setting-row">
@@ -2778,6 +2776,7 @@
   <LiveCompanionPanel />
   <LocalModelsPanel />
   <OffersPanel />
+  <OptionalParts />
 </div>
 
 <style>
