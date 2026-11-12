@@ -194,6 +194,29 @@ def is_cut_off_stop(voiced_seconds: float | None) -> bool:
     return voiced_seconds is not None and voiced_seconds <= SHORT_CUT_OFF_SECONDS
 
 
+def early_wake_agrees(opening_text: str, final_text: str) -> bool:
+    """The wake phrase read from the opening counts only when the first word Whisper heard after it is among
+    Parakeet's first five words: both recognisers then heard the same sentence start, and the opening is not a
+    guess from a fragment. "Hey Heliox, what can" / "Hey Lokes, what can I say?" agrees; "Hey Heliox." alone, or
+    a first word Parakeet did not hear, does not, and the whole utterance is checked as before."""
+    prefix = loose_wake_prefix(opening_text)
+    if not prefix:
+        return False
+    after = re.findall(r"[a-z']+", opening_text[len(prefix) :].casefold())
+    if not after:
+        return False
+
+    def stem(word: str) -> str:
+        return re.sub(r"[^a-z']", "", word.casefold()).split("'")[0]  # "what's" and "what" are the same start
+
+    return stem(after[0]) in [stem(word) for word in final_text.split()[:5]]
+
+
+def _cancel(task: asyncio.Future[Any] | None) -> None:
+    if task is not None and not task.done():
+        task.cancel()
+
+
 def is_short_decision(text: str) -> bool:
     """ "No", "Yes", "Stop": complete answers, however short."""
     return " ".join(text.casefold().strip(" \t,.:;!?-").split()) in _AUTONOMOUS_SHORT_DECISIONS
@@ -1623,6 +1646,10 @@ class _ContinuousRecorder:
         self.speculate_frames = 4
         self.on_candidate_end: Any = None  # callable(frames) -> None
         self.on_candidate_cancel: Any = None  # callable() -> None
+        # The opening of the utterance (pre-roll included), handed over once while the person is still talking,
+        # so the wake phrase can be read before they finish (see EARLY_WAKE_SECONDS).
+        self.opening_frames = max(1, int(EARLY_WAKE_SECONDS * 1000 / frame_ms))
+        self.on_opening: Any = None  # callable(frames) -> None
         # Smart Turn can also be asked at the candidate end; at or above this it ends the turn 200 ms sooner.
         # Off (1.0) until its effect on split sentences is measured on recorded speech: pauses between words on a
         # noise-gated headset last 250 to 350 ms, and asking after 200 ms once ended the turn at every such pause.
@@ -1975,6 +2002,7 @@ class _ContinuousRecorder:
         lead = 0
         held = False
         candidate = False
+        opening_sent = False
         silence_frames_used = endpointer.silence_frames
 
         while True:
@@ -2007,6 +2035,7 @@ class _ContinuousRecorder:
                 lead = len(preroll)
                 preroll = []
                 candidate = False
+                opening_sent = False
                 self.user_is_speaking = True
                 self.speech_started_at = time.monotonic()
                 if self.on_speech_start is not None and self.stream_sink is None:
@@ -2041,6 +2070,9 @@ class _ContinuousRecorder:
             captured.append(frame)
             if self.stream_sink is not None:
                 self.stream_sink.feed(frame)
+            if not opening_sent and len(captured) >= self.opening_frames:
+                opening_sent = True
+                self._notify(self.on_opening, list(captured))
 
             silence_now = endpointer.trailing_silence
             if candidate and silence_now == 0:
@@ -2128,6 +2160,10 @@ class _ContinuousRecorder:
 # How much of an utterance Whisper reads for the wake decision. The whole of it: on the owner's headset, reading
 # only the first 2 s found "Heliox" in 20 of 30 tries against 30 of 30 for the whole sentence (fixed boundaries).
 WAKE_OPENING_SECONDS = 30.0
+# The wake phrase read from the first seconds of an utterance while the person is still speaking the rest. Used
+# only when it agrees with Parakeet on the first word after the phrase; otherwise the whole utterance is checked
+# as before, so this can only make the answer sooner, never accept what the whole-utterance check would not see.
+EARLY_WAKE_SECONDS = 1.6
 
 
 def _to_int16(samples: Any) -> Any:
@@ -2250,6 +2286,16 @@ class ContinuousVoiceListener:
         self._capture_watch_task: asyncio.Task[None] | None = None
         self._capture_watchdog: Any = None
         self.capture_notice = ""
+        self._early_wake: asyncio.Task[str] | None = None
+        # Off until the false-accept comparison has run on speech not addressed to Heliox (a wake phrase accepted
+        # wrongly would send overheard speech to a model): the opening is then never read early and the whole
+        # utterance is checked as before.
+        self.early_wake_enabled = False
+        # What the sound says about the microphone (pilot.system.mic_quality), judged once per device.
+        from pilot.system.mic_quality import MicQuality
+
+        self._mic_quality = MicQuality()
+        self.last_wake_source = ""  # "opening" when the early reading of the opening decided, else "whole"
         self._turn_detector: Any = None
         self._streaming: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -2631,6 +2677,7 @@ class ContinuousVoiceListener:
                     opened = False
                 if opened:
                     watchdog.reopen_succeeded(await default_name(), recorder.last_error)
+                    self._mic_quality.reset()  # possibly another microphone: judge it afresh
                 else:
                     watchdog.reopen_failed()
                     logger.warning("Microphone could not be reopened: %s", recorder.last_error or "no device")
@@ -3057,26 +3104,44 @@ class ContinuousVoiceListener:
                 # Whisper reads the utterance for the wake phrase at the same moment Parakeet reads it for the
                 # words: the two run side by side instead of one after the other.
                 opening = _write_wav([_to_int16(samples[: int(WAKE_OPENING_SECONDS * 16000)])], 16000)
-                # English, not detected: on the owner's desk microphone automatic detection read "Hey Heliox, what
-                # can I say?" as Dutch ("Heliox.com, nice video.") in 2 of 5 cuts, and English hit 9 of 9, twice as
-                # fast. Parakeet, whose words are used, is English-only anyway.
-                wake_check = asyncio.ensure_future(self._transcribe_whisper_text(opening, language="en"))
-                wake_check.add_done_callback(lambda task: task.cancelled() or task.exception())
+
+                def whole_utterance_check() -> asyncio.Task[str]:
+                    # English, not detected: on the owner's desk microphone automatic detection read "Hey Heliox,
+                    # what can I say?" as Dutch ("Heliox.com, nice video.") in 2 of 5 cuts, and English hit 9 of 9,
+                    # twice as fast. Parakeet, whose words are used, is English-only anyway.
+                    task = asyncio.ensure_future(self._transcribe_whisper_text(opening, language="en"))
+                    task.add_done_callback(lambda done: done.cancelled() or done.exception())
+                    return task
+
+                early_wake = getattr(self, "_early_wake", None)
+                # With an early reading of the opening under way, the whole-utterance check waits to see whether
+                # it is needed: two Whisper passes at once would slow both on a small machine.
+                wake_check = whole_utterance_check() if early_wake is None else None
                 said = await asyncio.to_thread(_counted, parakeet.transcribe, samples)
                 addressed = self._addressed()  # the microphone button, or talking over Heliox
                 in_conversation = addressed or self.conversation_open()
                 if addressed and self._button_until and len(said.split()) > 2:
                     # The button was pressed for this sentence: no wake phrase to look for, nothing to wait for.
-                    wake_check.cancel()
+                    _cancel(wake_check)
                     return said
                 if addressed and self._is_short_cut_off():
                     # A word or two said over Heliox: what it does next does not depend on a wake phrase.
-                    wake_check.cancel()
+                    _cancel(wake_check)
                     return said
                 if in_conversation and len(said.split()) > 2 and looks_like_conversation_turn(said):
                     # Mid-conversation a reply needs no wake phrase: answer from Parakeet without waiting.
-                    wake_check.cancel()
+                    _cancel(wake_check)
                     return said
+                if early_wake is not None:
+                    try:
+                        heard_early = await asyncio.shield(early_wake)  # shared by every pass of this utterance
+                    except Exception:
+                        heard_early = ""
+                    if early_wake_agrees(heard_early, said):
+                        self.last_wake_source = "opening"
+                        return merge_wake(heard_early, said, loose_wake_prefix)
+                    wake_check = whole_utterance_check()
+                self.last_wake_source = "whole"
                 if in_conversation and len(said.split()) > 2 and self._on_overheard and not speculative:
                     # While Whisper decides whether this began with the wake phrase, Live can already check the
                     # words ("…Monday, the twelfth of November"): a correction does not depend on the wake phrase,
@@ -3137,10 +3202,13 @@ class ContinuousVoiceListener:
                 # they are picked up when the person starts talking.
                 self._recorder.on_speech_start = self._configure_turn_taking
                 speculation = self._speculate_final_pass()
+                self._early_wake = None
+                self._recorder.on_opening = self._start_early_wake if self.early_wake_enabled else None
                 try:
                     audio_path = await self._recorder.record_utterance(timeout=timeout, keep_backlog=keep_backlog)
                 finally:
                     self._recorder.on_candidate_end = self._recorder.on_candidate_cancel = None
+                    self._recorder.on_opening = None
                 if not audio_path:
                     speculation.cancel()
                     return ""
@@ -3176,6 +3244,9 @@ class ContinuousVoiceListener:
                     self._schedule(self._on_partial, transcript)  # the caption shows the words acted on
             if early is not None and not early.done():
                 early.cancel()
+            self._early_wake = None
+            if self._recorder.is_active and not self._mic_quality.verdict:
+                self._schedule_mic_quality(audio_path)
             self.last_transcription_ms = (time.perf_counter() - started) * 1000
             logger.info(
                 "Voice transcription completed (duration_ms=%.0f, characters=%d)",
@@ -3190,6 +3261,36 @@ class ContinuousVoiceListener:
                 e,
             )
             return ""
+
+    def _schedule_mic_quality(self, audio_path: str) -> None:
+        """Judge the microphone from this utterance in a worker thread, off the path to dispatch."""
+
+        def observe() -> str:
+            samples = _load_pcm_wav_for_whisper(audio_path)
+            return self._mic_quality.observe(samples) if samples is not None else ""
+
+        async def judge() -> None:
+            try:
+                verdict = await asyncio.to_thread(observe)
+            except Exception:
+                logger.debug("Microphone quality check failed", exc_info=True)
+                return
+            if verdict and verdict != "ok":
+                from pilot.system.mic_quality import MESSAGES
+
+                logger.warning("Microphone %s: %s", self._recorder.input_device_name, MESSAGES[verdict])
+                await self._capture_status("microphone_quality", verdict, MESSAGES[verdict])
+
+        asyncio.ensure_future(judge())
+
+    def _start_early_wake(self, frames: list[Any]) -> None:
+        """Read the opening for the wake phrase now, while the person is still speaking (Parakeet path only)."""
+        if self._parakeet() is None or _recognisers_running():
+            return
+        path = _write_wav(frames, self._recorder.sample_rate)
+        task = asyncio.ensure_future(self._transcribe_whisper_text(path, language="en"))
+        task.add_done_callback(lambda done: done.cancelled() or done.exception())
+        self._early_wake = task
 
     def _speculate_final_pass(self) -> _Speculation:
         """Arm the recorder to start the final pass at each candidate end of turn (see _Speculation)."""
@@ -3232,6 +3333,8 @@ class ContinuousVoiceListener:
             # What is wrong with the microphone now ("" when it works), and what Heliox told the person.
             "capture_problem": getattr(self._capture_watchdog, "problem", "") if self._capture_watchdog else "",
             "capture_notice": self.capture_notice,
+            # "ok", "narrowband" (Bluetooth call mode), "quiet" or "clipping"; "" until enough speech was heard.
+            "mic_quality": self._mic_quality.verdict,
             "capture_backend": self._recorder.capture_backend,
             "energy_threshold": self._recorder.energy_threshold,
             "adaptive_threshold_enabled": self._recorder.adaptive_threshold_enabled,

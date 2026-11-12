@@ -4,6 +4,7 @@ sherpa-onnx and the model are never needed here."""
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest.mock import AsyncMock, MagicMock
 
@@ -207,3 +208,82 @@ async def test_after_the_microphone_button_parakeets_words_are_used_without_wait
     started = time.perf_counter()
     assert await item._transcribe_path("utterance.wav") == PARAKEET
     assert time.perf_counter() - started < 0.4
+
+
+# ── the wake phrase read from the opening, while the person is still speaking ──
+
+
+@pytest.mark.parametrize(
+    ("opening", "final", "agrees"),
+    [
+        ("Hey Heliox, what can", "Hey Lokes, what can I say?", True),  # 22:01 desk microphone
+        ("Hey Heliox, what can I", "Hey Elioks, what can I say?", True),
+        ("Here Heliox, remind me", "Dear Yorks remind me that the launch call is Monday", True),  # headset
+        ("Hey Heliox, what's the best", "Hey Nydiok, what can I say to you?", True),  # 22:01, cut mid-sentence
+        ("Hey Heliox.", "Hey Lux, what can I say?", False),  # nothing after the phrase yet: check the whole
+        ("Hey Heliox, open", "Hey Felix, what time is it?", False),  # the recognisers disagree: check the whole
+        ("Hey Felix, what can", "Hey Felix, what can I say?", False),  # no wake phrase at all
+        ("", "Hey Lokes, what can I say?", False),
+    ],
+)
+def test_the_opening_counts_only_when_both_recognisers_heard_the_same_start(opening, final, agrees):
+    from pilot.system.voice import early_wake_agrees
+
+    assert early_wake_agrees(opening, final) is agrees
+
+
+def _parakeet_listener(tmp_path, monkeypatch, said: str):
+    import numpy as np
+
+    item = listener(tmp_path, "parakeet", with_model=True)
+    fake = MagicMock()
+    fake.transcribe.return_value = said
+    fake.available = True
+    monkeypatch.setattr(item, "_parakeet", lambda: fake)
+    monkeypatch.setattr("pilot.system.voice._load_pcm_wav_for_whisper", lambda _path: np.zeros(16000, np.float32))
+    return item
+
+
+@pytest.mark.asyncio
+async def test_an_agreeing_opening_answers_without_reading_the_whole_utterance_again(tmp_path, monkeypatch):
+    item = _parakeet_listener(tmp_path, monkeypatch, "Hey Lokes, what can I say?")
+
+    async def opening():
+        return "Hey Heliox, what can"
+
+    item._early_wake = asyncio.ensure_future(opening())
+    text = await item._transcribe_path("utterance.wav")
+    assert text == "Hey Heliox, what can I say?" and item.last_wake_source == "opening"
+    item._transcribe_whisper_text.assert_not_awaited()  # no second Whisper pass after the turn ended
+
+
+@pytest.mark.asyncio
+async def test_an_opening_that_does_not_agree_falls_back_to_the_whole_utterance(tmp_path, monkeypatch):
+    item = _parakeet_listener(tmp_path, monkeypatch, "Hey Felix, what time is it?")
+
+    async def opening():
+        return "Hey Heliox, open"
+
+    item._early_wake = asyncio.ensure_future(opening())
+    item._transcribe_whisper_text = AsyncMock(return_value="Hey Felix, what time is it?")
+    text = await item._transcribe_path("utterance.wav")
+    assert text == "Hey Felix, what time is it?" and item.last_wake_source == "whole"
+    item._transcribe_whisper_text.assert_awaited_once()  # decided by the whole-utterance check, as before
+
+
+@pytest.mark.asyncio
+async def test_the_recorder_hands_over_the_opening_once_while_the_person_speaks():
+    import numpy as np
+
+    from pilot.system.voice import _ContinuousRecorder
+
+    rec = _ContinuousRecorder(start_frames=2, silence_frames=6)
+    rec._queue = asyncio.Queue()
+    rec.opening_frames = 10
+    openings = []
+    rec.on_opening = lambda frames: openings.append(len(frames))
+    loud, quiet = np.full(800, 10000, dtype=np.int16), np.zeros(800, dtype=np.int16)
+    for frame in [loud] * 30 + [quiet] * 10:
+        rec._queue.put_nowait(frame)
+    assert await rec.record_utterance(timeout=3, keep_backlog=True)
+    assert openings == [10]
