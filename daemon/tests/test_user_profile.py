@@ -159,3 +159,19 @@ async def test_rpcs_routing_and_reservation(tmp_path):
     assert "_mirror" not in got["profile"]
     assert server._phrase_reserved("what do you know about me")
     assert not server._phrase_reserved("open chrome")
+
+
+@pytest.mark.asyncio
+async def test_forgetting_the_last_thing_holds_when_the_clock_has_not_moved(profile, monkeypatch):
+    """The Windows clock moves in steps of about 15 ms: two things said within one step must not tie."""
+    import pilot.workflows.user_profile as module
+
+    monkeypatch.setattr(module.time, "time", lambda: 1_800_000_000.0)
+    assert await profile.answer_async("remember that I'm a founder") == 'Remembered: "I\'m a founder".'
+    assert await profile.answer_async("my sister is Ana")
+    assert await profile.answer_async("remember that I'm left-handed") == 'Remembered: "I\'m left-handed".'
+
+    assert await profile.forget_last() == "I'm left-handed"
+    assert await profile.forget_last() == "Ana (sister)"
+    assert await profile.forget_last() == "I'm a founder"
+    assert await profile.forget_last() == ""

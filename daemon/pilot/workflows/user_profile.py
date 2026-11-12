@@ -258,7 +258,10 @@ class UserProfile:
         items[:] = [item for item in items if _normalize(item.get("text", "")) != norm and item not in replaced]
         if len(items) >= MAX_ENTRIES:
             raise ValueError(f"I can keep up to {MAX_ENTRIES} of those; clear some first")
-        entry = {"id": uuid.uuid4().hex[:10], "text": text, "at": time.time(), **extra}
+        # Strictly later than every entry already kept. The Windows clock moves in steps of about 15 ms, so two
+        # things said within one step tied, and "forget what I just told you" could remove the earlier one.
+        newest = max((float(item.get("at", 0.0)) for key in _LISTS for item in profile[key]), default=0.0)
+        entry = {"id": uuid.uuid4().hex[:10], "text": text, "at": max(time.time(), newest + 1e-6), **extra}
         if slot:
             entry["slot"] = slot
         items.append(entry)
