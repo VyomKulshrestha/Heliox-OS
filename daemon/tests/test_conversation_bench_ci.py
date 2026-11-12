@@ -91,3 +91,75 @@ def test_the_workflow_is_manual_and_weekly_never_on_push_and_never_blocking():
     assert "continue-on-error: true" in text
     assert "ci_prefetch" in text and "ci_timing" in text and "upload-artifact" in text
     assert "real/" not in text  # no real recording is ever referenced
+
+
+# ── Settings compared inside one job ──
+
+
+def test_settings_are_parsed_and_unknown_ones_refused():
+    from benchmarks.conversation_bench import compare_settings
+
+    assert compare_settings.parse("parakeet_threads=2, 3,4") == ("parakeet_threads", ["2", "3", "4"])
+    assert compare_settings.parse("") == ("", [""])
+    with pytest.raises(ValueError):
+        compare_settings.parse("kokoro_speed=1,2")
+    with pytest.raises(ValueError):
+        compare_settings.parse("parakeet_threads=")
+
+
+def test_the_order_rotates_so_each_setting_comes_first_as_often():
+    from benchmarks.conversation_bench import compare_settings
+
+    orders = [compare_settings.order(["2", "3", "4"], r) for r in range(3)]
+    assert orders == [["2", "3", "4"], ["3", "4", "2"], ["4", "2", "3"]]
+    assert sorted(o[0] for o in orders) == ["2", "3", "4"]
+
+
+def breakdown(recognition: float, synthesis: float) -> dict:
+    return {"recognition": {"wall": recognition, "audio": recognition}, "synthesis": {"wall": synthesis, "audio": None}}
+
+
+def test_differences_are_taken_within_each_repeat_with_their_range():
+    """A runner that slows down between repeats moves both settings: the difference stays."""
+    from benchmarks.conversation_bench import compare_settings
+
+    per = {
+        "2": {0: [breakdown(0.50, 0.9)], 1: [breakdown(0.80, 1.2)], 2: [breakdown(0.60, 1.0)]},
+        "4": {0: [breakdown(0.40, 0.9)], 1: [breakdown(0.66, 1.2)], 2: [breakdown(0.52, 1.0)]},
+    }
+    diffs = compare_settings.differences(per)
+    rec = diffs["4"]["recognition"]
+    assert rec["median"] == pytest.approx(-0.10) and rec["low"] == pytest.approx(-0.14)
+    assert rec["high"] == pytest.approx(-0.08) and rec["repeats"] == 3
+    assert diffs["4"]["synthesis"]["median"] == pytest.approx(0.0)
+    table = compare_settings.difference_table("parakeet_threads", {"local reply": per})
+    assert "difference from parakeet_threads=2" in table and "-0.10 s (-0.14 to -0.08)" in table
+    assert compare_settings.differences({"2": per["2"]}) == {}
+
+
+def test_the_calibration_line_names_the_cpu_and_both_timings():
+    from benchmarks.conversation_bench import compare_settings
+
+    line = compare_settings.calibration_line("AMD EPYC 7763 64-Core Processor", 4, 0.412, 0.231, 2)
+    assert (
+        line
+        == "CALIBRATION cpu='AMD EPYC 7763 64-Core Processor' cores=4 python_loop=0.412 s parakeet_pass=0.231 s on 2 threads"
+    )
+    assert compare_settings.calibration_line("", 4, 0.4, None, None).endswith("parakeet_pass=-")
+    assert compare_settings.python_loop_seconds(1000) >= 0.0
+
+
+def test_the_parakeet_threads_setting_reloads_only_on_a_change():
+    from types import SimpleNamespace
+
+    from benchmarks.conversation_bench import compare_settings
+
+    loads = []
+    transcriber = SimpleNamespace(threads=2, _recognizer="loaded", load=lambda: loads.append(transcriber.threads))
+    harness = SimpleNamespace(listener=SimpleNamespace(_parakeet=lambda: transcriber))
+    compare_settings.SETTINGS["parakeet_threads"](harness, "2")
+    assert loads == []
+    compare_settings.SETTINGS["parakeet_threads"](harness, "4")
+    assert transcriber.threads == 4 and transcriber._recognizer is None and loads == [4]
+    with pytest.raises(RuntimeError):
+        compare_settings.SETTINGS["parakeet_threads"](SimpleNamespace(listener=None), "2")

@@ -12,6 +12,11 @@ breakdown on the wall clock and on the audio clock, and saves every timeline for
 
 Real voice never runs here: scenarios with ``voice: real`` are refused, so no recording of the owner can be needed
 or uploaded.
+
+Comparing settings (``--settings parakeet_threads=2,3,4 --repeats 3``): every scenario runs once per setting, back
+to back, in an order that rotates each repeat, and the summary adds each setting's difference from the first with its
+range over the repeats (compare_settings.py). The scorecard lines are the first setting's, as before. A CALIBRATION
+line (the CPU, a fixed Python loop, one Parakeet pass on a fixed clip) is printed beside them on every run.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import machine, report, scoring, stack, stages
+from . import compare_settings, machine, report, scoring, stack, stages
 from . import timeline as tl
 from .models import KINDS
 from .scenarios import Scenario, load_all
@@ -85,7 +90,29 @@ def configure(config: Any) -> None:
     config.voice.tts_voice = "af_heart"
 
 
-async def run(args: argparse.Namespace, results: Path) -> tuple[list[scoring.Outcome], dict[str, list], set[str]]:
+CALIBRATION_CLIP = "synthetic/am_michael/1.0/hey_heliox_what_can_i_say.wav"
+
+
+def calibrate(harness: Any, audio_root: str) -> str:
+    """The CALIBRATION line: this runner's CPU, a fixed Python loop and one Parakeet pass on a fixed clip."""
+    from . import wavio
+
+    transcriber = harness.listener._parakeet() if harness.listener is not None else None
+    clip_path = Path(audio_root) / CALIBRATION_CLIP
+    clip = wavio.read(str(clip_path)) if clip_path.exists() else None
+    passed = compare_settings.parakeet_pass_seconds(transcriber, clip) if clip is not None else None
+    return compare_settings.calibration_line(
+        compare_settings.cpu_name(),
+        os.cpu_count(),
+        compare_settings.python_loop_seconds(),
+        passed,
+        getattr(transcriber, "threads", None),
+    )
+
+
+async def run(
+    args: argparse.Namespace, results: Path
+) -> tuple[list[scoring.Outcome], dict[str, list], set[str], dict[str, dict], str]:
     from .driver import Harness
 
     # The scratch root ci_prefetch filled (HELIOX_BENCH_ROOT, whose models the workflow caches), or a fresh one.
@@ -93,32 +120,53 @@ async def run(args: argparse.Namespace, results: Path) -> tuple[list[scoring.Out
     harness = Harness(audio_root=args.audio, data_dir=data_dir, model=KINDS["cloud"], configure=configure)
     await harness.build()
     stack.enable(harness)
+    name, values = compare_settings.parse(args.settings)
+    repeats = args.repeats or (3 if name else 1)
     outcomes: list[scoring.Outcome] = []
-    groups: dict[str, list[dict[str, Any]]] = {name: [] for name in GROUPS}
+    groups: dict[str, list[dict[str, Any]]] = {group: [] for group in GROUPS}
+    # per scenario group, per setting, per repeat: the stage breakdowns, for the differences
+    compared: dict[str, dict[str, dict[int, list[dict[str, Any]]]]] = {
+        group: {value: {} for value in values} for group in GROUPS
+    }
     owed: set[str] = set()
     wanted = [w for w in args.only.split(",") if w]
     todo = [(s, m) for s in chosen(load_all()) for m in s.models if not wanted or any(w in s.id for w in wanted)]
+    total = len(todo) * len(values) * repeats
+    i = 0
     try:
-        for i, (scenario, model) in enumerate(todo, 1):
-            quiet, load = machine.wait_for_quiet(args.max_wait, sample=lambda: machine.cpu_percent(2.0),
-                                                 threshold=args.threshold)  # fmt: skip
-            if not quiet:
-                owed.update(scenario.lines)
-                print(f"[{i}/{len(todo)}] skipped {scenario.id} ({model}): machine busy ({load}%)", flush=True)
-                continue
-            stack.select(harness, KINDS[model])
-            events = await harness.run(scenario, "as-recorded")
-            outcome = scoring.score(scenario, tl.measure(events), condition="as-recorded", model=model)
-            report.save_outcome(results, outcome, events)
-            outcomes.append(outcome)
-            for name, prefixes in GROUPS.items():
-                if scenario.id.startswith(prefixes):
-                    groups[name].append(stages.breakdown(events))
-            print(f"[{i}/{len(todo)}] {scenario.id} ({model}) load {load}% reply={outcome.measures.reply_start} "
-                  f"stop={outcome.measures.stop_time}", flush=True)  # fmt: skip
+        calibration = calibrate(harness, args.audio)
+        print(calibration, flush=True)
+        for repeat in range(repeats):
+            for scenario, model in todo:
+                for value in compare_settings.order(values, repeat):
+                    i += 1
+                    quiet, load = machine.wait_for_quiet(args.max_wait, sample=lambda: machine.cpu_percent(2.0),
+                                                         threshold=args.threshold)  # fmt: skip
+                    if not quiet:
+                        owed.update(scenario.lines)
+                        print(f"[{i}/{total}] skipped {scenario.id} ({model}): machine busy ({load}%)", flush=True)
+                        continue
+                    if name:
+                        compare_settings.SETTINGS[name](harness, value)
+                    stack.select(harness, KINDS[model])
+                    events = await harness.run(scenario, "as-recorded")
+                    outcome = scoring.score(scenario, tl.measure(events), condition="as-recorded", model=model)
+                    first = value == values[0]
+                    if first:
+                        report.save_outcome(results, outcome, events)
+                        outcomes.append(outcome)
+                    for group, prefixes in GROUPS.items():
+                        if scenario.id.startswith(prefixes):
+                            breakdown = stages.breakdown(events)
+                            if first:
+                                groups[group].append(breakdown)
+                            compared[group][value].setdefault(repeat, []).append(breakdown)
+                    shown = f" {name}={value}" if name else ""
+                    print(f"[{i}/{total}] {scenario.id} ({model}){shown} load {load}% "
+                          f"reply={outcome.measures.reply_start} stop={outcome.measures.stop_time}", flush=True)  # fmt: skip
     finally:
         await harness.close()
-    return outcomes, groups, owed
+    return outcomes, groups, owed, (compared if name else {}), calibration
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -129,19 +177,37 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--threshold", type=float, default=machine.BUSY_PERCENT)
     parser.add_argument("--only", default="", help="comma-separated id fragments (a quick check of the wiring)")
     parser.add_argument("--max-wait", type=float, default=120.0, help="seconds to wait for a quiet machine")
+    parser.add_argument(
+        "--settings", default="", help='settings to compare inside this job, e.g. "parakeet_threads=2,3,4"'
+    )
+    parser.add_argument("--repeats", type=int, default=0, help="repeats of every setting (default 3 when comparing)")
     args = parser.parse_args(argv)
     results = Path(args.results)
     results.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    outcomes, groups, owed = asyncio.run(run(args, results))
+    outcomes, groups, owed, compared, calibration = asyncio.run(run(args, results))
     where = "GitHub runner" if os.environ.get("GITHUB_ACTIONS") == "true" else "this machine, not a runner"
     note = stages.label(os.cpu_count(), where)
     rows = scoring.scorecard(outcomes)
     checks = check_lines(rows, note, owed)
     report.save_scorecard(results, rows, outcomes, scoring.worst(outcomes))
     (results / "stages.json").write_text(json.dumps(groups, indent=1), encoding="utf-8")
-    for line in checks:
+    for line in [*checks, calibration]:
         print(line)
+    name = compare_settings.parse(args.settings)[0]
+    comparison = (
+        [
+            f"Settings compared on this runner, interleaved ({name}; differences are against the first setting, taken "
+            "within each repeat; the range is over the repeats):",
+            "",
+            compare_settings.difference_table(name, compared),
+            "",
+        ]
+        if compared
+        else []
+    )
+    if compared:
+        (results / "compared.json").write_text(json.dumps(compared, indent=1), encoding="utf-8")
     text = "\n".join([
         f"### Conversation Bench timing lines: {note}",
         "",
@@ -149,7 +215,8 @@ def main(argv: list[str] | None = None) -> int:
         "how long Heliox's own stages take on such a machine; they do not say how the owner's laptop or voice "
         "behaves (another CPU, other load, a GPU, a real microphone and speaker, a real voice).",
         "",
-        "```", *checks, "```", "",
+        "```", *checks, calibration, "```", "",
+        *comparison,
         "Where the time goes (wall clock = what a person waits; audio clock = seconds of microphone audio fed; "
         "they differ only when the listener falls behind):",
         "",
