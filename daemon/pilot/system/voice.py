@@ -7,11 +7,13 @@ system TTS or edge-tts, and optional wake word detection.
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import json
 import logging
 import os
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -2518,6 +2520,11 @@ def _counted(function: Any, *args: Any) -> Any:
             _recogniser_threads -= 1
 
 
+# A speculative pass that took under this share of its audio's length is cheap to waste: then it may start at
+# 100 ms of quiet instead of 200 ms (speculation_frames).
+CHEAP_PASS_RTF = 0.1
+
+
 class _Speculation:
     """The final pass (Parakeet and the Whisper wake check, or Whisper alone) started at a candidate end of turn.
 
@@ -2537,8 +2544,19 @@ class _Speculation:
             # keeps the CPU busy until it finishes. No second one starts beside it (on 4 cores two at once made
             # both several times slower); the pass then runs at the end of the turn, as without speculation.
             return
-        path = _write_wav(frames, self.listener._recorder.sample_rate)
-        self.task = asyncio.ensure_future(self.listener._transcribe_path(path, speculative=True))
+        rate = self.listener._recorder.sample_rate
+        path = _write_wav(frames, rate)
+        audio_seconds = sum(len(frame) for frame in frames) / max(1, rate)
+
+        speculative = self.listener._transcribe_path(path, speculative=True)  # a pass that cannot start raises here
+
+        async def timed() -> str:
+            started = time.perf_counter()
+            text = await speculative
+            self.listener.note_pass(time.perf_counter() - started, audio_seconds)
+            return text
+
+        self.task = asyncio.ensure_future(timed())
         self.task.add_done_callback(lambda task: task.cancelled() or task.exception())
 
     def cancel(self) -> None:
@@ -2595,6 +2613,8 @@ class ContinuousVoiceListener:
         self._capture_watchdog: Any = None
         self.capture_notice = ""
         self._early_wake: asyncio.Task[str] | None = None
+        # How long the last finished speculative passes took against their audio (CHEAP_PASS_RTF).
+        self._pass_rtfs: collections.deque[float] = collections.deque(maxlen=5)
         # When speech is taken as meant for Heliox (pilot.system.addressing): the one authority.
         from pilot.system.addressing import Addressing
 
@@ -3075,6 +3095,20 @@ class ContinuousVoiceListener:
             return
         loop.call_soon_threadsafe(lambda: asyncio.ensure_future(callback(*args)))
 
+    def note_pass(self, seconds: float, audio_seconds: float) -> None:
+        """A speculative pass finished: its time against its audio decides how early the next one may start."""
+        if audio_seconds > 0.3:
+            self._pass_rtfs.append(seconds / audio_seconds)
+
+    def speculation_frames(self) -> int:
+        """Frames of quiet before the speculative pass starts: 2 (100 ms) when the last passes ran well under real
+        time, so one wasted when the person carries on costs little; else 4 (200 ms). Over the bench's replay corpus
+        100 ms made 1652 wasted passes against 410 at 200 ms (994 utterances), about 0.2 s of CPU each plus 0.2 s
+        per second of audio on this laptop's CPU, so a slow machine keeps 200 ms."""
+        if len(self._pass_rtfs) >= 3 and statistics.median(self._pass_rtfs) < CHEAP_PASS_RTF:
+            return 2
+        return 4
+
     def _configure_turn_taking(self) -> Any:
         """Point the recorder at the turn detector and streaming recognizer the settings ask for.
 
@@ -3092,6 +3126,7 @@ class ContinuousVoiceListener:
             self._turn_detector if smart and self._turn_detector is not None and self._turn_detector.ready else None
         )
         recorder.turn_hold_frames = max(1, int(getattr(voice, "turn_hold_ms", 2500.0) / recorder.frame_ms))
+        recorder.speculate_frames = self.speculation_frames()
         recorder.on_hold = (lambda: self._schedule(self._on_turn_hold)) if self._on_turn_hold else None
         streaming = self._streaming if voice.transcription_engine == "streaming" else None
         if streaming is not None and streaming.ready:

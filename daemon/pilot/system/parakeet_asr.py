@@ -93,12 +93,22 @@ def _without_wake(text: str, wake_prefix: Any) -> str:
     return text
 
 
+def parakeet_threads(cores: int | None = None) -> int:
+    """Half the cores the system reports, at most 4, at least 1. Measured 12 November on this laptop (24 logical
+    cores, the machine 60 to 98 % busy with other work, so the times are relative): a pass on 2 s of speech took 0.62 s
+    with 2 threads, 0.47 s with 4 and 0.60 s with 8, so more than 4 buys nothing; and while it ran, a Kokoro head took
+    3.0 s with Parakeet on 2 threads, 8.0 s on 4 and 49 s on 8 (its threads spin while they wait and starve the voice),
+    so the other half stays free for the turn detector and the voice. On a 4-core machine: 2."""
+    cores = cores if cores is not None else (os.cpu_count() or 2)
+    return max(1, min(4, cores // 2))
+
+
 class ParakeetTranscriber:
     """Loads the model on first use (about 4 s) and keeps it; safe to call from worker threads."""
 
     def __init__(self, folder: Path, threads: int | None = None) -> None:
         self.folder = folder
-        self.threads = threads or max(1, min(8, os.cpu_count() or 4))
+        self.threads = threads or parakeet_threads()
         self._recognizer: Any = None
         self._lock = threading.Lock()
         self.error = ""
