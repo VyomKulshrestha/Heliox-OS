@@ -247,3 +247,106 @@ async def test_a_database_that_turns_read_only_while_running_is_said_once_and_re
         assert store.status() is None and told[-1]["message"] == "Heliox can save again."
     finally:
         await pool.close()
+
+
+async def test_a_request_whose_store_is_full_is_answered_with_the_sentence_not_an_internal_error(
+    health, monkeypatch, tmp_path
+):
+    """CI, a tmpfs filled to the last byte: "note that ..." got {'code': -32603, 'message': 'Internal error: database
+    or disk is full'} because the durable task store raised before the note was taken. Any request whose handler
+    meets a full or read-only store now gets the plain sentence: execute in its result, which the window shows as the
+    task's outcome; any other method as a JSON-RPC error of its own (STORAGE_ERROR_CODE) whose message is the sentence,
+    so a caller that reads a list or a status object is not handed a result without its fields."""
+    import json
+    from unittest.mock import AsyncMock
+
+    import websockets
+
+    store, told = health
+    monkeypatch.setattr("pilot.config.RUNTIME_DIR", tmp_path / "runtime")
+    config = PilotConfig()
+    config.server.host, config.server.port, config.server.auth_token = "127.0.0.1", 0, "test-token"
+    server = PilotServer(config)
+    server.initialize = AsyncMock()
+    server._broadcast_notification = AsyncMock()
+
+    async def full(_params, _ws):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    async def read_only(_params, _ws):
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    async def broken(_params, _ws):
+        raise ValueError("not about the disk")
+
+    await server.start()
+    server._handlers = {"execute": full, "note_add": read_only, "todo_add": broken}
+    try:
+        port = server._server.sockets[0].getsockname()[1]
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": 1}))
+            replies = {}
+            await ws.send(json.dumps({"jsonrpc": "2.0", "method": "execute", "params": {"input": "note x"}, "id": 2}))
+            await ws.send(json.dumps({"jsonrpc": "2.0", "method": "todo_add", "params": {"text": "x"}, "id": 3}))
+            await ws.send(json.dumps({"jsonrpc": "2.0", "method": "note_add", "params": {"text": "x"}, "id": 4}))
+            while len(replies) < 3:
+                message = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                if message.get("id") in (2, 3, 4):
+                    replies[message["id"]] = message
+        answer = replies[2]["result"]
+        assert answer["status"] == "error" and answer["storage_problem"] is True
+        assert answer["message"].startswith("The disk is full, so Heliox could not save that.")
+        assert answer["explanation"] == answer["message"]
+        assert {notice["kind"] for notice in told} == {"full", "read_only"}  # each said once (the requests race)
+        assert replies[3]["error"]["code"] == -32603  # anything else is still an internal error
+        assert replies[3]["error"]["message"].startswith("Internal error:")
+        from pilot.server import STORAGE_ERROR_CODE
+
+        listed = replies[4]["error"]  # a list-style method: an error, the sentence alone, and what kind
+        assert listed["code"] == STORAGE_ERROR_CODE != -32603 and "result" not in replies[4]
+        assert listed["message"].startswith("Heliox's data folder cannot be written to, so it could not save that.")
+        assert listed["data"] == {"storage_problem": True, "kind": "read_only"}
+    finally:
+        await server.stop()
+
+
+def test_an_unwritable_data_folder_does_not_stop_the_daemon_before_it_listens(health, monkeypatch, tmp_path):
+    """CI, the data folder on a read-only tmpfs: ensure_dirs raised and the daemon ended before listening, so the
+    window could not connect and nobody said why. Now the other folders are made and start-up's own check says why."""
+    from pathlib import Path
+
+    from pilot import config as config_module
+
+    folders = {name: tmp_path / name for name in ("config", "data", "state", "runtime", "plugins")}
+    for name, attribute in (
+        ("config", "CONFIG_DIR"),
+        ("data", "DATA_DIR"),
+        ("state", "STATE_DIR"),
+        ("runtime", "RUNTIME_DIR"),
+        ("plugins", "PLUGINS_DIR"),
+    ):
+        monkeypatch.setattr(config_module, attribute, folders[name])
+    monkeypatch.setattr(config_module, "SCREENSHOTS_DIR", folders["data"] / "screenshots")
+    real_mkdir = Path.mkdir
+
+    def read_only(self, *args, **kwargs):
+        if folders["data"] == self or folders["data"] in self.parents:
+            raise OSError(errno.EROFS, "Read-only file system")
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", read_only)
+    config_module.ensure_dirs()  # no exception
+    assert all(folders[name].is_dir() for name in ("config", "state", "runtime", "plugins"))
+    assert not folders["data"].exists()
+
+    monkeypatch.setattr(Path, "mkdir", real_mkdir)
+    folders["data"].mkdir()
+    real_write = Path.write_text
+
+    def full(self, *args, **kwargs):
+        if self.name == ".write_test":
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", full)
+    config_module.ensure_dirs()  # a full disk is left to start-up too

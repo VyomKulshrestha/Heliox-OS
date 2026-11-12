@@ -32,13 +32,35 @@ def write_config(extra: str = "") -> None:
     )
 
 
+_output: list[Path] = []  # where each daemon this process started wrote its stdout and stderr
+
+
 def start(env: dict[str, str] | None = None) -> subprocess.Popen:
-    return subprocess.Popen(
-        [sys.executable, "-m", "pilot.server"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env={**os.environ, **(env or {})},
-    )
+    """``python -m pilot.server``; its stdout and stderr go to a file (``output_tail``), so a daemon that ends before
+    it writes its own log (or before it listens) still says why."""
+    import tempfile
+
+    folder = Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir())
+    path = folder / f"heliox-daemon-output-{os.getpid()}-{len(_output)}.log"
+    _output.append(path)
+    with open(path, "wb") as sink:  # the child keeps its own copy of the handle
+        return subprocess.Popen(
+            [sys.executable, "-m", "pilot.server"],
+            stdout=sink,
+            stderr=subprocess.STDOUT,
+            env={**os.environ, **(env or {})},
+        )
+
+
+def output_tail(lines: int = 40) -> list[str]:
+    """The last lines the most recently started daemon printed (a traceback before its log exists, for one)."""
+    if not _output:
+        return []
+    try:
+        text = _output[-1].read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    return [line.rstrip()[-240:] for line in text[-lines:]]
 
 
 class Session:
@@ -67,7 +89,10 @@ class Session:
     async def ask(self, text: str, timeout: float = 120.0) -> str:
         """A typed request, as the window sends it; the sentence Heliox answered with."""
         reply = await self.call("execute", {"input": text}, timeout)
-        return str(reply.get("explanation") or reply.get("message") or reply.get("rpc_error") or reply)
+        error = reply.get("rpc_error")
+        if isinstance(error, dict):
+            return str(error.get("message") or error)
+        return str(reply.get("explanation") or reply.get("message") or reply)
 
     async def timed(self, method: str, params: dict | None = None, timeout: float = 60.0) -> tuple[dict, float]:
         began = time.monotonic()

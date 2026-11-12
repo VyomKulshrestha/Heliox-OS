@@ -111,6 +111,31 @@ def fill() -> tuple[Path, int]:
     return filler, written
 
 
+def answer(reply: dict) -> tuple[str, str]:
+    """How a request was answered, and the sentence: a result (execute, resume_task) or a JSON-RPC error with its code
+    and data (every other method)."""
+    error = reply.get("rpc_error")
+    if isinstance(error, dict):
+        return f"error {error.get('code')} {error.get('data')}", str(error.get("message", ""))
+    return "result", str(reply.get("explanation") or reply.get("message") or reply)
+
+
+async def both_ways(session, text: str) -> list[tuple[str, str, str]]:
+    """A note saved typed (execute, the conversation) and from the Today panel (note_add): (method, form, sentence)."""
+    found = []
+    for method, params in (("execute", {"input": f"note that {text}"}), ("note_add", {"text": text})):
+        form, sentence = answer(await session.call(method, params, timeout=120))
+        found.append((method, form, sentence))
+    return found
+
+
+def said_by_both(found, words: str, kind: str) -> tuple[bool, str]:
+    """execute answers in its result; note_add with the storage error (-32010, data naming the kind)."""
+    ok = all(words in sentence for _method, _form, sentence in found)
+    ok = ok and found[0][1] == "result" and found[1][1].startswith("error -32010") and f"'{kind}'" in found[1][1]
+    return ok, "; ".join(f"{method} answered as {form}: {sentence[:160]!r}" for method, form, sentence in found)
+
+
 async def fresh_daemon(limit: float = 240.0):
     real_daemon.write_config()
     daemon = real_daemon.start()
@@ -171,13 +196,14 @@ async def full_while_running() -> None:
         filler, written = fill()
         print(f"INFO filled the tmpfs with {written / 2**20:.1f} MB; {options()}")
         began = time.monotonic()
-        said = await session.ask("note that the disk is full now")
+        found = await both_ways(session, "the disk is full now")
         took = time.monotonic() - began
         problem = await storage_status(session)
+        ok, how = said_by_both(found, FULL_WORDS, "full")
         check(
             "full/says-so",
-            FULL_WORDS in said and (problem or {}).get("kind") == "full",
-            f"answered in {took:.1f} s: {said!r}; status storage={problem!r}",
+            ok and (problem or {}).get("kind") == "full",
+            f"in {took:.1f} s: {how}; status storage={problem!r}",
         )
         pong, took = await session.timed("ping")
         sizes, sizes_took = await session.timed("storage_sizes")
@@ -245,18 +271,21 @@ async def remounted_read_only() -> None:
         )
         await asyncio.sleep(1)
         now = options()
-        if not check(
-            "remounted-read-only/kernel-remounted", now.split(",")[0] == "ro", f"{device} after the error: {now}"
-        ):
+        # Kernels from 6.x mark an ext4 file system that errors=remount-ro has stopped with "emergency_ro" and leave
+        # the mount's own "rw" (CI on e8bf67c: rw,relatime,errors=remount-ro,emergency_ro); writes then fail with
+        # EROFS as on an "ro" mount. Older kernels change "rw" to "ro".
+        stopped = now.split(",")[0] == "ro" or "emergency_ro" in now.split(",")
+        if not check("remounted-read-only/kernel-remounted", stopped, f"{device} after the error: {now}"):
             return
         began = time.monotonic()
-        said = await session.ask("note that the drive failed")
+        found = await both_ways(session, "the drive failed")
         took = time.monotonic() - began
         problem = await storage_status(session)
+        ok, how = said_by_both(found, READ_ONLY_WORDS, "read_only")
         check(
             "remounted-read-only/says-so",
-            READ_ONLY_WORDS in said and (problem or {}).get("kind") == "read_only",
-            f"answered in {took:.1f} s: {said!r}; status storage={problem!r}",
+            ok and (problem or {}).get("kind") == "read_only",
+            f"in {took:.1f} s: {how}; status storage={problem!r}",
         )
         pong, took = await session.timed("ping")
         check(
@@ -282,8 +311,10 @@ async def run() -> int:
             await case()
         except Exception as error:
             check(f"{case.__name__.replace('_', '-')}/ran", False, f"{type(error).__name__}: {error}")
-            for line in real_daemon.log_lines(("Storage problem", "cannot write", "Traceback", "Error")):
+            for line in real_daemon.log_lines(("Storage problem", "cannot write", "Traceback", "Error", "Start-up")):
                 print(f"DAEMON-LOG {line}")
+            for line in real_daemon.output_tail():
+                print(f"DAEMON-OUT {line}")
     return 0 if results and all(ok for ok, _line in results) else 1
 
 

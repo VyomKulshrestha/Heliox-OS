@@ -153,8 +153,15 @@ async def test_neural_sidecar_token_is_role_scoped_and_cannot_call_ping(daemon_s
             duplicate_denied = json.loads(await duplicate.recv())
             assert duplicate_denied["error"]["code"] == -32002
 
-        await ws.send(json.dumps({"jsonrpc": "2.0", "method": "neural_status", "id": "neural-status"}))
-        status = json.loads(await ws.recv())
+        # Neural input starts after ready, as a late part: until it has, neural_status says "starting" (with its
+        # sentence). Asked once, this failed whenever the machine was slower than the part (seen on 3e93cc1).
+        deadline = asyncio.get_running_loop().time() + WAIT_LIMIT_SECONDS
+        while True:
+            await ws.send(json.dumps({"jsonrpc": "2.0", "method": "neural_status", "id": "neural-status"}))
+            status = json.loads(await ws.recv())
+            if status["result"].get("status") != "starting" or asyncio.get_running_loop().time() > deadline:
+                break
+            await asyncio.sleep(0.1)
         assert status["result"]["status"] == "ok"
         assert status["result"]["connected"] is False
         assert status["result"]["capabilities"]["physical_control"] is False

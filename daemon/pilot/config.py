@@ -1931,9 +1931,28 @@ def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
 
 
 def ensure_dirs() -> None:
-    """Create all required XDG directories and validate write access."""
+    """Create all required XDG directories and validate write access.
+
+    A data folder that cannot be written because the disk is full or the drive or folder is read-only does not stop
+    the daemon here: start-up still listens and answers, says why, and checks again every 30 s
+    (pilot.system.storage_health.preflight). Before, this raised, and the daemon ended before it listened, so the
+    window could not connect and nobody was told why. Anything else (a file where the folder should be) still raises.
+    """
+    from pilot.system.storage_health import classify
+
+    data_folders = (DATA_DIR, SCREENSHOTS_DIR)
+    blocked = False
     for d in (CONFIG_DIR, DATA_DIR, STATE_DIR, RUNTIME_DIR, PLUGINS_DIR, SCREENSHOTS_DIR):
-        d.mkdir(parents=True, exist_ok=True)
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            if d not in data_folders or classify(error) is None:
+                raise
+            if not blocked:
+                logger.warning("The data folder cannot be written (%s); start-up says so and waits for it", error)
+            blocked = True  # the other folders are still made: the log, the tokens and the settings need them
+    if blocked:
+        return
 
     test_file = DATA_DIR / ".write_test"
 
@@ -1941,6 +1960,9 @@ def ensure_dirs() -> None:
         test_file.write_text("test")
         test_file.unlink()
     except Exception as e:
+        if isinstance(e, OSError) and classify(e) is not None:
+            logger.warning("The data folder cannot be written (%s); start-up says so and waits for it", e)
+            return
         logger.error(f"DATA_DIR is not writable: {DATA_DIR}")
         raise RuntimeError(f"DATA_DIR is not writable: {DATA_DIR}") from e
 

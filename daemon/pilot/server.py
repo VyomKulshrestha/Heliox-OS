@@ -601,8 +601,27 @@ def _success_response(req_id: str | int | None, result: Any) -> str:
     return json.dumps({"jsonrpc": "2.0", "result": result, "id": req_id})
 
 
-def _error_response(req_id: str | int | None, code: int, message: str) -> str:
-    return json.dumps({"jsonrpc": "2.0", "error": {"code": code, "message": message}, "id": req_id})
+def _error_response(req_id: str | int | None, code: int, message: str, data: dict[str, Any] | None = None) -> str:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
+    return json.dumps({"jsonrpc": "2.0", "error": error, "id": req_id})
+
+
+# A request that failed because the disk is full or the data folder is read-only (pilot.system.storage_health).
+# The methods that return a task's result ({status, message, explanation}) answer with that shape, which the window
+# already shows as the task's outcome; every other method answers with this JSON-RPC error, its message the plain
+# sentence alone, so whatever reads a list or a status object is not handed a result without its fields.
+STORAGE_ERROR_CODE = -32010
+TASK_RESULT_METHODS = frozenset({"execute", "resume_task"})
+
+
+def _storage_answer(req_id: str | int | None, method: str, kind: str, sentence: str) -> str:
+    if method in TASK_RESULT_METHODS:
+        return _success_response(
+            req_id, {"status": "error", "message": sentence, "explanation": sentence, "storage_problem": True}
+        )
+    return _error_response(req_id, STORAGE_ERROR_CODE, sentence, {"storage_problem": True, "kind": kind})
 
 
 # Answers Heliox gives in code that may go to a model in the cloud as part of the conversation: they hold nothing of
@@ -2652,6 +2671,17 @@ class PilotServer:
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("Connection lost during request handling: %s", remote)
             except Exception as e:
+                # A full disk or a read-only data folder under any request that writes a store: the plain sentence
+                # as the answer, never "Internal error: database or disk is full" (pilot.system.storage_health).
+                from pilot.system.storage_health import classify, storage
+
+                said = storage().report(f"request {request.method}", e)
+                if said is not None and request.id is not None:
+                    try:
+                        await websocket.send(_storage_answer(request.id, request.method, str(classify(e)), said))
+                    except websockets.exceptions.ConnectionClosed:
+                        logger.warning("Could not send the storage answer; the connection is closed: %s", remote)
+                    return
                 logger.exception("Handler error")
                 try:
                     await websocket.send(_error_response(request.id, -32603, f"Internal error: {e}"))
@@ -11116,6 +11146,7 @@ class PilotServer:
             if await asyncio.to_thread(preflight, DATA_DIR) is None:
                 storage().report_ok(announce=False)  # said below, once the stores are up
                 logger.info("The data folder can be written again; starting Heliox's stores")
+                await asyncio.to_thread(ensure_dirs)  # the folders inside it that could not be made at start
                 await self.initialize()
                 startup = getattr(self, "_startup", None)
                 if startup is not None:
@@ -14959,13 +14990,17 @@ def handle_tool(tool_name, params):
                 )
         except Exception as error:
             logger.error("Voice command execution failed: %s", error)
-            message = "Something went wrong while executing your request."
+            from pilot.system.storage_health import storage
+
+            # A full disk or a read-only data folder is said in plain words, aloud and in the window.
+            said = storage().report("voice request", error)
+            message = said or "Something went wrong while executing your request."
             await self._broadcast_notification(
                 "voice_result",
                 {
                     "command": spoken_command,
                     "status": "error",
-                    "message": str(error),
+                    "message": said or str(error),
                     "language": language,
                 },
             )
