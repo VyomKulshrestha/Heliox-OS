@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import tempfile
+import tomllib
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -108,6 +109,7 @@ class Record:
     planned: dict[int, list[str]] = field(default_factory=dict)  # what the planner was given, by turn
     stored: dict[int, str] = field(default_factory=dict)  # everything on disk after the turn, as text
     config_saves: dict[int, list[str]] = field(default_factory=dict)  # where each config save went, by turn
+    config_after: dict[int, dict[str, Any]] = field(default_factory=dict)  # the scratch config.toml after the turn
     folder: str = ""  # the session's own folder
     real_config_before: dict[str, tuple[int, int]] = field(default_factory=dict)  # the person's, by name
     real_config_after: dict[str, tuple[int, int]] = field(default_factory=dict)
@@ -612,6 +614,7 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                 else:
                     pending.append(task)  # waiting on the visible approval dialog, which nobody presses here
                 record.stored[index] = _on_disk(folder)
+                record.config_after[index] = _scratch_config()
             record.turn = len(session["turns"])
             for task in pending:
                 task.cancel()
@@ -699,6 +702,29 @@ def _on_disk(folder: Path) -> str:
             except OSError:
                 continue
     return "\n".join(parts)
+
+
+def _scratch_config() -> dict[str, Any]:
+    """The scratch config.toml as saved so far ({} before the first save); refuses to read one outside the scratch
+    root, so a session never reads the person's own settings."""
+    import pilot.config as config_module
+
+    target = Path(config_module.CONFIG_FILE)
+    if not target.resolve().is_relative_to(TEST_ROOT.resolve()):
+        raise RuntimeError(f"refusing to read a config outside the scratch root: {target}")
+    if not target.exists():
+        return {}
+    return tomllib.loads(target.read_text(encoding="utf-8"))
+
+
+def _setting(config: dict[str, Any], dotted: str) -> Any:
+    """config["live"]["enabled"] for "live.enabled"; None when a part is missing."""
+    value: Any = config
+    for part in dotted.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
 
 
 def _watch_saves(record: Record) -> Any:
@@ -838,9 +864,17 @@ def check_session(session: dict[str, Any], kind: str, record: Record) -> list[st
         if "config_saved_in_scratch" in expect:
             if expect["config_saved_in_scratch"] and not saves:
                 failures.append(f"{where}: expected the config to be saved; it was not")
+            if not expect["config_saved_in_scratch"] and saves:
+                failures.append(f"{where}: expected no config save; wrote {sorted({Path(t).name for t in saves})}")
             for target in saves:
                 if not Path(target).resolve().is_relative_to(TEST_ROOT.resolve()):
                     failures.append(f"{where}: a config save went outside the scratch root: {target}")
+        saved = record.config_after.get(index, {})
+        for dotted, value in expect.get("config", {}).items():
+            if _setting(saved, dotted) != value:
+                failures.append(
+                    f"{where}: expected {dotted} = {value!r} in the saved config; it is {_setting(saved, dotted)!r}"
+                )
         on_disk = record.stored.get(index, "")
         for option in expect.get("stored", []):
             if not _has(on_disk, option):
