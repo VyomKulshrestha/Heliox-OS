@@ -102,8 +102,14 @@ def on_processor_because_missing(what: str) -> str:
 # ── The NVIDIA libraries from pip (the voice-gpu extra) ──
 
 
+# The NVIDIA wheels Whisper's runtime (ctranslate2) loads from, and what they need themselves. On Linux PyPI's
+# PyTorch also installs nccl, nvshmem, cusparselt and others, which have nothing to do with Whisper: their folders are
+# never added to the search path.
+WHISPER_NVIDIA_PARTS = ("cublas", "cudnn", "cuda_runtime", "cuda_nvrtc", "nvjitlink")
+
+
 def nvidia_library_dirs() -> list[Path]:
-    """Folders of the NVIDIA wheels (nvidia-cublas-cu12, nvidia-cudnn-cu12, ...) in this environment that hold their
+    """Folders of the NVIDIA wheels Whisper needs (WHISPER_NVIDIA_PARTS) in this environment that hold their
     libraries: ``nvidia/<part>/bin`` on Windows, ``nvidia/<part>/lib`` elsewhere. [] when none is installed."""
     try:
         spec = importlib.util.find_spec("nvidia")
@@ -114,8 +120,8 @@ def nvidia_library_dirs() -> list[Path]:
     leaf = "bin" if sys.platform == "win32" else "lib"
     found: list[Path] = []
     for root in spec.submodule_search_locations:
-        for part in sorted(Path(root).iterdir()) if Path(root).is_dir() else []:
-            folder = part / leaf
+        for part in WHISPER_NVIDIA_PARTS:
+            folder = Path(root) / part / leaf
             if folder.is_dir():
                 found.append(folder)
     return found

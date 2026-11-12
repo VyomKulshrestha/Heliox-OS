@@ -84,13 +84,15 @@ def test_whisper_s_libraries_are_checked_by_name(monkeypatch, platform, expected
     assert gpu_paths.whisper_gpu_missing("darwin", loadable=lambda name: False) == []
 
 
-def test_the_nvidia_wheels_folders_are_found_for_this_system(monkeypatch, tmp_path):
+def test_only_the_nvidia_folders_whisper_needs_are_found(monkeypatch, tmp_path):
+    """Only this test's own site-packages is searched (the Linux runners' real one holds PyTorch's NVIDIA wheels),
+    and of the parts there only Whisper's: never nccl, nvshmem or cusparselt."""
     leaf = "bin" if sys.platform == "win32" else "lib"
-    for part in ("cublas", "cudnn"):
+    for part in ("cublas", "cudnn", "nccl", "nvshmem", "cusparselt"):
         (tmp_path / "nvidia" / part / leaf).mkdir(parents=True)
     (tmp_path / "nvidia" / "cuda_runtime").mkdir(parents=True)  # nothing to load there
-    monkeypatch.syspath_prepend(str(tmp_path))
-    monkeypatch.delitem(sys.modules, "nvidia", raising=False)
+    spec = SimpleNamespace(submodule_search_locations=[str(tmp_path / "nvidia")])
+    monkeypatch.setattr(gpu_paths.importlib.util, "find_spec", lambda name: spec if name == "nvidia" else None)
     found = gpu_paths.nvidia_library_dirs()
     assert [f.parent.name for f in found] == ["cublas", "cudnn"]
 
