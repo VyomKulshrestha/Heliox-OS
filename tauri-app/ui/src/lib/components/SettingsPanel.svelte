@@ -1205,7 +1205,7 @@
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">Global Hotkey</span>
-        <span class="setting-desc">Summon Heliox from anywhere (default: Ctrl+Space)</span>
+        <span class="setting-desc">Summon Heliox from anywhere (default: {defaultHotkey()})</span>
         <span class="hotkey-status" class:unsupported={!hotkeySupported}>
           {hotkeySupported
             ? `Active system shortcut: ${hotkeyInput || defaultHotkey()}`
