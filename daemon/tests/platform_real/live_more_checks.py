@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,12 @@ def skip(name: str, why: str) -> None:
 # ── 1. windows Live never reads ──
 
 
-async def never_read_steps(prefix: str, live: E.Live, send, type_text) -> None:
+async def never_read_steps(prefix: str, live: E.Live, send, type_text, front=lambda: None) -> None:
+    # Live must first read this fixture's field, or "never read" proves nothing (it read nothing at all).
+    if not await E.first_read(prefix, live, front, type_text):
+        for title in ("Bitwarden", "Heliox-OS"):
+            skip(f"{prefix}/live-window-titled-{title}-is-never-read", "Live read nothing from the fixture here")
+        return
     for days, title in ((20, "Bitwarden - My Vault"), (23, "Heliox-OS")):
         await asyncio.to_thread(send, f"title {title}")
         await live.run(1.5)
@@ -84,7 +90,9 @@ async def linux_never_read(wayland: bool, python: str, folder: Path) -> None:
             keeper = subprocess.Popen(["wtype", "-s", "600000"])
             atexit.register(keeper.kill)
             time.sleep(1.0)
-        await never_read_steps(prefix, E.Live(folder / "never"), fixture.send, type_keys)
+        await never_read_steps(
+            prefix, E.Live(folder / "never"), fixture.send, type_keys, front=lambda: fixture.send("focus entry")
+        )
     finally:
         fixture.close()
 
@@ -216,9 +224,13 @@ async def run(args: Any, folder: Path) -> None:
             skip("macos/live-more", "this runner does not grant Accessibility to the job")
             return
         fixture = subprocess.Popen(
-            [sys.executable, str(HERE / "macos_fixture.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+            [sys.executable, str(HERE / "live_fixture_macos.py")],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
         )
         assert fixture.stdin is not None and fixture.stdout is not None
+        said: list[str] = []
 
         def send(command: str) -> None:
             fixture.stdin.write(command + "\n")
@@ -231,8 +243,9 @@ async def run(args: Any, folder: Path) -> None:
 
         try:
             if check("macos/never-read-fixture-started", fixture.stdout.readline().startswith("ready")):
+                threading.Thread(target=lambda: said.extend(fixture.stdout), daemon=True).start()
                 time.sleep(1.0)
-                await never_read_steps("macos", E.Live(folder / "never"), send, type_text)
+                await never_read_steps("macos", E.Live(folder / "never"), send, type_text, front=lambda: send("front"))
         finally:
             send("quit")
             fixture.kill()

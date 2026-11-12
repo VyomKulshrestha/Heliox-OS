@@ -203,3 +203,29 @@ async def test_live_sees_the_wezterm_line_as_a_terminal_line_and_catches_a_risky
 def test_no_path_of_this_computer_in_the_reader():
     source = Path(T.__file__).read_text(encoding="utf-8")
     assert "marcu" not in source and "C:\\\\Users" not in source
+
+
+@pytest.mark.asyncio
+async def test_terminal_commands_run_without_heliox_pythons_variables(monkeypatch):
+    """kitty embeds its own Python: given the daemon's PYTHONHOME, PYTHONPATH or LD_LIBRARY_PATH it fails to start
+    ("No module named '_struct'" on a CI runner), so those never reach it."""
+    seen = {}
+
+    class Done:
+        returncode = 0
+
+        async def communicate(self):
+            return b"[]", b""
+
+    async def exec_(*argv, **kwargs):
+        seen["argv"], seen["env"] = argv, kwargs.get("env")
+        return Done()
+
+    for name in ("PYTHONHOME", "PYTHONPATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        monkeypatch.setenv(name, "/somewhere/else")
+    monkeypatch.setenv("KITTY_LISTEN_ON", "unix:/tmp/kitty-1")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", exec_)
+    assert await T.run(["kitty", "@", "ls"], 1.0) == (0, "[]")
+    env = seen["env"]
+    assert env is not None and not {"PYTHONHOME", "PYTHONPATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"} & set(env)
+    assert env["KITTY_LISTEN_ON"] == "unix:/tmp/kitty-1" and "PATH" in env  # the rest is passed on as it is

@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from pilot.live.terminal_text import KITTY_SETUP, TerminalText  # noqa: E402
+from pilot.live.terminal_text import KITTY_SETUP, TerminalText, child_env  # noqa: E402
 
 RISKY = "git push origin main --force"
 failures = 0
@@ -73,7 +73,8 @@ async def kitty_checks(root: Path, env: dict[str, str]) -> None:
     (conf_dir / "kitty.conf").write_text(
         f"allow_remote_control socket-only\nlisten_on {listen}\nconfirm_os_window_close 0\n", encoding="utf-8"
     )
-    run_env = dict(env, KITTY_CONFIG_DIRECTORY=str(conf_dir), PS1="$ ", ENV="", LIBGL_ALWAYS_SOFTWARE="1")
+    # As the product runs kitty: without the runner Python's variables, which break kitty's own Python.
+    run_env = child_env(dict(env, KITTY_CONFIG_DIRECTORY=str(conf_dir), PS1="$ ", ENV="", LIBGL_ALWAYS_SOFTWARE="1"))
     proc = subprocess.Popen([kitty, "--config", str(conf_dir / "kitty.conf"), "sh"], env=run_env, cwd=root)
     try:
         address = f"{listen}-{proc.pid}"
@@ -85,7 +86,7 @@ async def kitty_checks(root: Path, env: dict[str, str]) -> None:
         if not check("kitty: started with remote control on", socket.exists(), address):
             return
         time.sleep(1.0)
-        subprocess.run([kitty, "@", "--to", address, "send-text", RISKY], timeout=10, check=False)
+        subprocess.run([kitty, "@", "--to", address, "send-text", RISKY], timeout=10, check=False, env=run_env)
         reader = TerminalText(env={"KITTY_CONFIG_DIRECTORY": str(conf_dir)})
         seen = await read_until(reader, "kitty", proc.pid)
         check(
@@ -105,7 +106,7 @@ async def wezterm_checks(root: Path, env: dict[str, str]) -> None:
     if not wezterm:
         skip("wezterm", "wezterm is not installed")
         return
-    run_env = dict(env, PS1="$ ", ENV="", LIBGL_ALWAYS_SOFTWARE="1")
+    run_env = child_env(dict(env, PS1="$ ", ENV="", LIBGL_ALWAYS_SOFTWARE="1"))
     proc = subprocess.Popen(
         [wezterm, "--config", "front_end='Software'", "start", "--always-new-process", "--cwd", str(root), "sh"],
         env=run_env,

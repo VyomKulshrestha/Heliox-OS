@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -157,8 +158,43 @@ class Live:
         return hit or bool(until())
 
 
-async def steps(prefix: str, live: Live, type_text, focus, close) -> None:
+STEPS = (
+    "live-excluded-app-gives-no-card",
+    "live-typed-slip-becomes-a-card",
+    "live-password-field-gives-no-card",
+    "live-card-withdrawn-when-window-closes",
+)
+
+
+async def first_read(prefix: str, live: Live, front, type_text, seconds: float = 15.0) -> bool:
+    """Live must read the fixture's field through the daemon's own observe before any check here may pass: a "no
+    card" proves nothing when Live read nothing at all. The window is asked forward (an earlier step can leave
+    another app in front) and a neutral word is put in the field (an empty field gives nothing to read)."""
+    await asyncio.to_thread(type_text, "Notes:")
+    deadline = time.monotonic() + seconds
+    obs = None
+    while time.monotonic() < deadline:
+        await asyncio.to_thread(front)
+        await asyncio.sleep(0.5)
+        try:
+            obs = await live.engine._observe()
+        except Exception as exc:
+            obs = f"{type(exc).__name__}: {exc}"
+        if getattr(obs, "source", "") == "focused_field" and getattr(obs, "editable", False):
+            break
+    ok = check(f"{prefix}/live-reads-the-fixture-field", getattr(obs, "source", "") == "focused_field", repr(obs))
+    if not ok:
+        await live.diagnose(prefix)
+    return ok
+
+
+async def steps(prefix: str, live: Live, type_text, focus, close, front=lambda: None) -> None:
     from pilot.agents.screen_vision import _get_active_window
+
+    if not await first_read(prefix, live, front, type_text):
+        for name in STEPS:
+            skip(f"{prefix}/{name}", "Live read nothing from the fixture here, so these would prove nothing")
+        return
 
     app, title = await asyncio.to_thread(_get_active_window)
     print(f"{prefix}: foreground app {app!r}, title {title!r}")
@@ -238,7 +274,7 @@ async def linux(wayland: bool, python: str, folder: Path) -> None:
         def focus(which: str) -> None:
             fixture.send(f"focus {which}")
 
-        await steps(prefix, live, type_keys, focus, fixture.close)
+        await steps(prefix, live, type_keys, focus, fixture.close, front=lambda: focus("entry"))
     finally:
         fixture.close()
 
@@ -251,9 +287,10 @@ async def macos(folder: Path) -> None:
         skip("macos/live-end-to-end", "this runner does not grant Accessibility to the job, so no field can be read")
         return
     fixture = subprocess.Popen(
-        [sys.executable, str(HERE / "macos_fixture.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+        [sys.executable, str(HERE / "live_fixture_macos.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
     )
     assert fixture.stdin is not None and fixture.stdout is not None
+    said: list[str] = []
 
     def send(command: str) -> None:
         assert fixture.stdin is not None
@@ -277,9 +314,13 @@ async def macos(folder: Path) -> None:
     try:
         if not check("macos/live-fixture-started", fixture.stdout.readline().startswith("ready")):
             return
+        # The fixture answers each command; read its answers so its output never fills up.
+        threading.Thread(target=lambda: said.extend(fixture.stdout), daemon=True).start()
         time.sleep(1.0)
         print(f"reader shared: {M.shared() is not None}")
-        await steps("macos", Live(folder), type_text, lambda which: send(f"focus {which}"), close)
+        await steps(
+            "macos", Live(folder), type_text, lambda which: send(f"focus {which}"), close, front=lambda: send("front")
+        )
     finally:
         if fixture.poll() is None:
             fixture.kill()

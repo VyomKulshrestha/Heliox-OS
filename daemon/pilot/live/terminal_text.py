@@ -200,11 +200,27 @@ def kitty_conf_path(env: dict[str, str], home: Path) -> Path:
     return Path(env.get("XDG_CONFIG_HOME") or home / ".config") / "kitty" / "kitty.conf"
 
 
+# What Heliox's own Python sets for itself and a terminal's command must not inherit: kitty embeds its own Python,
+# which, given another interpreter's home, path or libraries, fails to start ("No module named '_struct'", seen on a
+# CI runner whose Python set LD_LIBRARY_PATH). A daemon run from a private Python or a venv can carry the same.
+CHILD_ENV_DROP = ("PYTHONHOME", "PYTHONPATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH")
+
+
+def child_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment ``kitty @`` and ``wezterm cli`` are run with: this process's, without ``CHILD_ENV_DROP``."""
+    source = os.environ if env is None else env
+    return {key: value for key, value in source.items() if key not in CHILD_ENV_DROP}
+
+
 async def run(argv: list[str], timeout: float) -> tuple[int | None, str]:
     """(exit code, stdout), or (None, "") when it had to be killed or could not start."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+            *argv,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=child_env(),
         )
     except OSError:
         return None, ""
@@ -378,6 +394,7 @@ __all__ = [
     "TERMINALS",
     "Seen",
     "TerminalText",
+    "child_env",
     "command_part",
     "kitty_addresses",
     "kitty_cursor_line",
