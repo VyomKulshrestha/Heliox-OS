@@ -2839,6 +2839,28 @@ class PilotServer:
             logger.warning("Experience ledger append failed for %s", event_type.value, exc_info=True)
             return None
 
+    async def _create_durable_task(self, *, accepted_as: str, **fields: Any) -> Any:
+        """The one way a durable task is created: the task, then an intent event under the same task_id.
+
+        Every task row can then be joined to the experience ledger, whose events say which Heliox wrote them and in
+        what kind of process (written_by). A queued task that never runs, and a request answered before planning
+        (the intent _handle_execute_inner writes comes later), would otherwise have no event at all.
+        """
+        created = await self._durable_tasks.create_task(**fields)
+        task = created.task
+        await self._append_experience(
+            ExperienceEventType.INTENT,
+            session_id=task.session_id,
+            task_id=task.task_id,
+            user_id=task.user_id,
+            idempotency_key=f"task:{task.task_id}:accepted",
+            source=accepted_as,
+            payload={"input": task.user_input, "accepted_as": accepted_as},
+            provenance={"component": "PilotServer._create_durable_task"},
+            privacy_class=PrivacyClass.SENSITIVE,
+        )
+        return created
+
     async def _await_execution_tracked(self, execution: Any) -> Any:
         """Track any cancellable interactive phase in the cancellation slot.
 
@@ -3169,7 +3191,8 @@ class PilotServer:
         async with self._queued_submission_lock:
             if len(self._queued_execute_requests) >= 10:
                 return {"status": "error", "message": "The interactive queue is full (10 tasks)."}
-            created = await self._durable_tasks.create_task(
+            created = await self._create_durable_task(
+                accepted_as="queued",
                 session_id=session_id,
                 user_id=user_id,
                 user_input=user_input,
@@ -3361,7 +3384,8 @@ class PilotServer:
                     reason="queued interactive request started",
                 )
             else:
-                created = await self._durable_tasks.create_task(
+                created = await self._create_durable_task(
+                    accepted_as="interactive",
                     task_id=requested_task_id,
                     session_id=str(params.get("session_id") or "default"),
                     user_id=str(params.get("user_id") or "local"),
