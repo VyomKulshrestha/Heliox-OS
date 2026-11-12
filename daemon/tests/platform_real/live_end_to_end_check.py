@@ -79,6 +79,7 @@ class Live:
         reader = focused_text.create_reader()
         self.reader = reader
         server = SimpleNamespace(config=self.config, _live_reader=reader, _live_last_ocr=0.0)
+        self.server = server
 
         async def observe():
             return await PilotServer._live_observe(server)  # type: ignore[arg-type]

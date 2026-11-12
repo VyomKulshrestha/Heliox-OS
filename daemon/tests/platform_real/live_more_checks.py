@@ -139,6 +139,23 @@ async def error_on_screen(prefix: str, python: str, folder: Path) -> None:
             subprocess.run(["xdotool", "search", "--sync", "--name", "Heliox CI build log", "windowfocus"], timeout=15)
         live = E.Live(folder / "ocr")
         live.config.live.ocr_fallback = True  # screen reading on, as the person would turn it on
+        # First read: the daemon's own observe must read the screen before a card can be judged (on Wayland through
+        # the desktop's Screenshot portal). If it never does, say what the screen read gave and judge nothing.
+        seen, deadline = None, time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            try:
+                seen = await live.engine._observe()
+            except Exception as exc:
+                seen = f"{type(exc).__name__}: {exc}"
+            if getattr(seen, "source", "") == "screen_ocr" and getattr(seen, "text", "").strip():
+                break
+            await asyncio.sleep(1.0)
+            live.server._live_last_ocr = 0.0  # the daemon reads the screen at most every 5 s; ask again now
+        if not check(f"{prefix}/live-reads-the-screen", getattr(seen, "source", "") == "screen_ocr", repr(seen)[:300]):
+            await screen_diag()
+            skip(f"{prefix}/live-error-on-screen-becomes-a-card", "the screen could not be read here")
+            return
+        live.server._live_last_ocr = 0.0
 
         def card():
             return next((c for c in live.cards() if c.get("kind") == "error_on_screen"), None)
@@ -151,15 +168,19 @@ async def error_on_screen(prefix: str, python: str, folder: Path) -> None:
             repr(found or [c.get("kind") for c in live.cards()]),
         )
         if found is None:
-            from pilot.system.vision import screen_ocr
-
-            try:
-                text = await screen_ocr()
-            except Exception as exc:
-                text = f"({type(exc).__name__}: {exc})"
-            print(f"DIAG what the screen read gave: {text[:400]!r}", flush=True)
+            await screen_diag()
     finally:
         window.close()
+
+
+async def screen_diag() -> None:
+    from pilot.system.vision import screen_ocr
+
+    try:
+        text = await screen_ocr()
+    except Exception as exc:
+        text = f"({type(exc).__name__}: {exc})"
+    print(f"DIAG what the screen read gave: {text[:400]!r}", flush=True)
 
 
 # ── 3. back and forth between two windows ──
@@ -253,8 +274,12 @@ async def run(args: Any, folder: Path) -> None:
         skip("macos/live-back-and-forth", "nothing on the runner can give another process's window focus")
         return
     await linux_never_read(args.wayland, args.python, folder)
+    if args.only == "error-on-screen":
+        await error_on_screen("wayland" if args.wayland else "x11", args.python, folder)
+        return
     if args.wayland:
-        skip("wayland/live-error-on-screen-becomes-a-card", "the Wayland screenshot portal is not proven yet")
+        # Runs in the "Wayland portals" step instead (--only error-on-screen), where the Screenshot portal runs.
+        skip("wayland/live-error-on-screen-becomes-a-card", "runs in the Wayland portals step, with the portal")
     else:
         await error_on_screen("x11", args.python, folder)
     await back_and_forth(args.wayland, args.python, folder)
@@ -264,6 +289,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--wayland", action="store_true")
     parser.add_argument("--python", default="/usr/bin/python3")
+    parser.add_argument("--only", choices=("all", "error-on-screen"), default="all")
     args = parser.parse_args()
     if not (sys.platform == "darwin" or sys.platform.startswith("linux")):
         skip("live-more", "macOS and Linux only")

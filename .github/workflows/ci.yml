@@ -520,6 +520,9 @@ jobs:
             sleep 2
             python tests/platform_real/linux_portal_check.py real
             status=$?
+            # Live reading an error off the screen under sway, through this portal (the Live step has no portal).
+            python tests/platform_real/live_more_checks.py --wayland --only error-on-screen --python /usr/bin/python3
+            status=$(( status + $? ))
             if [ $status -ne 0 ]; then
               echo "--- xdg-desktop-portal log"; tail -40 /tmp/xdp.log
               echo "--- xdg-desktop-portal-wlr log"; tail -40 /tmp/xdpw.log
