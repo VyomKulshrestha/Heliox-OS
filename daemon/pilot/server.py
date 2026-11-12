@@ -1308,7 +1308,9 @@ class PilotServer:
         )
         runtime_world_weights = DATA_DIR / "ui_jepa_weights.enc"
         if runtime_world_weights.is_file():
-            gate.configure_ui_jepa_artifact(
+            # In a worker thread: decrypting the weights reads the recorded-workflows key from the system keyring.
+            await asyncio.to_thread(
+                gate.configure_ui_jepa_artifact,
                 runtime_world_weights,
                 weight_loader=self._recorded_workflows.decrypt_model_artifact_file,
             )

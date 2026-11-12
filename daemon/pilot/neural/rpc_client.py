@@ -147,7 +147,8 @@ class NeurodBridge:
         when the sidecar went away, so nothing is armed again without the person (fail closed).
         """
         stop = stop_event or asyncio.Event()
-        self._service.start()
+        # In a worker thread: starting opens the recording, whose key comes from the system keyring.
+        await asyncio.to_thread(self._service.start)
         failures = 0
         try:
             while not stop.is_set():

@@ -40,6 +40,31 @@ _stalled_until = 0.0
 _said = False
 _last_reason = ""
 _clock: Callable[[], float] = time.monotonic
+_loop_calls = 0
+
+
+def _on_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def _caller() -> str:
+    import traceback
+
+    for frame in reversed(traceback.extract_stack()[:-3]):
+        if "keyring_guard" not in frame.filename:
+            return f"{frame.filename}:{frame.lineno} {frame.name}"
+    return "unknown"
+
+
+def loop_calls() -> int:
+    """How many credential-store calls ran on an event loop's own thread (tests assert none)."""
+    return _loop_calls
 
 
 def _keyring_errors() -> type[Exception]:
@@ -64,15 +89,19 @@ def status() -> dict[str, Any]:
 
 def reset() -> None:
     """Forget a stall (tests, and a restart of Heliox)."""
-    global _stalled_until, _said, _last_reason
+    global _stalled_until, _said, _last_reason, _loop_calls
     with _lock:
-        _stalled_until, _said, _last_reason = 0.0, False, ""
+        _stalled_until, _said, _last_reason, _loop_calls = 0.0, False, "", 0
 
 
 def call(function: Callable[..., T], *args: Any, timeout: float | None = None) -> T:
     """Run one credential-store call in a daemon thread, waiting at most ``timeout`` (default TIMEOUT_SECONDS)."""
-    global _stalled_until, _said, _last_reason
+    global _stalled_until, _said, _last_reason, _loop_calls
     limit = TIMEOUT_SECONDS if timeout is None else timeout
+    if _on_event_loop():
+        # Every caller should come through a worker thread; say which one did not, once per place.
+        _loop_calls += 1
+        logger.warning("A credential-store call ran on the event loop (%s)", _caller(), stack_info=_loop_calls == 1)
     with _lock:
         if _clock() < _stalled_until:
             raise KeyringStalled(_last_reason)
