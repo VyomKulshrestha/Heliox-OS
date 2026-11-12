@@ -436,6 +436,90 @@ async def getting_to_know_rpc(server: Any, params: dict[str, Any]) -> dict[str, 
     }
 
 
+# ── Live's terminal check (pilot.live.shell_line) ──
+
+
+def shell_server_for(server: Any) -> Any:
+    found = getattr(server, "_shell_lines_server", None)
+    if found is None:
+        from pilot.live.shell_line import ShellLines, ShellLineServer
+
+        found = ShellLineServer(
+            ShellLines(), enabled=lambda: bool(getattr(getattr(server.config, "live", None), "enabled", False))
+        )
+        server._shell_lines_server = found
+    return found
+
+
+def start_shell_lines(server: Any) -> None:
+    shell_server_for(server).start()  # a no-op on Windows, where consoles are read directly
+
+
+def shell_observation(server: Any, app: str, title: str) -> Any:
+    """Live's look at a terminal from the zsh integration: the line being typed, while it is fresh."""
+    found = getattr(server, "_shell_lines_server", None)
+    if found is None or not found.listening:
+        return None
+    latest = found.lines.latest()
+    if latest is None:
+        return None
+    key, seen = latest
+    from pilot.live.engine import Observation
+
+    # The shell's name in the title makes the detectors read it as a terminal line, which it is.
+    return Observation(
+        text=seen.line, app=app or seen.term, title=f"{title} ({seen.shell})", source="focused_field", field=key
+    )
+
+
+async def live_shell_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """``action``: "status" (what Add would do, for each shell), "install" or "uninstall" with ``shell``."""
+    import os
+    import sys
+    from pathlib import Path
+
+    from pilot.live import shell_line
+
+    if sys.platform == "win32":
+        return {
+            "status": "ok",
+            "supported": False,
+            "message": "On Windows Heliox reads the terminal itself, so nothing needs adding.",
+        }
+    found = shell_server_for(server)
+    home, env = Path.home(), dict(os.environ)
+    action = str(params.get("action") or "status")
+    shell = str(params.get("shell") or "")
+    try:
+        if action == "install":
+            shell_line.install(shell, home, env, found.path)
+        elif action == "uninstall":
+            shell_line.uninstall(shell, home, env)
+        elif action != "status":
+            return {"status": "error", "message": "action must be status, install or uninstall"}
+    except (ValueError, OSError) as error:
+        return {"status": "error", "message": str(error)}
+    shells = {}
+    for name in shell_line.SHELLS:
+        chosen = shell_line.plan(name, home, env)
+        shells[name] = {
+            "installed": shell_line.installed(name, home, env),
+            "script": str(chosen.script_path),
+            "startup_file": str(chosen.startup_file) if chosen.startup_file else "",
+            "line": chosen.line,
+            "remove": chosen.remove,
+        }
+    return {
+        "status": "ok",
+        "supported": True,
+        "listening": found.listening,
+        "problem": found.problem,
+        "socket": str(found.path),
+        "shells": shells,
+        "bash": "bash only offers hooks after Enter; with ble.sh it could work like zsh, which is not built yet.",
+    }
+
+
 __all__ = [
     "begin_turn",
     "deliver_offer",

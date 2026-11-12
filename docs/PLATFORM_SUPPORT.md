@@ -46,16 +46,27 @@ from the timeline, text inside images or video without screen reading on, the bo
 (only fields you type in), other fields of a form than the one you are in (so it cannot check a mail's recipients),
 and speech said near the microphone that was not for Heliox (see below).
 
-The most valuable gap: a risky command typed in a terminal that exposes nothing to accessibility. On Windows every
-console and Windows Terminal is read; on Linux kitty, Alacritty, WezTerm, foot and xterm expose no text (and those are
-what many developers use), and on macOS only Terminal.app and iTerm2 are read. Closing it does not need the terminals'
-help: an opt-in shell integration, the way prompt tools hook in, can hand Heliox the line being edited before Enter.
-In zsh a ZLE widget bound to `zle-line-pre-redraw` sees `$BUFFER`; in fish a `commandline` binding does the same; in
-bash it needs ble.sh, since plain bash only offers hooks after Enter. The hook writes the line to a local socket that
-only the person's own Heliox reads, and Live checks it as it checks a terminal field today. kitty (`kitty @ get-text`
-with remote control on) and WezTerm (`wezterm cli get-text`) can also be read directly. About two to three days for
-zsh and fish with tests on the CI runners, a day each for kitty and WezTerm; the person turns it on and can see the
-lines it added to their shell's start-up file.
+**Terminals that expose nothing (the Live terminal check).** On Windows every console and Windows Terminal is read.
+On Linux kitty, Alacritty, WezTerm, foot and xterm expose no text, and on macOS only Terminal.app and iTerm2 are
+read, so a risky command typed elsewhere was noticed only after it ran. Settings, Live, Terminal check adds an
+opt-in hook to the shell instead (`daemon/pilot/live/shell_line.py`), after showing exactly what it adds and how to
+take it out:
+
+| Shell | What it does | What is added |
+|---|---|---|
+| zsh (5.3 or later) | A ZLE `line-pre-redraw` hook sends the line being edited each time it changes; Live checks it like a terminal field and the card comes at the first pause, before Enter | One line in `~/.zshrc` (or `$ZDOTDIR/.zshrc`) that sources `~/.local/share/heliox/shell/heliox-live.zsh`, marked "# Heliox Live terminal check" |
+| fish | fish has no hook on every change, so Enter asks Heliox first (through `nc`, at most a second); a risky command is not run, its warning is printed, and Enter again runs it | `~/.config/fish/conf.d/heliox-live.fish`; no start-up file is changed |
+| bash | Nothing yet. Plain bash only offers hooks after Enter, too late; with ble.sh installed it could work like zsh, which is not built | Nothing |
+
+The line travels over a Unix socket in a folder only the person can open (mode 0700, owned by them; Heliox refuses a
+folder anyone else owns or can open; the socket is 0600), never over the network, and only while Live is on: with
+Live off the socket does not exist and the hook stays silent. Never sent: a line that starts with a space, a line in
+zsh's `vared` or a program's own prompt (sudo and password prompts never use the line editor), and anything from the
+first token-looking string onwards. It is kept in memory for 3 seconds and never sent to a model. Tested: the
+decisions on all three systems; the socket on Linux (and in WSL on the build machine); real zsh and fish sessions
+in a pseudo-terminal in the `platform-readers` job on ubuntu and macOS (`tests/platform_real/shell_integration_check.py`).
+Still to do: kitty (`kitty @ get-text` with remote control on) and WezTerm (`wezterm cli get-text`) read directly,
+for people who would rather not change their shell.
 
 Speech heard near the microphone but not said to Heliox (in an open conversation, a sentence for someone else)
 reaches Live only as text, can give at most a silent card, is kept in memory for 90 seconds and then forgotten, and

@@ -1397,6 +1397,9 @@ class PilotServer:
         from pilot.personal.wiring import start_offers
 
         start_offers(self, DATA_DIR)  # offers from routines, habits and goals (pilot.personal.offers)
+        from pilot.personal.wiring import start_shell_lines
+
+        start_shell_lines(self)  # the Live terminal check's socket, open only while Live is on (macOS, Linux)
         self._startup_stage("starting Live, reminders and the timeline")
         from pilot.live.engine import LiveCompanion
         from pilot.live.focused_text import create_reader
@@ -2042,6 +2045,7 @@ class PilotServer:
             "live_set": self._handle_live_set,
             "live_feedback": self._handle_live_feedback,
             "offers": self._handle_offers,
+            "live_shell": self._handle_live_shell,
             "getting_to_know": self._handle_getting_to_know,
             "live_explain": self._handle_live_explain,
             "workspace_save": self._handle_workspace_save,
@@ -7163,6 +7167,11 @@ class PilotServer:
             return None
         if never_read(app, title, self.config.timeline.excluded_apps, is_heliox=_is_heliox_window_title(title)):
             return None  # Heliox's own window, password managers, and apps the person excluded are never read
+        from pilot.personal.wiring import shell_observation
+
+        shell = shell_observation(self, app, title)  # the line being typed, from the opt-in zsh integration
+        if shell is not None:
+            return shell
         reading = None
         if cfg.read_focused_text and self._live_reader is not None:
             focused = await self._live_reader.read()
@@ -7222,6 +7231,12 @@ class PilotServer:
             # The background model does the work, through the same path and approvals as a typed request.
             asyncio.create_task(self._live_delegate(answer.delegate))
         return answer.reply
+
+    async def _handle_live_shell(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Live's terminal check for zsh and fish: what Add would do, Add, Remove (pilot.live.shell_line)."""
+        from pilot.personal.wiring import live_shell_rpc
+
+        return await live_shell_rpc(self, params)
 
     async def _handle_offers(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Offers in the app: status, mode, undoing a silenced offer, and the buttons on an offer card."""
@@ -13015,6 +13030,8 @@ def handle_tool(tool_name, params):
             await self._bounded_stop_step("suggestions.stop", self._suggestions.stop())
         if getattr(self, "_offer_loop", None) is not None:
             await self._bounded_stop_step("offer_loop.stop", self._offer_loop.stop())
+        if getattr(self, "_shell_lines_server", None) is not None:
+            await self._bounded_stop_step("shell_lines.stop", self._shell_lines_server.stop())
         if self._live is not None:
             await self._bounded_stop_step("live.stop", self._live.stop())
         if self._live_reader is not None:

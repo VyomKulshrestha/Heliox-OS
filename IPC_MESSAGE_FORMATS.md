@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **330 WebSocket RPC methods**. That is the API
+The daemon currently registers **331 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -578,6 +578,13 @@ sent to a model. By voice or chat it starts with "get to know me" or from the in
   reply, problems}`.
 - `getting_to_know {action: "remove", id}` removes one stored line (`call_me`, `style:length` or a profile entry
   id) -> `{status, profile_empty}`.
+
+#### `live_shell` (Live's terminal check for zsh and fish, macOS and Linux)
+- `live_shell {action: "status"}` -> `{status, supported, listening, problem, socket, shells: {zsh, fish}, bash}`;
+  each shell is `{installed, script, startup_file, line, remove}`: the file Heliox would write, the start-up file and
+  the exact line it would add (zsh only), and how to take it out by hand. On Windows `supported` is false.
+- `live_shell {action: "install" | "uninstall", shell}` adds or removes exactly that, and returns the status.
+  Nothing is written until the person presses Add in Settings.
 
 #### `offers` (offers from routines, habits and goals, `[suggestions] offers`)
 Offers are computed on this computer (`pilot.personal.offers`), at most one an hour and three a day, at a quiet moment.

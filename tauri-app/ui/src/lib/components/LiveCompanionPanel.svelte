@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
   import { settings } from "../stores/settings";
+  import LiveShellCheck from "./LiveShellCheck.svelte";
 
   type Kind = { kind: string; label: string };
   type Timing = {
@@ -280,6 +281,8 @@
       >
     </label>
   </div>
+
+  <LiveShellCheck />
 
   {#if notNowHolds.length}
     <div class="block" data-testid="live-held-back">

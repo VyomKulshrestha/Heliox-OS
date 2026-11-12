@@ -445,10 +445,20 @@ jobs:
           sw_vers
           python tests/platform_real/macos_ax_check.py
 
+      - name: Live terminal check in real zsh and fish sessions
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get install -y -q --no-install-recommends zsh fish netcat-openbsd
+          else
+            brew install fish >/dev/null
+          fi
+          zsh --version; fish --version
+          python tests/platform_real/shell_integration_check.py
+
       - name: Unit tests for the readers on this runner
         run: |
           pip install pytest pytest-asyncio pytest-timeout
-          pytest tests/test_platform_readers.py tests/test_platform_quiet_failures.py -q --timeout=120
+          pytest tests/test_platform_readers.py tests/test_platform_quiet_failures.py tests/test_live_shell_line.py -q --timeout=120
 
   # ── First run from nothing (experimental, non-blocking) ──
   # Runs the app's own first-run script (tauri-app/src-tauri/setup) in an empty home folder with the core only
