@@ -115,5 +115,38 @@ async def test_the_voice_starts_on_the_cpu_when_the_arbiter_says_the_card_is_hot
     manager.choose_device = lambda configured: (configured, True)  # cool and free: take the lease
     with pytest.raises(LocalTTSUnavailable):
         await manager.ensure_ready("kokoro_tts", "af_heart")
-    assert calls[-1] == ("auto", True) and faults == ["voice"]
+    # On the card with the lease: the fault counts, and the same voice is tried once more on the CPU (which fails
+    # here too, since this fake worker fails everywhere: then it is a plain failure, the system voice speaks).
+    assert calls[-2:] == [("auto", True), ("cpu", False)] and faults == ["voice"]
+    assert manager.cpu_for_session
+    await manager.shutdown()
+
+
+async def test_a_cuda_error_from_a_worker_started_on_the_cpu_is_a_plain_failure_and_nothing_is_remembered():
+    """The arbiter put the voice on the CPU (a hot card) and its load failed with an error that names CUDA: no GPU
+    fault for the arbiter, no CPU-for-the-session, and the system voice until it recovers. When the card is cool
+    again, the next start asks for the card."""
+    from tests.test_local_voice_lifecycle import FakeClock, FakeWorker
+
+    calls, faults = [], []
+
+    def spawn(engine, device, gpu_lease=False):
+        calls.append((device, gpu_lease))
+        return worker
+
+    clock = FakeClock()
+    worker = FakeWorker(load_reply=CUDA_FAULT)
+    manager = LocalTTSWorkerManager(spawn=spawn, clock=clock, sleep=clock.sleep)
+    manager.choose_device = lambda configured: ("cpu", False)  # hot card
+    manager.on_gpu_fault = lambda component, reason: faults.append(component)
+    with pytest.raises(LocalTTSUnavailable):
+        await manager.ensure_ready("kokoro_tts", "af_heart")
+    assert calls == [("cpu", False)] and faults == [] and manager.cpu_for_session == ""
+    assert manager.failing  # the system voice until it recovers
+
+    worker = FakeWorker()  # loads fine
+    await clock.advance(200)
+    manager.choose_device = lambda configured: (configured, True)  # cool and free
+    await manager.ensure_ready("kokoro_tts", "af_heart")
+    assert calls[-1] == ("auto", True) and faults == []
     await manager.shutdown()
