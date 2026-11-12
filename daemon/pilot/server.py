@@ -14802,6 +14802,7 @@ def handle_tool(tool_name, params):
         from pilot.conversation.turns import signature_of
 
         voice_turn.signature = signature_of(turn) if turn is not None else ""
+        voice_turn.result = turn
         voice_turn.verb = turn.intent.verb if turn is not None and turn.intent is not None else ""
         # The person was already told "I'm on it" for this sentence (its first half, withdrawn a moment ago):
         # not again, whatever the joined sentence turned out to ask for.
@@ -14849,6 +14850,9 @@ def handle_tool(tool_name, params):
                 # coordinator lets the higher-priority final answer preempt it.
                 if isinstance(acknowledgement_task, asyncio.Task) and not acknowledgement_task.done():
                     acknowledgement_task.cancel()
+            if voice_turn.withdrawn:
+                # The joined sentence took this turn's place while its planner call was ending: nothing of it is said.
+                return
             status = str(response.get("status") or "error")
             acted = any(isinstance(r, dict) and r.get("success") for r in response.get("results") or [])
             self._last_turn_kind = "action" if acted else "answer" if status == "success" else ""

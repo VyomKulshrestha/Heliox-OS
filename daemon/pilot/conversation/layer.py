@@ -120,6 +120,7 @@ YES = frozenset(
 _QUESTION_WORDS = re.compile(r"^(?:how|what|why|when|where|which|who|whats|what's|hows|how's)\b")
 _ASKS_TO_ACT = re.compile(r"^(?:can|could|would|will) you\b|^please\b")
 DOUBTFUL = "doubtful_follow_up"
+CARRY_SECONDS = 10.0  # a joined sentence does not repeat a company line its first half said this recently
 ASK_WHAT = "Which ones do you mean?"
 ASK_MORE = "Could you tell me a bit more?"
 SORRY = "Sorry?"
@@ -146,6 +147,7 @@ class TurnResult:
     target: HandoverTarget = HandoverTarget.FULL_PLANNER
     source: str = "voice"  # "voice" or "typed"
     understood: bool = True  # False: the turn was not understood and opens nothing (the listener is told)
+    withdrawn: bool = False  # replaced by the joined sentence: nothing more is said for this turn
     # The conversation before a hand-over, for the planner (and the person's own lines for the reviewers).
     context: HandoverContext | None = None
     _before: list[Any] = field(default_factory=list)
@@ -236,6 +238,7 @@ class ConversationLayer:
         self._not_understood = not_understood
         self._sorry_said = False
         self._said_local_slow = False  # "the model on this computer is slow the first time" said once
+        self._company_said: tuple[str, float] | None = None  # the last company line said, and when
         self._search_url = search_url
         # Whether the planner's model may be given screen text (conversation.share_screen_text), and whether the
         # fast model was shown some in this conversation (then Heliox's lines may repeat it).
@@ -736,13 +739,16 @@ class ConversationLayer:
     def _start_company(self, result: TurnResult, *, acknowledge: bool = True) -> asyncio.Task[None]:
         assert result.intent is not None
         if not acknowledge:
+            # The joined half of a split sentence: the first half's acknowledgement and progress line stand.
             return asyncio.ensure_future(
                 keep_company(
                     acknowledgement_text="",
-                    speak=self._sink,
+                    speak=self._company_speaker(result),
                     status=self._task_status,
+                    clock=self._clock,
                     user_speaking=self._user_speaking,
                     local_slow_once=self._local_slow_once,
+                    carried=self._recent_company_line(),
                 )
             )
         ack = (quick_acknowledgement(result.quick, result.intent.words) if result.quick is not None else "") or (
@@ -760,13 +766,35 @@ class ConversationLayer:
         return asyncio.ensure_future(
             keep_company(
                 acknowledgement_text=ack,
-                speak=self._sink,
+                speak=self._company_speaker(result),
                 status=self._task_status,
+                clock=self._clock,
                 on_said=said,
                 user_speaking=self._user_speaking,
                 local_slow_once=self._local_slow_once,
             )
         )
+
+    def _company_speaker(self, result: TurnResult) -> Sink:
+        """Speech for a hand-over's company: nothing once the turn is withdrawn, and each line remembered so a joined
+        sentence does not repeat it."""
+
+        async def speak(text: str, channel: str, key: str) -> str:
+            if result.withdrawn:
+                return "cancelled"
+            outcome = await self._sink(text, channel, key)
+            if outcome in HEARD and channel == "task_narration":
+                self._company_said = (text, self._clock())
+            return outcome
+
+        return speak
+
+    def _recent_company_line(self) -> tuple[str, float] | None:
+        """The last acknowledgement or progress line, when it was said a moment ago (CARRY_SECONDS)."""
+        said = self._company_said
+        if said is None or self._clock() - said[1] > CARRY_SECONDS:
+            return None
+        return said
 
     def _local_slow_once(self) -> bool:
         """True the first time in a session a plan from a model on this computer runs long."""

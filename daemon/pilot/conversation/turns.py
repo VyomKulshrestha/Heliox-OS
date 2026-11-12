@@ -65,6 +65,8 @@ class TurnState:
     kept: list[str] = field(default_factory=list)  # what code-answered handlers changed ("set the reminder")
     signature: str = ""  # what the turn leads to: the quick plan's action and target, or the hand-over's verb/object
     acknowledged: bool = False  # an acknowledgement for this sentence was started ("I'm on it"), here or earlier
+    result: Any = None  # the conversation layer's TurnResult for this turn, when the layer took it
+    withdrawn: bool = False  # replaced by the joined sentence: nothing more is said for it
     addressed: str = ""  # how the first half was addressed; the joined sentence keeps it
     verb: str = ""  # the request's verb ("open"), so a too-late "and Spotify" can be read as "open Spotify"
 
@@ -174,6 +176,11 @@ class TurnLog:
         if state.ran or state.kept:
             self.carried = (state.verb, self._clock())
             return Withdrawal("too_late", said_about(state.ran, state.kept), tuple(kind for kind, _ in state.ran))
+        # Marked before the cancellation lands: a planner call that ends in between says nothing ("All set."), and
+        # its company says no more lines.
+        state.withdrawn = True
+        if state.result is not None:
+            state.result.withdrawn = True
         task = state.task
         if task is not None and not task.done() and task is not asyncio.current_task():
             task.cancel()

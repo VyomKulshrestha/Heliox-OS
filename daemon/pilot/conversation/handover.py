@@ -211,6 +211,7 @@ async def keep_company(
     poll: float = POLL_SECONDS,
     user_speaking: Callable[[], bool] = lambda: False,
     local_slow_once: Callable[[], bool] = lambda: False,
+    carried: tuple[str, float] | None = None,
 ) -> None:
     """Runs from the hand-over until the caller cancels it (the planner returned).
 
@@ -228,6 +229,10 @@ async def keep_company(
     said_at = clock()
     lines = 0
     last_line = acknowledgement_text
+    if carried is not None:
+        # The sentence's first half, withdrawn a moment ago, already said this line: it counts as said here, so the
+        # joined request does not say it again and the next line comes on the same cadence.
+        last_line, said_at, lines = carried[0], carried[1], 1
     last_state = ("", "")
     approval_said = False
     while True:
