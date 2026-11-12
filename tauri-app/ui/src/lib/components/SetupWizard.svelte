@@ -2,6 +2,7 @@
   import { settings } from "../stores/settings";
   import { call, requireOkResult, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
   import { onMount } from "svelte";
+  import { protectedPackageExample } from "../firstRun";
 
   interface Props {
     oncomplete: () => void | Promise<void>;
@@ -26,7 +27,9 @@
   let subscriptionMessage = $state("");
   let subscriptionConnected = $state(false);
   let protectedFolders = $state("");
-  let protectedPackages = $state("firefox, nautilus");
+  // Empty on every system: only what the person names is protected. The example follows this system's names.
+  let protectedPackages = $state("");
+  const packageExample = protectedPackageExample(typeof navigator !== "undefined" ? navigator.platform : "");
 
   const steps = ["Welcome", "Model", "Security", "Ready"];
 
@@ -364,20 +367,17 @@
             <textarea
               id="protected-folders"
               bind:value={protectedFolders}
-              placeholder={"~/Documents/private\n~/ssh"}
+              placeholder={"~/Documents/private\n~/.ssh"}
               rows={4}></textarea>
             <span class="hint">One path per line. Heliox OS will never modify files in these folders.</span>
           </div>
 
           <div class="field">
             <label for="protected-packages">Protected Packages</label>
-            <input
-              id="protected-packages"
-              type="text"
-              bind:value={protectedPackages}
-              placeholder="firefox, nautilus, gnome-shell"
-            />
-            <span class="hint">Comma-separated. Heliox OS will refuse to uninstall these.</span>
+            <input id="protected-packages" type="text" bind:value={protectedPackages} placeholder={packageExample} />
+            <span class="hint"
+              >Comma-separated, as your package manager names them. Heliox OS will refuse to uninstall these.</span
+            >
           </div>
 
           <div class="field">

@@ -27,6 +27,20 @@ export function systemKey(platform: string): SystemKey {
   return "windows";
 }
 
+/**
+ * Example names for the setup wizard's protected packages, as this system's package manager spells them: winget ids
+ * on Windows, Homebrew names on macOS, the distribution's names on Linux. Only a placeholder: the field starts empty,
+ * so nothing is protected that the person did not name.
+ */
+export function protectedPackageExample(platform: string): string {
+  const examples: Record<SystemKey, string> = {
+    windows: "Mozilla.Firefox, Git.Git",
+    macos: "firefox, git",
+    linux: "firefox, nautilus, gnome-shell",
+  };
+  return examples[systemKey(platform)];
+}
+
 function entryFor(id: string, platform: string): SizeEntry | undefined {
   return SIZES[id]?.[systemKey(platform)] ?? SIZES[id]?.all;
 }
