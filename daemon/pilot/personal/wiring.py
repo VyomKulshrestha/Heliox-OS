@@ -436,6 +436,23 @@ async def getting_to_know_rpc(server: Any, params: dict[str, Any]) -> dict[str, 
     }
 
 
+# ── a slip in something said TO Heliox (pilot.live.held) ──
+
+
+async def live_hold(server: Any, text: str) -> Any:
+    """The hook for every addressed turn, typed or spoken, before any road takes it (it replaces the plain
+    ``live.offer_speech`` call at the top of dispatch). None: go on. Otherwise ``say`` is said or shown now, and
+    ``proceed`` is the request to go on with, or None: the turn waits for the person's answer, or was dropped."""
+    live = getattr(server, "_live", None)
+    if live is None:
+        return None
+    try:
+        return live.hold(text)
+    except Exception:
+        logger.warning("Live could not check the turn; it goes on unchecked", exc_info=True)
+        return None
+
+
 # ── Live's terminal check (pilot.live.shell_line) ──
 
 
@@ -473,7 +490,8 @@ def shell_observation(server: Any, app: str, title: str) -> Any:
 
 
 async def live_shell_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
-    """``action``: "status" (what Add would do, for each shell), "install" or "uninstall" with ``shell``."""
+    """``action``: "status" (what Add would do, for each shell), "test" with ``shell`` (the dry run: would the hook
+    work here), "install" (refused unless the dry run passes: a silent hook is never added) or "uninstall"."""
     import os
     import sys
     from pathlib import Path
@@ -490,13 +508,20 @@ async def live_shell_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
     home, env = Path.home(), dict(os.environ)
     action = str(params.get("action") or "status")
     shell = str(params.get("shell") or "")
+    tested: dict[str, Any] = {}
     try:
-        if action == "install":
-            shell_line.install(shell, home, env, found.path)
+        if action in ("test", "install"):
+            ready = await shell_line.dry_run(shell, found.path if found.listening else None)
+            tested = {shell: ready.as_dict()}
+            if action == "install" and not ready.ok:
+                message = f"Not added: {ready.problem}" + (f" {ready.install}" if ready.install else "")
+                return {"status": "error", "message": message, "ready": tested}
+            if action == "install":
+                shell_line.install(shell, home, env, found.path)
         elif action == "uninstall":
             shell_line.uninstall(shell, home, env)
         elif action != "status":
-            return {"status": "error", "message": "action must be status, install or uninstall"}
+            return {"status": "error", "message": "action must be status, test, install or uninstall"}
     except (ValueError, OSError) as error:
         return {"status": "error", "message": str(error)}
     shells = {}
@@ -516,6 +541,8 @@ async def live_shell_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
         "problem": found.problem,
         "socket": str(found.path),
         "shells": shells,
+        "ready": tested,
+        "fish_bound_ms": int(shell_line.BOUND_SECONDS * 1000),
         "bash": "bash only offers hooks after Enter; with ble.sh it could work like zsh, which is not built yet.",
     }
 

@@ -55,7 +55,7 @@ take it out:
 | Shell | What it does | What is added |
 |---|---|---|
 | zsh (5.3 or later) | A ZLE `line-pre-redraw` hook sends the line being edited each time it changes; Live checks it like a terminal field and the card comes at the first pause, before Enter | One line in `~/.zshrc` (or `$ZDOTDIR/.zshrc`) that sources `~/.local/share/heliox/shell/heliox-live.zsh`, marked "# Heliox Live terminal check" |
-| fish | fish has no hook on every change, so Enter asks Heliox first (through `nc`, at most a second); a risky command is not run, its warning is printed, and Enter again runs it | `~/.config/fish/conf.d/heliox-live.fish`; no start-up file is changed |
+| fish | fish has no hook on every change, so Enter asks Heliox first (through `nc -U -w 1`: at most one second, and no wait at all when Heliox is not running); a risky command is not run, its warning is printed, and Enter again runs it | `~/.config/fish/conf.d/heliox-live.fish`; no start-up file is changed |
 | bash | Nothing yet. Plain bash only offers hooks after Enter, too late; with ble.sh installed it could work like zsh, which is not built | Nothing |
 
 The line travels over a Unix socket in a folder only the person can open (mode 0700, owned by them; Heliox refuses a
@@ -68,9 +68,21 @@ in a pseudo-terminal in the `platform-readers` job on ubuntu and macOS (`tests/p
 Still to do: kitty (`kitty @ get-text` with remote control on) and WezTerm (`wezterm cli get-text`) read directly,
 for people who would rather not change their shell.
 
+Add is offered only after a dry run on the person's own computer (`shell_line.dry_run`, the `live_shell` "test"
+action) proves the hook would reach Heliox: zsh must load `zsh/net/socket` and `zsh/zselect` (some builds, an old
+`/bin/zsh` for one, lack them) and get an answer through the socket; fish must find an `nc` that talks to a Unix
+socket and waits for the answer, and that same `nc` must give up within the bound on a socket that accepts and never
+answers. When it cannot, Settings says why and what to install (`brew install netcat` or `brew install zsh` on
+macOS, the distribution's netcat-openbsd package on Linux), and install refuses as well: a hook that would stay
+silent, or an Enter that could hang, is never added. A hung Heliox never holds zsh either: the hook writes only when
+the socket is writable this instant (`zselect -t 0`), and otherwise drops the line and leaves Heliox alone for 30
+seconds. Settings states fish's bound, and what the test measured. Tested in CI with a socket that accepts and never
+answers (fish's Enter runs the command within the bound; zsh keeps taking 2 MB of lines nobody reads) and with a dead
+Heliox's socket (Enter does not wait).
+
 Speech heard near the microphone but not said to Heliox (in an open conversation, a sentence for someone else)
-reaches Live only as text, can give at most a silent card, is kept in memory for 90 seconds and then forgotten, and
-is never stored as conversation or sent to any model. Outside an open conversation Live does not hear it at all.
+reaches Live only as text and is not checked: no card, nothing kept, never stored as conversation or sent to any
+model. Outside an open conversation Live does not hear it at all.
 
 ## Reading the focused field
 

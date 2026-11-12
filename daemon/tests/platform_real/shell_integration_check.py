@@ -10,6 +10,10 @@ folder is not a repository.
   one); a line typed in ``vared`` never does; with Live off nothing is taken.
 - fish: Enter on the risky command prints Heliox's warning and does not run it; Enter again runs it; an ordinary
   command runs at once with no warning.
+- the dry run Settings does before offering Add passes for both shells here, and fails for fish with no nc on PATH.
+- a Heliox that is down or hung never holds the shell: fish's Enter against a socket that accepts and never answers
+  runs the command within the bound (BOUND_SECONDS plus BOUND_SLACK), and at once with the socket refusing; zsh keeps
+  taking keys when Heliox has stopped reading (thousands of long lines into a socket nobody reads).
 
 Each check prints one ``CHECK`` line (``SKIP`` when a shell is not installed); the exit code is the number of failed
 checks.
@@ -21,6 +25,7 @@ import asyncio
 import os
 import pty
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -28,7 +33,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from pilot.live.shell_line import ShellLines, ShellLineServer, install  # noqa: E402
+from pilot.live.shell_line import (  # noqa: E402
+    BOUND_SECONDS,
+    BOUND_SLACK,
+    ShellLines,
+    ShellLineServer,
+    dry_run,
+    install,
+    script_for,
+)
 
 RISKY = "git push origin main --force"
 failures = 0
@@ -176,6 +189,129 @@ async def fish_checks(server: ShellLineServer, root: Path) -> None:
         term.close()
 
 
+async def silent_socket(path: Path) -> tuple[asyncio.AbstractServer, list[asyncio.StreamWriter]]:
+    """A Heliox that accepts and never reads or answers."""
+    held: list[asyncio.StreamWriter] = []
+
+    async def client(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        held.append(writer)
+
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return await asyncio.start_unix_server(client, path=str(path)), held
+
+
+async def dry_run_checks(root: Path) -> None:
+    for shell in ("zsh", "fish"):
+        if not shutil.which(shell) or (shell == "fish" and not shutil.which("nc")):
+            skip(f"dry run: {shell}", f"{shell} or nc is not installed")
+            continue
+        ready = await dry_run(shell)
+        detail = f"answered {ready.answered_ms} ms, silent {ready.silent_ms} ms; {ready.problem}"
+        check(f"dry run: {shell} can reach Heliox here, so Add is offered", ready.ok, detail)
+    fish = shutil.which("fish")
+    if not fish:
+        return
+    bare = root / "bare-bin"
+    bare.mkdir()
+    (bare / "fish").symlink_to(fish)
+    old = os.environ["PATH"]
+    os.environ["PATH"] = str(bare)
+    try:
+        ready = await dry_run("fish", which=lambda name: str(bare / name) if (bare / name).exists() else None)
+    finally:
+        os.environ["PATH"] = old
+    check(
+        "dry run: fish with no nc is refused and says to install it",
+        not ready.ok and "nc" in ready.problem,
+        ready.problem,
+    )
+
+
+async def fish_bound_checks(root: Path) -> None:
+    fish = shutil.which("fish")
+    if not fish or not shutil.which("nc"):
+        skip("fish: Enter is bounded", "fish or nc is not installed")
+        return
+    home = root / "fish-bound-home"
+    home.mkdir()
+    env = base_env(home)
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    sock = root / "hung" / "live-shell.sock"
+    install("fish", home, env, sock)
+    server, held = await silent_socket(sock)
+    term = Terminal([fish, "-i"], env, root / "work")
+    limit = BOUND_SECONDS + BOUND_SLACK + 0.5  # and the typing of the Enter itself
+    try:
+        await term.settle(3.0)
+        start = len(term.read())
+        await term.type("echo heliox-bounded", gap=0.01)
+        loop = asyncio.get_running_loop()
+        began = loop.time()
+        os.write(term.master, b"\r")
+        ran = await wait_for(
+            lambda: "heliox-bounded\r\n" in term.read()[start:] or "heliox-bounded\n" in term.read()[start:], 10
+        )
+        waited = loop.time() - began
+        check(
+            "fish: with Heliox hung (accepts, never answers) Enter runs the command within the bound",
+            ran and waited <= limit,
+            f"{waited:.2f} s, bound {BOUND_SECONDS} s",
+        )
+        server.close()
+        for writer in held:
+            writer.close()
+        await server.wait_closed()
+        sock.unlink(missing_ok=True)
+        # A Heliox that died: its socket file is still there but nothing listens, so connecting is refused at once.
+        dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        dead.bind(str(sock))
+        start = len(term.read())
+        await term.type("echo heliox-down", gap=0.01)
+        began = loop.time()
+        os.write(term.master, b"\r")
+        ran = await wait_for(
+            lambda: "heliox-down\r\n" in term.read()[start:] or "heliox-down\n" in term.read()[start:], 10
+        )
+        waited = loop.time() - began
+        check("fish: with Heliox not running Enter does not wait", ran and waited < BOUND_SECONDS, f"{waited:.2f} s")
+        dead.close()
+    finally:
+        term.close()
+
+
+async def zsh_hung_check(root: Path) -> None:
+    zsh = shutil.which("zsh")
+    if not zsh:
+        skip("zsh: a hung Heliox", "zsh is not installed")
+        return
+    sock = root / "hung-zsh" / "live-shell.sock"
+    server, held = await silent_socket(sock)
+    script = root / "hook.zsh"
+    script.write_text(script_for("zsh", sock), encoding="utf-8")
+    body = 'source "$1"; line=${(l:400::x:)}; repeat 5000 _heliox_send "git status $line"; print sent'
+    loop = asyncio.get_running_loop()
+    began = loop.time()
+    proc = await asyncio.create_subprocess_exec(
+        zsh, "-f", "-c", body, "zsh", str(script), stdout=asyncio.subprocess.PIPE
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), 20)
+        done = out.decode().strip() == "sent"
+    except asyncio.TimeoutError:
+        proc.kill()
+        done = False
+    took = loop.time() - began
+    check(
+        "zsh: typing never waits on a Heliox that stopped reading (2 MB of lines, nobody reading)",
+        done,
+        f"{took:.2f} s",
+    )
+    for writer in held:
+        writer.close()
+    server.close()
+    await server.wait_closed()
+
+
 async def main() -> int:
     with tempfile.TemporaryDirectory(prefix="heliox-shell-") as folder:
         root = Path(folder)
@@ -194,6 +330,9 @@ async def main() -> int:
             )
             await zsh_checks(server, live_on, root)
             await fish_checks(server, root)
+            await dry_run_checks(root)
+            await fish_bound_checks(root)
+            await zsh_hung_check(root)
             await server.close()
             check("the socket is gone when Heliox closes it", not server.path.exists())
     return failures

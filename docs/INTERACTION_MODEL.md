@@ -168,7 +168,7 @@ Two more context sources, added with Heliox Live and the personal layer (`pilot/
 | Up to five profile, goal and habit lines that share words with this utterance, plus the answer style and preferences (one line, at most 360 characters, picked by word overlap in code) | yes | yes, like the profile lines above | yes |
 | Offers ("You usually open Outlook about now"), as a Heliox turn | yes | yes (app names only, never window titles) | yes |
 | Answers to the getting-to-know questions (name, main use, how to talk) | never; parsed in code | never | never |
-| Speech heard near the microphone but not said to Heliox (Live may show a silent card for 90 s) | never | never | never |
+| Speech heard near the microphone but not said to Heliox (Live does not check it: no card) | never | never | never |
 | A note said in passing ("my flight is on Friday"), kept until the day after its date or for a week | yes, as a profile line | yes, as a profile line | yes |
 | What those answers stored (the name, "I mainly use the computer for ...", the answer style, a speak-up or stay-quiet preference) | yes, as profile lines with later turns | yes, as profile lines with later turns | yes |
 
@@ -492,8 +492,19 @@ unless it is a line Whisper writes from noise ("Thanks for watching.", one word 
 question is when noise or Heliox's own voice through open speakers is most likely to be read as words.
 Control words ("Stop", "Wait") are English only; talking over Heliox for a moment stops it in any language.
 
-**Overheard speech** goes only to Heliox Live, marked not addressed, which gives silent cards at most. It is never
-stored as conversation and never sent to a cloud model.
+**Overheard speech** goes only to Heliox Live, marked not addressed, which does not check it: no card, nothing kept.
+It is never stored as conversation and never sent to a cloud model.
+
+**A slip in something said to Heliox is asked about before it is acted on** (`pilot.live.held`). Every addressed
+turn, typed or spoken, goes to `LiveCompanion.hold` before any road takes it. A weekday that does not match its date
+("put the review in for Monday the nineteenth", when the nineteenth is a Thursday), a date that does not exist (the
+thirty-first of November), or an amount that differs from one the person stated earlier in the same conversation
+("the invoice for Acme is 2,400", then "email the Acme invoice for 4,200") holds the turn: Heliox asks one short
+question ("The nineteenth is a Thursday. Monday the sixteenth, or Thursday the nineteenth?") and the action waits.
+The answer picks the version that is acted on; "never mind" drops it; anything else is asked once more and then
+dropped. A hold lapses after 60 seconds, and earlier turns count for 10 minutes. A change said on purpose ("change
+it to 4,200", "actually 4,200") and a statement (not a request) are not held. The card comes with the question; Live
+never says it a second time.
 
 **What the person sees.** The voice bar shows when a conversation is open and when it closes. When a direct
 request or question in the second person was not taken because no conversation was open, it says once: "Say 'Hey

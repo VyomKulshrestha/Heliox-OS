@@ -6,6 +6,15 @@
     line: string;
     remove: string;
   };
+  /** The dry run: would the hook reach Heliox from this shell on this computer. */
+  export type ShellReady = {
+    ok: boolean;
+    problem?: string;
+    install?: string;
+    answered_ms?: number | null;
+    silent_ms?: number | null;
+    bound_ms?: number;
+  };
   export type ShellStatus = {
     status: string;
     supported?: boolean;
@@ -13,8 +22,21 @@
     listening?: boolean;
     problem?: string;
     shells?: Record<string, ShellState>;
+    ready?: Record<string, ShellReady>;
+    fish_bound_ms?: number;
     bash?: string;
   };
+
+  /** fish's Enter asks Heliox first: how long it can wait, said plainly. */
+  export function boundSentence(ready: ShellReady | undefined, boundMs = 1000): string {
+    const bound = boundMs >= 1000 ? `${boundMs / 1000} second${boundMs === 1000 ? "" : "s"}` : `${boundMs} ms`;
+    let text = `Enter asks Heliox before running each command, and waits at most ${bound}, only while Live is on. If Heliox is not running, Enter does not wait at all.`;
+    if (ready?.answered_ms != null)
+      text += ` In the test just now Heliox answered in ${ready.answered_ms} ms, counting the time to start fish.`;
+    if (ready?.silent_ms != null)
+      text += ` Against a Heliox that never answered, Enter gave up after ${ready.silent_ms} ms.`;
+    return text;
+  }
 
   /** What pressing Add will do, in one sentence, so nothing is added unseen. */
   export function addSentence(shell: string, state: ShellState): string {
@@ -32,11 +54,14 @@
   let shown = $state<string>("");
   let error = $state("");
   let busy = $state(false);
+  // The dry run per shell, kept across status refreshes: Add is offered only after it passed.
+  let ready = $state<Record<string, ShellReady>>({});
 
   async function run(params: Record<string, unknown>) {
     busy = true;
     try {
       const result = await call<ShellStatus>("live_shell", params);
+      if (result?.ready && typeof result.ready === "object") ready = { ...ready, ...result.ready };
       if (result?.status === "ok") {
         status = result;
         error = "";
@@ -48,6 +73,11 @@
     } finally {
       busy = false;
     }
+  }
+
+  function show(shell: string) {
+    shown = shell;
+    void run({ action: "test", shell });
   }
 
   onMount(() => void run({ action: "status" }));
@@ -67,20 +97,35 @@
         <span class="shell-name">{shell}: {state.installed ? "added" : "not added"}</span>
         {#if state.installed}
           <button type="button" disabled={busy} onclick={() => void run({ action: "uninstall", shell })}>Remove</button>
-        {:else if shown === shell}
+        {:else if shown === shell && ready[shell]?.ok}
           <button type="button" class="primary" disabled={busy} onclick={() => void run({ action: "install", shell })}
             >Add</button
           >
-        {:else}
-          <button type="button" disabled={busy} onclick={() => (shown = shell)}>Show what Add does</button>
+        {:else if shown !== shell}
+          <button type="button" disabled={busy} onclick={() => show(shell)}>Show what Add does</button>
         {/if}
       </div>
       {#if shown === shell && !state.installed}
         <div class="preview" data-testid={`live-shell-preview-${shell}`}>
-          <p>{addSentence(shell, state)}</p>
-          {#if state.line}<code>{state.line}</code>{/if}
-          <p>To take it out yourself: {state.remove}</p>
+          {#if !ready[shell]}
+            <p>Checking that {shell} on this computer can reach Heliox…</p>
+          {:else if !ready[shell].ok}
+            <p class="error" data-testid={`live-shell-cannot-${shell}`}>
+              Heliox cannot add this: {ready[shell].problem}{ready[shell].install ? ` ${ready[shell].install}` : ""}
+              Nothing was changed.
+            </p>
+            <button type="button" disabled={busy} onclick={() => show(shell)}>Test again</button>
+          {:else}
+            <p>{addSentence(shell, state)}</p>
+            {#if state.line}<code>{state.line}</code>{/if}
+            {#if shell === "fish"}<p data-testid="live-shell-bound">
+                {boundSentence(ready[shell], ready[shell].bound_ms || status.fish_bound_ms || 1000)}
+              </p>{/if}
+            <p>To take it out yourself: {state.remove}</p>
+          {/if}
         </div>
+      {:else if shell === "fish" && state.installed}
+        <p class="note">{boundSentence(undefined, status.fish_bound_ms || 1000)}</p>
       {/if}
     {/each}
     {#if status.bash}<p class="note">bash: {status.bash}</p>{/if}
@@ -121,6 +166,10 @@
   .shell-name {
     font-size: var(--text-sm);
     color: var(--text-primary);
+  }
+
+  .preview button {
+    justify-self: start;
   }
 
   .preview {

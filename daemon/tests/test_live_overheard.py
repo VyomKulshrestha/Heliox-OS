@@ -12,7 +12,7 @@ import pytest
 
 from pilot.conversation.context import ConversationMemory
 from pilot.live.conversation_link import LiveConversationLink
-from pilot.live.engine import OVERHEARD_KEEP_SECONDS, TICK_SECONDS, LiveCompanion, Observation
+from pilot.live.engine import TICK_SECONDS, LiveCompanion, Observation
 
 
 def build(tmp_path):
@@ -50,26 +50,21 @@ async def run_for(live, clock, seconds):
 
 
 @pytest.mark.asyncio
-async def test_overheard_words_are_kept_ninety_seconds_and_never_reach_a_model(tmp_path):
+async def test_overheard_speech_gives_no_card_and_nothing_reaches_a_model(tmp_path):
     live, clock, events, spoken = build(tmp_path)
     live.offer_speech("lunch with Sam is on Tuesday 14 November", addressed=False)
-    await run_for(live, clock, 1)
-    [card] = [p for e, p in events if e == "live_interjection"]
-    assert card["spoken"] is False and spoken == []
+    live.offer_speech("I'll send Tom the deck by tomorrow.", addressed=False)
+    await run_for(live, clock, 3)
+    assert [e for e, _ in events if e == "live_interjection"] == [] and spoken == []
     memory = ConversationMemory(clock=lambda: clock.t)
     link = LiveConversationLink(
         live=lambda: live,
         layer=lambda: SimpleNamespace(memory=memory),
-        setting=lambda: "on",  # even with screen sharing on, and a model on this machine
+        setting=lambda: "on",
         model_local=lambda: True,
         clock=lambda: clock.t,
     )
     assert link.context_line() == "" and memory.recent() == []
-    assert "Tuesday 14 November" in live.why_spoken(card["id"])  # asked about locally, it is still explained
-    await run_for(live, clock, OVERHEARD_KEEP_SECONDS + 1)
-    entry = live._find(card["id"])
-    assert entry["forgotten"] and entry["evidence"] == entry["title"] == entry["message"] == ""
-    assert ("live_interjection_withdrawn", {"id": card["id"], "reason": "expired"}) in events
 
 
 @pytest.mark.asyncio

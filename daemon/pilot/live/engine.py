@@ -43,6 +43,7 @@ from pilot.live.detectors import (
     TextContext,
     detect,
 )
+from pilot.live.held import HOLD_SECONDS, Held, Turns, hold_for, resolve
 from pilot.live.policy import (
     DEFAULT_LEVEL,
     DROP,
@@ -264,6 +265,12 @@ def because(entry: dict[str, Any]) -> str:
 
 
 @dataclass(frozen=True)
+class HoldOutcome:
+    say: str  # what Heliox says now ("" for nothing)
+    proceed: str | None  # the request to go on with, or None: held for an answer, or dropped
+
+
+@dataclass(frozen=True)
 class LiveReply:
     reply: str
     delegate: str = ""  # a request to hand to the planner, when the person says "fix it"
@@ -388,6 +395,8 @@ class LiveCompanion:
         self._call_ended_at = float("-inf")
         self._needed_pause: float | None = None  # the wait the last decision required
         self._snoozed: dict[str, float] = {}
+        self.turns = Turns(clock=clock)  # what the person said to Heliox in this conversation (pilot.live.held)
+        self._held: Held | None = None
         self._snooze_loaded = False
         # What the person typed lately, per field: (when, app, text, the text it held before), for said_vs_typed.
         self._typed_log: OrderedDict[str, tuple[float, str, str, str]] = (
@@ -632,11 +641,14 @@ class LiveCompanion:
     def offer_speech(self, text: str, *, addressed: bool = True) -> None:
         """Check a sentence the person said. Spoken corrections land as soon as they stop talking.
 
-        ``addressed=False``: heard during an open conversation but not said to Heliox (a promise to a colleague, a
-        date said in a meeting). Catches from it are silent cards: Heliox says nothing about speech that was not
-        meant for it, and it is never sent to a model."""
+        ``addressed=False``: heard near the microphone but not said to Heliox (a promise to a colleague, a date
+        said in a meeting). Live does not check it at all: no card, nothing kept, nothing sent anywhere. (It used to
+        give a silent card; the conversation bench's must-not-fire case for a slip said to a colleague expects none.)
+        """
         cfg = self._config()
         if not getattr(cfg, "enabled", False) or self._paused or not getattr(cfg, "listen_to_speech", True):
+            return
+        if not addressed:
             return
         now = self._clock()
         kinds = tuple(kind for kind in self._kinds() if kind in SPEECH_KINDS)
@@ -669,6 +681,67 @@ class LiveCompanion:
             # Say it now rather than at the next tick: the person has just finished speaking.
             with contextlib.suppress(RuntimeError):
                 asyncio.get_running_loop().create_task(self._deliver_due(self._clock()))
+
+    # ── a slip in something said TO Heliox: asked about before it is acted on (pilot.live.held) ──
+
+    def hold(self, text: str) -> HoldOutcome | None:
+        """Every turn addressed to Heliox, whichever road will take it, comes here first.
+
+        Returns None to let the turn go on (other catches, like a promise without a reminder, are raised as before),
+        or an outcome: ``say`` is what Heliox says now, and ``proceed`` is the request to go on with (the person's
+        answer chose it) or None while the turn is held or was dropped.
+        """
+        cfg = self._config()
+        if not getattr(cfg, "enabled", False) or self._paused or not getattr(cfg, "listen_to_speech", True):
+            return None
+        now = self._clock()
+        held = self._held
+        if held is not None and now - held.at > HOLD_SECONDS:
+            held = self._held = None
+        if held is not None:
+            answer = resolve(held, text)
+            if answer.kind == "again":
+                return HoldOutcome(answer.say, None)
+            self._held = None
+            if answer.kind == "cancel":
+                return HoldOutcome(answer.say, None)
+            self.turns.add(answer.request)
+            asyncio.ensure_future(self._emit("live_interjection_withdrawn", {"id": held.card_id, "reason": "used_fix"}))
+            return HoldOutcome("", answer.request)
+        written = spoken.to_written(text)
+        found = hold_for(written, self._today(), self.turns)
+        card_kind = "" if found is None else ("said_vs_typed" if found.kind == "said_vs_said" else "weekday_date")
+        if found is not None and card_kind not in self._kinds():
+            found = None  # the person turned this kind off in Settings: the turn goes on unasked
+        if found is None:
+            self.turns.add(written)
+            self.offer_speech(text)
+            return None
+        found.at = now
+        self._held = found
+        found.card_id = uuid.uuid4().hex[:10]
+        payload = {
+            "id": found.card_id,
+            "kind": card_kind,
+            "title": found.title,
+            "message": found.question,
+            "detail": "",
+            "evidence": found.evidence,
+            "fix": "",
+            "fix_kind": "",
+            "urgency": NORMAL,
+            "spoken": True,
+            "source": "speech",
+            "app": "",
+        }
+        self._recent.append({**payload, "key": f"held:{found.card_id}", "at": now, "seq": next_seq(), "remark": 0})
+        asyncio.ensure_future(self._emit("live_interjection", payload))
+        return HoldOutcome(found.question, None)
+
+    def drop_held(self) -> None:
+        """A new conversation: no question is pending and earlier turns no longer count."""
+        self._held = None
+        self.turns.clear()
 
     # ── corrections a local model finds in the person's own data (pilot.live.grounded) ──
 

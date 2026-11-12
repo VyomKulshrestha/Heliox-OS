@@ -82,7 +82,7 @@ def test_why_works_for_the_newer_kinds():
 
 
 @pytest.mark.asyncio
-async def test_speech_not_said_to_heliox_gives_a_silent_card_at_most(tmp_path):
+async def test_speech_not_said_to_heliox_gives_no_card(tmp_path):
     clock = SimpleNamespace(t=100.0)
     events, spoken = [], []
     settings = SimpleNamespace(enabled=True, level="balanced", listen_to_speech=True, muted_kinds=[])
@@ -112,9 +112,7 @@ async def test_speech_not_said_to_heliox_gives_a_silent_card_at_most(tmp_path):
         await live.tick()
     for _ in range(3):
         await asyncio.sleep(0)
-    cards = [p for e, p in events if e == "live_interjection"]
-    assert sorted(c["kind"] for c in cards) == ["commitment", "weekday_date"]
-    assert all(c["spoken"] is False for c in cards) and spoken == []
+    assert [p for e, p in events if e == "live_interjection"] == [] and spoken == []
 
 
 def test_offers_status_carries_the_getting_to_know_switch(tmp_path):

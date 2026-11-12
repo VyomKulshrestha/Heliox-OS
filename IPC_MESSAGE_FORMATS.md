@@ -583,8 +583,13 @@ sent to a model. By voice or chat it starts with "get to know me" or from the in
 - `live_shell {action: "status"}` -> `{status, supported, listening, problem, socket, shells: {zsh, fish}, bash}`;
   each shell is `{installed, script, startup_file, line, remove}`: the file Heliox would write, the start-up file and
   the exact line it would add (zsh only), and how to take it out by hand. On Windows `supported` is false.
+- `live_shell {action: "test", shell}` is the dry run Settings does before it offers Add: the status plus
+  `ready: {<shell>: {ok, problem, install, answered_ms, silent_ms, bound_ms}}`. `problem` and `install` are plain
+  sentences (what is wrong, what to install); `silent_ms` is how long fish's Enter waited on a socket that never
+  answered, `bound_ms` the most it may (1000). The status also carries `fish_bound_ms`.
 - `live_shell {action: "install" | "uninstall", shell}` adds or removes exactly that, and returns the status.
-  Nothing is written until the person presses Add in Settings.
+  Nothing is written until the person presses Add in Settings. Install runs the dry run first and refuses
+  (`status: "error"`, `message` starting "Not added:", and `ready`) when it fails.
 
 #### `offers` (offers from routines, habits and goals, `[suggestions] offers`)
 Offers are computed on this computer (`pilot.personal.offers`), at most one an hour and three a day, at a quiet moment.
