@@ -10,6 +10,7 @@ import pytest
 
 from pilot.actions import Action, ActionPlan, ActionResult, ActionType, NotifyParams, VerificationResult
 from pilot.config import PilotConfig
+from pilot.security.rpc_identity import RpcClientRole
 from pilot.server import PilotServer
 from pilot.workflows.checkpoints import WorkflowCheckpointStore
 from pilot.workflows.durable_tasks import ApprovalStatus, DurableTaskStore, TaskStatus
@@ -131,7 +132,14 @@ async def test_a_partially_approved_plan_that_crashed_mid_run_never_runs_the_unc
     await durable.recover_incomplete()
 
     server, executor = _server(durable, checkpoints)
-    resumed = await server._handle_resume_task({"task_id": "task-1", "resume_token": resume_token}, _socket())
+    ws = _socket()
+    # After a crash nothing restarts by itself: the window offers the task, and its Continue button resumes it.
+    offered = await server._handle_resume_task({"task_id": "task-1", "resume_token": resume_token}, ws)
+    assert offered["status"] == "interrupted" and executor.executed == []
+    server._client_roles[ws] = RpcClientRole.UI
+    resumed = await server._handle_resume_task(
+        {"task_id": "task-1", "resume_token": resume_token, "continue": True}, ws
+    )
 
     assert resumed["status"] == "success"
     assert executor.executed == ["c"]
