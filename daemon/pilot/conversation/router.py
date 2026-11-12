@@ -207,14 +207,13 @@ ACTION_VERBS: dict[str, str] = {
     "pull": "Pulling",
     "remind": "Setting a reminder",
     "record": "Recording",
-    "plan": "Planning",
     "arrange": "Arranging",
 }
 
 # Polite or indirect ways of asking for an action: "can you open…", "please open…", "I need you to open…".
 _REQUEST_PREFIX = re.compile(
     r"^(?:(?:hey |ok |okay |so |and |now |then |also |alright |right |well )*(?:please |kindly )?"
-    r"(?:can you |could you |would you |will you |can u |could u |would you mind |"
+    r"(?:would you mind |can you |could you |would you |will you |can u |could u |"
     r"i (?:want|need|would like|'d like) (?:you )?to |i'd like you to |"
     r"go ahead and |let's |lets |help me |try to |try and |just |quickly |please )*)"
 )
@@ -368,6 +367,14 @@ def route(text: str, *, conversation_open: bool = False) -> Route:
         return Route(TurnKind.ACTION, "a question only the computer can answer", verb="check", target=body)
 
     verb = words[0]
+    if verb.endswith("ing") and verb not in ACTION_VERBS and body != normalized:
+        # "Would you mind muting the sound?", "could you try opening it": the gerund names the action.
+        stem = verb[:-3]
+        for candidate in (stem, stem + "e", stem[:-1]):
+            if candidate in ACTION_VERBS:
+                verb, words = candidate, [candidate, *words[1:]]
+                body = " ".join(words)
+                break
     if verb == "put" and words[1:2] == ["on"] and len(words) > 2:
         # "Put on some music", "put on my playlist": a request, worked out by the planner.
         return Route(TurnKind.ACTION, "put on", verb="play", target=" ".join(words[2:]))

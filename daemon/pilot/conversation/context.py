@@ -37,6 +37,7 @@ class Turn:
     text: str
     at: float
     cut_off: bool = False  # Heliox was talked over: ``text`` is what was heard, and no more
+    source: str = ""  # "live": Heliox Live spoke up on its own about something the person wrote or said
 
 
 class ConversationMemory:
@@ -50,10 +51,11 @@ class ConversationMemory:
     def add_user(self, text: str) -> None:
         self._add(Turn("user", " ".join(text.split())[:TURN_CHARS], self._clock()))
 
-    def add_heliox(self, text: str, *, cut_off: bool = False) -> None:
+    def add_heliox(self, text: str, *, cut_off: bool = False, source: str = "") -> None:
+        """Something Heliox said. ``source="live"`` for a remark Heliox Live made on its own."""
         clean = " ".join(text.split())[:TURN_CHARS]
         if clean:
-            self._add(Turn("assistant", clean, self._clock(), cut_off=cut_off))
+            self._add(Turn("assistant", clean, self._clock(), cut_off=cut_off, source=source))
 
     def _add(self, turn: Turn) -> None:
         if self._turns and self._clock() - self._turns[-1].at > CONVERSATION_IDLE_SECONDS:
@@ -157,6 +159,10 @@ def assemble(
         sections.append(f"The person is in {screen.app}.")
         if screen.excerpt:
             sections.append(f"End of the text they are writing there: {screen.excerpt!r}")
+    last = memory.last_heliox()
+    opening = " ".join(last.split()[:2]) if last else ""
+    if opening and memory.open:
+        sections.append(f"Your last reply began {opening!r}; begin this one differently.")
     profile = [str(line) for line in _safe(sources.profile_lines, [])][:PROFILE_LINES]
     if profile:
         sections.append("About the person: " + " ".join(profile))
@@ -173,6 +179,8 @@ def assemble(
     messages: list[dict[str, str]] = []
     for turn in memory.recent():
         said = turn.text + (" [the person talked over Heliox here; the rest was not said]" if turn.cut_off else "")
+        if turn.source == "live":
+            said = f"[Heliox Live spoke up on its own about something the person wrote or said:] {said}"
         if messages and messages[-1]["role"] == turn.role:
             messages[-1]["content"] += " " + said
         else:

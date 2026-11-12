@@ -277,7 +277,7 @@ ends.
 | What happens | What the person hears | Then |
 |---|---|---|
 | No network (DNS, refused, reset) | "I can't reach the language model right now..." once, then a short line | 30 s without asking the provider |
-| The provider accepts the connection but sends nothing for 6 s | the holding phrase at 2 s, at 6 s "The language model isn't answering right now..." | 30 s without asking |
+| The provider accepts the connection but sends nothing for 4.5 s | the holding phrase at 2 s, at 4.5 s "The language model isn't answering right now..." | 30 s without asking |
 | A local model loading into memory | "Loading the local model, one moment." (once a session) | waits up to 90 s for the first word |
 | The local server is not running, or the model is not pulled | "...the local one isn't running" / "...isn't installed", with where to fix it | 30 s |
 | The provider account is out of credit (Anthropic 400 "credit balance", OpenAI 429 `insufficient_quota`, a 402) | "Your Anthropic account is out of credit. Add credit there, or choose another model in Settings, under Model." | 10 minutes without asking |
@@ -382,6 +382,42 @@ a request). A second run lost the network part-way and showed that the short off
 turn; it now alternates. Third run: 41 turns, hand-over precision 1.0 and recall 1.0, every check at 100% except
 one repeated opening ("I can't..." on two honest don't-know answers in a row), $0.0038. The three runs cost $0.009
 in all. First-sentence times are owed: the machine was at 76 to 78% CPU with about 1 GB free.
+
+### When the fast model and the planner disagree
+
+Two cases are handled by rule, so the person is never left with a promise and nothing done, and nothing is done
+that was only asked about:
+
+* **A spoken promise without an ACT line** ("I'll open the calculator for you."): the promise is not said, and the
+  person's own words go to the full planner, with its reviews and approvals, as for any request. If the words were
+  misheard or only a question, Heliox asks instead ("Do you want me to ...?").
+* **An ACT line for a question that only asks how, what or why** ("How do I open the registry editor?"): nothing is
+  handed over. Heliox asks "Do you want me to open the registry editor?" and keeps the request for a minute. A
+  "yes" (or "sure", "go ahead", "please do") in that minute hands it to the planner through the normal road: it is
+  the person's request, not an approval. With a plan waiting for approval, the server refuses a spoken "yes"
+  before this layer is asked, exactly as before, so the two can never be confused. Anything else said closes the
+  offer. A request phrased as a question ("Could you open the calculator?") is not held back.
+
+### Spoken length, numbers and Live's remarks
+
+A spoken reply stops before a sentence that would take it past about 30 words (about 12 seconds); the first
+sentence is always said whole, a clause cut at a comma is never the last thing said, and the stream is closed so
+the rest is not generated. Typed replies keep their length and their markdown. Units glued to numbers ("16GB"),
+percentages, ISO dates and file names that carry one ("backup-2026-11-12.zip" becomes "the backup from the twelfth
+of November") are turned into words a voice says well. A remark Heliox Live made on its own is kept in the
+conversation as Live's (`add_heliox(..., source="live")`), so "why?" is answered from its evidence rather than as
+Heliox's own mistake, and the model is told how its last reply began so it starts the next one differently.
+
+On the further checks (53 turns on Claude Haiku 5.5), before these fixes and after:
+
+| Check | Before | After |
+|---|---|---|
+| Live follow-up answered from its evidence | 0 of 1 | 1 of 1 |
+| Numbers said well | 34 of 35 | 36 of 36 |
+| At most about 12 seconds of speech | 32 of 35 | 36 of 36 |
+| Hand-over (precision, recall) | 0.944, 1.0 | 1.0, 1.0 |
+| Quick road where expected | 7 of 7 | 7 of 7 |
+| A fresh opening | 21 of 22 | 21 to 23 of 23 (varies between runs) |
 
 ## 4. Not in this pass
 

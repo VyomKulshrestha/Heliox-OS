@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -55,6 +56,7 @@ from pilot.conversation.style import (
     drop_action_claims,
     looks_like_act,
     parse_act,
+    promised_action,
 )
 
 logger = logging.getLogger("pilot.conversation")
@@ -103,9 +105,19 @@ UNCLEAR_OFFLINE = "Sorry, I didn't catch that. Could you say it again?"
 HOLD_AFTER_SECONDS = 2.0  # no first sentence yet: a short holding phrase, so the wait is not silent
 HOLD_PHRASES = ("One moment.", "Let me think.", "Give me a second.")
 LOCAL_LOADING = "Loading the local model, one moment."
+SPOKEN_WORD_CAP = 30  # about 12 seconds of speech: a sentence that would go past it is not started
+OFFER_SECONDS = 60.0  # how long "Do you want me to ...?" waits for a yes
+YES = frozenset(
+    {
+        "yes", "yeah", "yep", "sure", "ok", "okay", "please", "yes please", "please do", "do it", "go ahead",
+        "yes do it", "yes go ahead", "sure go ahead", "go for it", "yes thanks", "yeah please", "sure please",
+    }
+)  # fmt: skip
+_QUESTION_WORDS = re.compile(r"^(?:how|what|why|when|where|which|who|whats|what's|hows|how's)\b")
+_ASKS_TO_ACT = re.compile(r"^(?:can|could|would|will) you\b|^please\b")
 LOST_MID_REPLY = "I lost the connection there."
 # No text from a cloud model by then: it is treated as not answering. A local model may be loading into memory.
-FIRST_TEXT_DEADLINE = 6.0
+FIRST_TEXT_DEADLINE = 4.5  # the holding phrase at 2 s, then at most 2.5 s more of quiet
 LOCAL_FIRST_TEXT_DEADLINE = 90.0
 PROVIDER_NAMES = {
     "claude": "Anthropic",
@@ -185,6 +197,7 @@ class ConversationLayer:
         self.memory = ConversationMemory(clock=clock)
         self._active: asyncio.Task[Any] | None = None
         self._explained: set[str] = set()
+        self._offer: tuple[float, HandoverIntent, Any] | None = None  # (when, what, its quick plan) awaiting a yes
         self._last_fallback = ""
         self._background: set[asyncio.Task[Any]] = set()
         self._last_hold = ""
@@ -252,6 +265,13 @@ class ConversationLayer:
         self.turns = [*self.turns[-19:], result]
         logger.info("Conversation turn routed as %s (%s)", decided.kind.value, decided.reason)
 
+        offer, self._offer = self._offer, None
+        if offer is not None and normalize(text) in YES and self._clock() - offer[0] <= OFFER_SECONDS:
+            # The person's yes to "Do you want me to ...?": their request, taken through the normal road with all
+            # its reviews and approvals. It is never an approval of a pending plan: with one pending, the server
+            # refuses a spoken yes before this layer is asked.
+            self.memory.add_user(text)
+            return self._hand_over(result, offer[1], quick=offer[2])
         if decided.kind is TurnKind.ACTION:
             self.memory.add_user(text)
             return self._hand_over(result, intent_from_route(decided, text))
@@ -305,6 +325,7 @@ class ConversationLayer:
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         act_text: list[str] = []
         failure: list[str] = []
+        promised: list[str] = []
 
         async def produce() -> None:
             splitter: Any = TextChunker() if typed else SentenceSplitter()
@@ -364,6 +385,7 @@ class ConversationLayer:
         current = ""
         try:
             first = True
+            capped = False
             held = False
             while True:
                 if first and not held and not typed:
@@ -384,10 +406,22 @@ class ConversationLayer:
                     break
                 # Spoken text is cleaned for the ear; typed text keeps its markdown for the chat view.
                 clean = drop_action_claims(sentence) if typed else clean_for_speech(sentence, first=first)
+                verb = promised_action(clean)
+                if verb:
+                    # "I'll open Notepad" with no ACT line would leave a promise and no action: not said here;
+                    # the request is handed over below.
+                    promised.append(verb)
+                    continue
                 if not clean or claims_an_action(clean):
                     if clean:
                         logger.info("Dropped a sentence claiming an action the fast model cannot take: %r", clean)
                     continue
+                words_so_far = sum(len(part.split()) for part in said)
+                if not typed and said and words_so_far + len(clean.split()) > SPOKEN_WORD_CAP:
+                    # Long enough to listen to: the reply ends at the last whole sentence (never after a clause
+                    # cut at a comma: those are joined to their sentence before this point).
+                    capped = True
+                    break
                 if not typed and self._user_speaking():
                     # The person started talking while the next sentence was being written: stop before it.
                     self._remember_said(said, None)
@@ -408,7 +442,8 @@ class ConversationLayer:
                 if outcome in HEARD or outcome == "duplicate":
                     said.append(clean)
                     result.spoken.append(clean)
-            await producer
+            if not capped:
+                await producer  # (when capped, the finally below closes the stream, so it stops costing tokens)
         except asyncio.CancelledError:
             # A new utterance arrived: what was said is remembered, the sentence being spoken as cut off.
             self._remember_said(said, current or None)
@@ -429,8 +464,22 @@ class ConversationLayer:
                     verb=act.verb, object=act.object, words=text, request=act.request, source="model", say=act.say
                 )
                 quick = from_model(act.action, words=text) if act.action is not None else None
+                if self._only_asked(text):
+                    # "How do I open the registry editor?" asks how, not for it to be done: offer first.
+                    await self._offer_to(result, intent, quick, started)
+                    return result
                 return self._hand_over(result, intent, quick=quick)
             failure.append("unparsed_act")
+        elif promised and not failure:
+            # The model said in words that it would act but wrote no ACT line. The person is not left with a
+            # promise and nothing done: what they said goes to the full planner, which reviews it as always.
+            intent = HandoverIntent(verb=promised[0], object="", words=text, request=text, source="model")
+            if decided.kind is TurnKind.UNCLEAR or self._only_asked(text):
+                await self._offer_to(result, intent, None, started)
+                return result
+            if said:
+                self.memory.add_heliox(" ".join(said))
+            return self._hand_over(result, intent)
         if failure and not said:
             await self._fallback(result, failure[0], decided, started, provider=getattr(model, "provider", ""))
             return result
@@ -455,6 +504,20 @@ class ConversationLayer:
                 self._prepare(clean)
             except Exception:
                 logger.debug("Preparing the next sentence failed", exc_info=True)
+
+    @staticmethod
+    def _only_asked(text: str) -> bool:
+        """A how/what/why question, not a request phrased as one ("could you open ...?")."""
+        words = normalize(text)
+        return bool(_QUESTION_WORDS.match(words)) and not _ASKS_TO_ACT.match(words)
+
+    async def _offer_to(self, result: TurnResult, intent: HandoverIntent, quick: Any, started: float) -> None:
+        """Ask "Do you want me to ...?" and keep the request for a yes in the next minute."""
+        request = intent.request.strip().rstrip(".?!")
+        sentence = f"Do you want me to {request[:1].lower()}{request[1:]}?" if request else "Do you want me to do that?"
+        await self._say_one(result, clean_for_speech(sentence), started)
+        self._offer = (self._clock(), intent, quick)
+        result.done = True
 
     def _remember_said(self, said: list[str], cut: str | None) -> None:
         if cut:

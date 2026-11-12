@@ -285,8 +285,10 @@ def from_words(
                 ActionType.KEYBOARD_PRESS, key, KeyboardParams(key=key, presses=5 if "volume" in key else 1)
             )
             break
-    if action is None and text in {"mute", "mute the sound", "mute the volume", "unmute", "unmute the sound"}:
-        action = _action(ActionType.VOLUME_MUTE, "", VolumeParams(mute=not text.startswith("unmute")))
+    sound = {"", "the sound", "the volume", "sound", "volume", "the audio", "audio", "it", "everything"}
+    if action is None and verb in {"mute", "unmute"} and target.strip() in sound:
+        # "mute", "mute the sound", and the same said politely ("would you mind muting the sound?")
+        action = _action(ActionType.VOLUME_MUTE, "", VolumeParams(mute=verb == "mute"))
     if action is None and (level := _VOLUME_LEVEL.match(text)):
         action = _action(ActionType.VOLUME_SET, "", VolumeParams(level=min(100, int(level.group(1)))))
     if action is None and verb == "check":

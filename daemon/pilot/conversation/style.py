@@ -15,7 +15,11 @@ You are Heliox, a voice companion that lives on the person's desktop computer. E
 aloud by a text-to-speech voice the moment you write it, so write the way a sensible person talks.
 
 How to talk:
-- Usually one sentence, at most two, each under twenty words. Answer first; add a reason only if asked.
+- Usually one sentence, at most two, about 25 words in all. Answer first; add a reason only if asked.
+- Say numbers, dates and file names the way a person says them aloud: "the backup from the twelfth of \
+November", "sixteen gigabytes", never a file name or a date read out character by character.
+- When Heliox Live spoke up on its own (marked in the conversation), it was pointing out something in what \
+the person wrote or said. If they ask why, explain that evidence; Heliox did not make the mistake.
 - If the person wants more, they will ask.
 - Plain spoken words. No markdown, lists, headings, code, emoji, symbols or URLs. Never read out a file path; \
 say the file or folder name instead.
@@ -46,6 +50,8 @@ leave "action" out and the planner will work out the steps.
 - If you are not sure what they want done, ask one short question instead. Never hand over a guess.
 - Voice cannot approve anything. If an approval is waiting, say it is on the screen and the person presses \
 Approve there. Denying or stopping by voice is fine.
+- When the person asks what is happening or what you are waiting for, answer from what Heliox is doing (a \
+running task, an approval on the screen) before anything else.
 """
 
 ACT_PREFIX = "ACT"
@@ -78,9 +84,55 @@ def _path_name(match: re.Match[str]) -> str:
     return name or "that folder"
 
 
+_UNITS = {
+    "kb": "kilobytes",
+    "mb": "megabytes",
+    "gb": "gigabytes",
+    "tb": "terabytes",
+    "ghz": "gigahertz",
+    "mhz": "megahertz",
+    "ms": "milliseconds",
+}
+_GLUED_UNIT = re.compile(r"\b(\d+(?:\.\d+)?)\s?(kb|mb|gb|tb|ghz|mhz|ms)\b", re.IGNORECASE)
+_PERCENT = re.compile(r"(\d)\s?%")
+_DATED_FILE = re.compile(r"\b([A-Za-z][\w-]*?)[-_](\d{4})-(\d{2})-(\d{2})(?:\.[A-Za-z0-9]{1,5})?\b")
+_ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+_MONTHS = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)  # fmt: skip
+
+
+def _date_words(year: str, month: str, day: str) -> str | None:
+    from pilot.live.spoken import date_words
+
+    m, d = int(month), int(day)
+    if not (1 <= m <= 12 and 1 <= d <= 31):
+        return None
+    return date_words(d, _MONTHS[m - 1])
+
+
+def speakable_numbers(text: str) -> str:
+    """Units, percentages, dated file names and ISO dates in the words a voice says well."""
+
+    def dated_file(match: re.Match[str]) -> str:
+        words = _date_words(match.group(2), match.group(3), match.group(4))
+        name = match.group(1).replace("-", " ").replace("_", " ")
+        return f"the {name} from {words}" if words else match.group(0)
+
+    def iso(match: re.Match[str]) -> str:
+        return _date_words(*match.groups()) or match.group(0)
+
+    out = _DATED_FILE.sub(dated_file, text)
+    out = _ISO_DATE.sub(iso, out)
+    out = _GLUED_UNIT.sub(lambda m: f"{m.group(1)} {_UNITS[m.group(2).casefold()]}", out)
+    return _PERCENT.sub(r"\1 percent", out)
+
+
 def clean_for_speech(text: str, *, first: bool = False) -> str:
     """Make one sentence of model text fit to be heard: no markdown, paths, links, symbols or stock openers."""
-    out = _URL.sub("the link", text)
+    out = speakable_numbers(text)
+    out = _URL.sub("the link", out)
     out = _WINDOWS_PATH.sub(_path_name, out)
     out = _POSIX_PATH.sub(_path_name, out)
     out = _BULLET.sub("", out)
@@ -268,3 +320,18 @@ def drop_action_claims(text: str) -> str:
     """Remove sentences that claim an action the fast model cannot have taken, keeping the rest's layout."""
     parts = re.split(r"(?<=[.!?])(\s+)", text)
     return "".join(part for part in parts if not claims_an_action(part))
+
+
+# The model saying it will act, in words, without the ACT line that hands the request over.
+_PROMISE = re.compile(
+    r"\b(?:i'll|i will|let me|i'm going to|i am going to|i can do that now and)\s+(?:go ahead and\s+|just\s+)?"
+    r"(?P<verb>open|close|delete|move|copy|send|launch|start|set|create|turn|mute|unmute|play|pause|search|find|"
+    r"install|uninstall|remove|rename|run|schedule|book|empty|switch|lock|restart|shut|save|download)\b",
+    re.IGNORECASE,
+)
+
+
+def promised_action(sentence: str) -> str:
+    """The verb when a sentence promises to act ("I'll open Notepad"), else ""."""
+    match = _PROMISE.search(sentence)
+    return match.group("verb").casefold() if match else ""

@@ -101,7 +101,7 @@ def check_turn(record: TurnRecord, spec: dict[str, Any], previous: TurnRecord | 
         out.append(
             Outcome(
                 spec.get("mentions_check", "mentions"),
-                word.casefold() in target.casefold(),
+                any(option.casefold() in target.casefold() for option in word.split("|")),  # "16|sixteen"
                 f"{word!r} not in {target!r}",
             )
         )

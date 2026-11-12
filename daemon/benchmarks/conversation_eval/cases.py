@@ -26,8 +26,11 @@ CONVERSATIONS = [
         "name": "a pronoun from the turn before",
         "turns": [
             ("I keep the launch notes in a file called launch-notes.md on my desktop.", {"expect": "talk"}),
-            ("Can you open it?", {"expect": "act", "mentions": ["launch-notes"], "mentions_check": "pronoun"}),
-            ("Sorry, what was that file called again?", {"expect": "talk", "mentions": ["launch-notes"]}),
+            (
+                "Can you open it?",
+                {"expect": "act", "mentions": ["launch-notes|launch notes"], "mentions_check": "pronoun"},
+            ),
+            ("Sorry, what was that file called again?", {"expect": "talk", "mentions": ["launch-notes|launch notes"]}),
         ],
     },
     {
