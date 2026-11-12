@@ -92,7 +92,7 @@ class RedisCacheAdapter:
         self._redis: Any = None
         self._fallback = _LRUCache(max_size=config.max_memory_cache_size)
         self._using_redis = False
-        self._last_warn_time: float = 0.0
+        self._last_warn_time: float = float("-inf")  # never warned (0.0 would read as just now right after boot)
 
     @classmethod
     def from_config(cls, config: RedisConfig) -> RedisCacheAdapter:

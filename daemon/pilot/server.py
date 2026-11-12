@@ -116,6 +116,53 @@ from pilot.workflows.durable_tasks import (
 
 logger = logging.getLogger("pilot.server")
 
+# Modules initialize() imports, heaviest first (counted by benchmarks/startup_stages.py). They are imported in a
+# worker thread before initialize uses them, so their import never holds the event loop.
+INITIALIZE_IMPORTS = (
+    "pilot.memory.store",
+    "pilot.coadaptation.service",
+    "pilot.air_handoff",
+    "pilot.agents.planner",
+    "pilot.agents.executor",
+    "pilot.live.engine",
+    "pilot.workflows.activity_timeline",
+    "pilot.agents.orchestrator",
+    "pilot.security.risk_gate",
+    "pilot.agents.rss_agent",
+    "pilot.agents.screen_vision",
+    "pilot.agents.proactive",
+    "pilot.agents.agent_mesh",
+    "pilot.intelligence.strategy_evolution",
+    "pilot.intelligence.evolution_harness",
+    "pilot.agents.prompt_improver",
+    "pilot.agents.subconscious",
+    "pilot.multimodal.fusion",
+    "pilot.workflows.recorded_workflows",
+    "pilot.intelligence.experience",
+    "pilot.agents.calendar_agent",
+    "pilot.models.cloud",
+)
+NEURAL_IMPORTS = ("pilot.neural.audit", "pilot.neural.controller", "pilot.neural.gate", "pilot.neural.goals")
+
+
+def _import_all(names: tuple[str, ...]) -> None:
+    import importlib
+
+    for name in names:
+        try:
+            importlib.import_module(name)
+        except Exception:  # the real import below raises it where it is handled, as before
+            logger.debug("Could not import %s ahead of use", name, exc_info=True)
+
+
+async def import_off_loop(*names: str) -> None:
+    """Import modules in a worker thread so the event loop keeps answering while they load."""
+    import sys
+
+    missing = tuple(name for name in names if name not in sys.modules)
+    if missing:
+        await asyncio.to_thread(_import_all, missing)
+
 
 def keyring_guard_status() -> dict[str, Any]:
     from pilot.security import keyring_guard
@@ -1085,7 +1132,7 @@ class PilotServer:
         self._suggestions: Any = None
         self._live: Any = None
         self._live_reader: Any = None
-        self._live_last_ocr = 0.0
+        self._live_last_ocr = float("-inf")  # never read: 0.0 read as just now in the first seconds after boot
         self._live_events: list[dict[str, Any]] = []
         self._live_events_at = float("-inf")
         self._live_events_task: asyncio.Task[None] | None = None
@@ -1158,6 +1205,8 @@ class PilotServer:
         planner, executor, verifier, orchestrator, multimodal fusion,
         cognitive intelligence, and autonomous execution features.
         """
+        # The heavy imports first, in a worker thread: the loop keeps answering ping and startup_status meanwhile.
+        await import_off_loop(*INITIALIZE_IMPORTS)
         from pilot.agents.background import BackgroundTaskManager
         from pilot.agents.code_agent import CodeAgent
         from pilot.agents.comm_agent import CommunicationAgent
@@ -10802,6 +10851,7 @@ class PilotServer:
     async def _start_neural_input(self) -> None:
         """Neural input owns a separate signing/session authority. Its fixed goals still converge on the same
         Executor, Agent Gateway, world model, permissions, validator, and audit path as other actions."""
+        await import_off_loop(*NEURAL_IMPORTS)  # about 1,250 modules (the decoder's numerical stack), off the loop
         from pilot import config as config_module
         from pilot.neural.audit import NeuralAuditStore
         from pilot.neural.controller import NeuralController
@@ -10906,6 +10956,9 @@ class PilotServer:
         late = self._late_parts()
         if self._experience_ledger is not None and not getattr(self._online_learning, "is_ready", True):
             try:
+                # river, scipy, pandas and sklearn (about 1,400 modules) in a worker thread: on the loop this held the
+                # daemon for 1.6 s right after ready, when a person is most likely to speak first.
+                await import_off_loop("pilot.intelligence.online_learning")
                 from pilot.intelligence.online_learning import VerifiedOnlineLearner
 
                 placeholder = self._online_learning

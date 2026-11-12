@@ -4,17 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // While Heliox is starting the microphone is not open yet: the voice bar says so and the button shows it is not yet
 // available. Once ready the line goes and nothing else changes. The startup_status request has three replies: ok with
-// a state, a refusal (any other answer), or no reply.
+// a state, a refusal (any other answer), or no reply; with no reply, a daemon that answers ping is up, and one that
+// answers nothing is asked again a few times.
 
 type Handler = (method: string, params: unknown) => void;
 const mocks = vi.hoisted(() => ({
   handlers: [] as Handler[],
   startup: (async () => ({ status: "ok", state: "starting" })) as () => Promise<Record<string, unknown>>,
+  ping: (async () => ({ pong: true })) as () => Promise<Record<string, unknown>>,
 }));
 
 vi.mock("../api/daemon", () => ({
   call: vi.fn(async (method: string) => {
     if (method === "startup_status") return mocks.startup();
+    if (method === "ping") return mocks.ping();
     if (method === "voice_listener_start") return new Promise(() => {}); // held by the daemon until ready
     return { status: "ok", running: false };
   }),
@@ -36,6 +39,7 @@ vi.mock("../stores/multimodal", () => ({ multimodal: writable({}) }));
 vi.mock("./AudioVisualizer.svelte", async () => ({ default: (await import("./WidgetCard.svelte")).default }));
 
 import VoiceControl from "./VoiceControl.svelte";
+import { STARTUP_ASK } from "../stores/startup";
 
 const LINE = "Listening starts when Heliox is ready.";
 const mic = () => screen.getAllByRole("button")[0] as HTMLButtonElement;
@@ -44,6 +48,8 @@ const notify = (state: string) => mocks.handlers.forEach((handler) => handler("s
 describe("the voice bar while Heliox starts", () => {
   afterEach(() => cleanup()); // each test starts the start-up watch afresh
   beforeEach(() => {
+    Object.assign(STARTUP_ASK, { replyMs: 30, retryMs: 20, attempts: 3 });
+    mocks.ping = async () => ({ pong: true });
     mocks.handlers = [];
     mocks.startup = async () => ({ status: "ok", state: "starting" });
     sessionState.store?.set({ loading: false, daemonConnected: false });
@@ -62,6 +68,19 @@ describe("the voice bar while Heliox starts", () => {
     expect(mic().getAttribute("aria-label")).not.toBe(LINE); // the line goes; the button is as it always is
   });
 
+  it("a reply that was asked for before the daemon said it is ready does not bring the line back", async () => {
+    let answer: (value: Record<string, unknown>) => void = () => {};
+    mocks.startup = () => new Promise((resolve) => (answer = resolve));
+    Object.assign(STARTUP_ASK, { replyMs: 5_000 });
+    render(VoiceControl);
+    sessionState.store?.set({ loading: false, daemonConnected: true });
+    notify("ready");
+    await waitFor(() => expect(screen.queryByText(LINE)).toBeNull());
+    answer({ status: "ok", state: "starting" }); // late, and older than the notification
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
   it("asks once connected: ok and ready ends the wait", async () => {
     mocks.startup = async () => ({ status: "ok", state: "ready" });
     render(VoiceControl);
@@ -78,14 +97,44 @@ describe("the voice bar while Heliox starts", () => {
     await waitFor(() => expect(screen.queryByText(LINE)).toBeNull());
   });
 
-  it("no reply leaves it waiting for Heliox", async () => {
+  it("no reply, but Heliox answers other requests: it is up, so the microphone is not stranded", async () => {
+    let asked = 0;
+    mocks.startup = () => {
+      asked += 1;
+      return new Promise(() => {}); // a live connection that never answers this one request
+    };
+    render(VoiceControl);
+    sessionState.store?.set({ loading: false, daemonConnected: true });
+    await waitFor(() => expect(screen.queryByText(LINE)).toBeNull());
+    expect(asked).toBe(1);
+  });
+
+  it("nothing answers at all: it asks again a few times and keeps waiting for Heliox", async () => {
+    let asked = 0;
+    mocks.startup = () => {
+      asked += 1;
+      return new Promise(() => {});
+    };
+    mocks.ping = () => new Promise(() => {});
+    render(VoiceControl);
+    sessionState.store?.set({ loading: false, daemonConnected: true });
+    await waitFor(() => expect(asked).toBe(3));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(asked).toBe(3); // no more than STARTUP_ASK.attempts
+    expect(screen.queryByText(LINE)).not.toBeNull();
+    expect(mic().disabled).toBe(true);
+  });
+
+  it("a dropped connection answers nothing, and listening waits", async () => {
     mocks.startup = async () => {
+      throw new Error("Daemon connection was interrupted");
+    };
+    mocks.ping = async () => {
       throw new Error("Daemon connection was interrupted");
     };
     render(VoiceControl);
     sessionState.store?.set({ loading: false, daemonConnected: true });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     expect(screen.queryByText(LINE)).not.toBeNull();
-    expect(mic().disabled).toBe(true);
   });
 });

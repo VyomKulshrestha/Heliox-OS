@@ -90,10 +90,11 @@ def _sign(key: bytes, header: dict[str, Any], payload: bytes) -> str:
 
 
 def write(
-    path: Path, key: bytes, state: dict[str, Any], *, model_version: str, reset_before: int, sequence: int
+    path: Path, key: bytes, state: dict[str, Any] | bytes, *, model_version: str, reset_before: int, sequence: int
 ) -> None:
-    """Write the snapshot beside the old one and rename it over, so a crash leaves the old one or the new one."""
-    payload = pickle.dumps(state, protocol=5)
+    """Write the snapshot beside the old one and rename it over, so a crash leaves the old one or the new one.
+    ``state`` may already be pickled (the learner serialises it under its lock)."""
+    payload = state if isinstance(state, bytes) else pickle.dumps(state, protocol=5)
     header: dict[str, Any] = {
         "format": FORMAT,
         "model_version": model_version,

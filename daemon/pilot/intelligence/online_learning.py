@@ -294,15 +294,17 @@ class VerifiedOnlineLearner:
         if not self._ready:
             return
         async with self._lock:
-            # A deep copy through pickle, taken while nothing can change it.
-            state = pickle.loads(pickle.dumps({name: getattr(self, name) for name in STATE_FIELDS}, protocol=5))
+            # Serialised while nothing can change it (consume waits for this lock), in a worker thread: on the loop
+            # it held the daemon for about 0.2 s. The risk gate only reads the learner, from its own threads.
+            state = {name: getattr(self, name) for name in STATE_FIELDS}
+            payload = await asyncio.to_thread(pickle.dumps, state, protocol=5)
             sequence, reset_before = self._cursor, self._reset_before_sequence
             self._consumed_since_snapshot = 0
         await asyncio.to_thread(
             learner_snapshot.write,
             path,
             key,
-            state,
+            payload,
             model_version=MODEL_VERSION,
             reset_before=reset_before,
             sequence=sequence,

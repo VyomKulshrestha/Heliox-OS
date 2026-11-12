@@ -370,7 +370,7 @@ class GnomonReviewer:
         self._idle_unload_seconds = idle_unload_seconds
         self._state = "cold"  # cold | loading | ready | unavailable | disabled
         self._last_error = ""
-        self._failed_at = 0.0
+        self._failed_at = float("-inf")  # never failed: 0.0 read as a failure just now, in the minutes after boot
         self._last_used = 0.0
         self._lock = asyncio.Lock()
         self._loader: threading.Thread | None = None
