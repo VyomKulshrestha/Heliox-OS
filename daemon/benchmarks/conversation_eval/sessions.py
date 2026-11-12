@@ -397,8 +397,33 @@ def _words(text: str) -> int:
     return len(text.split())
 
 
+# What the driver itself imports on its first session (the listener's pieces, the server, the fast model's client).
+DRIVER_IMPORTS = (
+    "pilot.system.addressing",
+    "pilot.system.voice",
+    "pilot.server",
+    "pilot.conversation.fast_model",
+    "httpx",
+)
+
+
+def _import_ahead() -> None:
+    """Import what the driver and the daemon's initialize() import, in this (worker) thread."""
+    import importlib
+
+    for name in DRIVER_IMPORTS:
+        importlib.import_module(name)
+    from pilot.server import INITIALIZE_IMPORTS, _import_all
+
+    _import_all(INITIALIZE_IMPORTS)
+
+
 async def run_session(session: dict[str, Any], kind: str, real_model: Any = None) -> tuple[Record, list[str]]:
     """``real_model``: a real fast model to answer instead of the scripted replies (the --real run)."""
+    # The daemon imports its modules in a worker thread at start-up, before anyone can speak; the session server
+    # skips initialize(), so the driver does the same here. Otherwise a turn's first lazy import (the planner, the
+    # cloud endpoints) holds the loop, and the loop watch names the turn instead of the bench.
+    await asyncio.to_thread(_import_ahead)
     from pilot.system.addressing import Heard
     from pilot.system.voice import voice_turn_addressed, voice_turn_id
 
