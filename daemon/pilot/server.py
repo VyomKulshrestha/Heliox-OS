@@ -27,7 +27,7 @@ from typing import Any
 
 import aiosqlite
 import websockets
-from websockets.asyncio.server import Server, ServerConnection
+from websockets.asyncio.server import ServerConnection
 
 from pilot import __version__
 from pilot.config import (
@@ -104,6 +104,7 @@ from pilot.system.companion_speech import (
     SpeechOutcome,
 )
 from pilot.system.interaction import InteractionPhase, InteractionRuntime, acknowledgement_for
+from pilot.system.startup import ServerGroup
 from pilot.task_request import ATTACHED_CONTEXT_MARKER, TaskRequest, readable_request
 from pilot.workflows.durable_tasks import (
     ApprovalStatus,
@@ -915,7 +916,7 @@ class PilotServer:
         """
         self.config = config
         self._start_time = time.time()
-        self._server: Server | None = None
+        self._server: ServerGroup | None = None
         self._clients: set[ServerConnection] = set()
         self._handlers: dict[str, Any] = {}
         self._model_router: Any = None
@@ -10663,6 +10664,25 @@ class PilotServer:
                 )
                 return
 
+    async def _on_wake(self, event: Any) -> None:
+        """The computer slept (or its clock was set back). Close every window that let speech count as meant for
+        Heliox without the wake phrase: kept in monotonic time, it would still be open an hour later on Linux and
+        macOS, where that clock stops during sleep. Then check reminders at once, so those that came due during
+        sleep go out together now."""
+        if event.kind != "wake":
+            return
+        listener = self._voice_listener
+        if listener is not None:
+            with contextlib.suppress(Exception):
+                listener.clear_follow_up_window()
+                listener.end_interruption()
+        conversation = getattr(self, "_conversation", None)
+        if conversation is not None:
+            with contextlib.suppress(Exception):
+                conversation.interrupt()
+        if self._reminders is not None:
+            await self._reminders.tick()
+
     def _startup_stage(self, words: str) -> None:
         """Tell the window which stage start-up is in (only while start() runs; tests that call initialize() alone
         have no progress to report)."""
@@ -12652,31 +12672,13 @@ def handle_tool(tool_name, params):
 
     # -- Lifecycle --
 
-    async def start(self) -> None:
-        """Start the Pilot daemon server.
+    def _release_port_lock(self) -> None:
+        lock = self.__dict__.pop("_port_lock", None)
+        if lock is not None:
+            lock.close()
 
-        Initializes all subsystems, starts the WebSocket server on the
-        configured host and port, and announces new features to clients.
-        """
-        self._running = True
-        from pilot.system.startup import StartupProgress
-        from pilot.system.storage_health import preflight, storage
-
-        # Listen first, then load: the window sees which stage start-up is in instead of a refused connection, and
-        # requests made meanwhile wait for readiness (pilot.system.startup).
-        progress = StartupProgress()
-        self._startup = progress
-        progress.on_change = lambda snapshot: self._spawn_notification("startup_status", snapshot)
-        progress.begin("checking the data folder")
-        blocked = await asyncio.to_thread(preflight, DATA_DIR)
-
-        host = self.config.server.host
-        port = self.config.server.port
-        if not self.config.server.auth_token:
-            self.config.server.auth_token = secrets.token_urlsafe(32)
-
-        # Write the auth token to a runtime file so the Tauri frontend can
-        # read it via a Rust command.  The file is chmod 600 (owner-read only).
+    def _write_token_files(self) -> None:
+        """Write this run's tokens for the window, the neural sidecar and MCP clients (chmod 600 where it applies)."""
         from pilot.config import RUNTIME_DIR
 
         token_file = RUNTIME_DIR / "auth_token"
@@ -12706,14 +12708,53 @@ def handle_tool(tool_name, params):
         logger.info("Neural sidecar token written to %s", neural_token_file)
         logger.info("Local MCP token written to %s", mcp_token_file)
 
+    async def start(self) -> None:
+        """Start the Pilot daemon server.
+
+        Initializes all subsystems, starts the WebSocket server on the
+        configured host and port, and announces new features to clients.
+        """
+        self._running = True
+        from pilot.system.startup import StartupProgress
+        from pilot.system.storage_health import preflight, storage
+
+        # Listen first, then load: the window sees which stage start-up is in instead of a refused connection, and
+        # requests made meanwhile wait for readiness (pilot.system.startup).
+        progress = StartupProgress()
+        self._startup = progress
+        progress.on_change = lambda snapshot: self._spawn_notification("startup_status", snapshot)
+        host = self.config.server.host
+        port = self.config.server.port
+        if not self.config.server.auth_token:
+            self.config.server.auth_token = secrets.token_urlsafe(32)
+        # Claim the address first, without listening: a second copy (the app started twice, or a daemon already
+        # running from a checkout) stops here, before it writes the tokens or touches the first copy's data. Nobody
+        # can connect until serve_claimed listens, after the token files are fresh: the window, the neural sidecar
+        # and MCP clients read their token file before every connect, so a connection that succeeds implies the
+        # token it read is this run's.
+        from pilot.config import RUNTIME_DIR
+        from pilot.system.startup import claim_address, hold_port_lock, serve_claimed
+
         logger.info("Starting Pilot daemon on ws://%s:%d", host, port)
-        self._server = await websockets.serve(
-            self._handle_connection,
-            host,
-            port,
-            ping_interval=30,  # send keepalive ping every 30s
-            ping_timeout=300,  # allow up to 5 min for pong (matches LLM timeout)
-        )
+        claimed = claim_address(host, port)
+        try:
+            self._port_lock = hold_port_lock(RUNTIME_DIR, port)  # Linux: two copies in the same instant
+            progress.begin("checking the data folder")
+            blocked = await asyncio.to_thread(preflight, DATA_DIR)
+            self._write_token_files()
+            self._server = await serve_claimed(
+                claimed,
+                websockets.serve,
+                self._handle_connection,
+                ping_interval=30,  # send keepalive ping every 30s
+                ping_timeout=300,  # allow up to 5 min for pong (matches LLM timeout)
+            )
+        except BaseException:
+            for sock in claimed:
+                sock.close()  # an in-process restart on this port must work at once
+            self._release_port_lock()
+            raise
+
         logger.info("Pilot daemon listening; loading the rest")
         if blocked is None:
             try:
@@ -12766,6 +12807,9 @@ def handle_tool(tool_name, params):
         if blocked is None:
             progress.ready()
             logger.info("Pilot daemon ready")
+        from pilot.system.wake import watch as watch_for_wake
+
+        self._wake_task = asyncio.create_task(watch_for_wake(self._on_wake), name="wake_watch")
 
         if hasattr(self, "_new_features_announcement") and self._new_features_announcement:
             await asyncio.sleep(1)
@@ -12849,6 +12893,10 @@ def handle_tool(tool_name, params):
         """
         self._stop_deadline = time.monotonic() + STOP_TOTAL_SECONDS
         self._running = False
+        wake_task = self.__dict__.get("_wake_task")
+        if wake_task is not None and not wake_task.done():
+            wake_task.cancel()
+            await self._bounded_stop_step("wake watch", asyncio.gather(wake_task, return_exceptions=True))
         storage_wait = self.__dict__.get("_storage_wait_task")
         if storage_wait is not None and not storage_wait.done():
             storage_wait.cancel()
@@ -12954,6 +13002,7 @@ def handle_tool(tool_name, params):
             # Closing the listener cancels every request still in flight on every connection and awaits its cleanup.
             await self._bounded_stop_step("requests in flight", self._server.wait_closed())
             self._server = None
+        self._release_port_lock()
         # ── Stop LAN mesh ──
         if self._mesh:
             self._set_collab_executor(None)
@@ -15839,6 +15888,19 @@ def handle_tool(tool_name, params):
         }
 
 
+LOG_MAX_BYTES = 10 * 1024 * 1024
+LOG_BACKUPS = 3
+
+
+def _bounded_log_handler(path: Path) -> logging.Handler:
+    """pilot.log stops at 10 MB and is kept as pilot.log.1 to .3: at most 40 MB, however long Heliox runs. (A plain
+    FileHandler grew without bound over a long day.) If another process holds the file when it is due to roll over
+    (Windows), the handler reports it and keeps writing; nothing stops."""
+    from logging.handlers import RotatingFileHandler
+
+    return RotatingFileHandler(path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
+
+
 def _setup_logging() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -15850,7 +15912,7 @@ def _setup_logging() -> None:
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         handlers=[
             stream_handler,
-            logging.FileHandler(LOG_FILE, encoding="utf-8"),
+            _bounded_log_handler(LOG_FILE),
         ],
     )
     # httpx's INFO message includes the complete request URL. Gemini uses an
@@ -15904,12 +15966,21 @@ def main() -> None:
         await stop_event.wait()
         await server.stop()
 
+    from pilot.system.startup import AlreadyRunningError
+
     try:
         loop.run_until_complete(_run())
+    except AlreadyRunningError as error:
+        # One plain sentence, and this copy ends without having touched the running one.
+        logger.error("%s", error)
+        print(f"Heliox: {error}", file=sys.stderr)
+        loop.close()
+        raise SystemExit(3) from None
     except KeyboardInterrupt:
         loop.run_until_complete(server.stop())
     finally:
-        loop.close()
+        if not loop.is_closed():
+            loop.close()
 
 
 if __name__ == "__main__":

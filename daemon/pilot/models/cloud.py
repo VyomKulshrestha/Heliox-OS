@@ -232,6 +232,11 @@ def safe_provider_error(error: Exception, provider: str) -> str:
     provider_name = PROVIDER_DISPLAY_NAMES.get(provider, provider.title()) or "Cloud"
     if isinstance(error, TimeoutError | httpx.TimeoutException):
         return f"{provider_name} API unavailable: the request timed out."
+    if isinstance(error, httpx.ConnectError | httpx.NetworkError):
+        # A DNS failure, no network or a refused connection: say so instead of "[Errno 11001] getaddrinfo failed".
+        return f"{provider_name} API unavailable: could not connect (no network, or the address could not be found)."
+    if isinstance(error, httpx.RemoteProtocolError):
+        return f"{provider_name} API unavailable: the connection closed before the answer was complete."
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
         body = error.response.text.lower()
@@ -267,6 +272,22 @@ def _is_out_of_credit(status: int, body: str) -> bool:
     """The provider's account has no credit left: OpenRouter 402, Anthropic 400 "credit balance is too low",
     OpenAI 429 "insufficient_quota"."""
     return status == 402 or "credit balance" in body or "insufficient_quota" in body
+
+
+class NotAnApiAnswer(RuntimeError):
+    """The response was not the API's JSON: usually a proxy, captive portal or firewall answering with a web page."""
+
+
+def _api_json(resp: httpx.Response, provider: str) -> Any:
+    try:
+        return resp.json()
+    except ValueError:
+        name = PROVIDER_DISPLAY_NAMES.get(provider, provider.title()) or "Cloud"
+        kind = (resp.headers.get("content-type") or "").split(";")[0].strip() or "something else"
+        raise NotAnApiAnswer(
+            f"{name} API unavailable: the answer was not from the API ({kind}); a proxy, a sign-in page for this "
+            "network or a firewall may be in the way."
+        ) from None
 
 
 def _is_rate_limit_error(error: Exception) -> bool:
@@ -527,7 +548,7 @@ class CloudClient:
                 logger.error("Gemini API request failed with status %d", resp.status_code)
                 resp.raise_for_status()
 
-            data = resp.json()
+            data = _api_json(resp, "gemini")
             _note_billed_call("gemini", model, data, _gemini_usage)
             candidates = data.get("candidates", [])
             if not candidates:
@@ -597,7 +618,7 @@ class CloudClient:
                     logger.error("Rate limited (429) by %s after %d retries", provider, MAX_RETRIES)
 
             resp.raise_for_status()
-            data = resp.json()
+            data = _api_json(resp, provider)
             _note_billed_call(provider, model, data, _openai_usage)
             return data["choices"][0]["message"]["content"]
 
@@ -673,7 +694,7 @@ class CloudClient:
                 continue
 
             resp.raise_for_status()
-            data = resp.json()
+            data = _api_json(resp, "claude")
             # Anthropic billed this response; count it before the text is judged.
             _note_billed_call("claude", model, data, _anthropic_usage)
             return _parse_anthropic_response(data)

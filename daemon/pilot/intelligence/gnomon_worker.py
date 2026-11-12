@@ -262,6 +262,19 @@ def worker_environment(gpu_index: int | None, base: dict[str, str] | None = None
     return env
 
 
+WORKER_LOG_MAX_BYTES = 5 * 1024 * 1024
+
+
+def rotate_worker_log(path: Path, max_bytes: int = WORKER_LOG_MAX_BYTES) -> None:
+    """Before each start: a log past 5 MB becomes gnomon_worker.log.1 (replacing the older one), so the worker's log
+    holds at most 10 MB however often it restarts."""
+    try:
+        if path.stat().st_size > max_bytes:
+            os.replace(path, path.with_name(path.name + ".1"))
+    except OSError:
+        pass
+
+
 def _default_spawn(gpu_index: int | None = None) -> Any:
     """A fresh interpreter (fork+exec on macOS and Linux, CreateProcess on Windows): nothing of the daemon's threads,
     locks or CUDA state is inherited, unlike multiprocessing's fork. Pipes work the same on all three systems."""
@@ -269,6 +282,7 @@ def _default_spawn(gpu_index: int | None = None) -> Any:
         raise RuntimeError("a frozen build has no Python interpreter to run the worker")
     log_path = worker_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    rotate_worker_log(log_path)
     stderr = open(log_path, "ab")  # noqa: SIM115 - the child owns the handle for its lifetime
     stderr.write(f"\n--- Gnomon worker started {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n".encode())
     stderr.flush()

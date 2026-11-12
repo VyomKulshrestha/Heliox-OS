@@ -219,3 +219,41 @@ async def test_get_config_reports_unreadable_files(config_dir):
     data = await server._handle_get_config({}, MagicMock())
 
     assert data["load_errors"] and "server" not in data
+
+
+@pytest.mark.parametrize(
+    ("content", "what"),
+    [
+        ('[voice]\ntts_engine = "kokoro_tts"\n[model]\nprovider = "clau', "half written"),
+        ('[voice]\ntts_engine = "kokoro_tts"\nwake_word_model = "v2"\n', "a key from a newer version"),
+    ],
+)
+def test_a_half_written_file_or_a_newer_versions_key_starts_on_defaults_and_keeps_the_file(config_dir, content, what):
+    (config_dir / "config.toml").write_text(content, encoding="utf-8")
+
+    config = PilotConfig.load()
+
+    assert config.voice.tts_engine == PilotConfig().voice.tts_engine  # defaults, not a half-applied mix
+    message = config.load_errors[0]
+    assert "config.toml could not be read" in message and "A copy was kept at" in message  # which file, what
+    with pytest.raises(ConfigWriteBlocked):
+        config.save()
+    assert (config_dir / "config.toml").read_text(encoding="utf-8") == content, what  # never rewritten
+
+
+def test_a_config_file_that_cannot_be_opened_starts_on_defaults_and_says_so(config_dir, monkeypatch):
+    (config_dir / "config.toml").write_text('[voice]\ntts_engine = "os_native"\n', encoding="utf-8")
+    real_read = config_module.Path.read_text
+
+    def denied(self, *args, **kwargs):
+        if self.name == "config.toml":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(config_module.Path, "read_text", denied)
+    config = PilotConfig.load()
+
+    assert config.voice.tts_engine == PilotConfig().voice.tts_engine
+    assert "Permission denied" in config.load_errors[0]
+    with pytest.raises(ConfigWriteBlocked):
+        config.save()
