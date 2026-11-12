@@ -7,9 +7,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location(
-    "heliox_update", ROOT / "tauri-app" / "src-tauri" / "setup" / "update.py"
-)
+spec = importlib.util.spec_from_file_location("heliox_update", ROOT / "tauri-app" / "src-tauri" / "setup" / "update.py")
 update = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(update)
@@ -31,18 +29,11 @@ def test_groups_are_inferred_for_installs_made_before_they_were_recorded():
 def test_the_requirement_keeps_every_group_and_pins_the_version():
     extras = update.parse_extras("", platform="linux")
     assert update.requirement("0.17.0", [], extras) == "pilot-daemon==0.17.0"
+    assert update.requirement("0.17.0", ["voice", "platform"], extras) == "pilot-daemon[voice,linux]==0.17.0"
     assert (
-        update.requirement("0.17.0", ["voice", "platform"], extras)
-        == "pilot-daemon[voice,linux]==0.17.0"
+        update.requirement("0.17.0", ["platform"], update.parse_extras("", platform="win32")) == "pilot-daemon==0.17.0"
     )
-    assert (
-        update.requirement("0.17.0", ["platform"], update.parse_extras("", platform="win32"))
-        == "pilot-daemon==0.17.0"
-    )
-    assert (
-        update.requirement("0.17.0", ["voice"], extras, source="/src/daemon")
-        == "/src/daemon[voice]"
-    )
+    assert update.requirement("0.17.0", ["voice"], extras, source="/src/daemon") == "/src/daemon[voice]"
     assert update.parse_extras("voice=voice,extra2", platform="darwin")["voice"] == "voice,extra2"
 
 
