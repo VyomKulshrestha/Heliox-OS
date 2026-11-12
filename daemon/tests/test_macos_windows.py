@@ -178,3 +178,19 @@ def test_launch_services_front_pid_parsing():
     assert M.parse_lsappinfo_pid("") == 0 and M.parse_lsappinfo_pid('"pid"=[ NULL ]') == 0
     outputs = {"front": "ASN:0x0-0x1:\n", "info": '"pid"=42\n'}
     assert M.launch_services_front_pid(lambda args: outputs[args[1]]) == 42
+
+
+def test_apps_sharing_a_name_resolve_to_the_one_meant():
+    ax = FakeAX()
+    checker = RunningApp(900, "Python", "Python", "org.python.python")
+    fixture = RunningApp(901, "Python", "Python", "org.python.python")
+    ax.apps = [checker, fixture]
+    ax.wins[900] = []
+    ax.wins[901] = [{"AXTitle": "Draft - edited", "AXMinimized": False, "AXCloseButton": {"button": 9}}]
+    ax.front = 901
+    assert MacWindows(ax).focus("Python", "Draft", settle=0) == "Python"
+    assert ax.activated == []  # the titled window's app was already in front
+    MacWindows(ax).minimize("Python", "Draft")
+    assert ax.wins[901][0]["AXMinimized"] is True
+    ax.front = 0
+    assert MacWindows(ax)._app("Python").pid == 901  # no title, nothing in front: the one with a window

@@ -11,7 +11,7 @@ Heliox runs on Windows, macOS and Linux. This page says what each part of the co
 | Application display names | Works: file description | Works: bundle display name | Works: desktop entry `Name` | `daemon/pilot/system/app_names.py` | Nothing | Windows: real run. macOS and Linux: fakes (pure parsers over a path or file text) |
 | Activity timeline | Works | Works as far as the foreground row | Works as far as the foreground row | `daemon/pilot/workflows/activity_timeline.py` | Nothing more | Fakes on all three, plus the foreground row |
 | macOS permissions status | Not applicable | Works: microphone, Accessibility, Screen Recording and Automation read without a prompt | Not applicable | `daemon/pilot/system/macos_permissions.py` | Nothing | macOS: CI run (states read, no prompt); messages with fakes |
-| Reading the screen (OCR) | Works: Windows OCR | Works with the `macos` extra: the Vision framework in process (pyobjc), no developer tools needed; without pyobjc, Vision through `swift` (needs the Xcode command-line tools), else tesseract or EasyOCR. Without Screen Recording the capture shows only the wallpaper, reported by the permission status | Partly: tesseract, EasyOCR, pytesseract; capture by `pyautogui`, `gnome-screenshot` or `scrot`; Wayland not handled | `daemon/pilot/system/vision.py`, `daemon/pilot/system/macos_vision_ocr.py`, `daemon/pilot/system/screen.py` | macOS Screen Recording. Linux: tesseract | Windows: real run. macOS: CI run of Vision on a rendered line of text; reading order with fakes. Linux: fakes |
+| Reading the screen (OCR) | Works: Windows OCR | Works with the `macos` extra: the Vision framework in process (pyobjc), no developer tools needed; without pyobjc, Vision through `swift` (needs the Xcode command-line tools), else tesseract or EasyOCR. Without Screen Recording the capture shows only the wallpaper, reported by the permission status | Partly: tesseract, EasyOCR, pytesseract; capture by `pyautogui`, `gnome-screenshot` or `scrot`; Wayland not handled | `daemon/pilot/system/vision.py`, `daemon/pilot/system/macos_vision_ocr.py`, `daemon/pilot/system/screen.py` | macOS Screen Recording. Linux: tesseract | Windows: real run. macOS: CI run on a real Mac: Vision read a rendered line of text in process and through vision.py; reading order with fakes. Linux: fakes |
 | Call detection | Works | No-op (being built in another workstream) | No-op (same) | `daemon/pilot/system/call_detection.py` | None on Windows | Fakes |
 | Speech capture and playback | Works: WASAPI, then PortAudio | Partly: PortAudio; the bundle now declares the microphone use, and `microphone_state()` tells the audio side whether it was granted | Partly: PortAudio over ALSA, PulseAudio or PipeWire; needs `libportaudio2` | `daemon/pilot/system/voice.py`, `daemon/pilot/system/audio_health.py` | macOS Microphone (asked by the system on first use). Linux: PortAudio | Fakes off Windows |
 | Wake phrase | Works | As far as capture works | As far as capture works | `daemon/pilot/system/voice.py` | As for capture | Fakes off Windows |
@@ -95,19 +95,19 @@ What a brand-new install meets, in the order the person meets it, with no speech
 
 macOS:
 
-1. Open: the app creates the daemon's environment with `python3 -m venv`. A stock Mac has no Python 3.11 or later: `/usr/bin/python3` is a stub that opens the system's "install command line developer tools" dialog, and the Python it then installs is 3.9, below the daemon's minimum. The failure is printed only to the app's stderr and the window stays on "Connecting". Open; the fix is to bundle a Python (python-build-standalone) or check the version and show a setup screen: 1 to 2 days, Rust and UI.
-2. Open: the same setup installs `pilot-daemon[all]` in the background without asking, including the speech models' libraries and Chromium (several GB). This breaks the program's first-run rule that every optional download is offered with its size and started by the person. Open, for the owner to decide: 1 to 2 days for an opt-in download screen.
+1. Fixed (see [FIRST_RUN.md](FIRST_RUN.md)): without Python 3.11 or later the app no longer runs Apple's `python3` stub; it offers a private Python (uv and python-build-standalone, size and source shown, checksum-checked) and shows any setup failure on screen with what to do.
+2. Fixed (see [FIRST_RUN.md](FIRST_RUN.md)): nothing is installed until the person chooses; the core, then the groups they pick, each with size and source.
 3. Microphone: the bundle declares why Heliox uses it, so macOS asks on first capture; `microphone_state()` lets the audio side say what to turn on (audio workstream).
 4. Fixed: Live's field reading names the Accessibility setting and offers the system prompt once.
 5. Fixed: reading the screen without Screen Recording used to read the wallpaper and find nothing; it now says what to turn on. The first capture is what makes macOS show its prompt.
 6. Fixed: window actions without Accessibility say what to turn on; focus works without it.
 7. Fixed: the default shortcut no longer collides with Spotlight, and a failed registration is shown in Settings.
-8. Open: an unsigned download is quarantined by Gatekeeper ("damaged" or "cannot be opened") and notifications may not appear for an unsigned app. Signing and notarisation are a release task.
+8. Open, for the owner (it costs money and an Apple account): an unsigned app meets Gatekeeper; [FIRST_RUN.md](FIRST_RUN.md) says exactly what the person has to do.
 
 Linux:
 
-1. Fixed for the .deb: `python3 -m venv` fails on Debian and Ubuntu without `python3-venv`, and microphone capture fails without `libportaudio2`; both are now package dependencies, with `at-spi2-core` (the .rpm gets `portaudio` and `at-spi2-core`). Open for the AppImage, which cannot declare dependencies: the setup failure is still printed only to stderr.
-2. Open: the same unasked background install of `pilot-daemon[all]` as on macOS.
+1. Fixed for the .deb: `python3 -m venv` fails on Debian and Ubuntu without `python3-venv`, and microphone capture fails without `libportaudio2`; both are now package dependencies, with `at-spi2-core` (the .rpm gets `portaudio` and `at-spi2-core`). The AppImage cannot declare dependencies, but setup now shows its failures in the app.
+2. Fixed: the same chosen, visible setup as on macOS ([FIRST_RUN.md](FIRST_RUN.md)); a Python without `venv` is skipped in favour of a private one.
 3. Fixed: Live says when the accessibility bus is missing or toolkit accessibility is off.
 4. Fixed: without espeak, speech logs one "no voice available" message and answers in text; whether the app shows that sentence is up to the audio workstream.
 5. Fixed: the `notify` action says when `notify-send` is missing instead of claiming success.

@@ -154,10 +154,31 @@ class MacWindows:
     def __init__(self, backend: Any | None = None) -> None:
         self.b = backend or Backend()
 
-    def _app(self, target: str) -> RunningApp:
+    def _app(self, target: str, title: str | None = None) -> RunningApp:
+        """The running app called ``target``. Several apps can share a name (every unbundled Python program is
+        "Python"); then the one with a window titled ``title`` wins, else the one in front, else one with a
+        window, so the action reaches the app the person meant."""
         found = match_apps(target, self.b.running_apps())
         if not found:
             raise RuntimeError(f"No running application is called {target!r}.")
+        if len(found) == 1:
+            return found[0]
+
+        def titles(app: RunningApp) -> list[str]:
+            return [str(self.b.get(window, "AXTitle") or "") for window in self.b.windows(app.pid)]
+
+        if title and self.b.trusted():
+            titled = [app for app in found if any(title_matches(t, title) for t in titles(app))]
+            if titled:
+                return titled[0]
+        front = self.b.frontmost_pid()
+        for app in found:
+            if app.pid == front:
+                return app
+        if self.b.trusted():
+            with_windows = [app for app in found if self.b.windows(app.pid)]
+            if with_windows:
+                return with_windows[0]
         return found[0]
 
     def _need_access(self) -> None:
@@ -194,7 +215,7 @@ class MacWindows:
         """Bring the app forward. An app already in front is left as it is (macOS answers "not activated" for
         it). Since macOS 14 a background process's activation request may be ignored ("cooperative activation"),
         so when the app is still not in front and Heliox has Accessibility, AXFrontmost does it."""
-        app = self._app(target)
+        app = self._app(target, title)
         if self.b.frontmost_pid() != app.pid:
             self.b.activate(app.pid)
             if not self._became_front(app.pid, settle) and self.b.trusted():
@@ -220,21 +241,21 @@ class MacWindows:
 
     def minimize(self, target: str, title: str | None = None) -> str:
         self._need_access()
-        app = self._app(target)
+        app = self._app(target, title)
         if not self.b.set_bool(self._window(app, title), "AXMinimized", True):
             raise RuntimeError(f"{app.name}'s window could not be minimised.")
         return app.name
 
     def maximize(self, target: str, title: str | None = None) -> str:
         self._need_access()
-        app = self._app(target)
+        app = self._app(target, title)
         if not self.b.set_frame(self._window(app, title), self.b.visible_frame()):
             raise RuntimeError(f"{app.name}'s window could not be resized.")
         return app.name
 
     def close(self, target: str, title: str | None = None) -> str:
         self._need_access()
-        app = self._app(target)
+        app = self._app(target, title)
         button = self.b.get(self._window(app, title), "AXCloseButton")
         if button is None or not self.b.press(button):
             raise RuntimeError(f"{app.name}'s window has no close button Heliox can press.")

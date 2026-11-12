@@ -223,29 +223,20 @@ def main() -> int:
         type_keys, how = typer(args.wayland, fixture)
         print(f"typing with: {how}")
 
+        if args.wayland and shutil.which("wtype"):
+            # A headless compositor has no keyboard, so no window would get keyboard focus and GTK would mark nothing
+            # focused (CI on 12 November: 0 focus events, seat0 with no capabilities). A virtual keyboard held open
+            # for the whole run gives the seat one, as every real machine has.
+            keeper = subprocess.Popen(["wtype", "-s", "600000"])
+            atexit.register(keeper.kill)
+            print("holding a virtual keyboard open for the run (wtype -s 600000)")
+            time.sleep(1.0)
         count_events()
         first = read_until(lambda r: r.editable)
         status = L.LinuxFocusedTextReader().status()
         print(f"reader status: {status.as_dict()}; focus events: {len(events_seen)}")
         found = first is not None and first.editable
-        if not found and args.wayland and shutil.which("wtype"):
-            # A headless compositor has no keyboard, so no window gets keyboard focus and GTK marks nothing focused.
-            # A virtual keyboard held open for the rest of the run gives the seat one, as a real machine has.
-            describe_tree()
-            sway_state()
-            keeper = subprocess.Popen(["wtype", "-s", "600000"])
-            atexit.register(keeper.kill)
-            print("diagnosis: holding a virtual keyboard open (wtype -s 600000) and reading again")
-            time.sleep(1.0)
-            first = read_until(lambda r: r.editable)
-            found = first is not None and first.editable
-            check(f"{session}/focused-entry-found-with-a-keyboard", found, repr(first))
-            if not found:
-                describe_tree()
-                sway_state()
-                keeper.kill()
-                return failures
-        elif not found:
+        if not found:
             describe_tree()
             sway_state()
         if not check(f"{session}/focused-entry-found", found, repr(first)):
