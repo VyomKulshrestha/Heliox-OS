@@ -53,6 +53,19 @@ def pytest_sessionfinish(session, exitstatus):
     t.start()
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """A test that reached Heliox's real folders fails at its teardown, even when the code it ran swallowed the
+    refusal (folder_guard.failure_for)."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "teardown" and report.outcome == "passed":
+        why = folder_guard.failure_for(item.nodeid)
+        if why is not None:
+            report.outcome = "failed"
+            report.longrepr = why
+
+
 def pytest_terminal_summary(terminalreporter):
     for line in _folder_guard_lines:
         terminalreporter.write_line(line)

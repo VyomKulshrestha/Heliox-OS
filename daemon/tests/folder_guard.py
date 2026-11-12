@@ -195,6 +195,23 @@ def install() -> Path:
     return session
 
 
+def failure_for(test: str) -> str | None:
+    """Why ``test`` must fail, when the guard refused something it did; None otherwise.
+
+    The refusal itself is a PermissionError where the access happened, and product code may rightly swallow it (a
+    missing or unreadable voice calibration must not stop the listener). So the test is failed here, at its
+    teardown, whatever the code under test did with the error."""
+    hits = _state["refused"].get(test)
+    if not hits:
+        return None
+    lines = [
+        f"{test} reached Heliox's real folders of the person running the tests (refused by tests/folder_guard.py):",
+        *(f"  {hit}" for hit in sorted(hits)[:5]),
+        "Use tmp_path, or the session folders pilot.config already points at (CACHE_DIR, DATA_DIR, ...).",
+    ]
+    return "\n".join(lines)
+
+
 def report() -> tuple[list[str], bool]:
     """Lines for the end of the session, and whether the session must fail."""
     _state["active"] = False

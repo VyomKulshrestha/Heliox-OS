@@ -107,3 +107,16 @@ def test_a_test_root_without_its_marker_is_ignored(tmp_path, monkeypatch):
     assert config_module._test_root() is None
     (tmp_path / config_module.TEST_ROOT_MARKER).write_text("", encoding="utf-8")
     assert config_module._test_root() == tmp_path
+
+
+def test_a_refusal_the_code_swallowed_still_fails_the_test(stand_in, request):
+    """Product code may catch the PermissionError (a missing voice calibration must not stop the listener); the
+    test is failed at its teardown anyway (conftest's pytest_runtest_makereport)."""
+    assert folder_guard.failure_for(request.node.nodeid) is None
+    try:
+        open(stand_in / "wake_variants.json", encoding="utf-8").close()
+    except Exception:
+        pass  # what voice_calibration does with an unreadable file
+    why = folder_guard.failure_for(request.node.nodeid)
+    assert why is not None and request.node.nodeid in why and "wake_variants.json" in why
+    # The stand_in fixture forgets this test's own refusal at its teardown, so this check of the check passes.
