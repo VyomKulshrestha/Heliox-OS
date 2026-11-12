@@ -209,7 +209,12 @@ class SwarmManager:
                     "jsonrpc": "2.0",
                     "id": secrets.token_hex(8),
                     "method": "execute",
-                    "params": {"input": plan.get("input", ""), "dry_run": plan.get("dry_run", False)},
+                    # "swarm": a peer's request is planned by the receiving daemon; it is not typed chat.
+                    "params": {
+                        "input": plan.get("input", ""),
+                        "dry_run": plan.get("dry_run", False),
+                        "source": "swarm",
+                    },
                 }
                 await ws.send(json.dumps(request))
                 response = await ws.recv()

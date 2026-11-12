@@ -1,7 +1,6 @@
 """The fast conversational layer: owns the spoken turn (see docs/INTERACTION_MODEL.md).
 
-Nothing here needs an audio, speech or model package at import; the Anthropic SDK is imported only when a Claude
-fast model is used.
+Nothing here needs an audio, speech or model package at import.
 """
 
 from pilot.conversation.adapters import layer_for

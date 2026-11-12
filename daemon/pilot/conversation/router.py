@@ -299,6 +299,17 @@ _SINGLE_WORD_ACTIONS = frozenset(
 _TAKE_OBJECTS = re.compile(r"\b(?:screenshot|screen shot|photo|picture|note|break|backup)\b")
 
 
+# Media and volume requests that do not start with an action verb ("next song", "pause the music").
+MEDIA_PATTERNS = (
+    (re.compile(r"^(?:pause|play|resume|unpause)(?: the)? (?:music|song|track|video|playback|audio)$"), "playpause"),
+    (re.compile(r"^(?:next|skip to the next) (?:song|track)$|^play the next (?:song|track)$"), "nexttrack"),
+    (re.compile(r"^(?:previous|last|go back a) (?:song|track)$|^play the previous (?:song|track)$"), "prevtrack"),
+    (re.compile(r"^(?:turn )?(?:the )?volume up$|^turn (?:it|the volume|the sound) up$|^louder$"), "volumeup"),
+    (re.compile(r"^(?:turn )?(?:the )?volume down$|^turn (?:it|the volume|the sound) down$|^quieter$"), "volumedown"),
+)
+VOLUME_LEVEL = re.compile(r"^set (?:the )?volume to (\d{1,3})(?: percent| %)?$")
+
+
 def _strip_prefix(normalized: str) -> str:
     match = _REQUEST_PREFIX.match(normalized)
     return normalized[match.end() :] if match else normalized
@@ -346,6 +357,11 @@ def route(text: str, *, conversation_open: bool = False) -> Route:
     words = body.split()
     if not words:
         return Route(TurnKind.UNCLEAR, "only a polite prefix")
+    for pattern, key in MEDIA_PATTERNS:
+        if pattern.search(body):
+            return Route(TurnKind.ACTION, "a media or volume key", verb="media", target=key)
+    if VOLUME_LEVEL.match(body):
+        return Route(TurnKind.ACTION, "a volume level", verb="set", target=body[4:])
     if _TALK_VERBS.match(body):
         return Route(TurnKind.CONVERSATION, "asks for words")
     if _LOOKUP_QUESTION.match(normalized):

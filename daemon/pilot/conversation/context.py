@@ -95,7 +95,8 @@ class ContextSources:
     # Asked once per turn with whether the model runs on this machine; it decides what may be shared.
     screen_async: Callable[[bool], Awaitable[Screen | None]] | None = None
     now: Callable[[], datetime] = datetime.now
-    extra: list[Callable[[], str]] = field(default_factory=list)
+    # Further context lines (personal memory, Live). Each takes no argument or the words being answered.
+    extra: list[Callable[..., str]] = field(default_factory=list)
 
 
 def _safe(call: Callable[[], Any], default: Any) -> Any:
@@ -126,8 +127,24 @@ def describe_task(state: dict[str, Any]) -> list[str]:
 _UNSET: Any = object()
 
 
+def _call_extra(extra: Callable[..., str], text: str) -> str:
+    """An extra source may take the words being answered (one argument) or nothing."""
+    import inspect
+
+    try:
+        takes_text = len(inspect.signature(extra).parameters) >= 1
+    except (TypeError, ValueError):
+        takes_text = False
+    return _safe((lambda: extra(text)) if takes_text else extra, "")
+
+
 def assemble(
-    sources: ContextSources, memory: ConversationMemory, *, budget: int = CONTEXT_CHARS, screen: Any = _UNSET
+    sources: ContextSources,
+    memory: ConversationMemory,
+    *,
+    budget: int = CONTEXT_CHARS,
+    screen: Any = _UNSET,
+    text: str = "",
 ) -> tuple[str, list[dict[str, str]]]:
     """The context block and the earlier turns as Messages API turns (alternating, starting with the person)."""
     now = _safe(sources.now, datetime.now())
@@ -144,7 +161,7 @@ def assemble(
     if profile:
         sections.append("About the person: " + " ".join(profile))
     for extra in sources.extra:
-        line = _safe(extra, "")
+        line = _call_extra(extra, text)
         if line:
             sections.append(str(line))
     block = ""
@@ -155,13 +172,17 @@ def assemble(
 
     messages: list[dict[str, str]] = []
     for turn in memory.recent():
-        text = turn.text + (" [the person talked over Heliox here; the rest was not said]" if turn.cut_off else "")
+        said = turn.text + (" [the person talked over Heliox here; the rest was not said]" if turn.cut_off else "")
         if messages and messages[-1]["role"] == turn.role:
-            messages[-1]["content"] += " " + text
+            messages[-1]["content"] += " " + said
         else:
-            messages.append({"role": turn.role, "content": text})
+            messages.append({"role": turn.role, "content": said})
+    # The Messages API starts with the person. Something Heliox said first (a Live remark) goes in the context.
+    opening = []
     while messages and messages[0]["role"] != "user":
-        messages.pop(0)
+        opening.append(messages.pop(0)["content"])
+    if opening:
+        block = f"Heliox said before this: {' '.join(opening)[:TURN_CHARS]}\n" + block
     return block.strip(), messages
 
 
@@ -174,7 +195,7 @@ def build_messages(
     screen: Any = _UNSET,
 ) -> list[dict[str, str]]:
     """Messages for one fast-model call: earlier turns, then the context and the new words as the last user turn."""
-    block, history = assemble(sources, memory, budget=budget, screen=screen)
+    block, history = assemble(sources, memory, budget=budget, screen=screen, text=text)
     final = f"[Context, not said by the person]\n{block}\n\n[The person said]\n{text.strip()}"
     if history and history[-1]["role"] == "user":
         history[-1]["content"] += "\n\n" + final

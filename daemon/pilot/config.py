@@ -536,6 +536,8 @@ class ConversationConfig:
     gemini_model: str = ""
     meta_model: str = ""
     ollama_model: str = ""
+    # The web search the quick road opens for "search the web for ...": an http(s) address with {query}.
+    search_url: str = "https://www.google.com/search?q={query}"
 
 
 @dataclass
@@ -1240,6 +1242,7 @@ def _validate_config_types(raw: dict) -> None:
             "gemini_model": str,
             "meta_model": str,
             "ollama_model": str,
+            "search_url": str,
         },
         "supervision": {
             "enabled": bool,
@@ -1641,6 +1644,14 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             name = c_raw.get(f"{key}_model")
             if isinstance(name, str) and len(name.strip()) <= 120:
                 setattr(config.conversation, f"{key}_model", name.strip())
+        search = c_raw.get("search_url")
+        if (
+            isinstance(search, str)
+            and "{query}" in search
+            and re.match(r"^https?://[^\s/$.?#][^\s]*$", search.strip().replace("{query}", "q"), re.IGNORECASE)
+            and len(search) <= 300
+        ):
+            config.conversation.search_url = search.strip()
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]

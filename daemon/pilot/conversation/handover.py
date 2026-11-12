@@ -31,7 +31,7 @@ SIMPLE_OBJECT_WORDS = 6
 
 class HandoverTarget(StrEnum):
     FULL_PLANNER = "full_planner"  # plan, reviewers, approval, executor, verifier: unchanged authority
-    # QUICK = "quick"  # a later workstream: plain one-step requests under way within three seconds
+    QUICK = "quick"  # one allow-listed action, no planner call; same validator, world model, executor, logs
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,8 +46,9 @@ class HandoverIntent:
     say: str = ""  # the fast model's own acknowledgement, when it wrote one
 
 
-def choose_target(intent: HandoverIntent) -> HandoverTarget:
-    return HandoverTarget.FULL_PLANNER
+def choose_target(intent: HandoverIntent, *, quick: bool = False) -> HandoverTarget:
+    """The quick road when a one-action plan on its allow-list was built for this intent, else the full planner."""
+    return HandoverTarget.QUICK if quick else HandoverTarget.FULL_PLANNER
 
 
 _PRONOUNS = {
@@ -101,6 +102,15 @@ def acknowledgement(intent: HandoverIntent, *, last: str = "") -> str:
     return sentence
 
 
+MEDIA_ACKS = {
+    "playpause": "Okay.",
+    "nexttrack": "Next track.",
+    "prevtrack": "Previous track.",
+    "volumeup": "Turning it up.",
+    "volumedown": "Turning it down.",
+}
+
+
 def _built(intent: HandoverIntent) -> str:
     verb = intent.verb.casefold()
     target = _speakable_object(intent.object)
@@ -109,8 +119,14 @@ def _built(intent: HandoverIntent) -> str:
         return "Setting that reminder."
     if verb == "set" and words[:2] in (["a", "timer"], ["timer"]):
         return f"Setting {target}."
-    if verb == "check" and intent.source == "router" and intent.object == intent.words:
+    if verb == "check" and intent.source == "router":
         return "I'll check."
+    if verb == "media":
+        return MEDIA_ACKS.get(intent.object, "Okay.")
+    if verb == "set" and words[:1] == ["volume"]:
+        return f"Setting the {target}."
+    if not target and verb in ACTION_VERBS and " " not in ACTION_VERBS[verb]:
+        return f"{ACTION_VERBS[verb]}."  # "Muting."
     if not target or len(words) > SIMPLE_OBJECT_WORDS:
         gerund = ACTION_VERBS.get(verb, "")
         return f"{gerund} that now." if gerund and " " not in gerund else "I'll get that started."

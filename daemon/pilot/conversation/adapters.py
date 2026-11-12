@@ -171,12 +171,38 @@ def _profile_lines(server: Any) -> list[str]:
     profile = getattr(server, "_user_profile", None)
     if profile is None:
         return []
-    return list(profile.context_lines())
+    return prioritise_profile(list(profile.context_lines()))
+
+
+_PROFILE_ORDER = ("Call them", "Answer style", "Preference", "About them", "Person they know")
+
+
+def prioritise_profile(lines: list[str]) -> list[str]:
+    """The name, answer style and preferences first (the profile stores oldest first), newest first within each."""
+
+    def rank(line: str) -> int:
+        return next((i for i, prefix in enumerate(_PROFILE_ORDER) if line.startswith(prefix)), len(_PROFILE_ORDER))
+
+    return [line for _i, line in sorted(enumerate(lines), key=lambda item: (rank(item[1]), -item[0]))]
 
 
 def _status(server: Any) -> dict[str, Any]:
     runtime = getattr(server, "_interaction_runtime", None)
     return runtime.status() if runtime is not None else {}
+
+
+def _prepare_speech(server: Any, text: str) -> None:
+    """The speech worker synthesises ``text`` ahead (a no-op for the system voice or a failed local voice)."""
+    from pilot.system.local_tts_worker import prepare_local_speech
+
+    prepare_local_speech(server.config.voice, text)
+
+
+def _turn_ended() -> float | None:
+    """When the person's last word ended (time.monotonic), set by the listener for each voice dispatch."""
+    from pilot.system.voice import voice_turn_ended_at
+
+    return voice_turn_ended_at.get()
 
 
 def layer_for(server: Any) -> Any:
@@ -256,6 +282,57 @@ def layer_for(server: Any) -> Any:
         ),
         user_speaking=user_speaking,
         task_status=lambda: _status(server),
+        prepare=lambda text: _prepare_speech(server, text),
+        turn_ended=_turn_ended,
+        search_url=lambda: str(getattr(settings(), "search_url", "") or ""),
     )
     server._conversation = layer
     return layer
+
+
+TYPED_SOURCES = frozenset({"interactive", "text", "chat"})
+
+
+@dataclass
+class TypedTurn:
+    """What a typed message became: answered in the chat (``response``), or a request for the pipeline."""
+
+    done: bool
+    response: dict[str, Any] | None = None
+    planner_input: str = ""
+    quick_plan: Any = None
+
+
+async def typed_turn(server: Any, text: str, ws: Any, notify: Any) -> TypedTurn | None:
+    """Typed chat through the same layer as voice: router, streamed reply, hand-over and quick road.
+
+    The reply streams into the chat view as ``token_stream`` notifications (the view already shows them as they
+    arrive) and keeps its markdown; the final text comes back as the task result. ``notify`` builds a
+    notification message (the server's ``_notification``). None: the layer is off and the planner road applies.
+    """
+
+    async def chat_sink(chunk: str, channel: str, key: str) -> str:
+        await ws.send(notify("token_stream", {"token": chunk}))
+        return "spoken"
+
+    turn = await layer_for(server).take(text, source="typed", sink=chat_sink)
+    if turn is None:
+        return None
+    if turn.done:
+        reply = "".join(turn.spoken).strip()
+        return TypedTurn(
+            done=True,
+            response={
+                "status": "success",
+                "conversational": True,
+                "dry_run": False,
+                "results": [],
+                "message": reply,
+                "explanation": reply,
+            },
+        )
+    return TypedTurn(
+        done=False,
+        planner_input=turn.planner_input or text,
+        quick_plan=turn.quick.plan if turn.quick is not None else None,
+    )

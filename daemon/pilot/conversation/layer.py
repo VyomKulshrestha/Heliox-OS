@@ -36,12 +36,23 @@ from pilot.conversation.handover import (
     intent_from_route,
     keep_company,
 )
-from pilot.conversation.router import Route, TurnKind, route
+from pilot.conversation.quick import (
+    QuickPlan,
+    from_model,
+    from_words,
+    quick_acknowledgement,
+    quick_result_sentence,
+    valid_search_url,
+)
+from pilot.conversation.router import Route, TurnKind, normalize, route
 from pilot.conversation.style import (
     SYSTEM_PROMPT,
+    TYPED_SYSTEM_PROMPT,
     SentenceSplitter,
+    TextChunker,
     claims_an_action,
     clean_for_speech,
+    drop_action_claims,
     looks_like_act,
     parse_act,
 )
@@ -67,6 +78,9 @@ FALLBACK = {
     "budget": "This month's model budget is used up, so I can only do what I handle myself until you raise it "
     "in Settings.",
     "busy": "The language model is busy right now. Try me again in a moment.",
+    "credit": "Your {provider} account is out of credit. Add credit there, or choose another model in Settings, "
+    "under Model.",
+    "slow": "The language model isn't answering right now, so I can only do what I handle myself for the moment.",
     "refused": "I can't help with that one.",
     "error": "Something went wrong reaching the language model. I can still do what I handle myself.",
     "none": "Talking things through needs a language model, and none is set up. " + SETUP_HINT,
@@ -79,12 +93,26 @@ FALLBACK = {
 FALLBACK_AGAIN = {
     "offline": "Still offline, so I can't answer that one.",
     "busy": "The model is still busy. Try again in a moment.",
+    "credit": "The model account is still out of credit.",
+    "slow": "The language model still isn't answering.",
     "refused": "I can't help with that one.",
 }
 FALLBACK_AGAIN_DEFAULT = "I can't answer that without a language model."
 UNCLEAR_OFFLINE = "Sorry, I didn't catch that. Could you say it again?"
 HOLD_AFTER_SECONDS = 2.0  # no first sentence yet: a short holding phrase, so the wait is not silent
 HOLD_PHRASES = ("One moment.", "Let me think.", "Give me a second.")
+LOCAL_LOADING = "Loading the local model, one moment."
+LOST_MID_REPLY = "I lost the connection there."
+# No text from a cloud model by then: it is treated as not answering. A local model may be loading into memory.
+FIRST_TEXT_DEADLINE = 6.0
+LOCAL_FIRST_TEXT_DEADLINE = 90.0
+PROVIDER_NAMES = {
+    "claude": "Anthropic",
+    "openai": "OpenAI",
+    "openrouter": "OpenRouter",
+    "gemini": "Google",
+    "meta": "Meta",
+}
 
 
 @dataclass
@@ -95,6 +123,9 @@ class TurnResult:
     planner_input: str = ""
     intent: HandoverIntent | None = None
     target: HandoverTarget = HandoverTarget.FULL_PLANNER
+    source: str = "voice"  # "voice" or "typed"
+    _sink: Any = None  # the sink for this turn when it is not the layer's own (typed chat)
+    quick: QuickPlan | None = None  # the one-action plan for the quick road, when there is one
     route: Route | None = None
     timings: dict[str, float] = field(default_factory=dict)
     spoken: list[str] = field(default_factory=list)
@@ -106,6 +137,17 @@ class TurnResult:
         assert self._layer is not None and self.intent is not None
         self._company = self._layer._start_company(self)
         return self._company
+
+    def execute_params(self) -> dict[str, Any]:
+        """What the server adds to the planner call: the quick plan, used once and only as an object."""
+        return {"_quick_plan": self.quick.plan} if self.quick is not None else {}
+
+    def spoken_result(self, result: str, status: str = "success") -> str:
+        """The quick road's result in a sentence ("" leaves the server's own wording): a state read in words, a
+        done action briefly, a failure with what failed."""
+        if self.quick is None:
+            return ""
+        return quick_result_sentence(self.quick, result, status)
 
     def finish(self, status: str, result: str) -> None:
         """The planner's outcome, for the conversation: the next question can refer to it."""
@@ -126,6 +168,10 @@ class ConversationLayer:
         clock: Callable[[], float] = time.monotonic,
         context_chars: int = 1400,
         hold_after: float = HOLD_AFTER_SECONDS,
+        first_text_deadline: float = FIRST_TEXT_DEADLINE,
+        prepare: Callable[[str], None] | None = None,
+        search_url: Callable[[], str] = lambda: "",
+        turn_ended: Callable[[], float | None] = lambda: None,
     ) -> None:
         self._sink = sink
         self._model = model
@@ -141,6 +187,12 @@ class ConversationLayer:
         self._background: set[asyncio.Task[Any]] = set()
         self._last_hold = ""
         self._hold_after = hold_after
+        self._first_text_deadline = first_text_deadline
+        self._said_loading = False
+        # Synthesise the next sentence while this one plays (one ahead only), and when the person's last word ended.
+        self._prepare = prepare
+        self._search_url = search_url
+        self._turn_ended = turn_ended
         self._last_ack = ""
         self.last_result = ""
         self.turns: list[TurnResult] = []  # recent turns, for measurement and the debug log
@@ -180,14 +232,21 @@ class ConversationLayer:
         self.memory.clear()
         self.last_result = ""
 
-    async def take(self, text: str, *, source: str = "voice") -> TurnResult | None:
+    async def take(self, text: str, *, source: str = "voice", sink: Sink | None = None) -> TurnResult | None:
         """Handle one addressed utterance that no control or local handler took. None: the layer is off."""
         if not self._enabled():
             return None
         started = self._clock()
         decided = route(text, conversation_open=self.memory.open)
-        result = TurnResult(done=False, planner_input=text, route=decided, _layer=self)
+        result = TurnResult(done=False, planner_input=text, route=decided, _layer=self, source=source, _sink=sink)
         result.timings["routed_ms"] = (self._clock() - started) * 1000
+        try:
+            ended = self._turn_ended()
+        except Exception:
+            ended = None
+        if ended is not None:
+            # On the same monotonic clock: how long recognition and dispatch took before this layer was asked.
+            result.timings["last_word_to_take_ms"] = max(0.0, (started - ended) * 1000)
         self.turns = [*self.turns[-19:], result]
         logger.info("Conversation turn routed as %s (%s)", decided.kind.value, decided.reason)
 
@@ -223,6 +282,8 @@ class ConversationLayer:
     # ── answering in words ──
 
     async def _answer(self, text: str, decided: Route, result: TurnResult, started: float) -> TurnResult:
+        typed = result.source == "typed"
+        sink = result._sink or self._sink
         model = None
         try:
             model = self._model()
@@ -248,40 +309,52 @@ class ConversationLayer:
         failure: list[str] = []
 
         async def produce() -> None:
-            splitter = SentenceSplitter()
+            splitter: Any = TextChunker() if typed else SentenceSplitter()
             mode: bool | None = None  # True: an ACT line, False: words to speak, None: too early to tell
             head = ""
             count = 0
-            stream = model.stream(SYSTEM_PROMPT, messages)
+            stream = model.stream(TYPED_SYSTEM_PROMPT if typed else SYSTEM_PROMPT, messages)
+            # A cloud model that has said nothing by the deadline is not answering; a local one may be loading.
+            deadline = LOCAL_FIRST_TEXT_DEADLINE if getattr(model, "local", False) else self._first_text_deadline
+            limit_sentences = 10_000 if typed else MAX_SENTENCES
             try:
-                async for fragment in stream:
-                    if "first_token_ms" not in result.timings:
-                        result.timings["first_token_ms"] = (self._clock() - started) * 1000
-                    if mode is None:
-                        head += fragment
-                        mode = looks_like_act(head)
+                async with asyncio.timeout(deadline) as limit:
+                    async for fragment in stream:
+                        if limit.when() is not None:
+                            limit.reschedule(None)  # text arrived: no deadline for the rest of the reply
+                        if "first_token_ms" not in result.timings:
+                            result.timings["first_token_ms"] = (self._clock() - started) * 1000
                         if mode is None:
+                            head += fragment
+                            mode = looks_like_act(head)
+                            if mode is None:
+                                continue
+                            fragment, head = head, ""
+                        if mode:
+                            act_text.append(fragment)
                             continue
-                        fragment, head = head, ""
-                    if mode:
-                        act_text.append(fragment)
-                        continue
-                    for sentence in splitter.feed(fragment):
-                        count += 1
-                        await queue.put(sentence)
-                    if count >= MAX_SENTENCES:
-                        break
+                        for sentence in splitter.feed(fragment):
+                            count += 1
+                            await queue.put(sentence)
+                        if count >= limit_sentences:
+                            break
                 if mode is None and head:
                     if looks_like_act(head + " "):
                         act_text.append(head)
                         mode = True
                     else:
-                        splitter.feed(head)
+                        for sentence in splitter.feed(head):
+                            await queue.put(sentence)
                 if not mode:
                     for sentence in splitter.flush():
                         await queue.put(sentence)
             except FastModelUnavailable as error:
                 failure.append(error.reason)
+            except TimeoutError:
+                failure.append("slow")
+                hold = getattr(model, "hold", None)
+                if callable(hold):
+                    hold(30.0, "slow")
             finally:
                 # Closing the stream ends the request now (a cut-off reply stops costing tokens) and records usage.
                 with contextlib.suppress(Exception):
@@ -295,13 +368,15 @@ class ConversationLayer:
             first = True
             held = False
             while True:
-                if first and not held:
+                if first and not held and not typed:
                     try:
                         sentence = await asyncio.wait_for(queue.get(), self._hold_after)
                     except TimeoutError:
                         held = True
                         # Said alongside the wait: when the answer is ready it follows (and outranks) the phrase.
-                        hold = asyncio.ensure_future(self._hold(result, started))
+                        hold = asyncio.ensure_future(
+                            self._hold(result, started, local=bool(getattr(model, "local", False)))
+                        )
                         self._background.add(hold)
                         hold.add_done_callback(self._background.discard)
                         continue
@@ -309,12 +384,13 @@ class ConversationLayer:
                     sentence = await queue.get()
                 if sentence is None:
                     break
-                clean = clean_for_speech(sentence, first=first)
+                # Spoken text is cleaned for the ear; typed text keeps its markdown for the chat view.
+                clean = drop_action_claims(sentence) if typed else clean_for_speech(sentence, first=first)
                 if not clean or claims_an_action(clean):
                     if clean:
                         logger.info("Dropped a sentence claiming an action the fast model cannot take: %r", clean)
                     continue
-                if self._user_speaking():
+                if not typed and self._user_speaking():
                     # The person started talking while the next sentence was being written: stop before it.
                     self._remember_said(said, None)
                     result.done = True
@@ -323,7 +399,9 @@ class ConversationLayer:
                     result.timings["first_sentence_ms"] = (self._clock() - started) * 1000
                 first = False
                 current = clean
-                outcome = await self._sink(clean, "final_answer", f"conv:{id(result)}:{len(said)}")
+                if not typed:
+                    self._prepare_next(queue)
+                outcome = await sink(clean, "final_answer", f"conv:{id(result)}:{len(said)}")
                 current = ""
                 if outcome in STOPPED:
                     self._remember_said(said, clean)
@@ -352,14 +430,33 @@ class ConversationLayer:
                 intent = HandoverIntent(
                     verb=act.verb, object=act.object, words=text, request=act.request, source="model", say=act.say
                 )
-                return self._hand_over(result, intent)
+                quick = from_model(act.action, words=text) if act.action is not None else None
+                return self._hand_over(result, intent, quick=quick)
             failure.append("unparsed_act")
         if failure and not said:
-            await self._fallback(result, failure[0], decided, started)
+            await self._fallback(result, failure[0], decided, started, provider=getattr(model, "provider", ""))
             return result
+        if failure and said:
+            # The reply stopped part-way: say so rather than trailing off.
+            await self._say_one(result, LOST_MID_REPLY, started)
         result.done = True
         result.timings["done_ms"] = (self._clock() - started) * 1000
         return result
+
+    def _prepare_next(self, queue: asyncio.Queue[str | None]) -> None:
+        """Hand the sentence after this one to the speech engine to synthesise while this one plays."""
+        if self._prepare is None:
+            return
+        waiting = getattr(queue, "_queue", None)  # asyncio.Queue's own deque; read only
+        nxt = waiting[0] if waiting else None
+        if not nxt:
+            return
+        clean = clean_for_speech(nxt)
+        if clean and not claims_an_action(clean):
+            try:
+                self._prepare(clean)
+            except Exception:
+                logger.debug("Preparing the next sentence failed", exc_info=True)
 
     def _remember_said(self, said: list[str], cut: str | None) -> None:
         if cut:
@@ -371,13 +468,15 @@ class ConversationLayer:
         self, result: TurnResult, sentence: str, started: float, *, channel: str = "final_answer"
     ) -> str:
         result.timings.setdefault("first_sentence_ms", (self._clock() - started) * 1000)
-        outcome = await self._sink(sentence, channel, f"conv-one:{id(result)}")
+        outcome = await (result._sink or self._sink)(sentence, channel, f"conv-one:{id(result)}")
         if outcome in HEARD or outcome in STOPPED:
             self.memory.add_heliox(sentence, cut_off=outcome in STOPPED)
             result.spoken.append(sentence)
         return outcome
 
-    async def _fallback(self, result: TurnResult, reason: str, decided: Route, started: float) -> None:
+    async def _fallback(
+        self, result: TurnResult, reason: str, decided: Route, started: float, *, provider: str = ""
+    ) -> None:
         """No model: say why in one sentence, once per session; later turns get a short line."""
         logger.info("Fast model unavailable (%s); answering from local rules", reason)
         if reason == "unparsed_act" or (decided.kind is TurnKind.UNCLEAR and reason in self._explained):
@@ -385,13 +484,24 @@ class ConversationLayer:
         elif reason in self._explained:
             sentence = FALLBACK_AGAIN.get(reason, FALLBACK_AGAIN_DEFAULT)
         else:
-            sentence = FALLBACK.get(reason, FALLBACK["error"])
+            sentence = FALLBACK.get(reason, FALLBACK["error"]).replace(
+                "{provider}", PROVIDER_NAMES.get(provider, "model provider's")
+            )
             if reason not in ("busy", "refused", "error"):
                 self._explained.add(reason)
         await self._say_one(result, sentence, started)
         result.done = True
 
-    async def _hold(self, result: TurnResult, started: float) -> None:
+    async def _hold(self, result: TurnResult, started: float, *, local: bool = False) -> None:
+        if local and not self._said_loading:
+            # A local model loads into memory on its first call after a while: say what the wait is, once.
+            self._said_loading = True
+            result.timings.setdefault("hold_ms", (self._clock() - started) * 1000)
+            await self._sink(LOCAL_LOADING, "task_narration", f"conv-hold:{id(result)}")
+            return
+        await self._hold_phrase(result, started)
+
+    async def _hold_phrase(self, result: TurnResult, started: float) -> None:
         index = (HOLD_PHRASES.index(self._last_hold) + 1) % len(HOLD_PHRASES) if self._last_hold in HOLD_PHRASES else 0
         phrase = HOLD_PHRASES[index]
         self._last_hold = phrase
@@ -400,9 +510,18 @@ class ConversationLayer:
 
     # ── handing over ──
 
-    def _hand_over(self, result: TurnResult, intent: HandoverIntent) -> TurnResult:
+    def _hand_over(self, result: TurnResult, intent: HandoverIntent, *, quick: QuickPlan | None = None) -> TurnResult:
+        if quick is None and intent.source == "router" and intent.verb:
+            try:
+                quick = from_words(
+                    normalize(intent.words), intent.verb, intent.object, search_url=valid_search_url(self._search_url())
+                )
+            except Exception:
+                logger.debug("No quick plan for %r", intent.words, exc_info=True)
+                quick = None
         result.intent = intent
-        result.target = choose_target(intent)
+        result.quick = quick
+        result.target = choose_target(intent, quick=quick is not None)
         result.planner_input = intent.request or intent.words
         result.done = False
         logger.info(
@@ -416,7 +535,11 @@ class ConversationLayer:
 
     def _start_company(self, result: TurnResult) -> asyncio.Task[None]:
         assert result.intent is not None
-        ack = acknowledgement(result.intent, last=self._last_ack) if result.intent.verb or result.intent.say else ""
+        ack = (quick_acknowledgement(result.quick, result.intent.words) if result.quick is not None else "") or (
+            acknowledgement(result.intent, last=self._last_ack) if result.intent.verb or result.intent.say else ""
+        )
+        if ack == self._last_ack and ack:
+            ack = "Okay, " + ack[:1].lower() + ack[1:]
         if not ack:
             ack = "Working on it."
         self._last_ack = ack

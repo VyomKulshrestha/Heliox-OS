@@ -17,8 +17,6 @@ dependencies = [
     "aiosqlite>=0.20",
     "aiohttp>=3.10",
     "httpx>=0.27",
-    # Streamed Claude replies for the conversation layer (pilot.conversation.fast_model); imported only when used.
-    "anthropic>=2.8",
     "tomli>=2.0; python_version < '3.12'",
     "tomli-w>=1.0",
     "cryptography>=43.0",

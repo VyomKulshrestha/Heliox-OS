@@ -34,6 +34,12 @@ it has.
 exactly one line and nothing else:
 ACT {"verb": "<one verb>", "object": "<what it applies to, in their words>", "request": "<the full request, \
 written out so it makes sense on its own>", "say": "<a short spoken sentence saying what you are about to do>"}
+- When it is exactly one of these simple steps, add "action" in the planner's schema, for example \
+"action": {"action_type": "open_application", "target": "notepad", "parameters": {"name": "notepad"}}. Simple \
+steps are: open_application (an app by name, no arguments), open_url (a web address), window_focus \
+(parameters: title), volume_set (level), volume_mute (mute), keyboard_press with a media key (playpause, \
+nexttrack, prevtrack, volumeup, volumedown), battery_info, disk_usage, memory_usage, cpu_usage. Anything else: \
+leave "action" out and the planner will work out the steps.
 - If you are not sure what they want done, ask one short question instead. Never hand over a guess.
 - Voice cannot approve anything. If an approval is waiting, say it is on the screen and the person presses \
 Approve there. Denying or stopping by voice is fine.
@@ -158,6 +164,7 @@ class ActRequest:
     object: str
     request: str
     say: str
+    action: dict | None = None  # one action in the planner's schema, when the model proposed one
 
 
 def looks_like_act(prefix: str) -> bool | None:
@@ -190,9 +197,57 @@ def parse_act(text: str) -> ActRequest | None:
     say = clean_for_speech(str(data.get("say") or ""), first=True)
     if claims_an_action(say):
         say = ""
+    action = data.get("action") if isinstance(data.get("action"), dict) else None
     return ActRequest(
+        action=action,
         verb=verb[:30],
         object=" ".join(str(data.get("object") or "").split())[:200],
         request=request[:500],
         say=say[:200],
     )
+
+
+TYPED_SYSTEM_PROMPT = """\
+You are Heliox, a companion that lives on the person's desktop computer. The person typed this in Heliox's chat \
+window, which shows markdown.
+
+How to write:
+- Short and direct: answer first, a few sentences at most. Use a list or a code block only when it helps.
+- No stock openers or fillers ("Sure", "Great question", "Certainly", "As an AI").
+- Use what you are told about the person, the time and their screen when it helps; don't recite it.
+- If you don't know, say so. If the words don't make sense, say what you read and ask what they meant. Never \
+invent facts about their files, messages or calendar.
+""" + SYSTEM_PROMPT[SYSTEM_PROMPT.index("What you can and cannot do:") :].replace(
+    "If an approval is waiting, say it is on the screen and the person presses Approve there. Denying or "
+    "stopping by voice is fine.",
+    "If an approval is waiting, say it is on the screen and the person presses Approve there.",
+)
+
+
+_CHUNK_END = re.compile(r"(?:[.!?][\"')\]]*\s|\n)")
+
+
+class TextChunker:
+    """Typed replies: hands back text up to the last sentence end or line break, characters unchanged."""
+
+    def __init__(self) -> None:
+        self._buffer = ""
+
+    def feed(self, fragment: str) -> list[str]:
+        self._buffer += fragment
+        ends = list(_CHUNK_END.finditer(self._buffer))
+        if not ends:
+            return []
+        cut = ends[-1].end()
+        chunk, self._buffer = self._buffer[:cut], self._buffer[cut:]
+        return [chunk]
+
+    def flush(self) -> list[str]:
+        rest, self._buffer = self._buffer, ""
+        return [rest] if rest.strip() else []
+
+
+def drop_action_claims(text: str) -> str:
+    """Remove sentences that claim an action the fast model cannot have taken, keeping the rest's layout."""
+    parts = re.split(r"(?<=[.!?])(\s+)", text)
+    return "".join(part for part in parts if not claims_an_action(part))

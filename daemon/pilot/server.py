@@ -3200,6 +3200,16 @@ class PilotServer:
             )
             return {"status": "error", "message": "Empty input"}
         dry_run = _resolve_dry_run(self.config.security.dry_run, params.get("dry_run", False))
+        # The conversation layer's quick road (pilot.conversation.quick): one allow-listed action built without the
+        # planner call. Only an ActionPlan object counts, which no client message can contain.
+        from pilot.actions import ActionPlan
+
+        # A voice shortcut that expanded the words means the plan was built for other words: plan normally.
+        quick_plan = (
+            params.get("_quick_plan")
+            if isinstance(params.get("_quick_plan"), ActionPlan) and expansion is None
+            else None
+        )
 
         # ── Cancel Token (Issue #92): fresh event per execution session ──
         self._cancel_event = asyncio.Event()
@@ -3331,6 +3341,23 @@ class PilotServer:
                     "results": [],
                     "explanation": timeline_answer,
                 }
+
+        # Typed chat goes through the conversation layer as voice does: talk is answered there (streamed into the
+        # chat view), a request comes back as the planner input, with a quick plan when it is one simple step.
+        # Only typed sources ("interactive", "text", "chat"); voice went through the layer in its own dispatch.
+        if not attachments and review_inputs is None and expansion is None and self._conversation_ready():
+            from pilot.conversation.adapters import TYPED_SOURCES, typed_turn
+
+            typed = (
+                await typed_turn(self, str(user_input), ws, _notification)
+                if interaction_source in TYPED_SOURCES
+                else None
+            )
+            if typed is not None and typed.done and typed.response is not None:
+                await _emit_task_complete("success", typed.response["message"])
+                return typed.response
+            if typed is not None:
+                user_input, quick_plan = typed.planner_input, typed.quick_plan or quick_plan
 
         async def _prepare_durable_replan(reason: str) -> None:
             if self._durable_tasks is None or not self._active_task_id:
@@ -3630,9 +3657,12 @@ class PilotServer:
             if emit and not using_minimal_retry:
                 await emit.data_event("planning", PLANNER_LLM_CALL, {"model": "active"}, parent_id=plan_phase)
 
+            quick_attempt = quick_plan is not None and not using_minimal_retry
             if using_minimal_retry:
                 plan = _pending_retry_plan
                 _pending_retry_plan = None
+            elif quick_attempt:
+                plan, quick_plan = quick_plan, None  # used once; any later attempt is planned normally
             else:
                 _screen_ctx = ""
                 if self._screen_vision:
@@ -3858,7 +3888,10 @@ class PilotServer:
 
             companion_review: Any = None
             run_companion = bool(
-                self.config.narration.proactive_review_enabled and self._execution_companion and not dry_run
+                self.config.narration.proactive_review_enabled
+                and self._execution_companion
+                and not dry_run
+                and not quick_attempt
             )
             if run_companion:
                 companion_review = self._deterministic_companion_review(plan, user_input)
@@ -3896,7 +3929,7 @@ class PilotServer:
                 reviews.append(
                     ("critic", "safety review", functools.partial(self._critic_plan_review, reviewer_request, plan))
                 )
-            if not dry_run:
+            if not dry_run and not quick_attempt:
                 review_context = "\n\n".join(part for part in (review_attachments, review_screen_context) if part)
                 reviews.append(
                     (
@@ -4049,6 +4082,11 @@ class PilotServer:
                 or gnomon_interrupt
                 or mcp_requires_visible_approval
             ) and not dry_run
+            if quick_attempt and (needs_confirm or run_critic):
+                logger.info("Quick road declined by the permission check or the world model; planning normally")
+                if self._checkpoint_store:
+                    await self._checkpoint_store.mark_status(plan_id, "quick_declined")
+                continue
             partially_approved = False
             if needs_confirm:
                 await self._interaction_runtime.transition(
@@ -5403,6 +5441,9 @@ class PilotServer:
                         {
                             "input": task.user_input,
                             "session_id": task.session_id,
+                            # A task being restarted is a request already under way, not a new chat message: it
+                            # is planned as before and never goes through the conversation layer.
+                            "source": "resume",
                         },
                         ws,
                     )
@@ -13350,6 +13391,10 @@ def handle_tool(tool_name, params):
 
             warm_output_line()
 
+    def _conversation_ready(self) -> bool:
+        """The conversation layer runs once the model stack is up (start()); a server built without it plans."""
+        return getattr(self, "_model_router", None) is not None
+
     def _voice_task_open(self) -> bool:
         """A task the person started is running or an approval waits: their replies need no wake word."""
         return bool(self._interactive_request_active or self._pending_confirms)
@@ -13640,6 +13685,7 @@ def handle_tool(tool_name, params):
                         "user_id": "local",
                         "source": "voice",
                         "_interaction_id": interaction_id,
+                        **(turn.execute_params() if turn is not None else {}),  # the quick road's one-action plan
                     },
                     _BroadcastConnection(self._broadcast_notification),
                 )
@@ -13682,6 +13728,7 @@ def handle_tool(tool_name, params):
             if turn is not None:
                 turn.finish(status, result_text)  # the next question can refer to what was done
             spoken = result_text[:300] if len(result_text) < 300 else result_text[:297] + "..."
+            spoken = (turn.spoken_result(result_text, status) if turn is not None else "") or spoken
             await self._speak_voice_response(
                 spoken,
                 channel=(

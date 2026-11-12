@@ -1,13 +1,13 @@
 """The small, fast model that talks: streamed wherever the provider streams, counted in the budget every time.
 
-One class per kind of provider the product supports (``pilot.models``):
+Every cloud provider is reached the same way, over ``httpx`` with server-sent events, as ``pilot.models`` does:
 
-* Claude: the Anthropic SDK's async ``messages.stream``. Default ``claude-haiku-5-5`` with thinking off and effort
-  ``low`` (Haiku 5.5 accepts ``{"type": "disabled"}`` at effort low, medium and high; API version 2026-10-21
-  rejects every sampling parameter, so none is sent). The SDK is imported only when this model is used. Without
-  it, the ordinary provider call is used and the log says once that fast replies need the package.
-* OpenAI-compatible (OpenAI, OpenRouter, Meta): chat completions with ``stream: true`` over server-sent events,
-  usage from the final chunk (``stream_options.include_usage``).
+* Claude: the Messages API with ``stream: true``. Default ``claude-haiku-5-5`` with thinking off and effort
+  ``low`` (Haiku 5.5 accepts ``{"type": "disabled"}`` at effort low, medium and high; no sampling parameters).
+  On 12 November this path gave a first token in 0.77 s median against 0.88 s through the Anthropic SDK, whose
+  import took up to 30 s, so the SDK is not used.
+* OpenAI-compatible (OpenAI, OpenRouter, Meta): chat completions with ``stream: true``, usage from the final chunk
+  (``stream_options.include_usage``).
 * Gemini: ``streamGenerateContent`` with ``alt=sse``, usage from ``usageMetadata``.
 * A local model through Ollama: ``/api/chat`` with ``stream: true`` (one JSON object per line). Nothing leaves the
   machine; the first token can take seconds while the model loads.
@@ -37,8 +37,10 @@ from typing import Any, Protocol
 logger = logging.getLogger("pilot.conversation.fast_model")
 
 DEFAULT_CLAUDE_FAST_MODEL = "claude-haiku-5-5"
-OFFLINE_HOLD_SECONDS = 30.0
-WARM_EVERY_SECONDS = 45.0  # an idle HTTPS connection is usually kept about this long  # after a connection failure, answer at once from local rules for this long
+OFFLINE_HOLD_SECONDS = 30.0  # after a connection failure, answer at once from local rules for this long
+CREDIT_HOLD_SECONDS = 600.0  # an account out of credit does not refill in seconds
+BUSY_HOLD_SECONDS = 20.0  # a rate limit without a Retry-After header
+WARM_EVERY_SECONDS = 45.0  # an idle HTTPS connection is usually kept about this long
 LOCAL_PROVIDERS = frozenset({"ollama", "local"})
 OPENAI_COMPATIBLE = frozenset({"openai", "openrouter", "meta"})
 
@@ -113,7 +115,10 @@ class _StreamingBase:
 
     def _gate(self) -> None:
         if self.clock() < self._offline_until:
-            raise FastModelUnavailable("offline", "no connection a moment ago")
+            reason = getattr(self, "_hold_reason", "") or (
+                "local_down" if self.provider in LOCAL_PROVIDERS else "offline"
+            )
+            raise FastModelUnavailable(reason, "held after a failure a moment ago")
         if self.budget is not None and self.provider not in LOCAL_PROVIDERS:
             try:
                 self.budget.check_budget(self.provider)
@@ -121,7 +126,21 @@ class _StreamingBase:
                 raise FastModelUnavailable("budget", str(error)) from None
 
     def _went_offline(self) -> None:
-        self._offline_until = self.clock() + OFFLINE_HOLD_SECONDS
+        self.hold(OFFLINE_HOLD_SECONDS, "local_down" if self.provider in LOCAL_PROVIDERS else "offline")
+
+    def hold(self, seconds: float, reason: str) -> None:
+        """Answer from local rules for ``seconds`` without asking the provider (no network, no credit, too many
+        requests, or a provider that stopped answering)."""
+        self._offline_until = max(self._offline_until, self.clock() + max(0.0, seconds))
+        self._hold_reason = reason
+
+    def _after_failure(self, reason: str, error: BaseException) -> None:
+        if reason in ("offline", "local_down"):
+            self._went_offline()
+        elif reason == "credit":
+            self.hold(CREDIT_HOLD_SECONDS, "credit")
+        elif reason == "busy":
+            self.hold(_retry_after(error), "busy")
 
     async def _record(self, record: CallRecord, usage: _Usage, payload: dict[str, Any], finished: bool) -> None:
         if usage.reported and usage.input_tokens:
@@ -161,119 +180,17 @@ class _StreamingBase:
             logger.warning("Could not record the fast model's usage", exc_info=True)
 
 
-# ── Claude, through the Anthropic SDK ──
-
-
-@dataclass
-class ClaudeFastModel(_StreamingBase):
-    api_key: Callable[[], Any]  # async callable returning the key, or None
-    budget: Budget | None
-    name: str = DEFAULT_CLAUDE_FAST_MODEL
-    max_tokens: int = 400
-    effort: str = "low"
-    thinking_off: bool = True
-    request_timeout: float = 20.0
-    client_factory: Callable[[str], Any] | None = None
-    clock: Callable[[], float] = time.monotonic
-    provider: str = "claude"
-    streams: bool = True
-    local: bool = False
-    calls: list[CallRecord] = field(default_factory=list)
-    _client: Any = None
-    _client_key: str = ""
-    _offline_until: float = 0.0
-    _warmed_at: float = float("-inf")
-
-    def payload(self, system: str, messages: list[dict[str, str]]) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "model": self.name,
-            "max_tokens": self.max_tokens,
-            "system": system,
-            "messages": messages,
-        }
-        if not self.name.startswith(("claude-3", "claude-haiku-4", "claude-sonnet-4-5")):
-            # Older models reject output_config.effort (see pilot.models.cloud.claude_supports_effort).
-            payload["output_config"] = {"effort": self.effort}
-        if self.thinking_off:
-            payload["thinking"] = {"type": "disabled"}
-        return payload
-
-    async def _get_client(self, key: str) -> Any:
-        if self._client is None or key != self._client_key:
-            factory = self.client_factory or _default_claude_client
-            # Built off the event loop: the first import of the SDK reads hundreds of files.
-            self._client = await asyncio.to_thread(factory, key)  # kept: its connection stays open between turns
-            self._client_key = key
-        return self._client
-
-    async def warm(self) -> None:
-        """Build the client (importing the SDK) and open its connection, so the first reply skips both. Uses the
-        token-counting endpoint, which is free; at most once every WARM_EVERY_SECONDS."""
-        now = self.clock()
-        if now - self._warmed_at < WARM_EVERY_SECONDS or now < self._offline_until:
-            return
-        self._warmed_at = now
-        try:
-            key = await self.api_key()
-            if not key:
-                return
-            client = await self._get_client(key)
-            await client.messages.count_tokens(
-                model=self.name, messages=[{"role": "user", "content": "hi"}], timeout=5.0
-            )
-        except Exception:
-            logger.debug("Warming the Claude connection failed", exc_info=True)
-
-    async def stream(self, system: str, messages: list[dict[str, str]]) -> AsyncIterator[str]:
-        self._gate()
-        key = await self.api_key()
-        if not key:
-            raise FastModelUnavailable("no_key", "no Claude API key is stored")
-        client = await self._get_client(key)
-        payload = self.payload(system, messages)
-        record = CallRecord(model=self.name, started=self.clock())
-        self.calls.append(record)
-        usage = _Usage()
-        manager = None
-        stream = None
-        finished = False
-        try:
-            manager = client.messages.stream(**payload, timeout=self.request_timeout)
-            stream = await manager.__aenter__()
-            async for text in stream.text_stream:
-                if not text:
-                    continue
-                if record.first_text_at is None:
-                    record.first_text_at = self.clock()
-                record.chars += len(text)
-                yield text
-            final = await stream.get_final_message()
-            finished = True
-            _claude_usage(getattr(final, "usage", None), usage)
-            if getattr(final, "stop_reason", "") == "refusal":
-                raise FastModelUnavailable("refused", "the model declined")
-        except FastModelUnavailable:
-            raise
-        except BaseException as error:
-            if not isinstance(error, Exception):  # cancelled or closed: the person talked over Heliox
-                raise
-            reason = _classify(error, _sdk_errors())
-            if reason == "offline":
-                self._went_offline()
-            raise FastModelUnavailable(reason, type(error).__name__) from None
-        finally:
-            record.ended_at = self.clock()
-            if not finished and stream is not None:
-                try:
-                    _claude_usage(getattr(stream.current_message_snapshot, "usage", None), usage)
-                except Exception:
-                    pass  # no message_start yet: nothing was reported
-            await self._record(record, usage, payload, finished)
-            if manager is not None:
-                try:
-                    await manager.__aexit__(None, None, None)
-                except BaseException:  # closing a cancelled stream must never raise into the turn
-                    logger.debug("Closing the Claude stream failed", exc_info=True)
+def claude_payload(
+    model: str, max_tokens: int, system: str, messages: list[dict[str, str]], effort: str, thinking_off: bool
+) -> dict[str, Any]:
+    """The Messages API body for a spoken reply, the same for the SDK and the HTTP path."""
+    payload: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "system": system, "messages": messages}
+    if not model.startswith(("claude-3", "claude-haiku-4", "claude-sonnet-4-5")):
+        # Older models reject output_config.effort (see pilot.models.cloud.claude_supports_effort).
+        payload["output_config"] = {"effort": effort}
+    if thinking_off:
+        payload["thinking"] = {"type": "disabled"}  # Haiku 5.5 accepts it at effort low, medium and high
+    return payload
 
 
 def _claude_usage(source: Any, usage: _Usage) -> None:
@@ -286,36 +203,32 @@ def _claude_usage(source: Any, usage: _Usage) -> None:
     usage.reported = True
 
 
-def _default_claude_client(key: str) -> Any:
-    import anthropic
-
-    # No SDK retries: a turn that fails says so in a sentence instead of waiting through backoff.
-    return anthropic.AsyncAnthropic(api_key=key, max_retries=0)
+CLAUDE_API_VERSION = "2023-06-01"  # the version pilot.models.cloud sends
 
 
-def _sdk_errors() -> dict[str, tuple[type[BaseException], ...]]:
-    try:
-        import anthropic
-    except ImportError:
-        return {}
-    return {
-        "offline": (anthropic.APIConnectionError,),  # includes APITimeoutError
-        "no_key": (anthropic.AuthenticationError, anthropic.PermissionDeniedError),
-        "busy": (anthropic.RateLimitError, anthropic.InternalServerError),
-    }
+def _claude_headers(key: str) -> dict[str, str]:
+    return {"x-api-key": key, "anthropic-version": CLAUDE_API_VERSION, "content-type": "application/json"}
 
 
-def _classify(error: BaseException, errors: dict[str, tuple[type[BaseException], ...]]) -> str:
-    for reason, kinds in errors.items():
+class _Namespace:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self.__dict__.update(data)
+
+
+def _classify(error: BaseException, errors: dict[str, tuple[type[BaseException], ...]] | None = None) -> str:
+    for reason, kinds in (errors or {}).items():
         if isinstance(error, kinds):
             return reason
     status = getattr(error, "status_code", None)
     if status is None:
         status = getattr(getattr(error, "response", None), "status_code", None)
+    body = _error_text(error)
+    # The provider account out of credit, which waiting does not fix: Anthropic says 400 "credit balance is too
+    # low", OpenAI 429 "insufficient_quota", OpenRouter 402. Heliox's own monthly budget is "budget".
+    if status == 402 or "credit balance" in body or "insufficient_quota" in body or "insufficient credits" in body:
+        return "credit"
     if status in (401, 403):
         return "no_key"
-    if status == 402:
-        return "budget"
     if status == 429 or (isinstance(status, int) and status >= 500):
         return "busy"
     try:
@@ -328,6 +241,26 @@ def _classify(error: BaseException, errors: dict[str, tuple[type[BaseException],
     if isinstance(error, TimeoutError | ConnectionError | OSError):
         return "offline"
     return "error"
+
+
+def _error_text(error: BaseException) -> str:
+    parts = [str(error)]
+    response = getattr(error, "response", None)
+    try:
+        parts.append(str(getattr(response, "text", "") or ""))
+    except Exception:
+        pass
+    parts.append(str(getattr(error, "body", "") or ""))
+    return " ".join(parts).casefold()
+
+
+def _retry_after(error: BaseException) -> float:
+    headers = getattr(getattr(error, "response", None), "headers", None) or {}
+    try:
+        value = float(headers.get("retry-after", BUSY_HOLD_SECONDS))
+    except (TypeError, ValueError, AttributeError):
+        value = BUSY_HOLD_SECONDS
+    return min(max(value, 1.0), 300.0)
 
 
 # ── Providers reached over plain HTTP, as pilot.models does ──
@@ -346,11 +279,15 @@ class HttpFastModel(_StreamingBase):
     max_tokens: int = 400
     keep_alive: int | None = None
     request_timeout: float = 30.0
+    effort: str = "low"  # Claude only
+    thinking_off: bool = True  # Claude only
     clock: Callable[[], float] = time.monotonic
     streams: bool = True
     calls: list[CallRecord] = field(default_factory=list)
     _client: Any = None
     _offline_until: float = 0.0
+    _hold_reason: str = ""
+    _warmed_at: float = float("-inf")
 
     @property
     def local(self) -> bool:
@@ -368,6 +305,12 @@ class HttpFastModel(_StreamingBase):
             if self.keep_alive is not None:
                 body["keep_alive"] = self.keep_alive
             return f"{self.base_url.rstrip('/')}/api/chat", {"Content-Type": "application/json"}, body
+        if self.provider == "claude":
+            from pilot.models.cloud import PROVIDER_ENDPOINTS
+
+            body = claude_payload(self.name, self.max_tokens, system, messages, self.effort, self.thinking_off)
+            body["stream"] = True
+            return PROVIDER_ENDPOINTS["claude"], _claude_headers(key), body
         if self.provider == "gemini":
             from pilot.models.cloud import PROVIDER_ENDPOINTS
 
@@ -425,6 +368,24 @@ class HttpFastModel(_StreamingBase):
             if data.get("error"):
                 raise FastModelUnavailable("error", str(data["error"])[:120])
             return str((data.get("message") or {}).get("content") or "")
+        if self.provider == "claude":
+            kind = data.get("type")
+            if kind == "message_start":
+                _claude_usage(_Namespace((data.get("message") or {}).get("usage") or {}), usage)
+            elif kind == "message_delta":
+                out = (data.get("usage") or {}).get("output_tokens")
+                if isinstance(out, int):
+                    usage.output_tokens = out
+                if (data.get("delta") or {}).get("stop_reason") == "refusal":
+                    raise FastModelUnavailable("refused", "the model declined")
+            elif kind == "error":
+                error_type = str((data.get("error") or {}).get("type") or "")
+                raise FastModelUnavailable("busy" if "overloaded" in error_type else "error", error_type)
+            elif kind == "content_block_delta":
+                delta = data.get("delta") or {}
+                if delta.get("type") == "text_delta":
+                    return str(delta.get("text") or "")
+            return ""
         if self.provider == "gemini":
             meta = data.get("usageMetadata")
             if isinstance(meta, dict) and "promptTokenCount" in meta:
@@ -444,6 +405,29 @@ class HttpFastModel(_StreamingBase):
         if not choices:
             return ""
         return str((choices[0].get("delta") or {}).get("content") or "")
+
+    async def warm(self) -> None:
+        """Open the connection before the turn ends (Claude: the free token-counting call), at most every 45 s."""
+        now = self.clock()
+        if self.provider != "claude" or now - self._warmed_at < WARM_EVERY_SECONDS or now < self._offline_until:
+            return
+        self._warmed_at = now
+        try:
+            key = await self.api_key() if self.api_key is not None else ""
+            if not key:
+                return
+            if self._client is None:
+                self._client = self.client_factory()
+            from pilot.models.cloud import PROVIDER_ENDPOINTS
+
+            await self._client.post(
+                PROVIDER_ENDPOINTS["claude"] + "/count_tokens",
+                json={"model": self.name, "messages": [{"role": "user", "content": "hi"}]},
+                headers=_claude_headers(key),
+                timeout=5.0,
+            )
+        except Exception:
+            logger.debug("Warming the Claude connection failed", exc_info=True)
 
     async def stream(self, system: str, messages: list[dict[str, str]]) -> AsyncIterator[str]:
         self._gate()
@@ -481,12 +465,11 @@ class HttpFastModel(_StreamingBase):
             if not isinstance(error, Exception):
                 raise
             reason = _classify(error, {})
-            if reason == "offline":
-                self._went_offline()
             if self.local:
                 status = getattr(getattr(error, "response", None), "status_code", None)
                 # No local server running, or the named model not pulled: say how to fix it, not "offline".
                 reason = "local_down" if reason == "offline" else "local_missing" if status == 404 else reason
+            self._after_failure(reason, error)
             raise FastModelUnavailable(reason, type(error).__name__) from None
         finally:
             record.ended_at = self.clock()
@@ -536,37 +519,6 @@ class RouterFastModel:
 
 
 # ── Choosing the model ──
-
-
-def sdk_available() -> bool:
-    """Whether the Anthropic SDK is installed, without importing it (a cold import can take many seconds)."""
-    import importlib.util
-    import sys
-
-    if "anthropic" in sys.modules:
-        return sys.modules["anthropic"] is not None
-    try:
-        return importlib.util.find_spec("anthropic") is not None
-    except (ImportError, ValueError):
-        return False
-
-
-_sdk_import: asyncio.Task[Any] | None = None
-
-
-def prewarm_sdk() -> None:
-    """Import the SDK on a worker thread now, so the first spoken reply does not wait for it."""
-    global _sdk_import
-    if _sdk_import is not None or not sdk_available():
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    import importlib
-
-    _sdk_import = loop.create_task(asyncio.to_thread(importlib.import_module, "anthropic"))
-    _sdk_import.add_done_callback(lambda task: task.cancelled() or task.exception())
 
 
 _warned: set[str] = set()
@@ -628,16 +580,7 @@ def build_fast_model(config: Any, *, vault: Any, router: Any, budget: Any, http_
             return await vault.get_key(cloud)
 
         name = fast_model_name(config, cloud)
-        if cloud == "claude":
-            if sdk_available():
-                prewarm_sdk()
-                return ClaudeFastModel(api_key=key, budget=budget, name=name, max_tokens=max_tokens)
-            _warn_once(
-                "sdk",
-                "Fast spoken replies with Claude need the anthropic package; until it is installed, replies "
-                "use the planner model through the ordinary call and arrive in one piece, seconds later",
-            )
-        elif cloud == "gemini" or cloud in OPENAI_COMPATIBLE:
+        if cloud in ("claude", "gemini") or cloud in OPENAI_COMPATIBLE:
             return HttpFastModel(
                 provider=cloud,
                 name=name,

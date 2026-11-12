@@ -13,7 +13,6 @@ import pytest
 from pilot.config import PilotConfig
 from pilot.conversation import fast_model as fm
 from pilot.conversation.fast_model import (
-    ClaudeFastModel,
     FastModelUnavailable,
     HttpFastModel,
     RouterFastModel,
@@ -53,135 +52,6 @@ async def collect(stream, stop_after=None):
 
 async def key():
     return "test-key"
-
-
-# ── Claude through the SDK (faked) ──
-
-
-class FakeClaudeStream:
-    def __init__(self, pieces, usage, stop_reason="end_turn", error=None):
-        self.pieces = pieces
-        self.usage = usage
-        self.stop_reason = stop_reason
-        self.error = error
-        self.current_message_snapshot = SimpleNamespace(
-            usage=SimpleNamespace(input_tokens=usage.input_tokens, output_tokens=1)
-        )
-
-    @property
-    def text_stream(self):
-        async def gen():
-            for piece in self.pieces:
-                if self.error is not None:
-                    raise self.error
-                yield piece
-
-        return gen()
-
-    async def get_final_message(self):
-        return SimpleNamespace(usage=self.usage, stop_reason=self.stop_reason)
-
-
-class FakeClaudeClient:
-    def __init__(self, stream, *, enter_error=None):
-        self._stream = stream
-        self.enter_error = enter_error
-        self.kwargs = None
-        self.closed = False
-        client = self
-
-        class Manager:
-            async def __aenter__(self):
-                if client.enter_error is not None:
-                    raise client.enter_error
-                return client._stream
-
-            async def __aexit__(self, *exc):
-                client.closed = True
-
-        self.messages = SimpleNamespace(stream=lambda **kwargs: self._record(kwargs, Manager()))
-
-    def _record(self, kwargs, manager):
-        self.kwargs = kwargs
-        return manager
-
-
-def usage(i=120, o=30):
-    return SimpleNamespace(input_tokens=i, output_tokens=o, cache_read_input_tokens=0, cache_creation_input_tokens=0)
-
-
-def claude(client, budget=None, **kwargs):
-    return ClaudeFastModel(api_key=key, budget=budget, client_factory=lambda _key: client, **kwargs)
-
-
-def test_the_claude_request_matches_what_haiku_5_5_accepts():
-    client = FakeClaudeClient(FakeClaudeStream(["Hi."], usage()))
-    model = claude(client)
-    asyncio.run(collect(model.stream("system", [{"role": "user", "content": "hi"}])))
-    sent = client.kwargs
-    assert sent["model"] == "claude-haiku-5-5"
-    assert sent["thinking"] == {"type": "disabled"}  # accepted at effort low, medium and high
-    assert sent["output_config"] == {"effort": "low"}
-    assert not {"temperature", "top_p", "top_k"} & set(sent)  # API version 2026-10-21 rejects every one
-    assert sent["max_tokens"] == 400 and sent["system"] == "system"
-
-
-def test_a_finished_claude_stream_records_the_reported_usage():
-    budget = FakeBudget()
-    client = FakeClaudeClient(FakeClaudeStream(["Hello ", "there."], usage(150, 12)))
-    out = asyncio.run(collect(claude(client, budget).stream("s", [{"role": "user", "content": "hi"}])))
-    assert out == ["Hello ", "there."]
-    assert budget.checked == ["claude"]
-    assert budget.records == [("claude", "claude-haiku-5-5", 150, 12, "reported")]
-    assert client.closed
-
-
-def test_a_claude_stream_cut_off_records_what_it_had_reported():
-    budget = FakeBudget()
-    client = FakeClaudeClient(FakeClaudeStream(["one ", "two ", "three ", "four"], usage(150, 40)))
-    model = claude(client, budget)
-    out = asyncio.run(collect(model.stream("s", [{"role": "user", "content": "hi"}]), stop_after=2))
-    assert out == ["one ", "two "]
-    provider, name, input_tokens, output_tokens, source = budget.records[0]
-    assert (provider, input_tokens, source) == ("claude", 150, "reported")
-    assert output_tokens >= 2  # at least the text received, never zero
-    assert model.calls[0].cut_off
-
-
-def test_a_claude_stream_cut_before_any_usage_records_the_abandoned_estimate():
-    budget = FakeBudget()
-    stream = FakeClaudeStream(["a"], usage())
-    stream.current_message_snapshot = None
-    client = FakeClaudeClient(stream, enter_error=httpx.ConnectError("down"))
-    with pytest.raises(FastModelUnavailable) as caught:
-        asyncio.run(collect(claude(client, budget).stream("s", [{"role": "user", "content": "hi"}])))
-    assert caught.value.reason == "offline"
-    assert budget.records and budget.records[0][-1] == "abandoned_estimate"
-
-
-def test_an_exhausted_budget_or_missing_key_never_calls_the_model():
-    client = FakeClaudeClient(FakeClaudeStream(["x"], usage()))
-    with pytest.raises(FastModelUnavailable) as caught:
-        asyncio.run(collect(claude(client, FakeBudget(exceeded=True)).stream("s", [])))
-    assert caught.value.reason == "budget" and client.kwargs is None
-
-    async def no_key():
-        return None
-
-    model = ClaudeFastModel(api_key=no_key, budget=None, client_factory=lambda _k: client)
-    with pytest.raises(FastModelUnavailable) as caught:
-        asyncio.run(collect(model.stream("s", [])))
-    assert caught.value.reason == "no_key"
-
-
-def test_after_a_connection_failure_the_next_turn_falls_back_at_once():
-    client = FakeClaudeClient(FakeClaudeStream(["x"], usage()), enter_error=httpx.ConnectError("down"))
-    model = claude(client)
-    for _ in range(2):
-        with pytest.raises(FastModelUnavailable) as caught:
-            asyncio.run(collect(model.stream("s", [])))
-        assert caught.value.reason == "offline"
-    assert len(model.calls) == 1  # the second turn did not wait on the network
 
 
 # ── HTTP providers (fake httpx client) ──
@@ -226,6 +96,9 @@ class FakeHttp:
     def stream(self, method, url, json=None, headers=None, timeout=None):
         self.sent = (method, url, json, headers)
         return self._ctx()
+
+    async def post(self, url, json=None, headers=None, timeout=None):
+        self.posted = getattr(self, "posted", []) + [(url, json, headers)]
 
 
 def http_model(provider, lines, name="m", budget=None, status=200, error=None, **kwargs):
@@ -311,7 +184,7 @@ def test_a_local_server_that_is_not_running_says_so():
     assert caught.value.reason == "local_missing"
 
 
-@pytest.mark.parametrize(("status", "reason"), [(401, "no_key"), (429, "busy"), (402, "budget"), (500, "busy")])
+@pytest.mark.parametrize(("status", "reason"), [(401, "no_key"), (429, "busy"), (402, "credit"), (500, "busy")])
 def test_cloud_errors_become_reasons(status, reason):
     model, _ = http_model("openai", [], status=status)
     with pytest.raises(FastModelUnavailable) as caught:
@@ -358,22 +231,55 @@ def config(provider, cloud="", cloud_model="", **conversation):
 VAULT = SimpleNamespace(get_key=lambda provider: asyncio.sleep(0, result="k"))
 
 
-def test_a_claude_key_gets_haiku_streamed_through_the_sdk(monkeypatch):
-    monkeypatch.setattr(fm, "sdk_available", lambda: True)
-    model = build_fast_model(config("cloud", "claude", "claude-opus-5-5"), vault=VAULT, router=object(), budget=None)
-    assert isinstance(model, ClaudeFastModel) and model.name == "claude-haiku-5-5" and not model.local
-    chosen = build_fast_model(
-        config("cloud", "claude", claude_model="claude-sonnet-5-5"), vault=VAULT, router=object(), budget=None
-    )
-    assert chosen.name == "claude-sonnet-5-5"
+CLAUDE_SSE = [
+    "event: message_start",
+    'data: {"type":"message_start","message":{"usage":{"input_tokens":321,"output_tokens":1}}}',
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello "}}',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"there."}}',
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}',
+    'data: {"type":"message_stop"}',
+]
 
 
-def test_without_the_sdk_claude_falls_back_to_the_ordinary_call(monkeypatch, caplog):
-    monkeypatch.setattr(fm, "sdk_available", lambda: False)
-    monkeypatch.setattr(fm, "_warned", set())
-    model = build_fast_model(config("cloud", "claude"), vault=VAULT, router=object(), budget=None)
-    assert isinstance(model, RouterFastModel)
-    assert "anthropic package" in caplog.text
+def test_claude_over_http_sends_the_same_request_and_records_the_same_usage():
+    budget = FakeBudget()
+    model, client = http_model("claude", CLAUDE_SSE, name="claude-haiku-5-5", budget=budget)
+    out = asyncio.run(collect(model.stream("sys", [{"role": "user", "content": "hi"}])))
+    assert out == ["Hello ", "there."]
+    _m, url, body, headers = client.sent
+    assert url.endswith("/v1/messages") and headers["x-api-key"] == "test-key"
+    assert body == {
+        "model": "claude-haiku-5-5",
+        "max_tokens": 400,
+        "system": "sys",
+        "messages": [{"role": "user", "content": "hi"}],
+        "thinking": {"type": "disabled"},  # Haiku 5.5 accepts it at effort low, medium and high
+        "output_config": {"effort": "low"},
+        "stream": True,
+    }
+    assert not {"temperature", "top_p", "top_k"} & set(body)
+    assert budget.checked == ["claude"]
+    assert budget.records == [("claude", "claude-haiku-5-5", 321, 7, "reported")]
+
+
+def test_a_claude_http_stream_cut_off_records_what_it_reported():
+    budget = FakeBudget()
+    model, _ = http_model("claude", CLAUDE_SSE, name="claude-haiku-5-5", budget=budget)
+    asyncio.run(collect(model.stream("s", [{"role": "user", "content": "hi"}]), stop_after=1))
+    provider, _name, input_tokens, output_tokens, source = budget.records[0]
+    assert (provider, input_tokens, source) == ("claude", 321, "reported") and output_tokens >= 1
+
+
+def test_claude_error_and_refusal_events_become_reasons():
+    for line, reason in (
+        ('data: {"type":"error","error":{"type":"overloaded_error"}}', "busy"),
+        ('data: {"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":1}}', "refused"),
+    ):
+        model, _ = http_model("claude", [line])
+        with pytest.raises(FastModelUnavailable) as caught:
+            asyncio.run(collect(model.stream("s", [])))
+        assert caught.value.reason == reason
 
 
 @pytest.mark.parametrize(
@@ -404,31 +310,118 @@ def test_no_model_at_all_gets_none():
     assert describe_setup(config("")) == "none"
 
 
-def test_nothing_in_the_package_needs_the_sdk_at_import():
+def test_a_claude_key_gets_haiku_streamed_over_http():
+    model = build_fast_model(config("cloud", "claude", "claude-opus-5-5"), vault=VAULT, router=object(), budget=None)
+    assert isinstance(model, HttpFastModel) and model.provider == "claude" and model.name == "claude-haiku-5-5"
+    chosen = build_fast_model(
+        config("cloud", "claude", claude_model="claude-sonnet-5-5"), vault=VAULT, router=object(), budget=None
+    )
+    assert chosen.name == "claude-sonnet-5-5"
+
+
+def test_a_claude_stream_cut_before_any_usage_records_the_abandoned_estimate():
+    budget = FakeBudget()
+    model, _ = http_model("claude", [], name="claude-haiku-5-5", budget=budget, error=httpx.ReadTimeout("slow"))
+    with pytest.raises(FastModelUnavailable) as caught:
+        asyncio.run(collect(model.stream("s", [{"role": "user", "content": "hi"}])))
+    assert caught.value.reason == "offline"
+    assert budget.records and budget.records[0][-1] == "abandoned_estimate"
+
+
+def test_an_exhausted_budget_or_missing_key_never_calls_the_model():
+    model, client = http_model("claude", CLAUDE_SSE, budget=FakeBudget(exceeded=True))
+    with pytest.raises(FastModelUnavailable) as caught:
+        asyncio.run(collect(model.stream("s", [])))
+    assert caught.value.reason == "budget" and client.sent is None
+
+    async def no_key():
+        return None
+
+    model, client = http_model("claude", CLAUDE_SSE)
+    model.api_key = no_key
+    with pytest.raises(FastModelUnavailable) as caught:
+        asyncio.run(collect(model.stream("s", [])))
+    assert caught.value.reason == "no_key" and client.sent is None
+
+
+def test_after_a_connection_failure_the_next_turn_falls_back_at_once():
+    model, client = http_model("claude", [], error=httpx.ConnectError("down"))
+    for _ in range(2):
+        with pytest.raises(FastModelUnavailable) as caught:
+            asyncio.run(collect(model.stream("s", [])))
+        assert caught.value.reason == "offline"
+    assert len(model.calls) == 1  # the second turn did not wait on the network
+
+
+def test_nothing_in_the_package_imports_the_anthropic_sdk():
     import subprocess
     import sys
 
     code = (
-        "import sys; sys.modules['anthropic'] = None\n"
-        "import pilot.conversation, pilot.conversation.fast_model as f\n"
-        "assert not f.sdk_available()\n"
+        "import sys; import pilot.conversation, pilot.conversation.fast_model\nassert 'anthropic' not in sys.modules\n"
     )
     assert subprocess.run([sys.executable, "-c", code], capture_output=True).returncode == 0
 
 
+# ── failures seen in the network drill ──
+
+
+@pytest.mark.parametrize(
+    ("provider", "status", "body", "reason"),
+    [
+        ("claude", 400, '{"error":{"message":"Your credit balance is too low to access the API"}}', "credit"),
+        ("openai", 429, '{"error":{"code":"insufficient_quota"}}', "credit"),
+        ("openrouter", 402, '{"error":{"message":"Insufficient credits"}}', "credit"),
+        ("openai", 429, '{"error":{"code":"rate_limit_exceeded"}}', "busy"),
+    ],
+)
+def test_an_account_out_of_credit_is_told_apart_from_a_busy_one(provider, status, body, reason):
+    import httpx
+
+    request = httpx.Request("POST", "http://x")
+    error = httpx.HTTPStatusError("x", request=request, response=httpx.Response(status, request=request, text=body))
+    assert fm._classify(error, {}) == reason
+
+
+def test_out_of_credit_and_rate_limits_are_held_so_the_provider_is_not_asked_every_turn():
+    import httpx
+
+    now = [0.0]
+    model, _ = http_model("openai", [], status=429)
+    model.clock = lambda: now[0]
+    request = httpx.Request("POST", "http://x")
+    limited = httpx.HTTPStatusError(
+        "x", request=request, response=httpx.Response(429, request=request, headers={"retry-after": "12"})
+    )
+    model._after_failure("busy", limited)
+    with pytest.raises(FastModelUnavailable) as caught:
+        model._gate()
+    assert caught.value.reason == "busy"
+    now[0] = 13.0
+    model._gate()  # the hold is over
+    model._after_failure("credit", limited)
+    now[0] = 300.0
+    with pytest.raises(FastModelUnavailable) as caught:
+        model._gate()
+    assert caught.value.reason == "credit"
+
+
+def test_a_local_model_held_after_a_failure_still_says_it_is_the_local_one():
+    model, _ = http_model("ollama", [], error=httpx.ConnectError("refused"))
+    for _ in range(2):
+        with pytest.raises(FastModelUnavailable) as caught:
+            asyncio.run(collect(model.stream("s", [])))
+        assert caught.value.reason == "local_down"
+
+
 def test_warming_opens_the_connection_with_the_free_token_count_at_most_every_45_s():
-    client = FakeClaudeClient(FakeClaudeStream(["x"], usage()))
-    counted = []
-
-    async def count_tokens(**kwargs):
-        counted.append(kwargs)
-
-    client.messages.count_tokens = count_tokens
     now = [100.0]
-    model = claude(client, clock=lambda: now[0])
+    model, client = http_model("claude", CLAUDE_SSE, name="claude-haiku-5-5")
+    model.clock = lambda: now[0]
     asyncio.run(model.warm())
     asyncio.run(model.warm())
-    assert len(counted) == 1 and counted[0]["model"] == "claude-haiku-5-5"
+    assert len(client.posted) == 1 and client.posted[0][0].endswith("/v1/messages/count_tokens")
+    assert client.posted[0][2]["x-api-key"] == "test-key"
     now[0] += 50
     asyncio.run(model.warm())
-    assert len(counted) == 2
+    assert len(client.posted) == 2

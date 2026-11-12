@@ -167,7 +167,7 @@ async def test_a_sentence_claiming_an_action_is_never_spoken():
 
 @pytest.mark.asyncio
 async def test_a_slow_first_sentence_gets_a_short_holding_phrase_once():
-    model = FakeModel(["Here it is. "], first_delay=0.3, local=True)
+    model = FakeModel(["Here it is. "], first_delay=0.3)
     sink = FakeSink()
     layer = make_layer(model, sink, hold_after=0.05)
     result = await layer.take("What do you think?")
@@ -569,3 +569,95 @@ async def test_a_control_phrase_with_an_instruction_goes_to_the_running_task_or_
     server._handle_execute.assert_awaited_once()
     assert server._handle_execute.await_args.args[0]["input"] == sentence
     assert model.calls == []
+
+
+@pytest.mark.asyncio
+async def test_the_next_sentence_is_synthesised_while_this_one_plays():
+    prepared = []
+    model = FakeModel(["One thing. ", "Two **things**. ", "Three. "])
+    sink = FakeSink(duration=0.02)
+    layer = make_layer(model, sink, prepare=prepared.append)
+    await layer.take("Tell me three things")
+    assert sink.texts == ["One thing.", "Two things.", "Three."]
+    assert prepared and set(prepared) <= {"Two things.", "Three."}  # exactly what will be said, one ahead
+
+
+@pytest.mark.asyncio
+async def test_the_time_since_the_last_word_is_recorded():
+    layer = make_layer(FakeModel(["Hi. "]), FakeSink(), turn_ended=lambda: time.monotonic() - 0.4)
+    result = await layer.take("Hello there")
+    assert 350 <= result.timings["last_word_to_take_ms"] < 2000
+
+
+def test_extra_context_may_read_the_words_being_answered():
+    sources = ContextSources(extra=[lambda: "no argument", lambda text: f"about: {text}"])
+    final = build_messages("the launch", sources, ConversationMemory())[-1]["content"]
+    assert "no argument" in final and "about: the launch" in final
+
+
+def test_something_heliox_said_first_is_kept_in_the_context():
+    memory = ConversationMemory()
+    memory.add_heliox("The twelfth of November is a Thursday.")
+    memory.add_user("oh thanks")
+    messages = build_messages("which day was it again?", ContextSources(), memory)
+    assert messages[0]["role"] == "user"
+    assert "Thursday" in messages[-1]["content"] or "Thursday" in messages[0]["content"]
+
+
+def test_the_name_style_and_preferences_reach_the_model_first():
+    from pilot.conversation.adapters import prioritise_profile
+
+    lines = [f"About them: fact {i}" for i in range(10)] + ["Preference: short answers", "Call them Sam."]
+    first = prioritise_profile(lines)[:3]
+    assert first[0] == "Call them Sam." and first[1] == "Preference: short answers"
+
+
+@pytest.mark.asyncio
+async def test_a_provider_that_never_answers_is_given_up_on_and_held():
+    model = FakeModel(["Too late. "], first_delay=1.0)
+    model.held = []
+    model.hold = lambda seconds, reason: model.held.append(reason)
+    sink = FakeSink()
+    layer = make_layer(model, sink, hold_after=0.05, first_text_deadline=0.2)
+    started = time.monotonic()
+    result = await layer.take("What do you think?")
+    assert time.monotonic() - started < 0.8 and result.done
+    assert sink.texts[0] in HOLD_PHRASES and sink.texts[-1] == FALLBACK["slow"]
+    assert model.held == ["slow"]
+
+
+@pytest.mark.asyncio
+async def test_a_local_model_gets_time_to_load_and_says_so_once():
+    model = FakeModel(["Here. "], first_delay=0.3, local=True)
+    sink = FakeSink()
+    layer = make_layer(model, sink, hold_after=0.05, first_text_deadline=0.1)
+    await layer.take("What do you think?")
+    assert sink.texts == ["Loading the local model, one moment.", "Here."]
+    await layer.take("And now?")
+    assert sink.texts[2] in HOLD_PHRASES  # said once per session, then the ordinary phrase
+
+
+class BrokenAfter(FakeModel):
+    async def stream(self, system, messages):
+        yield "First part. "
+        await asyncio.sleep(0.05)
+        raise FastModelUnavailable("offline")
+
+
+@pytest.mark.asyncio
+async def test_a_reply_cut_by_the_network_says_so():
+    sink = FakeSink()
+    layer = make_layer(BrokenAfter([]), sink)
+    await layer.take("Explain it")
+    assert sink.texts == ["First part.", "I lost the connection there."]
+
+
+@pytest.mark.asyncio
+async def test_out_of_credit_names_the_provider_account_not_heliox_budget():
+    model = FakeModel([], fail="credit")
+    model.provider = "openrouter"
+    sink = FakeSink()
+    await make_layer(model, sink).take("How are you?")
+    assert sink.texts == [
+        "Your OpenRouter account is out of credit. Add credit there, or choose another model in Settings, under Model."
+    ]
