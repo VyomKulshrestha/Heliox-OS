@@ -1008,24 +1008,48 @@ async def _tts_macos(
 
     cmd.append(text)
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as error:  # `say` missing or not runnable
+        return _say_failed(f"say could not start ({error})")
 
     try:
-        await proc.communicate()
+        _out, err = await proc.communicate()
     except asyncio.CancelledError:
         # Barge-in interrupting speak() mid-playback — kill `say` rather
         # than leaving it running after this await appears cancelled.
         proc.kill()
         raise
 
+    if proc.returncode:
+        detail = (err or b"").decode("utf-8", errors="replace").strip().splitlines()
+        return _say_failed(f"say exited with code {proc.returncode}" + (f": {detail[-1][:200]}" if detail else ""))
+
     if output_file:
         return f"Speech saved to {output_file}"
 
     return f"Spoken: {text[:80]}..."
+
+
+_SAY_WARNED = False
+
+
+def _say_failed(detail: str) -> str:
+    """The macOS voice failed: said once in the log in plain words (like linux_voice.no_voice_message), and
+    returned as a failure, never as "Spoken: ..."."""
+    global _SAY_WARNED
+    if not _SAY_WARNED:
+        _SAY_WARNED = True
+        logger.warning(
+            "macOS's own voice could not speak (%s). Heliox's replies are shown as text until a voice works: check the "
+            "output device, and the voice in System Settings, Accessibility, Spoken Content.",
+            detail,
+        )
+    return f"TTS failed: {detail}"
 
 
 async def list_voices() -> str:
