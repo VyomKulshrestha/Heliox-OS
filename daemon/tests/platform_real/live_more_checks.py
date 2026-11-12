@@ -97,6 +97,67 @@ async def linux_never_read(wayland: bool, python: str, folder: Path) -> None:
         fixture.close()
 
 
+# ── 1b. a GTK 4 window Live never reads ──
+
+GTK4_TITLE = "Heliox Live GTK 4 window"
+
+
+async def gtk4_never_read(python: str, folder: Path) -> None:
+    """GTK 4 windows are recognised by their numeric role (the reader's 490947a), so a GTK 4 field has a window title:
+    the rules by title (a password manager's name, Heliox's own window) now apply there. Shown for real here: Live
+    reads the GTK 4 field and its title, then a GTK 4 window titled like a password manager or like Heliox is never
+    read. Runs in the X11 step that has GTK 4 and a window manager (openbox)."""
+    prefix = "x11-gtk4"
+    proc = subprocess.Popen(
+        [python, str(HERE / "live_gtk4_window.py"), GTK4_TITLE],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        env={k: v for k, v in os.environ.items() if k != "NO_AT_BRIDGE"},
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+    said: list[str] = []
+
+    def send(command: str) -> None:
+        try:
+            proc.stdin.write(command + "\n")
+            proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            return
+        time.sleep(0.5)
+
+    def type_text(text: str) -> None:
+        for word in text.split(" "):
+            send(f"insert {word} ")
+
+    def front() -> None:
+        if shutil.which("xdotool"):
+            subprocess.run(["xdotool", "search", "--name", "Heliox", "windowactivate"], timeout=10, capture_output=True)
+        send("focus")
+
+    try:
+        if not check(f"{prefix}/window-started", proc.stdout.readline().startswith("ready")):
+            return
+        threading.Thread(target=lambda: said.extend(proc.stdout), daemon=True).start()
+        live = E.Live(folder / "gtk4")
+        if not await E.first_read(prefix, live, front, type_text):
+            for title in ("Bitwarden", "Heliox-OS"):
+                skip(f"{prefix}/live-window-titled-{title}-is-never-read", "Live read nothing from the GTK 4 window")
+            return
+        seen = await live.engine._observe()
+        check(f"{prefix}/the-window-title-is-read", getattr(seen, "title", "") == GTK4_TITLE, repr(seen))
+        await never_read_steps(prefix, live, send, type_text, front)
+    finally:
+        try:
+            proc.stdin.close()
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
 # ── 2. an error on screen ──
 
 
@@ -287,6 +348,9 @@ async def run(args: Any, folder: Path) -> None:
         skip("macos/live-back-and-forth", "nothing on the runner can give another process's window focus")
         return
     await linux_never_read(args.wayland, args.python, folder)
+    if args.only == "gtk4-never-read":
+        await gtk4_never_read(args.python, folder)
+        return
     if args.only == "error-on-screen":
         await error_on_screen("wayland" if args.wayland else "x11", args.python, folder)
         return
@@ -302,14 +366,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--wayland", action="store_true")
     parser.add_argument("--python", default="/usr/bin/python3")
-    parser.add_argument("--only", choices=("all", "error-on-screen"), default="all")
+    parser.add_argument("--only", choices=("all", "error-on-screen", "gtk4-never-read"), default="all")
     args = parser.parse_args()
     if not (sys.platform == "darwin" or sys.platform.startswith("linux")):
         skip("live-more", "macOS and Linux only")
         return 0
     with tempfile.TemporaryDirectory(prefix="hlx-live-", dir="/tmp") as folder:
         root = Path(folder)
-        for name in ("never", "ocr", "switch"):
+        for name in ("never", "ocr", "switch", "gtk4"):
             (root / name).mkdir()
         asyncio.run(run(args, root))
     return failures

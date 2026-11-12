@@ -58,6 +58,7 @@ from pilot.live.shell_line import (  # noqa: E402
     plan,
     script_for,
 )
+from pilot.timeouts import bounded  # noqa: E402
 
 RISKY = "git push origin main --force"
 READY = "HLXREADY"
@@ -560,10 +561,10 @@ async def zsh_hung_check(root: Path) -> None:
         zsh, "-f", "-c", body, "zsh", str(script), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
     )
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), 20)
+        out, _ = await bounded(proc.communicate(), 20)
         text = out.decode(errors="replace").strip()
         done = text.endswith("sent")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         text, done = "(killed after 20 s)", False
     took = loop.time() - began
