@@ -130,11 +130,29 @@ export interface SetupStep {
   detail: string;
 }
 
+export interface PackageChange {
+  name: string;
+  from: string;
+  to: string;
+  bytes: number;
+}
+
+/** What an update of an older installed daemon will do; nothing changes until the person applies it. */
+export interface UpdatePlan {
+  installed: string;
+  target: string;
+  groups: string[];
+  planned: boolean;
+  changes: PackageChange[];
+  total_bytes: number;
+}
+
 export interface SetupState {
   phase: string;
   python: PythonPlan;
   steps: SetupStep[];
   log_tail: string[];
+  update?: UpdatePlan;
 }
 
 /** One sentence about Python for the first screen. */
@@ -153,7 +171,7 @@ export function pythonSentence(plan: PythonPlan | undefined, platform = ""): str
   return "No Python Heliox can use was found, and Heliox has no private Python for this kind of computer. Install Python 3.12, then open Heliox again.";
 }
 
-export type Screen = "hidden" | "choose" | "installing" | "failed" | "done";
+export type Screen = "hidden" | "choose" | "installing" | "failed" | "done" | "update" | "planning";
 
 /** Which screen to show for a setup state. "installed" means there was nothing to set up. */
 export function screenFor(state: SetupState | null): Screen {
@@ -161,6 +179,12 @@ export function screenFor(state: SetupState | null): Screen {
   switch (state.phase) {
     case "needs_choice":
       return "choose";
+    case "needs_update":
+      return "update";
+    case "planning":
+      return "planning";
+    case "updating":
+      return "installing";
     case "running":
       return "installing";
     case "failed":
@@ -283,4 +307,22 @@ export async function afterSetup(call: Call, models: string[], greet = true): Pr
     /* the daemon offers it later as a card */
   }
   return left;
+}
+
+/** "0.15.0 to 0.16.0, 12 packages change, about 18 MB to download"; the size only when the index gave it. */
+export function updateSummary(plan: UpdatePlan | undefined): string {
+  if (!plan) return "";
+  const versions = `${plan.installed || "an older version"} to ${plan.target}`;
+  if (!plan.planned) return versions;
+  const count = plan.changes.length === 1 ? "1 package changes" : `${plan.changes.length} packages change`;
+  const size = plan.total_bytes > 0 ? `, ${formatMb(plan.total_bytes / 1_000_000)} to download` : "";
+  return `${versions}: ${count}${size}`;
+}
+
+/** The kept groups in words for the update screen. */
+export function keptGroups(plan: UpdatePlan | undefined, groups: Group[]): string {
+  const names = (plan?.groups ?? []).map((id) => groups.find((g) => g.id === id)?.label ?? id);
+  return names.length
+    ? `Your parts stay installed: ${names.join(", ")}.`
+    : "Only the core is installed; it stays as it is.";
 }

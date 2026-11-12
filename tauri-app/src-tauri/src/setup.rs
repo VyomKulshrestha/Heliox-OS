@@ -5,17 +5,26 @@
 //! them, turns their `@@` lines into a state the UI shows (`setup-progress` events and `setup_status`), and starts
 //! the daemon when the core is in. Nothing is installed until the person presses the button on the first screen,
 //! and a failed optional group never blocks the app. See docs/FIRST_RUN.md.
+//!
+//! It also updates an environment an older version of the app installed (`setup/update.py`, run with the
+//! environment's base Python): offered on the same screen, planned before anything changes, applied all or
+//! nothing, with the daemon stopped during the update and the supervisor paused (`DAEMON_PAUSED`).
 
 use serde::Serialize;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
+
+/// Set while setup changes the daemon's environment (update, repair): the supervisor must not restart the daemon.
+pub static DAEMON_PAUSED: AtomicBool = AtomicBool::new(false);
 
 const SCRIPT_SH: &str = include_str!("../setup/first-run.sh");
 const SCRIPT_PS1: &str = include_str!("../setup/first-run.ps1");
 const PYTHON_VERSIONS: &str = include_str!("../setup/python-versions.json");
+const UPDATE_PY: &str = include_str!("../setup/update.py");
 
 /// (min, max, private): the Python versions an existing install may be, and the one Heliox downloads.
 pub fn python_versions() -> (String, String, String) {
@@ -70,6 +79,25 @@ pub struct Step {
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
+pub struct PackageChange {
+    pub name: String,
+    pub from: String,
+    pub to: String,
+    pub bytes: u64,
+}
+
+/// What an update will do, from `update.py plan`; nothing changes until the person applies it.
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+pub struct UpdatePlan {
+    pub installed: String,
+    pub target: String,
+    pub groups: Vec<String>,
+    pub planned: bool,
+    pub changes: Vec<PackageChange>,
+    pub total_bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub struct PythonPlan {
     pub kind: String, // "system", "download", "none", "" before the probe
     pub version: String,
@@ -80,11 +108,13 @@ pub struct PythonPlan {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct SetupState {
-    /// "installed" (nothing to do), "needs_choice" (first screen), "running", "done", "failed"
+    /// "installed" (nothing to do), "needs_choice" (first screen), "running", "done", "failed",
+    /// "needs_update" (an older daemon is installed), "planning" and "updating"
     pub phase: String,
     pub python: PythonPlan,
     pub steps: Vec<Step>,
     pub log_tail: Vec<String>,
+    pub update: UpdatePlan,
 }
 
 impl SetupState {
@@ -134,6 +164,38 @@ impl SetupState {
         } else if let Some(rest) = line.strip_prefix("@@hint ") {
             let (id, hint) = rest.split_once(' ').unwrap_or((rest, ""));
             self.step(id).hint = hint.to_string();
+        } else if let Some(rest) = line.strip_prefix("@@update ") {
+            let words: Vec<&str> = rest.split(' ').collect();
+            match words.as_slice() {
+                ["installed", installed, "target", target, "groups", groups] => {
+                    self.update.installed = installed.to_string();
+                    self.update.target = target.to_string();
+                    self.update.groups = groups
+                        .split(',')
+                        .filter(|g| !g.is_empty() && *g != "-")
+                        .map(str::to_string)
+                        .collect();
+                }
+                ["changes", _, "bytes", bytes] => {
+                    self.update.total_bytes = bytes.parse().unwrap_or(0);
+                    self.update.planned = true;
+                }
+                _ => {}
+            }
+        } else if let Some(rest) = line.strip_prefix("@@change ") {
+            let words: Vec<&str> = rest.split(' ').collect();
+            if let [name, from, to, bytes] = words.as_slice() {
+                self.update.changes.push(PackageChange {
+                    name: name.to_string(),
+                    from: if *from == "-" {
+                        String::new()
+                    } else {
+                        from.to_string()
+                    },
+                    to: to.to_string(),
+                    bytes: bytes.parse().unwrap_or(0),
+                });
+            }
         } else if line.starts_with("@@") {
             // Measurements for CI (@@size, @@disk) and anything newer: not shown to the person.
         } else if !line.trim().is_empty() {
@@ -240,6 +302,8 @@ pub fn probe_in_background(app: AppHandle) {
         .map(|state| state.phase == "needs_choice")
         .unwrap_or(false);
     if !needed {
+        let app = app.clone();
+        std::thread::spawn(move || check_for_update(&app));
         return;
     }
     std::thread::spawn(move || {
@@ -333,7 +397,7 @@ pub fn run(app: AppHandle, groups: Vec<String>) -> Result<(), String> {
             .env("HELIOX_GROUPS", wanted.join(";"))
             .spawn()
     });
-    let mut child = match spawned {
+    let child = match spawned {
         Ok(child) => child,
         Err(error) => {
             let message = format!("Setup could not start: {error}");
@@ -348,35 +412,8 @@ pub fn run(app: AppHandle, groups: Vec<String>) -> Result<(), String> {
             return Err(message);
         }
     };
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
     std::thread::spawn(move || {
-        let (sender, receiver) = std::sync::mpsc::channel::<String>();
-        if let Some(err) = stderr {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                for line in BufReader::new(err).lines().map_while(Result::ok) {
-                    let _ = sender.send(line);
-                }
-            });
-        }
-        if let Some(out) = stdout {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                for line in BufReader::new(out).lines().map_while(Result::ok) {
-                    let _ = sender.send(line);
-                }
-            });
-        }
-        drop(sender);
-        for line in receiver {
-            let setup = app.state::<Setup>();
-            if let Ok(mut state) = setup.0.lock() {
-                state.apply(&line);
-                emit(&app, &state);
-            };
-        }
-        let code = child.wait().ok().and_then(|status| status.code());
+        let code = stream_lines(&app, child);
         let core_done = {
             let setup = app.state::<Setup>();
             let mut state = match setup.0.lock() {
@@ -387,6 +424,7 @@ pub fn run(app: AppHandle, groups: Vec<String>) -> Result<(), String> {
             state.phase == "done"
         };
         if core_done {
+            record_groups(&app);
             start_daemon_after_setup(&app);
         }
         if let Ok(state) = app.state::<Setup>().0.lock() {
@@ -394,6 +432,328 @@ pub fn run(app: AppHandle, groups: Vec<String>) -> Result<(), String> {
         }
     });
     Ok(())
+}
+
+/// Feed a child's stdout and stderr into the state line by line, emitting progress; returns its exit code.
+fn stream_lines(app: &AppHandle, mut child: std::process::Child) -> Option<i32> {
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let (sender, receiver) = std::sync::mpsc::channel::<String>();
+    if let Some(err) = stderr {
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(err).lines().map_while(Result::ok) {
+                let _ = sender.send(line);
+            }
+        });
+    }
+    if let Some(out) = stdout {
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                let _ = sender.send(line);
+            }
+        });
+    }
+    drop(sender);
+    for line in receiver {
+        let setup = app.state::<Setup>();
+        if let Ok(mut state) = setup.0.lock() {
+            state.apply(&line);
+            emit(app, &state);
+        };
+    }
+    child.wait().ok().and_then(|status| status.code())
+}
+
+/// The groups file: which optional groups this environment has, so an update or a repair keeps them.
+fn groups_file() -> PathBuf {
+    data_dir().join("setup.json")
+}
+
+fn recorded_groups() -> Vec<String> {
+    std::fs::read_to_string(groups_file())
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|data| data["groups"].as_array().cloned())
+        .map(|list| {
+            list.iter()
+                .filter_map(|g| g.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The groups recorded so far plus those this run installed (its steps that are done and are groups).
+pub fn merged_groups(recorded: &[String], steps: &[Step]) -> Vec<String> {
+    let mut groups: Vec<String> = recorded.to_vec();
+    for step in steps {
+        if step.status == "done" && group_extras(&step.id).is_some() && !groups.contains(&step.id) {
+            groups.push(step.id.clone());
+        }
+    }
+    groups
+}
+
+fn record_groups(app: &AppHandle) {
+    let steps = app
+        .state::<Setup>()
+        .0
+        .lock()
+        .map(|state| state.steps.clone())
+        .unwrap_or_default();
+    let data = serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "groups": merged_groups(&recorded_groups(), &steps),
+    });
+    let _ = std::fs::write(groups_file(), format!("{data:#}\n"));
+}
+
+/// The version of the daemon in the environment, from its `.dist-info` folder name; None when it is not there.
+pub fn daemon_version<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    names.into_iter().find_map(|name| {
+        name.strip_prefix("pilot_daemon-")
+            .and_then(|rest| rest.strip_suffix(".dist-info"))
+            .map(str::to_string)
+    })
+}
+
+fn version_parts(text: &str) -> Vec<u64> {
+    text.split('.')
+        .map(|part| {
+            part.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0)
+        })
+        .collect()
+}
+
+/// Whether the installed daemon is older than this app (a newer one is never downgraded).
+pub fn is_older(installed: &str, app: &str) -> bool {
+    version_parts(installed) < version_parts(app)
+}
+
+fn site_packages(env: &std::path::Path) -> Vec<PathBuf> {
+    let mut found = vec![env.join("Lib").join("site-packages")];
+    if let Ok(entries) = std::fs::read_dir(env.join("lib")) {
+        for entry in entries.flatten() {
+            found.push(entry.path().join("site-packages"));
+        }
+    }
+    found
+}
+
+fn installed_daemon_version() -> Option<String> {
+    for dir in site_packages(&data_dir().join("env")) {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            let names: Vec<String> = entries
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            if let Some(version) = daemon_version(names.iter().map(String::as_str)) {
+                return Some(version);
+            }
+        }
+    }
+    None
+}
+
+/// The Python the environment was made from, from `pyvenv.cfg`'s `home` line.
+pub fn base_python(pyvenv_cfg: &str, windows: bool) -> Option<PathBuf> {
+    let home = pyvenv_cfg.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "home").then(|| PathBuf::from(value.trim()))
+    })?;
+    if windows {
+        return Some(home.join("python.exe"));
+    }
+    ["python3", "python"]
+        .iter()
+        .map(|name| home.join(name))
+        .find(|path| path.exists())
+        .or_else(|| Some(home.join("python3")))
+}
+
+fn extras_argument() -> String {
+    ["platform", "voice", "screen", "browser", "local", "more"]
+        .iter()
+        .map(|id| format!("{id}={}", group_extras(id).unwrap_or("")))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn update_command(mode: &str) -> std::io::Result<Command> {
+    let dir = data_dir().join("setup");
+    std::fs::create_dir_all(&dir)?;
+    let script = dir.join("update.py");
+    std::fs::write(&script, UPDATE_PY)?;
+    let env = data_dir().join("env");
+    let cfg = std::fs::read_to_string(env.join("pyvenv.cfg"))?;
+    let python = base_python(&cfg, cfg!(target_os = "windows")).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "the environment does not name its Python",
+        )
+    })?;
+    let mut command = Command::new(python);
+    command
+        .arg(script)
+        .arg(mode)
+        .arg("--env")
+        .arg(env)
+        .arg("--version")
+        .arg(env!("CARGO_PKG_VERSION"))
+        .arg("--groups-file")
+        .arg(groups_file())
+        .arg("--extras")
+        .arg(extras_argument());
+    if let Ok(source) = std::env::var("HELIOX_DAEMON_SOURCE") {
+        command.arg("--source").arg(source);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    Ok(command)
+}
+
+/// At start, when Heliox is installed: an environment from an older version of the app is offered an update.
+fn check_for_update(app: &AppHandle) {
+    let Some(installed) = installed_daemon_version() else {
+        return;
+    };
+    if !is_older(&installed, env!("CARGO_PKG_VERSION")) {
+        return;
+    }
+    if let Ok(mut state) = app.state::<Setup>().0.lock() {
+        state.phase = "needs_update".into();
+        state.update = UpdatePlan {
+            installed,
+            target: env!("CARGO_PKG_VERSION").into(),
+            ..UpdatePlan::default()
+        };
+        emit(app, &state);
+    }
+}
+
+fn fail_update(app: &AppHandle, message: String) -> Result<(), String> {
+    if let Ok(mut state) = app.state::<Setup>().0.lock() {
+        let step = state.step("update");
+        step.status = "failed".into();
+        step.message = message.clone();
+        step.hint = "Nothing was changed. Press Retry.".into();
+        state.phase = "failed".into();
+        emit(app, &state);
+    }
+    Err(message)
+}
+
+/// Work out what the update changes (packages and download size). Changes nothing.
+pub fn update_plan(app: AppHandle) -> Result<(), String> {
+    {
+        let setup = app.state::<Setup>();
+        let mut state = setup
+            .0
+            .lock()
+            .map_err(|_| "Setup state is unavailable.".to_string())?;
+        state.phase = "planning".into();
+        state.update.changes.clear();
+        state.update.planned = false;
+        state.steps.clear();
+        state.log_tail.clear();
+    }
+    let child = match update_command("plan").and_then(|mut command| command.spawn()) {
+        Ok(child) => child,
+        Err(error) => return fail_update(&app, format!("The update could not start: {error}")),
+    };
+    std::thread::spawn(move || {
+        let code = stream_lines(&app, child);
+        if let Ok(mut state) = app.state::<Setup>().0.lock() {
+            state.phase = if code == Some(0) && state.update.planned {
+                "needs_update"
+            } else {
+                "failed"
+            }
+            .into();
+            emit(&app, &state);
+        }
+    });
+    Ok(())
+}
+
+/// Apply the update: stop the daemon (the supervisor is paused), update all or nothing, start it again.
+pub fn update_apply(app: AppHandle) -> Result<(), String> {
+    {
+        let setup = app.state::<Setup>();
+        let mut state = setup
+            .0
+            .lock()
+            .map_err(|_| "Setup state is unavailable.".to_string())?;
+        if state.phase == "updating" {
+            return Err("The update is already running.".into());
+        }
+        state.phase = "updating".into();
+        state.steps.clear();
+        state.log_tail.clear();
+    }
+    DAEMON_PAUSED.store(true, Ordering::SeqCst);
+    if let Ok(mut guard) = app.state::<crate::DaemonProcess>().0.lock() {
+        if let Some(mut child) = guard.take() {
+            crate::supervisor::kill_tree(&mut child);
+            let _ = child.wait();
+        }
+    }
+    let child = match update_command("apply").and_then(|mut command| command.spawn()) {
+        Ok(child) => child,
+        Err(error) => {
+            DAEMON_PAUSED.store(false, Ordering::SeqCst);
+            start_daemon_after_setup(&app);
+            return fail_update(&app, format!("The update could not start: {error}"));
+        }
+    };
+    std::thread::spawn(move || {
+        let code = stream_lines(&app, child);
+        if let Ok(mut state) = app.state::<Setup>().0.lock() {
+            state.phase = if code == Some(0) { "done" } else { "failed" }.into();
+        }
+        DAEMON_PAUSED.store(false, Ordering::SeqCst);
+        // Updated or put back as it was: either way the daemon starts again from the environment.
+        start_daemon_after_setup(&app);
+        if let Ok(state) = app.state::<Setup>().0.lock() {
+            emit(&app, &state);
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn setup_update_plan(app: AppHandle) -> Result<(), String> {
+    update_plan(app)
+}
+
+#[tauri::command]
+pub fn setup_update_apply(app: AppHandle) -> Result<(), String> {
+    update_apply(app)
+}
+
+/// "Not now": keep using the installed version for this run; the offer comes back at the next start.
+#[tauri::command]
+pub fn setup_update_later(app: AppHandle) -> SetupState {
+    let setup = app.state::<Setup>();
+    let Ok(mut state) = setup.0.lock() else {
+        return SetupState::default();
+    };
+    if state.phase == "needs_update" || state.phase == "failed" {
+        state.phase = "installed".into();
+    }
+    state.clone()
 }
 
 #[tauri::command]
@@ -447,6 +807,67 @@ mod tests {
         let mut silent = SetupState::default();
         silent.finish(Some(9));
         assert!(silent.steps[0].message.contains("exit code 9"));
+    }
+
+    #[test]
+    fn an_older_daemon_is_found_and_offered_an_update_never_a_downgrade() {
+        let names = [
+            "numpy-2.2.6.dist-info",
+            "pilot_daemon-0.15.0.dist-info",
+            "pilot",
+        ];
+        assert_eq!(daemon_version(names), Some("0.15.0".to_string()));
+        assert_eq!(daemon_version(["numpy-2.2.6.dist-info"]), None);
+        assert!(is_older("0.15.0", "0.16.0"));
+        assert!(is_older("0.9.1", "0.16.0"));
+        assert!(!is_older("0.16.0", "0.16.0"));
+        assert!(!is_older("0.17.0", "0.16.0"));
+    }
+
+    #[test]
+    fn the_base_python_comes_from_pyvenv_cfg() {
+        let cfg = "home = C:\\Python312\ninclude-system-site-packages = false\n";
+        assert_eq!(
+            base_python(cfg, true),
+            Some(PathBuf::from("C:\\Python312").join("python.exe"))
+        );
+        assert_eq!(base_python("version = 3.12\n", true), None);
+    }
+
+    #[test]
+    fn update_lines_become_the_plan_and_groups_are_kept() {
+        let mut state = SetupState::default();
+        state.apply("@@update installed 0.15.0 target 0.16.0 groups platform,voice");
+        state.apply("@@change pilot-daemon 0.15.0 0.16.0 812345");
+        state.apply("@@change mcp - 2.1.0 0");
+        state.apply("@@update changes 2 bytes 812345");
+        assert_eq!(state.update.installed, "0.15.0");
+        assert_eq!(state.update.groups, vec!["platform", "voice"]);
+        assert!(state.update.planned);
+        assert_eq!(state.update.changes.len(), 2);
+        assert_eq!(state.update.changes[1].from, "");
+        assert_eq!(state.update.total_bytes, 812345);
+        let steps = vec![
+            Step {
+                id: "core".into(),
+                status: "done".into(),
+                ..Step::default()
+            },
+            Step {
+                id: "voice".into(),
+                status: "done".into(),
+                ..Step::default()
+            },
+            Step {
+                id: "browser".into(),
+                status: "failed".into(),
+                ..Step::default()
+            },
+        ];
+        assert_eq!(
+            merged_groups(&["platform".to_string()], &steps),
+            vec!["platform", "voice"]
+        );
     }
 
     #[test]

@@ -7,6 +7,7 @@ import {
   formatMb,
   pythonSentence,
   screenFor,
+  sizeMb,
   totalMb,
   type SetupState,
 } from "../firstRun";
@@ -59,7 +60,9 @@ describe("first-run choices", () => {
     expect(formatMb(900)).toBe("about 900 MB");
     expect(formatMb(1500)).toBe("about 1.5 GB");
     const groups = catalog("Linux x86_64");
-    expect(totalMb(groups, ["platform"], state({}).python)).toBe(111);
+    expect(totalMb(groups, ["platform"], state({}).python)).toBe(
+      sizeMb("core", "") + sizeMb("platform", "Linux x86_64"),
+    );
   });
 
   it("maps every setup phase to a screen", () => {
@@ -258,5 +261,81 @@ describe("after setup", () => {
     expect(localStorage.getItem("heliox_first_run_speech_models")).toBeNull();
     expect(localStorage.getItem("heliox_first_run_greet")).toBeNull();
     session.set({ daemonConnected: false });
+  });
+});
+
+describe("update from an older installed version", () => {
+  const plan = {
+    installed: "0.15.0",
+    target: "0.16.0",
+    groups: ["platform", "voice"],
+    planned: false,
+    changes: [] as { name: string; from: string; to: string; bytes: number }[],
+    total_bytes: 0,
+  };
+
+  it("offers the update, plans it only when asked, and keeps the person's parts", async () => {
+    const { screenFor: screenOf, updateSummary, keptGroups, catalog: groupsFor } = await import("../firstRun");
+    expect(screenOf(state({ phase: "needs_update", update: plan }))).toBe("update");
+    expect(screenOf(state({ phase: "planning", update: plan }))).toBe("planning");
+    expect(screenOf(state({ phase: "updating", update: plan }))).toBe("installing");
+    expect(updateSummary(plan)).toBe("0.15.0 to 0.16.0");
+    const planned = {
+      ...plan,
+      planned: true,
+      changes: [
+        { name: "pilot-daemon", from: "0.15.0", to: "0.16.0", bytes: 900_000 },
+        { name: "mcp", from: "", to: "2.1.0", bytes: 300_000 },
+      ],
+      total_bytes: 1_200_000,
+    };
+    expect(updateSummary(planned)).toBe("0.15.0 to 0.16.0: 2 packages change, about 1 MB to download");
+    expect(keptGroups(planned, groupsFor("Linux x86_64"))).toBe("Your parts stay installed: Linux readers, Voice.");
+
+    invoke.mockClear();
+    render(FirstRunInstall, { initial: state({ phase: "needs_update", update: plan }) });
+    expect(screen.getByRole("heading", { name: "Update Heliox" })).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "See what changes" }));
+    expect(invoke).toHaveBeenCalledWith("setup_update_plan");
+  });
+
+  it("lists what changes and applies only on Update", async () => {
+    invoke.mockClear();
+    const planned = {
+      ...plan,
+      planned: true,
+      changes: [{ name: "pilot-daemon", from: "0.15.0", to: "0.16.0", bytes: 900_000 }],
+      total_bytes: 900_000,
+    };
+    render(FirstRunInstall, { initial: state({ phase: "needs_update", update: planned }) });
+    expect(screen.getByText("0.15.0 → 0.16.0")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    expect(invoke).toHaveBeenCalledWith("setup_update_apply");
+  });
+
+  it("retries a failed update as an update and lets the person keep the current version", async () => {
+    invoke.mockClear();
+    render(FirstRunInstall, {
+      initial: state({
+        phase: "failed",
+        update: plan,
+        steps: [
+          {
+            id: "update",
+            status: "failed",
+            message: "The update did not install cleanly, so Heliox put the previous version back.",
+            hint: "Nothing changed.",
+            detail: "",
+          },
+        ],
+      }),
+    });
+    expect(screen.getByText(/put the previous version back/)).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(invoke).toHaveBeenCalledWith("setup_update_plan");
+    expect(invoke).not.toHaveBeenCalledWith("setup_run", expect.anything());
+    await fireEvent.click(screen.getByRole("button", { name: "Keep the current version" }));
+    expect(invoke).toHaveBeenCalledWith("setup_update_later");
   });
 });

@@ -336,6 +336,11 @@ pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
             if APP_EXITING.load(std::sync::atomic::Ordering::SeqCst) {
                 return;
             }
+            if setup::DAEMON_PAUSED.load(std::sync::atomic::Ordering::SeqCst) {
+                // Setup is changing the daemon's environment (update, repair); it starts the daemon again itself.
+                watch.started();
+                continue;
+            }
             let state = app.state::<DaemonProcess>();
             let exited = match state.0.lock() {
                 Ok(mut guard) => match guard.as_mut() {
@@ -471,6 +476,9 @@ fn main() {
             commands::get_hotkey,
             setup::setup_status,
             setup::setup_run,
+            setup::setup_update_plan,
+            setup::setup_update_apply,
+            setup::setup_update_later,
             commands::get_hotkey_status,
             commands::set_hotkey,
             commands::get_auth_token,

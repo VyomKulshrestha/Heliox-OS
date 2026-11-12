@@ -56,6 +56,30 @@ The desktop app used to set itself up in the background as soon as it opened. It
 
 The app can only ask for groups from a fixed list: `group_extras` in `src/setup.rs`. Each version is pinned to the app's own release (`pilot-daemon==<app version>`). `HELIOX_DAEMON_SOURCE` points the install at a local checkout, for development and CI.
 
+## Updating an older install
+
+A person who installed an earlier version has an environment with an older daemon. The old desktop app installed `pilot-daemon[all]==<its version>`. When the app's own version is newer than the daemon's, the app offers an update.
+
+1. **Detection costs nothing.** At start, the app reads the daemon's version from the `pilot_daemon-<version>.dist-info` folder in the environment. If that version is older than the app's, the "Update Heliox" screen says which version is installed and which this app is. A newer daemon is never downgraded. "Not now" keeps the installed version for this run, and the offer comes back at the next start.
+2. **The plan changes nothing.** "See what changes" runs `update.py plan`, which uses `pip install --dry-run --report` with `--upgrade-strategy only-if-needed`. The screen lists every package that will change (from → to, or new) and the download size the package index reports.
+3. **The person's parts are kept.** The groups come from `~/.config/heliox-os/setup.json`, which first-run setup and every update now write. For an install made before that file existed, they are inferred from what is installed: `faster-whisper` means voice, `easyocr` means screen reading, and so on. So an old `[all]` install keeps every group.
+4. **Unchanged packages are not touched.** The update runs in place with `only-if-needed`, so only the packages in the plan are replaced.
+5. **The update is all or nothing.** Before pip runs, `update.py apply` keeps a copy of the environment made of hard links, so no data is copied. pip replaces a file by removing it and writing a new one, so the copy keeps the old files intact. After installing, it checks that `pilot.server` imports and reports the new version.
+   - On success it deletes the copy and records the version and groups.
+   - On any failure it puts the copy back, so the environment is exactly as it was, and says so with a Retry. Retry plans again, and "Keep the current version" closes the screen.
+6. **The daemon is stopped for the update and started again after it.** On Windows its files are locked while it runs. The supervisor is paused for the duration (`DAEMON_PAUSED` in `setup.rs`) so it does not restart the daemon into a half-changed environment. If a daemon the app did not start is listening, the update refuses and asks the person to quit it.
+
+`update.py` runs with the environment's base Python, named in `env/pyvenv.cfg`, never the environment's own interpreter. An environment whose Python no longer starts, for example after Homebrew upgraded the Python it was made from, is sent to Repair, which rebuilds it.
+
+**How it is tested:**
+- **Real run on Windows (12 November).** A venv with a small fake `pilot-daemon` 0.1.0 was updated to a fake 99.0.0 that installs but has no `pilot.server`. The update was rolled back: the environment reported 0.1.0 afterwards and no copy was left behind. A clean update to 0.2.0 then succeeded and recorded the groups file.
+- **Unit tests.** `daemon/tests/test_update_path.py` covers group inference, the requirement, which packages count as changed, version order, and the hard-link copy surviving a pip-style file replacement and restoring exactly. The Rust tests cover version detection, `pyvenv.cfg` and the plan lines; vitest covers the update screen's states.
+- **CI, job `update-path`** (non-blocking; ubuntu, macOS and Windows). It installs the released `pilot-daemon` 0.15.0 as an older app did, then does three things:
+  - It applies a fake 99.0.0 that breaks the daemon, and checks the rollback left 0.15.0 with an identical package list.
+  - It plans and applies the update to this checkout.
+  - It checks that the updated daemon answers an authenticated ping.
+- **Not tested:** the desktop app driving the update (Rust compiled and unit-tested here, not run as an app).
+
 ## Where the code is
 
 - **Steps:** `tauri-app/src-tauri/setup/first-run.sh` (macOS, Linux; POSIX sh) and `first-run.ps1` (Windows PowerShell 5.1). They take the same inputs and print the same `@@` lines. The app embeds them, writes them to `~/.config/heliox-os/setup/` and runs them; CI runs the same files.

@@ -11,6 +11,7 @@
     failedGroups,
     formatMb,
     GREET_KEY,
+    keptGroups,
     languageNote,
     pendingModels,
     pythonSentence,
@@ -20,6 +21,7 @@
     speechModels,
     stepLabel,
     totalMb,
+    updateSummary,
     type GroupId,
     type SetupState,
   } from "../firstRun";
@@ -47,6 +49,8 @@
   let unlisten: (() => void) | null = null;
 
   const screen = $derived(dismissed ? "hidden" : screenFor(setupState));
+  // A failed update is retried as an update (planned again first), never as a fresh setup.
+  const updateFailed = $derived(screen === "failed" && (setupState?.steps ?? []).some((s) => s.id === "update"));
 
   onMount(async () => {
     if (initial || !isNativeTauriRuntime()) return;
@@ -97,6 +101,23 @@
     chosen = on ? [...new Set([...chosen, id])] : chosen.filter((g) => g !== id);
   }
 
+  async function updateStep(command: "setup_update_plan" | "setup_update_apply") {
+    startError = "";
+    try {
+      await invoke(command);
+    } catch (error) {
+      startError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function updateLater() {
+    try {
+      setupState = await invoke<SetupState>("setup_update_later");
+    } catch {
+      dismissed = true;
+    }
+  }
+
   async function start(selection: GroupId[]) {
     startError = "";
     // Kept until the daemon is up and has been asked for each (it is the only downloader of speech models).
@@ -119,7 +140,38 @@
 {#if screen !== "hidden"}
   <div class="first-run" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
     <div class="panel">
-      {#if screen === "choose"}
+      {#if screen === "update" || screen === "planning"}
+        <h2 id="first-run-title">Update Heliox</h2>
+        <p>
+          This app is version {setupState?.update?.target}; the Heliox installed on this computer is
+          {setupState?.update?.installed}. Nothing changes until you press Update. If the update does not install
+          cleanly, Heliox puts the current version back.
+        </p>
+        <p class="python">{keptGroups(setupState?.update, groups)}</p>
+        {#if screen === "planning"}
+          <p>Working out what changes…</p>
+        {:else if setupState?.update?.planned}
+          <p class="python">{updateSummary(setupState?.update)}</p>
+          <ul class="changes" aria-label="Packages that change">
+            {#each setupState.update.changes as change (change.name)}
+              <li>
+                <span class="group-name">{change.name}</span>
+                <span class="size">{change.from ? `${change.from} → ${change.to}` : `new: ${change.to}`}</span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <div class="actions">
+          <button onclick={updateLater}>Not now</button>
+          {#if setupState?.update?.planned}
+            <button class="primary" onclick={() => updateStep("setup_update_apply")}>Update</button>
+          {:else}
+            <button class="primary" onclick={() => updateStep("setup_update_plan")} disabled={screen === "planning"}>
+              See what changes
+            </button>
+          {/if}
+        </div>
+      {:else if screen === "choose"}
         <h2 id="first-run-title">Set up Heliox</h2>
         <p>
           Heliox installs its core first ({sizePhrase("core", platform)}, from PyPI). Choose anything else you want now;
@@ -181,7 +233,13 @@
         </div>
       {:else}
         <h2 id="first-run-title">
-          {screen === "installing" ? "Setting up Heliox" : screen === "failed" ? "Setup stopped" : "Heliox is ready"}
+          {screen === "installing"
+            ? setupState?.phase === "updating"
+              ? "Updating Heliox"
+              : "Setting up Heliox"
+            : screen === "failed"
+              ? "Setup stopped"
+              : "Heliox is ready"}
         </h2>
         {#if screen === "done"}
           <p>
@@ -208,9 +266,15 @@
             {#if screen === "done"}
               <button onclick={() => (dismissed = true)}>Continue</button>
             {/if}
+            {#if updateFailed}
+              <button onclick={updateLater}>Keep the current version</button>
+            {/if}
             <button
               class="primary"
-              onclick={() => start(screen === "done" && setupState ? failedGroups(setupState) : chosen)}
+              onclick={() =>
+                updateFailed
+                  ? updateStep("setup_update_plan")
+                  : start(screen === "done" && setupState ? failedGroups(setupState) : chosen)}
             >
               Retry
             </button>
@@ -280,6 +344,24 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-md, 8px);
     cursor: pointer;
+  }
+
+  .changes {
+    display: grid;
+    gap: 4px;
+    max-height: 220px;
+    margin: 0 0 12px;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+  }
+
+  .changes li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
   }
 
   .models {

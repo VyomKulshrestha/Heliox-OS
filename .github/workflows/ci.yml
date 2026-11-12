@@ -390,7 +390,7 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          sudo apt-get install -y -q --no-install-recommends sway xdg-desktop-portal xdg-desktop-portal-wlr
+          sudo apt-get install -y -q --no-install-recommends sway xdg-desktop-portal xdg-desktop-portal-wlr pipewire
           mkdir -p "$HOME/.config/xdg-desktop-portal"
           printf "[preferred]\ndefault=wlr\norg.freedesktop.impl.portal.Screenshot=wlr\n" > "$HOME/.config/xdg-desktop-portal/sway-portals.conf"
           ls /usr/share/xdg-desktop-portal/portals/ /usr/share/dbus-1/services/ | grep -i portal || true
@@ -408,10 +408,16 @@ jobs:
             unset DISPLAY
             export WAYLAND_DISPLAY=$sock
             dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_RUNTIME_DIR
-            # No systemd user session on the runner: start the backend and the portal here, with their logs, rather
-            # than relying on D-Bus activation, so the run shows which of them is missing if the portal is.
-            /usr/libexec/xdg-desktop-portal-wlr -l DEBUG >/tmp/xdpw.log 2>&1 &
+            # No systemd user session on the runner: start PipeWire, the wlr backend and the portal here, in that
+            # order, with their logs. The backend initialises screen casting at start and exits when it cannot reach
+            # PipeWire (CI, 12 November: "pipewire: couldn't connect to context"), taking Screenshot with it; the
+            # front end only uses backends that are on the bus when it starts.
+            pipewire >/tmp/pipewire.log 2>&1 &
             sleep 1
+            /usr/libexec/xdg-desktop-portal-wlr -l DEBUG >/tmp/xdpw.log 2>&1 &
+            xdpw=$!
+            sleep 1
+            if kill -0 $xdpw 2>/dev/null; then echo "xdg-desktop-portal-wlr is running"; else wait $xdpw; echo "xdg-desktop-portal-wlr exited with status $?"; fi
             /usr/libexec/xdg-desktop-portal -v -r >/tmp/xdp.log 2>&1 &
             sleep 2
             python tests/platform_real/linux_portal_check.py real
@@ -419,6 +425,8 @@ jobs:
             if [ $status -ne 0 ]; then
               echo "--- xdg-desktop-portal log"; tail -40 /tmp/xdp.log
               echo "--- xdg-desktop-portal-wlr log"; tail -40 /tmp/xdpw.log
+              echo "--- pipewire log"; tail -20 /tmp/pipewire.log
+              kill -0 $xdpw 2>/dev/null && echo "xdg-desktop-portal-wlr still running" || echo "xdg-desktop-portal-wlr not running"
             fi
             exit $status
           '
@@ -505,6 +513,84 @@ jobs:
           set +e
           export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
           if [ "$RUNNER_OS" = "Windows" ]; then PY="$HOME/.config/heliox-os/env/Scripts/python.exe"; else PY="$HOME/.config/heliox-os/env/bin/python"; fi
+          "$PY" -m pilot.server > "$RUNNER_TEMP/daemon.log" 2>&1 &
+          "$PY" daemon/tests/platform_real/first_run_rpc_check.py 240
+          status=$?
+          if [ $status -ne 0 ]; then tail -60 "$RUNNER_TEMP/daemon.log"; fi
+          exit $status
+
+  # ── Update from the previous release (experimental, non-blocking) ──
+  # Installs the released pilot-daemon 0.15.0 the way an older desktop app did, then runs the app's update path
+  # (tauri-app/src-tauri/setup/update.py) to this checkout: first an update that cannot install, which must leave
+  # 0.15.0 exactly as it was, then the real one, after which the updated daemon must answer its RPC.
+  update-path:
+    name: Update path (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the previous release as an older app did
+        run: |
+          export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
+          ENV="$RUNNER_TEMP/home/.config/heliox-os/env"
+          mkdir -p "$(dirname "$ENV")"
+          python -m venv "$ENV"
+          if [ "$RUNNER_OS" = "Windows" ]; then PY="$ENV/Scripts/python.exe"; else PY="$ENV/bin/python"; fi
+          "$PY" -m pip install --disable-pip-version-check --progress-bar off "pilot-daemon==0.15.0"
+          "$PY" -c "import importlib.metadata as m; print('installed', m.version('pilot-daemon'))"
+
+      - name: An update that breaks the daemon is rolled back to the old version exactly
+        run: |
+          set +e
+          ENV="$RUNNER_TEMP/home/.config/heliox-os/env"
+          if [ "$RUNNER_OS" = "Windows" ]; then PY="$ENV/Scripts/python.exe"; else PY="$ENV/bin/python"; fi
+          # A "pilot-daemon 99.0.0" that installs cleanly but has no pilot.server: the check after installing fails.
+          FAKE="$RUNNER_TEMP/fake-daemon"
+          mkdir -p "$FAKE/pilot_fake"
+          printf '[project]\nname = "pilot-daemon"\nversion = "99.0.0"\n[tool.setuptools]\npackages = ["pilot_fake"]\n' > "$FAKE/pyproject.toml"
+          touch "$FAKE/pilot_fake/__init__.py"
+          before=$("$PY" -m pip freeze --disable-pip-version-check | sort | md5sum 2>/dev/null || "$PY" -m pip freeze | sort | md5)
+          python tauri-app/src-tauri/setup/update.py apply --env "$ENV" --version 99.0.0 --source "$FAKE" | grep "^@@"
+          status=${PIPESTATUS[0]}
+          after=$("$PY" -m pip freeze --disable-pip-version-check | sort | md5sum 2>/dev/null || "$PY" -m pip freeze | sort | md5)
+          version=$("$PY" -c "import importlib.metadata as m, pilot.server; print(m.version('pilot-daemon'))")
+          echo "exit $status; installed after: $version; packages unchanged: $([ "$before" = "$after" ] && echo yes || echo no)"
+          [ $status -ne 0 ] && [ "$version" = "0.15.0" ] && [ "$before" = "$after" ] && [ ! -e "$ENV.previous" ]
+
+      - name: Plan and apply the update to this checkout
+        run: |
+          set +e
+          ENV="$RUNNER_TEMP/home/.config/heliox-os/env"
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' tauri-app/src-tauri/Cargo.toml | head -1)
+          python tauri-app/src-tauri/setup/update.py plan --env "$ENV" --version "$VERSION" --source "$GITHUB_WORKSPACE/daemon" | grep "^@@"
+          start=$(date +%s)
+          python tauri-app/src-tauri/setup/update.py apply --env "$ENV" --version "$VERSION" --source "$GITHUB_WORKSPACE/daemon" --groups-file "$RUNNER_TEMP/setup.json" | tee "$RUNNER_TEMP/update.log" | grep "^@@"
+          status=${PIPESTATUS[0]}
+          echo "update exit code $status after $(( $(date +%s) - start )) s"
+          cat "$RUNNER_TEMP/setup.json" 2>/dev/null
+          exit $status
+
+      - name: The updated daemon answers
+        run: |
+          export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
+          ENV="$HOME/.config/heliox-os/env"
+          if [ "$RUNNER_OS" = "Windows" ]; then PY="$ENV/Scripts/python.exe"; else PY="$ENV/bin/python"; fi
+          "$PY" -c "import importlib.metadata as m; print('installed', m.version('pilot-daemon'))"
           "$PY" -m pilot.server > "$RUNNER_TEMP/daemon.log" 2>&1 &
           "$PY" daemon/tests/platform_real/first_run_rpc_check.py 240
           status=$?
