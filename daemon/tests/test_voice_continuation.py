@@ -157,9 +157,9 @@ def test_a_wake_phrased_turn_is_addressed_when_the_wake_check_misreads_what_foll
     assert not talk.act
 
 
-async def split_sentence(withdraw):
-    """ "Hey Heliox, remind me to" | 1.4 s | "call the bank tomorrow morning." through the listener, with the
-    server's withdraw call answering ``withdraw``. Returns (dispatched, withdraw calls)."""
+async def split_sentence(withdraw, pause: float = 1.4, withdraw_turn=None):
+    """ "Hey Heliox, remind me to" | ``pause`` | "call the bank tomorrow morning." through the listener, with the
+    server's withdraw call answering ``withdraw`` (or ``withdraw_turn`` itself). Returns (dispatched, withdraw calls)."""
     item = listener()
     dispatched: list[tuple[str, str]] = []
     calls: list[tuple[str, str]] = []
@@ -168,15 +168,21 @@ async def split_sentence(withdraw):
     async def on_command(text: str) -> None:
         dispatched.append((text, voice.voice_turn_addressed.get()))
 
-    async def withdraw_turn(turn_id: str, joined: str):
+    async def two_arguments(turn_id: str, joined: str):  # an older server, or a double without the gap
         calls.append((turn_id, joined))
         done.set()
         return withdraw
 
+    async def counted(*args, **kwargs):
+        calls.append(args + tuple(kwargs.items()))
+        done.set()
+        return await custom(*args, **kwargs)
+
+    custom = withdraw_turn
     item._on_command = on_command
-    item.withdraw_turn = withdraw_turn
+    item.withdraw_turn = two_arguments if custom is None else counted
     recorder = item._recorder
-    said = iter([("Hey Heliox, remind me to", 0.0), ("call the bank tomorrow morning.", 1.4)])
+    said = iter([("Hey Heliox, remind me to", 0.0), ("call the bank tomorrow morning.", pause)])
     # The recorder's stamps here are compared with stamps the listener takes from the real monotonic clock, so they
     # start from it: a made-up 1000.0 is in the future on a machine that booted five minutes ago (every CI runner).
     clock = [time.monotonic()]
@@ -219,3 +225,22 @@ async def test_too_late_or_unknown_runs_the_second_half_as_a_new_turn(status):
 
     dispatched, _calls = await split_sentence(SimpleNamespace(status=status, said="I've already set it."))
     assert dispatched == [("remind me to", "wake"), ("call the bank tomorrow morning", "follow_up")]
+
+
+@pytest.mark.asyncio
+async def test_the_gap_on_the_capture_clock_reaches_the_server_so_a_slow_recogniser_does_not_split_the_request():
+    """The bench's 2.0 s pause: the second half began 2.6 s after the first half's last word, but was decided 6.1 s
+    after the first half's dispatch. Counted on the gap the person left, it is withdrawn and joined."""
+    from types import SimpleNamespace
+
+    seen: list[float | None] = []
+
+    async def server_withdraw(turn_id: str, joined: str, gap: float | None = None):
+        seen.append(gap)
+        processing = 6.1  # what the server would count without the gap
+        waited = gap if gap is not None else processing
+        return SimpleNamespace(status="withdrawn" if waited <= 6.0 else "unknown")
+
+    dispatched, _calls = await split_sentence(None, pause=2.2, withdraw_turn=server_withdraw)
+    assert seen and abs(seen[0] - 2.6) < 1e-6  # last word at +0.6, second half at +3.2
+    assert dispatched == [("remind me to", "wake")]  # withdrawn: the server runs the joined sentence

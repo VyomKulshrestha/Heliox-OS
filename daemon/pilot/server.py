@@ -1063,7 +1063,7 @@ class PilotServer:
         self._voice_request = ""
         self._voice_end_said = False
         # When the person last cut Heliox's voice off: "Wait, stop." right after it is acknowledged aloud.
-        self._voice_cut_off_at = 0.0
+        self._voice_cut_off_at = float("-inf")  # never: 0.0 would be "just now" in the first seconds after boot
         self._workspaces: Any = None
         self._notes: Any = None
         self._todos: Any = None
@@ -14127,6 +14127,18 @@ def handle_tool(tool_name, params):
         if outcome.status == "interrupted":
             self._voice_cut_off_at = time.monotonic()
             await self._broadcast_notification("voice_status", {"status": "interrupted"})
+        if outcome.status == "no_voice":
+            # Nothing was heard: the reply is shown as text, and what to check is said once (until a voice works).
+            first = not getattr(self, "_voice_output_failed_said", False)
+            self._voice_output_failed_said = True
+            if first:
+                logger.warning("Speech output failed: %s", outcome.message)
+            await self._broadcast_notification(
+                "voice_status",
+                {"status": "voice_output_failed", "text": text, "message": outcome.message if first else ""},
+            )
+        elif outcome.status == "spoken":
+            self._voice_output_failed_said = False
         return outcome
 
     async def _speak_voice_response(

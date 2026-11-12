@@ -852,6 +852,31 @@ async def _speak_impl(
         return await _tts_linux(spoken_text, voice, rate, output_file)
 
 
+class SpeechUnheard(RuntimeError):
+    """The speech produced no sound: no voice on this system, or the one there failed. ``str()`` is one plain sentence
+    for the person about what to check."""
+
+
+def unheard_reason(result: Any) -> str:
+    """The plain sentence for a speak() result that means nothing was heard, or "" when it was spoken."""
+    text = str(result or "")
+    if not (text.startswith(("TTS failed", "TTS save failed", "TTS unavailable"))):
+        return ""
+    if CURRENT_PLATFORM == Platform.MACOS:
+        where = "the output device, and the voice in System Settings, Accessibility, Spoken Content"
+    elif CURRENT_PLATFORM == Platform.WINDOWS:
+        where = "the output device, and the speech voices in Settings, Time & language, Speech"
+    else:
+        where = "the output device, and that espeak-ng is installed (or a local voice in Settings, Voice)"
+    return f"Heliox's voice did not work, so its replies are shown here as text. Check {where}."
+
+
+def _raise_if_unheard(result: Any) -> None:
+    reason = unheard_reason(result)
+    if reason:
+        raise SpeechUnheard(reason)
+
+
 async def speak_interruptible(
     text: str,
     recorder: _ContinuousRecorder | None = None,
@@ -869,14 +894,19 @@ async def speak_interruptible(
     equivalent to plain speak() — always returns False.
     """
     if recorder is None or not recorder.is_active:
-        await speak(text, **speak_kwargs)
+        _raise_if_unheard(await speak(text, **speak_kwargs))
         return False
 
     speak_task = asyncio.create_task(speak(text, **speak_kwargs))
     watch_task = asyncio.create_task(recorder.wait_for_speech_start(timeout=None))
     try:
         done, _pending = await asyncio.wait({speak_task, watch_task}, return_when=asyncio.FIRST_COMPLETED)
-        return watch_task in done
+        if watch_task in done:
+            return True
+        if not speak_task.cancelled() and speak_task.exception() is None:
+            # A voice that failed returns at once: nothing was heard, so this is not "spoken".
+            _raise_if_unheard(speak_task.result())
+        return False
     finally:
         # Whatever ended this (the line finished, the person talked over it, or a more urgent line replaced
         # it), neither the voice nor the watcher may outlive it: a stray watcher would treat the person's next
@@ -1063,24 +1093,29 @@ async def list_voices() -> str:
         )
         return out.strip() if code == 0 else f"Error: {err}"
 
-    elif CURRENT_PLATFORM == Platform.MACOS:
-        proc = await asyncio.create_subprocess_exec(
-            "say",
-            "-v",
-            "?",
-            stdout=asyncio.subprocess.PIPE,
-        )
-        out, _ = await proc.communicate()
-        return out.decode("utf-8", errors="replace")
-
+    if CURRENT_PLATFORM == Platform.MACOS:
+        program, args = "say", ["-v", "?"]
     else:
+        from pilot.system.linux_voice import NO_VOICE, espeak_program
+
+        found = espeak_program()  # espeak-ng first, then espeak
+        if found is None:
+            return f"Error: {NO_VOICE}"
+        program, args = found, ["--voices"]
+    try:
         proc = await asyncio.create_subprocess_exec(
-            "espeak",
-            "--voices",
+            program,
+            *args,
             stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        out, _ = await proc.communicate()
-        return out.decode("utf-8", errors="replace")
+    except OSError as error:
+        return f"Error: {program} could not start ({error})"
+    out, err = await proc.communicate()
+    if proc.returncode:
+        detail = (err or b"").decode("utf-8", errors="replace").strip().splitlines()
+        return f"Error: {program} exited with code {proc.returncode}" + (f": {detail[-1][:200]}" if detail else "")
+    return out.decode("utf-8", errors="replace")
 
 
 # ── Speech-to-Text ───────────────────────────────────────────────────
@@ -2540,7 +2575,9 @@ class ContinuousVoiceListener:
         # The server's withdraw_voice_turn(turn_id, joined) -> Withdrawal (status "withdrawn" | "too_late" | "unknown",
         # docs: scratchpad conv_interfaces.md (b)); None until the conversation side wires it.
         self.withdraw_turn: Any = None
-        self._continuation_of: tuple[str, str, str] = ("", "", "")  # (command, number, own words) of the next dispatch
+        self._continuation_of: tuple[str, str, str] = ("", "", "")
+        self._last_turn_word_end: float | None = None
+        self._continuation_gap: float | None = None  # (command, number, own words) of the next dispatch
         self._yielded = False
         self._sample_rate = 16000
 
@@ -2668,6 +2705,10 @@ class ContinuousVoiceListener:
         self._last_turn = None  # one continuation per turn
         rest = text.strip(" \t,.:;!?-")
         self._continuation_of = (previous, number, rest)
+        word_end = self._last_turn_word_end
+        self._continuation_gap = (
+            round(started - word_end, 3) if isinstance(started, float) and isinstance(word_end, float) else None
+        )
         return Decision(True, f"{previous.rstrip(' .,;:')} {rest[:1].lower() + rest[1:]}".strip(), "continuation")
 
     def _canonical_wake(self, text: str) -> str:
@@ -3407,7 +3448,7 @@ class ContinuousVoiceListener:
                     continues = self._continuation_of if addressed_as == "continuation" else ("", "", "")
                     self._continuation_of = ("", "", "")
                     if addressed_as == "continuation":  # only when the server can withdraw (_decide_addressed)
-                        status = await self._withdraw(continues[1], command_text)
+                        status = await self._withdraw(continues[1], command_text, self._continuation_gap)
                         if status == "withdrawn":
                             continue  # the server dispatched the joined sentence in place of the first half
                         command_text, addressed_as = continues[2], "follow_up"  # the rest, as a new turn
@@ -3417,6 +3458,7 @@ class ContinuousVoiceListener:
                     turn_end = getattr(self._recorder, "last_endpoint_at", None)
                     if not cut_off and isinstance(turn_end, float):
                         self._last_turn = (turn_end, command_text, turn_id)
+                        self._last_turn_word_end = ended  # the first half's last word, for the withdraw gap
                     task = asyncio.create_task(
                         self._dispatch_command(command_text, ended, addressed_as, continues=continues, turn=turn_id)
                     )
@@ -3439,11 +3481,26 @@ class ContinuousVoiceListener:
                 )
                 await asyncio.sleep(1.0)
 
-    async def _withdraw(self, turn_id: str, joined: str) -> str:
+    async def _withdraw(self, turn_id: str, joined: str, gap: float | None = None) -> str:
         """Ask the server to withdraw the first half's dispatch in favour of the joined sentence. "withdrawn",
-        "too_late" or "unknown"; any failure counts as "unknown" (the second half then runs as a new turn)."""
+        "too_late" or "unknown"; any failure counts as "unknown" (the second half then runs as a new turn).
+
+        ``gap``: seconds on the capture clock from the first half's last word to the start of the words that continue
+        it. The server counts its withdraw limit on it instead of on processing time, so a slow recogniser does not
+        turn one request into two. A withdraw call that takes only two arguments (an older server, a test double) is
+        called without it."""
+        import inspect
+
         try:
-            result = await self.withdraw_turn(turn_id, joined)
+            params = inspect.signature(self.withdraw_turn).parameters
+            takes_gap = "gap" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+        except (TypeError, ValueError):
+            takes_gap = False
+        try:
+            if takes_gap and gap is not None:
+                result = await self.withdraw_turn(turn_id, joined, gap=gap)
+            else:
+                result = await self.withdraw_turn(turn_id, joined)
         except Exception:
             logger.warning("Withdrawing the first half of a split sentence failed", exc_info=True)
             return "unknown"

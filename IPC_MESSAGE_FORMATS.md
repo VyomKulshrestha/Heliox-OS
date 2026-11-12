@@ -1670,7 +1670,9 @@ Send UI text through the daemon's single speech coordinator and configured
 Kokoro/Pocket/OS-native engine.
 
 **Params:** `{ "text": "Done", "channel": "final_answer", "dedupe_key": "task:123" }`
-**Result:** a `SpeechOutcome` with accepted/completed/interrupted/suppressed status.
+**Result:** `{ "status": ..., "message": ... }` from the speech outcome: `"spoken"` (message "Spoken: ..."),
+`"interrupted"`, `"suppressed"`, `"cancelled"`, `"superseded"`, `"dropped"`, `"error"`, or `"no_voice"`: the voice
+failed or there is none, so nothing was heard; `message` is one plain sentence about what to check.
 
 #### `stop_speech`
 Immediately stop daemon-side speech playback and release the speech channel.
@@ -3806,6 +3808,10 @@ Voice listener lifecycle updates.
 - `"in_call"` — the person is in a call (`app` names it; Windows only): Heliox says nothing and takes no speech as addressed to it until `"call_ended"`. `message` is the voice bar text, "Quiet while you're in a call". Off with `voice.quiet_in_calls = false`.
 - `"call_ended"` — the call is over; listening and speech are back to normal.
 - `"holding"` — the person paused mid-sentence and Smart Turn judged the sentence unfinished, so Heliox keeps listening (up to `voice.turn_hold_ms`) instead of answering. Sent once per utterance.
+- `"voice_output_failed"` — Heliox's voice did not work for a sentence (speech outcome `"no_voice"`): `{ "status":
+  "voice_output_failed", "text": "the sentence", "message": "Heliox's voice did not work, so its replies are shown
+  here as text. Check ..." }`. `message` is given the first time only (until a sentence is spoken again); the UI
+  shows `text` as a caption. No follow-up window and no Live reply window open after it.
 - `"wake_teach"` — one try of `voice_wake_teach` was heard: `{ "status": "wake_teach", "try": 1, "of": 4, "heard": "Hey Helios." }` (`heard` is "" when nothing was recognised).
 
 ### `voice_partial`

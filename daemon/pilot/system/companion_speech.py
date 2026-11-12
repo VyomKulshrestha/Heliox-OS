@@ -243,8 +243,12 @@ class CompanionSpeechCoordinator:
                     "Speech superseded" if status == "superseded" else "Speech stopped",
                 )
             except Exception as error:
+                from pilot.system.voice import SpeechUnheard
+
+                # "no_voice": the voice failed or there is none, so nothing was heard. Not "spoken": no follow-up
+                # window, no Live reply window, and the reply is shown as text (PilotServer._speak_companion_text).
                 outcome = SpeechOutcome(
-                    "error",
+                    "no_voice" if isinstance(error, SpeechUnheard) else "error",
                     request.channel,
                     str(error),
                 )
@@ -271,5 +275,7 @@ class CompanionSpeechCoordinator:
 
         if recorder is not None:
             return await speak_interruptible(text, recorder=recorder)
-        await speak(text)
+        from pilot.system.voice import _raise_if_unheard
+
+        _raise_if_unheard(await speak(text))
         return False

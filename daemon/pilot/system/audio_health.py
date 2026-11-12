@@ -77,7 +77,7 @@ class CaptureWatchdog:
         self._failures = 0
         self._next_attempt = 0.0
         self._silent_reported = False
-        self._last_silent_reopen = 0.0
+        self._last_silent_reopen = float("-inf")  # never (0.0 is a real time just after boot)
         self.problem = ""  # what is wrong now, for the status ("" when healthy)
         self._problem_frames = 0
 

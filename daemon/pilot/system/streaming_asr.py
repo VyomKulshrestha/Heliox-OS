@@ -58,7 +58,7 @@ class StreamingTranscriber:
         self._lock = threading.Lock()
         self._stream: Any = None
         self._partial = ""
-        self._last_partial_at = 0.0
+        self._last_partial_at = float("-inf")
         self.on_partial: Callable[[str], None] | None = None
         self.error = ""
         self.last_finish_ms = 0.0

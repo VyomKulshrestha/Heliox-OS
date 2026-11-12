@@ -404,6 +404,21 @@
           : null;
       return;
     }
+    if (status === "voice_output_failed") {
+      // Heliox's voice did not work: the reply is shown as a caption, long enough to read, and what to check once
+      // (the message is empty after the first time).
+      const said = String(payload.text ?? "");
+      interimTranscript = said;
+      if (captionTimer) clearTimeout(captionTimer);
+      captionTimer = setTimeout(
+        () => {
+          interimTranscript = "";
+        },
+        Math.max(6000, said.split(/\s+/).length * 450),
+      );
+      if (payload.message) showDeviceNotice(String(payload.message));
+      return;
+    }
     if (status === "not_addressed") {
       // Someone clearly spoke to Heliox without the wake phrase. Sent once per session (pilot.system.addressing).
       showDeviceNotice(String(payload.message ?? ""), 6000);

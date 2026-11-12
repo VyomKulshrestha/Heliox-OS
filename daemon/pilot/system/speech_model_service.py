@@ -47,7 +47,7 @@ class SpeechModelService:
         self._downloader: speech_models.Downloader | None = None
         self._lock = threading.Lock()
         self._task: asyncio.Task[None] | None = None
-        self._last_sent = 0.0
+        self._last_sent = float("-inf")
         self._waiting: list[str] = []  # asked for while another downloaded: started in order, one at a time
 
     def list(self, language: str = "auto") -> dict[str, Any]:
