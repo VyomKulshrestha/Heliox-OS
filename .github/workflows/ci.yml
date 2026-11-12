@@ -389,7 +389,7 @@ jobs:
       # A first-day person opens an app by name and moves its windows: the planner's launch, the names the timeline
       # shows, and the window tools, against a real window manager (openbox) with two GTK windows.
       - name: Linux, X11 - launching an app by its desktop entry, app names, and window actions under openbox
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         continue-on-error: true
         run: |
           sudo apt-get install -y -q --no-install-recommends openbox wmctrl x11-utils
@@ -409,7 +409,7 @@ jobs:
       # notifications, a GTK 4 app and Firefox, a control with no accessibility action, an app that hangs, and a
       # protected folder named in another case. "Before" checks run before their package is installed.
       - name: Linux, X11 - OCR, speech, notifications, GTK 4 and Firefox, a centre click, a hung app, a protected folder
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         continue-on-error: true
         run: |
           set +e
@@ -445,7 +445,7 @@ jobs:
       # gdk_seat_get_keyboard assertions and no element was ever focused). Sway on wlroots' headless backend
       # always has a seat, focuses new windows, and accepts keys from wtype through the virtual-keyboard protocol.
       - name: Linux, Wayland session (sway headless) - the same checks without X
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         continue-on-error: true
         run: |
           sudo apt-get install -y -q --no-install-recommends sway wtype
@@ -478,7 +478,7 @@ jobs:
       # xdg-desktop-portal-wlr (Screenshot version 1, so the front end asks no permission) runs grim to take the
       # picture; without grim its call returns -1, which sd-bus reports as "Operation not permitted" (CI, 12 November).
       - name: Linux, Wayland portals (Screenshot under sway, GlobalShortcuts against a fake portal)
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         continue-on-error: true
         run: |
           set +e
@@ -532,18 +532,30 @@ jobs:
           exit $(( real + fake ))
 
       - name: macOS - permissions, frontmost app and the Accessibility reader
-        if: runner.os == 'macOS'
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         run: |
           sw_vers
           python tests/platform_real/macos_ax_check.py
 
+      # Live end to end on macOS: a slip typed into a real field becomes a card, then the windows Live never
+      # reads, an error on screen, and back and forth. Its own step, so a failed reader check does not hide it.
+      - name: macOS - Live end to end, and the windows Live never reads
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        continue-on-error: true
+        run: |
+          set +e
+          python tests/platform_real/live_end_to_end_check.py
+          live=$?
+          python tests/platform_real/live_more_checks.py
+          exit $(( live + $? ))
+
       - name: macOS - launching TextEdit by name, and app names from real bundles
-        if: runner.os == 'macOS'
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         continue-on-error: true
         run: python tests/platform_real/apps_check.py
 
       - name: macOS - OCR without pyobjc, speech to a file, a notification, APFS case, a centre click, a hung app, the probe
-        if: runner.os == 'macOS'
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         continue-on-error: true
         run: |
           set +e
@@ -561,13 +573,9 @@ jobs:
           python tests/platform_real/click_hang_check.py || failed=$((failed + 1))
           python tests/platform_real/probe_check.py || failed=$((failed + 1))
           exit $failed
-          reader=$?
-          python tests/platform_real/live_end_to_end_check.py
-          reader=$(( reader + $? ))
-          python tests/platform_real/live_more_checks.py
-          exit $(( reader + $? ))
 
       - name: Live terminal check in real zsh and fish sessions
+        if: ${{ !cancelled() }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get install -y -q --no-install-recommends zsh fish netcat-openbsd
@@ -583,7 +591,7 @@ jobs:
       # kitty read through its own remote control, without changing the shell. WezTerm is checked too when the
       # runner has it (it is not in Ubuntu's archive); the unit tests cover its answers.
       - name: Live reads kitty (and WezTerm) directly
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         continue-on-error: true
         run: |
           sudo apt-get install -y -q --no-install-recommends kitty xvfb
@@ -595,6 +603,7 @@ jobs:
           '
 
       - name: Unit tests for the readers on this runner
+        if: ${{ !cancelled() }}
         run: |
           pip install pytest pytest-asyncio pytest-timeout
           pytest tests/test_platform_readers.py tests/test_platform_quiet_failures.py tests/test_live_shell_line.py tests/test_live_terminal_text.py -q --timeout=120
