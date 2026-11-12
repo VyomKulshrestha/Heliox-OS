@@ -39,4 +39,9 @@ describe("hotkey settings", () => {
     expect(toTauriHotkey("Control+Alt+K")).toBe("Ctrl+Alt+K");
     expect(toTauriHotkey("   ")).toBe("");
   });
+
+  it("explains Wayland instead of calling it a failure", () => {
+    const note = hotkeyFailureMessage({ shortcut: "Ctrl+Space", error: "Wayland: your desktop sets this shortcut." });
+    expect(note).toBe("your desktop sets this shortcut.");
+  });
 });

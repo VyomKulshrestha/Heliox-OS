@@ -58,6 +58,14 @@ async def _capture_screenshot_bytes(
     max_dimension: int | None = None,
 ) -> bytes:
     """Capture screenshot and return PNG bytes."""
+    if sys.platform.startswith("linux"):
+        from pilot.system import portal
+
+        if portal.wayland_session():
+            # Wayland: only the desktop's Screenshot portal may read the screen (pyautogui and scrot see nothing).
+            data = await asyncio.to_thread(portal.capture_png, region)
+            if data:
+                return _resize_png_for_vision(data, max_dimension) if max_dimension else data
     try:
         from io import BytesIO
 

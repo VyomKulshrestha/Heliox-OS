@@ -12417,6 +12417,14 @@ def handle_tool(tool_name, params):
         )
         self._start_tts_warmup()
 
+        # Wayland: the app's own shortcut cannot grab keys there, so the daemon binds it through the desktop portal.
+        from pilot.system.wayland_shortcut import start_if_wayland
+
+        loop = asyncio.get_running_loop()
+        self._wayland_shortcut = start_if_wayland(
+            lambda method, params: asyncio.run_coroutine_threadsafe(self._broadcast_notification(method, params), loop)
+        )
+
         # ── Start LAN mesh if enabled ──
         if self._mesh:
             try:

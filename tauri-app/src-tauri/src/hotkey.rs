@@ -17,6 +17,18 @@ pub fn default_shortcut() -> &'static str {
     }
 }
 
+/// Shown in Settings on Wayland, where the shortcut comes from the desktop's portal.
+pub const WAYLAND_NOTE: &str = "Wayland: your desktop sets this shortcut. Heliox asks for it through the desktop when it starts; change the keys in your desktop's keyboard settings.";
+
+/// A Wayland session on Linux (the variables a Wayland compositor sets for its clients).
+pub fn wayland_session() -> bool {
+    cfg!(target_os = "linux")
+        && (std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var("XDG_SESSION_TYPE")
+                .map(|kind| kind.eq_ignore_ascii_case("wayland"))
+                .unwrap_or(false))
+}
+
 pub fn registration_error() -> Option<String> {
     REGISTRATION_ERROR
         .lock()
@@ -57,6 +69,12 @@ fn save_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
 pub fn register_hotkey(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.handle().clone();
     let shortcut = load_saved_shortcut(&app_handle);
+    if wayland_session() {
+        // The plugin grabs keys through X11, which a Wayland session does not allow; the daemon binds the shortcut
+        // through the desktop's GlobalShortcuts portal instead (daemon/pilot/system/wayland_shortcut.py).
+        set_registration_error(Some(WAYLAND_NOTE.to_string()));
+        return Ok(());
+    }
     match do_register(&app_handle, &shortcut) {
         Ok(()) => set_registration_error(None),
         Err(e) => {

@@ -75,6 +75,8 @@ export function hotkeyFailureMessage(
   platform = currentPlatform(),
 ): string {
   if (!status?.error) return "";
+  // Wayland: not a failure; the desktop owns global shortcuts there (see hotkey.rs and wayland_shortcut.py).
+  if (status.error.startsWith("Wayland:")) return status.error.slice("Wayland:".length).trim();
   const shortcut = status.shortcut ? displayHotkey(status.shortcut, platform) : "The shortcut";
   return `${shortcut} could not be registered (${status.error}). Another app may be using it: choose a different shortcut below.`;
 }

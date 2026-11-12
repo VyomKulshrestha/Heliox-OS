@@ -382,6 +382,40 @@ jobs:
             exit $status
           '
 
+      # Screenshots on Wayland go through the desktop's portal. Under sway, xdg-desktop-portal-wlr answers without a
+      # dialog, so this proves Heliox's client end to end; GNOME's and KDE's consent dialogs are not proven here.
+      # GlobalShortcuts is not in xdg-desktop-portal-wlr: the client is checked against a fake portal on its own bus.
+      - name: Linux, Wayland portals (Screenshot under sway, GlobalShortcuts against a fake portal)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          set +e
+          sudo apt-get install -y -q --no-install-recommends sway xdg-desktop-portal xdg-desktop-portal-wlr
+          mkdir -p "$HOME/.config/xdg-desktop-portal"
+          printf "[preferred]\ndefault=wlr\n" > "$HOME/.config/xdg-desktop-portal/sway-portals.conf"
+          dbus-run-session -- bash -c '
+            export XDG_RUNTIME_DIR=$(mktemp -d) && chmod 700 "$XDG_RUNTIME_DIR"
+            export XDG_CURRENT_DESKTOP=sway
+            printf "output HEADLESS-1 resolution 1280x800\n" > /tmp/sway-portal.conf
+            WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman sway -c /tmp/sway-portal.conf >/tmp/sway-portal.log 2>&1 &
+            sock=""
+            for i in $(seq 1 50); do
+              sock=$(ls "$XDG_RUNTIME_DIR" | grep -E "^wayland-[0-9]+$" | head -1)
+              [ -n "$sock" ] && break
+              sleep 0.2
+            done
+            unset DISPLAY
+            export WAYLAND_DISPLAY=$sock
+            dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_RUNTIME_DIR
+            python tests/platform_real/linux_portal_check.py real
+            status=$?
+            exit $status
+          '
+          real=$?
+          dbus-run-session -- python tests/platform_real/linux_portal_check.py fake
+          fake=$?
+          exit $(( real + fake ))
+
       - name: macOS - permissions, frontmost app and the Accessibility reader
         if: runner.os == 'macOS'
         run: |
