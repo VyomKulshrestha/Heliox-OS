@@ -55,6 +55,9 @@ def test_a_zoom_meeting_process_is_a_call():
 def test_when_nothing_can_be_read_it_is_not_a_call(monkeypatch):
     monkeypatch.setattr(call_detection, "_mic_users_linux", lambda _own: None)  # no pactl
     monkeypatch.setattr(call_detection, "_processes", lambda: [])
+    # Heliox's own PIDs come from psutil: imported for the first time while sys.platform says "linux", psutil
+    # leaves its half-loaded Linux modules behind and fails in every later test of this Windows process.
+    monkeypatch.setattr(call_detection, "_own_pids", lambda: {0})
     monkeypatch.setattr(call_detection.sys, "platform", "linux")
     assert call_detection.current_call() == ""
     monkeypatch.setattr(call_detection.sys, "platform", "freebsd13")
