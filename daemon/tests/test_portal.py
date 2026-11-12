@@ -49,6 +49,9 @@ def test_paths_messages_and_wayland_detection():
     with pytest.raises(PortalError):
         portal.file_from_uri("https://example.com/a.png")
     assert "answer was no" in portal.explain(1, "take a screenshot")
+    refused = portal.explain(2, "take a screenshot")
+    assert "allow screenshots for Heliox when it asks" in refused and "grim" in refused
+    assert "portal response 2" in portal.explain(2, "bind shortcuts")
     assert "xdg-desktop-portal" in portal.no_portal("take a screenshot", "org.freedesktop.DBus.Error.ServiceUnknown")
     assert portal.wayland_session({"WAYLAND_DISPLAY": "wayland-0"})
     assert portal.wayland_session({"XDG_SESSION_TYPE": "wayland"})

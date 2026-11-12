@@ -118,3 +118,42 @@ def test_each_systems_search_reads_names_only():
     assert cc.linux_entries("svc", lambda attrs: [{"service": "svc", "username": "a"}, {"service": "svc"}]) == ["a"]
     assert cc.macos_entries("svc", lambda args: (0, '"acct"<blob>="b"')) == ["b"]
     assert cc.macos_entries("svc", lambda args: (44, "not found")) == []
+
+
+def _platform_real(name: str):
+    import importlib.util
+
+    path = ROOT / "daemon" / "tests" / "platform_real" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"platform_real_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_ci_checks_read_cmdkey_and_tell_heliox_leftovers_from_other_programs():
+    store = _platform_real("credential_store_check")
+    listing = (
+        "Currently stored credentials:\n\n"
+        "    Target: LegacyGeneric:target=pilot-ai-command-center\n    Type: Generic\n    User: heliox-ci-12\n\n"
+        "    Target: WindowsLive:target=virtualapp/didlogical\n"
+        "    Target: heliox-ci-12@heliox-co-adaptation\n"
+    )
+    assert store.windows_targets(listing) == {
+        "pilot-ai-command-center",
+        "virtualapp/didlogical",
+        "heliox-ci-12@heliox-co-adaptation",
+    }
+
+    home = _platform_real("home_snapshot")
+    sep = "/" if "/" in str(Path("a/b")) else "\\"
+    before = {".cache", f".cache{sep}pip"}
+    after = before | {
+        f".cache{sep}uv",
+        f".cache{sep}uv{sep}wheels",
+        ".pilot",
+        f".pilot{sep}other.conf",
+        f".config{sep}heliox-os",
+    }
+    tops = home.new_tops(before, after)
+    assert tops == [f".cache{sep}uv", f".config{sep}heliox-os", ".pilot"]
+    assert [t for t in tops if home.HELIOX.search(sep + t)] == [f".config{sep}heliox-os", ".pilot"]

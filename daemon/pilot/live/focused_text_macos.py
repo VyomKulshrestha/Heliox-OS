@@ -85,6 +85,20 @@ def element_answer(err: int) -> bool | None:
     return None
 
 
+def window_open_answer(window_err: int, has_window: bool, listed: bool | None) -> bool | None:
+    """Whether a field's window is still open, from its kAXWindowAttribute answer and whether that window is in its
+    app's kAXWindowsAttribute list (None: the list could not be read). Pure.
+
+    A closed window can leave its elements answering (CI, 12 November: the app kept the text field alive after
+    the window closed), so the element answering is not enough; the window must still be one of the app's.
+    """
+    if window_err == AX_ERROR_INVALID_ELEMENT:
+        return False
+    if window_err != 0 or not has_window:
+        return None
+    return listed
+
+
 def pid_alive(pid: int) -> bool:
     import os
 
@@ -142,6 +156,20 @@ class AXBackend:
         API cannot tell (for example the app is busy)."""
         err, _value = self._ax.AXUIElementCopyAttributeValue(element, "AXRole", None)
         return element_answer(err)
+
+    def window_open(self, element: Any) -> bool | None:
+        """Whether the element's window is still one of its app's windows (minimised counts); None when unknown."""
+        err, window = self._ax.AXUIElementCopyAttributeValue(element, "AXWindow", None)
+        if err != 0 or window is None:
+            return window_open_answer(err, window is not None, None)
+        pid = self.pid(element)
+        if not pid:
+            return None
+        app = self._ax.AXUIElementCreateApplication(pid)
+        self._ax.AXUIElementSetMessagingTimeout(app, MESSAGING_TIMEOUT)
+        err_list, windows = self._ax.AXUIElementCopyAttributeValue(app, "AXWindows", None)
+        listed = None if err_list != 0 or windows is None else any(self._cf.CFEqual(window, w) for w in windows)
+        return window_open_answer(0, True, listed)
 
     def settable(self, element: Any, name: str) -> bool:
         err, value = self._ax.AXUIElementIsAttributeSettable(element, name, None)
@@ -233,7 +261,8 @@ def remember_element(field: str, element: Any) -> None:
 
 
 def field_exists(field: str) -> bool | None:
-    """Whether the element behind a field id still exists: False once its window closed or its app quit."""
+    """Whether the field behind a field id is still there: False once its element is gone, its window is no longer
+    one of its app's windows, or its app quit. None (keep the card) when that cannot be told."""
     try:
         pid = int(field.split(":")[1])
     except (IndexError, ValueError):
@@ -245,7 +274,13 @@ def field_exists(field: str) -> bool | None:
     if element is None or reader is None:
         return None
     with _lock:
-        return reader.backend.element_valid(element)
+        valid = reader.backend.element_valid(element)
+        if valid is False:
+            return False
+        window = reader.backend.window_open(element)
+    if window is False:
+        return False
+    return True if window else None
 
 
 _lock = threading.Lock()

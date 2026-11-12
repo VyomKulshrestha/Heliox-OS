@@ -392,12 +392,14 @@ jobs:
       # Screenshots on Wayland go through the desktop's portal. Under sway, xdg-desktop-portal-wlr answers without a
       # dialog, so this proves Heliox's client end to end; GNOME's and KDE's consent dialogs are not proven here.
       # GlobalShortcuts is not in xdg-desktop-portal-wlr: the client is checked against a fake portal on its own bus.
+      # xdg-desktop-portal-wlr (Screenshot version 1, so the front end asks no permission) runs grim to take the
+      # picture; without grim its call returns -1, which sd-bus reports as "Operation not permitted" (CI, 12 November).
       - name: Linux, Wayland portals (Screenshot under sway, GlobalShortcuts against a fake portal)
         if: runner.os == 'Linux'
         continue-on-error: true
         run: |
           set +e
-          sudo apt-get install -y -q --no-install-recommends sway xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk pipewire
+          sudo apt-get install -y -q --no-install-recommends sway xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk pipewire grim
           mkdir -p "$HOME/.config/xdg-desktop-portal"
           printf "[preferred]\ndefault=wlr;gtk\norg.freedesktop.impl.portal.Screenshot=wlr\norg.freedesktop.impl.portal.Access=gtk\n" > "$HOME/.config/xdg-desktop-portal/sway-portals.conf"
           ls /usr/share/xdg-desktop-portal/portals/ /usr/share/dbus-1/services/ | grep -i portal || true
@@ -657,6 +659,109 @@ jobs:
           if [ $status -ne 0 ]; then tail -60 "$RUNNER_TEMP/daemon.log"; fi
           exit $status
 
+  # ── Real setup, repair, credential store and removal (experimental, non-blocking) ──
+  # The desktop app's own Rust code, without a window, in the runner's real home folder: the first run (setup.rs),
+  # the repair after the environment's interpreter is deleted, then daemon/tests/platform_real/real_removal.sh: the
+  # daemon's credential cleanup against the system's real credential store (one test entry per Heliox service,
+  # checked with cmdkey, security or secret-tool), and "Remove Heliox's files" (uninstall.rs) in both modes, with
+  # what is left in the home folder listed. The ignored Rust tests run only under GitHub Actions. The app's window
+  # and its buttons are not used here.
+  real-removal:
+    name: Real setup, repair and removal (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux dependencies (the app's libraries, a GNOME keyring and secret-tool)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev librsvg2-dev libgtk-3-dev \
+            libayatana-appindicator3-dev gnome-keyring libsecret-tools dbus dbus-x11
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "tauri-app/src-tauri -> target"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tauri-app/ui/package-lock.json
+
+      - name: Build frontend (Tauri embeds it)
+        working-directory: tauri-app/ui
+        run: npm ci && npx vite build
+
+      - name: Build the app's tests
+        working-directory: tauri-app/src-tauri
+        run: cargo test --all-targets --no-run
+
+      - name: Paths, and keyring for the runner's own Python
+        run: |
+          python -m pip install --disable-pip-version-check --progress-bar off keyring
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "ENVPY=$HOME/.config/heliox-os/env/Scripts/python.exe" >> "$GITHUB_ENV"
+            echo "HELIOX_DAEMON_SOURCE=$(cygpath -w "$GITHUB_WORKSPACE/daemon")" >> "$GITHUB_ENV"
+          else
+            echo "ENVPY=$HOME/.config/heliox-os/env/bin/python" >> "$GITHUB_ENV"
+            echo "HELIOX_DAEMON_SOURCE=$GITHUB_WORKSPACE/daemon" >> "$GITHUB_ENV"
+          fi
+          echo "SYSPY=$(command -v python)" >> "$GITHUB_ENV"
+          python daemon/tests/platform_real/home_snapshot.py save "$RUNNER_TEMP/home-before.txt"
+
+      - name: First run through the app's own setup code
+        working-directory: tauri-app/src-tauri
+        run: |
+          HELIOX_REAL_SETUP=1 cargo test --all-targets -- --ignored --exact \
+            setup::tests::real_first_run_installs_through_the_apps_code --nocapture
+
+      - name: The daemon it installed answers, and is stopped
+        run: |
+          set +e
+          "$ENVPY" -m pilot.server > "$RUNNER_TEMP/daemon.log" 2>&1 &
+          "$ENVPY" daemon/tests/platform_real/first_run_rpc_check.py 240
+          status=$?
+          if [ $status -ne 0 ]; then tail -60 "$RUNNER_TEMP/daemon.log"; fi
+          pkill -f "pilot.server" 2>/dev/null || taskkill //F //IM python.exe >/dev/null 2>&1 || true
+          sleep 3
+          exit $status
+
+      - name: Repair through the app's own code - the environment's interpreter is gone
+        working-directory: tauri-app/src-tauri
+        run: |
+          rm -f "$ENVPY"
+          HELIOX_REAL_SETUP=1 cargo test --all-targets -- --ignored --exact \
+            setup::tests::real_repair_through_the_apps_code --nocapture
+
+      - name: Credential store and removal, for real
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            dbus-run-session -- sh daemon/tests/platform_real/with_keyring.sh bash daemon/tests/platform_real/real_removal.sh
+          else
+            bash daemon/tests/platform_real/real_removal.sh
+          fi
+
   # ── macOS type check of the desktop app (non-blocking) ──
   # The Rust job runs on Ubuntu and a Windows check is done locally; this compiles the app for macOS so a Mac-only
   # error is found here, not by someone building a release.
@@ -691,8 +796,8 @@ jobs:
         working-directory: tauri-app/src-tauri
         run: cargo check --all-targets
 
-      # Real removal on a Mac's file system (APFS): app files go, data stays, a link out of Heliox's folders is not
-      # followed. The same test runs on Linux in the Rust job.
-      - name: Remove Heliox's files (unit tests on a real file system)
+      # The whole suite on a Mac: the removal on APFS (app files go, data stays, a link out of Heliox's folders is
+      # not followed), the per-user lock and the bring-forward port of instance.rs, and the rest.
+      - name: Cargo tests
         working-directory: tauri-app/src-tauri
-        run: cargo test --all-targets -- uninstall
+        run: cargo test --all-targets

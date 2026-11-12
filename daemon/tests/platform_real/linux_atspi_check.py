@@ -66,6 +66,21 @@ class Fixture:
         self.wait_for(f"ok {command}", 10.0)
         time.sleep(0.3)
 
+    def presses(self) -> int:
+        """How many times the button's own handler has run, or -1 when the fixture does not say."""
+        assert self.proc.stdin is not None and self.proc.stdout is not None
+        self.proc.stdin.write("presses\n")
+        self.proc.stdin.flush()
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            line = self.proc.stdout.readline()
+            if not line:
+                return -1
+            if line.startswith("presses "):
+                self.wait_for("ok presses", 5.0)
+                return int(line.split()[1])
+        return -1
+
     def close(self) -> None:
         try:
             self.send("quit")
@@ -321,6 +336,10 @@ def main() -> int:
         check(f"{session}/read-cost", median < 50.0, f"median {median:.1f} ms, max {max(timings):.1f} ms over 40 reads")
 
         snapshot_checks(session, check)
+        # The real press through the AT-SPI action, and nothing pressed or clicked once the window is a refused one.
+        from press_checks import press_checks
+
+        press_checks(session, check, fixture.presses, lambda title: fixture.send(f"title {title}"), "Draft - edited 1")
 
         # Live drops a card when its field's window has gone: the window exists now, and not once the app has quit.
         if back is not None and back.field:

@@ -97,6 +97,8 @@ Settings and data are not touched.
 **How it is tested:**
 - **Real run on Windows (12 November).** A venv whose `python.exe` was deleted was detected ("no longer starts; building it again"), rebuilt from the system Python and given its core.
 - **CI, job `first-run`.** On all three systems, with the runner's Python and with a private one, the job deletes the environment's interpreter after setup. It then reruns the script and checks three things: that the repair was detected, that `env.broken` is gone, and that the rebuilt daemon answers.
+- **CI, job `real-removal`, through the app's own Rust code.** On all three systems, a headless run of the same functions the Repair button uses (`startup_check`, `run_command` with the recorded groups, `read_lines` into the screen's state, `write_groups`, then `launch_daemon`), after the job deleted the environment's interpreter. It checks that the start-up check finds `needs_repair`, that the repair finishes with the core in, that `env.broken` is gone, that the groups are kept, and that the daemon starts from the result the way the app starts it.
+- **What no CI run proves:** the window itself (the "Repair Heliox" screen, its button, the `setup-progress` events reaching it) and `setup_repair`'s own two lines, which pause the supervisor and stop the daemon the app holds. A headless runner has no window to press; vitest covers the screen, and the Rust above covers everything the button starts.
 - **Unit tests.** The start-up decision (repair before update, nothing to do, update) has Rust unit tests; the screen has vitest.
 
 ## Removing Heliox's files
@@ -144,10 +146,16 @@ Heliox creates no login item, service or scheduled task.
 
 **How it is tested:**
 - **Rust tests on a real file system.** On Windows here, on Linux in the Rust job and on macOS in the `rust-macos` job, the tests build a home folder with an environment, settings and a quarantined file, plus a link pointing outside. Removing with "keep my data" deletes the environment and keeps the settings and the quarantined file. Removing everything deletes Heliox's folders. In both cases the file outside is untouched.
-- **Credential cleanup.** Tested with a fake keyring backend (`daemon/tests/test_credential_cleanup.py`): entries are removed by service search and by known name, an entry the store refuses is listed with how to remove it, and a store that cannot be searched still has its known names removed. The search by service ran for real on Windows here, listing names only. Removal has not run against a real credential store on any system.
+- **Credential cleanup with a fake keyring** (`daemon/tests/test_credential_cleanup.py`): entries are removed by service search and by known name, an entry the store refuses is listed with how to remove it, and a store that cannot be searched still has its known names removed. The search by service also ran for real on Windows here, listing names only.
+- **Credential cleanup against real stores, CI job `real-removal`** (`daemon/tests/platform_real/credential_store_check.py`). On each runner the check writes one test entry under each of the four services with `keyring`, then sees them with the system's own tool: `cmdkey /list` on Windows, `security find-generic-password` in the macOS login keychain, `secret-tool lookup` on Linux with a GNOME keyring unlocked for a `dbus-run-session` (`with_keyring.sh`). It runs the daemon's cleanup and checks with the same tool that none is left. Before writing, it searches the store for any Heliox entry and refuses to go on if one exists, so only entries the check created are ever touched.
+- **A real removal, CI job `real-removal`** (`daemon/tests/platform_real/real_removal.sh`). After a first run and a repair through the app's Rust code in the runner's real home folder, `uninstall::remove_heliox` runs through an ignored Rust test that runs only under GitHub Actions:
+  - "everything" while the environment exists: the test keys go through the daemon's code, then the files;
+  - setup again, then "keep my data": the environment goes, the data folders and the keys stay;
+  - then "everything" with the environment already gone: the files go and the four services are listed for the person, as the screen would show;
+  - each time, `home_snapshot.py` lists what the run left in the home folder (four levels down) against a listing taken before setup. Anything left with Heliox's names fails the job; anything else is listed as another program's (pip's cache, for example).
 - **Rust tests** also cover no home folder, the safe-location lock, `.pilot` keeping another program's file, the credential report and the Windows web view note.
 - **Vitest:** the screen's choice, confirmation, the after-removal screen, and the three replies: a bare ok, a refusal, no reply.
-- **Not tested:** the desktop app driving a real removal (it would remove the runner's own install).
+- **Not tested:** the window driving a removal (the confirmation, the button, the after-removal screen over a real removal), and the step in `heliox_files_remove` that pauses the supervisor and stops the daemon the app holds; in the CI job the daemon is stopped by the job first.
 
 ## Where the code is
 

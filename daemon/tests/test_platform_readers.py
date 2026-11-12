@@ -669,9 +669,13 @@ def test_macos_field_exists_from_the_element_and_its_process(monkeypatch):
 
     class Backend:
         valid = True
+        window: bool | None = True
 
         def element_valid(self, element):
             return self.valid
+
+        def window_open(self, element):
+            return self.window
 
     backend = Backend()
     monkeypatch.setattr(M, "_reader", type("R", (), {"backend": backend})())
@@ -679,10 +683,23 @@ def test_macos_field_exists_from_the_element_and_its_process(monkeypatch):
     monkeypatch.setattr(M, "pid_alive", lambda pid: pid == 501)
     M.remember_element("ax:501:1f", object())
     assert M.field_exists("ax:501:1f") is True
-    backend.valid = False  # the window closed: its elements are invalid
+    backend.window = False  # the window closed but the app keeps its text field alive (seen on a real Mac in CI)
+    assert M.field_exists("ax:501:1f") is False
+    backend.window = None  # the app's window list cannot be read: cannot tell, the card stays
+    assert M.field_exists("ax:501:1f") is None
+    backend.valid, backend.window = False, True  # the element itself is gone
     assert M.field_exists("ax:501:1f") is False
     assert M.field_exists("ax:777:2a") is False  # the app quit
     assert M.field_exists("ax:501:99") is None  # never read here: cannot tell
+
+
+def test_macos_window_open_answer_needs_the_window_in_its_apps_list():
+    assert M.window_open_answer(0, True, True) is True
+    assert M.window_open_answer(0, True, False) is False
+    assert M.window_open_answer(0, True, None) is None
+    assert M.window_open_answer(M.AX_ERROR_INVALID_ELEMENT, False, None) is False
+    assert M.window_open_answer(M.AX_ERROR_CANNOT_COMPLETE, False, None) is None
+    assert M.window_open_answer(0, False, None) is None  # a field with no window attribute: cannot tell
 
 
 def test_linux_field_exists_from_the_accessibility_bus(monkeypatch):

@@ -2333,28 +2333,35 @@ class Executor:
             return None
         if not p.snapshot_id:
             raise ValueError("element_ref requires the snapshot_id of the screen_accessibility_snapshot it came from")
-        from pilot.system.accessibility import default_store
+        from pilot.system.accessibility import WAYLAND_NO_POINTER, default_store, pointer_click_allowed
 
         element = default_store().resolve(p.snapshot_id, p.element_ref)
+        if not pointer_click_allowed():
+            raise ValueError(WAYLAND_NO_POINTER.format(label=f"{element.label} ({element.ref})"))
         x, y = element.center
         return x, y, f"{element.label} ({element.ref})"
 
     @staticmethod
-    async def _press_element_in_background(p: MouseParams) -> str | None:
-        """Single left clicks on a ref try UI Automation first so the cursor stays with the person."""
+    async def _press_element_in_background(p: MouseParams, excluded: tuple[str, ...] = ()) -> str | None:
+        """Single left clicks on a ref press the control first (UI Automation, AXPress, AT-SPI) so the cursor stays
+        with the person. A control whose window Heliox never reads raises, and is not clicked either."""
         if not p.element_ref or not p.snapshot_id or p.button != "left" or p.clicks != 1:
             return None
-        from pilot.system.accessibility import default_store, press_in_background
+        from pilot.system import accessibility
+        from pilot.system.platform_detect import Platform
 
-        store = default_store()
+        store = accessibility.default_store()
         element = store.resolve(p.snapshot_id, p.element_ref)
         window = store.window_of(p.snapshot_id)
         if window is None:
             return None
-        pattern = await press_in_background(window, element)
+        pattern = await accessibility.press_in_background(window, element, snapshot_id=p.snapshot_id, excluded=excluded)
         if pattern is None:
             return None
-        return f"Pressed {element.label} ({element.ref}) through UI Automation ({pattern}); the cursor did not move"
+        api = {Platform.MACOS: "the Accessibility API", Platform.LINUX: "AT-SPI"}.get(
+            accessibility.CURRENT_PLATFORM, "UI Automation"
+        )
+        return f"Pressed {element.label} ({element.ref}) through {api} ({pattern}); the cursor did not move"
 
     async def _exec_mouse_click(self, action: Action) -> str:
         from pilot.system.input_control import mouse_click
@@ -2362,7 +2369,10 @@ class Executor:
         p: MouseParams = action.parameters  # type: ignore[assignment]
         x, y = p.x, p.y
         target_label = ""
-        pressed = await self._press_element_in_background(p)
+        # Apps the person excluded from the timeline are never read or pressed, here as everywhere else.
+        config = getattr(self, "_config", None)
+        excluded = tuple(getattr(getattr(config, "timeline", None), "excluded_apps", ()) or ())
+        pressed = await self._press_element_in_background(p, excluded)
         if pressed is not None:
             return pressed
         grounded = self._accessibility_target(p)

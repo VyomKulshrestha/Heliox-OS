@@ -1,7 +1,8 @@
 """An AppKit window with a text field and a secure text field, driven over stdin, for the macOS check.
 
-Commands: ``focus entry``, ``focus password``, ``title <text>``, ``insert <text>``, ``quit``. Prints ``ready`` once
-the window is in front with the text field focused.
+Commands: ``focus entry``, ``focus password``, ``title <text>``, ``insert <text>``, ``presses`` (prints
+``presses <n>``, how many times the button's own action ran), ``quit``. Prints ``ready`` once the window is in
+front with the text field focused. The fields have placeholders ("message", "password"), as their labels.
 """
 
 from __future__ import annotations
@@ -33,6 +34,9 @@ class Driver(NSObject):
         self.window.setTitle_("Heliox AX fixture")
         self.entry = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(20, 80, 380, 24))
         self.password = AppKit.NSSecureTextField.alloc().initWithFrame_(AppKit.NSMakeRect(20, 30, 380, 24))
+        self.entry.setPlaceholderString_("message")
+        self.password.setPlaceholderString_("password")
+        self.presses = 0
         self.button = AppKit.NSButton.buttonWithTitle_target_action_("Press me", self, "pressed:")
         self.button.setFrame_(AppKit.NSMakeRect(300, 105, 100, 28))
         self.window.contentView().addSubview_(self.button)
@@ -46,6 +50,7 @@ class Driver(NSObject):
         return self
 
     def pressed_(self, _sender):
+        self.presses += 1
         print("pressed", flush=True)
 
     def tick_(self, _timer):
@@ -59,6 +64,8 @@ class Driver(NSObject):
                 editor = self.window.fieldEditor_forObject_(True, None)
                 responder = self.window.firstResponder()
                 (responder if hasattr(responder, "insertText_") else editor).insertText_(arg)
+            elif command == "presses":
+                print(f"presses {self.presses}", flush=True)
             elif command == "quit":
                 AppKit.NSApplication.sharedApplication().terminate_(None)
 

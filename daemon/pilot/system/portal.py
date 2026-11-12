@@ -62,9 +62,23 @@ def session_path(unique_name: str, handle_token: str) -> str:
     return f"{PORTAL_PATH}/session/{sender}/{handle_token}"
 
 
+# Response 2 to a screenshot request, in xdg-desktop-portal 1.18 (src/screenshot.c): with a backend of Screenshot
+# version 2 or later (GNOME, KDE), a request without "interactive" first consults the PermissionStore ("screenshot"
+# table) and, when nothing is stored, asks through the Access dialog; a stored "no", a "Deny" there, or a failed
+# dialog all answer 2. A version-1 backend (xdg-desktop-portal-wlr) is called directly: it runs grim, and when grim
+# is missing its call fails ("Operation not permitted", sd-bus's reading of -1) and the answer is 2 as well.
+SCREENSHOT_REFUSED = (
+    "The desktop did not take the screenshot. If it asked whether Heliox may take screenshots, allow screenshots for "
+    "Heliox when it asks again. If it did not ask, screenshots for apps are turned off in its privacy settings; on "
+    "sway and other wlroots desktops, xdg-desktop-portal-wlr also needs the grim package."
+)
+
+
 def explain(code: int, what: str) -> str:
     if code == 1:
         return f"The desktop asked whether Heliox may {what}, and the answer was no."
+    if code == 2 and what == "take a screenshot":
+        return SCREENSHOT_REFUSED
     return f"The desktop could not let Heliox {what} (portal response {code})."
 
 

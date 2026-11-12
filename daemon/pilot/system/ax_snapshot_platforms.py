@@ -9,16 +9,30 @@ system credential stores, apps excluded from the timeline) are refused before an
 
 Role names are mapped to the Windows control types the planner already knows (Button, Edit, CheckBox, ...), by
 pure tables tested on every system.
+
+A control from a snapshot can be pressed without the mouse: AXPress on macOS, the AT-SPI Action interface on
+Linux, when the control offers it. The press checks the control's window again first, since a window can become
+one Heliox never reads after the snapshot was taken (a title change, a password manager taking its place), and
+then nothing is pressed or clicked. Each press returns an outcome word, as the Windows script does: the action
+used, "none" (the control offers no press; the caller may click it), "missing", "disabled", "refused" or "failed".
 """
 
 from __future__ import annotations
 
 import zlib
+from collections import OrderedDict
 from collections.abc import Iterable
 from typing import Any
 
 MAX_TREE_DEPTH = 12
 MAX_NODE_VISITS = 2500
+MAX_REMEMBERED_SNAPSHOTS = 8
+
+# AT-SPI action names that press a control, best first (GTK buttons offer "click", Qt "Press", menus "activate").
+PRESS_ACTIONS = ("click", "press", "activate", "toggle", "jump")
+
+# kAXErrorInvalidUIElement: the control is gone.
+AX_INVALID_ELEMENT = -25202
 
 # macOS AXRole (and subrole) to the planner's control types.
 MAC_ROLES = {
@@ -98,7 +112,55 @@ def refuse_window(app: str, title: str, excluded: Iterable[str]) -> str:
     return ""
 
 
+# ── the controls of recent snapshots, for pressing them ──
+
+_handles: OrderedDict[str, list[Any]] = OrderedDict()
+
+
+def remember(snapshot_id: str, handles: list[Any], capacity: int = MAX_REMEMBERED_SNAPSHOTS) -> None:
+    """Keep a snapshot's native controls (AXUIElements, AT-SPI refs) in element order, for the last few snapshots."""
+    _handles[snapshot_id] = list(handles)
+    _handles.move_to_end(snapshot_id)
+    while len(_handles) > capacity:
+        _handles.popitem(last=False)
+
+
+def handle_for(snapshot_id: str, ref: str) -> Any | None:
+    """The native control behind ``ref`` ("e3") in a remembered snapshot, or None."""
+    handles = _handles.get(snapshot_id)
+    if not handles or not ref.startswith("e") or not ref[1:].isdigit():
+        return None
+    index = int(ref[1:]) - 1
+    return handles[index] if 0 <= index < len(handles) else None
+
+
+def choose_action(names: Iterable[str]) -> int | None:
+    """The index of the action that presses a control, or None when none of its actions does. Pure."""
+    folded = [str(name).strip().casefold() for name in names]
+    for wanted in PRESS_ACTIONS:
+        if wanted in folded:
+            return folded.index(wanted)
+    return None
+
+
 # ── macOS ──
+
+# Where a control's label is, in order. A field's AXValue is never one of them; a placeholder is the app's own
+# hint text, not what the person typed. (CI, 12 November: with AXTitle and AXDescription alone, two text fields
+# and three buttons of a real window came back unnamed.)
+MAC_LABEL_ATTRIBUTES = ("AXTitle", "AXDescription", "AXPlaceholderValue", "AXHelp")
+
+
+def mac_label(get: Any, role: str) -> str:
+    """A control's label from ``get(attribute)``, never a field's value; static text is a label itself. Pure."""
+    for key in MAC_LABEL_ATTRIBUTES:
+        value = get(key)
+        if isinstance(value, str) and value.strip():
+            return " ".join(value.split())
+    if role == "AXStaticText":
+        value = get("AXValue")
+        return " ".join(value.split()) if isinstance(value, str) else ""
+    return ""
 
 
 def capture_macos(
@@ -152,6 +214,7 @@ def capture_macos(
     if reason:
         raise RuntimeError(reason)
     elements: list[dict] = []
+    handles: list[Any] = []
     queue: list[tuple[Any, int]] = [(window, 0)]
     visits = 0
     while queue and len(elements) < max_elements and visits < MAX_NODE_VISITS:
@@ -162,10 +225,7 @@ def capture_macos(
         kind = control_type(role, MAC_ROLES)
         if role == "AXRadioButton" and subrole == "AXTabButton":
             kind = "TabItem"
-        # The label, never the value of a field: AXValue is read only for static text, which is a label itself.
-        name = str(attr(element, "AXTitle") or attr(element, "AXDescription") or "")
-        if not name and role == "AXStaticText":
-            name = str(attr(element, "AXValue") or "")
+        name = mac_label(lambda key, element=element: attr(element, key), role)
         bounds = box(element)
         if element is not window and keep(kind, name) and bounds[2] > 0 and bounds[3] > 0:
             elements.append(
@@ -177,6 +237,7 @@ def capture_macos(
                     bool(attr(element, "AXFocused")),
                 )
             )
+            handles.append(element)
         if depth < MAX_TREE_DEPTH:
             queue.extend((child, depth + 1) for child in (attr(element, "AXChildren") or []))
     import CoreFoundation
@@ -184,7 +245,45 @@ def capture_macos(
     wx, wy, ww, wh = box(window)
     key = window_key(f"{pid}:{CoreFoundation.CFHash(window)}")
     payload = {"title": title, "process": int(pid), "elements": elements, "truncated": bool(queue)}
+    payload["_handles"] = handles  # taken out before the payload is parsed; see accessibility.capture_snapshot
     return payload, (key, (wx, wy, wx + ww, wy + wh))
+
+
+def press_macos(element: Any, excluded: Iterable[str] = ()) -> tuple[str, str]:
+    """AXPress on a control from a snapshot, after checking its window again. (outcome, detail)."""
+    import AppKit
+    import ApplicationServices as ax  # noqa: N813
+
+    if not ax.AXIsProcessTrusted():
+        return "failed", "Heliox needs Accessibility access to press a control."
+    err, window = ax.AXUIElementCopyAttributeValue(element, "AXWindow", None)
+    if err == AX_INVALID_ELEMENT:
+        return "missing", ""
+    if err != 0 or window is None:
+        # A control whose window cannot be named is not pressed: its window may be one Heliox never reads.
+        return "refused", "Heliox cannot tell which window this control is in, so it does not press it."
+    err, pid = ax.AXUIElementGetPid(window, None)
+    running = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid) if err == 0 else None
+    app_name = str(running.localizedName() or "") if running is not None else ""
+    err, title = ax.AXUIElementCopyAttributeValue(window, "AXTitle", None)
+    reason = refuse_window(app_name, str(title or "") if err == 0 else "", excluded)
+    if reason:
+        return "refused", reason
+    err, enabled = ax.AXUIElementCopyAttributeValue(element, "AXEnabled", None)
+    if err == 0 and enabled is False:
+        return "disabled", ""
+    err, names = ax.AXUIElementCopyActionNames(element, None)
+    if err == AX_INVALID_ELEMENT:
+        return "missing", ""
+    if err != 0 or "AXPress" not in list(names or []):
+        return "none", ""
+    err = ax.AXUIElementPerformAction(element, "AXPress")
+    if err == 0:
+        return "AXPress", ""
+    if err == AX_INVALID_ELEMENT:
+        return "missing", ""
+    # Cannot-complete often means the app ran the action and is now busy (a sheet opened): never click again.
+    return "failed", f"AXPress returned {err}"
 
 
 def front_window_macos() -> tuple[int, tuple[int, int, int, int]] | None:
@@ -221,10 +320,10 @@ def front_window_macos() -> tuple[int, tuple[int, int, int, int]] | None:
 # ── Linux ──
 
 
-def _atspi_window(client: Any) -> Any:
+def _atspi_window(client: Any, start: Any = None) -> Any:
     from pilot.live import focused_text_linux as L
 
-    ref = client.focused()
+    ref = start if start is not None else client.focused()
     if ref is None:
         raise RuntimeError("No window is in front to read (nothing has keyboard focus on the accessibility bus).")
     for _ in range(40):
@@ -260,6 +359,7 @@ def capture_linux(
         if reason:
             raise RuntimeError(reason)
         elements: list[dict] = []
+        handles: list[Any] = []
         queue: list[tuple[Any, int]] = [(window, 0)]
         visits = 0
         while queue and len(elements) < max_elements and visits < MAX_NODE_VISITS:
@@ -277,6 +377,7 @@ def capture_linux(
             box = _extents(client, ref)
             if ref != window and keep(kind, name) and box[2] > 0 and box[3] > 0:
                 elements.append(raw_element(kind or "", name, box, 8 in state or 24 in state, L.STATE_FOCUSED in state))
+                handles.append(ref)
             if depth < MAX_TREE_DEPTH and L.STATE_MANAGES_DESCENDANTS not in state:
                 try:
                     queue.extend((child, depth + 1) for child in client._children(ref))
@@ -284,7 +385,57 @@ def capture_linux(
                     pass
         wx, wy, ww, wh = _extents(client, window)
         payload = {"title": title, "process": client.pid(window[0]), "elements": elements, "truncated": bool(queue)}
+        payload["_handles"] = handles  # taken out before the payload is parsed; see accessibility.capture_snapshot
         return payload, (window_key(f"{window[0]}{window[1]}"), (wx, wy, wx + ww, wy + wh))
+
+
+ATSPI_ACTION = "org.a11y.atspi.Action"
+
+
+def press_linux(ref: Any, excluded: Iterable[str] = ()) -> tuple[str, str]:
+    """DoAction on a control from a snapshot, after checking its window again. (outcome, detail)."""
+    from pilot.live import focused_text_linux as L
+
+    if not L.SHARED.lock.acquire(timeout=2.0):
+        return "failed", "The accessibility bus is busy."
+    try:
+        client = L.SHARED.get()
+        if client is None:
+            return "failed", L.SHARED.error or "The accessibility bus is not reachable."
+        try:
+            state = client._state(ref)
+            window = _atspi_window(client, ref)
+            title = str(client._get(window, L.ACCESSIBLE, "Name") or "")
+            app_name = L.comm_name(client.pid(window[0]))
+        except Exception as error:
+            if L.gone_from_error(str(error)):
+                return "missing", ""
+            # A control whose window cannot be named is not pressed: its window may be one Heliox never reads.
+            return "refused", "Heliox cannot tell which window this control is in, so it does not press it."
+        reason = refuse_window(app_name, title, excluded)
+        if reason:
+            return "refused", reason
+        if L.STATE_DEFUNCT in state:
+            return "missing", ""
+        if not (8 in state or 24 in state):  # ENABLED or SENSITIVE
+            return "disabled", ""
+        try:
+            count = int(client._get(ref, ATSPI_ACTION, "NActions") or 0)
+            names = [str(client._t.call(ref[0], ref[1], ATSPI_ACTION, "GetName", "i", (i,))[0]) for i in range(count)]
+        except Exception as error:
+            return ("missing", "") if L.gone_from_error(str(error)) else ("none", "")
+        index = choose_action(names)
+        if index is None:
+            return "none", ""
+        try:
+            done = bool(client._t.call(ref[0], ref[1], ATSPI_ACTION, "DoAction", "i", (index,))[0])
+        except Exception as error:
+            if L.gone_from_error(str(error)):
+                return "missing", ""
+            return "failed", f"DoAction failed: {type(error).__name__}"
+        return (names[index], "") if done else ("failed", f"DoAction({names[index]!r}) returned false")
+    finally:
+        L.SHARED.lock.release()
 
 
 def front_window_linux() -> tuple[int, tuple[int, int, int, int]] | None:

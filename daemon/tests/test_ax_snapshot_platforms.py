@@ -25,6 +25,20 @@ def test_roles_map_to_the_control_types_the_planner_knows():
     assert P.window_key("a") == P.window_key("a") != P.window_key("b")
 
 
+def test_mac_labels_fall_back_in_order_and_never_read_a_fields_value():
+    def getter(values):
+        return lambda key: values.get(key)
+
+    assert P.mac_label(getter({"AXTitle": "Save", "AXDescription": "x"}), "AXButton") == "Save"
+    assert P.mac_label(getter({"AXTitle": " ", "AXDescription": "Close"}), "AXButton") == "Close"
+    assert P.mac_label(getter({"AXPlaceholderValue": "Search", "AXValue": "my secret query"}), "AXTextField") == (
+        "Search"
+    )
+    assert P.mac_label(getter({"AXHelp": "Send the  message"}), "AXButton") == "Send the message"
+    assert P.mac_label(getter({"AXValue": "typed text"}), "AXTextField") == ""
+    assert P.mac_label(getter({"AXValue": "Total: 3"}), "AXStaticText") == "Total: 3"
+
+
 def test_never_read_windows_are_refused():
     assert P.refuse_window("1Password", "Vault", ())
     assert P.refuse_window("Heliox-OS", "Heliox-OS", ())
@@ -212,3 +226,218 @@ async def test_the_autonomous_observer_reads_nothing_from_an_excluded_app(monkey
     monkeypatch.setattr(accessibility, "CURRENT_PLATFORM", Platform.LINUX)
     assert await server._accessibility_observation(excluded=("python3",)) == ""
     assert "Press me" in await server._accessibility_observation()
+
+
+# ── pressing a control from a snapshot: AXPress on macOS, the AT-SPI action on Linux ──
+
+
+class PressClient(FakeClient):
+    """FakeClient whose button offers AT-SPI actions and records presses."""
+
+    def __init__(self, actions=("click",), title="Heliox AT-SPI fixture") -> None:
+        super().__init__()
+        self.nodes["/win"] = (self.nodes["/win"][0], title, *self.nodes["/win"][2:])
+        self.actions = list(actions)
+        self.pressed: list[tuple[str, int]] = []
+        outer = self
+
+        class T:
+            def call(self, bus, path, interface, method, signature="", body=()):
+                if method == "GetExtents":
+                    return (outer.nodes[path][4],)
+                if method == "GetName":
+                    return (outer.actions[body[0]],)
+                if method == "DoAction":
+                    outer.pressed.append((path, body[0]))
+                    return (True,)
+                raise AssertionError(method)
+
+        self._t = T()
+
+    def retitle(self, title: str) -> None:
+        self.nodes["/win"] = (self.nodes["/win"][0], title, *self.nodes["/win"][2:])
+
+    def _get(self, ref, interface, prop):
+        if prop == "NActions":
+            return len(self.actions) if ref[1] == "/btn" else 0
+        return super()._get(ref, interface, prop)
+
+
+def _linux(monkeypatch, client):
+    shared = L._Shared()
+    shared.client = client
+    monkeypatch.setattr(L, "SHARED", shared)
+    monkeypatch.setattr(L, "comm_name", lambda pid: "gedit")
+    monkeypatch.setattr(accessibility, "CURRENT_PLATFORM", Platform.LINUX)
+
+
+def test_press_action_choice_and_remembered_controls():
+    assert P.choose_action(["Press"]) == 0
+    assert P.choose_action(["activate", "click"]) == 1
+    assert P.choose_action(["expand or contract"]) is None
+    for n in range(10):
+        P.remember(f"cap{n}", [f"h{n}a", f"h{n}b"])
+    assert P.handle_for("cap0", "e1") is None, "only the last few snapshots are kept"
+    assert P.handle_for("cap9", "e2") == "h9b"
+    assert P.handle_for("cap9", "e3") is None and P.handle_for("cap9", "x1") is None
+
+
+def test_linux_press_uses_the_controls_own_action(monkeypatch):
+    client = PressClient(actions=("activate", "click"))
+    _linux(monkeypatch, client)
+    assert P.press_linux((":1.5", "/btn")) == ("click", "")
+    assert client.pressed == [("/btn", 1)]
+    client.actions = []
+    assert P.press_linux((":1.5", "/btn")) == ("none", "")
+    client.nodes["/btn"] = ("push button", "Press me", [L.STATE_SHOWING], [], (10, 10, 80, 24))
+    assert P.press_linux((":1.5", "/btn"))[0] == "disabled"
+
+
+def test_linux_press_checks_the_window_again_and_presses_nothing_in_a_refused_one(monkeypatch):
+    client = PressClient(title="Bitwarden - vault")
+    _linux(monkeypatch, client)
+    outcome, detail = P.press_linux((":1.5", "/btn"))
+    assert outcome == "refused" and "does not read this window" in detail
+    client = PressClient()
+    _linux(monkeypatch, client)
+    assert P.press_linux((":1.5", "/btn"), excluded=("gedit",))[0] == "refused"
+    assert client.pressed == []
+
+
+def _click_action(snapshot_id: str, ref: str):
+    from types import SimpleNamespace
+
+    from pilot.actions import MouseParams
+
+    return SimpleNamespace(parameters=MouseParams(element_ref=ref, snapshot_id=snapshot_id))
+
+
+async def _linux_snapshot(monkeypatch, client):
+    _linux(monkeypatch, client)
+    store = accessibility.SnapshotStore(window_probe=lambda: accessibility.WindowIdentity(*P.front_window_linux()))
+    monkeypatch.setattr(accessibility, "_default_store", store)
+    snapshot = await accessibility.capture_snapshot(store=store)
+    button = next(e for e in snapshot.elements if e.name == "Press me")
+    return snapshot, button
+
+
+@pytest.mark.asyncio
+async def test_a_click_on_a_ref_presses_through_at_spi_and_never_moves_the_mouse(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    client = PressClient()
+    snapshot, button = await _linux_snapshot(monkeypatch, client)
+    click = AsyncMock()
+    monkeypatch.setattr("pilot.system.input_control.mouse_click", click)
+    output = await _executor()._exec_mouse_click(_click_action(snapshot.snapshot_id, button.ref))
+    assert client.pressed == [("/btn", 0)] and "through AT-SPI (click)" in output
+    click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_refused_window_gets_neither_a_press_nor_a_click(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    client = PressClient()
+    snapshot, button = await _linux_snapshot(monkeypatch, client)
+    client.retitle("KeePassXC")  # the same window, now one Heliox never reads
+    click = AsyncMock()
+    monkeypatch.setattr("pilot.system.input_control.mouse_click", click)
+    with pytest.raises(accessibility.AccessibilityRefused):
+        await _executor()._exec_mouse_click(_click_action(snapshot.snapshot_id, button.ref))
+    assert client.pressed == []
+    click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_without_a_press_action_x11_clicks_the_centre_and_wayland_says_why_not(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    client = PressClient(actions=())
+    snapshot, button = await _linux_snapshot(monkeypatch, client)
+    click = AsyncMock(return_value="Clicked")
+    monkeypatch.setattr("pilot.system.input_control.mouse_click", click)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+    await _executor()._exec_mouse_click(_click_action(snapshot.snapshot_id, button.ref))
+    click.assert_awaited_once_with(50, 22, "left", 1)
+
+    click.reset_mock()
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    with pytest.raises(ValueError, match="on Wayland Heliox cannot move the pointer"):
+        await _executor()._exec_mouse_click(_click_action(snapshot.snapshot_id, button.ref))
+    click.assert_not_awaited()
+
+
+class FakeAX:
+    """Just enough of ApplicationServices for press_macos: one button in one window."""
+
+    def __init__(self, title="Draft", actions=("AXPress",), enabled=True) -> None:
+        self.title, self.actions, self.enabled = title, list(actions), enabled
+        self.performed: list[tuple[str, str]] = []
+
+    def AXIsProcessTrusted(self):  # noqa: N802
+        return True
+
+    def AXUIElementCopyAttributeValue(self, element, name, _out):  # noqa: N802
+        values = {("button", "AXWindow"): "window", ("window", "AXTitle"): self.title}
+        values[("button", "AXEnabled")] = self.enabled
+        return (0, values[(element, name)]) if (element, name) in values else (-25205, None)
+
+    def AXUIElementGetPid(self, _element, _out):  # noqa: N802
+        return 0, 77
+
+    def AXUIElementCopyActionNames(self, _element, _out):  # noqa: N802
+        return 0, self.actions
+
+    def AXUIElementPerformAction(self, element, action):  # noqa: N802
+        self.performed.append((element, action))
+        return 0
+
+
+def _fake_mac(monkeypatch, fake: FakeAX, app_name: str = "TextEdit"):
+    import sys
+    import types
+
+    appkit = types.ModuleType("AppKit")
+    running = types.SimpleNamespace(localizedName=lambda: app_name)
+    appkit.NSRunningApplication = types.SimpleNamespace(runningApplicationWithProcessIdentifier_=lambda pid: running)
+    monkeypatch.setitem(sys.modules, "AppKit", appkit)
+    monkeypatch.setitem(sys.modules, "ApplicationServices", fake)
+
+
+def test_macos_press_uses_axpress_after_checking_the_window(monkeypatch):
+    fake = FakeAX()
+    _fake_mac(monkeypatch, fake)
+    assert P.press_macos("button") == ("AXPress", "")
+    assert fake.performed == [("button", "AXPress")]
+
+    fake = FakeAX(title="1Password 8")
+    _fake_mac(monkeypatch, fake)
+    assert P.press_macos("button")[0] == "refused" and fake.performed == []
+    fake = FakeAX()
+    _fake_mac(monkeypatch, fake, app_name="Notes")
+    assert P.press_macos("button", excluded=("Notes",))[0] == "refused" and fake.performed == []
+
+    _fake_mac(monkeypatch, FakeAX(actions=("AXShowMenu",)))
+    assert P.press_macos("button") == ("none", "")
+    _fake_mac(monkeypatch, FakeAX(enabled=False))
+    assert P.press_macos("button")[0] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_macos_press_outcomes_reach_the_caller(monkeypatch):
+    element = accessibility.AccessibleElement("e1", "Button", "Save", "", 0, 0, 10, 10, True, False)
+    P.remember("axm", ["button"])
+    monkeypatch.setattr(accessibility, "CURRENT_PLATFORM", Platform.MACOS)
+    window = accessibility.WindowIdentity(1, (0, 0, 9, 9))
+    for outcome, expected in (("AXPress", "AXPress"), ("none", None)):
+        monkeypatch.setattr(P, "press_macos", lambda handle, excluded, o=outcome: (o, ""))
+        assert await accessibility.press_in_background(window, element, snapshot_id="axm") == expected
+    monkeypatch.setattr(P, "press_macos", lambda handle, excluded: ("refused", "a password manager"))
+    with pytest.raises(accessibility.AccessibilityRefused, match="password manager"):
+        await accessibility.press_in_background(window, element, snapshot_id="axm")
+    monkeypatch.setattr(P, "press_macos", lambda handle, excluded: ("failed", "AXPress returned -25204"))
+    with pytest.raises(RuntimeError, match="-25204"):
+        await accessibility.press_in_background(window, element, snapshot_id="axm")
+    assert await accessibility.press_in_background(window, element, snapshot_id="unknown") is None

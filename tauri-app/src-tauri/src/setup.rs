@@ -360,6 +360,32 @@ fn emit(app: &AppHandle, state: &SetupState) {
     let _ = app.emit("setup-progress", state.clone());
 }
 
+/// The setup script in "run" mode with the core and the chosen groups, as `setup_run` and `setup_repair` start it.
+/// A group outside `group_extras` is dropped.
+pub fn run_command(groups: &[String]) -> std::io::Result<Command> {
+    let version = env!("CARGO_PKG_VERSION");
+    let source = std::env::var("HELIOX_DAEMON_SOURCE").ok();
+    let wanted: Vec<String> = groups
+        .iter()
+        .filter_map(|id| {
+            group_extras(id).map(|extras| {
+                format!(
+                    "{id}={}",
+                    requirement(Some(extras), version, source.as_deref())
+                )
+            })
+        })
+        .collect();
+    let mut command = script_command("run")?;
+    command
+        .env(
+            "HELIOX_CORE_REQ",
+            requirement(None, version, source.as_deref()),
+        )
+        .env("HELIOX_GROUPS", wanted.join(";"));
+    Ok(command)
+}
+
 /// Run the setup with the chosen groups in a background thread; the daemon is started when the core is in.
 pub fn run(app: AppHandle, groups: Vec<String>) -> Result<(), String> {
     {
@@ -375,28 +401,7 @@ pub fn run(app: AppHandle, groups: Vec<String>) -> Result<(), String> {
         state.steps.retain(|s| s.status == "done" && s.id != "core");
         state.log_tail.clear();
     }
-    let version = env!("CARGO_PKG_VERSION");
-    let source = std::env::var("HELIOX_DAEMON_SOURCE").ok();
-    let wanted: Vec<String> = groups
-        .iter()
-        .filter_map(|id| {
-            group_extras(id).map(|extras| {
-                format!(
-                    "{id}={}",
-                    requirement(Some(extras), version, source.as_deref())
-                )
-            })
-        })
-        .collect();
-    let spawned = script_command("run").and_then(|mut command| {
-        command
-            .env(
-                "HELIOX_CORE_REQ",
-                requirement(None, version, source.as_deref()),
-            )
-            .env("HELIOX_GROUPS", wanted.join(";"))
-            .spawn()
-    });
+    let spawned = run_command(&groups).and_then(|mut command| command.spawn());
     let child = match spawned {
         Ok(child) => child,
         Err(error) => {
@@ -435,7 +440,18 @@ pub fn run(app: AppHandle, groups: Vec<String>) -> Result<(), String> {
 }
 
 /// Feed a child's stdout and stderr into the state line by line, emitting progress; returns its exit code.
-fn stream_lines(app: &AppHandle, mut child: std::process::Child) -> Option<i32> {
+fn stream_lines(app: &AppHandle, child: std::process::Child) -> Option<i32> {
+    read_lines(child, |line| {
+        let setup = app.state::<Setup>();
+        if let Ok(mut state) = setup.0.lock() {
+            state.apply(&line);
+            emit(app, &state);
+        };
+    })
+}
+
+/// Hand each line of a child's stdout and stderr to `on_line` as it comes; returns the exit code.
+pub fn read_lines(mut child: std::process::Child, mut on_line: impl FnMut(String)) -> Option<i32> {
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let (sender, receiver) = std::sync::mpsc::channel::<String>();
@@ -457,11 +473,7 @@ fn stream_lines(app: &AppHandle, mut child: std::process::Child) -> Option<i32> 
     }
     drop(sender);
     for line in receiver {
-        let setup = app.state::<Setup>();
-        if let Ok(mut state) = setup.0.lock() {
-            state.apply(&line);
-            emit(app, &state);
-        };
+        on_line(line);
     }
     child.wait().ok().and_then(|status| status.code())
 }
@@ -502,9 +514,14 @@ fn record_groups(app: &AppHandle) {
         .lock()
         .map(|state| state.steps.clone())
         .unwrap_or_default();
+    write_groups(&steps);
+}
+
+/// Record which groups the environment now has, so an update or a repair keeps them.
+pub fn write_groups(steps: &[Step]) {
     let data = serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "groups": merged_groups(&recorded_groups(), &steps),
+        "groups": merged_groups(&recorded_groups(), steps),
     });
     let _ = std::fs::write(groups_file(), format!("{data:#}\n"));
 }
@@ -672,8 +689,8 @@ pub fn startup_finding(
     }
 }
 
-/// At start, when Heliox is installed: a broken environment is offered a repair, an older one an update.
-fn check_for_update(app: &AppHandle) {
+/// What the start-up check finds on this computer, and the daemon version installed.
+pub fn startup_check() -> (&'static str, Option<String>) {
     let env_exists = data_dir().join("env").exists();
     let installed = installed_daemon_version();
     let finding = startup_finding(
@@ -682,6 +699,12 @@ fn check_for_update(app: &AppHandle) {
         installed.as_deref(),
         env!("CARGO_PKG_VERSION"),
     );
+    (finding, installed)
+}
+
+/// At start, when Heliox is installed: a broken environment is offered a repair, an older one an update.
+fn check_for_update(app: &AppHandle) {
+    let (finding, installed) = startup_check();
     if finding == "needs_repair" {
         if let Ok(mut state) = app.state::<Setup>().0.lock() {
             state.phase = "needs_repair".into();
@@ -969,6 +992,80 @@ mod tests {
             merged_groups(&["platform".to_string()], &steps),
             vec!["platform", "voice"]
         );
+    }
+
+    /// Real runs of the app's own setup code, without a window: CI only (HELIOX_REAL_SETUP set and GITHUB_ACTIONS
+    /// "true"), because they install into this computer's home folder.
+    fn real_setup_allowed() -> bool {
+        std::env::var("HELIOX_REAL_SETUP").is_ok()
+            && std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
+    }
+
+    /// The script started exactly as `setup_run` and `setup_repair` start it, its lines fed to the same state the
+    /// screen shows.
+    fn run_setup_headless(groups: &[String]) -> SetupState {
+        let mut state = SetupState {
+            phase: "running".into(),
+            ..SetupState::default()
+        };
+        let child = run_command(groups)
+            .and_then(|mut command| command.spawn())
+            .expect("the setup script starts");
+        let code = read_lines(child, |line| {
+            if line.starts_with("@@step") || line.starts_with("@@python") {
+                println!("{line}");
+            }
+            state.apply(&line);
+        });
+        state.finish(code);
+        let steps: Vec<_> = state
+            .steps
+            .iter()
+            .map(|s| format!("{} {}", s.id, s.status))
+            .collect();
+        println!("SETUP_RESULT {} {:?} exit {:?}", state.phase, steps, code);
+        state
+    }
+
+    #[test]
+    #[ignore = "installs Heliox into this computer's home folder; run by CI"]
+    fn real_first_run_installs_through_the_apps_code() {
+        if !real_setup_allowed() {
+            return;
+        }
+        let state = run_setup_headless(&["platform".to_string()]);
+        assert_eq!(state.phase, "done", "{:?}", state.log_tail);
+        write_groups(&state.steps);
+        assert_eq!(startup_check().0, "installed");
+    }
+
+    /// CI deletes the environment's interpreter first (an upgrade of its base Python does the same), and stops the
+    /// daemon. What the Repair button runs is then run here: the start-up check, the script with the recorded
+    /// groups, and the daemon started from the result the way the app starts it.
+    #[test]
+    #[ignore = "repairs Heliox in this computer's home folder; run by CI"]
+    fn real_repair_through_the_apps_code() {
+        if !real_setup_allowed() {
+            return;
+        }
+        let (finding, installed) = startup_check();
+        println!("START_UP_FINDING {finding} installed {installed:?}");
+        assert_eq!(finding, "needs_repair");
+        let groups = recorded_groups();
+        let state = run_setup_headless(&groups);
+        assert_eq!(state.phase, "done", "{:?}", state.log_tail);
+        assert!(
+            !data_dir().join("env.broken").exists(),
+            "the broken environment is not left behind"
+        );
+        write_groups(&state.steps);
+        assert_eq!(recorded_groups(), groups, "the repair keeps the groups");
+        assert_eq!(startup_check().0, "installed");
+        let mut child =
+            crate::launch_daemon().expect("the daemon starts from the repaired environment");
+        println!("REPAIRED_DAEMON_STARTED pid {}", child.id());
+        crate::supervisor::kill_tree(&mut child);
+        let _ = child.wait();
     }
 
     #[test]

@@ -322,7 +322,10 @@ async def capture_snapshot(
             raise AccessibilityUnavailable(f"The {CURRENT_PLATFORM.value} reader is not installed: {error}") from error
         except RuntimeError as error:
             raise AccessibilityUnavailable(str(error)) from error
+        handles = payload.pop("_handles", None) if isinstance(payload, dict) else None
         snapshot = parse_snapshot(json.dumps(payload), WindowIdentity(key, rect), captured_at=store.now())
+        if handles is not None:
+            platforms.remember(snapshot.snapshot_id, handles)
         store.add(snapshot)
         return snapshot
     if CURRENT_PLATFORM != Platform.WINDOWS:
@@ -391,12 +394,26 @@ def _background_press_script(handle: int, runtime_id: str) -> str:
     )
 
 
-async def press_in_background(window: WindowIdentity, element: AccessibleElement) -> str | None:
+class AccessibilityRefused(AccessibilityUnavailable):
+    """The control's window is one Heliox never reads or acts in: nothing is pressed and nothing is clicked."""
+
+
+async def press_in_background(
+    window: WindowIdentity,
+    element: AccessibleElement,
+    *,
+    snapshot_id: str = "",
+    excluded: tuple[str, ...] = (),
+) -> str | None:
     """Press, toggle, select or expand an element without moving the cursor.
 
-    Returns the UI Automation pattern used, or None when the element offers no
-    such pattern and a physical click is needed instead.
+    Returns the pattern or action used (UI Automation on Windows, AXPress on macOS, the AT-SPI action on Linux),
+    or None when the element offers none and a physical click is needed instead. On macOS and Linux the control's
+    window is checked again first; when it is one Heliox never reads, AccessibilityRefused is raised and the caller
+    must not click either.
     """
+    if CURRENT_PLATFORM in (Platform.MACOS, Platform.LINUX):
+        return await _press_native(element, snapshot_id, excluded)
     if CURRENT_PLATFORM != Platform.WINDOWS or not _RUNTIME_ID.fullmatch(element.runtime_id or ""):
         return None
     code, stdout, stderr = await run_powershell(
@@ -411,3 +428,46 @@ async def press_in_background(window: WindowIdentity, element: AccessibleElement
     if outcome == "disabled":
         raise ValueError(f"{element.label} ({element.ref}) is disabled")
     return None if outcome == "none" else outcome
+
+
+async def _press_native(element: AccessibleElement, snapshot_id: str, excluded: tuple[str, ...]) -> str | None:
+    import asyncio
+
+    from pilot.system import ax_snapshot_platforms as platforms
+
+    handle = platforms.handle_for(snapshot_id, element.ref)
+    if handle is None:
+        return None
+    press = platforms.press_macos if CURRENT_PLATFORM == Platform.MACOS else platforms.press_linux
+    try:
+        outcome, detail = await asyncio.wait_for(
+            asyncio.to_thread(press, handle, excluded), timeout=SNAPSHOT_TIMEOUT_SECONDS
+        )
+    except ImportError:
+        return None
+    if outcome == "refused":
+        raise AccessibilityRefused(detail)
+    if outcome == "missing":
+        raise StaleElementRef(f"re-snapshot required: {element.label} ({element.ref}) is no longer in the window")
+    if outcome == "disabled":
+        raise ValueError(f"{element.label} ({element.ref}) is disabled")
+    if outcome == "failed":
+        # Not followed by a click: the press may have run (a dialog opening makes AXPress report an error).
+        raise RuntimeError(f"Pressing {element.label} ({element.ref}) failed: {detail}")
+    return None if outcome == "none" else outcome
+
+
+WAYLAND_NO_POINTER = (
+    "{label} offers no press action, and on Wayland Heliox cannot move the pointer to click by position. "
+    "Use the app's keyboard shortcut, or ask the app to expose the control to accessibility."
+)
+
+
+def pointer_click_allowed(env: dict[str, str] | None = None) -> bool:
+    """Whether a click by position may be sent: Windows, macOS and X11, not a Wayland session, where the pointer
+    belongs to the compositor and a synthetic click reaches only X11 apps, if any."""
+    if CURRENT_PLATFORM != Platform.LINUX:
+        return True
+    from pilot.system.portal import wayland_session
+
+    return not wayland_session(env)

@@ -573,6 +573,12 @@ pub fn heliox_files_remove(
             let _ = child.wait();
         }
     }
+    Ok(remove_heliox(&dirs, keep_data))
+}
+
+/// The removal itself, once the daemon is stopped: with "everything", the saved keys through the daemon's own
+/// code while its environment still exists, then the files.
+pub fn remove_heliox(dirs: &SystemDirs, keep_data: bool) -> RemovalReport {
     let credentials = if keep_data {
         Credentials {
             outcome: "kept".into(),
@@ -583,7 +589,7 @@ pub fn heliox_files_remove(
     } else {
         remove_credentials(&dirs.home, dirs.os)
     };
-    Ok(remove_files(&dirs, keep_data, credentials))
+    remove_files(dirs, keep_data, credentials)
 }
 
 /// Quit the app after a removal: nothing is left for it to run.
@@ -765,6 +771,69 @@ mod tests {
         );
         assert!(note.contains("goes when you uninstall the app"));
         assert!(failure_note(Path::new("/x/y"), "linux", "busy").ends_with(": busy"));
+    }
+
+    /// A real removal from this computer's home folder, after a real first run: CI only (the job sets
+    /// HELIOX_REAL_REMOVAL to "keep" or "everything", and GITHUB_ACTIONS is "true" there), never on a person's
+    /// machine. Prints the report as one line for the job's log.
+    #[test]
+    #[ignore = "removes Heliox's files from this computer's home folder; run by CI after a real first run"]
+    fn real_removal_from_a_set_up_home() {
+        let Ok(mode) = std::env::var("HELIOX_REAL_REMOVAL") else {
+            return;
+        };
+        if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true") {
+            return;
+        }
+        let keep_data = match mode.as_str() {
+            "keep" => true,
+            "everything" => false,
+            other => panic!("HELIOX_REAL_REMOVAL must be keep or everything, not {other:?}"),
+        };
+        let dirs = system_dirs().expect("the runner has a home folder");
+        let env = dirs.home.join(".config").join("heliox-os").join("env");
+        let had_env = env.exists();
+        let before = plan(&dirs);
+        println!(
+            "REMOVAL_PLAN {}",
+            serde_json::to_string(&before).unwrap_or_default()
+        );
+        let report = remove_heliox(&dirs, keep_data);
+        println!(
+            "REMOVAL_REPORT {}",
+            serde_json::to_string(&report).unwrap_or_default()
+        );
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert!(!env.exists(), "the environment is removed in both modes");
+        if keep_data {
+            assert_eq!(report.credentials.outcome, "kept");
+            for location in before.iter().filter(|l| l.kind == Kind::Data) {
+                assert!(location.path.exists(), "kept: {}", location.path.display());
+            }
+        } else {
+            if had_env {
+                assert_eq!(
+                    report.credentials.outcome, "removed",
+                    "the daemon's cleanup ran"
+                );
+                assert!(
+                    report.credentials.remaining.is_empty(),
+                    "{:?}",
+                    report.credentials.remaining
+                );
+            } else {
+                // The app's files went earlier with "keep my data": nothing can run the daemon's cleanup now, so
+                // every service is named for the person to remove by hand.
+                assert_eq!(report.credentials.outcome, "listed");
+                assert_eq!(
+                    report.credentials.remaining.len(),
+                    credential_services().len()
+                );
+            }
+            for location in &before {
+                assert!(!location.path.exists(), "left: {}", location.path.display());
+            }
+        }
     }
 
     #[test]

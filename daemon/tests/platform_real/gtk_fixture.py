@@ -2,8 +2,9 @@
 
 Run with the system Python that has PyGObject (``python3-gi`` and ``gir1.2-gtk-3.0``), not the daemon's venv.
 Commands, one per line: ``focus entry``, ``focus password``, ``title <text>``, ``insert <text>`` (types into the
-focused entry from inside the app, for sessions where no input tool can send keys), ``quit``. Prints ``ready``
-once the window is shown with the entry focused, and ``ok <command>`` after each command.
+focused entry from inside the app, for sessions where no input tool can send keys), ``presses`` (prints
+``presses <n>``, how many times the button's own handler ran), ``quit``. Prints ``ready`` once the window is shown
+with the entry focused, and ``ok <command>`` after each command.
 """
 
 from __future__ import annotations
@@ -30,7 +31,13 @@ def main() -> None:
     password.set_visibility(False)
     password.get_accessible().set_name("password")
     button = Gtk.Button(label="Press me")
-    button.connect("clicked", lambda _b: print("pressed", flush=True))
+    pressed = [0]
+
+    def on_clicked(_button) -> None:
+        pressed[0] += 1
+        print("pressed", flush=True)
+
+    button.connect("clicked", on_clicked)
     for widget in (label, entry, password, button):
         box.pack_start(widget, False, False, 0)
     window.add(box)
@@ -52,6 +59,8 @@ def main() -> None:
             position = target.get_position()
             target.insert_text(arg, position)
             target.set_position(position + len(arg))
+        elif command == "presses":
+            print(f"presses {pressed[0]}", flush=True)
         elif command == "quit":
             Gtk.main_quit()
         print(f"ok {line}", flush=True)

@@ -178,6 +178,12 @@ def snapshot_checks(prefix: str, check) -> None:
     print(f"snapshot {snapshot.snapshot_id} of {snapshot.title!r}: {labels[:12]}")
     button = next((e for e in snapshot.elements if e.role == "Button" and e.name == "Press me"), None)
     check(f"{prefix}/snapshot-finds-the-button", button is not None, repr(labels[:12]))
+    # Fields are named by their placeholder when they have no title or description; never by what is in them.
+    check(
+        f"{prefix}/snapshot-names-fields-by-placeholder",
+        'Edit "message"' in labels and 'Edit "password"' in labels,
+        repr(labels[:12]),
+    )
     check(
         f"{prefix}/snapshot-never-has-values",
         not any("hello from ci" in label or "s3cret" in label for label in labels),
@@ -192,6 +198,18 @@ def snapshot_checks(prefix: str, check) -> None:
             )
         except Exception as exc:
             check(f"{prefix}/snapshot-ref-resolves-in-the-same-window", False, f"{type(exc).__name__}: {exc}")
+
+
+def window_detail(field: str) -> str:
+    """What the element and its window answer, for the window-gone check."""
+    element = M._ELEMENTS.get(field)
+    reader = M._reader
+    if element is None or reader is None:
+        return "element not remembered"
+    try:
+        return f"element answers {reader.backend.element_valid(element)!r}, window open {reader.backend.window_open(element)!r}"
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
 
 
 def main() -> int:
@@ -250,6 +268,19 @@ def main() -> int:
         fixture.stdin.flush()
         time.sleep(0.6)
 
+    def presses() -> int:
+        """How many times the button's own action has run, or -1 when the fixture does not say."""
+        fixture.stdin.write("presses\n")
+        fixture.stdin.flush()
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            line = fixture.stdout.readline()
+            if not line:
+                return -1
+            if line.startswith("presses "):
+                return int(line.split()[1])
+        return -1
+
     def read_until(predicate, timeout: float = 10.0):
         deadline = time.monotonic() + timeout
         last = None
@@ -280,6 +311,10 @@ def main() -> int:
         secret = read_until(lambda r: r.password)
         check("macos/secure-field-refused", secret is not None and secret.password and secret.text == "", repr(secret))
         snapshot_checks("macos", check)
+        # The real press through AXPress, and nothing pressed or clicked once the window is a refused one.
+        from press_checks import press_checks
+
+        press_checks("macos", check, presses, lambda title: send(f"title {title}"), "Draft - edited")
 
         # Live drops a card when its field's window has gone; window_checks ends by closing the window.
         handle = focused_text.window_handle(later.field) if later is not None and later.field else None
@@ -293,7 +328,7 @@ def main() -> int:
             check(
                 "macos/window-gone-after-close",
                 not focused_text.window_exists(handle),
-                f"field_exists says {M.field_exists(later.field)!r}",
+                f"field_exists says {M.field_exists(later.field)!r}; {window_detail(later.field)}",
             )
         timings = []
         for _ in range(30):
