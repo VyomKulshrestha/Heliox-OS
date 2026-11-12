@@ -492,12 +492,17 @@ def install_hint(missing: str, platform: str, which: Callable[[str], str | None]
         return "Install your distribution's zsh package; this zsh was built without zsh/net/socket or zsh/zselect."
     if missing == "nc":
         if mac:
-            return "Install the OpenBSD netcat: brew install netcat."
+            # macOS ships the BSD nc, which talks to a Unix socket. Homebrew's "netcat" is GNU netcat 0.7.1, which
+            # cannot (no -U): installing it is what breaks this, never what fixes it.
+            return (
+                "Nothing needs installing: macOS's own nc (/usr/bin/nc) can do this, but fish finds another nc first. "
+                "If it is Homebrew's netcat (GNU netcat, which cannot use a Unix socket), run brew uninstall netcat."
+            )
+        # Each name is the OpenBSD netcat in that distribution's own archive (checked 12 November 2026).
         for tool, command in (
             ("apt-get", "sudo apt install netcat-openbsd"),
             ("dnf", "sudo dnf install netcat"),
             ("pacman", "sudo pacman -S openbsd-netcat"),
-            ("zypper", "sudo zypper install netcat-openbsd"),
             ("apk", "sudo apk add netcat-openbsd"),
         ):
             if which(tool):

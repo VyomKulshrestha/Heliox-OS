@@ -155,6 +155,15 @@ async def live_speak(server: Any, text: str, urgent: bool) -> str:
     channel = SpeechChannel.LIVE_CORRECTION if urgent else SpeechChannel.PROACTIVE_SUGGESTION
     outcome = await server._speak_companion_text(text, channel=channel, dedupe_key=f"live:{text}")
     status = str(getattr(outcome, "status", "error"))
+    if status in ("spoken", "interrupted") and listener is not None:
+        # Live spoke to the person: for a few seconds its own replies ("why?", "not now") need no wake phrase.
+        # The listener decides what counts (pilot.live.engine.is_live_reply); before it has this, nothing changes.
+        note = getattr(listener, "note_live_spoke", None)
+        if callable(note):
+            try:
+                note()
+            except Exception:
+                logger.debug("note_live_spoke failed", exc_info=True)
     try:
         link_for(server).record_spoken(text, status)
     except Exception:

@@ -29,69 +29,97 @@ Heliox runs on Windows, macOS and Linux. This page says what each part of the co
 
 Live checks four things, each from a different source. What it can see depends on that source being available, so
 the same slip can be caught on one system and missed on another. From the code (`daemon/pilot/live/`) as of this
-page:
+page, with what has been shown for each claim:
+
+- **Run for real**: seen on that system in a real run, named with its job and check;
+- **Fakes only**: the decision is tested with stand-ins (recorded or typed text, fake readers), never seen there;
+- **Not tested**.
+
+As of 12 November no slip typed into a real window has yet been seen to become a card on macOS or Linux: the
+end-to-end check (`tests/platform_real/live_end_to_end_check.py`, in the `platform-readers` job: an excluded app, a slip that must become a card with its
+evidence, the password field, the window closed) has its first run pending.
 
 | Slip | Comes from | Windows | macOS | Linux |
 |---|---|---|---|---|
-| In what you type: a weekday that doesn't match its date, a date that doesn't exist, a wrong sum, a wrong name for someone in your profile, a doubled word, "attached" with nothing attached, a key pasted into a message, catch-pack phrases, a promise with a deadline, rewriting the same sentence | The focused text field (the reader above) | Any app whose fields UI Automation exposes: Office, browsers, Notepad, chat apps, most of what people type in | Apps that expose their fields to Accessibility (native AppKit apps, Safari, Chrome, most Electron apps), once Accessibility is granted to Heliox-OS | GTK apps always; Qt, Chromium, Electron and Firefox apps once toolkit accessibility is on; nothing from apps outside the accessibility bus |
-| A risky command before you press Enter | The focused field of a terminal | Windows Terminal, the console, PowerShell windows | Terminal.app and iTerm2 only; other terminals expose nothing | VTE terminals (GNOME Terminal, Tilix, Terminator, Xfce Terminal), Konsole partly; not Alacritty, kitty, WezTerm, foot or xterm |
-| In what you say to Heliox: a wrong weekday or impossible date, a wrong sum, a wrong name, a promise without a reminder, a date that differs from the one you just typed | Speech, after the wake phrase, the microphone button, or in the 8 s follow-up | Works | Works where capture works (PortAudio, microphone permission) | Works where capture works (PortAudio with ALSA, PulseAudio or PipeWire) |
-| An error on screen, with the fix | Reading the screen (OCR); off by default | Windows OCR | The Vision framework, once Screen Recording is granted | tesseract on X11; on Wayland through the desktop's Screenshot portal, not yet proven (see above) |
-| A risky command or a key typed anywhere (supervision's keyboard hook) | A global keyboard hook (`pynput`); off by default, its own opt-in | Works | Needs Input Monitoring for Heliox-OS | X11 only; Wayland gives apps no global keyboard |
-| Switching back and forth between two windows | The foreground window | Works | Works | Works on X11; on Wayland through the accessibility bus |
-| Staying quiet in calls | Call detection (above) | Works | macOS 14 and later; partly before | With `pactl` (PulseAudio or PipeWire) |
+| In what you type: a weekday that doesn't match its date, a date that doesn't exist, a wrong sum, a wrong name for someone in your profile, a doubled word, "attached" with nothing attached, a key pasted into a message, catch-pack phrases, a promise with a deadline, rewriting the same sentence | The focused text field (the reader above) | Meant for any app whose fields UI Automation exposes (the reader was built against Notepad on the development machine). Notepad, Office, browsers, chat apps: **Not tested** by a recorded check. The detectors: **Fakes only** (typed text, the Live Bench) | Meant for apps that expose their fields to Accessibility, once it is granted to Heliox-OS. Reading a field: **Run for real** on an AppKit text field (`platform-readers`, `macos_ax_check.py`, "reads-typed-text"). The slip becoming a card: **Not tested** (end-to-end check pending). Safari, Chrome, Electron apps: **Not tested** | Meant for apps on the accessibility bus. Reading a field: **Run for real** on a GTK 3 field under X11 and sway (`platform-readers`, `linux_atspi_check.py`, "reads-typed-text"). The slip becoming a card: **Not tested** (end-to-end check pending). GTK 4, Qt, Chromium, Electron, Firefox: **Not tested** |
+| A risky command before you press Enter | The focused field of a terminal | Meant for Windows Terminal, the console and PowerShell windows. The detector: **Fakes only**; reading those windows: **Not tested** by a recorded check | Meant for Terminal.app and iTerm2 (other terminals expose nothing): **Not tested** | Meant for VTE terminals (GNOME Terminal, Tilix, Terminator, Xfce Terminal) and partly Konsole; not Alacritty, kitty, WezTerm, foot or xterm: **Not tested** |
+| In what you say to Heliox: a wrong weekday or impossible date, a wrong sum, a wrong name, a promise without a reminder, a date that differs from the one you just typed | Speech, after the wake phrase, the microphone button, or in the 8 s follow-up | **Fakes only**: the catches run on recognised text, including real recogniser output replayed from recordings (Live Bench); no recorded voice session has shown a spoken catch | **Fakes only**, as on Windows; it needs capture to work (PortAudio, microphone permission) | **Fakes only**, as on Windows; it needs capture to work (PortAudio with ALSA, PulseAudio or PipeWire) |
+| An error on screen, with the fix | Reading the screen (OCR); off by default | Windows OCR. The card: **Not tested** | The Vision framework, once Screen Recording is granted. Vision reading a rendered line: **Run for real** (`macos_ax_check.py`, "ocr-vision-in-process"). The card: **Not tested** | tesseract on X11; on Wayland through the desktop's Screenshot portal, not yet proven (see above). The card: **Not tested** |
+| A risky command or a key typed anywhere (supervision's keyboard hook) | A global keyboard hook (`pynput`); off by default, its own opt-in | **Fakes only** in Live's tests | Needs Input Monitoring for Heliox-OS: **Not tested** | X11 only; Wayland gives apps no global keyboard: **Not tested** |
+| Switching back and forth between two windows | The foreground window | The offer: **Fakes only** | Which app is in front: **Run for real** (`macos_ax_check.py`, "frontmost-app-from-launch-services"). The offer: **Fakes only** | The window title following focus: **Run for real** under X11 and sway (`linux_atspi_check.py`, "foreground-title-follows"). The offer: **Fakes only** |
+| Staying quiet in calls | Call detection (above) | Live holding back in a call: **Fakes only** | macOS 14 and later, partly before: **Not tested** | Another app recording seen through `pactl`: **Run for real** (`platform-readers`, "Linux, quiet in calls"). Live holding back: **Fakes only** |
 
 What Live never sees, on any system: password fields, Heliox's own window, password managers and apps you excluded
 from the timeline, text inside images or video without screen reading on, the body of a web page you are reading
 (only fields you type in), other fields of a form than the one you are in (so it cannot check a mail's recipients),
-and speech said near the microphone that was not for Heliox (see below).
+and speech said near the microphone that was not for Heliox (see below). Password fields: **Run for real** on GTK
+under X11 and sway ("password-refused") and on an AppKit secure field ("secure-field-refused"). Heliox's own
+window, password managers and excluded apps: **Fakes only** (matched by name; the end-to-end check's excluded app
+is pending). The body of a web page: **Not tested**.
 
-**Terminals that expose nothing (the Live terminal check).** On Windows every console and Windows Terminal is read.
-On Linux kitty, Alacritty, WezTerm, foot and xterm expose no text, and on macOS only Terminal.app and iTerm2 are
-read, so a risky command typed elsewhere was noticed only after it ran. Settings, Live, Terminal check adds an
+**Terminals that expose nothing (the Live terminal check).** On Windows the console and Windows Terminal are meant
+to be read through UI Automation (**Not tested** by a recorded check; mintty, used by Git Bash, and ConEmu: **Not
+tested**). On Linux kitty, Alacritty, WezTerm, foot and xterm expose no text, and on macOS only Terminal.app and
+iTerm2 are meant to be read, so a risky command typed elsewhere was noticed only after it ran. Settings, Live, Terminal check adds an
 opt-in hook to the shell instead (`daemon/pilot/live/shell_line.py`), after showing exactly what it adds and how to
 take it out:
 
 | Shell | What it does | What is added |
 |---|---|---|
-| zsh (5.3 or later) | A ZLE `line-pre-redraw` hook sends the line being edited each time it changes; Live checks it like a terminal field and the card comes at the first pause, before Enter | One line in `~/.zshrc` (or `$ZDOTDIR/.zshrc`) that sources `~/.local/share/heliox/shell/heliox-live.zsh`, marked "# Heliox Live terminal check" |
-| fish | fish has no hook on every change, so Enter asks Heliox first (through `nc -U -w 1`: at most one second, and no wait at all when Heliox is not running); a risky command is not run, its warning is printed, and Enter again runs it | `~/.config/fish/conf.d/heliox-live.fish`; no start-up file is changed |
+| zsh (5.3 or later; only 5.9 has been run) | A ZLE `line-pre-redraw` hook sends the line being edited each time it changes; Live checks it like a terminal field and the card comes at the first pause, before Enter. In a real zsh: **Not tested** yet (see below) | One line in `~/.zshrc` (or `$ZDOTDIR/.zshrc`) that sources `~/.local/share/heliox/shell/heliox-live.zsh`, marked "# Heliox Live terminal check" |
+| fish | fish has no hook on every change, so Enter asks Heliox first (through `nc -U -w 1`: at most one second, and no wait at all when Heliox is not running); a risky command is not run, its warning is printed, and Enter again runs it. In a real fish: **Not tested** yet (see below) | `~/.config/fish/conf.d/heliox-live.fish`; no start-up file is changed |
 | bash | Nothing yet. Plain bash only offers hooks after Enter, too late; with ble.sh installed it could work like zsh, which is not built | Nothing |
 
 The line travels over a Unix socket in a folder only the person can open (mode 0700, owned by them; Heliox refuses a
 folder anyone else owns or can open; the socket is 0600), never over the network, and only while Live is on: with
 Live off the socket does not exist and the hook stays silent. Never sent: a line that starts with a space, a line in
 zsh's `vared` or a program's own prompt (sudo and password prompts never use the line editor), and anything from the
-first token-looking string onwards. It is kept in memory for 3 seconds and never sent to a model. Tested: the
-decisions on all three systems; the socket on Linux (and in WSL on the build machine); real zsh and fish sessions
-in a pseudo-terminal in the `platform-readers` job on ubuntu and macOS (`tests/platform_real/shell_integration_check.py`).
-For people who would rather not change their shell, kitty and WezTerm are read directly
-(`daemon/pilot/live/terminal_text.py`), while one of them is the window in front, Live is on and reading fields is
-on: WezTerm through `wezterm cli` (the focused pane, its cursor row, its text; nothing to set up, on every system),
-kitty through `kitty @ ls` and `kitty @ get-text --add-cursor` over its Unix socket, which kitty opens only with
-`allow_remote_control socket-only` and `listen_on unix:/tmp/kitty` in kitty.conf (Settings says so; Heliox never
-edits kitty.conf, and never uses a TCP `listen_on`). Only the cursor's line is kept, from after the prompt sign,
-with the shell hook's rules (no line starting with a space, nothing from a key-looking string on). It is asked in
-the background at most every 0.6 s, each call is killed after 1 s, and the line is kept in memory for 2 s. Tested:
-the answers of both terminals with recorded output on all three systems; real kitty under Xvfb in the
-`platform-readers` job (`tests/platform_real/terminal_text_check.py`); WezTerm for real only where a runner has
-it, as it is not in Ubuntu's archive.
+first token-looking string onwards. It is kept in memory for 3 seconds and never sent to a model.
+
+What has been shown: **Run for real**, the socket folder 0700 and the socket 0600, and the socket gone once Heliox
+closes it (`platform-readers` on ubuntu, `tests/platform_real/shell_integration_check.py`). **Fakes only**, the
+decisions above (what is never sent, the 3 seconds) on all three systems, and the socket opening and closing with
+Live in unit tests on Linux and macOS. **Not tested**, the hook in a real zsh or fish: the first real run (ubuntu,
+12 November) failed five of its eight shell checks because the check's terminal was not the shell's own (no
+controlling terminal, no window size), so fish never reached its line editor; the corrected check has not run yet.
+Sudo and password prompts: **Not tested**.
+
+**kitty and WezTerm, read directly.** For people who would rather not change their shell, kitty and WezTerm are
+read directly (`daemon/pilot/live/terminal_text.py`), while one of them is the window in front, Live is on and
+reading fields is on: WezTerm through `wezterm cli` (the focused pane, its cursor row, its text; nothing to set up,
+on every system), kitty through `kitty @ ls` and `kitty @ get-text --add-cursor` over its Unix socket, which kitty
+opens only with `allow_remote_control socket-only` and `listen_on unix:/tmp/kitty` in kitty.conf (Settings says so;
+Heliox never edits kitty.conf, and never uses a TCP `listen_on`). Only the cursor's line is kept, from after the
+prompt sign, with the shell hook's rules (no line starting with a space, nothing from a key-looking string on). It
+is asked in the background at most every 0.6 s, each call is killed after 1 s, and the line is kept in memory for
+2 s. What has been shown: **Fakes only**, the answers of both terminals as recorded output, on all three systems.
+**Not tested** yet, real kitty under Xvfb in the `platform-readers` job (`tests/platform_real/terminal_text_check.py`,
+first run pending), and real WezTerm anywhere (it is not in Ubuntu's archive, so that step skips it).
 
 Add is offered only after a dry run on the person's own computer (`shell_line.dry_run`, the `live_shell` "test"
-action) proves the hook would reach Heliox: zsh must load `zsh/net/socket` and `zsh/zselect` (some builds, an old
-`/bin/zsh` for one, lack them) and get an answer through the socket; fish must find an `nc` that talks to a Unix
-socket and waits for the answer, and that same `nc` must give up within the bound on a socket that accepts and never
-answers. When it cannot, Settings says why and what to install (`brew install netcat` or `brew install zsh` on
-macOS, the distribution's netcat-openbsd package on Linux), and install refuses as well: a hook that would stay
-silent, or an Enter that could hang, is never added. A hung Heliox never holds zsh either: the hook writes only when
-the socket is writable this instant (`zselect -t 0`), and otherwise drops the line and leaves Heliox alone for 30
-seconds. Settings states fish's bound, and what the test measured. Tested in CI with a socket that accepts and never
-answers (fish's Enter runs the command within the bound; zsh keeps taking 2 MB of lines nobody reads) and with a dead
-Heliox's socket (Enter does not wait).
+action) is meant to prove the hook would reach Heliox: zsh must load `zsh/net/socket` and `zsh/zselect` (a zsh built
+without them would leave the hook silent) and get an answer through the socket; fish must find an `nc` that talks
+to a Unix socket and waits for the answer, and that same `nc` must give up within the bound on a socket that
+accepts and never answers. When it cannot, Settings says why and what to do, and install refuses as well: a hook
+that would stay silent, or an Enter that could hang, is never added. What to do: on macOS nothing needs installing
+for `nc`, as the system's own `/usr/bin/nc` talks to a Unix socket (Homebrew's `netcat` is GNU netcat, which cannot,
+so if it comes first, `brew uninstall netcat`); for zsh's modules, `brew install zsh`. On Linux, the distribution's
+OpenBSD netcat: `netcat-openbsd` on Debian, Ubuntu and Alpine, `netcat` on Fedora, `openbsd-netcat` on Arch. A hung
+Heliox is meant never to hold zsh either: the hook writes only when the socket is writable this instant (`zselect -t
+0`), and otherwise drops the line and leaves Heliox alone for 30 seconds. Settings states fish's bound, and what the
+test measured.
+
+What has been shown: **Run for real** only in part. On the development machine, in WSL, netcat-openbsd called
+directly with the hook's flags gave up at the 1 s bound on a socket that never answers, answered at once from
+Heliox's socket, and was refused at once by a dead one. The dry run, the hung and dead Heliox through a real fish,
+and zsh against a Heliox that stopped reading (`shell_integration_check.py`): **Not tested** yet; they are in the
+check whose first corrected run is pending. The decisions: **Fakes only** (unit tests, including an `nc` that never
+gives up).
 
 Speech heard near the microphone but not said to Heliox (in an open conversation, a sentence for someone else)
 reaches Live only as text and is not checked: no card, nothing kept, never stored as conversation or sent to any
-model. Outside an open conversation Live does not hear it at all.
+model. Outside an open conversation Live does not hear it at all. **Fakes only**: unit tests with recognised text;
+no recorded conversation has shown it.
 
 ## Reading the focused field
 

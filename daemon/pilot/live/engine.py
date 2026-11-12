@@ -312,6 +312,17 @@ _WHY = re.compile(
     r"|what are you talking about|what do you mean by that)$"
 )
 _FIX = re.compile(r"^(?:fix it|fix that|do it|go ahead|go ahead and fix it|please fix it)$")
+_HUSH = re.compile(r"^(?:stop|stop it|wait|cancel|quiet|be quiet|shush|hush)$")
+
+
+def is_live_reply(text: str) -> bool:
+    """Whether a sentence is one of Live's own replies: "why?", "why did you say that", "thanks", "not now",
+    "don't mention these", "fix it", "never mind", or a stop word. A closed list: right after Live has spoken, these
+    words can only be an answer to it, so the listener may take them without the wake phrase (and nothing else)."""
+    from pilot.workflows.routines import normalize_phrase
+
+    said = normalize_phrase(text)
+    return bool(said) and any(p.match(said) for p in (_WHY, _THANKS, _DISMISS, _MUTE, _FIX, _HUSH))
 
 
 class LiveCompanion:

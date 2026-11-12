@@ -150,9 +150,17 @@ recall and false alarms unchanged):
    the reply has started it becomes a card.
 4. So Live never asks to speak during a reply, and a reply that starts during a Live remark waits behind it.
 
-What Live says aloud is recorded in `ConversationMemory` as a Heliox turn (cut off if talked over), and the
-listener's existing follow-up window (opened after any spoken Heliox sentence) lets "why?" or "not now" follow it
-without the wake phrase.
+What Live says aloud is recorded in `ConversationMemory` as a Heliox turn (cut off if talked over). The floor rule is
+**Fakes only**: measured on the Live Bench's simulated `converse` steps, not yet in a real voice session.
+
+**Answering Live.** Today a reply to a spoken Live remark needs the wake phrase when no conversation is open: the
+listener's follow-up window opens only inside an open conversation, so "why?" two seconds after Live spoke is not
+taken (`tests/test_live_reply_window.py`, with the real `Addressing` and listener). Decided, and not yet built (the
+listener is the speech workstream's next change): for about 6 s after Live speaks with no conversation open, the
+listener takes only Live's own closed list of replies (`pilot.live.engine.is_live_reply`: "why?", "why did you say
+that", "thanks", "not now", "don't mention these", "fix it", "never mind", stop words) and nothing else; any other
+sentence is not taken and opens nothing. These words can only answer what Live just said, so speech not addressed
+to Heliox is still never acted on.
 
 ### What leaves the machine
 
@@ -169,6 +177,8 @@ without the wake phrase.
   never text read off the screen by OCR), left out whole when it contains anything that looks like a key or
   password (Live's own patterns).
 * For Heliox's own window, password managers and apps excluded from the timeline, nothing is sent, in every row.
+* What reaches a model in these rows is **Fakes only**: unit tests of the context builder; no request body sent to
+  a real provider has been captured and checked yet.
 * The person's words, the earlier turns of this conversation, the time, the task state and the profile lines go
   to whichever model is configured. With a local model none of it leaves the machine.
 
@@ -349,7 +359,9 @@ layer is active only once the server's model stack is up.
 
 Nothing in the package depends on the operating system. The focused app comes from Live's observation when Live
 is on, otherwise from `screen_vision._get_active_window` (Windows, macOS and Linux backends; "Unknown" is treated
-as not available). The focused field's text exists only where Live's reader runs (Windows today). When either is
+as not available). The focused field's text exists only where Live's reader can read the field: Windows (UI
+Automation), macOS (Accessibility, once granted) and Linux (AT-SPI); which apps, and what has been run for real on
+each, is in [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md). When either is
 missing the model is told nothing about the screen. All of this is exercised with fakes in the tests, which run on
 the three CI systems.
 
@@ -517,10 +529,14 @@ Control words ("Stop", "Wait") are English only; talking over Heliox for a momen
 the code: the cut-off is judged on the length of the voice, not its words; shown on English recordings only).
 
 **Overheard speech** goes only to Heliox Live, marked not addressed, which does not check it: no card, nothing kept.
-It is never stored as conversation and never sent to a cloud model.
+It is never stored as conversation and never sent to a cloud model. **Fakes only**: unit tests with recognised text.
 
-**A slip in something said to Heliox is asked about before it is acted on** (`pilot.live.held`). Every addressed
-turn, typed or spoken, goes to `LiveCompanion.hold` before any road takes it. A weekday that does not match its date
+**A slip in something said to Heliox, asked about before it is acted on** (`pilot.live.held`). Live decides and
+holds today; no addressed turn is offered to it yet. Offering every addressed turn, typed or spoken, to
+`LiveCompanion.hold` before any road takes it is the conversation side's next patch, which also changes this
+paragraph to say so. What follows is what Live does with a turn once it is offered: **Fakes only** (text through
+`live_hold`: the four slips of the conversation bench's slips.json held, the must-not-fire cases silent). A weekday
+that does not match its date
 ("put the review in for Monday the nineteenth", when the nineteenth is a Thursday), a date that does not exist (the
 thirty-first of November), or an amount that differs from one the person stated earlier in the same conversation
 ("the invoice for Acme is 2,400", then "email the Acme invoice for 4,200"; or "email it for 4,200", where "it" or
@@ -539,7 +555,7 @@ Heliox' first."
 **Settings.** `voice.continuous_conversation_enabled`, which took sentences that looked like commands as addressed
 without the wake phrase, is no longer read and defaults to off; its text says that it made Heliox act on what other
 people say. `voice.follow_up_window_seconds` is 8. Heliox speaking (a reminder, a Live card) opens no reply window
-unless someone opened the conversation.
+unless someone opened the conversation; for the replies Live's own remarks are to get, see "Answering Live" above.
 
 **Hooks.** Each dispatch sets `pilot.system.voice.voice_turn_addressed` ("wake", "button", "follow_up",
 "doubtful_follow_up") beside `voice_turn_ended_at`; the conversation layer calls

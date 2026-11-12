@@ -199,7 +199,11 @@ def test_a_fresh_zsh_line_is_what_live_sees_and_its_risky_command_is_caught():
 
 def test_what_to_install_is_said_for_the_kind_of_computer():
     nothing = lambda _name: None  # noqa: E731
-    assert install_hint("nc", "darwin", nothing) == "Install the OpenBSD netcat: brew install netcat."
+    mac = install_hint("nc", "darwin", nothing)
+    assert mac.startswith("Nothing needs installing: macOS's own nc (/usr/bin/nc)") and "brew uninstall netcat" in mac
+    assert "brew install netcat" not in mac  # Homebrew's netcat is GNU netcat: it has no -U
+    zypper = lambda name: "/usr/bin/zypper" if name == "zypper" else None  # noqa: E731
+    assert install_hint("nc", "linux", zypper) == "Install the OpenBSD netcat (often packaged as netcat-openbsd)."
     apt = lambda name: "/usr/bin/apt-get" if name == "apt-get" else None  # noqa: E731
     assert install_hint("nc", "linux", apt) == "Install the OpenBSD netcat: sudo apt install netcat-openbsd."
     pacman = lambda name: "/usr/bin/pacman" if name == "pacman" else None  # noqa: E731
@@ -260,7 +264,7 @@ async def test_a_shell_that_cannot_reach_the_socket_is_caught(tmp_path):
     zsh = await dry_run("zsh", which=lambda name: fake if name == "zsh" else None, platform="linux")
     assert not zsh.ok and "zsh/net/socket" in zsh.problem
     fish = await dry_run("fish", which=lambda name: fake if name == "fish" else None, platform="darwin")
-    assert not fish.ok and fish.install == "Install the OpenBSD netcat: brew install netcat."
+    assert not fish.ok and fish.install.startswith("Nothing needs installing: macOS's own nc")
     quiet = _stub(tmp_path, "echo nothing")
     nc = await dry_run("fish", which=lambda name: quiet if name == "fish" else None, platform="linux")
     assert not nc.ok and "-U" in nc.problem
