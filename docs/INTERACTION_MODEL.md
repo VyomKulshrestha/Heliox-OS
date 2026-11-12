@@ -70,6 +70,7 @@ returns a plan in 10 to 15 s before any review (daemon log).
 | `handover.py` | The hand-over to the planner: the structured intent, the choice of target, the spoken acknowledgement, progress and the approval pointer. |
 | `layer.py` | The turn itself: `take`, `interrupt`, `clear`, `prewarm`, and the result the server needs. |
 | `adapters.py` | The thin glue to the server, the focused-app lookup and Live, each answering "not available" when missing. |
+| `provisional.py` | Provisional answers: the model starts on the listener's words before the turn is confirmed, everything held until the final words match. |
 
 ### The turn
 
@@ -128,6 +129,68 @@ whatever the sentence length. Four replies of 15 to 20 words: the whole first se
 the head 1.1 to 2.0 s, and every later piece was ready before the one before had finished playing. So a CPU-only
 person keeps Kokoro as the default: it runs at under half real time, so speaking clause by clause never waits
 for it. What it costs them is the head's synthesis, about 1 s, against about 0.1 s on a GPU.
+
+### Starting the answer before the turn is confirmed (`conversation.provisional_answers`)
+
+A cloud model's first word takes about 1.0 s (Claude Haiku 5.5: median 1.04 to 1.18 s over three paid runs). Before
+this, that second began only after the endpoint and the accurate recognition pass had decided. With a provisional
+answer it runs while they decide.
+
+**How it works:**
+- When the person has probably stopped (200 ms into a pause), the listener hands the layer the words it has and a
+  turn id (`PilotServer.provisional_voice_turn`). The layer starts the fast model on those words.
+- It holds everything: nothing is spoken, shown, kept in the conversation, handed over or offered, and no action or
+  approval can come from it.
+- The final words arrive as the normal dispatch under the same turn id. If they are the same words, the turn takes
+  over the running answer and speaks and keeps it as its own.
+- "The same words" means equal after folding case, dropping punctuation, removing "um", "uh", "er", "erm", "hmm" and
+  "mm", and reading numbers in words as digits ("twenty two" is 22, "nineteen eighty four" is 1984, "one two" is
+  never 3). Nothing looser: answering a question the person did not ask is worse than answering a second later.
+- Otherwise the call is closed, so the reply stops costing output tokens, and the turn asks the model as before.
+- If the person carries on, says something else (a stop, a new request), or no final words come within 8 s, the
+  provisional answer is dropped. Nothing was said from it.
+
+**When it may start:**
+- Only for an utterance already known to be addressed to Heliox before its end: the microphone button, or the wake
+  phrase on the same proof the final addressing rule accepts.
+- Never for a follow-up without the wake phrase, a continuation, a doubtful follow-up, a cut-off, speech in a call,
+  or anything the addressing rule has not taken. The listener's replay gate counts how many of the 981 unaddressed
+  corpus lines would have started one; it must be zero, or the feature ships off.
+- Only on the spoken fast-model road. Requests to act, control words, unclear words, answers given in code (the time,
+  sums) and turns during a running task or a waiting approval never start early.
+
+**Money.** A dropped start costs about what an answer costs: the question is billed, and only the reply's few dozen
+tokens are saved. In the paid runs, 36 Haiku calls cost $0.00494, about $0.00014 a call. The limits:
+- at most 6 dropped starts a minute;
+- dropped starts may cost at most $0.05 an hour, whatever the model, by the budget tracker's own estimate;
+- once the session has made ten calls, dropped starts never cost more than a tenth of what its other conversation
+  calls have cost;
+- past a money limit, none start until the hour turns;
+- off for the rest of the session once the month's spend reaches 90% of `budget_monthly_limit_usd`.
+
+Every provisional call is recorded by the budget tracker like any other fast-model call, with
+`agent_id = "conversation.provisional"`. On Haiku, a turn every 15 s with every start dropped would add about
+$0.03 an hour; the 6-a-minute limit holds the most it can waste to about $0.05 an hour.
+
+**The setting.**
+- `"off"`: never.
+- `"on"`: for every model, local ones included.
+- `"auto"` (the default): off with a model on this computer, which would share the CPU with the accurate
+  recognition pass. With a cloud model, on only when the measured adoption rate on the recorded corpus is at least
+  80%. The adoption rate is how often the streaming words at the last pause equal the final words after the
+  normalising above.
+- Measured adoption rate: **not measured yet** (the speech agent's corpus measurement). Until it is, "auto" is off
+  and `provisional.MEASURED_ADOPTION_RATE` stays `None`.
+
+**What has been tested.** **Fakes only**: `tests/test_conversation_provisional.py`, on the real server and the real
+streaming client over a stubbed transport, driven by a fake listener through the interface the real one will call.
+The listener's side is not built yet. The tests cover:
+- an adopted answer: one request, and the first sound earlier by the overlap;
+- changed words: a new request, and the provisional answer never said;
+- carrying on, words not taken, a stop, and no final words: nothing said or kept;
+- every way of being addressed except the wake phrase and the button: no request at all;
+- the roads that never start early;
+- the budget, per-minute and money limits, and the setting.
 
 ### The spoken style
 
@@ -354,11 +417,20 @@ conversation with a real model has been recorded.
 | A Wi-Fi sign-in page (or any proxy's own page) answers instead of the provider: 200, not an event stream or JSON | "I'm getting a web page instead of the language model. The network may want you to sign in first." | 30 s without asking, as for no network |
 | A proper stream that carries no text at all | "The language model sent back nothing that time. Ask me again?" | the next turn asks again |
 
-**Fakes only**: every row is a test with the provider's own stream format stubbed (`tests/test_conversation_models.py`,
-`tests/test_conversation_every_person.py`, `tests/test_conversation_portal.py`), except the sign-in page and the
-stall, which `tests/platform_real/network_faults_check.py` checks with real sockets in front of the real client on
-the CI runners (**Run for real**, local servers, not a real portal). The out-of-credit and rate-limit replies are written from the
-providers' documented errors, not captured from a real account.
+Every row is a test with the provider's own stream format stubbed (**Fakes only**: `tests/test_conversation_models.py`,
+`tests/test_conversation_every_person.py`, `tests/test_conversation_portal.py`).
+
+Three rows also ran for real, through `tests/platform_real/network_faults_check.py`. Each check used real sockets in
+front of the real client, on the ubuntu-24.04, macos-latest and windows-latest CI runners (run 43223177292 on 0fcfc1d,
+all three passing). The servers were local, not a real portal or a real outage. **Run for real** for:
+
+- **No network**: a name that does not resolve gave the "can't reach" line.
+- **Slow first word**: the holding phrase came at 2.0 s, and the stopped-waiting line at 4.5 s, within its 4.5 s bound.
+  Nothing else was said.
+- **Sign-in page**: its line came within 0.0 s (0.2 s on Windows).
+
+The out-of-credit and rate-limit replies are written from the providers' documented errors, not captured from a real
+account.
 
 ### Claude over plain HTTP
 

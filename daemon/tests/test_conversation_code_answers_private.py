@@ -79,6 +79,34 @@ async def test_the_days_answer_goes_to_a_local_model_but_never_to_a_cloud_one(pr
     assert (ANSWERED_ON_THIS_COMPUTER in body) is not shared
 
 
+async def test_two_turns_at_once_each_keep_their_own_answerer():
+    """Which handler answered is the turn's own: a sum and the day's answer handled at the same time each go to
+    memory by their own rule (the sum as said, the day's answer as answered on this computer)."""
+    import asyncio
+
+    from pilot.server import CODE_ANSWER_BY
+
+    server, _sent, heard = server_with("claude")
+    seen: dict[str, str] = {}
+    original = server._control_reply
+
+    async def control_reply(text: str):
+        reply = await original(text)
+        await asyncio.sleep(0.01)  # the other turn answers in between
+        seen[text] = CODE_ANSWER_BY.get()
+        return reply
+
+    server._control_reply = control_reply
+    await asyncio.gather(say(server, "what's two plus two"), say(server, "good morning"))
+    assert seen == {"what's two plus two": "_local_answer:QuickAnswers", "good morning": seen["good morning"]}
+    assert seen["good morning"] not in ("", "_local_answer:QuickAnswers")
+    said_by_heliox = [turn.text for turn in layer_for(server).memory.recent() if turn.role == "assistant"]
+    assert any("That's 4." in text for text in said_by_heliox)
+    assert ANSWERED_ON_THIS_COMPUTER in said_by_heliox
+    assert not any(text.startswith("Good morning") for text in said_by_heliox)
+    assert CODE_ANSWER_BY.get() == ""  # nothing leaks out of the turns into the caller
+
+
 @pytest.mark.parametrize("provider", ["claude", "ollama"])
 async def test_a_sum_answered_in_code_is_part_of_the_conversation_for_every_model(provider):
     server, sent, heard = server_with(provider)

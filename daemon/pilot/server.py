@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import contextvars
 import copy
 import csv
 import functools
@@ -615,6 +616,10 @@ CODE_ANSWERS_ANY_MODEL = frozenset(
     }
 )
 ANSWERED_ON_THIS_COMPUTER = "(answered on this computer)"
+# The handler that answered a turn in code (and, for a local answer, which kind of answer), held in the turn's own
+# context: a typed turn and a voice turn running at once never read each other's.
+CODE_ANSWER_BY: contextvars.ContextVar[str] = contextvars.ContextVar("heliox_code_answer_by", default="")
+LOCAL_ANSWER_SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("heliox_local_answer_source", default="")
 
 
 def _conversation_model_local(conversation: Any) -> bool:
@@ -1127,10 +1132,6 @@ class PilotServer:
         # What the last voice turn was, from what the server saw happen: "action" (an action ran), "answer" (Heliox
         # only spoke), "" (not known). Decides whether "again" means the words or the action.
         self._last_turn_kind = ""
-        self._code_answer_by = (
-            ""  # the handler (and, for local answers, the source) that answered the last turn in code
-        )
-        self._local_answer_source = ""
         # The request a voice task is carrying out, and whether the person ended it by voice and was already told
         # so ("Okay, I've dropped that: ..."): then the task's own ending is not said a second time.
         self._voice_request = ""
@@ -2922,6 +2923,32 @@ class PilotServer:
             return "Okay, I've dropped that. Nothing ran."
         short = " ".join(words.split()[:10])
         return f"Okay, I've dropped that: {short[:1].lower() + short[1:]}. Nothing ran."
+
+    def provisional_voice_turn(self, turn_id: str, words: str, addressed: str) -> bool:
+        """The listener has words for an utterance already known to be addressed to Heliox ("wake" on the same proof
+        the final rule accepts, or "button"), before the turn is confirmed: the fast model may start on them, holding
+        everything until the final words for ``turn_id`` (conv_interfaces.md, section c). True if it started."""
+        if addressed not in ("wake", "button") or self._voice_task_open():
+            return False  # a task running or an approval waiting: replies there take other roads
+        quick = getattr(self, "_quick_answers", None)
+        try:
+            if quick is not None and quick.answer(words) is not None:
+                return False  # answered in code (the time, a sum): no model call
+        except Exception:
+            return False
+        try:
+            from pilot.conversation import layer_for
+
+            return bool(layer_for(self).begin_provisional(turn_id, words, addressed))
+        except Exception:
+            logger.debug("Could not start a provisional answer", exc_info=True)
+            return False
+
+    def cancel_provisional_voice_turn(self, turn_id: str, reason: str) -> None:
+        """The person carried on, the addressing rule did not take the utterance, or it was dropped."""
+        conversation = getattr(self, "_conversation", None)
+        if conversation is not None:
+            conversation.cancel_provisional(turn_id, reason)
 
     async def withdraw_voice_turn(self, turn_id: str, joined: str, gap: float | None = None) -> Any:
         """The listener heard the rest of a sentence it had split at a pause (conv_interfaces.md, section b).
@@ -7068,12 +7095,12 @@ class PilotServer:
             self._shortcut_request,
             self._memory_talk_request,
         )
-        self._code_answer_by = ""
+        CODE_ANSWER_BY.set("")
         for handler in handlers:
             reply = await handler(text)
             if reply is not None:
-                self._code_answer_by = handler.__name__ + (
-                    f":{self._local_answer_source}" if handler.__name__ == "_local_answer" else ""
+                CODE_ANSWER_BY.set(
+                    handler.__name__ + (f":{LOCAL_ANSWER_SOURCE.get()}" if handler.__name__ == "_local_answer" else "")
                 )
                 return reply
         if REPEAT_REQUEST.match(normalize_phrase(text)):
@@ -8511,7 +8538,7 @@ class PilotServer:
                 logger.warning("Local history answer failed", exc_info=True)
                 continue
             if answer is not None:
-                self._local_answer_source = type(source).__name__  # which kind of answer (CODE_ANSWERS_ANY_MODEL)
+                LOCAL_ANSWER_SOURCE.set(type(source).__name__)  # which kind of answer (CODE_ANSWERS_ANY_MODEL)
                 return answer
         return None
 
@@ -14448,22 +14475,31 @@ def handle_tool(tool_name, params):
 
     async def _voice_turn(self, command_text: str) -> None:
         """One addressed utterance holds the conversation floor until it is answered (pilot.live.floor)."""
+        from pilot.conversation import layer_for
+        from pilot.conversation.turns import voice_turn_id
         from pilot.personal.wiring import begin_turn, end_turn
 
-        if await self._voice_leaves_interrupted_task(command_text):
-            return
-        token = begin_turn(self, command_text)
-        # Known to stop(), which cancels a voice turn still running before any store closes.
-        turns: set[asyncio.Task[Any]] = self.__dict__.setdefault("_voice_turn_tasks", set())
-        current = asyncio.current_task()
-        if current is not None:
-            turns.add(current)
+        # A provisional answer for another turn is dropped (a stop, a new request); this turn's waits to be adopted.
+        conversation = layer_for(self)
+        turn_id = voice_turn_id.get()
+        conversation.provisional_dispatch(turn_id)
         try:
-            await self._voice_command_dispatch(command_text)
-        finally:
+            if await self._voice_leaves_interrupted_task(command_text):
+                return
+            token = begin_turn(self, command_text)
+            # Known to stop(), which cancels a voice turn still running before any store closes.
+            turns: set[asyncio.Task[Any]] = self.__dict__.setdefault("_voice_turn_tasks", set())
+            current = asyncio.current_task()
             if current is not None:
-                turns.discard(current)
-            end_turn(self, token)
+                turns.add(current)
+            try:
+                await self._voice_command_dispatch(command_text)
+            finally:
+                if current is not None:
+                    turns.discard(current)
+                end_turn(self, token)
+        finally:
+            conversation.provisional_done(turn_id)  # not adopted by this turn: dropped, nothing was said
 
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Run voice through the same safe interaction path as typed input."""
@@ -14602,7 +14638,7 @@ def handle_tool(tool_name, params):
                     conversation.memory.add_user(command_text)
                     conversation.memory.add_heliox(
                         timeline_answer
-                        if self._code_answer_by in CODE_ANSWERS_ANY_MODEL or _conversation_model_local(conversation)
+                        if CODE_ANSWER_BY.get() in CODE_ANSWERS_ANY_MODEL or _conversation_model_local(conversation)
                         else ANSWERED_ON_THIS_COMPUTER
                     )
                 await self._broadcast_notification(

@@ -27,6 +27,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from pilot.conversation import provisional as prov
 from pilot.conversation.context import ContextSources, ConversationMemory, build_messages
 from pilot.conversation.fast_model import FastModel, FastModelUnavailable
 from pilot.conversation.handover import (
@@ -120,6 +121,11 @@ YES = frozenset(
 _QUESTION_WORDS = re.compile(r"^(?:how|what|why|when|where|which|who|whats|what's|hows|how's)\b")
 _ASKS_TO_ACT = re.compile(r"^(?:can|could|would|will) you\b|^please\b")
 DOUBTFUL = "doubtful_follow_up"
+# Words that start a stop, a denial or an undo (the listener's own rule): never answered early.
+_CONTROL_START = re.compile(
+    r"^(?:stop|wait|hold on|no|nope|cancel|never ?mind|undo|skip|don'?t|do not|not (?:that|now)|actually|instead|"
+    r"go ahead|continue|that'?s (?:it|enough|all)|enough)\b"
+)
 CARRY_SECONDS = 10.0  # a joined sentence does not repeat a company line its first half said this recently
 ASK_WHAT = "Which ones do you mean?"
 ASK_MORE = "Could you tell me a bit more?"
@@ -211,6 +217,7 @@ class ConversationLayer:
         search_url: Callable[[], str] = lambda: "",
         turn_ended: Callable[[], float | None] = lambda: None,
         screen_text_ok: Callable[[], bool] = lambda: False,
+        provisional_setting: Callable[[], str] = lambda: "off",
     ) -> None:
         self._sink = sink
         self._model = model
@@ -248,6 +255,9 @@ class ConversationLayer:
         self._last_ack = ""
         self.last_result = ""
         self.turns: list[TurnResult] = []  # recent turns, for measurement and the debug log
+        # Answers started on the listener's words before the turn was confirmed (pilot.conversation.provisional).
+        self._provisional_setting = provisional_setting
+        self.provisional = prov.ProvisionalAnswers(clock=clock)
 
     # ── the server's hooks ──
 
@@ -277,6 +287,118 @@ class ConversationLayer:
                 return
             self._background.add(task)
             task.add_done_callback(self._background.discard)
+
+    # ── provisional answers (conv_interfaces.md, section c) ──
+
+    def provisional_on(self, model: Any) -> bool:
+        """The setting: "on" for every model; "auto" for a cloud model only when the measured adoption rate earns
+        it (a model on this computer would share the cores the accurate recognition pass needs); "off" never."""
+        try:
+            setting = str(self._provisional_setting() or "auto").strip().casefold()
+        except Exception:
+            setting = "off"
+        if setting == "on":
+            return True
+        if setting != "auto" or getattr(model, "local", False):
+            return False
+        rate = prov.MEASURED_ADOPTION_RATE
+        return rate is not None and rate >= prov.AUTO_ADOPTION_RATE
+
+    def begin_provisional(self, turn_id: str, words: str, addressed: str) -> bool:
+        """Start the fast model on the words the listener has now, holding everything it says until the final words
+        for ``turn_id`` arrive. True if it started. Only for an utterance known to be addressed to Heliox before its
+        end, and only when the words would be answered by the fast model in speech."""
+        if addressed not in prov.ADDRESSED or not turn_id or not self._enabled():
+            return False
+        if len(prov.normalise(words).split()) < prov.MIN_WORDS:
+            return False
+        fixed = misheard_command(words, addressed=addressed)
+        text = fixed if fixed is not None else words
+        decided = route(text, conversation_open=self.memory.open)
+        if decided.kind in (TurnKind.ACTION, TurnKind.CONTROL, TurnKind.UNCLEAR) or _CONTROL_START.match(
+            normalize(text)
+        ):
+            return False  # a request to act, a control word or unclear words: those roads never start early
+        offer = self._offer
+        if offer is not None and normalize(text) in YES:
+            return False
+        try:
+            model = self._model()
+        except Exception:
+            return False
+        if model is None or not getattr(model, "streams", False) or not self.provisional_on(model):
+            return False
+        refused = self.provisional.refusal(model)
+        if refused:
+            logger.info("No provisional answer for %s (%s)", turn_id, refused)
+            return False
+        held = prov.Provisional(
+            turn_id=turn_id,
+            words=words,
+            addressed=addressed,
+            started=self._clock(),
+            model=model,
+            before=self.memory.recent(),
+        )
+
+        async def build() -> tuple[list[dict[str, str]], Any]:
+            screen = await self._read_screen(model)
+            return build_messages(text, self.sources, self.memory, budget=self._context_chars, screen=screen), screen
+
+        self.provisional.add(held)
+        held.task = asyncio.ensure_future(prov.pump(held, SYSTEM_PROMPT, build))
+        self._background.add(held.task)
+        held.task.add_done_callback(self._background.discard)
+        try:
+            asyncio.get_running_loop().call_later(prov.FINAL_WITHIN_SECONDS, self.provisional.expire, held)
+        except RuntimeError:
+            pass
+        logger.info("Provisional answer started for %s", turn_id)
+        return True
+
+    def cancel_provisional(self, turn_id: str, reason: str) -> None:
+        """The listener: the person carried on, the addressing rule did not take the utterance, or it was dropped."""
+        self.provisional.drop(turn_id, reason or "dropped")
+
+    def provisional_dispatch(self, turn_id: str) -> None:
+        """A voice dispatch starts: every provisional answer for another turn is dropped (a stop, a new request), and
+        this one waits for the layer's turn to adopt it."""
+        self.provisional.drop_others(turn_id)
+        prov.dispatch_turn.set(turn_id)
+
+    def provisional_done(self, turn_id: str) -> None:
+        """The voice dispatch for ``turn_id`` has ended: a provisional answer it did not adopt is dropped."""
+        self.provisional.finish(turn_id)
+
+    async def _read_screen(self, model: Any) -> Any:
+        """What the screen shows, for the fast model's context, as _answer reads it."""
+        if self.sources.screen_async is not None:
+            try:
+                async with asyncio.timeout(0.5):
+                    return await self.sources.screen_async(bool(getattr(model, "local", False)))
+            except Exception:
+                return None
+        return self.sources.screen()
+
+    def _adoptable(self, text: str, decided: Route, source: str) -> prov.Provisional | None:
+        """The provisional answer this turn can take over: the same turn, the same words, the conversation as it was,
+        and the spoken fast-model road. Anything else drops it, and the turn asks the model itself."""
+        turn_id = prov.dispatch_turn.get() if source == "voice" else ""
+        held = self.provisional.claim(turn_id) if turn_id else None
+        if held is None:
+            return None
+        if held.dropped:
+            return None
+        if not prov.same_words(held.words, text):
+            self.provisional.not_adopted(held, "other_words")
+            return None
+        if decided.kind in (TurnKind.ACTION, TurnKind.CONTROL) or held.messages is None and held.finished:
+            self.provisional.not_adopted(held, "other_road")
+            return None
+        if [(t.role, t.text, t.at) for t in self.memory.recent()] != [(t.role, t.text, t.at) for t in held.before]:
+            self.provisional.not_adopted(held, "conversation_moved")
+            return None
+        return held
 
     def clear(self) -> None:
         """The "new conversation" call: earlier turns no longer frame the next question."""
@@ -347,7 +469,11 @@ class ConversationLayer:
             result.done = True
             return result
 
-        task = asyncio.ensure_future(self._answer(text, decided, result, started))
+        held = self._adoptable(text, decided, source)
+        if held is not None:
+            task = asyncio.ensure_future(self._adopt(held, text, decided, result, started))
+        else:
+            task = asyncio.ensure_future(self._answer(text, decided, result, started))
         self._active = task
         try:
             return await task
@@ -388,7 +514,37 @@ class ConversationLayer:
             self._saw_screen_text = True
         messages = build_messages(text, self.sources, self.memory, budget=self._context_chars, screen=screen)
         self.memory.add_user(text)
+        return await self._answer_from(text, decided, result, started, model, messages)
 
+    async def _adopt(
+        self, held: prov.Provisional, text: str, decided: Route, result: TurnResult, started: float
+    ) -> TurnResult:
+        """The final words are the provisional ones: the running answer becomes this turn's own, said and kept
+        exactly as if this turn had asked for it."""
+        self.provisional.note_adopted(held)
+        result.timings["provisional_ms"] = max(0.0, (started - held.started) * 1000)
+        logger.info("Adopted the provisional answer for %s", held.turn_id)
+        while held.messages is None and not held.finished:
+            held._changed.clear()
+            await held._changed.wait()
+        if held.screen is not None and getattr(held.screen, "excerpt", ""):
+            self._saw_screen_text = True
+        self.memory.add_user(text)
+        return await self._answer_from(text, decided, result, started, held.model, held.messages or [], held)
+
+    async def _answer_from(
+        self,
+        text: str,
+        decided: Route,
+        result: TurnResult,
+        started: float,
+        model: Any,
+        messages: list[dict[str, str]],
+        adopted: prov.Provisional | None = None,
+    ) -> TurnResult:
+        """Speak the model's answer as it streams (``adopted``: a provisional answer taken over, already running)."""
+        typed = result.source == "typed"
+        sink = result._sink or self._sink
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         act_text: list[str] = []
         failure: list[str] = []
@@ -403,7 +559,11 @@ class ConversationLayer:
             head = ""
             tail = ""  # the end of the words when it could start an ACT line ("AC"), held until the next piece
             count = 0
-            stream = model.stream(TYPED_SYSTEM_PROMPT if typed else SYSTEM_PROMPT, messages)
+            stream = (
+                adopted.replay()
+                if adopted is not None
+                else model.stream(TYPED_SYSTEM_PROMPT if typed else SYSTEM_PROMPT, messages)
+            )
             # A cloud model that has said nothing by the deadline is not answering; a local one may be loading.
             deadline = LOCAL_FIRST_TEXT_DEADLINE if getattr(model, "local", False) else self._first_text_deadline
             limit_sentences = 10_000 if typed else MAX_SENTENCES

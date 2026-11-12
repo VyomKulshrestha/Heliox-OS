@@ -326,6 +326,7 @@ def layer_for(server: Any) -> Any:
         addressed=_turn_addressed,
         not_understood=lambda: _not_understood(server),
         screen_text_ok=lambda: screen_text_ok_for_planner(server.config),
+        provisional_setting=lambda: str(getattr(settings(), "provisional_answers", "auto") or "auto"),
     )
     server._conversation = layer
     return layer

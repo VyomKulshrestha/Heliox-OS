@@ -590,7 +590,13 @@ class ConversationConfig:
     other provider the model already configured for it. share_screen_text decides whether the end of the text
     field you are typing in (read by Heliox Live, never a password field) goes with a question: "auto" shares it
     with a model on this computer and not with a cloud model, "on" always, "off" never. The focused app's name
-    is sent in every case except for apps Live never reads."""
+    is sent in every case except for apps Live never reads.
+
+    provisional_answers: Heliox starts answering a question you said after "Hey Heliox" (or with the microphone
+    button) before it is sure you have finished, and says nothing unless your final words are the same; a start it
+    drops costs about what an answer costs, and dropped starts may cost at most $0.05 an hour. "auto" turns it on
+    for a cloud model once its measured accuracy earns it (docs/INTERACTION_MODEL.md), "on" for every model,
+    "off" never."""
 
     enabled: bool = True
     share_screen_text: str = "auto"  # "auto" | "on" | "off"
@@ -603,6 +609,7 @@ class ConversationConfig:
     ollama_model: str = ""
     # The web search the quick road opens for "search the web for ...": an http(s) address with {query}.
     search_url: str = "https://www.google.com/search?q={query}"
+    provisional_answers: str = "auto"  # "auto" | "on" | "off"
 
 
 @dataclass
@@ -1323,6 +1330,7 @@ def _validate_config_types(raw: dict) -> None:
             "meta_model": str,
             "ollama_model": str,
             "search_url": str,
+            "provisional_answers": str,
         },
         "supervision": {
             "enabled": bool,
@@ -1736,6 +1744,9 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             and len(search) <= 300
         ):
             config.conversation.search_url = search.strip()
+        early = c_raw.get("provisional_answers")
+        if isinstance(early, str) and early.strip().casefold() in ("auto", "on", "off"):
+            config.conversation.provisional_answers = early.strip().casefold()
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]
