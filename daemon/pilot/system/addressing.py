@@ -242,8 +242,12 @@ class Addressing:
     question_open: bool = False
     task_open: bool = False  # a task the person started is running or an approval waits
     _sorry_given: bool = False
+    _at: float | None = None  # while deciding: when the utterance began (capture clock), not when it is processed
     _hint_given: bool = False
     history: list[str] = field(default_factory=list)
+
+    def _now(self) -> float:
+        return self._at if self._at is not None else self.clock()
 
     @property
     def conversation_open(self) -> bool:
@@ -251,7 +255,7 @@ class Addressing:
             return True
         if self.open_since is None:
             return False
-        if self.clock() - self.open_since > self.close_seconds:
+        if self._now() - self.open_since > self.close_seconds:
             self.close("quiet")
             return False
         return True
@@ -275,6 +279,15 @@ class Addressing:
             self.question_open = asked
 
     def decide(self, heard: Heard) -> Decision:
+        """The decision for one utterance, judged at the moment it began (``heard.started``, capture clock): a
+        recognition backlog of seconds must not close the window or the conversation under it."""
+        self._at = heard.started
+        try:
+            return self._decide(heard)
+        finally:
+            self._at = None
+
+    def _decide(self, heard: Heard) -> Decision:
         if heard.in_call:
             self.close("call")
             return Decision(False, why="in a call")
@@ -344,7 +357,7 @@ class Addressing:
         return 0 <= heard.started - self.heliox_ended_at <= ELLIPTICAL_SECONDS
 
     def _addressed(self) -> None:
-        self.open_since = self.clock()
+        self.open_since = self._now()
         self._sorry_given = False
         self._hint_given = False
 

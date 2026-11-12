@@ -617,6 +617,23 @@ pause scenarios (0.6 to 2.0 s inside "Hey Heliox, remind me to | call the bank t
 joined and none is taken as "Stop"; the 23 corpus lines cut at a pause (pauses of 0.40 to 0.72 s) all resume well
 inside the window.
 
+**Times are when the sound arrived.** On a CPU-only laptop the recognisers can fall seconds behind the microphone.
+Every captured block therefore carries the time its last sample arrived, and every decision that compares times
+uses it: the start of speech, the end of the turn and of the last word, the follow-up window and the conversation's
+20 s close (the rule judges an utterance at the moment it began), quick replies, elliptical follow-ups,
+continuations and the cut-off. Barge-in reads voice activity worked out on the capture side, not the recorder's
+flag, which lags a backlog. With processing time instead, a continuation said 1.4 s after the first half was refused
+behind a 7 s backlog; it is now decided the same at 0, 7 and 25 s of backlog (tests/test_voice_capture_clock.py).
+Where the time comes from:
+- PortAudio (sounddevice: MME, DirectSound and WASAPI on Windows, Core Audio on macOS, ALSA on Linux) gives each
+  input buffer's ADC time in the callback (`inputBufferAdcTime`, on the stream's clock), moved onto
+  `time.monotonic()` with the callback's `currentTime`. A host API that reports 0 there (some ALSA plugins,
+  including PulseAudio's and PipeWire's ALSA devices) falls back to the sample count.
+- Windows' native WASAPI capture (soundcard, used first on Windows) reports no times: the stream's own sample count
+  from its first block is the clock, put right if it drifts more than half a second from the wall (a device restart
+  or dropped buffers).
+- The Conversation Bench's file source uses the sample count, or a capture time it passes in.
+
 **Another voice in the room.** With a second voice behind the person, the wake phrase was taken 8 of 8 times at
 15 dB and above, 4 of 8 at 10 dB and 2 of 8 at 5 dB (bench sweep on the owner's desk recordings). The other voice's
 words replace the name; Parakeet never writes "Heliox", so the wake rests on Whisper alone. Reading only the first

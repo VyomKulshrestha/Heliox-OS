@@ -236,6 +236,35 @@ def early_wake_agrees(opening_text: str, final_text: str) -> bool:
     return stem(after[0]) in [stem(word) for word in final_text.split()[:5]]
 
 
+class _Captured(tuple):
+    """A captured audio block and the time its last sample arrived (capture clock, time.monotonic()'s base)."""
+
+    __slots__ = ()
+
+    def __new__(cls, block: Any, captured: float) -> _Captured:
+        return super().__new__(cls, (block, captured))
+
+
+def _unwrap(item: Any) -> tuple[Any, float]:
+    """(frame, capture time) from a queue item; a bare frame (put there by a test) counts as captured now."""
+    if isinstance(item, _Captured):
+        return item[0], item[1]
+    return item, time.monotonic()
+
+
+def _portaudio_capture_end(time_info: Any, frames: int, rate: int) -> float | None:
+    """The ADC time of the end of this input buffer from PortAudio's callback time info, on time.monotonic()'s
+    clock, or None when the host API does not report it (0, as some ALSA and PulseAudio paths do)."""
+    try:
+        adc = float(time_info.inputBufferAdcTime)
+        current = float(time_info.currentTime)
+    except Exception:
+        return None
+    if adc <= 0.0 or current <= 0.0:
+        return None
+    return time.monotonic() - (current - adc) + frames / float(rate)
+
+
 def _cancel(task: asyncio.Future[Any] | None) -> None:
     if task is not None and not task.done():
         task.cancel()
@@ -392,7 +421,12 @@ class BargeInWatcher:
                 self.listener.note_yield()
                 logger.info("The person went on with their sentence; Heliox yields")
                 return True
-            if self.gate.push(self.clock(), self.listener.user_is_speaking, float(recorder.last_frame_rms)):
+            # Voice activity on the capture clock: under a recognition backlog the recorder's own flag lags.
+            since = getattr(recorder, "capture_speech_since", "")
+            speaking = (
+                (since is not None) if since is None or isinstance(since, float) else self.listener.user_is_speaking
+            )
+            if self.gate.push(self.clock(), bool(speaking), float(recorder.last_frame_rms)):
                 self.detected_at = self.clock()
                 self.listener.note_interruption()
                 logger.info("The person started talking over Heliox; stopping speech")
@@ -1684,6 +1718,14 @@ class _ContinuousRecorder:
         self.user_is_speaking = False
         # When the current or last utterance's speech was confirmed (time.monotonic()); None before any.
         self.speech_started_at: float | None = None
+        # The capture clock (see _capture_stamp) and voice activity on it (barge-in reads capture_speech_since).
+        self._captured_samples = 0
+        self._capture_t0: float | None = None
+        self._capture_run = 0
+        self._capture_run_start = 0.0
+        self._capture_last_voiced: float | None = None
+        self.capture_speech_since: float | None = None
+        self._utterance_last_voice: float | None = None
         self.capture_backend = ""
         # When the current run of exact digital zeros began (time.monotonic()); None while there is any signal.
         self._zeros_since: float | None = None
@@ -1791,7 +1833,7 @@ class _ContinuousRecorder:
             # hand off via call_soon_threadsafe rather than touching the
             # queue directly.
             block = indata[:, 0].copy()
-            self._publish_audio_block(block)
+            self._publish_audio_block(block, captured=_portaudio_capture_end(time_info, frames, self.sample_rate))
 
         preferred = self._opening_preferred
         if preferred.startswith("pulse::"):
@@ -1847,10 +1889,12 @@ class _ContinuousRecorder:
             self._stream = None
             return False
 
-    def feed(self, block: Any) -> None:
+    def feed(self, block: Any, captured: float | None = None) -> None:
         """A supported audio source besides the microphone (the Conversation Bench's file pump): one block of
-        16 kHz int16 samples, handled exactly as a captured one. Call use_file_source() first."""
-        self._publish_audio_block(block)
+        16 kHz int16 samples, handled exactly as a captured one. Call use_file_source() first. ``captured``: when
+        its last sample was captured (time.monotonic() base), for a source that knows; else the stream's sample
+        count is the clock."""
+        self._publish_audio_block(block, captured=captured, trusted=captured is not None)
 
     def use_file_source(self) -> None:
         """Take audio from feed() instead of a device: start() then opens nothing."""
@@ -1862,7 +1906,42 @@ class _ContinuousRecorder:
         since = self._zeros_since
         return 0.0 if since is None else max(0.0, time.monotonic() - since)
 
-    def _publish_audio_block(self, block: Any) -> None:
+    def _capture_stamp(self, samples: int, captured: float | None) -> float:
+        """When the last sample of this block reached the microphone input, on time.monotonic()'s clock.
+
+        PortAudio gives the ADC time of the buffer (``captured``). Otherwise (Windows' native WASAPI capture, the
+        file source) the stream's own sample count from its first block is the clock: start time plus samples over
+        the rate, which a backlog in the listener cannot move. It is put right again if it drifts more than half a
+        second from the wall (a device restart, dropped buffers)."""
+        now = time.monotonic()
+        if captured is not None and abs(now - captured) <= 1.0:
+            self._capture_t0 = None
+            return captured
+        self._captured_samples += samples
+        if self._capture_t0 is None:
+            self._capture_t0 = now - self._captured_samples / self.sample_rate
+        stamp = self._capture_t0 + self._captured_samples / self.sample_rate
+        if abs(now - stamp) > 0.5:
+            self._capture_t0 = now - self._captured_samples / self.sample_rate
+            stamp = now
+        return stamp
+
+    def _note_capture_voice(self, stamp: float, voiced: bool, block_seconds: float) -> None:
+        """Voice activity on the capture clock, for barge-in: speech is on after ``start_frames`` voiced blocks in a
+        row (gaps under 0.3 s do not break it) and off after 0.3 s without a voiced block."""
+        if voiced:
+            if self._capture_run == 0:
+                self._capture_run_start = stamp - block_seconds
+            self._capture_run += 1
+            self._capture_last_voiced = stamp
+            if self._capture_run >= self.start_frames and self.capture_speech_since is None:
+                self.capture_speech_since = self._capture_run_start
+        elif self._capture_last_voiced is None or stamp - self._capture_last_voiced > 0.3:
+            self._capture_run = 0
+            self.capture_speech_since = None
+
+    def _publish_audio_block(self, block: Any, captured: float | None = None, trusted: bool = False) -> None:
+        stamp = captured if trusted and captured is not None else self._capture_stamp(len(block), captured)
         signal_rms = frame_rms(block)
         if signal_rms == 0.0:
             if self._zeros_since is None:
@@ -1877,14 +1956,16 @@ class _ContinuousRecorder:
             # window otherwise lifts the "noise floor" above its own softer words, and the sentence is cut into
             # pieces (measured on a Bluetooth hands-free microphone).
             self._adaptive_threshold.observe(signal_rms)
-        if signal_rms >= self.effective_energy_threshold:
+        voiced = signal_rms >= self.effective_energy_threshold
+        if voiced:
             self.last_above_threshold_at = time.time()
-            self.last_voice_monotonic = time.monotonic()
+            self.last_voice_monotonic = stamp
+        self._note_capture_voice(stamp, voiced, len(block) / self.sample_rate)
         loop = self._loop
         queue = self._queue
         if loop is not None and queue is not None and not loop.is_closed():
             try:
-                loop.call_soon_threadsafe(queue.put_nowait, block)
+                loop.call_soon_threadsafe(queue.put_nowait, _Captured(block, stamp))
             except RuntimeError:
                 # The native capture thread can finish its final blocking
                 # read while the asyncio loop is already shutting down.
@@ -2061,7 +2142,7 @@ class _ContinuousRecorder:
             if remaining is not None and remaining <= 0:
                 return False
             try:
-                frame = await asyncio.wait_for(queue.get(), timeout=remaining)
+                frame, _captured = _unwrap(await asyncio.wait_for(queue.get(), timeout=remaining))
             except asyncio.TimeoutError:
                 return False
 
@@ -2101,10 +2182,11 @@ class _ContinuousRecorder:
             if remaining is not None and remaining <= 0:
                 return None
             try:
-                frame = await asyncio.wait_for(queue.get(), timeout=remaining)
+                frame, captured_at = _unwrap(await asyncio.wait_for(queue.get(), timeout=remaining))
             except asyncio.TimeoutError:
                 self.user_is_speaking = False
                 return None
+            self._frame_captured_at = captured_at
 
             if frame is _RECORDER_STOP:
                 self.user_is_speaking = False
@@ -2114,7 +2196,10 @@ class _ContinuousRecorder:
                 # Follow the room while waiting. A wait that began before the threshold had learned the room kept
                 # the 0.02 default, and a quiet headset voice (0.01) waited unheard behind it.
                 endpointer.energy_threshold = self.effective_energy_threshold
-            event = endpointer.push(frame_rms(frame))
+            level = frame_rms(frame)
+            event = endpointer.push(level)
+            if level >= endpointer.energy_threshold:
+                self._utterance_last_voice = captured_at
 
             # Check event states before is_speaking: push() already called
             # reset() internally on ENDED/MAX_DURATION, so is_speaking is
@@ -2128,7 +2213,9 @@ class _ContinuousRecorder:
                 candidate = False
                 opening_sent = False
                 self.user_is_speaking = True
-                self.speech_started_at = time.monotonic()
+                # When the sound began, not when the recorder got to it: the confirming frames are start_frames
+                # long, each frame_ms.
+                self.speech_started_at = captured_at - self.start_frames * self.frame_ms / 1000.0
                 if self.on_speech_start is not None and self.stream_sink is None:
                     try:
                         self.on_speech_start()
@@ -2239,8 +2326,11 @@ class _ContinuousRecorder:
             logger.debug("Candidate end-of-turn callback failed", exc_info=True)
 
     def _note_voiced(self, frames: int) -> None:
-        self.last_endpoint_at = time.monotonic()
-        self.last_turn_ended_at = self.last_voice_monotonic or None
+        # On the capture clock: the end of the turn is the frame that ended it, the last word its last voiced frame.
+        captured = getattr(self, "_frame_captured_at", None)
+        self.last_endpoint_at = captured if isinstance(captured, float) else time.monotonic()
+        last_voice = self._utterance_last_voice
+        self.last_turn_ended_at = last_voice if isinstance(last_voice, float) else (self.last_voice_monotonic or None)
         self.last_voiced_seconds = max(0.0, (frames * self.frame_ms - self.last_endpoint_ms) / 1000.0)
 
     def _turn_check_due(self, silence: int) -> bool:
