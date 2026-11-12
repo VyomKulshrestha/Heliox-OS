@@ -117,18 +117,27 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
         assert server._orchestrator._scheduler_task.done()
 
 
+async def _reply(ws):
+    """The next JSON-RPC response on ``ws``. Notifications (late_parts as parts start, config_updated, start-up
+    states) have no id and may arrive between a request and its reply; they are skipped."""
+    while True:
+        message = json.loads(await ws.recv())
+        if "id" in message:
+            return message
+
+
 @pytest.mark.asyncio
 async def test_health_handler(daemon_server, capsys):
     """Test the health JSON-RPC handler returns correct fields."""
     async with websockets.connect(daemon_server) as ws:
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
-        auth_resp = json.loads(await ws.recv())
+        auth_resp = await _reply(ws)
         assert auth_resp["result"]["status"] == "authenticated"
 
         request = {"jsonrpc": "2.0", "method": "health", "params": {}, "id": "health-test"}
         await ws.send(json.dumps(request))
 
-        response = json.loads(await ws.recv())
+        response = await _reply(ws)
         assert response["id"] == "health-test"
         assert "result" in response
 
@@ -164,13 +173,13 @@ async def test_ready_handler(daemon_server, capsys):
     """Test the ready JSON-RPC handler returns correct fields."""
     async with websockets.connect(daemon_server) as ws:
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
-        auth_resp = json.loads(await ws.recv())
+        auth_resp = await _reply(ws)
         assert auth_resp["result"]["status"] == "authenticated"
 
         request = {"jsonrpc": "2.0", "method": "ready", "params": {}, "id": "ready-test"}
         await ws.send(json.dumps(request))
 
-        response = json.loads(await ws.recv())
+        response = await _reply(ws)
         assert response["id"] == "ready-test"
         assert "result" in response
 

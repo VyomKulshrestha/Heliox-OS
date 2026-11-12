@@ -75,18 +75,27 @@ async def daemon_server(tmp_path, monkeypatch):
         assert server._orchestrator._scheduler_task.done()
 
 
+async def _reply(ws):
+    """The next JSON-RPC response on ``ws``. Notifications (late_parts as parts start, config_updated, start-up
+    states) have no id and may arrive between a request and its reply; they are skipped."""
+    while True:
+        message = json.loads(await ws.recv())
+        if "id" in message:
+            return message
+
+
 @pytest.mark.asyncio
 async def test_ipc_ping_pong(daemon_server):
     """Verify that the basic ping-pong handshake works."""
     async with websockets.connect(daemon_server) as ws:
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
-        auth_resp = json.loads(await ws.recv())
+        auth_resp = await _reply(ws)
         assert auth_resp["result"]["status"] == "authenticated"
 
         request = {"jsonrpc": "2.0", "method": "ping", "params": {}, "id": "test-1"}
         await ws.send(json.dumps(request))
 
-        response = json.loads(await ws.recv())
+        response = await _reply(ws)
         assert response["id"] == "test-1"
         assert response["result"]["pong"] is True
         assert "version" in response["result"]
@@ -111,11 +120,11 @@ async def test_daemon_rotates_a_role_scoped_local_mcp_token(daemon_server):
                 }
             )
         )
-        authenticated = json.loads(await ws.recv())
+        authenticated = await _reply(ws)
         assert authenticated["result"] == {"status": "authenticated", "role": "mcp_local"}
 
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": "execute", "id": "forbidden"}))
-        denied = json.loads(await ws.recv())
+        denied = await _reply(ws)
         assert denied["error"]["code"] == -32601
         assert "mcp_local" in denied["error"]["message"]
 
@@ -136,7 +145,7 @@ async def test_neural_sidecar_token_is_role_scoped_and_cannot_call_ping(daemon_s
                 }
             )
         )
-        auth = json.loads(await ws.recv())
+        auth = await _reply(ws)
         assert auth["result"] == {"status": "authenticated", "role": "neural_sidecar"}
 
         async with websockets.connect(daemon_server) as duplicate:
@@ -150,7 +159,7 @@ async def test_neural_sidecar_token_is_role_scoped_and_cannot_call_ping(daemon_s
                     }
                 )
             )
-            duplicate_denied = json.loads(await duplicate.recv())
+            duplicate_denied = await _reply(duplicate)
             assert duplicate_denied["error"]["code"] == -32002
 
         # Neural input starts after ready, as a late part: until it has, neural_status says "starting" (with its
@@ -158,7 +167,7 @@ async def test_neural_sidecar_token_is_role_scoped_and_cannot_call_ping(daemon_s
         deadline = asyncio.get_running_loop().time() + WAIT_LIMIT_SECONDS
         while True:
             await ws.send(json.dumps({"jsonrpc": "2.0", "method": "neural_status", "id": "neural-status"}))
-            status = json.loads(await ws.recv())
+            status = await _reply(ws)
             if status["result"].get("status") != "starting" or asyncio.get_running_loop().time() > deadline:
                 break
             await asyncio.sleep(0.1)
@@ -167,7 +176,7 @@ async def test_neural_sidecar_token_is_role_scoped_and_cannot_call_ping(daemon_s
         assert status["result"]["capabilities"]["physical_control"] is False
 
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": "ping", "id": "forbidden"}))
-        denied = json.loads(await ws.recv())
+        denied = await _reply(ws)
         assert denied["error"]["code"] == -32601
         assert "neural_sidecar" in denied["error"]["message"]
 
@@ -345,12 +354,12 @@ async def test_ipc_parse_error(daemon_server):
     """Verify that invalid JSON returns a Parse error (-32700)."""
     async with websockets.connect(daemon_server) as ws:
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
-        auth_resp = json.loads(await ws.recv())
+        auth_resp = await _reply(ws)
         assert auth_resp["result"]["status"] == "authenticated"
 
         await ws.send("invalid json {")
 
-        response = json.loads(await ws.recv())
+        response = await _reply(ws)
         assert response["id"] is None
         assert response["error"]["code"] == -32700, response
         assert "Parse error" in response["error"]["message"]
@@ -366,13 +375,13 @@ async def test_ipc_method_not_found(daemon_server):
     """Verify that calling a non-existent method returns -32601."""
     async with websockets.connect(daemon_server) as ws:
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
-        auth_resp = json.loads(await ws.recv())
+        auth_resp = await _reply(ws)
         assert auth_resp["result"]["status"] == "authenticated"
 
         request = {"jsonrpc": "2.0", "method": "non_existent_method", "id": 99}
         await ws.send(json.dumps(request))
 
-        response = json.loads(await ws.recv())
+        response = await _reply(ws)
         assert response["id"] == 99
         assert response["error"]["code"] == -32601
 
@@ -382,13 +391,13 @@ async def test_ipc_get_config(daemon_server):
     """Verify that get_config returns the expected configuration sections."""
     async with websockets.connect(daemon_server) as ws:
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
-        auth_resp = json.loads(await ws.recv())
+        auth_resp = await _reply(ws)
         assert auth_resp["result"]["status"] == "authenticated"
 
         request = {"jsonrpc": "2.0", "method": "get_config", "id": "cfg-1"}
         await ws.send(json.dumps(request))
 
-        response = json.loads(await ws.recv())
+        response = await _reply(ws)
         result = response["result"]
         assert "model" in result
         assert "security" in result
@@ -397,14 +406,6 @@ async def test_ipc_get_config(daemon_server):
 
 
 @pytest.mark.asyncio
-async def _reply(ws):
-    """The next JSON-RPC response; notifications such as config_updated may arrive in between."""
-    while True:
-        message = json.loads(await ws.recv())
-        if "id" in message:
-            return message
-
-
 async def test_ipc_update_screen_vision_interval(daemon_server):
     """Verify screen vision interval updates round-trip through config IPC."""
     async with websockets.connect(daemon_server) as ws:
@@ -469,7 +470,7 @@ async def test_ipc_execute_flow_broadcast(daemon_server):
             await ws.send(
                 json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"})
             )
-            auth_resp = json.loads(await ws.recv())
+            auth_resp = await _reply(ws)
             assert auth_resp["result"]["status"] == "authenticated"
 
             request = {"jsonrpc": "2.0", "method": "execute", "params": {"input": "test command"}, "id": "exec-1"}
