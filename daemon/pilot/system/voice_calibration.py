@@ -36,6 +36,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from pilot.config import CACHE_DIR
+
 logger = logging.getLogger("pilot.system.voice_calibration")
 
 
@@ -190,7 +192,7 @@ class VoiceCalibrationStore:
     """Persists learned wake-word variants to a local JSON file."""
 
     def __init__(self, data_dir: Path | None = None) -> None:
-        self._data_dir = data_dir or (Path.home() / ".cache" / "heliox" / "voice_calibration")
+        self._data_dir = data_dir or (CACHE_DIR / "voice_calibration")
         self._path = self._data_dir / "wake_variants.json"
 
     def load(self) -> dict[str, WakeWordVariant]:

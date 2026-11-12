@@ -22,6 +22,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from pilot.config import CACHE_DIR
+
 logger = logging.getLogger("pilot.cognitive.biometric_loop")
 
 # ── Configuration ──
@@ -95,7 +97,7 @@ class BiometricStore:
     """Persists biometric data to disk."""
 
     def __init__(self, data_dir: Path | None = None):
-        self._data_dir = data_dir or (Path.home() / ".cache" / "heliox" / "biometric")
+        self._data_dir = data_dir or (CACHE_DIR / "biometric")
         self._data_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_fingerprint_path(self, user_id: str) -> Path:

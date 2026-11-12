@@ -23,12 +23,14 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from pilot.config import CACHE_DIR
+
 logger = logging.getLogger("pilot.cognitive.cognitive_handoff")
 
 # ── Configuration ──
 
 SYNC_INTERVAL_SECONDS = 30.0  # Sync to cloud every 30s
-CLOUD_STORAGE_PATH = Path.home() / ".cache" / "heliox" / "cloud"
+CLOUD_STORAGE_PATH = CACHE_DIR / "cloud"
 MAX_HANDOVERS = 20  # Keep last 20 handoffs
 CONTEXT_RETENTION_HOURS = 24
 

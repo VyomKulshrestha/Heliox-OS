@@ -384,7 +384,9 @@ _swift_state = _SwiftHelperState()
 
 def _swift_helper_dir() -> Path:
     # Setup's own tools folder: an app part, rebuilt on demand and removed with the app's files (uninstall.rs).
-    return Path.home() / ".config" / "heliox-os" / "tools" / "vision-ocr"
+    from pilot.config import SETUP_DIR
+
+    return SETUP_DIR / "tools" / "vision-ocr"
 
 
 def _swift_helper_path() -> Path:

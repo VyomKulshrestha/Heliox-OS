@@ -5,8 +5,10 @@
 1. It works out the real folders the way ``pilot.config`` does (config, data, state and runtime, each ``heliox-os``),
    plus the home-folder places removal also counts as Heliox's data (``~/.heliox``, ``~/.cache/heliox``,
    ``~/.pilot``), and lists what is in them.
-2. It points HELIOX_CONFIG_DIR, HELIOX_DATA_DIR, HELIOX_STATE_DIR and HELIOX_RUNTIME_DIR (``pilot.config``) at one
-   temporary folder for the session, so Heliox and every daemon a test starts use that instead.
+2. It makes one temporary folder for the session, marks it (``.heliox-test-root``) and names it in HELIOX_TEST_ROOT,
+   so ``pilot.config`` lays all of Heliox's folders out there (config, data, state, runtime, ``~/.cache/heliox`` and
+   setup's ``~/.config/heliox-os``), for this process and every daemon a test starts. Without the marker the variable
+   is ignored, so a real install never picks it up.
 3. An audit hook refuses (PermissionError) any open, SQLite connect, folder creation, rename or removal under the
    real folders, and records which test asked. A refused open never touches the file.
 
@@ -48,15 +50,11 @@ def real_folders(env: dict[str, str] | None = None) -> list[Path]:
     env = dict(os.environ if env is None else env)
     home = Path(env.get("USERPROFILE") if sys.platform == "win32" and env.get("USERPROFILE") else Path.home())
 
-    def heliox(override: str, variable: str, fallback: str) -> Path:
-        if env.get(override, "").strip():
-            return Path(env[override].strip())
+    def heliox(variable: str, fallback: str) -> Path:
         return (Path(env[variable]) if variable in env else home / fallback) / "heliox-os"
 
     runtime_root = env.get("XDG_RUNTIME_DIR", "").strip()
-    if env.get("HELIOX_RUNTIME_DIR", "").strip():
-        runtime = Path(env["HELIOX_RUNTIME_DIR"].strip())
-    elif runtime_root:
+    if runtime_root:
         runtime = Path(runtime_root) / "heliox-os"
     elif sys.platform == "darwin":
         runtime = home / "Library" / "Caches" / "heliox-os" / "runtime"
@@ -71,9 +69,10 @@ def real_folders(env: dict[str, str] | None = None) -> list[Path]:
             else Path(env.get("TMPDIR", "/tmp")) / f"heliox-os-runtime-{uid}"
         )
     return [
-        heliox("HELIOX_CONFIG_DIR", "XDG_CONFIG_HOME", ".config"),
-        heliox("HELIOX_DATA_DIR", "XDG_DATA_HOME", ".local/share"),
-        heliox("HELIOX_STATE_DIR", "XDG_STATE_HOME", ".local/state"),
+        heliox("XDG_CONFIG_HOME", ".config"),
+        heliox("XDG_DATA_HOME", ".local/share"),
+        heliox("XDG_STATE_HOME", ".local/state"),
+        home / ".config" / "heliox-os",  # setup's folder, which does not follow XDG_CONFIG_HOME
         runtime,
         home / ".heliox",
         home / ".cache" / "heliox",
@@ -172,17 +171,15 @@ def install() -> Path:
         return _state["session"]
     roots = [root for root in real_folders()]
     session = Path(tempfile.mkdtemp(prefix="heliox-tests-"))
-    # Heliox's own overrides, not the XDG variables: PulseAudio, the accessibility bus and other programs the
-    # platform tests talk to find their sockets and cookies through those.
-    for variable, layout in (
-        ("HELIOX_CONFIG_DIR", ".config"),
-        ("HELIOX_DATA_DIR", ".local/share"),
-        ("HELIOX_STATE_DIR", ".local/state"),
-        ("HELIOX_RUNTIME_DIR", "runtime"),
-    ):
-        folder = session / layout / "heliox-os"  # laid out as in a home folder
-        folder.mkdir(parents=True)
-        os.environ[variable] = str(folder)
+    # pilot.config's test root, not the XDG variables: PulseAudio, the accessibility bus and other programs the
+    # platform tests talk to find their sockets and cookies through those. The marker file is what makes pilot.config
+    # use it; daemons a test starts inherit the variable and find the same marker.
+    for layout in (".config", ".local/share", ".local/state", "runtime"):
+        (session / layout / "heliox-os").mkdir(parents=True)  # laid out as in a home folder
+    (session / ".heliox-test-root").write_text(
+        "Heliox's test suite; see daemon/tests/folder_guard.py", encoding="utf-8"
+    )
+    os.environ["HELIOX_TEST_ROOT"] = str(session)
     session_key = _key(session)
     # A real folder that contains the session folder (TMPDIR under ~/.pilot, say) would refuse the session itself.
     kept = [root for root in roots if not session_key.startswith(_key(root) + os.sep)]

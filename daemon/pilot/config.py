@@ -33,20 +33,35 @@ def _xdg(env_var: str, fallback: str) -> Path:
     return Path(os.environ.get(env_var, Path.home() / fallback))
 
 
-def _heliox_dir(override: str, env_var: str, fallback: str) -> Path:
-    """Heliox's own folder under the XDG one. ``override`` (HELIOX_CONFIG_DIR and the others) names Heliox's folder
-    itself and wins: the test suite points it at a temporary folder without changing the XDG variables other
-    programs read (PulseAudio's cookie, the accessibility bus), and nothing else sets it."""
-    named = os.environ.get(override, "").strip()
-    return Path(named) if named else _xdg(env_var, fallback) / "heliox-os"
+# The test suite's own folder (tests/folder_guard.py), never a real install's. It is used only when the folder named
+# by HELIOX_TEST_ROOT carries TEST_ROOT_MARKER, a file the suite writes there, so setting the variable by hand, or a
+# leftover in a shell, is ignored: setup, removal and the app never see Heliox anywhere but its usual folders.
+TEST_ROOT_VARIABLE = "HELIOX_TEST_ROOT"
+TEST_ROOT_MARKER = ".heliox-test-root"
+
+
+def _test_root() -> Path | None:
+    named = os.environ.get(TEST_ROOT_VARIABLE, "").strip()
+    if not named:
+        return None
+    root = Path(named)
+    return root if (root / TEST_ROOT_MARKER).is_file() else None
+
+
+_TEST_ROOT = _test_root()
+
+
+def _heliox_dir(env_var: str, fallback: str) -> Path:
+    """Heliox's own folder under the XDG one; under the test root, laid out as in a home folder, during tests."""
+    if _TEST_ROOT is not None:
+        return _TEST_ROOT / fallback / "heliox-os"
+    return _xdg(env_var, fallback) / "heliox-os"
 
 
 def _default_runtime_dir() -> Path:
-    """Resolve runtime dir when XDG_RUNTIME_DIR is unset (macOS, Windows, minimal Linux). HELIOX_RUNTIME_DIR, when
-    set, is the folder itself (see _heliox_dir)."""
-    named = os.environ.get("HELIOX_RUNTIME_DIR", "").strip()
-    if named:
-        return Path(named)
+    """Resolve runtime dir when XDG_RUNTIME_DIR is unset (macOS, Windows, minimal Linux); the test root's during tests."""
+    if _TEST_ROOT is not None:
+        return _TEST_ROOT / "runtime" / "heliox-os"
     xdg = os.environ.get("XDG_RUNTIME_DIR", "").strip()
     if xdg:
         return Path(xdg) / "heliox-os"
@@ -63,10 +78,15 @@ def _default_runtime_dir() -> Path:
     return Path(tmp) / f"heliox-os-runtime-{uid}"
 
 
-CONFIG_DIR = _heliox_dir("HELIOX_CONFIG_DIR", "XDG_CONFIG_HOME", ".config")
-DATA_DIR = _heliox_dir("HELIOX_DATA_DIR", "XDG_DATA_HOME", ".local/share")
-STATE_DIR = _heliox_dir("HELIOX_STATE_DIR", "XDG_STATE_HOME", ".local/state")
+CONFIG_DIR = _heliox_dir("XDG_CONFIG_HOME", ".config")
+DATA_DIR = _heliox_dir("XDG_DATA_HOME", ".local/share")
+STATE_DIR = _heliox_dir("XDG_STATE_HOME", ".local/state")
 RUNTIME_DIR = _default_runtime_dir()
+# Two places under the home folder that do not follow the XDG variables, as removal (uninstall.rs) knows them:
+# learned data some parts keep (voice calibration, persona, biometric, cloud hand-off) and the folder setup and the app
+# use (~/.config/heliox-os: the environment, tools such as the macOS screen-reading helper).
+CACHE_DIR = (_TEST_ROOT or Path.home()) / ".cache" / "heliox"
+SETUP_DIR = (_TEST_ROOT or Path.home()) / ".config" / "heliox-os"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"

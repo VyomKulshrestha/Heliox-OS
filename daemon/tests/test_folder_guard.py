@@ -91,3 +91,19 @@ def test_a_path_through_a_link_is_refused(stand_in, tmp_path):
 def test_paths_elsewhere_are_untouched(stand_in, tmp_path):
     (tmp_path / "elsewhere.txt").write_text("fine", encoding="utf-8")
     assert (tmp_path / "elsewhere.txt").read_text(encoding="utf-8") == "fine"
+
+
+def test_the_cache_and_setup_folders_point_at_the_session_folder_too():
+    session = folder_guard._state["session"]
+    assert session / ".cache" / "heliox" == config_module.CACHE_DIR
+    assert session / ".config" / "heliox-os" == config_module.SETUP_DIR
+    assert config_module.TEST_ROOT_VARIABLE == "HELIOX_TEST_ROOT"
+    assert (session / config_module.TEST_ROOT_MARKER).is_file()  # the name the guard writes
+
+
+def test_a_test_root_without_its_marker_is_ignored(tmp_path, monkeypatch):
+    """Setting HELIOX_TEST_ROOT by hand, or a leftover in a shell, never moves a real install's folders."""
+    monkeypatch.setenv("HELIOX_TEST_ROOT", str(tmp_path))
+    assert config_module._test_root() is None
+    (tmp_path / config_module.TEST_ROOT_MARKER).write_text("", encoding="utf-8")
+    assert config_module._test_root() == tmp_path
