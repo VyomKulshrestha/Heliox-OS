@@ -164,6 +164,11 @@ async def test_the_listener_offers_another_microphone_once_for_a_narrowband_head
     async def on_status(name, data):
         statuses.append((name, data))
 
+    from pilot.system import audio_health
+
+    # The headset is the device the listener opened, not whatever this computer's real default microphone is: the
+    # test read the real one whenever an earlier test had left soundcard working on the thread it ran on.
+    monkeypatch.setattr(audio_health, "default_microphone_key", lambda platform=None: "")
     listener = voice.ContinuousVoiceListener(wake_words=["hey heliox"], on_status=on_status, config=PilotConfig())
     listener._recorder.input_device_name = "Headset (Rockerz 415 Hands-Free AG Audio)"
     monkeypatch.setattr(listener, "_other_input_for", lambda headset: {"id": "W::Mic", "name": "Mic"})

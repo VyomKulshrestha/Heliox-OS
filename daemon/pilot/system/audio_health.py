@@ -14,11 +14,36 @@ return "" elsewhere, where the watchdog then skips the default-device checks.
 from __future__ import annotations
 
 import logging
+import sys
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
 logger = logging.getLogger("pilot.system.audio_health")
+
+_COM = threading.local()
+
+
+def soundcard_module():
+    """``soundcard``, with COM initialised on the calling thread first on Windows.
+
+    soundcard initialises COM only on the thread that imports it, so on Windows its calls from any other thread
+    (every asyncio.to_thread worker but one) failed and answered "": the default microphone and speaker checks went
+    blind at random, and which thread imported it first decided what a test saw. Initialising the multithreaded
+    apartment here is per thread and harmless when it is already initialised (S_FALSE, or RPC_E_CHANGED_MODE on a
+    thread that chose the single-threaded one). Not before soundcard's own first import: it initialises COM itself
+    there and fails when it finds it already done."""
+    if sys.platform == "win32" and not getattr(_COM, "ready", False):
+        if "soundcard" in sys.modules:
+            import ctypes
+
+            ctypes.windll.ole32.CoInitializeEx(None, 0)  # COINIT_MULTITHREADED
+        _COM.ready = True
+    import soundcard
+
+    return soundcard
+
 
 STALL_SECONDS = 3.0  # no frames at all for this long: the stream has stopped delivering
 SILENT_SECONDS = 30.0  # exact zeros for this long: muted, or another app holds the device
@@ -169,7 +194,7 @@ class CaptureWatchdog:
 def default_microphone_name() -> str:
     """The system default microphone now, read live through WASAPI ("" when unavailable)."""
     try:
-        import soundcard as sc
+        sc = soundcard_module()
 
         microphone = sc.default_microphone()
         return str(getattr(microphone, "name", "") or "")
@@ -190,7 +215,7 @@ def default_microphone_key(platform: str | None = None) -> str:
     import sys
 
     try:
-        import soundcard as sc
+        sc = soundcard_module()
 
         microphone = sc.default_microphone()
     except Exception:
@@ -210,7 +235,7 @@ def default_microphone_identity() -> tuple[str, str]:
     anyway; it is never stored (default_microphone_key is the stored one). No identifier: the name stands in.
     """
     try:
-        import soundcard as sc
+        sc = soundcard_module()
 
         microphone = sc.default_microphone()
     except Exception:
@@ -227,7 +252,7 @@ def pulse_sources() -> list[dict[str, str]]:
     if not sys.platform.startswith("linux"):
         return []
     try:
-        import soundcard as sc
+        sc = soundcard_module()
 
         return [
             {"id": f"pulse::{mic.id}", "name": str(mic.name), "hostapi": "PulseAudio"}
@@ -241,7 +266,7 @@ def microphone_present(name: str) -> bool:
     if not name:
         return False
     try:
-        import soundcard as sc
+        sc = soundcard_module()
 
         return any(mic.name.strip().casefold() == name.strip().casefold() for mic in sc.all_microphones())
     except Exception:
@@ -251,7 +276,7 @@ def microphone_present(name: str) -> bool:
 def default_speaker_name() -> str:
     """The system default output now, read live through WASAPI ("" when unavailable)."""
     try:
-        import soundcard as sc
+        sc = soundcard_module()
 
         speaker = sc.default_speaker()
         return str(getattr(speaker, "name", "") or "")

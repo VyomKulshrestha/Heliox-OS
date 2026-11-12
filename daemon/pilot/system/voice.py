@@ -378,8 +378,9 @@ def echo_free_output(device_name: str) -> bool:
 def default_output_name() -> str:
     """The name of the device Heliox's voice plays on, or "" when it cannot be read."""
     try:
-        import soundcard as sc
+        from pilot.system.audio_health import soundcard_module
 
+        sc = soundcard_module()
         speaker = sc.default_speaker()
         return str(speaker.name) if speaker is not None else ""
     except Exception:
@@ -2094,8 +2095,10 @@ class _ContinuousRecorder:
     def _start_windows_wasapi(self) -> bool:
         """Capture through Windows Audio Session API instead of PortAudio."""
         import numpy as np
-        import soundcard as sc
 
+        from pilot.system.audio_health import soundcard_module
+
+        sc = soundcard_module()  # COM on this thread: a reopen runs in a worker thread
         preferred_name = ""
         preferred = getattr(self, "_opening_preferred", self.preferred_device)
         if preferred.strip().casefold() != "auto":
@@ -3740,11 +3743,44 @@ class ContinuousVoiceListener:
                     # and Live never acts, it only speaks up. The same sentence offered again later is not repeated.
                     self._schedule(self._on_overheard, said)
                 heard = await wake_check
+                if not loose_wake_prefix(heard) and self._narrowband_input():
+                    # A headset in call mode: the wake check heard no wake phrase, so Whisper reads the utterance
+                    # once more through a telephone-band round trip, and that reading counts only if it holds one.
+                    second = await self._telephone_band_wake(samples)
+                    if loose_wake_prefix(second):
+                        heard = second
+                        self.last_wake_source = "telephone band"
                 self._last_wake_text = heard
                 if not said and not heard:
                     return ""
                 return merge_wake(heard, said, loose_wake_prefix)
         return await self._transcribe_whisper_text(audio_path)
+
+    def _narrowband_input(self) -> bool:
+        """The input is a headset in call mode (nothing above about 4 kHz): the device's name says hands-free, or
+        the microphone check judged it narrowband from the utterances so far. One utterance alone is not judged: a
+        short "Wait, stop." on the desk microphone has no sibilants and looks narrowband too."""
+        from pilot.system.mic_quality import hands_free_name
+
+        name = str(getattr(self._recorder, "input_device_name", "") or "")
+        return self._mic_quality.verdict == "narrowband" or hands_free_name(name)
+
+    async def _telephone_band_wake(self, samples: Any) -> str:
+        """The Whisper wake check on the utterance through a 16 -> 8 -> 16 kHz round trip. On the owner's call-mode
+        headset this found "Hey Heliox" where the 16 kHz reading found nothing (bench replay, 12 November)."""
+        try:
+            from scipy.signal import resample_poly
+        except ImportError:
+            return ""
+        narrow = await asyncio.to_thread(
+            lambda: resample_poly(resample_poly(samples[: int(WAKE_OPENING_SECONDS * 16000)], 1, 2), 2, 1)
+        )
+        path = _write_wav([_to_int16(narrow)], 16000)
+        try:
+            return await self._transcribe_whisper_text(path, language="en")
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
 
     async def _transcribe_whisper_text(self, audio_path: str, language: str | None = None) -> str:
         from pilot.system.model_presence import SpeechModelMissing

@@ -357,7 +357,9 @@ async def test_a_wasapi_stream_invalidated_by_a_call_app_is_reopened(monkeypatch
     card = FakeSoundcard()
     monkeypatch.setitem(sys.modules, "soundcard", card)
     monkeypatch.setattr(voice, "CURRENT_PLATFORM", Platform.WINDOWS)
-    monkeypatch.setattr(audio_health, "STALL_SECONDS", 0.2)
+    # The stall check stays well behind the pump's error, as it does in use (3 s against milliseconds): at 0.2 s a
+    # loaded machine could starve the pump thread long enough for "no_audio" to be decided first.
+    monkeypatch.setattr(audio_health, "STALL_SECONDS", 2.0)
     monkeypatch.setattr(audio_health, "default_microphone_identity", lambda: ("", ""))
     monkeypatch.setattr(audio_health, "default_speaker_name", lambda: "")
     statuses: list[tuple[str, dict]] = []
@@ -370,7 +372,7 @@ async def test_a_wasapi_stream_invalidated_by_a_call_app_is_reopened(monkeypatch
     assert recorder.start() and recorder.capture_backend == "windows_wasapi"
     listener._running = True
     watch = asyncio.ensure_future(listener._watch_capture(every_seconds=0.02))
-    for _ in range(500):
+    for _ in range(1000):
         if any(name == "microphone_recovered" for name, _data in statuses):
             break
         await asyncio.sleep(0.01)
@@ -495,3 +497,56 @@ async def test_the_listener_follows_a_new_default_with_the_same_name(system, mon
     listener._running = False
     await asyncio.wait_for(watch, 5)
     assert fake.reopened == 1
+
+
+def test_soundcard_is_usable_from_any_thread_on_windows(monkeypatch):
+    """soundcard initialises COM only on the thread that imports it; every other thread (each asyncio.to_thread
+    worker) gets COM initialised before its first call, once, and the importing thread is left to soundcard."""
+    import ctypes
+    import sys
+    import threading
+    from types import SimpleNamespace
+
+    calls: list[tuple[int, object, int]] = []
+    fake_ole32 = SimpleNamespace(CoInitializeEx=lambda reserved, mode: calls.append((threading.get_ident(), reserved,
+                                                                                    mode)) or 0)  # fmt: skip
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(ole32=fake_ole32), raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    import importlib.abc
+    import importlib.util
+    import types
+
+    card = types.ModuleType("soundcard")
+    card.default_microphone = lambda: SimpleNamespace(id="{0.0.1}.{a}", name="USB Audio Device")
+
+    class Finder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+        """Imports the fake soundcard the way the real one is imported (it initialises COM itself then)."""
+
+        def find_spec(self, name, path, target=None):
+            return importlib.util.spec_from_loader(name, self) if name == "soundcard" else None
+
+        def create_module(self, spec):
+            return card
+
+        def exec_module(self, module):
+            return None
+
+    def in_thread(fn):
+        out = []
+        t = threading.Thread(target=lambda: out.append(fn()))
+        t.start()
+        t.join()
+        return out[0]
+
+    monkeypatch.delitem(sys.modules, "soundcard", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [Finder(), *sys.meta_path])
+    monkeypatch.setattr(audio_health, "_COM", threading.local())
+    first_import = audio_health.soundcard_module
+    assert in_thread(first_import) is card and calls == []
+    assert in_thread(audio_health.default_microphone_identity) == ("{0.0.1}.{a}", "USB Audio Device")
+    assert len(calls) == 1 and calls[0][1:] == (None, 0)  # the multithreaded apartment, on that thread
+    worker = threading.Thread(target=lambda: [audio_health.soundcard_module() for _ in range(3)])
+    worker.start()
+    worker.join()
+    assert len(calls) == 2  # once per thread, however many calls
+    monkeypatch.delitem(sys.modules, "soundcard")

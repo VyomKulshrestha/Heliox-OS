@@ -841,6 +841,22 @@ telephone-band filter (0.57) or louder input (0.40) did not help; for Whisper al
 it is ("four to seven words in ten", from these nine sentences on one headset and one voice) and offers the two
 fixes: the computer's own microphone for input, or the headset's stereo profile outside calls.
 
+The wake phrase on such a headset gets a second look. When the input is in call mode (the device's name says
+hands-free, or the microphone check judged it narrowband; never from one utterance alone, since a short "Wait,
+stop." on the desk microphone looks narrowband too) and the Whisper wake check heard no wake phrase, Whisper reads
+the utterance once more through a 16 to 8 to 16 kHz round trip, and that reading counts only if it holds one. On the
+bench replay (12 November) it changed two outcomes: the owner's "Hey Heliox, remind me that the launch call is
+Monday..." on the headset, which nothing heard at 16 kHz, is now taken ("Here Heliox, invite me to..."), and the
+synthetic "Helix is a nice name for a project.", read as "Heliox is a nice name...", is still refused as talk about
+Heliox. Unaddressed lines dispatched: 0 of 981; addressed lines taken: 12 of 13 (11 before). The cost on a call-mode
+headset is one more Whisper base pass on every utterance without a wake phrase, about 1 s for a 6.5 s utterance on
+this laptop's CPU at about a third of its load (the GPU could not be measured: its CUDA libraries do not load here).
+An utterance the first look took is never delayed by it.
+A known limit that stays: the owner's "Hey Heliox, what can I say?" on the same headset, heard as "Here is what can
+I say?" by Parakeet and "Here we go to work the nice video." by Whisper at either bandwidth. No recogniser wrote
+anything like the name, and "Here is ..." is ordinary speech, so no rule can take it, and the wake teach step refuses
+ordinary words. The advice is the voice bar's own: use the computer's microphone, or the headset outside a call.
+
 **When the listener ended the turn too early.** No word list can hold a turn at a comma (section 6), so the
 listener recovers from an early end the way a person who started answering too soon does. If the person speaks
 again within 3 s of the end of their own turn (as the listener declared it) and Heliox, if it is talking, began
