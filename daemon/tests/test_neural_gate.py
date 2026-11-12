@@ -251,3 +251,59 @@ async def test_physical_scope_and_neural_arming_are_impossible() -> None:
         await gate.arm(session_id, scope=NeuralScope.NAVIGATE, non_neural_authorized=False)
     with pytest.raises(NeuralGateError, match="physical"):
         await gate.arm(session_id, scope=NeuralScope.PHYSICAL_GOAL, non_neural_authorized=True)
+
+
+async def _clocked_gate(clock: list[int]) -> tuple[NeuralIntentGate, NeuralIntentSigner, uuid.UUID, int]:
+    signer = NeuralIntentSigner(b"n" * 32)
+    session_id = uuid.uuid4()
+    gate = NeuralIntentGate(signer=signer, monotonic_ns=lambda: clock[0])
+    await gate.connect(_descriptor(session_id))
+    await gate.begin_calibration(session_id)
+    await gate.finish_calibration(session_id, calibration_id=CALIBRATION, subject_key=SUBJECT)
+    armed = await gate.arm(session_id, scope=NeuralScope.NAVIGATE, non_neural_authorized=True)
+    return gate, signer, session_id, int(armed["state_revision"])
+
+
+@pytest.mark.asyncio
+async def test_a_preview_nobody_committed_lapses_and_the_session_is_armed_again() -> None:
+    clock = [NOW]
+    gate, signer, session_id, revision = await _clocked_gate(clock)
+    preview = await gate.preview(_signed_intent(signer, session_id=session_id, revision=revision), now_ns=NOW)
+    assert preview is not None
+    assert (await gate.status())["state"] == "previewed"
+
+    clock[0] = preview.expires_at_ns + 1
+    status = await gate.status()
+    assert status["state"] == "armed_safe_ui" and status["pending_preview"] is None
+    with pytest.raises(NeuralGateError, match="missing or no longer current"):  # nothing was committed
+        await gate.commit(preview.preview_id, expected_revision=preview.state_revision, effect_tier=1, now_ns=clock[0])
+    # The bridge's next intent, decoded against the new revision, is previewed again.
+    again = _signed_intent(signer, session_id=session_id, revision=int(status["state_revision"]), sequence=2)
+    assert await gate.preview(again, now_ns=NOW + 100_000_000) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_commit_that_came_too_late_does_not_leave_neural_control_stuck() -> None:
+    clock = [NOW]
+    gate, signer, session_id, revision = await _clocked_gate(clock)
+    preview = await gate.preview(_signed_intent(signer, session_id=session_id, revision=revision), now_ns=NOW)
+    assert preview is not None
+    with pytest.raises(NeuralGateError, match="expired"):
+        await gate.commit(
+            preview.preview_id,
+            expected_revision=preview.state_revision,
+            effect_tier=1,
+            now_ns=preview.expires_at_ns + 1,
+        )
+    assert (await gate.status())["state"] == "armed_safe_ui"
+
+
+@pytest.mark.asyncio
+async def test_a_live_preview_is_kept_until_it_lapses() -> None:
+    clock = [NOW]
+    gate, signer, session_id, revision = await _clocked_gate(clock)
+    preview = await gate.preview(_signed_intent(signer, session_id=session_id, revision=revision), now_ns=NOW)
+    assert preview is not None
+    clock[0] = preview.expires_at_ns
+    status = await gate.status()
+    assert status["state"] == "previewed" and status["pending_preview"] == str(preview.preview_id)

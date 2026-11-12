@@ -9,38 +9,16 @@ import websockets
 from pilot.config import PilotConfig, _merge_config
 from pilot.server import JsonRpcRequest, PilotServer
 
-
-@pytest.fixture
-async def server_port(unused_tcp_port):
-    """Provides a random unused TCP port for the test server."""
-    return unused_tcp_port
-
-
-async def _wait_for_port(
-    host: str,
-    port: int,
-    server_task: asyncio.Task,
-    timeout_seconds: float = 30.0,
-) -> None:
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
-    while True:
-        if server_task.done():
-            if server_task.cancelled():
-                raise RuntimeError("Server task was cancelled before port became ready.")
-            raise RuntimeError("Server task failed before port became ready.") from server_task.exception()
-        try:
-            _, writer = await asyncio.open_connection(host, port)
-            writer.close()
-            await writer.wait_closed()
-            return
-        except OSError:
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError(f"Server did not bind on {host}:{port} within {timeout_seconds}s.") from None
-            await asyncio.sleep(0.05)
+# Upper limits that matter only when something is broken. Nothing here waits a fixed time for a state or asserts on
+# elapsed time: start-up, statuses and notifications are awaited as conditions, so a slow or busy machine only makes
+# the test slower. (A 30 s start-up budget failed under load on 12 November 2026; the neurod test's 12 s waits
+# failed on Windows CI.)
+START_LIMIT_SECONDS = 600.0
+WAIT_LIMIT_SECONDS = 120.0
 
 
 @pytest.fixture
-async def daemon_server(server_port, tmp_path, monkeypatch):
+async def daemon_server(tmp_path, monkeypatch):
     """
     Fixture that starts a PilotServer in the background with a
     clean temporary environment.
@@ -66,7 +44,7 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
 
     config = PilotConfig()
     config.server.host = "127.0.0.1"
-    config.server.port = server_port
+    config.server.port = 0  # the OS picks a free port at bind time; read back below
     config.server.auth_token = "test-token"
 
     # Mock heavy subsystems to avoid requiring a real LLM or OCR
@@ -84,19 +62,17 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
         patch("pilot.agents.code_agent.CodeAgent", new_callable=MagicMock),
     ):
         server = PilotServer(config)
-        server_task = asyncio.create_task(server.start())
+        # start() returns once the listener is bound: no port probing, no start-up budget but a failure limit.
+        await asyncio.wait_for(server.start(), timeout=START_LIMIT_SECONDS)
+        port = server._server.sockets[0].getsockname()[1]
 
-        # Give the server a moment to start the websocket listener
-        await _wait_for_port("127.0.0.1", server_port, server_task)
-
-        uri = f"ws://127.0.0.1:{server_port}"
+        uri = f"ws://127.0.0.1:{port}"
         yield uri
 
         # Cleanup
         await server.stop()
         assert server._orchestrator is not None
         assert server._orchestrator._scheduler_task.done()
-        await server_task
 
 
 @pytest.mark.asyncio
@@ -220,7 +196,8 @@ async def test_real_neurod_bridge_calibrates_previews_commits_and_disconnects_fa
     )
     stop = asyncio.Event()
     bridge = NeurodBridge(
-        transport=NeuralRpcTransport(url=daemon_server, token=token),
+        # The product's 10 s per-call limit stopped the bridge on a saturated machine; here it is a failure limit.
+        transport=NeuralRpcTransport(url=daemon_server, token=token, timeout_seconds=WAIT_LIMIT_SECONDS),
         service=service,
         artifact=artifact,
         poll_seconds=0.5,
@@ -243,7 +220,7 @@ async def test_real_neurod_bridge_calibrates_previews_commits_and_disconnects_fa
                 }
             )
         )
-        deadline = asyncio.get_running_loop().time() + 10
+        deadline = asyncio.get_running_loop().time() + WAIT_LIMIT_SECONDS
         while True:
             raw = await asyncio.wait_for(ws.recv(), timeout=max(0.01, deadline - asyncio.get_running_loop().time()))
             message = json.loads(raw)
@@ -254,8 +231,9 @@ async def test_real_neurod_bridge_calibrates_previews_commits_and_disconnects_fa
             if message.get("method"):
                 notifications.append(message)
 
-    async def wait_status(ws, predicate, timeout: float = 12.0, *, require_bridge: bool = True) -> dict:
+    async def wait_status(ws, predicate, timeout: float = WAIT_LIMIT_SECONDS, *, require_bridge: bool = True) -> dict:
         deadline = asyncio.get_running_loop().time() + timeout
+        status: dict = {}
         while asyncio.get_running_loop().time() < deadline:
             if require_bridge and bridge_task.done():
                 raise AssertionError("neurod bridge stopped unexpectedly") from bridge_task.exception()
@@ -263,27 +241,7 @@ async def test_real_neurod_bridge_calibrates_previews_commits_and_disconnects_fa
             if predicate(status):
                 return status
             await asyncio.sleep(0.05)
-        raise AssertionError("neural status did not reach the expected state")
-
-    async def wait_notification(ws, method: str, timeout: float = 5.0) -> dict:
-        for message in notifications:
-            if message.get("method") == method:
-                return message
-
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            if bridge_task.done():
-                raise AssertionError("neurod bridge stopped unexpectedly") from bridge_task.exception()
-            raw = await asyncio.wait_for(
-                ws.recv(),
-                timeout=max(0.01, deadline - asyncio.get_running_loop().time()),
-            )
-            message = json.loads(raw)
-            if message.get("method"):
-                notifications.append(message)
-                if message["method"] == method:
-                    return message
-        raise AssertionError(f"notification {method!r} was not received")
+        raise AssertionError(f"neural status did not reach the expected state; last: {status}")
 
     try:
         async with websockets.connect(daemon_server) as ui:
@@ -304,24 +262,34 @@ async def test_real_neurod_bridge_calibrates_previews_commits_and_disconnects_fa
             assert armed["state"] == "armed_safe_ui"
 
             async def pending_preview() -> tuple[dict, dict]:
-                """Return the status and the announcement of the preview pending right now."""
-                status = await wait_status(ui, lambda status: status.get("state") == "previewed")
-                await wait_notification(ui, "neural_preview")
-                deadline = asyncio.get_running_loop().time() + 5
-                while asyncio.get_running_loop().time() < deadline:
-                    for message in reversed(notifications):
-                        params = message.get("params") or {}
-                        if message.get("method") == "neural_preview" and params.get("preview_id") == status.get(
-                            "pending_preview"
-                        ):
-                            return status, params
-                    status = await rpc(ui, "neural_status")  # also collects newer notifications
-                    await asyncio.sleep(0.05)
-                raise AssertionError("the pending preview was never announced")
+                """The status and the announcement of the preview pending right now.
 
-            # The bridge keeps polling, so on a slow host a newer preview can replace the
-            # one just read; commit whichever preview is pending, with bounded retries.
-            for _attempt in range(3):
+                A preview can lapse (3 s validity) or be replaced while it is being looked up; then the next one is
+                looked up instead of waiting for an announcement that belongs to a preview that is gone.
+                """
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + WAIT_LIMIT_SECONDS
+                while loop.time() < deadline:
+                    status = await wait_status(
+                        ui,
+                        lambda status: status.get("state") == "previewed" and bool(status.get("pending_preview")),
+                        timeout=max(0.01, deadline - loop.time()),
+                    )
+                    pending = status["pending_preview"]
+                    while loop.time() < deadline:
+                        for message in reversed(notifications):
+                            params = message.get("params") or {}
+                            if message.get("method") == "neural_preview" and params.get("preview_id") == pending:
+                                return status, params
+                        status = await rpc(ui, "neural_status")  # also collects newer notifications
+                        if status.get("pending_preview") != pending:
+                            break  # lapsed or replaced: look at the next preview
+                        await asyncio.sleep(0.05)
+                raise AssertionError("no pending preview was announced")
+
+            # On a slow host a preview can lapse (3 s validity) before the commit reaches the daemon; the gate then
+            # arms the session again and the bridge offers a new one. Commit whichever preview is pending.
+            for _attempt in range(10):
                 preview_status, preview = await pending_preview()
                 assert preview["intent_class"] == "focus_right"
                 assert preview["fusion"]["raw_media_excluded"] is True
@@ -351,7 +319,7 @@ async def test_real_neurod_bridge_calibrates_previews_commits_and_disconnects_fa
             assert "retry_allowed" not in result
 
             stop.set()
-            await asyncio.wait_for(bridge_task, timeout=5)
+            await asyncio.wait_for(bridge_task, timeout=WAIT_LIMIT_SECONDS)
             disarmed = await wait_status(
                 ui,
                 lambda status: status.get("armed_scope") == "observe",
@@ -362,7 +330,7 @@ async def test_real_neurod_bridge_calibrates_previews_commits_and_disconnects_fa
     finally:
         stop.set()
         if not bridge_task.done():
-            await asyncio.wait_for(bridge_task, timeout=5)
+            await asyncio.wait_for(bridge_task, timeout=WAIT_LIMIT_SECONDS)
 
 
 @pytest.mark.asyncio
@@ -506,11 +474,13 @@ async def test_ipc_execute_flow_broadcast(daemon_server):
             # 3. status: routing agents
             # ...
 
+            # Read until the request's own answer: stopping earlier left the request running into server.stop(),
+            # which then closed the experience ledger under it ("database table is locked" at teardown).
             messages = []
-            for _ in range(5):
-                msg = json.loads(await ws.recv())
+            while True:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=WAIT_LIMIT_SECONDS))
                 messages.append(msg)
-                if "id" in msg and msg["id"] == "exec-1":
+                if msg.get("id") == "exec-1":
                     break
 
             # Check that we got at least one status notification

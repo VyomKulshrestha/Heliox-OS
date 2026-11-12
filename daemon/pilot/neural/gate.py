@@ -327,8 +327,31 @@ class NeuralIntentGate:
     async def status(self) -> dict[str, object]:
         async with self._lock:
             if self._session is not None:
-                self._refresh_cooldown(self._session, self._monotonic_ns())
+                now = self._monotonic_ns()
+                self._refresh_cooldown(self._session, now)
+                self._refresh_lapsed_preview(self._session, now)
             return self._status_locked()
+
+    def _refresh_lapsed_preview(self, session: _Session, now: int) -> None:
+        """A preview nobody committed in time, or one whose commit came too late, is dropped and the session is
+        armed again, so the bridge (which decodes only in an armed state) can offer the next intent.
+
+        Before this a lapsed preview left the session in "previewed" or "abstained" for good: no new previews,
+        neural control dead until it was armed again by hand. Dropping it commits nothing; every new preview still
+        needs its own commit after the cancellation window, so this fails closed.
+        """
+        lapsed = session.state == NeuralSessionState.ABSTAINED or (
+            session.state == NeuralSessionState.PREVIEWED
+            and (session.pending is None or now > session.pending.expires_at_ns)
+        )
+        if not lapsed:
+            return
+        session.pending = None
+        session.state = {
+            NeuralScope.NAVIGATE: NeuralSessionState.ARMED_SAFE_UI,
+            NeuralScope.SAFE_DESKTOP: NeuralSessionState.ARMED_SAFE_DESKTOP,
+        }.get(session.armed_scope, NeuralSessionState.OBSERVE_ONLY)
+        session.state_revision += 1
 
     def _refresh_cooldown(self, session: _Session, now: int) -> None:
         if (
