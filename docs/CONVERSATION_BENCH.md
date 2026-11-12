@@ -179,11 +179,11 @@ results folder's `scorecard.txt`.
 
 | line | real voice, as recorded | synthetic | target | stage responsible (from the timelines) |
 |---|---|---|---|---|
-| 1.1a local answer starts | owed, machine busy | owed, machine busy | 0.8 s | stage order seen in the timelines: endpoint, then the final pass (the longest stage on this run), then synthesis; the answer itself is immediate |
-| 1.1b/c model answer starts | owed, machine busy | owed, machine busy | 1.5 s / 2.5 s | in this run the spoken acknowledgement was scheduled 2.5 s after dispatch (no longer so when the conversation layer is active) |
-| 1.1d longest silence | owed, machine busy | owed, machine busy | 2.5 s | nothing is said while the final pass runs |
+| 1.1a local answer starts | owed (laptop, real voice) | runner: 5.00 s (synthetic voice, GitHub runner (4 cores), CPU only); laptop owed | 0.8 s | stage order seen in the timelines: endpoint, then the final pass (the longest stage on this run), then synthesis; the answer itself is immediate |
+| 1.1b/c model answer starts | owed (laptop, real voice) | runner: 3.22 s median, 3.55 s worst (synthetic voice, GitHub runner (4 cores), CPU only); laptop owed | 1.5 s / 2.5 s | in this run the spoken acknowledgement was scheduled 2.5 s after dispatch (no longer so when the conversation layer is active) |
+| 1.1d longest silence | owed (laptop, real voice) | runner: 6.24 s cloud, 30.20 s local (synthetic voice, GitHub runner (4 cores), CPU only); laptop owed | 2.5 s | nothing is said while the final pass runs |
 | 1.2a talks over the person | 0 | 0 | 0 | |
-| 1.2b voice stops after barge-in | owed, machine busy | owed, machine busy | 0.4 s | `BargeInGate` waits 0.4 s of speech with open speakers (0.25 s with headphones) by design, which alone uses the whole budget |
+| 1.2b voice stops after barge-in | owed (laptop, real voice) | runner: 0.34 s (synthetic voice, GitHub runner (4 cores), CPU only); laptop owed | 0.4 s | `BargeInGate` waits 0.4 s of speech with open speakers (0.25 s with headphones) by design, which alone uses the whole budget |
 | 1.2c interruption heard | 12/12 | 10/10 | all | |
 | 1.3 sentence split at a pause | 0/14 | 4/4 | under 5% | Smart Turn ends the turn at a 0.6 to 2.0 s pause after "remind me to"; "remind me too" went to the planner |
 | 1.4a plain-speech rubric | 7/12 | 71/75 | all | the "what can I say" answer is 53 words, a spoken list of features ("undo, reminders and timers, notes, ..."); the only failing reply |
@@ -192,7 +192,7 @@ results folder's `scorecard.txt`.
 | 2.1c no wake needed in an open conversation | - | 0/1 | all | follow-up after a local answer was not acted on |
 | 2.2 not addressed (62 min of speech) | 0 of 3 real clips | 264 dispatches, 514 spoken lines | 0 | 28 wake-free "command intent" requests (continuous conversation is on), 11 wake-word false hits ("Hello, Alex", "Helix", Heliox named in the third person), then 225 more inside the 30 s follow-up window each reply opens |
 | 3.1 spoken slip raised as a card | 1/5 | 1/2 | all | unwoken headset sentences never reach Live; one invoice take was heard as "twenty first"; one correct take raised no card, possibly because Live does not repeat a slip it already raised in the same run (the bench keeps one Live instance) |
-| 4.1 simple request under way | never for unwoken sentences; otherwise owed, machine busy | owed, machine busy | 3 s | |
+| 4.1 simple request under way | never for unwoken sentences; otherwise owed (laptop) | runner: 5.06 s (synthetic voice, GitHub runner (4 cores), CPU only); laptop owed | 3 s | |
 | 4.2 control words | 12/12 | 10/11 per model | all | undo after a correction: Parakeet and Whisper merged into "Hey Heliox, Hey Heliocs, undo that", so the undo went to the planner |
 | Q fast-layer quality (canned stubs) | - | 9/9 per model | all | |
 | Live Bench (text) | precision 1.00, recall 1.00 (personal policy, 27/27) | | keep | |
@@ -204,6 +204,61 @@ plan request was answered with the "configure a provider" message (the acknowled
 Derived conditions on the owner's voice (WER / wake found): Bluetooth call mode 35% / 4 of 9, laptop fan 27% /
 6 of 9, another voice 10 dB under 112% / 2 of 9 (the background voice's words were transcribed instead),
 12 dB quieter 57% / 3 of 9, 10% faster 33% / 6 of 9.
+
+## Timing on a GitHub runner (first run, 12 November)
+
+The weekly timing workflow (`.github/workflows/conversation-timing.yml`) ran once by hand: run 43197018718 on
+0a8edad, ubuntu, 4 cores, CPU only, nothing else running, the load check passed before every scenario. Every
+number here is "synthetic voice, GitHub runner (4 cores), CPU only". It tells how long Heliox's own stages take on a small CPU-only machine with a quiet
+processor. It does not tell how the owner's laptop behaves (another processor, other load), how a real voice or
+microphone behaves, or how long the output device takes to make a sound: the runner has no audio device, so the
+listener is fed from files and Heliox's voice is consumed silently, as everywhere in the bench.
+
+| line | runner (cloud stub) | local stub | no model | target | stage that dominates |
+|---|---|---|---|---|---|
+| 1.1a local answer starts | 5.00 s (n=11) | 5.36 s (n=1) | 5.49 s (n=1) | 0.8 s | synthesis |
+| 1.1b model answer starts (median) | 3.22 s (n=13) | 3.20 s (n=1) | 4.84 s (n=1) | 1.5 s | synthesis, then recognition |
+| 1.1c model answer starts (worst) | 3.55 s | 3.20 s | 4.84 s | 2.5 s | as 1.1b |
+| 1.1d longest silence | 6.24 s (n=24) | 30.20 s (n=2) | 5.49 s (n=2) | 2.5 s | see below |
+| 1.2b voice stops after barge-in | 0.34 s (n=6) | 0.32 s | 0.34 s | 0.4 s | the barge-in gate |
+| 4.1 simple request under way | 5.06 s (n=24) | 1.97 s (n=2) | 1.68 s (n=2) | 3 s | see below |
+
+Stage medians, wall clock (the audio clock agreed within 0.05 s everywhere, so the listener kept up with the
+audio throughout):
+
+| stage | 1.1a, cloud (n=11) | 1.1b, cloud (n=13) | 1.2b, cloud (n=6) |
+|---|---|---|---|
+| endpoint (last word to end of turn) | 0.69 s | 0.78 s | |
+| recognition (Parakeet for the words, the Whisper wake check beside it) | 0.80 s | 1.10 s | |
+| decision (words to text to say; for 1.1a the stub fast model's 0.6 s first token is in here) | 0.74 s | 0.0 s | |
+| planner call to the acknowledgement | | 0.04 s | |
+| synthesis (text to the first sound, Kokoro on the CPU) | 2.46 s | 1.24 s | |
+| onset (first word to voice activity) | | | 0.06 s |
+| gate (voice activity to barge-in accepted) | | | 0.27 s |
+| cut (barge-in to silence) | | | 0.00 s |
+
+What this says:
+- 1.1a: half of the five seconds is synthesis. The local answers are whole sentences of 15 to 25 words, and the
+  voice synthesises a sentence completely before it plays any of it. Halving synthesis moves 1.1a most (about
+  1.2 s); halving recognition would save 0.4 s.
+- 1.1b: the first sound is the spoken acknowledgement ("Okay, opening Notepad."), which is short, so synthesis is
+  1.24 s; recognition (1.10 s) is next. Halving either moves 1.1b by about 0.6 s; neither alone reaches 1.5 s.
+- 1.1d at 30.20 s on the local model is the bench's own assumption, not something measured: the stub planner for
+  a local model takes 2.5 s plus 400 tokens at 12 tokens a second (35.8 s), and Heliox said "I'm working out the
+  steps." once and nothing more until the result. What it shows is real: during a long plan nothing is said after
+  the first progress line.
+- 4.1 differs by kind of model only because of which scenarios ran: on the cloud stub it includes the synthetic
+  questions answered by the conversation layer ("what did I do this morning?"), where the first sign of progress
+  is the spoken answer itself (5.0 s, synthesis again); the local and no-model lines have only the two
+  turn-taking scenarios (n=2), whose acknowledgement or local answer comes sooner.
+- 1.2b passes on the runner (0.34 s): the gate took 0.27 s, against 0.42 s in the laptop runs before the speech
+  agent's capture-side voice activity landed; which of the gate's holds the bench's silent output selects was not
+  checked.
+
+The bench's own share: the stub models' delays (cloud first token 0.6 s; the local planner's 35.8 s), the n=1 and
+n=2 lines for local and no model, and the first scenario of the run (c-syn-stop, 3.9 s to "Okay, stopped." where
+the others took 3.5 s), which carries a cold voice worker. The file-fed microphone kept real-time pace (the two
+clocks agree).
 
 ## Soak, 20 minutes (12 November)
 

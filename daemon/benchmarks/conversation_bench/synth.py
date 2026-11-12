@@ -50,7 +50,11 @@ def scenario_clips(root: str) -> list[tuple[Path, str, str, float]]:
     out = []
     for scenario in load_all():
         for step in scenario.steps:
-            if not step.say.startswith("synthetic/") or not step.text:
+            if (
+                not step.say.startswith("synthetic/")
+                or step.say.startswith("synthetic/not_addressed/")
+                or not step.text
+            ):
                 continue
             ref = audio_refs.parse_ref(step.say)
             parts = PurePosixPath(ref.path).parts

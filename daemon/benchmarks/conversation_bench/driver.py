@@ -273,6 +273,9 @@ class Harness:
         config.save = MagicMock()
         config.live.enabled = True
         config.live.grounded_checks = False  # the local model takes minutes on a CPU
+        # CPU only, said in the setting itself: the voice worker's GPU choice does not read CUDA_VISIBLE_DEVICES=""
+        # as "no card" (on 12 November it put Kokoro on the failing GPU and fell back to the system voice).
+        config.voice.tts_device = "cpu"
         if self.configure is not None:
             self.configure(config)
         server = PilotServer(config)
@@ -386,7 +389,9 @@ class Harness:
         )
         await server._live.start()
 
-        original_dispatch = server._voice_command_dispatch
+        # What the server's own listener calls for an addressed turn: the turn entry point (it holds the floor,
+        # lets Live see the turn first and runs the conversation layer), or the dispatch on servers without it.
+        original_dispatch = getattr(server, "_voice_turn", None) or server._voice_command_dispatch
 
         async def dispatch(text: str) -> None:
             lst = self.listener
@@ -414,6 +419,10 @@ class Harness:
             on_overheard=overheard,
         )
         listener.task_open = server._voice_task_open
+        # Wired exactly as the server wires its own listener, so a sentence split at a pause can be withdrawn
+        # and joined (without it every bench run was the unwired case).
+        if hasattr(server, "withdraw_voice_turn"):
+            listener.withdraw_turn = server.withdraw_voice_turn
         self.listener = listener
         original_note = listener.note_interruption
 

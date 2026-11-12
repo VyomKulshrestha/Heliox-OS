@@ -1,0 +1,728 @@
+{
+ "scenarios": [
+  {
+   "id": "tt-syn-comma-02f02097",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: \"That's it for today, thanks for watching, and see you in the next video.\"",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/02f0209736ed7356.wav",
+     "text": "That's it for today, thanks for watching, and see you in the next video.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-0ac5061e",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'If you see an error here, restart Visual Studio Code and try again.'",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/0ac5061e05deeda0.wav",
+     "text": "If you see an error here, restart Visual Studio Code and try again.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-0c55fad2",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'The library extended its opening hours during exams, and the reading room was full until midnight.'",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/0c55fad28115b43d.wav",
+     "text": "The library extended its opening hours during exams, and the reading room was full until midnight.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-103fac5f",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'The committee will publish its findings at the end of the month, after the last hearing.'",
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/103fac5fb2b74f81.wav",
+     "text": "The committee will publish its findings at the end of the month, after the last hearing.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-1b1db497",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'Now we are engaged in a great civil war, testing whether that nation, or any nation so conceived and so dedicated, can long endure.'",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/1b1db497a4a67561.wav",
+     "text": "Now we are engaged in a great civil war, testing whether that nation, or any nation so conceived and so dedicated, can long endure.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-322beb91",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'The rain had stopped by the time the train reached the coast, and the platform was empty except for a porter and his cart.'",
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/322beb9156890a51.wav",
+     "text": "The rain had stopped by the time the train reached the coast, and the platform was empty except for a porter and his cart.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-34dd214a",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'We are met on a great battlefield of that war. We have come to dedicate a portion of that field.'",
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/34dd214a32880899.wav",
+     "text": "We are met on a great battlefield of that war. We have come to dedicate a portion of that field.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-3a31770f",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: \"Close the terminal, it's eating all the memory.\"",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/3a31770f431a7af2.wav",
+     "text": "Close the terminal, it's eating all the memory.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-43cf21b1",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'Every spring the river floods the lower fields, and every summer the farmers plant them again.'",
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/43cf21b16e3a49d0.wav",
+     "text": "Every spring the river floods the lower fields, and every summer the farmers plant them again.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-797e72d2",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'Can you open the deck so everyone can see it?'",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/797e72d2026ff6c4.wav",
+     "text": "Can you open the deck so everyone can see it?",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-9403cf91",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'The recipe says to bake the bread for forty minutes, but my oven runs hot, so I take it out at thirty five.'",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/9403cf913ca84bad.wav",
+     "text": "The recipe says to bake the bread for forty minutes, but my oven runs hot, so I take it out at thirty five.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-a8396caf",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'Four score and seven years ago our fathers brought forth on this continent a new nation, conceived in liberty, and dedicated to the proposition that all men are created equal.'",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/a8396cafeb11a5e4.wav",
+     "text": "Four score and seven years ago our fathers brought forth on this continent a new nation, conceived in liberty, and dedicated to the proposition that all men are created equal.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-aa227646",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'In Visual Studio Code, open the command palette with control shift P.'",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/aa2276464ffe3f69.wav",
+     "text": "In Visual Studio Code, open the command palette with control shift P.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-b57a2c57",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'Water boils at a lower temperature at altitude, which is why cooking times change in the mountains.'",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/b57a2c57c3305391.wav",
+     "text": "Water boils at a lower temperature at altitude, which is why cooking times change in the mountains.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-b7b9a8f8",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'Sorry, you were on mute. Could you say that again?'",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/b7b9a8f8528ac225.wav",
+     "text": "Sorry, you were on mute. Could you say that again?",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-bf32c37d",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'Run the install command again and wait for it to finish.'",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/bf32c37d6fdd1607.wav",
+     "text": "Run the install command again and wait for it to finish.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-d33e91b2",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: \"No, don't send it yet, I want Priya to read it first.\"",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/d33e91b208f644dc.wav",
+     "text": "No, don't send it yet, I want Priya to read it first.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-dde9d59b",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'She opened the window, let the cold air in, and read the letter a second time.'",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/dde9d59b37e7b0b3.wav",
+     "text": "She opened the window, let the cold air in, and read the letter a second time.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-e001f3a0",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: \"Close Chrome, it's eating all the memory.\"",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/e001f3a043627f1f.wav",
+     "text": "Close Chrome, it's eating all the memory.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-e1d4d689",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'He kept the old radio on the kitchen shelf, where it played the news every morning at seven.'",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/e1d4d68964cdf3ca.wav",
+     "text": "He kept the old radio on the kitchen shelf, where it played the news every morning at seven.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-e9add9eb",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'Yes, approve it, we talked about this last week.'",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/e9add9ebdd868a9d.wav",
+     "text": "Yes, approve it, we talked about this last week.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-f3a758a1",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: 'When in the course of human events it becomes necessary for one people to dissolve the political bands which have connected them with another, a decent respect to the opinions of mankind requires that they should declare the causes which impel them to the separation.'",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/f3a758a10be51482.wav",
+     "text": "When in the course of human events it becomes necessary for one people to dissolve the political bands which have connected them with another, a decent respect to the opinions of mankind requires that they should declare the causes which impel them to the separation.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "tt-syn-comma-f4d5451d",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "1.3",
+    "1.2a"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "a corpus line the listener cut at a comma, said to Heliox: \"Okay, that makes sense. Let's go with the second option.\"",
+   "steps": [
+    {
+     "say": "synthetic/bm_lewis/1.0/hey_heliox.wav",
+     "text": "Hey Heliox,"
+    },
+    {
+     "say": "synthetic/not_addressed/lines/f4d5451d4cb52661.wav",
+     "text": "Okay, that makes sense. Let's go with the second option.",
+     "wait": 0.3
+    }
+   ],
+   "expect": {
+    "one_turn": true,
+    "woken": true
+   }
+  },
+  {
+   "id": "c-real-usb-cue-b-wait-stop-plan-waiting",
+   "set": "control",
+   "voice": "real",
+   "lines": [
+    "4.2"
+   ],
+   "mic": "ptron-usb-desk",
+   "note": "a plan waits for approval and Heliox is asking about it; the person says \"Wait, stop.\": one sentence back, nothing approved",
+   "setup": {
+    "pending_approval": true,
+    "heliox_says": "I'm about to delete the old installers in your Downloads folder. Shall I go ahead?"
+   },
+   "steps": [
+    {
+     "say": "real/desk/usb_cue_b.wav",
+     "text": "Wait, stop.",
+     "when": "heliox_audio",
+     "delay": 1.5
+    }
+   ],
+   "expect": {
+    "approved": false,
+    "stopped": true,
+    "spoken": true
+   }
+  },
+  {
+   "id": "c-syn-wait-stop-plan-waiting",
+   "set": "control",
+   "voice": "synthetic",
+   "lines": [
+    "4.2"
+   ],
+   "note": "a plan waits for approval and Heliox is asking about it; the person says \"Wait, stop.\": one sentence back, nothing approved",
+   "setup": {
+    "pending_approval": true,
+    "heliox_says": "I'm about to delete the old installers in your Downloads folder. Shall I go ahead?"
+   },
+   "steps": [
+    {
+     "say": "synthetic/af_bella/1.0/wait_stop.wav",
+     "text": "Wait, stop.",
+     "when": "heliox_audio",
+     "delay": 1.5
+    }
+   ],
+   "expect": {
+    "approved": false,
+    "stopped": true,
+    "spoken": true
+   }
+  },
+  {
+   "id": "tt-syn-reply-to-live-remark",
+   "set": "turn_taking",
+   "voice": "synthetic",
+   "lines": [
+    "2.1c"
+   ],
+   "models": [
+    "cloud"
+   ],
+   "note": "Live raises the weekday slip aloud; the person answers it without the wake phrase, 1.5 s after Heliox stops",
+   "steps": [
+    {
+     "say": "synthetic/am_michael/1.0/hey_heliox_remind_me_on_tuesday_the_nineteenth_t.wav",
+     "text": "Hey Heliox, remind me on Tuesday the nineteenth to send the report."
+    },
+    {
+     "say": "synthetic/am_michael/1.0/oh_right_make_it_thursday_then.wav",
+     "text": "Oh right, make it Thursday then.",
+     "when": "heliox_done",
+     "delay": 1.5
+    }
+   ],
+   "expect": {
+    "follow_up": true
+   }
+  }
+ ]
+}
