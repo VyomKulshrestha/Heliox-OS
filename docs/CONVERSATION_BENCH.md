@@ -127,6 +127,31 @@ The bench forces the CPU (`CUDA_VISIBLE_DEVICES=""`) so numbers are comparable b
 cannot take a run down. Today it has only run on the owner's Windows laptop; on macOS and Linux only its unit
 tests have run.
 
+## Fast replay of addressing (line 2.2 and the owner's clips)
+
+The audio-level hour takes about 90 minutes. For iterating on who Heliox thinks is talking to it, the replay runs
+the same utterances at transcript level in seconds:
+
+```
+python -m benchmarks.conversation_bench.replay build --audio <folder> [--redo]   # once: recognise and cache
+python -m benchmarks.conversation_bench.replay run --audio <folder> --decide pilot.system.addressing:decide
+```
+
+`build` recognises every corpus line of the not-addressed blocks and every real clip through the listener's own
+calls (the Whisper wake check with its English setting and vocabulary prompt, and the Parakeet final pass on the
+same normalised samples) and caches the words, voiced seconds and speech level in `replay_cache.jsonl` in the
+audio folder. `run` feeds them in order to a decision function, simulates Heliox's reply after each dispatch (so
+follow-up windows open as they would), prints the counts per label and writes `replay_table.tsv`: what was said,
+both recognisers' words, the decision and its rule, and which earlier turn opened the window it fell in. Its
+utterances are corpus lines; the listener's endpointing sometimes joins two, so the audio-level run stays final.
+
+## Re-baseline with the conversation layer up
+
+`python -m benchmarks.conversation_bench.rebaseline --audio <folder>` runs the real-voice, control and turn-taking
+scenarios with the server's model stack marked up and a stub fast model per kind of model (`stack.py`), labels
+real-voice rows by microphone (desk, headset), samples the load before the run and before every scenario
+(`machine.py`), and prints every timing line measured on a busy machine as owed.
+
 ## Hooks the product should expose
 
 The driver reaches into private attributes today; each of these would make a number exact and survive refactors:
@@ -147,18 +172,18 @@ The driver reaches into private attributes today; each of these would make a num
 ## Baseline, 12 November 2026
 
 Owner's Windows laptop, CPU only, planner stubbed, silent output. The machine was shared with other agents and
-ran at 75 to 100 percent CPU for most of the run, which slows recognition and synthesis; the timings below are
-what a busy machine gives, not a quiet one. Real-voice understanding was run as recorded and under five derived
+ran at 75 to 100 percent CPU for the whole run. Every timing measured then is owed and not quoted here; the
+raw values stay in the results folder only as evidence of order between stages. Real-voice understanding was run as recorded and under five derived
 conditions (bt-call, fan-10db, voice-10db, quiet-12db, fast-1.1). Full numbers per condition and model are in the
 results folder's `scorecard.txt`.
 
 | line | real voice, as recorded | synthetic | target | stage responsible (from the timelines) |
 |---|---|---|---|---|
-| 1.1a local answer starts | 5.7 s median | 6.9 s | 0.8 s | recognition after the endpoint 2.7 s median (final pass on a busy CPU), the endpoint 0.6 s, synthesis 0.4 to 1.1 s; the answer itself takes 0.03 s |
-| 1.1b/c model answer starts | 30.8 s (n=1) | 6.0 s median, 19.7 s worst | 1.5 s / 2.5 s | the spoken acknowledgement is scheduled 2.5 s after dispatch, after recognition of 2.6 s |
-| 1.1d longest silence | 30.8 s | 27.6 s | 2.5 s | same as above; nothing is said while the final pass runs |
+| 1.1a local answer starts | owed, machine busy | owed, machine busy | 0.8 s | stage order seen in the timelines: endpoint, then the final pass (the longest stage on this run), then synthesis; the answer itself is immediate |
+| 1.1b/c model answer starts | owed, machine busy | owed, machine busy | 1.5 s / 2.5 s | in this run the spoken acknowledgement was scheduled 2.5 s after dispatch (no longer so when the conversation layer is active) |
+| 1.1d longest silence | owed, machine busy | owed, machine busy | 2.5 s | nothing is said while the final pass runs |
 | 1.2a talks over the person | 0 | 0 | 0 | |
-| 1.2b voice stops after barge-in | 0.48 s (0.81 s once, cold) | 0.49 s | 0.4 s | `BargeInGate` waits 0.4 s of speech with open speakers (0.25 s with headphones); voice activity itself is seen in 0.06 s |
+| 1.2b voice stops after barge-in | owed, machine busy | owed, machine busy | 0.4 s | `BargeInGate` waits 0.4 s of speech with open speakers (0.25 s with headphones) by design, which alone uses the whole budget |
 | 1.2c interruption heard | 12/12 | 10/10 | all | |
 | 1.3 sentence split at a pause | 0/14 | 4/4 | under 5% | Smart Turn ends the turn at a 0.6 to 2.0 s pause after "remind me to"; "remind me too" went to the planner |
 | 1.4a plain-speech rubric | 7/12 | 71/75 | all | the "what can I say" answer is 53 words, a spoken list of features ("undo, reminders and timers, notes, ..."); the only failing reply |
@@ -167,14 +192,14 @@ results folder's `scorecard.txt`.
 | 2.1c no wake needed in an open conversation | - | 0/1 | all | follow-up after a local answer was not acted on |
 | 2.2 not addressed (62 min of speech) | 0 of 3 real clips | 264 dispatches, 514 spoken lines | 0 | 28 wake-free "command intent" requests (continuous conversation is on), 11 wake-word false hits ("Hello, Alex", "Helix", Heliox named in the third person), then 225 more inside the 30 s follow-up window each reply opens |
 | 3.1 spoken slip raised as a card | 1/5 | 1/2 | all | unwoken headset sentences never reach Live; one invoice take was heard as "twenty first"; one correct take raised no card, possibly because Live does not repeat a slip it already raised in the same run (the bench keeps one Live instance) |
-| 4.1 simple request under way | never (not woken) | 18.1 s worst | 3 s | recognition plus a 2.5 s acknowledgement delay; with a 10 s plan the result comes later still |
+| 4.1 simple request under way | never for unwoken sentences; otherwise owed, machine busy | owed, machine busy | 3 s | |
 | 4.2 control words | 12/12 | 10/11 per model | all | undo after a correction: Parakeet and Whisper merged into "Hey Heliox, Hey Heliocs, undo that", so the undo went to the planner |
 | Q fast-layer quality (canned stubs) | - | 9/9 per model | all | |
 | Live Bench (text) | precision 1.00, recall 1.00 (personal policy, 27/27) | | keep | |
 | Memory Bench | 11/11 | | 10/10 | |
 
 Kinds of model: control words and local answers behaved the same under cloud, local and none. With no model a
-plan request was answered with the "configure a provider" message in 9.5 s (the acknowledgement plays first).
+plan request was answered with the "configure a provider" message (the acknowledgement plays first; its timing is owed).
 
 Derived conditions on the owner's voice (WER / wake found): Bluetooth call mode 35% / 4 of 9, laptop fan 27% /
 6 of 9, another voice 10 dB under 112% / 2 of 9 (the background voice's words were transcribed instead),
@@ -185,8 +210,8 @@ Derived conditions on the owner's voice (WER / wake found): Bluetooth call mode 
 `soak --minutes 20` ran 24 minutes of wall time (16 activities: requests, barge-ins, control words, two five-minute
 not-addressed blocks), sampling every 10 s. Resident memory of the bench process went from 1130 MB after warm-up
 to 1019 MB (peak 1188 MB, no upward trend); the voice worker from 316 MB to 130 MB. Handles 701 to 710, threads
-106 to 105, asyncio tasks 10 to 7. The voice worker started once and never restarted. The audio feed fell at most
-2.8 s behind real time. Missed: the two Bluetooth-headset launch-call sentences, which are never woken (see 2.1b).
+106 to 105, asyncio tasks 10 to 7. The voice worker started once and never restarted. The audio feed fell behind
+real time at moments, an effect of the load (not quoted). Missed: the two Bluetooth-headset launch-call sentences, which are never woken (see 2.1b).
 At the end Heliox still heard and answered aloud. Twenty minutes cannot show a slow leak; the two-hour run is
 `python -m benchmarks.conversation_bench soak --minutes 120 --audio <folder>`.
 
@@ -202,3 +227,32 @@ From `platform.json` (the run itself was on Windows only, and nothing Heliox sai
 - `pilot/system/call_detection.py`: Windows, macOS (CoreAudio) and Linux (PulseAudio streams) paths exist in the
   working tree today; only the Windows one has run here.
 - `pilot/system/local_tts_worker.py` `_default_spawn`: a Windows-only process flag; behaviour is the same elsewhere.
+
+## Re-baseline, 12 November afternoon (addressing rule, conversation layer up)
+
+Measured on the working tree: base d8fa4ec plus the uncommitted listener and addressing patch that was later
+committed as 789b7d6 (the re-baseline started at 11:29). The audio-level unaddressed hour ran from 12:13 on a
+tree equal to ff0a8d1. The conversation layer was up with a stub fast model (10 stub calls during the run).
+Only lines that do not depend on time are given; every timing line is owed, because the machine was busy. Real
+voice is split by microphone: the desk microphone measures recognition, and the Bluetooth headset (narrowband
+call mode, which the product now detects and warns about) measures the warning.
+
+| line | real, desk | real, headset | synthetic | changed since the first baseline |
+|---|---|---|---|---|
+| 2.1a word error rate (as recorded) | 16% (9 edits / 58 words) | 34% | - | desk 12% to 16%, headset 36% to 34%: the same recognisers, run-to-run variation on a loaded CPU |
+| 2.1b wake phrase found (as recorded) | 4/4 | 2/5 | 4/4 | none |
+| 2.1b in derived conditions (desk) | Bluetooth call mode 2/4, fan 4/4, another voice 1/4 | | | another voice 2/4 to 1/4 |
+| 1.3 split at a pause | 0/9 | 0/5 | 4/4 split (0.6 to 2 s pauses) | none |
+| 1.2a talks over the person | 0 | 0 | 1 in 13 scenarios | 0 to 1 (synthetic) |
+| 1.4a plain-speech rubric | 8/8 | 2/2 | 28/28 | was 7/12 real and 71/75 synthetic: the "what can I say" answer is short now |
+| 2.1c no wake needed in an open conversation | - | - | 0/1 | none: the follow-up after a local answer still gets no reply |
+| 2.2 not addressed, real fragments | 0 of 3 | | | none |
+| 2.2 open-conversation remarks to a colleague | | | 0 of 3 | none |
+| 3.1 spoken slip raised as a card | 0/3 | 0/2 | - | was 1/3 desk: remarks in an open conversation are now ignored, so Live never hears the invoice slip |
+| 4.2 control words | 12/12 (all three models) | | 10/11 per model | the undo after a correction is now heard as "undo that" (merge fixed), but nothing is said back |
+| 2.2 the unaddressed hour through the real listener (13 blocks, 67 min of speech, 1130 utterances recognised) | | | 0 dispatched, 0 spoken, 0 stored | was 264 dispatched and 514 spoken lines |
+| Transcript replay, the hour plus the owner's clips | 0 of 981 not-addressed lines dispatched; addressed 7/9 (desk 4/4, headset 3/5); control 4/4 | | | first baseline at audio level: 264 dispatches |
+
+Also seen: "Hey Heliox, open Notepad" (synthetic, one voice) was heard as "opened Notepad" and answered by the
+conversation layer as a remark, not sent to the planner. With no model, the layer said that talking things
+through needs a language model and where to set one up.
