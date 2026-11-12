@@ -8797,6 +8797,7 @@ class PilotServer:
             return {"status": "error", "message": f"Unknown config section: {section}"}
         voice_recorder_fields = {
             "input_device",
+            "headset_input_choices",
             "vad_energy_threshold",
             "vad_adaptive_threshold_enabled",
             "vad_silence_ms",
@@ -9053,6 +9054,19 @@ class PilotServer:
                         return {
                             "status": "error",
                             "message": "voice.tts_voice must be a supported Kokoro or Pocket TTS voice",
+                        }
+                if section == "voice" and k == "headset_input_choices":
+                    if (
+                        not isinstance(v, dict)
+                        or len(v) > 20
+                        or not all(
+                            isinstance(a, str) and isinstance(b, str) and 0 < len(a) <= 300 and 0 < len(b) <= 500
+                            for a, b in v.items()
+                        )
+                    ):
+                        return {
+                            "status": "error",
+                            "message": "voice.headset_input_choices must map headset names to microphone identifiers",
                         }
                 if section == "voice" and k == "input_device":
                     if not isinstance(v, str) or not v.strip() or len(v) > 500:

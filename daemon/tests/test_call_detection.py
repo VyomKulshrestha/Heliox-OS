@@ -52,8 +52,12 @@ def test_a_zoom_meeting_process_is_a_call():
     assert decide([], ["Zoom.exe"], []) == ""  # Zoom open, no meeting
 
 
-def test_off_windows_there_is_never_a_call(monkeypatch):
+def test_when_nothing_can_be_read_it_is_not_a_call(monkeypatch):
+    monkeypatch.setattr(call_detection, "_mic_users_linux", lambda _own: None)  # no pactl
+    monkeypatch.setattr(call_detection, "_processes", lambda: [])
     monkeypatch.setattr(call_detection.sys, "platform", "linux")
+    assert call_detection.current_call() == ""
+    monkeypatch.setattr(call_detection.sys, "platform", "freebsd13")
     assert call_detection.current_call() == ""
 
 

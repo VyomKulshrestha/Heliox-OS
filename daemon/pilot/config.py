@@ -175,7 +175,8 @@ class VoiceConfig:
     # still runs beside it for the wake phrase. Without the model files it falls back to "whisper".
     final_pass: str = "whisper"  # "whisper" | "parakeet"
     # While the person is in a call (Teams, Zoom, Meet, WhatsApp, Slack, ...; pilot.system.call_detection),
-    # Heliox does not speak and does not take what is said as addressed to it. Windows only for now.
+    # Heliox does not speak and does not take what is said as addressed to it. Windows, macOS 14+ (and older with a
+    # call app open) and Linux with PulseAudio or PipeWire.
     quiet_in_calls: bool = True
     parakeet_model_dir: str = ""  # "" = <Heliox data>/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8
     turn_hold_ms: float = 2500.0
@@ -206,6 +207,10 @@ class VoiceConfig:
     # Where the local voice runs: "auto" (the GPU when CUDA works, else the CPU), "cpu" or "cuda". On the CPU a
     # long sentence takes about 3.5 s instead of 0.25 s, but no GPU memory is used.
     tts_device: str = "auto"
+    # Per headset, the microphone to listen with instead (input_device "auto" only): a Bluetooth headset in call
+    # mode sends narrowband sound that recognisers mishear (pilot.system.mic_quality). Filled only when the person
+    # presses "Use <microphone> for input" in the voice bar; removed from Settings. {headset name: input id}.
+    headset_input_choices: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -1138,6 +1143,7 @@ def _validate_config_types(raw: dict) -> None:
             "tts_engine": str,
             "tts_voice": str,
             "tts_keep_loaded_seconds": (int, float),
+            "headset_input_choices": dict,
             "tts_device": str,
         },
         "screen_vision": {

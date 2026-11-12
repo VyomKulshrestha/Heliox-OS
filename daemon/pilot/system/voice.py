@@ -1606,6 +1606,8 @@ class _ContinuousRecorder:
         self.silence_frames = silence_frames
         self.max_frames = max(1, int(max_utterance_seconds * 1000 / frame_ms))
         self.preferred_device = preferred_device
+        # {headset name: input id} chosen by the person for a headset in call mode (VoiceConfig).
+        self.headset_input_choices: dict[str, str] = {}
 
         self._stream: Any = None
         self._soundcard_recorder: Any = None
@@ -1695,9 +1697,21 @@ class _ContinuousRecorder:
         self._queue = asyncio.Queue()
         return self._open_capture()
 
+    def effective_preferred_device(self) -> str:
+        """The configured microphone, or, with "auto" and the system default being a headset the person chose
+        another microphone for, that microphone. The headset can stay the output; only the input moves."""
+        configured = (self.preferred_device or "auto").strip() or "auto"
+        if configured.casefold() != "auto" or not self.headset_input_choices:
+            return configured
+        from pilot.system.audio_health import default_microphone_name
+
+        default = default_microphone_name() or self.input_device_name
+        return self.headset_input_choices.get(default, configured)
+
     def _open_capture(self) -> bool:
         """Open the capture backend; frames go to the existing queue. Safe to call from a worker thread."""
         self._zeros_since = None
+        self._opening_preferred = self.effective_preferred_device()
         if CURRENT_PLATFORM == Platform.WINDOWS:
             try:
                 if self._start_windows_wasapi():
@@ -1728,12 +1742,12 @@ class _ContinuousRecorder:
                 sample_rate=self.sample_rate,
                 channels=1,
                 dtype="int16",
-                preferred_device=self.preferred_device,
+                preferred_device=self._opening_preferred,
                 allow_preferred_fallback=True,
             )
             device_info = sd.query_devices(self.input_device)
             self.input_device_name = str(device_info.get("name", self.input_device))
-            configured = self.preferred_device.strip()
+            configured = self._opening_preferred.strip()
             if configured and configured.casefold() != "auto":
                 try:
                     hostapi = str(sd.query_hostapis(int(device_info.get("hostapi", -1))).get("name", "Unknown"))
@@ -1807,8 +1821,9 @@ class _ContinuousRecorder:
         import soundcard as sc
 
         preferred_name = ""
-        if self.preferred_device.strip().casefold() != "auto":
-            preferred_name = self.preferred_device.rsplit("::", 1)[-1].strip()
+        preferred = getattr(self, "_opening_preferred", self.preferred_device)
+        if preferred.strip().casefold() != "auto":
+            preferred_name = preferred.rsplit("::", 1)[-1].strip()
 
         microphones = list(sc.all_microphones(include_loopback=False))
         microphone = next(
@@ -1825,7 +1840,7 @@ class _ContinuousRecorder:
         )
         if self.using_fallback_input:
             self.input_device_notice = (
-                f"Configured microphone '{self.preferred_device.strip()}' is unavailable; "
+                f"Configured microphone '{preferred.strip()}' is unavailable; "
                 f"using '{microphone.name}' until it returns."
             )
             logger.warning(self.input_device_notice)
@@ -2343,6 +2358,7 @@ class ContinuousVoiceListener:
             preferred_device=self.config.voice.input_device,
             adaptive_threshold_enabled=self.config.voice.vad_adaptive_threshold_enabled,
         )
+        self._recorder.headset_input_choices = dict(getattr(self.config.voice, "headset_input_choices", {}) or {})
 
     @property
     def is_running(self) -> bool:
@@ -3278,10 +3294,36 @@ class ContinuousVoiceListener:
             if verdict and verdict != "ok":
                 from pilot.system.mic_quality import MESSAGES
 
-                logger.warning("Microphone %s: %s", self._recorder.input_device_name, MESSAGES[verdict])
-                await self._capture_status("microphone_quality", verdict, MESSAGES[verdict])
+                headset = self._recorder.input_device_name
+                logger.warning("Microphone %s: %s", headset, MESSAGES[verdict])
+                offer = await asyncio.to_thread(self._other_input_for, headset) if verdict == "narrowband" else None
+                if self._on_status:
+                    try:
+                        await self._on_status(
+                            "microphone_quality",
+                            {
+                                "reason": verdict,
+                                "message": MESSAGES[verdict],
+                                "headset": headset,
+                                "suggested_input": offer,
+                            },
+                        )
+                    except Exception:
+                        logger.debug("Microphone status callback failed", exc_info=True)
 
         asyncio.ensure_future(judge())
+
+    def _other_input_for(self, headset: str) -> dict[str, str] | None:
+        """A microphone to use instead of a headset in call mode: {"id", "name"}, or None when there is none."""
+        try:
+            import sounddevice as sd
+
+            from pilot.system.mic_quality import suggest_input
+
+            return suggest_input(list_audio_input_devices(sd), headset, sys.platform)
+        except Exception:
+            logger.debug("Could not list other microphones", exc_info=True)
+            return None
 
     def _start_early_wake(self, frames: list[Any]) -> None:
         """Read the opening for the wake phrase now, while the person is still speaking (Parakeet path only)."""

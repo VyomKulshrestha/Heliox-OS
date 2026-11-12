@@ -101,3 +101,43 @@ def hands_free_name(device_name: str) -> bool:
     "handsfree"; macOS shows the plain headset name, so there the sound decides alone)."""
     name = device_name.casefold()
     return any(word in name for word in ("hands-free", "handsfree", "headset_head_unit", "head unit"))
+
+
+# Names that are not microphones a person speaks into: recordings of what is played, and virtual devices.
+NOT_A_MICROPHONE = ("stereo mix", "what u hear", "loopback", "monitor of", ".monitor", "wave out", "virtual",
+                    "cable output", "blackhole", "soundflower")  # fmt: skip
+BUILT_IN = ("microphone array", "internal", "built-in", "macbook", "realtek", "intel", "digital microphone")
+# The host API each system's capture uses, so the id names a device the listener can open.
+PREFERRED_HOSTAPI = {"win32": "Windows WASAPI", "darwin": "Core Audio", "linux": "ALSA"}
+
+
+def _product(name: str) -> str:
+    """The product inside a device name: "Headset (Rockerz 415 Hands-Free AG Audio)" -> "rockerz 415"."""
+    inside = name[name.find("(") + 1 : name.rfind(")")] if "(" in name and ")" in name else name
+    for word in ("hands-free ag audio", "hands-free", "handsfree", "stereo", "headset"):
+        inside = inside.casefold().replace(word, " ")
+    return " ".join(inside.split())
+
+
+def suggest_input(devices: list[dict[str, Any]], headset: str, platform: str) -> dict[str, str] | None:
+    """The best other microphone, as {"id", "name"}, from list_audio_input_devices (pure).
+
+    Not the headset (nor its other entries), not another hands-free input, not a recording of the output.
+    A built-in microphone first; the system's main host API is preferred so the id opens.
+    """
+    product = _product(headset)
+    hostapi = PREFERRED_HOSTAPI.get("linux" if platform.startswith("linux") else platform)
+    candidates = []
+    for device in devices:
+        name = str(device.get("name", ""))
+        folded = name.casefold()
+        if not name or folded == headset.casefold() or hands_free_name(name):
+            continue
+        if any(word in folded for word in NOT_A_MICROPHONE) or (product and product in folded):
+            continue
+        score = 2 * any(word in folded for word in BUILT_IN) + (device.get("hostapi") == hostapi)
+        candidates.append((score, name, device))
+    if not candidates:
+        return None
+    _score, name, device = max(candidates, key=lambda item: item[0])
+    return {"id": str(device.get("id", name)), "name": name}

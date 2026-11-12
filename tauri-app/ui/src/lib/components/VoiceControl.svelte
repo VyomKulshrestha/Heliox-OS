@@ -17,6 +17,7 @@
   import { call, offNotification, onNotification } from "../api/daemon";
   import { onDestroy, onMount } from "svelte";
   import { get } from "svelte/store";
+  import { settings } from "../stores/settings";
 
   // ── State ──
   let isListening = $state(false);
@@ -234,6 +235,21 @@
   // The microphone or speakers failed or changed: what Heliox is doing about it (cleared when sound flows again).
   let deviceNotice = $state("");
   let deviceTimer: ReturnType<typeof setTimeout> | null = null;
+  // A headset in Bluetooth call mode: listen with another microphone instead, if the person presses the button.
+  let inputOffer = $state<{ headset: string; id: string; name: string } | null>(null);
+  async function acceptInputOffer() {
+    const offer = inputOffer;
+    if (!offer) return;
+    inputOffer = null;
+    const choices = { ...(get(settings).voice?.headset_input_choices ?? {}), [offer.headset]: offer.id };
+    const saved = await settings.updateSectionDetailed("voice", { headset_input_choices: choices });
+    showDeviceNotice(
+      saved.ok
+        ? `Listening with ${offer.name} while ${offer.headset} is connected. Undo in Settings, Voice.`
+        : `Not changed: ${saved.message}`,
+      8000,
+    );
+  }
   function showDeviceNotice(text: string, clearAfterMs = 0) {
     deviceNotice = text;
     if (deviceTimer) clearTimeout(deviceTimer);
@@ -281,6 +297,15 @@
     }
     if (status === "microphone_problem") {
       showDeviceNotice(String(payload.message ?? "") || "The microphone stopped; reopening it.");
+      return;
+    }
+    if (status === "microphone_quality") {
+      showDeviceNotice(String(payload.message ?? ""));
+      const suggested = payload.suggested_input as { id?: string; name?: string } | null | undefined;
+      inputOffer =
+        payload.reason === "narrowband" && suggested?.id && suggested.name && payload.headset
+          ? { headset: String(payload.headset), id: String(suggested.id), name: String(suggested.name) }
+          : null;
       return;
     }
     if (status === "microphone_recovered" || status === "speaker_changed") {
@@ -546,6 +571,9 @@
       {#if deviceNotice}
         <span class="holding">{deviceNotice}</span>
       {/if}
+      {#if inputOffer}
+        <button type="button" class="input-offer" onclick={acceptInputOffer}>Use {inputOffer.name} for input</button>
+      {/if}
     </div>
   {/if}
 
@@ -771,6 +799,17 @@
   }
 
   /* ── Transcript Preview ── */
+  .input-offer {
+    margin-left: 0.5rem;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--accent, currentColor);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
   .transcript-preview {
     position: absolute;
     bottom: calc(100% + 8px);

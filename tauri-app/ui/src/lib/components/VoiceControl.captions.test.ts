@@ -96,4 +96,29 @@ describe("VoiceControl live captions", () => {
     expect(screen.queryByText("The microphone stopped sending sound; reopening it.")).toBeNull();
     expect(screen.getByText("Listening on Microphone (USBAudio1.0).")).toBeTruthy();
   });
+
+  it("offers another microphone for a headset in call mode, and switches only when pressed", async () => {
+    render(VoiceControl);
+    emit("voice_status", {
+      status: "microphone_quality",
+      reason: "narrowband",
+      message: "This microphone is in Bluetooth call mode.",
+      headset: "Headset (Rockerz 415 Hands-Free AG Audio)",
+      suggested_input: { id: "Windows WASAPI::Microphone Array (Realtek)", name: "Microphone Array (Realtek)" },
+    });
+    await tick();
+    expect(mocks.call).not.toHaveBeenCalledWith("update_config", expect.anything());
+    await fireEvent.click(screen.getByRole("button", { name: "Use Microphone Array (Realtek) for input" }));
+    await waitFor(() =>
+      expect(mocks.call).toHaveBeenCalledWith("update_config", {
+        section: "voice",
+        values: {
+          headset_input_choices: {
+            "Headset (Rockerz 415 Hands-Free AG Audio)": "Windows WASAPI::Microphone Array (Realtek)",
+          },
+        },
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "Use Microphone Array (Realtek) for input" })).toBeNull();
+  });
 });

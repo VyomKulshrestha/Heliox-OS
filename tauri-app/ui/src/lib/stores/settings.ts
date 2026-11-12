@@ -129,6 +129,8 @@ export interface PilotSettings {
   };
   voice: {
     input_device: string;
+    /** Per headset in Bluetooth call mode, the microphone the person chose to listen with instead. */
+    headset_input_choices?: Record<string, string>;
     transcription_engine: "auto" | "faster_whisper" | "openai_whisper" | "streaming";
     turn_detection?: "smart_turn" | "silence";
     turn_hold_ms?: number;

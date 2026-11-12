@@ -1917,6 +1917,26 @@
       </select>
     </div>
 
+    {#each Object.entries($settings.voice?.headset_input_choices ?? {}) as [headset, input] (headset)}
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">With {headset}</span>
+          <span class="setting-desc"
+            >Heliox listens with {input.split("::").pop()}, because this headset sends call-quality sound. It still
+            speaks through the headset.</span
+          >
+        </div>
+        <button
+          type="button"
+          class="btn-secondary"
+          onclick={(event) => {
+            const { [headset]: _removed, ...rest } = $settings.voice?.headset_input_choices ?? {};
+            void saveSetting("voice", { headset_input_choices: rest }, { event });
+          }}>Use the headset microphone again</button
+        >
+      </div>
+    {/each}
+
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">Speech recognition engine</span>

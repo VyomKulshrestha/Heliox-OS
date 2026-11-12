@@ -331,6 +331,17 @@ jobs:
             python3-gi gir1.2-gtk-3.0
           ls /usr/share/dbus-1/services/ | grep -i a11y || echo "no org.a11y.Bus service file"
 
+      - name: Linux, quiet in calls - another app recording is seen through PulseAudio
+        if: runner.os == 'Linux'
+        # Its own failure must not stop the accessibility checks below.
+        continue-on-error: true
+        run: |
+          pip install pytest pytest-asyncio pytest-timeout
+          sudo apt-get install -y -q --no-install-recommends pulseaudio pulseaudio-utils
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-source source_name=heliox_mic
+          HELIOX_REAL_PULSE=1 pytest tests/test_call_detection_mac_linux.py -q --timeout=120
+
       - name: Linux, X11 session - type into a GTK field and read it through AT-SPI
         if: runner.os == 'Linux'
         run: |
