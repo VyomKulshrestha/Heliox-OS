@@ -1174,6 +1174,14 @@ jobs:
           mkdir -p "$HOME"
           python daemon/tests/platform_real/network_faults_check.py
 
+      - name: The network goes away in the middle of a request (the kernel drops the packets), then comes back
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/netdrop" USERPROFILE="$RUNNER_TEMP/netdrop" LOCALAPPDATA="$RUNNER_TEMP/netdrop/AppData/Local"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/network_drop_check.py
+
       - name: The update path with the port held by something else
         continue-on-error: true
         run: |
