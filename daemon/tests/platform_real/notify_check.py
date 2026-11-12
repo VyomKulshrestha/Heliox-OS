@@ -12,13 +12,14 @@ Each check prints one ``CHECK`` line; the exit code is the number of failed chec
 
 from __future__ import annotations
 
-import asyncio
 import json
 import subprocess
 import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
+
+import one_loop  # noqa: E402  (next to this script)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -40,7 +41,7 @@ def notify() -> str:
 
     action = SimpleNamespace(parameters=NotifyParams(summary=SUMMARY, body=BODY))
     try:
-        return asyncio.run(Executor._exec_notify(SimpleNamespace(), action))
+        return one_loop.run(Executor._exec_notify(SimpleNamespace(), action))
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
 

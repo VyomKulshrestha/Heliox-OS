@@ -25,6 +25,51 @@ def _ensure_pyautogui():
 # ── Mouse ────────────────────────────────────────────────────────────
 
 
+# pyautogui reaches X11 through python-xlib, which refuses to connect when no X authority file can be found
+# ($XAUTHORITY unset and no ~/.Xauthority), even when the X server asks for none (CI on 008f1a0, under Xvfb). A
+# person meets it when Heliox's daemon runs outside the desktop session's environment (a systemd user service
+# started without XAUTHORITY, for one). libX11, which xdotool uses, reads the same settings without that failure.
+X11_NO_AUTHORITY = (
+    "Heliox could not reach the X display to click: python-xlib found no X authority file ($XAUTHORITY is not set "
+    "and ~/.Xauthority does not exist). Install xdotool, or start Heliox from your desktop session so it gets the "
+    "session's XAUTHORITY."
+)
+XDOTOOL_BUTTONS = {"left": "1", "middle": "2", "right": "3"}
+
+
+def x_display_unreachable(error: BaseException) -> bool:
+    """Whether pyautogui failed for want of an X connection (no authority file, no display). Pure."""
+    text = f"{type(error).__name__}: {error}"
+    return any(mark in text for mark in ("XauthError", "Xauthority", "DisplayConnectionError", "DisplayNameError"))
+
+
+def x11_session(platform: str | None = None, env: dict[str, str] | None = None) -> bool:
+    import os
+    import sys
+
+    env = dict(os.environ) if env is None else env
+    return (
+        (platform or sys.platform).startswith("linux") and bool(env.get("DISPLAY")) and not env.get("WAYLAND_DISPLAY")
+    )
+
+
+async def _xdotool_click(x: int, y: int, button: str, clicks: int, interval: float, cause: BaseException) -> str:
+    import shutil
+
+    from pilot.system.platform_detect import run_command
+
+    if not shutil.which("xdotool"):
+        raise RuntimeError(f"{X11_NO_AUTHORITY} ({type(cause).__name__})") from cause
+    command = ["xdotool", "mousemove", "--sync", str(int(x)), str(int(y)), "click"]
+    command += ["--repeat", str(max(1, int(clicks))), "--delay", str(max(1, int(interval * 1000)))]
+    command.append(XDOTOOL_BUTTONS.get(button, "1"))
+    code, _out, err = await run_command(command, timeout=10)
+    if code != 0:
+        raise RuntimeError(f"{X11_NO_AUTHORITY} xdotool could not click either: {(err or '').strip()[:160]}")
+    logger.info("Clicked through xdotool: pyautogui could not reach the X display (%s)", type(cause).__name__)
+    return f"Clicked ({button}, {clicks}x) at ({x}, {y}) through xdotool"
+
+
 async def mouse_click(
     x: int,
     y: int,
@@ -32,13 +77,18 @@ async def mouse_click(
     clicks: int = 1,
     interval: float = 0.1,
 ) -> str:
-    """Click at screen coordinates."""
-    pag = _ensure_pyautogui()
+    """Click at screen coordinates. On X11, when pyautogui cannot reach the display, xdotool clicks instead."""
+    try:
+        pag = _ensure_pyautogui()
 
-    def _do():
-        pag.click(x=x, y=y, button=button, clicks=clicks, interval=interval)
+        def _do():
+            pag.click(x=x, y=y, button=button, clicks=clicks, interval=interval)
 
-    await asyncio.to_thread(_do)
+        await asyncio.to_thread(_do)
+    except Exception as error:
+        if not (x11_session() and x_display_unreachable(error)):
+            raise
+        return await _xdotool_click(x, y, button, clicks, interval, error)
     return f"Clicked ({button}, {clicks}x) at ({x}, {y})"
 
 

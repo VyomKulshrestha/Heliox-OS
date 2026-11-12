@@ -15,13 +15,14 @@ Each check prints one ``CHECK`` line; the exit code is the number of failed chec
 
 from __future__ import annotations
 
-import asyncio
 import os
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import one_loop  # noqa: E402  (next to this script)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -51,7 +52,7 @@ def linux(system_python: str = "/usr/bin/python3") -> None:
         time.sleep(1.0)
         shot = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "heliox-ocr-shot.png"
         try:
-            output = asyncio.run(screen.screenshot(str(shot)))
+            output = one_loop.run(screen.screenshot(str(shot)))
         except Exception as exc:
             output = f"{type(exc).__name__}: {exc}"
         tools = [name for name in ("scrot", "gnome-screenshot", "import") if shutil.which(name)]
@@ -62,7 +63,7 @@ def linux(system_python: str = "/usr/bin/python3") -> None:
         )
         start = time.perf_counter()
         try:
-            text = asyncio.run(vision.screen_ocr(allow_slow_fallback=False))
+            text = one_loop.run(vision.screen_ocr(allow_slow_fallback=False))
         except Exception as exc:
             text = f"{type(exc).__name__}: {exc}"
         took = (time.perf_counter() - start) * 1000
@@ -95,7 +96,7 @@ def mac_fallback(png: Path) -> None:
     # SWIFT_OCR_COMPILE_TIMEOUT), a read runs it within SWIFT_OCR_RUN_TIMEOUT. Both are timed and reported.
     start = time.perf_counter()
     try:
-        text = asyncio.run(vision._ocr_macos_native(data))
+        text = one_loop.run(vision._ocr_macos_native(data))
     except Exception as exc:
         text = f"{type(exc).__name__}: {exc}"
     took = (time.perf_counter() - start) * 1000
@@ -116,7 +117,7 @@ def mac_fallback(png: Path) -> None:
     )
     start = time.perf_counter()
     try:
-        text = asyncio.run(vision._ocr_macos_native(data))
+        text = one_loop.run(vision._ocr_macos_native(data))
     except Exception as exc:
         text = f"{type(exc).__name__}: {exc}"
     took = (time.perf_counter() - start) * 1000
@@ -128,7 +129,7 @@ def mac_fallback(png: Path) -> None:
     )
     if shutil.which("tesseract"):
         try:
-            text = asyncio.run(vision._ocr_tesseract_cli(data, "eng"))
+            text = one_loop.run(vision._ocr_tesseract_cli(data, "eng"))
         except Exception as exc:
             text = f"{type(exc).__name__}: {exc}"
         check("ocr-macos/tesseract-reads-the-line", found(text), repr(text[:160]))

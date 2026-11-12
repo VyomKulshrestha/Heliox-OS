@@ -17,7 +17,6 @@ Each check prints one ``CHECK`` line; the exit code is the number of failed chec
 from __future__ import annotations
 
 import argparse
-import asyncio
 import subprocess
 import sys
 import threading
@@ -26,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import one_loop  # noqa: E402  (next to this script)
 from press_checks import _click  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -107,7 +107,7 @@ def main() -> int:
             fixture.send("front")
             time.sleep(0.8)
             try:
-                snapshot = asyncio.run(accessibility.capture_snapshot(max_elements=60))
+                snapshot = one_loop.run(accessibility.capture_snapshot(max_elements=60))
                 target = next((e for e in snapshot.elements if e.name == "Click me"), None)
             except Exception as exc:
                 print(f"snapshot: {type(exc).__name__}: {exc}")

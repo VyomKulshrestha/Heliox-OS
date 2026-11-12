@@ -80,18 +80,28 @@ async def _capture_screenshot_bytes(
     except Exception as e:
         logger.debug(f"pyautogui screenshot failed ({e}), falling back to system command")
         # Fallback: capture via system command and read file
-        tmp = os.path.join(tempfile.gettempdir(), f"pilot_screen_{os.getpid()}.png")
+        folder = _scratch_folder()
+        tmp = os.path.join(folder, "screen.png")
         from pilot.system.screen import screenshot
 
-        await screenshot(tmp)
-        data = Path(tmp).read_bytes()
-        os.unlink(tmp)
+        try:
+            await screenshot(tmp)
+            data = Path(tmp).read_bytes()
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
         return _resize_png_for_vision(data, max_dimension) if max_dimension else data
 
 
 # ──────────────────────────────────────────────────────────────────────
 #  Main OCR entry point
 # ──────────────────────────────────────────────────────────────────────
+
+
+def _scratch_folder() -> str:
+    """A new private folder for one read's temporary files. Names built from the process id were shared by two
+    reads at once in one daemon (Live's screen read and a request's): each overwrote the other's image, and the
+    first one's cleanup deleted the second's file."""
+    return tempfile.mkdtemp(prefix="pilot_ocr_")
 
 
 class OCRUnavailableError(RuntimeError):
@@ -232,8 +242,9 @@ async def _ocr_windows_native(img_bytes: bytes) -> str:
 
     Writes the PS script to a temp file to avoid escaping issues.
     """
-    tmp_img = os.path.join(tempfile.gettempdir(), f"pilot_ocr_{os.getpid()}.png")
-    tmp_ps1 = os.path.join(tempfile.gettempdir(), f"pilot_ocr_{os.getpid()}.ps1")
+    folder = _scratch_folder()
+    tmp_img = os.path.join(folder, "image.png")
+    tmp_ps1 = os.path.join(folder, "ocr.ps1")
     Path(tmp_img).write_bytes(img_bytes)
 
     # PowerShell script that uses WinRT OCR
@@ -301,11 +312,7 @@ try {{
             return ""
         raise RuntimeError(f"Windows OCR failed (exit {code}): {err.strip()}")
     finally:
-        for f in (tmp_img, tmp_ps1):
-            try:
-                os.unlink(f)
-            except OSError:
-                pass
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -480,7 +487,8 @@ async def _ocr_macos_native(img_bytes: bytes) -> str:
         logger.debug("pyobjc Vision not installed; using the swift route")
 
     helper = _swift_ocr_helper()
-    tmp_img = os.path.join(tempfile.gettempdir(), f"pilot_ocr_{os.getpid()}.png")
+    folder = _scratch_folder()
+    tmp_img = os.path.join(folder, "image.png")
     Path(tmp_img).write_bytes(img_bytes)
     try:
         code, out, err = await run_command([str(helper), tmp_img], timeout=SWIFT_OCR_RUN_TIMEOUT)
@@ -488,10 +496,7 @@ async def _ocr_macos_native(img_bytes: bytes) -> str:
             return out.strip()
         raise RuntimeError(f"macOS Vision OCR failed: {(err or '').strip()[:200]}")
     finally:
-        try:
-            os.unlink(tmp_img)
-        except OSError:
-            pass
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -506,8 +511,9 @@ async def _ocr_tesseract_cli(img_bytes: bytes, language: str) -> str:
     if not tesseract_bin:
         raise RuntimeError("tesseract binary not found in PATH")
 
-    tmp_img = os.path.join(tempfile.gettempdir(), f"pilot_ocr_{os.getpid()}.png")
-    tmp_out = os.path.join(tempfile.gettempdir(), f"pilot_ocr_{os.getpid()}_out")
+    folder = _scratch_folder()
+    tmp_img = os.path.join(folder, "image.png")
+    tmp_out = os.path.join(folder, "text")
     Path(tmp_img).write_bytes(img_bytes)
 
     try:
@@ -523,11 +529,7 @@ async def _ocr_tesseract_cli(img_bytes: bytes, language: str) -> str:
             raise RuntimeError(f"tesseract failed (exit {code}): {err.strip()}")
         return ""
     finally:
-        for f in (tmp_img, f"{tmp_out}.txt"):
-            try:
-                os.unlink(f)
-            except OSError:
-                pass
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 # ──────────────────────────────────────────────────────────────────────

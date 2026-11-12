@@ -11,10 +11,11 @@ would count it.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Callable
 from types import SimpleNamespace
+
+import one_loop  # noqa: E402  (next to this script)
 
 REFUSED_TITLE = "Bitwarden - Heliox CI"
 
@@ -36,7 +37,7 @@ def _click(snapshot_id: str, ref: str) -> str:
 
     executor, stub = _executor_stub()
     action = SimpleNamespace(parameters=MouseParams(element_ref=ref, snapshot_id=snapshot_id))
-    return asyncio.run(executor._exec_mouse_click(stub, action))
+    return one_loop.run(executor._exec_mouse_click(stub, action))
 
 
 def _wait_for_count(presses: Callable[[], int], wanted: int, timeout: float) -> int:
@@ -58,7 +59,7 @@ def press_checks(
     from pilot.system import accessibility
 
     try:
-        snapshot = asyncio.run(accessibility.capture_snapshot(max_elements=60))
+        snapshot = one_loop.run(accessibility.capture_snapshot(max_elements=60))
     except Exception as exc:
         check(f"{prefix}/press-snapshot", False, f"{type(exc).__name__}: {exc}")
         return

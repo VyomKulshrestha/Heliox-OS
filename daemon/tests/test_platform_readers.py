@@ -842,3 +842,71 @@ def test_linux_field_exists_from_the_accessibility_bus(monkeypatch):
     bus.nodes["/entry"]["state"] = [L.STATE_EDITABLE]
     bus.gone = {"/entry"}  # the window was destroyed
     assert L.field_exists(field) is False
+
+
+def test_a_click_with_no_x_authority_file_goes_through_xdotool_or_says_why(monkeypatch):
+    import asyncio
+    import shutil
+
+    import pytest
+
+    from pilot.system import input_control as ic
+    from pilot.system import platform_detect
+
+    class XauthError(Exception):
+        pass
+
+    def no_display():
+        raise XauthError("~/.Xauthority: [Errno 2] No such file or directory: '/home/runner/.Xauthority'")
+
+    calls = []
+    real_x11_session = ic.x11_session
+
+    async def run(command, **_kw):
+        calls.append(command)
+        return (0, "", "")
+
+    monkeypatch.setattr(ic, "_ensure_pyautogui", no_display)
+    monkeypatch.setattr(ic, "x11_session", lambda *a, **k: True)
+    monkeypatch.setattr(platform_detect, "run_command", run)
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/xdotool" if name == "xdotool" else None)
+    assert asyncio.run(ic.mouse_click(10, 20, "right")).endswith("through xdotool")
+    assert calls == [["xdotool", "mousemove", "--sync", "10", "20", "click", "--repeat", "1", "--delay", "100", "3"]]
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match=r"no X authority file .*Install xdotool"):
+        asyncio.run(ic.mouse_click(10, 20))
+
+    monkeypatch.setattr(ic, "x11_session", lambda *a, **k: False)  # elsewhere the error is not reinterpreted
+    with pytest.raises(XauthError):
+        asyncio.run(ic.mouse_click(10, 20))
+    assert real_x11_session("linux", {"DISPLAY": ":0"})
+    assert not real_x11_session("linux", {"DISPLAY": ":0", "WAYLAND_DISPLAY": "w"})
+    assert not ic.x_display_unreachable(ValueError("bad button"))
+
+
+def test_two_tesseract_reads_at_once_each_use_their_own_files(monkeypatch):
+    import asyncio
+    from pathlib import Path
+
+    from pilot.system import vision
+
+    images = []
+
+    async def run(command, **_kw):
+        image, out = command[1], command[2]
+        images.append(image)
+        await asyncio.sleep(0.01)  # the other read writes its image meanwhile
+        Path(out + ".txt").write_text(Path(image).read_bytes().decode(), encoding="utf-8")
+        return (0, "", "")
+
+    monkeypatch.setattr(vision, "run_command", run)
+    monkeypatch.setattr(vision.shutil, "which", lambda name: "/usr/bin/tesseract")
+
+    async def both():
+        return await asyncio.gather(
+            vision._ocr_tesseract_cli(b"first", "eng"), vision._ocr_tesseract_cli(b"second", "eng")
+        )
+
+    assert asyncio.run(both()) == ["first", "second"]
+    assert images[0] != images[1] and not any(Path(image).parent.exists() for image in images)

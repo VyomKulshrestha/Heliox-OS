@@ -15,7 +15,6 @@ Each check prints one ``CHECK`` line; the exit code is the number of failed chec
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import shutil
@@ -23,6 +22,8 @@ import subprocess
 import sys
 import wave
 from pathlib import Path
+
+import one_loop  # noqa: E402  (next to this script)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -58,7 +59,7 @@ def speak() -> None:
     if sys.platform == "darwin":
         out = folder / "heliox-say.aiff"
         out.unlink(missing_ok=True)
-        result = asyncio.run(voice._tts_macos(TEXT, None, 180, str(out)))
+        result = one_loop.run(voice._tts_macos(TEXT, None, 180, str(out)))
         info = subprocess.run(["afinfo", str(out)], capture_output=True, text=True, check=False).stdout
         duration = next(
             (line.split(":", 1)[1].strip() for line in info.splitlines() if "estimated duration" in line), ""
@@ -72,7 +73,7 @@ def speak() -> None:
         return
     out = folder / "heliox-espeak.wav"
     out.unlink(missing_ok=True)
-    result = asyncio.run(voice._tts_linux(TEXT, None, 175, str(out)))
+    result = one_loop.run(voice._tts_linux(TEXT, None, 175, str(out)))
     seconds, peak = wav_facts(out) if out.exists() else (0.0, 0)
     check(
         "speech-linux/espeak-writes-audio",
@@ -96,7 +97,7 @@ def no_voice() -> None:
     handler = Keep()
     logging.getLogger("pilot").addHandler(handler)
     logging.getLogger("pilot").setLevel(logging.INFO)
-    results = [asyncio.run(voice._tts_linux(TEXT, None, 175, None)) for _ in range(3)]
+    results = [one_loop.run(voice._tts_linux(TEXT, None, 175, None)) for _ in range(3)]
     said = [r.getMessage() for r in records if "no voice available" in r.getMessage()]
     check(
         "speech-linux/no-voice-said-once-text-carries-on",

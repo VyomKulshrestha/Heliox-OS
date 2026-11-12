@@ -19,7 +19,6 @@ Each check prints one ``CHECK`` line; the exit code is the number of failed chec
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import os
 import subprocess
@@ -29,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import one_loop  # noqa: E402  (next to this script)
 from linux_atspi_check import Fixture  # noqa: E402
 
 from pilot.system import window_mgr  # noqa: E402
@@ -61,7 +61,7 @@ def window_state(title: str) -> str:
 
 def call(coroutine) -> str:
     try:
-        return asyncio.run(coroutine)
+        return one_loop.run(coroutine)
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
 

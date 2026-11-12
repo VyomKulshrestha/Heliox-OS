@@ -14,7 +14,6 @@ Each check prints one ``CHECK`` line; the exit code is the number of failed chec
 
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 import sys
@@ -22,6 +21,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import one_loop  # noqa: E402  (next to this script)
 
 from pilot.system import app_names, applications  # noqa: E402
 
@@ -61,7 +62,7 @@ def macos() -> None:
     subprocess.run(["osascript", "-e", 'quit app "TextEdit"'], capture_output=True, check=False)
     wait_for(lambda: not running("TextEdit"), 5.0)
     try:
-        output = asyncio.run(applications.launch_application("TextEdit"))
+        output = one_loop.run(applications.launch_application("TextEdit"))
     except Exception as exc:
         output = f"{type(exc).__name__}: {exc}"
     started = wait_for(lambda: running("TextEdit"))
@@ -118,7 +119,7 @@ def linux() -> None:
 
         arguments = ["/tmp/notes with space.txt", "second.txt"]
         try:
-            output = asyncio.run(applications.launch_application("Heliox Probe Editor", arguments))
+            output = one_loop.run(applications.launch_application("Heliox Probe Editor", arguments))
         except Exception as exc:
             output = f"{type(exc).__name__}: {exc}"
         wrote = wait_for(out.exists, 10.0)
