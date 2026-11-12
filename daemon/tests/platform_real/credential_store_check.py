@@ -13,9 +13,9 @@ has been removed.
 
 Before writing, the store is searched for Heliox's entries (by service where the system allows it, and by every
 account name Heliox knows). The daemon's first run makes some itself (the learner's saved-state key, for one), so
-on a runner they are recorded as the daemon's, and "everything" must remove them as well as the check's own. Off
-CI (``GITHUB_ACTIONS`` not "true"), any entry found stops the check before it writes anything: on a person's
-computer it touches nothing it did not create. The test entries are written with ``keyring``, one under each of
+on a runner they are recorded as the daemon's, and "everything" must remove them as well as the check's own. It
+runs only on a CI runner (``ci_only.require_runner``): on a person's computer it prints what it would change and
+exits with 3, touching nothing. The test entries are written with ``keyring``, one under each of
 Heliox's four services, with an account name made for this run. The system tools: ``cmdkey /list`` on Windows,
 ``security find-generic-password`` on macOS (the login keychain), ``secret-tool lookup`` on Linux (the Secret
 Service, a GNOME keyring unlocked for the session by ``with_keyring.sh``).
@@ -197,4 +197,7 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    from ci_only import require_runner  # here, not at the top: the tests import this file for its helpers
+
+    require_runner("writes and deletes test entries in this user's credential store")
     sys.exit(main(sys.argv[1:]))

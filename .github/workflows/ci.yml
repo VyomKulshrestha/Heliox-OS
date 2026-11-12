@@ -1013,7 +1013,7 @@ jobs:
     name: Real faults (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     continue-on-error: true
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -1080,3 +1080,18 @@ jobs:
           status=$?
           python -c "import asyncio, sys; sys.path.insert(0, 'daemon/tests/platform_real'); import stop_timing_check as s; asyncio.run(s.send('daemon_stop', {}, wait=True))" || true
           exit $status
+
+      - name: A full disk and a read-only data folder (tmpfs and an ext4 image)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/disk"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/storage_faults_check.py
+
+      - name: A locked keychain (one made for the check; the login keychain is not touched)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        env:
+          PYTHON_KEYRING_BACKEND: keyring.backends.macOS.Keyring
+        run: python daemon/tests/platform_real/keychain_locked_check.py

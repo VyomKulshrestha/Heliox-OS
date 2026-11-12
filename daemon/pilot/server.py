@@ -10368,6 +10368,7 @@ class PilotServer:
             "memory_usage_mb": memory_mb,
             "active_connections": active_connections,
             "loaded_agents": loaded_agents,
+            "event_loop_tasks": len(asyncio.all_tasks()),  # the weekly soak watches this for leaks
         }
 
     async def _handle_ready(self, params: dict[str, Any], ws: ServerConnection) -> dict[str, Any]:

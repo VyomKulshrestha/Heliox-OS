@@ -1,7 +1,8 @@
 """Two real daemons started in the same instant (``python -m pilot.server`` twice, the same home folder). One must
 serve and the other must print the one sentence and exit with code 3; the token files on disk must be the
 survivor's (its window token authenticates). Run with the environment's Python and HOME set to the CI's empty home.
-Prints CHECK lines; exit code 1 if one fails. The survivor is stopped at the end.
+Prints CHECK lines; exit code 1 if one fails.
+Off a CI runner it changes nothing and exits with 3 (ci_only.py). The survivor is stopped at the end.
 """
 
 from __future__ import annotations
@@ -11,6 +12,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+from ci_only import require_runner
+
+require_runner("starts two real daemons on Heliox's folders in the home folder")
 
 HERE = Path(__file__).resolve().parent
 LIMIT = 240.0

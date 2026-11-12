@@ -15,10 +15,29 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 PORT = 8785
+# SO_REUSEADDR on Linux and macOS, as the daemon itself binds: the earlier steps' daemons leave connections in
+# TIME_WAIT on this port, and without it Linux refuses the bind for a minute although nothing listens.
 HOLDER = (
-    f"import socket, time; s = socket.socket(); s.bind(('127.0.0.1', {PORT})); s.listen(); print('ready', flush=True); "
-    "time.sleep(600)"
+    "import os, socket, time; s = socket.socket(); "
+    "os.name == 'posix' and s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); "
+    f"s.bind(('127.0.0.1', {PORT})); s.listen(); print('ready', flush=True); time.sleep(600)"
 )
+
+
+def who_holds(port: int) -> str:
+    """What the system's own tool says about the port, for a stand-in that could not take it."""
+    if sys.platform == "win32":
+        command = ["netstat", "-ano", "-p", "TCP"]
+    elif sys.platform == "darwin":
+        command = ["lsof", "-nP", f"-iTCP:{port}"]
+    else:
+        command = ["ss", "-tanp", f"( sport = :{port} )"]
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"{command[0]} could not run: {error}"
+    lines = [line.strip() for line in (done.stdout + done.stderr).splitlines() if f":{port}" in line or "State" in line]
+    return " | ".join(lines[:12]) or f"{command[0]} lists nothing on port {port}"
 
 
 def main() -> int:
@@ -29,10 +48,15 @@ def main() -> int:
     assert spec.loader is not None
     spec.loader.exec_module(update)
 
-    holder = subprocess.Popen([sys.executable, "-c", HOLDER], stdout=subprocess.PIPE, text=True)
+    holder = subprocess.Popen([sys.executable, "-c", HOLDER], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         if (holder.stdout.readline() if holder.stdout else "").strip() != "ready":
-            print("CHECK foreign-port/named: FAIL - the stand-in program could not hold the port")
+            holder.wait(10)
+            error = (holder.stderr.read() if holder.stderr else "").strip().splitlines()[-1:]
+            print(
+                f"CHECK foreign-port/named: FAIL - the stand-in program could not hold port {PORT} "
+                f"({error[0] if error else 'no error printed'}); the port now: {who_holds(PORT)}"
+            )
             return 1
         started = time.monotonic()
         go_ahead, hint = update.make_way(Path(sys.executable), port=PORT)

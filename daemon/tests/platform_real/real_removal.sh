@@ -9,6 +9,10 @@
 # "keep my data" (keys kept), then "everything" with the environment already gone (the keys are then listed by
 # service, not removed), this check's own keys dropped, and what is left in the home folder again.
 set -u
+if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ -z "${RUNNER_TEMP:-}" ]; then
+  echo "NOT RUN: this script removes a Heliox install and its credentials from the home folder and the credential store, so it runs only on a CI runner (GITHUB_ACTIONS=true and RUNNER_TEMP set) and changed nothing here."
+  exit 3
+fi
 ROOT=$(pwd)
 STATE="$RUNNER_TEMP/heliox-test-keys.json"
 CHECK="daemon/tests/platform_real/credential_store_check.py"

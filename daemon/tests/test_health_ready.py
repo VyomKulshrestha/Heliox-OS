@@ -145,6 +145,8 @@ async def test_health_handler(daemon_server, capsys):
         assert isinstance(result["memory_usage_mb"], (int, float)), "memory_usage_mb should be a number"
         assert isinstance(result["active_connections"], int), "active_connections should be an integer"
         assert isinstance(result["loaded_agents"], list), "loaded_agents should be a list"
+        # The weekly soak (tests/platform_real/soak_check.py) watches this count for leaked tasks.
+        assert isinstance(result["event_loop_tasks"], int) and result["event_loop_tasks"] >= 1
 
         # Print results with PASS/FAIL
         print("\n--- HEALTH Handler Test Results ---")

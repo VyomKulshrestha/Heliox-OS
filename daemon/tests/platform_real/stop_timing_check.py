@@ -8,6 +8,7 @@ the stop from the request to the process exit and lists every step the daemon's 
 
 What this cannot show: a stop with the voice worker or Gnomon's worker running (neither starts on a runner without
 models or an NVIDIA card). Prints CHECK lines; exit code 1 if one fails.
+Off a CI runner it changes nothing and exits with 3 (ci_only.py).
 """
 
 from __future__ import annotations
@@ -20,6 +21,10 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+from ci_only import require_runner
+
+require_runner("writes Heliox's config.toml in the home folder and starts a real daemon there")
 
 HERE = Path(__file__).resolve().parent
 TOTAL_BOUND = 30.0

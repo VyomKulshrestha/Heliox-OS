@@ -1,11 +1,12 @@
 """What "No NVIDIA card" claims, seen on a real machine without one (the macOS runner, Apple Silicon, and the Linux
-and Windows runners): run against the daemon the first-run job started, with the environment's Python.
+and Windows runners): run against a running daemon, with the environment's Python.
 
-Asks the daemon's own ``health`` RPC (the window's token from the runtime folder) and checks:
-- gnomon: reported as not supported here, with a reason, and no Gnomon worker process was started to find out;
-- every local model entry (voice, recognisers, screen reading) names the processor or the system's own engine, never
-  CUDA;
-- the GPU status reads kind 'cpu' (no NVIDIA card); on the macOS runner kind 'apple' with memory shared.
+Asks the daemon's own ``autonomy_review_status`` RPC (what Settings shows for Gnomon, the local models and the GPU;
+the window's token from the runtime folder) and checks:
+- gnomon: not running and not on CUDA, and no Gnomon worker process was started (on a machine without CUDA it is
+  either never asked to load, or says it is not supported here);
+- every local model entry (voice, recognisers, screen reading) has a device other than CUDA;
+- the GPU status reads kind 'cpu' (no NVIDIA card), no cards; on the macOS runner kind 'apple' with memory shared.
 Prints each entry as the window would see it, then CHECK lines; exit code 1 if one fails.
 
 What this cannot show: an integrated GPU, an AMD card, or a machine with a broken NVIDIA driver.
@@ -22,7 +23,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
-async def ask_health() -> dict:
+async def ask_status() -> dict:
     import websockets
 
     sys.path.insert(0, str(HERE))
@@ -33,7 +34,7 @@ async def ask_health() -> dict:
     token = (RUNTIME_DIR / "auth_token").read_text(encoding="utf-8").strip()
     async with websockets.connect("ws://127.0.0.1:8785", open_timeout=10) as ws:
         await rpc.request_auth(ws, token)
-        return (await rpc.request(ws, "health", 2, timeout=60)).get("result") or {}
+        return (await rpc.request(ws, "autonomy_review_status", 2, timeout=60)).get("result") or {}
 
 
 def gnomon_workers() -> list[str]:
@@ -41,43 +42,48 @@ def gnomon_workers() -> list[str]:
 
     found = []
     for process in psutil.process_iter(["pid", "cmdline"]):
-        line = " ".join(process.info.get("cmdline") or [])
+        try:
+            line = " ".join(process.info.get("cmdline") or [])
+        except Exception:
+            continue
         if "pilot.intelligence.gnomon_worker" in line:
             found.append(f"{process.info['pid']}: {line[:120]}")
     return found
 
 
 def main() -> int:
-    health = asyncio.run(ask_health())
-    print("health.gnomon:", json.dumps(health.get("gnomon"), default=str)[:600])
-    for entry in health.get("local_models") or []:
-        print("health.local_models:", json.dumps(entry, default=str)[:400])
-    print("health.gpu:", json.dumps(health.get("gpu"), default=str)[:600])
+    status = asyncio.run(ask_status())
+    print("status.gnomon:", json.dumps(status.get("gnomon"), default=str)[:600])
+    for entry in status.get("local_models") or []:
+        print("status.local_models:", json.dumps(entry, default=str)[:400])
+    print("status.gpu:", json.dumps(status.get("gpu"), default=str)[:600])
     results = []
 
-    gnomon = health.get("gnomon") or {}
+    gnomon = status.get("gnomon") or {}
     workers = gnomon_workers()
-    ok = gnomon.get("supported") is False and not workers
+    ok = bool(gnomon) and gnomon.get("state") != "ready" and gnomon.get("device") != "cuda" and not workers
     results.append(
         (
             ok,
-            f"CHECK no-nvidia/gnomon: {'PASS' if ok else 'FAIL'} - supported={gnomon.get('supported')!r}, "
-            f"state={gnomon.get('state')!r}, workers started: {workers or 'none'}",
+            f"CHECK no-nvidia/gnomon: {'PASS' if ok else 'FAIL'} - state={gnomon.get('state')!r}, "
+            f"supported={gnomon.get('supported')!r}, reason={gnomon.get('reason')!r}, workers started: "
+            f"{workers or 'none'}",
         )
     )
 
-    entries = health.get("local_models") or []
-    cuda = [entry.get("name") or entry.get("id") for entry in entries if "cuda" in json.dumps(entry).lower()]
+    entries = status.get("local_models") or []
+    cuda = [entry.get("name") for entry in entries if "cuda" in str(entry.get("device") or "").lower()]
     ok = bool(entries) and not cuda
+    devices = sorted({str(entry.get("device")) for entry in entries})
     results.append(
         (
             ok,
-            f"CHECK no-nvidia/models-on-processor: {'PASS' if ok else 'FAIL'} - {len(entries)} entries, "
-            f"naming CUDA: {cuda or 'none'}",
+            f"CHECK no-nvidia/models-on-processor: {'PASS' if ok else 'FAIL'} - {len(entries)} entries, devices "
+            f"{devices}, on CUDA: {cuda or 'none'}",
         )
     )
 
-    machine = (health.get("gpu") or {}).get("machine") or {}
+    machine = (status.get("gpu") or {}).get("machine") or {}
     apple = platform.system() == "Darwin" and platform.machine() == "arm64"
     expect = "apple" if apple else "cpu"
     ok = machine.get("kind") == expect and (machine.get("unified_memory") is True) == apple and not machine.get("gpus")

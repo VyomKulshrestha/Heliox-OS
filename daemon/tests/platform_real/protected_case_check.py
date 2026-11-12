@@ -16,6 +16,10 @@ import shutil
 import sys
 from pathlib import Path
 
+from ci_only import require_runner
+
+require_runner("creates and deletes a HelioxProtected folder in the home folder")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 failures = 0

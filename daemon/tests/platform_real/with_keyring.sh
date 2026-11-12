@@ -3,6 +3,10 @@
 #   dbus-run-session -- sh daemon/tests/platform_real/with_keyring.sh <command> [args...]
 # The keyring's password is a throwaway for this session; the keyring lives in the runner's home folder.
 set -e
+if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ -z "${RUNNER_TEMP:-}" ]; then
+  echo "NOT RUN: this script unlocks a GNOME keyring with a throwaway password and starts a keyring daemon on this session, so it runs only on a CI runner (GITHUB_ACTIONS=true and RUNNER_TEMP set) and changed nothing here."
+  exit 3
+fi
 printf "heliox-ci" | gnome-keyring-daemon --unlock --components=secrets >"${RUNNER_TEMP:-/tmp}/keyring.env"
 gnome-keyring-daemon --start --components=secrets >>"${RUNNER_TEMP:-/tmp}/keyring.env"
 while IFS= read -r line; do

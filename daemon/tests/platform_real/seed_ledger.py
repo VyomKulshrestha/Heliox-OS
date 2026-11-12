@@ -122,4 +122,7 @@ async def main(count: int, snapshot: bool) -> None:
 
 
 if __name__ == "__main__":
+    from ci_only import require_runner  # here, not at the top: the tests import this file for its helpers
+
+    require_runner("writes 100,000 synthetic events into Heliox's experience ledger in the home folder")
     asyncio.run(main(int(sys.argv[1]) if len(sys.argv) > 1 else 100_000, "--snapshot" in sys.argv))

@@ -25,6 +25,10 @@ import sys
 import time
 from pathlib import Path
 
+from ci_only import require_runner
+
+require_runner("adds PulseAudio sinks and sources and changes the default speaker and microphone")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 failures = 0

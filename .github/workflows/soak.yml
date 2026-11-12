@@ -1,0 +1,65 @@
+name: "Weekly soak (a real daemon for two hours, sampled for leaks)"
+
+# A real daemon answering the requests Heliox answers itself, for two hours on each system, with memory, threads,
+# open files or handles, child processes and event-loop tasks sampled every five minutes; then the stores' growth at
+# ten times the requests. No model, no network, no GPU: the daemon's model address refuses at once. Never blocks
+# anything; the CHECK lines are in each step's log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "How long the daemon runs (minutes)"
+        default: "120"
+  schedule:
+    - cron: "41 4 * * 6" # Saturdays 04:41 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: soak-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  soak:
+    name: Soak (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+      CUDA_VISIBLE_DEVICES: ""
+      PYTHONUNBUFFERED: "1"
+      HELIOX_SOAK_MINUTES: ${{ github.event.inputs.minutes || '120' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the daemon (core only, as a first run does)
+        run: python -m pip install --disable-pip-version-check --progress-bar off -e ./daemon
+
+      - name: A real daemon for hours, sampled
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/soak" USERPROFILE="$RUNNER_TEMP/soak" LOCALAPPDATA="$RUNNER_TEMP/soak/AppData/Local"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/soak_check.py
+
+      - name: Store growth at ten times the requests
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/growth" USERPROFILE="$RUNNER_TEMP/growth" LOCALAPPDATA="$RUNNER_TEMP/growth/AppData/Local"
+          mkdir -p "$HOME"
+          python daemon/tests/platform_real/store_growth_check.py

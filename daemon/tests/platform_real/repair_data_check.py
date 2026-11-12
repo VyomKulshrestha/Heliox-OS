@@ -21,6 +21,10 @@ import secrets
 import sys
 from pathlib import Path
 
+from ci_only import require_runner
+
+require_runner("adds a marker line to Heliox's config.toml in the home folder")
+
 REBUILT = {"env", "python", "tools", "uv-cache", "setup", "env.broken"}
 failures = 0
 

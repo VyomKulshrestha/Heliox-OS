@@ -1202,10 +1202,10 @@ Check connectivity.
 
 #### `health`
 Return daemon-process health: uptime, RSS memory, active WebSocket connections,
-and loaded agent roles.
+loaded agent roles, and how many tasks the event loop holds (the weekly soak watches it for leaks).
 
 **Params:** `{}`
-**Result:** `{ "uptime": 42.1, "memory_usage_mb": 180.4, "active_connections": 1, "loaded_agents": [...] }`
+**Result:** `{ "uptime": 42.1, "memory_usage_mb": 180.4, "active_connections": 1, "loaded_agents": [...], "event_loop_tasks": 57 }`
 
 #### `ready`
 Return `{ "ready": true }` only when start-up has finished, the orchestrator has registered agents
