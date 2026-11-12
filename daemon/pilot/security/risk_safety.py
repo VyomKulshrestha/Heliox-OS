@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from pilot.security.path_rules import names_a_place, resolved, rules_for
+from pilot.security.path_rules import PathRules, names_a_place, resolved, rules_for
 from pilot.security.risk_model import PredictedOutcome
 from pilot.security.risk_observation import NOMINAL_PROC_CAPACITY
 
@@ -57,10 +57,10 @@ def _strings(values: dict, keys: tuple[str, ...]) -> list[str]:
     return [value for key in keys if isinstance(value := values.get(key), str) and value.strip()]
 
 
-def _fold(text: str) -> str:
+def _fold(text: str, rules: PathRules) -> str:
     """Case is folded where the file system ignores it (Windows, macOS), and kept on Linux."""
     text = text.replace("\\", "/")
-    return text.casefold() if rules_for().case_insensitive else text
+    return text.casefold() if rules.case_insensitive else text
 
 
 # Where a protected folder written in command text ends: the end, a path separator, a space, a quote or a shell
@@ -73,9 +73,9 @@ _PACKAGE_EDGE_AFTER = r"(?![\w.+-])"
 _REMOVAL_WORDS = re.compile(r"\b(uninstall|remove|purge|erase|autoremove)\b", re.IGNORECASE)
 
 
-def _folder_in_text(text: str, folder: str) -> bool:
-    folded = _fold(text)
-    forms = {_fold(folder.strip().rstrip("/\\")), _fold(resolved(folder).rstrip("/\\"))}
+def _folder_in_text(text: str, folder: str, rules: PathRules, guard: str) -> bool:
+    folded = _fold(text, rules)
+    forms = {_fold(folder.strip().rstrip("/\\"), rules), _fold(guard.rstrip("/\\"), rules)}
     return any(form and re.search(_FOLDER_START + re.escape(form) + _FOLDER_END, folded) is not None for form in forms)
 
 
@@ -92,7 +92,14 @@ def _package_in_text(text: str, package: str) -> bool:
     )
 
 
-def touches_protected_path(action: Action, config: PilotConfig) -> str | None:
+def touches_protected_path(
+    action: Action,
+    config: PilotConfig,
+    rules: PathRules | None = None,
+    *,
+    cwd: str | None = None,
+    home: str | None = None,
+) -> str | None:
     """Returns the matched protected folder/package string if this action's
     target or parameters touch one, else None. Heliox's direct analog of
     Ferrum's `deletes_own_config` check — a concrete fact about THIS
@@ -108,7 +115,10 @@ def touches_protected_path(action: Action, config: PilotConfig) -> str | None:
       resolved, at a path boundary in a ``command`` or ``script``;
     - a protected package: the package action's name, the same package by ``package_names.is_protected``
       (ignoring case; on Windows a winget id or the name after its last dot); or one of those as a whole token in a
-      ``command`` or ``script`` that removes packages (uninstall, remove, purge, erase, autoremove)."""
+      ``command`` or ``script`` that removes packages (uninstall, remove, purge, erase, autoremove).
+
+    ``rules`` (this system's by default), ``cwd`` and ``home`` let a test ask what another system would decide, on
+    the text alone (``path_rules.resolved``)."""
     from pilot.actions import PackageParams
     from pilot.security.package_names import is_protected
     from pilot.security.path_rules import path_within
@@ -136,11 +146,19 @@ def touches_protected_path(action: Action, config: PilotConfig) -> str | None:
     if is_package and action.target:
         names.append(action.target)
 
+    system = rules or rules_for()
+
+    def place(path: str) -> str:
+        return resolved(path, rules, cwd=cwd, home=home)
+
     for folder in folders:
-        guard = resolved(folder)
-        if any(names_a_place(path) and path_within(resolved(path), guard) for path in paths):
+        guard = place(folder)
+        # A folder that names no place here ("C:/Windows" on macOS or Linux is a relative name) contains no path;
+        # it is still looked for in command text, where seeing it costs nothing.
+        in_place = names_a_place(folder, system)
+        if in_place and any(names_a_place(p, system) and path_within(place(p), guard, system) for p in paths):
             return folder
-        if any(_folder_in_text(text, folder) for text in texts):
+        if any(_folder_in_text(text, folder, system, guard) for text in texts):
             return folder
     for package in packages:
         if any(is_protected(name, [package]) for name in names):

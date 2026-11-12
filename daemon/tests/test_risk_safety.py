@@ -1,5 +1,11 @@
+"""The plan risk score's safety rules. Paths here are written as rooted POSIX paths ("/etc"), which name a place on
+every system (on Windows, the current drive), unless a test says which system's rules it uses."""
+
+import pytest
+
 from pilot.actions import Action, ActionType, EmptyParams, FileParams
 from pilot.config import PilotConfig
+from pilot.security.path_rules import LINUX, MACOS, WINDOWS
 from pilot.security.risk_model import PredictedOutcome
 from pilot.security.risk_safety import score_outcome, touches_protected_path
 
@@ -68,11 +74,41 @@ def test_multiple_rules_compound_but_clamp_at_one():
     assert len(reasons) == 3
 
 
-def test_touches_protected_path_checks_target():
+@pytest.mark.parametrize(
+    ("rules", "cwd", "folder", "target", "expected"),
+    [
+        # Windows: a drive path, with forward slashes, is a place.
+        (WINDOWS, "C:\\work", "C:/Windows/System32", "C:/Windows/System32/config.sys", True),
+        (WINDOWS, "C:\\work", "C:/Windows/System32", "c:\\windows\\system32\\drivers", True),
+        # macOS and Linux: "C:/Windows/..." is a relative name, not a place, so nothing is protected by it.
+        (LINUX, "/home/sam", "C:/Windows/System32", "C:/Windows/System32/config.sys", False),
+        (MACOS, "/Users/sam", "C:/Windows/System32", "C:/Windows/System32/config.sys", False),
+        # A rooted path is a place on every system ("/etc" lands on the current drive on Windows).
+        (LINUX, "/home/sam", "/etc", "/etc/passwd", True),
+        (MACOS, "/Users/sam", "/etc", "/etc/passwd", True),
+        (WINDOWS, "D:\\work", "/etc", "/etc/passwd", True),
+        # Case: ignored on Windows and macOS, kept on Linux.
+        (MACOS, "/Users/sam", "/Users/Sam/Private", "/users/sam/private/plan.txt", True),
+        (LINUX, "/home/sam", "/home/Sam/Private", "/home/sam/private/plan.txt", False),
+    ],
+)
+def test_touches_protected_path_checks_target_under_each_systems_rules(rules, cwd, folder, target, expected):
     config = PilotConfig()
-    config.restrictions.protected_folders = ["C:/Windows/System32"]
-    action = _action(target="C:/Windows/System32/config.sys")
-    assert touches_protected_path(action, config) is not None
+    config.restrictions.protected_folders = [folder]
+    found = touches_protected_path(_action(target=target), config, rules, cwd=cwd)
+    assert (found == folder) is expected
+
+
+def test_touches_protected_path_checks_target_on_this_system():
+    # A path written the way this system writes absolute paths.
+    import sys
+
+    folder, target = ("C:/Windows/System32", "C:/Windows/System32/config.sys")
+    if sys.platform != "win32":
+        folder, target = ("/usr/lib", "/usr/lib/libc.so")
+    config = PilotConfig()
+    config.restrictions.protected_folders = [folder]
+    assert touches_protected_path(_action(target=target), config) == folder
 
 
 def test_touches_protected_path_none_when_no_match():

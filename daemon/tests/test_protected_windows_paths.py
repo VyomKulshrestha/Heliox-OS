@@ -1,4 +1,8 @@
-"""A protected folder is found however a Windows path names it, on every Python Heliox supports.
+"""A protected folder is found however a Windows path names it, on every Python Heliox supports, and a path
+written the Windows way protects nothing on macOS and Linux, where it is a relative name.
+
+The rules of each system are checked on any machine through path_rules' rule sets (ntpath and posixpath on the
+text alone); the tests marked windows_only also check the real resolution on Windows.
 
 Python 3.13 on Windows stopped counting a rooted path without a drive ("/Users/sam", "\\Users\\sam") as absolute,
 while Windows still opens it on the current drive. The risk score asked os.path.isabs and so, on 3.13, never looked
@@ -17,7 +21,7 @@ import pytest
 from pilot.actions import Action, ActionType, FileParams
 from pilot.config import PilotConfig
 from pilot.security import path_rules
-from pilot.security.path_rules import names_a_place
+from pilot.security.path_rules import LINUX, MACOS, WINDOWS, names_a_place
 from pilot.security.risk_safety import touches_protected_path
 from pilot.security.validator import ActionValidator
 
@@ -25,24 +29,72 @@ windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows path 
 
 
 @pytest.mark.parametrize(
-    ("path", "windows", "expected"),
+    ("path", "rules", "expected"),
     [
-        ("/etc/passwd", False, True),
-        ("~/notes", False, True),
-        ("notes.txt", False, False),
-        ("git", True, False),
-        ("C:\\Users\\sam", True, True),
-        ("C:/Users/sam", True, True),
-        ("C:Users\\sam", True, True),  # drive-relative
-        ("\\Users\\sam", True, True),  # rooted, no drive
-        ("/Users/sam", True, True),
-        ("\\\\server\\share\\private", True, True),  # UNC
-        ("\\Users\\sam", False, False),  # a backslash is a plain character on macOS and Linux
-        ("", True, False),
+        ("/etc/passwd", LINUX, True),
+        ("/etc/passwd", MACOS, True),
+        ("/etc/passwd", WINDOWS, True),
+        ("~/notes", LINUX, True),
+        ("notes.txt", LINUX, False),
+        ("git", WINDOWS, False),
+        ("C:\\Users\\sam", WINDOWS, True),
+        ("C:/Users/sam", WINDOWS, True),
+        ("C:Users\\sam", WINDOWS, True),  # drive-relative
+        ("\\Users\\sam", WINDOWS, True),  # rooted, no drive
+        ("/Users/sam", WINDOWS, True),
+        ("\\\\server\\share\\private", WINDOWS, True),  # UNC
+        # Written the Windows way, on macOS and Linux: a relative name (a backslash is a plain character there).
+        ("C:/Users/sam", LINUX, False),
+        ("C:\\Users\\sam", MACOS, False),
+        ("\\Users\\sam", LINUX, False),
+        ("\\\\server\\share", MACOS, False),
+        ("", WINDOWS, False),
     ],
 )
-def test_what_names_a_place(path, windows, expected):
-    assert names_a_place(path, windows=windows) is expected
+def test_what_names_a_place(path, rules, expected):
+    assert names_a_place(path, rules) is expected
+
+
+@pytest.mark.parametrize(
+    ("path", "rules", "cwd", "expected"),
+    [
+        ("\\Users\\sam\\x", WINDOWS, "D:\\work", "D:\\Users\\sam\\x"),  # rooted: the current drive
+        ("/Users/sam/x", WINDOWS, "D:\\work", "D:\\Users\\sam\\x"),
+        ("D:Users\\sam", WINDOWS, "D:\\work", "D:\\work\\Users\\sam"),  # drive-relative: that drive's folder
+        ("C:/Users/sam/x", WINDOWS, "D:\\work", "C:\\Users\\sam\\x"),
+        ("\\\\files\\team\\x", WINDOWS, "D:\\work", "\\\\files\\team\\x"),
+        ("/etc/../etc/hosts", LINUX, "/home/sam", "/etc/hosts"),
+        ("C:/Users/sam", LINUX, "/home/sam", "/home/sam/C:/Users/sam"),  # a relative name on Linux
+        ("~/notes", MACOS, "/", "/Users/sam/notes"),
+    ],
+)
+def test_how_each_system_resolves_a_path(path, rules, cwd, expected):
+    assert path_rules.resolved(path, rules, cwd=cwd, home="/Users/sam") == expected
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "\\Users\\sam\\private\\plan.txt",
+        "/Users/sam/private/plan.txt",
+        "D:/Users/sam/private/plan.txt",
+        "D:Users\\sam\\private\\plan.txt",  # with D:'s current folder at its root
+    ],
+)
+def test_windows_rules_see_a_protected_folder_however_the_path_names_it(written):
+    config = _config("D:\\Users\\sam\\private")
+    assert touches_protected_path(_file_action(written), config, WINDOWS, cwd="D:\\") == "D:\\Users\\sam\\private"
+    assert touches_protected_path(_file_action("D:/Users/sam/private-notes.txt"), config, WINDOWS, cwd="D:\\") is None
+    # The same text on macOS and Linux: the Windows-shaped folder is a relative name there and protects nothing.
+    for rules in (LINUX, MACOS):
+        assert touches_protected_path(_file_action(written), config, rules, cwd="/home/sam") is None
+
+
+def test_windows_rules_see_a_unc_path_inside_a_protected_share():
+    config = _config("\\\\files\\team\\private")
+    for path in ("\\\\files\\team\\private\\plan.txt", "//files/team/private/plan.txt"):
+        assert touches_protected_path(_file_action(path), config, WINDOWS, cwd="C:\\") is not None, path
+    assert touches_protected_path(_file_action("\\\\files\\team\\public\\a.txt"), config, WINDOWS, cwd="C:\\") is None
 
 
 def _drive() -> str:
