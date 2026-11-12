@@ -1,7 +1,8 @@
 """A GTK 4 window with a text entry and a password entry, for ``toolkit_check.py``.
 
 Run with the system Python that has PyGObject and GTK 4 (``gir1.2-gtk-4.0``). Commands on stdin, one per line:
-``focus entry``, ``focus password``, ``quit``. Prints ``ready`` once the entry has focus, ``ok <command>`` after each.
+``focus entry``, ``focus password``, ``text`` (what the keys reached), ``quit``. Prints ``ready`` once the entry
+has focus, ``ok <command>`` after each.
 """
 
 from __future__ import annotations
@@ -40,6 +41,14 @@ def main() -> None:
             command, _, arg = line.partition(" ")
             if command == "focus":
                 (password if arg == "password" else entry).grab_focus()
+            elif command == "text":
+                # What the keys actually reached: the entry's text, and only the length of the password's.
+                print(
+                    f"text entry={entry.get_text()!r} password_length={len(password.get_text())} "
+                    f"entry_focus={entry.has_focus()} password_focus={password.has_focus()} "
+                    f"window_active={window.is_active()}",
+                    flush=True,
+                )
             elif command == "quit":
                 application.quit()
             print(f"ok {line}", flush=True)

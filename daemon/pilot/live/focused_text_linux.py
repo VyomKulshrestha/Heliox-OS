@@ -64,13 +64,19 @@ STATE_READ_ONLY = 43
 
 PASSWORD_ROLES = frozenset({"password text"})
 # AtspiRole ATSPI_ROLE_PASSWORD_TEXT (at-spi2-core atspi-constants.h). GTK 4 names its roles after ARIA in
-# GetRoleName, so a password entry's role name is "text box" like any entry's; it marks the password only in the
-# numeric role (GetRole), on the GtkPasswordEntry, while focus sits on the text widget inside it (CI on 008f1a0:
-# a GTK 4 password entry was read as a "text box"). The numeric role is asked of the field and of its parents.
+# GetRoleName, so a password entry's role name is "text box" like any entry's, and marks the password only in the
+# numeric role (GetRole). CI on 008f1a0 read a GTK 4 password entry as a "text box"; the dump from CI on 8d513fd
+# shows the mark on the focused object itself (role name "text box", numeric role 40), its parent a plain
+# "generic" (39). The numeric role is asked of the field and, for toolkits or versions that mark only an
+# enclosing entry, of its two parents too.
 ROLE_PASSWORD_TEXT = 40
 PASSWORD_PARENT_DEPTH = 2
 TERMINAL_ROLES = frozenset({"terminal"})
 WINDOW_ROLES = frozenset({"frame", "window", "dialog", "alert", "file chooser"})
+# The same by numeric role (ATSPI_ROLE_ALERT, DIALOG, FILE_CHOOSER, FRAME, WINDOW). GTK 4 names its window
+# "application" in GetRoleName (CI on 8d513fd: the window holding the focused entry, titled and active, had role name
+# "application" and numeric role 23, a frame), so a window is recognised by either.
+WINDOW_ROLE_NUMBERS = frozenset({2, 16, 19, 23, 69})
 # Roles that are never somewhere the person writes, even if a toolkit marks them editable.
 NOT_WRITING_ROLES = frozenset({"label", "link", "push button", "menu item", "list item", "heading", "static", "image"})
 
@@ -331,27 +337,39 @@ class AtspiClient:
         except Exception:
             return None
 
+    def is_window(self, ref: Ref) -> bool:
+        """Whether ``ref`` is a window, by role name or by numeric role (GTK 4 names its windows "application")."""
+        if self._role(ref) in WINDOW_ROLES:
+            return True
+        return self._role_number(ref) in WINDOW_ROLE_NUMBERS
+
     def is_password(self, ref: Ref, role: str | None = None) -> bool:
         """Whether ``ref`` is a password field, or sits inside one, by role name or numeric role (GTK 4 marks it
-        only in the numeric role of the entry that holds the focused text widget)."""
-        names = [role if role is not None else self._role(ref)]
-        numbers = [self._role_number(ref)]
+        only in the numeric role of the entry that holds the focused text widget).
+
+        Only a walk that ended normally can say "not a password": it reached the root or a null parent, or went
+        PASSWORD_PARENT_DEPTH levels up with every role read. Any call that fails on the way (the parent, its role
+        name, its numeric role) means Heliox cannot tell, and cannot telling is a refusal: for GTK 4 the only mark
+        is on the parent."""
+        try:
+            names = [role if role is not None else self._role(ref)]
+        except Exception:
+            return True
+        numbers: list[int | None] = [self._role_number(ref)]
         current = ref
         for _ in range(PASSWORD_PARENT_DEPTH):
             try:
                 bus, path = self._get(current, ACCESSIBLE, "Parent")
             except Exception:
-                break
+                return True
             current = (str(bus), str(path))
             if not current[1] or current[1] == ROOT_PATH or current[1].endswith("/null"):
                 break
             try:
                 names.append(self._role(current))
             except Exception:
-                break
-            number = self._role_number(current)
-            if number is not None:
-                numbers.append(number)
+                return True
+            numbers.append(self._role_number(current))  # None, when it cannot be read, counts as a password
         return password_by_role(names, numbers)
 
     def pid(self, bus: str) -> int:
@@ -458,7 +476,7 @@ class AtspiClient:
             ref: Ref = focus.ref
             for _ in range(40):
                 try:
-                    if self._role(ref) in WINDOW_ROLES:
+                    if self.is_window(ref):
                         focus.window = ref
                         break
                     bus, path = self._get(ref, ACCESSIBLE, "Parent")

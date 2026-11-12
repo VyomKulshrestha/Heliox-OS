@@ -155,8 +155,24 @@ class FakeBus(L.Transport):
                 "parent": "/win",
             },
             "/label": {"role": "label", "state": [L.STATE_SHOWING], "text": "Name", "parent": "/win"},
-            # GTK 4: a GtkPasswordEntry ("text box", numeric role password text) holding the text widget that has
-            # focus ("text box", numeric role text). Only the entry's numeric role says it is a password.
+            # GTK 4 exactly as CI on 8d513fd dumped it (toolkit_check.py gtk4, X11): the focused password entry is
+            # a "text box" whose numeric role is 40, inside a "generic" (39), inside the application (23).
+            "/gtk4app": {
+                "role": "application",
+                "number": 23,
+                "state": [1, 24, 25, 30],
+                "name": "Heliox GTK 4 fixture",
+            },
+            "/gtk4app/generic": {"role": "generic", "number": 39, "state": [24, 25, 29, 30], "parent": "/gtk4app"},
+            "/gtk4app/generic/password": {
+                "role": "text box",
+                "number": 40,
+                "state": [7, 11, 12, 24, 25, 30, 42],
+                "text": "s3cret",
+                "parent": "/gtk4app/generic",
+            },
+            # A toolkit or version that marks only an enclosing entry: a "text box" with numeric role password text
+            # holding the text widget that has focus ("text box", numeric role text).
             "/gtk4pw": {
                 "role": "text box",
                 "number": L.ROLE_PASSWORD_TEXT,
@@ -180,6 +196,9 @@ class FakeBus(L.Transport):
         self.calls.append((path, method))
         if path in getattr(self, "gone", ()):
             raise RuntimeError("[org.freedesktop.DBus.Error.UnknownObject] No such object")
+        what = body[1] if method == "Get" and len(body) > 1 else method
+        if (path, what) in getattr(self, "failing", ()):
+            raise TimeoutError(f"{what} on {path} timed out")
         if method == "GetConnectionUnixProcessID":
             return (4242,)
         if path == L.ROOT_PATH and method == "GetChildren":
@@ -206,7 +225,7 @@ class FakeBus(L.Transport):
             if prop == "CharacterCount":
                 return (("i", len(node["text"])),)
             if prop == "Name":
-                return (("s", self.title if path == "/win" else ""),)
+                return (("s", self.title if path == "/win" else node.get("name", "")),)
             if prop == "Parent":
                 return (("(so)", (APP, node.get("parent", "/org/a11y/atspi/null"))),)
         if method == "GetText":
@@ -259,10 +278,24 @@ def test_atspi_refuses_a_password_field_before_asking_for_its_text():
     assert not any(path == "/pw" and method in ("GetText", "Get") for path, method in bus.calls)
 
 
-def test_a_gtk4_password_entry_is_refused_by_its_numeric_role_and_its_parents():
-    # Role names, numeric roles and the parent chain as GTK 4 gives them over AT-SPI (gtkatspicontext: GetRoleName
-    # returns the ARIA-style "text box", GetRole returns password text only for the GtkPasswordEntry). The next
-    # CI run records the real dump (DIAG lines of toolkit_check.py gtk4).
+def test_the_gtk4_password_entry_from_the_ci_dump_is_refused_by_its_own_numeric_role():
+    bus = FakeBus()
+    bus.focus = "/gtk4app/generic/password"
+    client = L.AtspiClient(bus, clock=Clock())
+    read = client.describe((APP, "/gtk4app/generic/password"))
+    assert read.password and not read.editable and read.text == ""
+    assert not any(path == "/gtk4app/generic/password" and method == "GetText" for path, method in bus.calls)
+    # Its role name alone would have let it through: that is how CI on 008f1a0 read it.
+    assert L.classify("text box", {7, 11, 12, 24, 25, 30, 42}, [L.TEXT]) == (False, FIELD)
+    # GTK 4 names its window "application"; its numeric role (23, a frame) says it is the window, so its title is
+    # found for the timeline and the never-read rules.
+    bus.pending.append((APP, "/gtk4app/generic/password"))
+    assert client.focused() == (APP, "/gtk4app/generic/password")
+    assert client.window_title() == "Heliox GTK 4 fixture"
+
+
+def test_a_password_marked_only_on_an_enclosing_entry_is_refused_too():
+    # Kept for toolkits or versions that mark only the entry around the focused text widget.
     assert L.password_by_role(["text box", "text box"], [61, L.ROLE_PASSWORD_TEXT])
     assert L.password_by_role(["password text"], [61])
     assert L.password_by_role(["text box"], [None]), "a field whose numeric role cannot be read is not read"
@@ -275,6 +308,22 @@ def test_a_gtk4_password_entry_is_refused_by_its_numeric_role_and_its_parents():
     assert not any(path == "/gtk4pw/text" and method == "GetText" for path, method in bus.calls)
     bus.nodes["/entry"]["number"] = None  # a toolkit that cannot say its numeric role: refused, not read
     assert client.describe((APP, "/entry")).text == ""
+
+
+def test_a_parent_that_cannot_be_asked_means_the_field_is_not_read():
+    # For GTK 4 the password mark is on the parent, so a parent Heliox cannot ask is a field it cannot judge.
+    for failing in (("/gtk4pw/text", "Parent"), ("/gtk4pw", "GetRoleName"), ("/gtk4pw", "GetRole")):
+        bus = FakeBus()
+        bus.nodes["/gtk4pw"]["number"] = 61  # an ordinary GTK 4 entry: only the failing call can make it doubtful
+        client = L.AtspiClient(bus, clock=Clock())
+        assert client.describe((APP, "/gtk4pw/text")).text == "s3cret", "readable while every call answers"
+        bus.failing = {failing}
+        read = client.describe((APP, "/gtk4pw/text"))
+        assert read.password and read.text == "", failing
+    # A walk that ends normally (a null parent above the window) still reads an ordinary field.
+    bus = FakeBus()
+    client = L.AtspiClient(bus, clock=Clock())
+    assert client.describe((APP, "/entry")).text == "draft"
 
 
 def test_atspi_field_identity_holds_while_typing_and_when_the_title_changes():

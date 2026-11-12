@@ -344,7 +344,7 @@ def _atspi_window(client: Any, start: Any = None) -> Any:
     if ref is None:
         raise RuntimeError("No window is in front to read (nothing has keyboard focus on the accessibility bus).")
     for _ in range(40):
-        if client._role(ref) in L.WINDOW_ROLES:
+        if client.is_window(ref):
             return ref
         bus, path = client._get(ref, L.ACCESSIBLE, "Parent")
         ref = (str(bus), str(path))

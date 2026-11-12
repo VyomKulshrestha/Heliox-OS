@@ -99,6 +99,9 @@ class FakeClient:
     def pid(self, bus):
         return 4242
 
+    def is_window(self, ref):
+        return self._role(ref) in L.WINDOW_ROLES
+
     def is_password(self, ref, role=None):
         return self.nodes[ref[1]][0] == "password text" or ref[1] in getattr(self, "password_paths", ())
 

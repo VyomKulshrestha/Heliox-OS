@@ -103,6 +103,63 @@ def diag_focused(prefix: str) -> None:
                 break
 
 
+def ask_fixture(fixture: subprocess.Popen, command: str, answer: str, timeout: float = 5.0) -> str:
+    """Send a command to the fixture and return its line that starts with ``answer`` ("" when none came)."""
+    assert fixture.stdin is not None and fixture.stdout is not None
+    fixture.stdin.write(command + "\n")
+    fixture.stdin.flush()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        line = fixture.stdout.readline()
+        if not line:
+            return ""
+        if line.startswith(answer):
+            return line.strip()
+    return ""
+
+
+def diag_reader(prefix: str) -> None:
+    """DIAG lines for a read that saw nothing: the reader's foreground, its focused object, and every application
+    on the accessibility bus with its windows' role, numeric role, states and title, so a run shows whether the
+    keys or the reader is where it stops."""
+    from pilot.live import focused_text_linux as L
+
+    try:
+        print(f"DIAG {prefix} reader foreground: {L.foreground_window()!r}", flush=True)
+    except Exception as exc:
+        print(f"DIAG {prefix} reader foreground: {type(exc).__name__}: {exc}", flush=True)
+    with L.SHARED.lock:
+        client = L.SHARED.get()
+        if client is None:
+            print(f"DIAG {prefix}: no AT-SPI client: {L.SHARED.error}", flush=True)
+            return
+        try:
+            print(f"DIAG {prefix} reader focused object: {client.focused()!r}", flush=True)
+        except Exception as exc:
+            print(f"DIAG {prefix} reader focused object: {type(exc).__name__}: {exc}", flush=True)
+        try:
+            apps = client._children((L.REGISTRY, L.ROOT_PATH))
+        except Exception as exc:
+            print(f"DIAG {prefix} applications: {type(exc).__name__}: {exc}", flush=True)
+            return
+        for app in apps[:12]:
+            try:
+                name = client._get(app, L.ACCESSIBLE, "Name")
+                windows = []
+                for window in client._children(app)[:6]:
+                    windows.append(
+                        (
+                            client._role(window),
+                            client._role_number(window),
+                            sorted(client._state(window)),
+                            client._get(window, L.ACCESSIBLE, "Name"),
+                        )
+                    )
+                print(f"DIAG {prefix} application {name!r} {app}: windows {windows}", flush=True)
+            except Exception as exc:
+                print(f"DIAG {prefix} application {app}: {type(exc).__name__}: {exc}", flush=True)
+
+
 def gtk4(system_python: str, wayland: bool) -> None:
     prefix = "gtk4-wayland" if wayland else "gtk4"
     env = {key: value for key, value in os.environ.items() if key != "NO_AT_BRIDGE"}
@@ -121,6 +178,10 @@ def gtk4(system_python: str, wayland: bool) -> None:
         type_keys("hello gtk four", wayland)
         typed = read_until(lambda r: r.text == "hello gtk four")
         check(f"{prefix}/reads-typed-text", typed is not None and typed.text == "hello gtk four", repr(typed))
+        reached = ask_fixture(fixture, "text", "text ")
+        print(f"DIAG {prefix} what the keys reached: {reached or 'no answer'}", flush=True)
+        if typed is None or typed.text != "hello gtk four":
+            diag_reader(prefix)
         fixture.stdin.write("focus password\n")
         fixture.stdin.flush()
         time.sleep(0.8)
@@ -145,7 +206,7 @@ def gtk4(system_python: str, wayland: bool) -> None:
         fixture.kill()
 
 
-PAGE = "data:text/html,<title>Heliox Firefox fixture</title><textarea autofocus aria-label=message></textarea>"
+PAGE = "<!doctype html><title>Heliox Firefox fixture</title><textarea autofocus aria-label=message></textarea>\n"
 
 
 def firefox() -> None:
@@ -157,7 +218,13 @@ def firefox() -> None:
         capture_output=True,
         check=False,
     )
-    profile = Path(tempfile.mkdtemp(prefix="heliox-firefox-"))
+    # In the home folder, not /tmp: a snap Firefox (Ubuntu's) sees a private /tmp of its own. The page is a file,
+    # as Firefox refuses a top-level data: URL given on the command line (CI on 8d513fd: no window ever had the
+    # page's title, and Firefox printed nothing).
+    profile = Path(tempfile.mkdtemp(prefix="heliox-firefox-", dir=Path.home()))
+    page = profile / "fixture.html"
+    page.write_text(PAGE, encoding="utf-8")
+    print(f"DIAG firefox program {program} -> {Path(program).resolve()}", flush=True)
     (profile / "user.js").write_text(
         'user_pref("accessibility.force_disabled", -1);\nuser_pref("browser.shell.checkDefaultBrowser", false);\n',
         encoding="utf-8",
@@ -166,7 +233,7 @@ def firefox() -> None:
     env = {**os.environ, "GNOME_ACCESSIBILITY": "1", "MOZ_ENABLE_WAYLAND": "0"}
     with log.open("w", encoding="utf-8") as out:
         browser = subprocess.Popen(
-            [program, "--new-instance", "--profile", str(profile), PAGE], stdout=out, stderr=out, env=env
+            [program, "--new-instance", "--profile", str(profile), page.as_uri()], stdout=out, stderr=out, env=env
         )
     try:
         window = find_window("Heliox Firefox fixture", timeout=60.0)
@@ -181,6 +248,7 @@ def firefox() -> None:
         check("firefox/reads-typed-text", typed is not None and typed.text.endswith("hello firefox"), repr(typed))
     finally:
         browser.kill()
+        shutil.rmtree(profile, ignore_errors=True)
 
 
 def run_quiet(args: list[str]) -> str:
