@@ -75,6 +75,9 @@ async def running(unused_tcp_port, tmp_path, monkeypatch):
         server = PilotServer(config)
         task = asyncio.create_task(server.start())
         await _wait_for_port(unused_tcp_port, task)
+        # The daemon listens before start-up has finished; this test needs a started daemon, so wait for start()
+        # itself. The limit only matters on failure.
+        await asyncio.wait_for(task, timeout=600)
         from pilot.conversation import layer_for
 
         layer_for(server)._model = lambda: StubTalk()
