@@ -351,7 +351,15 @@ async def test_got_it_stops_the_voice_but_never_background_work():
 
 
 @pytest.mark.asyncio
-async def test_a_request_that_starts_like_a_stop_is_still_a_request():
+async def test_a_request_that_starts_like_a_stop_is_still_a_request(monkeypatch):
+    class PassThrough:  # the conversation layer is tested elsewhere; here only the stop phrases are in question
+        def interrupt(self):
+            pass
+
+        async def take(self, _text):
+            return None
+
+    monkeypatch.setattr("pilot.conversation.layer_for", lambda _server: PassThrough())
     server = PilotServer(PilotConfig())
     server._broadcast_notification = AsyncMock()
     server._speak_voice_response = AsyncMock()

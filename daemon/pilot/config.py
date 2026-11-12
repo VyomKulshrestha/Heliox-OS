@@ -516,6 +516,29 @@ class LiveConfig:
 
 
 @dataclass
+class ConversationConfig:
+    """The fast conversational layer (see pilot.conversation): questions, remarks and follow-ups said to Heliox are
+    answered by a small fast model, streamed into speech sentence by sentence; requests to act go to the planner
+    with a short spoken acknowledgement. On by default; it uses the provider set under [model].
+
+    Each provider's fast model is its own setting. Empty means: Claude's fast tier (claude-haiku-5-5), or for any
+    other provider the model already configured for it. share_screen_text decides whether the end of the text
+    field you are typing in (read by Heliox Live, never a password field) goes with a question: "auto" shares it
+    with a model on this computer and not with a cloud model, "on" always, "off" never. The focused app's name
+    is sent in every case except for apps Live never reads."""
+
+    enabled: bool = True
+    share_screen_text: str = "auto"  # "auto" | "on" | "off"
+    max_reply_tokens: int = 400
+    claude_model: str = ""
+    openai_model: str = ""
+    openrouter_model: str = ""
+    gemini_model: str = ""
+    meta_model: str = ""
+    ollama_model: str = ""
+
+
+@dataclass
 class SuggestionsConfig:
     """Proactive suggestions (see pilot.workflows.suggestions). Off by default. When on,
     Heliox offers one gentle suggestion now and then, computed in code from your goals,
@@ -797,6 +820,7 @@ class PilotConfig:
     clipboard: ClipboardConfig = field(default_factory=ClipboardConfig)
     suggestions: SuggestionsConfig = field(default_factory=SuggestionsConfig)
     live: LiveConfig = field(default_factory=LiveConfig)
+    conversation: ConversationConfig = field(default_factory=ConversationConfig)
     supervision: SupervisionConfig = field(default_factory=SupervisionConfig)
     co_adaptation: CoAdaptationConfig = field(default_factory=CoAdaptationConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -1199,6 +1223,17 @@ def _validate_config_types(raw: dict) -> None:
             "grounded_model": str,
             "muted_kinds": list,
         },
+        "conversation": {
+            "enabled": bool,
+            "share_screen_text": (str, bool),
+            "max_reply_tokens": int,
+            "claude_model": str,
+            "openai_model": str,
+            "openrouter_model": str,
+            "gemini_model": str,
+            "meta_model": str,
+            "ollama_model": str,
+        },
         "supervision": {
             "enabled": bool,
             "keyboard_mouse_hook_enabled": bool,
@@ -1580,6 +1615,22 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             from pilot.live.detectors import KINDS
 
             config.live.muted_kinds = [str(k) for k in l_raw["muted_kinds"] if str(k) in KINDS]
+
+    if "conversation" in raw and isinstance(raw["conversation"], dict):
+        c_raw = raw["conversation"]
+        config.conversation.enabled = bool(c_raw.get("enabled", config.conversation.enabled))
+        share = c_raw.get("share_screen_text")
+        if share is True or share is False:
+            config.conversation.share_screen_text = "on" if share else "off"
+        elif isinstance(share, str) and share.strip().casefold() in ("auto", "on", "off"):
+            config.conversation.share_screen_text = share.strip().casefold()
+        tokens = c_raw.get("max_reply_tokens")
+        if isinstance(tokens, int) and not isinstance(tokens, bool):
+            config.conversation.max_reply_tokens = max(60, min(tokens, 2000))
+        for key in ("claude", "openai", "openrouter", "gemini", "meta", "ollama"):
+            name = c_raw.get(f"{key}_model")
+            if isinstance(name, str) and len(name.strip()) <= 120:
+                setattr(config.conversation, f"{key}_model", name.strip())
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]

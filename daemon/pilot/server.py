@@ -13305,6 +13305,9 @@ def handle_tool(tool_name, params):
         if listener is not None:
             listener.clear_follow_up_window()
             listener.end_interruption()
+        from pilot.conversation import layer_for
+
+        layer_for(self).clear()
         logger.info("Started a new voice conversation (%d earlier turns set aside)", hidden)
         return {"status": "ok", "earlier_turns": hidden}
 
@@ -13313,6 +13316,9 @@ def handle_tool(tool_name, params):
         from pilot.system.local_tts_worker import LOCAL_ENGINES, prewarm_local_voice
 
         prewarm_local_voice(self.config.voice)
+        from pilot.conversation import layer_for
+
+        layer_for(self).prewarm()  # the fast model and its SDK, so a spoken reply waits for neither
         if self.config.voice.tts_engine in LOCAL_ENGINES:
             from pilot.system.voice import warm_output_line
 
@@ -13333,6 +13339,10 @@ def handle_tool(tool_name, params):
         if self._live is not None:
             # The live layer hears what the person says to Heliox too, and answers a slip at the end of the turn.
             self._live.offer_speech(command_text)
+        from pilot.conversation import layer_for
+
+        conversation = layer_for(self)
+        conversation.interrupt()  # a new utterance ends a reply still being written or spoken
 
         if self.config.voice.barge_in_enabled and self._speech_coordinator.status()["active"]:
             await self._speech_coordinator.stop_all()
@@ -13544,6 +13554,15 @@ def handle_tool(tool_name, params):
                 f"Carry out this requested action: {proactive_decision['action_command']}"
             )
 
+        # The fast layer answers talk itself (streamed) and hands requests to act on to the planner below.
+        turn = await conversation.take(command_text) if proactive_decision is None else None
+        if turn is not None and turn.done:
+            message = " ".join(turn.spoken)
+            await self._broadcast_notification(
+                "voice_result", {"command": spoken_command, "status": "answered", "message": message}
+            )
+            return
+        command_text = turn.planner_input if turn is not None else command_text
         interaction = await self._interaction_runtime.start(command_text, source="voice")
         interaction_id = str(interaction["interaction_id"])
         language = getattr(
@@ -13560,11 +13579,15 @@ def handle_tool(tool_name, params):
                 "proactive_decision": proactive_decision,
             },
         )
-        acknowledgement_task = self._spawn_interaction_speech(
-            acknowledgement_for(command_text),
-            channel=SpeechChannel.TASK_NARRATION,
-            dedupe_key=f"voice-ack:{interaction_id}",
-            delay_seconds=2.5,
+        acknowledgement_task = (
+            turn.keep_company()  # a specific sentence now, progress if planning runs long, the approval pointer
+            if turn is not None
+            else self._spawn_interaction_speech(
+                acknowledgement_for(command_text),
+                channel=SpeechChannel.TASK_NARRATION,
+                dedupe_key=f"voice-ack:{interaction_id}",
+                delay_seconds=2.5,
+            )
         )
 
         try:
@@ -13620,6 +13643,8 @@ def handle_tool(tool_name, params):
                 message=result_text[:160],
                 interaction_id=interaction_id,
             )
+            if turn is not None:
+                turn.finish(status, result_text)  # the next question can refer to what was done
             spoken = result_text[:300] if len(result_text) < 300 else result_text[:297] + "..."
             await self._speak_voice_response(
                 spoken,
