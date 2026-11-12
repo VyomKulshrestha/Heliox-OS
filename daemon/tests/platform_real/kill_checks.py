@@ -1,9 +1,11 @@
 """Real kills on this machine (CI runners: Windows, macOS, Linux). Prints CHECK lines; exit code 1 if one fails.
 
-1. worker-ends: a process that starts Gnomon's worker exactly as the daemon does (gnomon_worker._default_spawn: the
+1. worker-ends and worker-unload: a process that starts Gnomon's worker exactly as the daemon does (gnomon_worker._default_spawn: the
    real interpreter, pipes and parent watch) is killed hard (SIGKILL / TerminateProcess, no clean-up); the worker
    must be gone within WORKER_BOUND seconds. The parent is a small harness, not the whole daemon: on a runner without
    an NVIDIA card the daemon never starts this worker, but the spawn, the pipes and the watch are the daemon's own.
+   worker-unload: the daemon's own stop path for that worker (the reviewer's close unloads the engine) ends a real
+   worker process at once.
 2. interrupted-task: a process holding the real durable task store and checkpoint store, in the middle of a
    three-step task (one step done, the second claimed and running), is killed hard. A new process then starts the
    way the daemon does (recover_incomplete) and asks for the task as the window does (resume_task): it must be
@@ -89,7 +91,9 @@ def check_worker_ends() -> bool:
     if not alive(worker):
         print("CHECK kill/worker-ends: FAIL - the worker had already exited before the kill")
         return False
-    hard_kill(parent.pid)
+    import real_daemon
+
+    hard_kill(real_daemon.serving_process(parent, "worker-parent").pid)  # the harness's interpreter, not a launcher
     killed_at = time.monotonic()
     while alive(worker) and time.monotonic() - killed_at < WORKER_BOUND * 3:
         time.sleep(0.1)
@@ -104,6 +108,37 @@ def check_worker_ends() -> bool:
     print(
         f"CHECK kill/worker-ends: {'PASS' if ok else 'FAIL'} - the worker was gone {waited:.1f} s after its parent "
         f"was killed hard (bound {WORKER_BOUND:.0f} s)"
+    )
+    return ok
+
+
+def check_worker_unload() -> bool:
+    """The daemon's own stop path for Gnomon (reviewer close -> engine unload) with a real worker process: started
+    and answering its ping (no card needed for that), then unloaded; it must be gone at once, not left behind."""
+    from types import SimpleNamespace
+
+    from pilot.intelligence.gnomon_worker import GnomonWorkerEngine
+
+    engine = GnomonWorkerEngine({"check": True}, arbiter=SimpleNamespace(disabled=False))
+    try:
+        engine._start(None)
+    except Exception as error:
+        print(f"CHECK kill/worker-unload: FAIL - the worker did not start ({type(error).__name__}: {error})")
+        return False
+    pids = [pid for pid in (engine.worker_pid, getattr(engine._process, "pid", None)) if pid]
+    began = time.monotonic()
+    engine.unload()
+    while any(alive(pid) for pid in pids) and time.monotonic() - began < WORKER_BOUND * 3:
+        time.sleep(0.1)
+    waited = time.monotonic() - began
+    left = [pid for pid in pids if alive(pid)]
+    for pid in left:
+        hard_kill(pid)
+    ok = not left and waited <= WORKER_BOUND
+    print(
+        f"CHECK kill/worker-unload: {'PASS' if ok else 'FAIL'} - the worker (pids {pids}) was "
+        f"{'gone' if not left else 'still running'} {waited:.1f} s after the stop path unloaded it "
+        f"(bound {WORKER_BOUND:.0f} s)"
     )
     return ok
 
@@ -217,6 +252,7 @@ def main(argv: list[str]) -> int:
     results = []
     if "worker" in wanted:
         results.append(check_worker_ends())
+        results.append(check_worker_unload())
     if "task" in wanted:
         results.append(check_interrupted_task())
     return 0 if all(results) else 1

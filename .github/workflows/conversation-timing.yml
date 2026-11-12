@@ -102,6 +102,15 @@ jobs:
           --results "$RUNNER_TEMP/conversation-timing" --summary "$GITHUB_STEP_SUMMARY"
           --settings "$COMPARE_SETTINGS" --repeats "${COMPARE_REPEATS:-0}"
 
+      # A real daemon stopped and killed while its Kokoro worker loads and while it is idle: how long the worker
+      # outlives the daemon (it has no parent watch; it ends when its stdin closes). Uses the models fetched above.
+      - name: The voice worker after a stop and after a hard kill
+        continue-on-error: true
+        env:
+          HF_HUB_OFFLINE: "1"
+          PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+        run: python tests/platform_real/voice_worker_stop_check.py
+
       - name: Upload timelines
         if: always()
         uses: actions/upload-artifact@v4

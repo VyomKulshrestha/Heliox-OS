@@ -147,6 +147,54 @@ async def connect(limit: float = 240.0) -> Session:
     raise TimeoutError(f"the daemon did not answer in {limit:g} s ({last or 'no token file'})")
 
 
+def serving_process(popen: subprocess.Popen, mark: str = "pilot.server") -> Any:
+    """The interpreter that serves, for a process a check started with ``sys.executable``. On Windows a virtual
+    environment's python.exe is a launcher and the interpreter is its child (same arguments): killing or freezing the
+    launcher alone leaves the daemon serving. Elsewhere, and with a plain interpreter, it is the Popen's own process."""
+    import psutil
+
+    root = psutil.Process(popen.pid)
+    for child in root.children():
+        try:
+            if child.name().lower().startswith("python") and any(mark in part for part in child.cmdline()):
+                return child
+        except psutil.Error:
+            continue
+    return root
+
+
+def kill_serving(popen: subprocess.Popen, mark: str = "pilot.server") -> None:
+    """A hard kill of the serving interpreter only (SIGKILL; TerminateProcess on Windows), as a crash ends it: the
+    workers it started stay for their own watch to end. The launcher, if any, then ends with its child."""
+    import psutil
+
+    try:
+        serving_process(popen, mark).kill()
+    except psutil.Error:
+        pass
+    popen.wait(30)
+
+
+def end_tree(popen: subprocess.Popen) -> None:
+    """Clean-up: the process and everything under it, launcher, interpreter and workers alike."""
+    import psutil
+
+    try:
+        root = psutil.Process(popen.pid)
+        processes = [*root.children(recursive=True), root]
+    except psutil.Error:
+        processes = []
+    for process in processes:
+        try:
+            process.kill()
+        except psutil.Error:
+            pass
+    try:
+        popen.wait(30)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 async def stop(daemon: subprocess.Popen, session: Session | None, limit: float = 40.0) -> None:
     """Ask for the clean stop (``daemon_stop``, the same as SIGTERM, on every system), then make sure it is gone."""
     if daemon.poll() is None and session is not None:
@@ -160,8 +208,7 @@ async def stop(daemon: subprocess.Popen, session: Session | None, limit: float =
     while daemon.poll() is None and time.monotonic() < deadline:
         await asyncio.sleep(0.2)
     if daemon.poll() is None:
-        daemon.kill()
-        daemon.wait(30)
+        end_tree(daemon)
 
 
 def log_lines(marks: tuple[str, ...], last: int = 20) -> list[str]:

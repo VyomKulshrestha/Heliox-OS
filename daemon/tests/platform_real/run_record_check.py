@@ -61,8 +61,7 @@ async def run() -> int:
 
     daemon, session, _status = await started()
     await session.close()
-    daemon.kill()  # SIGKILL on Linux and macOS, TerminateProcess on Windows: no stop(), no clean mark
-    daemon.wait(30)
+    real_daemon.kill_serving(daemon)  # SIGKILL / TerminateProcess of the serving interpreter: no stop(), no mark
 
     daemon, session, status = await started()
     last = status.get("last_run") or {}
