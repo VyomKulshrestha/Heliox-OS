@@ -90,13 +90,17 @@ def mac_fallback(png: Path) -> None:
     except ImportError:
         check("ocr-macos/second-venv-has-no-pyobjc", True)
     data = png.read_bytes()
-    start = time.perf_counter()
-    try:
-        text = asyncio.run(vision._ocr_macos_native(data))
-    except Exception as exc:
-        text = f"{type(exc).__name__}: {exc}"
-    took = (time.perf_counter() - start) * 1000
-    check("ocr-macos/vision-through-swift", found(text), f"{text[:160]!r} in {took:.0f} ms")
+    # The first read compiles the swift helper (its own limit, SWIFT_OCR_COMPILE_TIMEOUT); every later read runs
+    # the compiled helper within SWIFT_OCR_RUN_TIMEOUT. Both are timed and reported.
+    for attempt, name in ((1, "ocr-macos/vision-through-swift-first-read"), (2, "ocr-macos/vision-through-swift")):
+        start = time.perf_counter()
+        try:
+            text = asyncio.run(vision._ocr_macos_native(data))
+        except Exception as exc:
+            text = f"{type(exc).__name__}: {exc}"
+        took = (time.perf_counter() - start) * 1000
+        bound = vision.SWIFT_OCR_COMPILE_TIMEOUT if attempt == 1 else vision.SWIFT_OCR_RUN_TIMEOUT
+        check(name, found(text) and took <= bound * 1000, f"{text[:160]!r} in {took:.0f} ms (bound {bound} s)")
     if shutil.which("tesseract"):
         try:
             text = asyncio.run(vision._ocr_tesseract_cli(data, "eng"))

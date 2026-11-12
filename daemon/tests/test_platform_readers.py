@@ -579,7 +579,7 @@ def test_vision_ocr_lines_come_out_in_reading_order():
     assert reading_order([]) == []
 
 
-def test_macos_ocr_without_pyobjc_uses_the_swift_route(monkeypatch):
+def test_macos_ocr_without_pyobjc_uses_the_swift_route(monkeypatch, tmp_path):
     import asyncio
     import sys
 
@@ -588,13 +588,49 @@ def test_macos_ocr_without_pyobjc_uses_the_swift_route(monkeypatch):
     monkeypatch.setitem(sys.modules, "pilot.system.macos_vision_ocr", None)  # import fails like a missing extra
     calls = []
 
-    async def run(args, **_kw):
-        calls.append(args)
+    async def run(args, **kw):
+        calls.append((args, kw.get("timeout")))
+        if args[0] == "swiftc":
+            from pathlib import Path
+
+            Path(args[args.index("-o") + 1]).write_bytes(b"helper")
+            return (0, "", "")
         return (0, "from swift\n", "")
 
     monkeypatch.setattr(vision, "run_command", run)
+    monkeypatch.setattr(vision, "_swift_helper_dir", lambda: tmp_path)
+    monkeypatch.setattr(vision.shutil, "which", lambda name: "/usr/bin/swiftc" if name == "swiftc" else None)
     assert asyncio.run(vision._ocr_macos_native(b"png")) == "from swift"
-    assert calls and calls[0][0] == "swift"
+    assert asyncio.run(vision._ocr_macos_native(b"png")) == "from swift"
+    compiles = [c for c in calls if c[0][0] == "swiftc"]
+    runs = [c for c in calls if c[0][0] != "swiftc"]
+    # Compiled once with its own long limit, then the cached helper runs within the short one, each time.
+    assert len(compiles) == 1 and compiles[0][1] == vision.SWIFT_OCR_COMPILE_TIMEOUT
+    assert len(runs) == 2 and all(timeout == vision.SWIFT_OCR_RUN_TIMEOUT for _args, timeout in runs)
+    assert [p.name for p in tmp_path.iterdir() if p.suffix in (".swift", ".part")] == []
+
+
+def test_macos_ocr_without_pyobjc_or_developer_tools_says_what_to_install(monkeypatch, tmp_path):
+    import asyncio
+    import sys
+
+    import pytest
+
+    from pilot.system import vision
+
+    monkeypatch.setitem(sys.modules, "pilot.system.macos_vision_ocr", None)
+    monkeypatch.setattr(vision, "_swift_helper_dir", lambda: tmp_path)
+    monkeypatch.setattr(vision.shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match=r"pilot-daemon\[macos\].*xcode-select --install"):
+        asyncio.run(vision._ocr_macos_native(b"png"))
+
+    async def slow(args, **_kw):
+        return (1, "", "Command timed out")
+
+    monkeypatch.setattr(vision.shutil, "which", lambda name: "/usr/bin/swiftc")
+    monkeypatch.setattr(vision, "run_command", slow)
+    with pytest.raises(RuntimeError, match="compiled once, the first time"):
+        asyncio.run(vision._ocr_macos_native(b"png"))
 
 
 def test_macos_screen_ocr_says_screen_recording_is_missing(monkeypatch):

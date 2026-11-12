@@ -1,8 +1,9 @@
 """An AppKit window for ``click_hang_check.py``: a text field, and a "Click me" label (static text, no AXPress)
 that counts mouse clicks on it, so a click by element ref can only reach it as a real click at its centre.
 
-Commands on stdin: ``clicks`` (prints ``clicks <n>``), ``hang <s>`` (the main thread stops answering for that many
-seconds, as a hung app does), ``insert <text>``, ``quit``. Prints ``ready`` once the text field has focus.
+Commands on stdin: ``clicks`` (prints ``clicks <n>``), ``front`` (brings the window forward), ``hang <s>`` (the
+main thread stops answering for that many seconds, as a hung app does), ``insert <text>``, ``quit``. Prints
+``ready`` once the text field has focus.
 """
 
 from __future__ import annotations
@@ -52,6 +53,11 @@ class Driver(NSObject):
             command, _, arg = commands.get().partition(" ")
             if command == "clicks":
                 print(f"clicks {counts['clicks']}", flush=True)
+            elif command == "front":
+                AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                self.window.makeKeyAndOrderFront_(None)
+                self.window.makeFirstResponder_(self.entry)
+                print("ok front", flush=True)
             elif command == "hang":
                 print("ok hang", flush=True)
                 time.sleep(float(arg or 5))

@@ -56,7 +56,14 @@ def new_tops(before: set[str], after: set[str]) -> list[str]:
 def ignored_paths(argv: list[str], home: Path) -> set[str]:
     """The exact paths after each ``--ignore``, relative to ``home`` as the listing writes them. Pure."""
     paths = [argv[i + 1] for i, word in enumerate(argv[:-1]) if word == "--ignore"]
-    return {os.path.relpath(os.path.abspath(path), home) for path in paths}
+    ignored = set()
+    for path in paths:
+        try:
+            ignored.add(os.path.relpath(os.path.abspath(path), home))
+        except ValueError:
+            # Another drive (CI on e51aead: the checkout on D:, the home on C:): it cannot be in the listing.
+            continue
+    return ignored
 
 
 def main(argv: list[str]) -> int:

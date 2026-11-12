@@ -172,3 +172,19 @@ def test_an_empty_windows_store_is_an_empty_list_and_the_learner_key_is_known():
     from pilot.server import LEARNER_SNAPSHOT_KEY
 
     assert LEARNER_SNAPSHOT_KEY in cc.known_accounts()[VAULT_SERVICE]
+
+
+def test_an_ignored_path_on_another_drive_is_left_out_not_a_crash(monkeypatch):
+    home = _platform_real("home_snapshot")
+    real_relpath = home.os.path.relpath
+
+    def relpath(path, start):
+        if "other-drive" in path:
+            raise ValueError("path is on mount 'D:', start on mount 'C:'")
+        return real_relpath(path, start)
+
+    monkeypatch.setattr(home.os.path, "relpath", relpath)
+    base = Path.home()
+    inside = str(base / "work" / "state.json")
+    ignored = home.ignored_paths(["--ignore", inside, "--ignore", "/other-drive/state.json"], base)
+    assert ignored == {str(Path("work") / "state.json")}

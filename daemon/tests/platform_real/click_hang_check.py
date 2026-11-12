@@ -99,12 +99,18 @@ def main() -> int:
         time.sleep(1.0)
         from pilot.system import accessibility
 
-        try:
-            snapshot = asyncio.run(accessibility.capture_snapshot(max_elements=60))
-            target = next((e for e in snapshot.elements if e.name == "Click me"), None)
-        except Exception as exc:
-            snapshot, target = None, None
-            print(f"snapshot failed: {type(exc).__name__}: {exc}")
+        # The window must be in front first: a step before this one can leave another app there (CI on e51aead:
+        # "No window is in front to read" after the notification check), so ask the fixture forward until the
+        # snapshot is of its window, for up to 15 s.
+        snapshot, target, deadline = None, None, time.monotonic() + 15.0
+        while target is None and time.monotonic() < deadline:
+            fixture.send("front")
+            time.sleep(0.8)
+            try:
+                snapshot = asyncio.run(accessibility.capture_snapshot(max_elements=60))
+                target = next((e for e in snapshot.elements if e.name == "Click me"), None)
+            except Exception as exc:
+                print(f"snapshot: {type(exc).__name__}: {exc}")
         if check(f"{prefix}/snapshot-finds-the-label", target is not None):
             before = fixture.clicks()
             try:
@@ -128,7 +134,16 @@ def main() -> int:
         else:
             subprocess.run(["xdotool", "type", "--delay", "20", "hello from the hang check"], timeout=30, check=False)
         time.sleep(1.0)
-        print(f"before the hang: {read()!r}")
+        seen = read()
+        print(f"before the hang: {seen!r}")
+        # Without the field read before the hang, a fast read during it proves nothing (CI on e51aead read None
+        # throughout and passed in 0.0 s): the check needs the reader to be talking to the fixture first.
+        if not check(
+            f"{prefix}/hang-check-reads-the-field-first",
+            seen is not None and "hello from the hang check" in (getattr(seen, "text", "") or ""),
+            repr(seen),
+        ):
+            return failures
         fixture.wait_line("ok hang", 10.0, fixture.send("hang 6"))
         time.sleep(0.3)
         timings, errors = [], []

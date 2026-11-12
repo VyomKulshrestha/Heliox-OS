@@ -38,7 +38,24 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
 
 
 def pactl(*args: str) -> str:
-    return subprocess.run(["pactl", *args], capture_output=True, text=True, timeout=10, check=False).stdout.strip()
+    done = subprocess.run(["pactl", *args], capture_output=True, text=True, timeout=10, check=False)
+    if done.returncode != 0:
+        print(f"pactl {' '.join(args)}: exit {done.returncode}: {done.stderr.strip()}")
+    return done.stdout.strip()
+
+
+def load_null_source(name: str, description: str) -> None:
+    """A null source with its own description. module-null-source takes ``description=`` (unlike the null sink's
+    ``sink_properties=``): CI on e51aead loaded nothing with ``source_properties=``, the default stayed the earlier
+    step's "Null Input", and every follow check failed for that reason."""
+    if pactl("load-module", "module-null-source", f"source_name={name}", f"description={description}"):
+        return
+    pactl(
+        "load-module",
+        "module-null-source",
+        f"source_name={name}",
+        f"source_properties=device.description={description}",
+    )
 
 
 def playback() -> None:
@@ -95,12 +112,8 @@ def follow() -> None:
     from pilot.system import audio_health, voice
 
     for name, description in (("heliox_follow_a", "HelioxMicA"), ("heliox_follow_b", "HelioxMicB")):
-        pactl(
-            "load-module",
-            "module-null-source",
-            f"source_name={name}",
-            f"source_properties=device.description={description}",
-        )
+        load_null_source(name, description)
+    print(f"sources: {pactl('list', 'short', 'sources').splitlines()}")
     pactl("set-default-source", "heliox_follow_a")
     time.sleep(0.5)
     recorder = voice._ContinuousRecorder(preferred_device="auto")

@@ -47,14 +47,6 @@ def known_accounts() -> dict[str, list[str]]:
     # heliox_learner_snapshot: the learner's snapshot key, which versions before the key file kept in the keyring.
     vault = [*KNOWN_PROVIDERS, SIGNING_KEY_NAME, "heliox_learner_snapshot"]
     try:
-        # The learner's saved-state key: the daemon's first run writes it (CI, 12 November: the only Heliox entry
-        # in a fresh runner's store). The name comes from the module that owns it.
-        from pilot.server import LEARNER_SNAPSHOT_KEY
-
-        vault.append(LEARNER_SNAPSHOT_KEY)
-    except Exception:
-        pass
-    try:
         from pilot.config import PilotConfig
 
         config = PilotConfig.load()
