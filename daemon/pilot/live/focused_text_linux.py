@@ -3,7 +3,8 @@
 AT-SPI is a D-Bus protocol, so it works the same under X11 and Wayland: what matters is whether the application
 exposes itself on the accessibility bus. GTK 3 and 4 applications always do. Qt, Chromium, Electron and Firefox do
 when accessibility is switched on for the session (GNOME: ``gsettings set org.gnome.desktop.interface
-toolkit-accessibility true``; Chromium and Electron also honour ``--force-renderer-accessibility``). Terminals
+toolkit-accessibility true``, which sets org.a11y.Status IsEnabled; the app reads it when it starts). In CI on
+7f553b9 ``--force-renderer-accessibility`` alone did not put Chrome or Electron on the bus. Terminals
 built on VTE (GNOME Terminal, Tilix, Terminator, Xfce Terminal) expose their text with the "terminal" role and
 are read like the Windows console; Konsole exposes some of it; GPU terminals (Alacritty, kitty, WezTerm, foot)
 and xterm expose none, so nothing is read there.
@@ -11,8 +12,10 @@ and xterm expose none, so nothing is read there.
 The connection uses jeepney, a pure-Python D-Bus library (optional, ``pilot-daemon[linux]``): no compiler and no
 GObject introspection. Focus is followed by subscribing to ``object:state-changed:focused`` events, so a read is
 four or five D-Bus round trips to the focused application (about 1 to 5 ms). When no event has arrived yet (the
-reader just started, or the application sends none), a bounded search of the active window finds the focused
-element, at most every few seconds.
+reader just started, or the application sends none), the focused element is looked for at most every few
+seconds: first by asking each active window's application for it in one call (``Collection.GetMatches`` with the
+FOCUSED state, which the app answers from its own tree), then by a bounded walk of the windows for toolkits that do
+not answer that call.
 
 Field identity is the application's bus name plus the object path of the element: it names the element itself,
 so it does not change while the person types or when the window title changes. Every element goes through
@@ -51,6 +54,7 @@ ROOT_PATH = "/org/a11y/atspi/accessible/root"
 ACCESSIBLE = "org.a11y.atspi.Accessible"
 TEXT = "org.a11y.atspi.Text"
 PROPS = "org.freedesktop.DBus.Properties"
+COLLECTION = "org.a11y.atspi.Collection"
 FOCUS_EVENT = "object:state-changed:focused"
 
 # AtspiStateType bit numbers (at-spi2-core atspi-constants.h).
@@ -82,6 +86,13 @@ NOT_WRITING_ROLES = frozenset({"label", "link", "push button", "menu item", "lis
 
 CALL_TIMEOUT = 0.5
 SEARCH_BUDGET = 250  # accessible objects visited by one search for the focused element
+# Collection.GetMatches(rule, sortby, count, traverse) -> a(so) (at-spi2-core xml/Collection.xml). The rule is
+# (states as 32-bit words, match type, attributes, match type, roles, match type, interfaces, match type, invert);
+# MATCH_ALL with an empty set matches everything, so only the FOCUSED state narrows it.
+MATCH_SIGNATURE = "(aiia{ss}iaiiasib)uib"
+MATCH_ALL = 1  # ATSPI_Collection_MATCH_ALL
+SORT_CANONICAL = 1  # ATSPI_Collection_SORT_ORDER_CANONICAL
+FOCUSED_STATE_BITS = [1 << 12, 0]  # STATE_FOCUSED in the first of two 32-bit words
 SEARCH_EVERY_SECONDS = 3.0
 RESTART_BACKOFF_SECONDS = (2.0, 5.0, 15.0, 60.0)
 
@@ -414,8 +425,35 @@ class AtspiClient:
             self._focus = _Focus(ref)
         return ref
 
+    def focused_in(self, window: Ref) -> Ref | None:
+        """The focused element inside ``window``, asked of its application in one call (Collection.GetMatches with
+        the FOCUSED state). None when the app has none focused there, does not implement Collection, or does not
+        answer within the call limit; the caller then walks the tree itself. In canonical order an ancestor comes
+        before what it holds, so the last match still focused is taken: if a toolkit marks the page as focused as well
+        as the field in it, the field is the one read.
+
+        A browser's tree is deep and wide (the window's own toolbars and tabs come before the page), so a walk from
+        outside within ``SEARCH_BUDGET`` objects may never reach the page; the app walks its own tree in process."""
+        rule = (FOCUSED_STATE_BITS, MATCH_ALL, {}, MATCH_ALL, [], MATCH_ALL, [], MATCH_ALL, False)
+        try:
+            found = self._t.call(
+                window[0], window[1], COLLECTION, "GetMatches", MATCH_SIGNATURE, (rule, SORT_CANONICAL, 8, True)
+            )[0]
+        except Exception:
+            return None
+        for bus, path in reversed(list(found)):
+            ref = (str(bus or window[0]), str(path))
+            try:
+                state = self._state(ref)
+            except Exception:
+                continue
+            if STATE_FOCUSED in state and STATE_DEFUNCT not in state:
+                return ref
+        return None
+
     def _search(self) -> Ref | None:
-        """Look for the focused element in active windows first, visiting at most ``SEARCH_BUDGET`` objects."""
+        """Look for the focused element in active windows first: by asking each active window's application
+        (``focused_in``), then by a walk visiting at most ``SEARCH_BUDGET`` objects."""
         budget = SEARCH_BUDGET
         try:
             apps = self._children((REGISTRY, ROOT_PATH))
@@ -431,6 +469,10 @@ class AtspiClient:
                     windows.append((0 if STATE_ACTIVE in self._state(window) else 1, window))
             except Exception:
                 continue
+        for _rank, window in (item for item in windows if item[0] == 0):
+            ref = self.focused_in(window)
+            if ref is not None:
+                return ref
         for _rank, window in sorted(windows, key=lambda item: item[0]):
             stack = [window]
             while stack and budget > 0:

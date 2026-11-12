@@ -141,7 +141,7 @@ def run(target: str, workdir: Path) -> None:
                 return
             args = [
                 CHROME,
-                f"--user-data-dir={workdir / 'chrome-profile'}",
+                f"--user-data-dir={workdir / f'chrome-{target}'}",  # a profile per target: no handing off
                 "--no-first-run",
                 "--no-default-browser-check",
             ]
@@ -226,13 +226,30 @@ def run(target: str, workdir: Path) -> None:
             except Exception:
                 process.kill()
         if kind == "safari" and not safari_was_running:
-            subprocess.run(
-                ["/usr/bin/osascript", "-e", 'quit app "Safari"'], capture_output=True, timeout=15, check=False
-            )
+            quit_app("com.apple.Safari")
         for leftover in _pids_named("Electron") if kind == "electron" else []:
             subprocess.run(["/bin/kill", str(leftover)], capture_output=True, check=False)
         time.sleep(1.5)
         diag(f"at the end of {target}")
+
+
+def quit_app(bundle_id: str, timeout: float = 10.0) -> None:
+    """Quit an app through NSRunningApplication, then force it. Not through osascript: CI on 7f553b9 timed out on
+    'quit app "Safari"' after 15 s (sending Apple Events to Safari needs an Automation grant the runner lacks), and
+    that stopped every target after Safari."""
+    import AppKit
+
+    def running() -> list:
+        return list(AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle_id) or [])
+
+    for app in running():
+        app.terminate()
+    deadline = time.monotonic() + timeout
+    while running() and time.monotonic() < deadline:
+        time.sleep(0.5)
+    for app in running():
+        print(f"DIAG {bundle_id} did not quit when asked; forcing pid {app.processIdentifier()}", flush=True)
+        app.forceTerminate()
 
 
 def _pids_named(name: str) -> list[int]:
@@ -246,7 +263,10 @@ def main(argv: list[str]) -> int:
     shutil.copyfile(HERE / "field_fixture.html", workdir / "field_fixture.html")
     try:
         for target in argv:
-            run(target, workdir)
+            try:
+                run(target, workdir)
+            except Exception as exc:  # one target failing must not stop the others
+                check(f"{target}/ran", False, f"{type(exc).__name__}: {exc}")
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
     return failures

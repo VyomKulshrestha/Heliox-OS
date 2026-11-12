@@ -446,16 +446,21 @@ jobs:
           failed=$((failed + $?))
           exit $failed
 
-      # Where people type: a browser, an Electron app and a Qt app. Each shows a text field and a password field;
-      # the default setup of each is an ANSWER (does Heliox see the field as a person has it), the forced setups
-      # must read it, and the password field must be refused wherever the text field was read.
+      # Where people type: a browser, an Electron app and a Qt app. Each shows a text field and a password field.
+      # Each app runs with the desktop switch off and on, with and without its own switch: setups with the desktop
+      # switch on must read the field, the others are ANSWER lines; the password field must be refused wherever the
+      # text field was read.
       - name: Linux, X11 - fields in Chrome, Electron and Qt, by default and with accessibility forced on
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         continue-on-error: true
         run: |
           set +e
+          # PySide6 needs libEGL and libGL even for widgets (CI on 7f553b9: "libEGL.so.1: cannot open shared object
+          # file"), and its xcb platform plugin the xcb extension libraries.
           sudo apt-get install -y -q --no-install-recommends openbox libxcb-cursor0 libxkbcommon-x11-0 \
-            libxcb-icccm4 libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-xinerama0
+            libxcb-icccm4 libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-xinerama0 \
+            libegl1 libgl1 libopengl0 libfontconfig1 libdbus-1-3 libxcb-shape0 libxcb-randr0 libxcb-xfixes0 \
+            libxcb-sync1 libxcb-xkb1
           pip install -q "PySide6==6.8.1"
           mkdir -p "$RUNNER_TEMP/electron"
           npm install --prefix "$RUNNER_TEMP/electron" --no-save --no-audit --no-fund electron@33.2.1 >/dev/null 2>&1
@@ -469,7 +474,8 @@ jobs:
             openbox >/tmp/openbox-fields.log 2>&1 &
             sleep 1
             python tests/platform_real/apps_fields_check.py chrome-default chrome-switch chrome-forced \
-              electron-default electron-forced qt-default qt-forced
+              chrome-forced-switch chrome-env chrome-late electron-default electron-switch electron-forced \
+              electron-forced-switch electron-env electron-late qt-default qt-switch qt-forced
           '
 
       # Weston's headless backend has no seat, so nothing can take keyboard focus there (first run: GTK logged

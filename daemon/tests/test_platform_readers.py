@@ -326,6 +326,128 @@ def test_a_parent_that_cannot_be_asked_means_the_field_is_not_read():
     assert client.describe((APP, "/entry")).text == "draft"
 
 
+CHROME = ":1.2"
+
+
+class ChromeBus(L.Transport):
+    """Google Chrome on the bus as CI on 7f553b9 dumped it with toolkit accessibility on: application ':1.2' with an
+    active frame (role "frame", numeric 23, states 1, 8, 24, 25, 30) titled "Heliox field fixture - Google Chrome"
+    and two untitled frames. The run showed only the frames; what is inside the active one is modelled on Chrome's
+    layout: the browser's own toolbars and tabs (``ui`` objects) come before the page, which holds the focused text
+    area and the password input."""
+
+    unique_name = ":1.99"
+
+    def __init__(self, ui: int = 400, collection: bool = True) -> None:
+        self.collection = collection
+        self.focus = "/page/message"
+        self.page_marked_focused = False
+        frame_state = [L.STATE_ACTIVE, 8, 24, L.STATE_SHOWING, 30]
+        self.nodes: dict[str, dict] = {
+            "/frame": {"role": "frame", "state": frame_state, "children": ["/ui0", "/page"]},
+            "/frame2": {"role": "frame", "state": [8, 24, L.STATE_SHOWING, 30], "children": []},
+            "/page": {
+                "role": "document web",
+                "state": [L.STATE_SHOWING],
+                "children": ["/page/message", "/page/pw"],
+                "parent": "/frame",
+            },
+            "/page/message": {
+                "role": "entry",
+                "state": [L.STATE_EDITABLE, L.STATE_SHOWING],
+                "text": "hello chrome-switch",
+                "parent": "/page",
+            },
+            "/page/pw": {"role": "password text", "state": [L.STATE_EDITABLE, L.STATE_SHOWING], "parent": "/page"},
+        }
+        for n in range(ui):
+            self.nodes[f"/ui{n}"] = {
+                "role": "panel",
+                "state": [L.STATE_SHOWING],
+                "children": [f"/ui{n + 1}"] if n + 1 < ui else [],
+            }
+        self.calls: list[tuple[str, str]] = []
+
+    def focused_paths(self) -> list[str]:
+        return (["/page"] if self.page_marked_focused else []) + [self.focus]
+
+    def call(self, bus, path, interface, method, signature="", body=()):
+        self.calls.append((path, method))
+        if method == "GetConnectionUnixProcessID":
+            return (5150,)
+        if path == L.ROOT_PATH and method == "GetChildren":
+            if bus == L.REGISTRY:
+                return ([(CHROME, L.ROOT_PATH)],)
+            return ([(CHROME, "/frame"), (CHROME, "/frame2")],)
+        if method == "GetMatches":
+            if not self.collection:
+                raise RuntimeError("[org.freedesktop.DBus.Error.UnknownMethod] No such interface Collection")
+            assert interface == L.COLLECTION and signature == L.MATCH_SIGNATURE
+            rule = body[0]
+            assert rule[0] == bits(L.STATE_FOCUSED) and rule[1] == L.MATCH_ALL
+            return ([(CHROME, p) for p in self.focused_paths()] if path == "/frame" else [],)
+        node = self.nodes[path]
+        if method == "GetState":
+            return (bits(*node["state"], *([L.STATE_FOCUSED] if path in self.focused_paths() else [])),)
+        if method == "GetRoleName":
+            return (node["role"],)
+        if method == "GetRole":
+            return ({"frame": 23, "entry": 79, "password text": 40, "document web": 95}.get(node["role"], 39),)
+        if method == "GetChildren":
+            return ([(CHROME, child) for child in node.get("children", [])],)
+        if method == "GetInterfaces":
+            return ([L.ACCESSIBLE, L.TEXT],)
+        if method == "Get":
+            prop = body[1]
+            if prop == "CharacterCount":
+                return (("i", len(node.get("text", "s3cret"))),)
+            if prop == "Parent":
+                return (("(so)", (CHROME, node.get("parent", "/org/a11y/atspi/null"))),)
+            if prop == "Name":
+                return (("s", "Heliox field fixture - Google Chrome" if path == "/frame" else ""),)
+        if method == "GetText":
+            start, end = body
+            return (node["text"][start:end],)
+        raise KeyError((path, method))
+
+    def events(self):
+        return []
+
+
+def test_a_focused_field_in_chrome_is_found_by_asking_the_app_not_by_walking_its_toolbars():
+    bus = ChromeBus()
+    client = L.AtspiClient(bus, clock=Clock())
+    ref = client.focused()
+    assert ref == (CHROME, "/page/message")
+    assert client.describe(ref).text == "hello chrome-switch"
+    assert client.window_title() == "Heliox field fixture - Google Chrome"
+    assert ("/frame", "GetMatches") in bus.calls and ("/frame2", "GetMatches") not in bus.calls, "active window only"
+    assert not any(path.startswith("/ui") for path, _method in bus.calls), "the browser's own controls are not walked"
+    # Without the app's answer, the walk spends its budget on the toolbars and never reaches the page: what CI on
+    # 7f553b9 reported (no foreground, no focused object) with Chrome on the bus and its window active.
+    assert L.AtspiClient(ChromeBus(collection=False), clock=Clock()).focused() is None
+    # A small window is still found by the walk when the app does not answer the call (GTK 4, Qt).
+    assert L.AtspiClient(ChromeBus(ui=3, collection=False), clock=Clock()).focused() == (CHROME, "/page/message")
+
+
+def test_the_field_is_taken_when_the_app_marks_the_page_focused_too():
+    bus = ChromeBus()
+    bus.page_marked_focused = True
+    assert L.AtspiClient(bus, clock=Clock()).focused() == (CHROME, "/page/message")
+
+
+def test_the_password_input_in_chrome_is_refused_before_its_text_is_asked_for():
+    bus = ChromeBus()
+    client = L.AtspiClient(bus, clock=Clock())
+    assert client.describe(client.focused()).text == "hello chrome-switch"  # the first read
+    bus.focus = "/page/pw"
+    clock = Clock()
+    client = L.AtspiClient(bus, clock=clock)
+    read = client.describe(client.focused())
+    assert read.password and not read.editable and read.text == ""
+    assert not any(path == "/page/pw" and method in ("GetText", "Get") for path, method in bus.calls)
+
+
 def test_atspi_field_identity_holds_while_typing_and_when_the_title_changes():
     bus = FakeBus()
     client = L.AtspiClient(bus, clock=Clock())
