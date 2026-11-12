@@ -467,10 +467,24 @@ jobs:
           zsh --version; fish --version
           python tests/platform_real/shell_integration_check.py
 
+      # kitty read through its own remote control, without changing the shell. WezTerm is checked too when the
+      # runner has it (it is not in Ubuntu's archive); the unit tests cover its answers.
+      - name: Live reads kitty (and WezTerm) directly
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y -q --no-install-recommends kitty xvfb
+          dbus-run-session -- bash -c '
+            Xvfb :98 -screen 0 1280x800x24 >/tmp/xvfb98.log 2>&1 &
+            export DISPLAY=:98
+            sleep 2
+            python tests/platform_real/terminal_text_check.py
+          '
+
       - name: Unit tests for the readers on this runner
         run: |
           pip install pytest pytest-asyncio pytest-timeout
-          pytest tests/test_platform_readers.py tests/test_platform_quiet_failures.py tests/test_live_shell_line.py -q --timeout=120
+          pytest tests/test_platform_readers.py tests/test_platform_quiet_failures.py tests/test_live_shell_line.py tests/test_live_terminal_text.py -q --timeout=120
 
   # ── First run from nothing (experimental, non-blocking) ──
   # Runs the app's own first-run script (tauri-app/src-tauri/setup) in an empty home folder with the core only

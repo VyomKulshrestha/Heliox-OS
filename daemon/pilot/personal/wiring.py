@@ -472,20 +472,41 @@ def start_shell_lines(server: Any) -> None:
     shell_server_for(server).start()  # a no-op on Windows, where consoles are read directly
 
 
+def terminal_text_for(server: Any) -> Any:
+    found = getattr(server, "_terminal_text", None)
+    if found is None:
+        from pilot.live.terminal_text import TerminalText
+
+        found = server._terminal_text = TerminalText()
+    return found
+
+
 def shell_observation(server: Any, app: str, title: str) -> Any:
-    """Live's look at a terminal from the zsh integration: the line being typed, while it is fresh."""
-    found = getattr(server, "_shell_lines_server", None)
-    if found is None or not found.listening:
-        return None
-    latest = found.lines.latest()
-    if latest is None:
-        return None
-    key, seen = latest
+    """Live's look at a terminal that shows accessibility nothing: the line being typed, while it is fresh, from
+    the zsh or fish integration, or else from kitty or WezTerm themselves (pilot.live.terminal_text)."""
     from pilot.live.engine import Observation
 
-    # The shell's name in the title makes the detectors read it as a terminal line, which it is.
+    found = getattr(server, "_shell_lines_server", None)
+    latest = found.lines.latest() if found is not None and found.listening else None
+    if latest is not None:
+        key, seen = latest
+        # The shell's name in the title makes the detectors read it as a terminal line, which it is.
+        return Observation(
+            text=seen.line, app=app or seen.term, title=f"{title} ({seen.shell})", source="focused_field", field=key
+        )
+    from pilot.live.terminal_text import which_terminal
+
+    terminal = which_terminal(app, title)
+    live = getattr(getattr(server, "config", None), "live", None)
+    if not terminal or not getattr(live, "read_focused_text", True):
+        return None
+    reader = terminal_text_for(server)
+    reader.poke(terminal)  # in the background: this look uses what the last one found
+    seen = reader.latest(terminal)
+    if seen is None:
+        return None
     return Observation(
-        text=seen.line, app=app or seen.term, title=f"{title} ({seen.shell})", source="focused_field", field=key
+        text=seen.line, app=app, title=f"{title} ({terminal} terminal)", source="focused_field", field=seen.pane
     )
 
 
@@ -543,6 +564,7 @@ async def live_shell_rpc(server: Any, params: dict[str, Any]) -> dict[str, Any]:
         "shells": shells,
         "ready": tested,
         "fish_bound_ms": int(shell_line.BOUND_SECONDS * 1000),
+        "terminals": terminal_text_for(server).status(),
         "bash": "bash only offers hooks after Enter; with ble.sh it could work like zsh, which is not built yet.",
     }
 

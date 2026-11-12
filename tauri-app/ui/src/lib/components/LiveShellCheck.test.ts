@@ -138,6 +138,35 @@ describe("Live's terminal check in Settings", () => {
     expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
   });
 
+  it("says what kitty and WezTerm need, in one line each", async () => {
+    mocks.call.mockResolvedValue(
+      status({
+        terminals: {
+          wezterm: { found: true, needs: "", problem: "" },
+          kitty: {
+            found: true,
+            ready: false,
+            needs: "kitty answers only with remote control on: add 'allow_remote_control socket-only'.",
+            problem: "",
+          },
+        },
+      }),
+    );
+    render(LiveShellCheck);
+    await waitFor(() => expect(screen.getByTestId("live-terminals")).toBeTruthy());
+    const text = screen.getByTestId("live-terminals").textContent ?? "";
+    expect(text).toContain("WezTerm: read directly while Live is on, nothing to add.");
+    expect(text).toContain("kitty: kitty answers only with remote control on");
+  });
+
+  it("a terminal it cannot find, or no terminal list at all, is said plainly or left out", async () => {
+    mocks.call.mockResolvedValue(status({ terminals: { wezterm: { found: false } } }));
+    render(LiveShellCheck);
+    await waitFor(() => expect(screen.getByTestId("live-terminals")).toBeTruthy());
+    expect(screen.getByTestId("live-terminals").textContent).toContain("WezTerm: not found on this computer.");
+    expect(screen.getByTestId("live-terminals").textContent).toContain("kitty: not found on this computer.");
+  });
+
   it.each([
     ["a bare ok", async () => ({ status: "ok" })],
     ["a refusal", async () => ({ status: "error", message: "not ready" })],

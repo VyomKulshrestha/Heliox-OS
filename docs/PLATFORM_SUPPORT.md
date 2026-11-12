@@ -65,8 +65,17 @@ zsh's `vared` or a program's own prompt (sudo and password prompts never use the
 first token-looking string onwards. It is kept in memory for 3 seconds and never sent to a model. Tested: the
 decisions on all three systems; the socket on Linux (and in WSL on the build machine); real zsh and fish sessions
 in a pseudo-terminal in the `platform-readers` job on ubuntu and macOS (`tests/platform_real/shell_integration_check.py`).
-Still to do: kitty (`kitty @ get-text` with remote control on) and WezTerm (`wezterm cli get-text`) read directly,
-for people who would rather not change their shell.
+For people who would rather not change their shell, kitty and WezTerm are read directly
+(`daemon/pilot/live/terminal_text.py`), while one of them is the window in front, Live is on and reading fields is
+on: WezTerm through `wezterm cli` (the focused pane, its cursor row, its text; nothing to set up, on every system),
+kitty through `kitty @ ls` and `kitty @ get-text --add-cursor` over its Unix socket, which kitty opens only with
+`allow_remote_control socket-only` and `listen_on unix:/tmp/kitty` in kitty.conf (Settings says so; Heliox never
+edits kitty.conf, and never uses a TCP `listen_on`). Only the cursor's line is kept, from after the prompt sign,
+with the shell hook's rules (no line starting with a space, nothing from a key-looking string on). It is asked in
+the background at most every 0.6 s, each call is killed after 1 s, and the line is kept in memory for 2 s. Tested:
+the answers of both terminals with recorded output on all three systems; real kitty under Xvfb in the
+`platform-readers` job (`tests/platform_real/terminal_text_check.py`); WezTerm for real only where a runner has
+it, as it is not in Ubuntu's archive.
 
 Add is offered only after a dry run on the person's own computer (`shell_line.dry_run`, the `live_shell` "test"
 action) proves the hook would reach Heliox: zsh must load `zsh/net/socket` and `zsh/zselect` (some builds, an old

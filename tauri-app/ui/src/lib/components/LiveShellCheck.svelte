@@ -24,8 +24,19 @@
     shells?: Record<string, ShellState>;
     ready?: Record<string, ShellReady>;
     fish_bound_ms?: number;
+    terminals?: Record<string, TerminalState>;
     bash?: string;
   };
+  export type TerminalState = { found?: boolean; ready?: boolean; needs?: string; problem?: string };
+
+  /** kitty and WezTerm read directly, without the shell hook: one plain line each. */
+  export function terminalLine(name: string, state: TerminalState | undefined): string {
+    const label = name === "wezterm" ? "WezTerm" : name;
+    if (!state?.found) return `${label}: not found on this computer.`;
+    if (state.problem) return `${label}: ${state.problem}`;
+    if (state.needs) return `${label}: ${state.needs}`;
+    return `${label}: read directly while Live is on, nothing to add.`;
+  }
 
   /** fish's Enter asks Heliox first: how long it can wait, said plainly. */
   export function boundSentence(ready: ShellReady | undefined, boundMs = 1000): string {
@@ -128,6 +139,16 @@
         <p class="note">{boundSentence(undefined, status.fish_bound_ms || 1000)}</p>
       {/if}
     {/each}
+    {#if status.terminals && typeof status.terminals === "object"}
+      <div data-testid="live-terminals">
+        <p class="note">
+          kitty and WezTerm can also be asked for the line you are typing, without changing your shell:
+        </p>
+        {#each ["wezterm", "kitty"] as name (name)}
+          <p class="note">{terminalLine(name, status.terminals[name])}</p>
+        {/each}
+      </div>
+    {/if}
     {#if status.bash}<p class="note">bash: {status.bash}</p>{/if}
     {#if status.problem}<p class="error">The check cannot start: {status.problem}.</p>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}

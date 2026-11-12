@@ -592,7 +592,9 @@ sent to a model. By voice or chat it starts with "get to know me" or from the in
 - `live_shell {action: "test", shell}` is the dry run Settings does before it offers Add: the status plus
   `ready: {<shell>: {ok, problem, install, answered_ms, silent_ms, bound_ms}}`. `problem` and `install` are plain
   sentences (what is wrong, what to install); `silent_ms` is how long fish's Enter waited on a socket that never
-  answered, `bound_ms` the most it may (1000). The status also carries `fish_bound_ms`.
+  answered, `bound_ms` the most it may (1000). The status also carries `fish_bound_ms`, and `terminals:
+  {wezterm, kitty}`, each `{found, needs, problem}` (kitty also `ready`): whether kitty and WezTerm can be read
+  directly, what to add to kitty.conf when not, and why the last look failed.
 - `live_shell {action: "install" | "uninstall", shell}` adds or removes exactly that, and returns the status.
   Nothing is written until the person presses Add in Settings. Install runs the dry run first and refuses
   (`status: "error"`, `message` starting "Not added:", and `ready`) when it fails.
