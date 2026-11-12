@@ -366,7 +366,7 @@ class ActionValidator:
                         "which actions may not read or change",
                     )
 
-            from pilot.security.path_rules import path_within
+            from pilot.security.path_rules import path_within, resolved
 
             # Both the path and the destination: a copy or move into a protected folder changes it as much as a write.
             # "~" is expanded on both sides, as the setup wizard and settings invite "~/Documents/private": without
@@ -375,13 +375,13 @@ class ActionValidator:
                 if not candidate:
                     continue
                 try:
-                    resolved_path = os.path.realpath(os.path.expanduser(candidate))
+                    resolved_path = resolved(candidate)
                 except Exception:
                     resolved_path = candidate
 
                 for protected in restrictions.protected_folders:
                     try:
-                        resolved_protected = os.path.realpath(os.path.expanduser(protected))
+                        resolved_protected = resolved(protected)
                     except Exception:
                         resolved_protected = protected
 

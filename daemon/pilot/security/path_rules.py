@@ -9,6 +9,7 @@ are case-sensitive. A folder contains a path only at a separator boundary: ``C:\
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 
@@ -43,6 +44,33 @@ def _key(path: str, rules: PathRules) -> str:
         if rules.windows and len(path) == 2 and path[1] == ":":
             path += sep  # "C:" is the drive root
     return path.casefold() if rules.case_insensitive else path
+
+
+def names_a_place(path: str, windows: bool | None = None) -> bool:
+    """Whether ``path`` names a place on disk without depending on a working folder the reader cannot see: an
+    absolute path, "~", and on Windows also a rooted path without a drive ("\\Users\\sam", "/Users/sam"), a
+    drive-relative one ("C:folder") and a UNC path ("\\\\server\\share"). A bare name ("notes.txt", "git") is not.
+
+    Decided by the text, the same on every Python Heliox supports: Python 3.13 on Windows no longer counts a rooted
+    path without a drive as absolute (os.path.isabs("/etc") is False there, True on 3.11 and 3.12), yet Windows
+    opens it on the current drive, so a check that asked os.path.isabs saw nothing there."""
+    windows = sys.platform == "win32" if windows is None else windows
+    text = path.strip()
+    if not text:
+        return False
+    if text.startswith(("~", "/")):
+        return True
+    return windows and (text.startswith("\\") or (len(text) >= 2 and text[1] == ":" and text[0].isalpha()))
+
+
+def resolved(path: str) -> str:
+    """``path`` as the system will open it: "~" expanded, then made absolute and links followed. On Windows a rooted
+    path without a drive lands on the daemon's current drive and "C:folder" on drive C's current folder, which is
+    where a file action run by the daemon opens them."""
+    try:
+        return os.path.realpath(os.path.expanduser(path.strip()))
+    except (OSError, ValueError):
+        return path
 
 
 def path_within(path: str, folder: str, rules: PathRules | None = None) -> bool:

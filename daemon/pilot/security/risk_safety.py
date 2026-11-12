@@ -16,11 +16,10 @@ risk_score() for how this composes with the existing heuristic_risk().
 
 from __future__ import annotations
 
-import os
 import re
 from typing import TYPE_CHECKING
 
-from pilot.security.path_rules import rules_for
+from pilot.security.path_rules import names_a_place, resolved, rules_for
 from pilot.security.risk_model import PredictedOutcome
 from pilot.security.risk_observation import NOMINAL_PROC_CAPACITY
 
@@ -58,18 +57,6 @@ def _strings(values: dict, keys: tuple[str, ...]) -> list[str]:
     return [value for key in keys if isinstance(value := values.get(key), str) and value.strip()]
 
 
-def _resolved(path: str) -> str:
-    try:
-        return os.path.realpath(os.path.expanduser(path.strip()))
-    except (OSError, ValueError):
-        return path
-
-
-def _is_absolute(path: str) -> bool:
-    expanded = os.path.expanduser(path.strip())
-    return os.path.isabs(expanded) or bool(re.match(r"^[A-Za-z]:[\\/]", expanded))
-
-
 def _fold(text: str) -> str:
     """Case is folded where the file system ignores it (Windows, macOS), and kept on Linux."""
     text = text.replace("\\", "/")
@@ -88,7 +75,7 @@ _REMOVAL_WORDS = re.compile(r"\b(uninstall|remove|purge|erase|autoremove)\b", re
 
 def _folder_in_text(text: str, folder: str) -> bool:
     folded = _fold(text)
-    forms = {_fold(folder.strip().rstrip("/\\")), _fold(_resolved(folder).rstrip("/\\"))}
+    forms = {_fold(folder.strip().rstrip("/\\")), _fold(resolved(folder).rstrip("/\\"))}
     return any(form and re.search(_FOLDER_START + re.escape(form) + _FOLDER_END, folded) is not None for form in forms)
 
 
@@ -114,8 +101,10 @@ def touches_protected_path(action: Action, config: PilotConfig) -> str | None:
 
     The matching rule (it was a substring of any field, so a protected "git" scored every path with "git" in it,
     and "/etc" scored "/home/sam/etcetera"):
-    - a protected folder: an absolute path in the target, ``path`` or ``destination`` that is the folder or inside
-      it, after "~" and links are resolved (case folded on Windows and macOS); or the folder, as written or
+    - a protected folder: a target, ``path`` or ``destination`` naming a place (``path_rules.names_a_place``:
+      absolute, "~", and on Windows also rooted without a drive, drive-relative or UNC) that is the folder or
+      inside it once both are resolved as Windows opens them (``path_rules.resolved``; case folded on Windows
+      and macOS); or the folder, as written or
       resolved, at a path boundary in a ``command`` or ``script``;
     - a protected package: the package action's name, the same package by ``package_names.is_protected``
       (ignoring case; on Windows a winget id or the name after its last dot); or one of those as a whole token in a
@@ -148,8 +137,8 @@ def touches_protected_path(action: Action, config: PilotConfig) -> str | None:
         names.append(action.target)
 
     for folder in folders:
-        guard = _resolved(folder)
-        if any(_is_absolute(path) and path_within(_resolved(path), guard) for path in paths):
+        guard = resolved(folder)
+        if any(names_a_place(path) and path_within(resolved(path), guard) for path in paths):
             return folder
         if any(_folder_in_text(text, folder) for text in texts):
             return folder
