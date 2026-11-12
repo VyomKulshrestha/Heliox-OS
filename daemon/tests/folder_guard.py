@@ -51,7 +51,9 @@ def real_folders(env: dict[str, str] | None = None) -> list[Path]:
     home = Path(env.get("USERPROFILE") if sys.platform == "win32" and env.get("USERPROFILE") else Path.home())
 
     def heliox(variable: str, fallback: str) -> Path:
-        return (Path(env[variable]) if variable in env else home / fallback) / "heliox-os"
+        # The rule pilot.config._xdg follows: an unset, empty or relative value means the default under the home.
+        value = str(env.get(variable, "")).strip()
+        return (Path(value) if value and Path(value).is_absolute() else home / fallback) / "heliox-os"
 
     runtime_root = env.get("XDG_RUNTIME_DIR", "").strip()
     if runtime_root:

@@ -174,3 +174,32 @@ class TestMigrateOldPaths:
         assert (plugins_dir / "existing.py").exists()
         assert not (plugins_dir / "old.py").exists(), "should not overwrite"
         assert old_plugins.exists(), "old dir should remain unmoved"
+
+
+class TestXdgVariables:
+    """The XDG variables as the specification says: an unset, empty or relative value means the default."""
+
+    @pytest.mark.parametrize(
+        ("variable", "fallback"),
+        [("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"), ("XDG_STATE_HOME", ".local/state")],
+    )
+    def test_absolute_values_are_used_and_empty_or_relative_ones_ignored(
+        self, variable, fallback, tmp_path, monkeypatch
+    ):
+        from pilot.config import _xdg
+
+        monkeypatch.setenv(variable, str(tmp_path))
+        assert _xdg(variable, fallback) == tmp_path
+        for ignored in ("", "   ", "relative/folder", "./here"):
+            monkeypatch.setenv(variable, ignored)
+            assert _xdg(variable, fallback) == Path.home() / fallback, repr(ignored)
+        monkeypatch.delenv(variable, raising=False)
+        assert _xdg(variable, fallback) == Path.home() / fallback
+
+    def test_the_suites_test_root_wins_over_the_variables(self, tmp_path, monkeypatch):
+        import pilot.config as config
+
+        if config._TEST_ROOT is None:
+            pytest.skip("run outside the suite's folder guard")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        assert config._heliox_dir("XDG_CONFIG_HOME", ".config") == config._TEST_ROOT / ".config" / "heliox-os"

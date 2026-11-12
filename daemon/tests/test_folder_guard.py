@@ -120,3 +120,9 @@ def test_a_refusal_the_code_swallowed_still_fails_the_test(stand_in, request):
     why = folder_guard.failure_for(request.node.nodeid)
     assert why is not None and request.node.nodeid in why and "wake_variants.json" in why
     # The stand_in fixture forgets this test's own refusal at its teardown, so this check of the check passes.
+
+
+def test_an_empty_or_relative_xdg_value_guards_the_default_folder_as_the_daemon_uses_it():
+    for value in ("", "relative/folder"):
+        guarded = folder_guard.real_folders({"XDG_CONFIG_HOME": value})
+        assert guarded[0] == Path.home() / ".config" / "heliox-os", (value, guarded[0])

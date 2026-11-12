@@ -30,7 +30,13 @@ from pilot.security.gateway import DEFAULT_SOURCE_PROFILES, ActionFamily, Source
 
 
 def _xdg(env_var: str, fallback: str) -> Path:
-    return Path(os.environ.get(env_var, Path.home() / fallback))
+    """The XDG folder named by ``env_var``, or ``~/<fallback>``. As the XDG specification says, an unset, empty or
+    relative value is ignored: used as it was, an empty one put Heliox's folder under the daemon's working directory,
+    where "Remove Heliox's files" (uninstall.rs, which follows the same rule) does not look."""
+    value = os.environ.get(env_var, "").strip()
+    if value and Path(value).is_absolute():
+        return Path(value)
+    return Path.home() / fallback
 
 
 # The test suite's own folder (tests/folder_guard.py), never a real install's. It is used only when the folder named

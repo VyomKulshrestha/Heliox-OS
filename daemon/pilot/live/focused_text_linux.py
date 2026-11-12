@@ -345,12 +345,13 @@ class AtspiClient:
 
     def is_password(self, ref: Ref, role: str | None = None) -> bool:
         """Whether ``ref`` is a password field, or sits inside one, by role name or numeric role (GTK 4 marks it
-        only in the numeric role of the entry that holds the focused text widget).
+        only in the numeric role).
 
         Only a walk that ended normally can say "not a password": it reached the root or a null parent, or went
         PASSWORD_PARENT_DEPTH levels up with every role read. Any call that fails on the way (the parent, its role
-        name, its numeric role) means Heliox cannot tell, and cannot telling is a refusal: for GTK 4 the only mark
-        is on the parent."""
+        name, its numeric role) means Heliox cannot tell, and cannot telling is a refusal: GTK 4 marks the focused
+        object itself (CI on 8d513fd), but a toolkit or version that marks only an enclosing entry is caught only
+        through its parents."""
         try:
             names = [role if role is not None else self._role(ref)]
         except Exception:

@@ -38,6 +38,9 @@ pub enum Target {
     Folder,
     /// A folder another program could also use: only these files, then the folder if it is left empty.
     Files(Vec<&'static str>),
+    /// Everything in the folder except these names (listed as places of their own), then the folder if it is
+    /// left empty.
+    Rest(Vec<&'static str>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -63,6 +66,68 @@ pub struct SystemDirs {
     pub local_app_data: Option<PathBuf>,
     /// "windows", "macos" or "linux".
     pub os: &'static str,
+    /// $XDG_CONFIG_HOME, $XDG_DATA_HOME and $XDG_STATE_HOME when set to an absolute path. The daemon puts its
+    /// settings, data and logs under them (pilot.config CONFIG_DIR, DATA_DIR, STATE_DIR) on every system, so
+    /// removal looks there too; unset, they are ~/.config, ~/.local/share and ~/.local/state.
+    pub xdg: Xdg,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Xdg {
+    pub config: Option<PathBuf>,
+    pub data: Option<PathBuf>,
+    pub state: Option<PathBuf>,
+}
+
+impl Xdg {
+    /// From the environment. The XDG specification: an unset, empty or relative value is ignored.
+    pub fn from_env() -> Self {
+        Self::from_values(|name| std::env::var_os(name))
+    }
+
+    pub fn from_values(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> Self {
+        let read = |name: &str| {
+            get(name)
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+        };
+        Xdg {
+            config: read("XDG_CONFIG_HOME"),
+            data: read("XDG_DATA_HOME"),
+            state: read("XDG_STATE_HOME"),
+        }
+    }
+}
+
+/// Heliox's settings, data and logs folders: "heliox-os" under the XDG folder, or under its default in the home
+/// folder. Pure.
+pub fn heliox_folders(dirs: &SystemDirs) -> (PathBuf, PathBuf, PathBuf) {
+    let home = &dirs.home;
+    let under =
+        |set: &Option<PathBuf>, default: PathBuf| set.clone().unwrap_or(default).join("heliox-os");
+    (
+        under(&dirs.xdg.config, home.join(".config")),
+        under(&dirs.xdg.data, home.join(".local").join("share")),
+        under(&dirs.xdg.state, home.join(".local").join("state")),
+    )
+}
+
+/// The folder setup and the app use for the environment, tools and setup files: always ~/.config/heliox-os
+/// (pilot.config SETUP_DIR; setup.rs data_dir), whatever XDG_CONFIG_HOME says.
+pub fn setup_folder(dirs: &SystemDirs) -> PathBuf {
+    dirs.home.join(".config").join("heliox-os")
+}
+
+/// Where removal may act: inside the home folder, or inside one of the XDG "heliox-os" folders, which may lie
+/// outside it when a variable points elsewhere. Never the XDG folder itself, never anything beside it.
+pub fn within_allowed(path: &Path, dirs: &SystemDirs) -> bool {
+    if path.starts_with(&dirs.home) {
+        return true;
+    }
+    let (config, data, state) = heliox_folders(dirs);
+    [config, data, state]
+        .iter()
+        .any(|folder| path.starts_with(folder))
 }
 
 const APP_ID: &str = "com.helioxos.app";
@@ -70,6 +135,32 @@ const APP_ID: &str = "com.helioxos.app";
 /// Folders inside ~/.config/heliox-os that setup builds and can build again; the rest of that folder is data.
 pub const CONFIG_APP_CHILDREN: [&str; 6] =
     ["env", "python", "tools", "uv-cache", "setup", "env.broken"];
+
+/// The file setup writes in ~/.config/heliox-os with the groups it installed (setup.rs groups_file).
+pub const SETUP_RECORD: &str = "setup.json";
+
+/// The entries of ``folder`` other than ``except``, not following links. Empty when it cannot be read.
+fn rest_of(folder: &Path, except: &[&str]) -> Vec<PathBuf> {
+    std::fs::read_dir(folder)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| !except.iter().any(|name| entry.file_name() == *name))
+                .map(|entry| entry.path())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn remove_if_empty(folder: &Path) -> std::io::Result<()> {
+    if std::fs::read_dir(folder)
+        .map(|mut entries| entries.next().is_none())
+        .unwrap_or(false)
+    {
+        std::fs::remove_dir(folder)?;
+    }
+    Ok(())
+}
 
 fn place(path: PathBuf, label: &str, kind: Kind, target: Target) -> Place {
     Place {
@@ -86,19 +177,39 @@ pub fn locations(dirs: &SystemDirs) -> Vec<Place> {
     use Kind::{App, Data};
     use Target::{Files, Folder};
     let home = &dirs.home;
-    // "heliox-os" under .config, .local/share and .local/state: Heliox's name, used by the daemon and the app.
-    let config = home.join(".config").join("heliox-os");
+    // "heliox-os" under the XDG config, data and state folders (by default .config, .local/share and
+    // .local/state): Heliox's name, used by the daemon and the app.
+    let (config, data, state) = heliox_folders(dirs);
+    let setup = setup_folder(dirs);
     let mut out: Vec<Place> = CONFIG_APP_CHILDREN
         .iter()
-        .map(|child| place(config.join(child), &format!("Setup: {child}"), App, Folder))
+        .map(|child| place(setup.join(child), &format!("Setup: {child}"), App, Folder))
         .collect();
+    if setup != config {
+        // XDG_CONFIG_HOME points elsewhere: the daemon's settings live there. ~/.config/heliox-os still holds what
+        // setup builds (the folders above) and records (setup.json), and can hold settings from before the
+        // variable was set, which "keep my data" keeps: only setup's own parts are app files here.
+        out.push(place(
+            setup.join(SETUP_RECORD),
+            "Setup: record of the installed parts",
+            App,
+            Folder,
+        ));
+        let mut setup_parts: Vec<&'static str> = CONFIG_APP_CHILDREN.to_vec();
+        setup_parts.push(SETUP_RECORD);
+        out.push(place(
+            setup.clone(),
+            "Earlier settings in ~/.config/heliox-os",
+            Data,
+            Target::Rest(setup_parts),
+        ));
+    }
     out.push(place(
         config.clone(),
         "Settings and keys (config.toml, restrictions, shortcut)",
         Data,
         Folder,
     ));
-    let data = home.join(".local").join("share").join("heliox-os");
     out.push(place(
         data.join("models"),
         "Downloaded speech models",
@@ -111,12 +222,7 @@ pub fn locations(dirs: &SystemDirs) -> Vec<Place> {
         Data,
         Folder,
     ));
-    out.push(place(
-        home.join(".local").join("state").join("heliox-os"),
-        "Logs",
-        App,
-        Folder,
-    ));
+    out.push(place(state, "Logs", App, Folder));
     // "heliox" under .cache and ".heliox": Heliox's name (cognitive caches, persona, plugins, quarantine).
     out.push(place(
         home.join(".cache").join("heliox"),
@@ -222,6 +328,10 @@ fn target_size(place: &Place) -> u64 {
     match &place.target {
         Target::Folder => size_of(&place.path),
         Target::Files(files) => files.iter().map(|f| size_of(&place.path.join(f))).sum(),
+        Target::Rest(except) => rest_of(&place.path, except)
+            .iter()
+            .map(|path| size_of(path))
+            .sum(),
     }
 }
 
@@ -248,13 +358,13 @@ fn remove_place(place: &Place) -> std::io::Result<()> {
                 remove(&place.path.join(file))?;
             }
             // Only an empty folder: another program's files there stay, and so does the folder.
-            if std::fs::read_dir(&place.path)
-                .map(|mut entries| entries.next().is_none())
-                .unwrap_or(false)
-            {
-                std::fs::remove_dir(&place.path)?;
+            remove_if_empty(&place.path)
+        }
+        Target::Rest(except) => {
+            for path in rest_of(&place.path, except) {
+                remove(&path)?;
             }
-            Ok(())
+            remove_if_empty(&place.path)
         }
     }
 }
@@ -277,28 +387,30 @@ pub fn dirs_from_home(home: Option<PathBuf>) -> Option<SystemDirs> {
         } else {
             "linux"
         },
+        xdg: Xdg::from_env(),
     })
 }
 
 /// What is there now, with sizes; the settings and data folders leave out what is listed on its own.
 pub fn plan(dirs: &SystemDirs) -> Vec<Location> {
     let all = locations(dirs);
-    let config = dirs.home.join(".config").join("heliox-os");
-    let models = dirs
-        .home
-        .join(".local")
-        .join("share")
-        .join("heliox-os")
-        .join("models");
+    let (_config, data, _state) = heliox_folders(dirs);
+    let setup = setup_folder(dirs);
+    let models = data.join("models");
     all.iter()
-        .filter(|p| safe_location(&p.path) && std::fs::symlink_metadata(&p.path).is_ok())
+        .filter(|p| {
+            safe_location(&p.path)
+                && within_allowed(&p.path, dirs)
+                && std::fs::symlink_metadata(&p.path).is_ok()
+        })
         .filter(|p| target_size(p) > 0 || matches!(p.target, Target::Folder))
         .map(|p| {
             let mut bytes = target_size(p);
-            if p.path == config {
+            if p.path == setup && matches!(p.target, Target::Folder) {
+                // The setup folder's own size leaves out what is listed on its own (env, python, ...).
                 let children: u64 = CONFIG_APP_CHILDREN
                     .iter()
-                    .map(|c| size_of(&config.join(c)))
+                    .map(|c| size_of(&setup.join(c)))
                     .sum();
                 bytes = bytes.saturating_sub(children);
             }
@@ -492,7 +604,7 @@ pub fn remove_files(dirs: &SystemDirs, keep_data: bool, credentials: Credentials
         ..RemovalReport::default()
     };
     for place in chosen(&locations(dirs), keep_data) {
-        if !safe_location(&place.path) {
+        if !safe_location(&place.path) || !within_allowed(&place.path, dirs) {
             report.failed.push(format!(
                 "{}: refused, not a safe location",
                 place.path.display()
@@ -514,6 +626,18 @@ pub fn remove_files(dirs: &SystemDirs, keep_data: bool, credentials: Credentials
                     .push(failure_note(&place.path, dirs.os, &error.to_string()))
             }
         }
+    }
+    // With XDG_CONFIG_HOME elsewhere, ~/.config/heliox-os goes once nothing is left in it: with "keep my data"
+    // that is when it held no earlier settings.
+    let (config, _data, _state) = heliox_folders(dirs);
+    let setup = setup_folder(dirs);
+    if setup != config
+        && safe_location(&setup)
+        && setup.is_dir()
+        && remove_if_empty(&setup).is_ok()
+        && !setup.exists()
+    {
+        report.removed.push(setup.display().to_string());
     }
     report
 }
@@ -607,6 +731,7 @@ mod tests {
             home: home.to_path_buf(),
             local_app_data: Some(home.join("AppData").join("Local")),
             os,
+            xdg: Xdg::default(),
         }
     }
 
@@ -645,6 +770,179 @@ mod tests {
             .to_path_buf();
         assert!(!safe_location(&root.join("home")));
         assert!(safe_location(&root.join("home").join("sam")));
+    }
+
+    fn os_values(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<std::ffi::OsString> {
+        let owned: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |name: &str| {
+            owned
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| std::ffi::OsString::from(v))
+        }
+    }
+
+    #[test]
+    fn xdg_folders_are_followed_and_an_empty_or_relative_value_is_ignored() {
+        let base = std::env::temp_dir().join("heliox-xdg");
+        let config = base.join("cfg");
+        let xdg = Xdg::from_values(os_values(&[
+            ("XDG_CONFIG_HOME", config.to_str().unwrap()),
+            ("XDG_DATA_HOME", ""),
+            ("XDG_STATE_HOME", "relative/state"),
+        ]));
+        assert_eq!(xdg.config, Some(config.clone()));
+        assert_eq!(xdg.data, None, "empty is unset");
+        assert_eq!(
+            xdg.state, None,
+            "relative is ignored, as the XDG specification says"
+        );
+
+        let home = std::env::temp_dir().join("home-xdg");
+        let dirs = SystemDirs {
+            xdg: Xdg {
+                config: Some(config.clone()),
+                data: Some(base.join("data")),
+                state: Some(base.join("state")),
+            },
+            ..dirs_for(&home, "linux")
+        };
+        let all = locations(&dirs);
+        let has = |path: PathBuf| all.iter().any(|p| p.path == path);
+        assert!(
+            has(config.join("heliox-os")),
+            "settings under XDG_CONFIG_HOME"
+        );
+        assert!(has(base.join("data").join("heliox-os")));
+        assert!(has(base.join("data").join("heliox-os").join("models")));
+        assert!(has(base.join("state").join("heliox-os")));
+        // Setup stays where setup puts it, with its own folder listed as an app part.
+        let setup = home.join(".config").join("heliox-os");
+        assert!(has(setup.join("env")) && has(setup.clone()));
+        assert!(all.iter().all(|p| within_allowed(&p.path, &dirs)));
+        assert!(
+            !within_allowed(&base.join("data"), &dirs),
+            "never the XDG folder itself"
+        );
+        assert!(!within_allowed(&base.join("data").join("other-app"), &dirs));
+        assert!(!within_allowed(
+            &std::env::temp_dir().join("elsewhere"),
+            &dirs
+        ));
+        // Unset, the folders are the home folder's, and the setup folder is the settings folder (listed once).
+        let plain = locations(&dirs_for(&home, "linux"));
+        assert_eq!(plain.iter().filter(|p| p.path == setup).count(), 1);
+    }
+
+    #[test]
+    fn removal_follows_xdg_folders_outside_the_home_and_spares_their_neighbours() {
+        let root =
+            std::env::temp_dir().join(format!("heliox-uninstall-xdg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let elsewhere = root.join("elsewhere");
+        let dirs = SystemDirs {
+            xdg: Xdg {
+                config: Some(elsewhere.join("cfg")),
+                data: Some(elsewhere.join("data")),
+                state: Some(elsewhere.join("state")),
+            },
+            ..dirs_for(&home, "linux")
+        };
+        let setup = home.join(".config").join("heliox-os");
+        std::fs::create_dir_all(setup.join("env")).unwrap();
+        std::fs::write(setup.join("setup.json"), "{}").unwrap();
+        for folder in ["cfg", "data", "state"] {
+            std::fs::create_dir_all(elsewhere.join(folder).join("heliox-os")).unwrap();
+            std::fs::write(elsewhere.join(folder).join("heliox-os").join("x"), "heliox").unwrap();
+            std::fs::write(elsewhere.join(folder).join("neighbour.txt"), "not Heliox's").unwrap();
+        }
+        let listed = plan(&dirs);
+        assert!(listed
+            .iter()
+            .any(|l| l.path == elsewhere.join("data").join("heliox-os")));
+
+        let report = remove_files(&dirs, true, Credentials::default());
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert!(
+            !setup.join("env").exists() && !setup.exists(),
+            "setup's parts go, and the folder with them when nothing else was in it"
+        );
+        assert!(
+            elsewhere.join("cfg").join("heliox-os").join("x").exists(),
+            "settings kept"
+        );
+        assert!(
+            elsewhere.join("data").join("heliox-os").join("x").exists(),
+            "data kept"
+        );
+        assert!(
+            !elsewhere.join("state").join("heliox-os").exists(),
+            "logs are app files"
+        );
+
+        let report = remove_files(&dirs, false, Credentials::default());
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        for folder in ["cfg", "data", "state"] {
+            assert!(
+                !elsewhere.join(folder).join("heliox-os").exists(),
+                "{folder}"
+            );
+            assert!(
+                elsewhere.join(folder).join("neighbour.txt").exists(),
+                "{folder}: a neighbour stays"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn earlier_settings_in_the_setup_folder_are_data_when_xdg_config_home_points_elsewhere() {
+        let root =
+            std::env::temp_dir().join(format!("heliox-uninstall-earlier-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let dirs = SystemDirs {
+            xdg: Xdg {
+                config: Some(root.join("elsewhere").join("cfg")),
+                ..Xdg::default()
+            },
+            ..dirs_for(&home, "linux")
+        };
+        let setup = home.join(".config").join("heliox-os");
+        std::fs::create_dir_all(setup.join("env").join("bin")).unwrap();
+        std::fs::write(
+            setup.join("env").join("bin").join("python"),
+            vec![0u8; 2048],
+        )
+        .unwrap();
+        std::fs::write(setup.join(SETUP_RECORD), "{\"groups\": []}").unwrap();
+        std::fs::write(setup.join("config.toml"), "theme = 'dark'\n").unwrap();
+
+        // The person sees the old settings folder as data, with the size of what is theirs in it.
+        let listed = plan(&dirs);
+        let earlier = listed.iter().find(|l| l.path == setup).expect("listed");
+        assert_eq!(earlier.kind, Kind::Data);
+        assert_eq!(earlier.bytes, "theme = 'dark'\n".len() as u64);
+        assert!(listed
+            .iter()
+            .any(|l| l.path == setup.join(SETUP_RECORD) && l.kind == Kind::App));
+
+        let report = remove_files(&dirs, true, Credentials::default());
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert!(
+            setup.join("config.toml").exists(),
+            "keep my data keeps the earlier settings"
+        );
+        assert!(!setup.join("env").exists() && !setup.join(SETUP_RECORD).exists());
+
+        let report = remove_files(&dirs, false, Credentials::default());
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert!(!setup.exists(), "everything: the folder goes, empty");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
