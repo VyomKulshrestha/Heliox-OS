@@ -142,3 +142,11 @@ def load_all(directory: Path = SCENARIO_DIR) -> list[Scenario]:
     if dupes:
         raise ScenarioError(f"duplicate scenario ids across files: {sorted(dupes)}")
     return out
+
+
+def load_local(audio_root: str | Path) -> list[Scenario]:
+    """Scenarios written next to a person's own recordings (``real/<mic>/scenarios.json``, by ``record``)."""
+    out: list[Scenario] = []
+    for path in sorted(Path(audio_root).glob("real/*/scenarios.json")):
+        out.extend(load_file(path))
+    return out

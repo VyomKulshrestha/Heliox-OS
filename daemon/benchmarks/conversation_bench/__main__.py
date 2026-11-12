@@ -28,7 +28,7 @@ from . import conditions as conds
 from . import quality, report, scoring
 from . import timeline as tl
 from .platform_scan import scan, unavailable_messages
-from .scenarios import MODEL_KINDS, SETS, Scenario, load_all
+from .scenarios import MODEL_KINDS, SETS, Scenario, load_all, load_local
 from .scoring import Row
 
 DAEMON_DIR = Path(__file__).resolve().parents[2]
@@ -219,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     args.audio = audio_refs.audio_root(args.audio)
+    scenarios = scenarios + load_local(args.audio)  # the person's own recordings, if any
     if args.command == "list":
         for s in scenarios:
             state = "pending" if s.pending else ("ok" if audio_present(args.audio, s) else "AUDIO MISSING")
