@@ -29,6 +29,9 @@ MAX_PENDING_PLANS = 256
 MAX_PENDING_ACTIONS = 512
 DECAY_HALF_LIFE_DAYS = 30.0
 REPLAY_PAGE = 1000
+# Replaying is on the event loop: hand it back after this many events, so a page of a thousand never holds the
+# daemon in one piece (it held a slow Windows machine for 0.42 s right after ready).
+REPLAY_YIELD_EVERY = 50
 # Events replayed per second, measured low (about 25,000 a second here with learning): used only to tell the risk
 # gate whether waiting for the learner is worth it, never for a decision itself.
 REPLAY_EVENTS_PER_SECOND = 20_000.0
@@ -267,16 +270,20 @@ class VerifiedOnlineLearner:
         while True:
             events = await ledger.list_events(after_sequence=after, limit=REPLAY_PAGE)
             summary["reads"] += 1
-            for event in events:
+            for index, event in enumerate(events, 1):
                 await self.consume(event, replaying=True)
+                if index % REPLAY_YIELD_EVERY == 0:
+                    await asyncio.sleep(0)
             summary["replayed"] += len(events)
             if len(events) < REPLAY_PAGE:
                 break
             after = events[-1].sequence
         while self._pending:
             held, self._pending = sorted(self._pending, key=lambda event: event.sequence), []
-            for event in held:
+            for index, event in enumerate(held, 1):
                 await self.consume(event, replaying=True)
+                if index % REPLAY_YIELD_EVERY == 0:
+                    await asyncio.sleep(0)  # events that arrive meanwhile are held and taken by the next round
         self._ready = True  # no await since the last check: nothing can be held and missed
         self.last_load = summary
         return summary

@@ -21,6 +21,7 @@ from pilot.db.sqlite_pool import AsyncSqlitePool
 
 SCHEMA_VERSION = 1
 logger = logging.getLogger("pilot.intelligence.experience")
+DECODE_ON_LOOP_ROWS = 64  # list_events decodes bigger pages in a worker thread
 
 
 class ExperienceEventType(StrEnum):
@@ -482,6 +483,9 @@ class ExperienceLedger:
             cursor = await db.execute(query, tuple(params))
             rows = await cursor.fetchall()
             await cursor.close()
+        if len(rows) > DECODE_ON_LOOP_ROWS:
+            # Decoding a page of a thousand events (two JSON documents each) held the loop for tens of milliseconds.
+            return await asyncio.to_thread(lambda: [self._event_from_row(row) for row in rows])
         return [self._event_from_row(row) for row in rows]
 
     async def close(self) -> None:

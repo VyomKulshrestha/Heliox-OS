@@ -47,6 +47,7 @@ jobs:
       # Which steps hold the event loop longer than 100 ms (asyncio debug mode, tests/loop_watch.py), with the test
       # name, on these quiet runners. For reading, not a gate: a step over 100 ms is a person waiting on the daemon.
       - name: Event-loop steps over 100 ms (session suite, IPC, typed end to end)
+        if: ${{ !cancelled() }} # also after a failed "Run tests": its lines matter most then
         continue-on-error: true
         env:
           HELIOX_LOOP_WATCH: "1"
