@@ -924,6 +924,22 @@ function createSession() {
         break;
       }
 
+      case "voice_withdrawn": {
+        // The first half of a sentence split at a pause, replaced by the whole sentence: its request leaves the
+        // chat, and the whole sentence arrives as its own voice_command.
+        const command = String(p.command ?? "").trim();
+        update((s) => {
+          const index = s.messages.findLastIndex((m) => m.type === "user" && m.text === command);
+          return {
+            ...s,
+            loading: false,
+            phase: "",
+            messages: index === -1 ? s.messages : [...s.messages.slice(0, index), ...s.messages.slice(index + 1)],
+          };
+        });
+        break;
+      }
+
       case "voice_result": {
         const status = String(p.status ?? "error");
         if (status === "approval_required") {

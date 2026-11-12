@@ -27,7 +27,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from pilot.system.voice import voice_turn_addressed, voice_turn_id  # set per dispatch by the listener
+from pilot.system.voice import (  # set per dispatch by the listener
+    CONTINUATION_SECONDS,
+    voice_turn_addressed,
+    voice_turn_id,
+)
 from pilot.turn_changes import turn_changes
 
 WITHDRAW_SECONDS = 6.0
@@ -69,6 +73,13 @@ class TurnState:
     withdrawn: bool = False  # replaced by the joined sentence: nothing more is said for it
     addressed: str = ""  # how the first half was addressed; the joined sentence keeps it
     verb: str = ""  # the request's verb ("open"), so a too-late "and Spotify" can be read as "open Spotify"
+    # What a withdrawn first half must not leave behind: the conversation and what Heliox last said as they were
+    # when it began, the request it showed on screen and its interaction, and the words Live kept from it.
+    memory_before: Any = None
+    spoken_before: tuple[Any, ...] | None = None
+    shown: str = ""
+    interaction_id: str = ""
+    live_text: str = ""
 
 
 def signature_of(turn: Any) -> str:
@@ -89,7 +100,7 @@ def signature_of(turn: Any) -> str:
     return ""
 
 
-def said_about(ran: list[tuple[str, str]], kept: list[str] | None = None) -> str:
+def said_about(ran: list[tuple[str, str]], kept: list[str] | None = None, *, undo: bool = False) -> str:
     """ "I've already opened Notepad." from what was sent to the executor and what code-answered handlers changed."""
     parts = list((kept or [])[:2])
     for kind, target in ran[:2]:
@@ -98,9 +109,19 @@ def said_about(ran: list[tuple[str, str]], kept: list[str] | None = None) -> str
             continue
         name = target.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] or "it"
         parts.append(phrase.format(target=name.title() if kind.endswith("application") else name))
-    if not parts:
-        return "I've already done the first part."
-    return "I've already " + " and ".join(parts) + "."
+    said = "I've already done the first part." if not parts else "I've already " + " and ".join(parts) + "."
+    if undo and any(kind in _undoable_kinds() for kind, _target in ran):
+        said += " Say undo to take it back."  # the undo journal kept what it needs to put it back
+    return said
+
+
+def _undoable_kinds() -> frozenset[str]:
+    try:
+        from pilot.workflows.undo_journal import UNDOABLE_TYPES
+
+        return frozenset(kind.value for kind in UNDOABLE_TYPES)
+    except Exception:
+        return frozenset()
 
 
 def carried_verb(rest: str, verb: str) -> str:
@@ -109,6 +130,69 @@ def carried_verb(rest: str, verb: str) -> str:
     if not verb or len(words) < 2 or words[0].casefold() not in {"and", "also", "plus"}:
         return rest
     return f"{verb} {' '.join(words[1:])}"
+
+
+SETTLE_POLL_SECONDS = 0.05
+SETTLE_BOUND_SECONDS = 10.0  # the longest a first half waits for the person to finish what they are saying
+
+
+def changes_something(actions: list[Any]) -> bool:
+    """Any action outside READ_ONLY_ACTIONS: opening and reading things change nothing."""
+    from pilot.actions import READ_ONLY_ACTIONS
+
+    return any(getattr(action, "action_type", None) not in READ_ONLY_ACTIONS for action in actions)
+
+
+def must_wait_out_window(actions: list[Any]) -> bool:
+    """A plan the risk classification calls destructive or not undoable: an action that would need an approval if
+    the learner had not waived it (``requires_confirmation``), or one no snapshot can reverse (``is_irreversible``).
+    Such a plan waits out the continuation window even in silence; any other change runs at once."""
+    for action in actions:
+        try:
+            if action.requires_confirmation or action.is_irreversible:
+                return True
+        except Exception:
+            return True  # not classifiable: treated as the careful case
+    return False
+
+
+def continuation_possible(listener: Any, turn_id: str, *, window: bool) -> bool:
+    """The person may still be going on with turn ``turn_id`` (read from the listener, never from the words).
+
+    True while the listener has decided that what followed continues it (the withdrawal is on its way), or while it
+    is hearing or recognising speech that began within CONTINUATION_SECONDS of that turn's end. With ``window``, also
+    while that window is open and nothing has begun yet. Only the listener's last turn can be continued."""
+    if listener is None or not turn_id:
+        return False
+    pending = getattr(listener, "_continuation_of", None)
+    if isinstance(pending, tuple) and len(pending) > 1 and pending[1] == turn_id:
+        return True
+    last = getattr(listener, "_last_turn", None)
+    if not isinstance(last, tuple) or len(last) < 3 or last[2] != turn_id or not isinstance(last[0], float):
+        return False
+    ended = last[0]
+    recorder = getattr(listener, "_recorder", None)
+    started = getattr(recorder, "speech_started_at", None)
+    hearing = bool(getattr(listener, "user_is_speaking", False) or getattr(listener, "_busy", False))
+    if hearing and isinstance(started, float) and 0.0 <= started - ended <= CONTINUATION_SECONDS:
+        return True
+    if not window:
+        return False
+    now = getattr(recorder, "_frame_captured_at", None)  # the capture clock, which the turn's end is counted on
+    if not isinstance(now, float):
+        now = time.monotonic()
+    return now - ended <= CONTINUATION_SECONDS
+
+
+async def settle(listener: Any, turn_id: str, *, window: bool) -> float:
+    """Wait while the person may be going on with this turn; returns the seconds waited. A continuation withdraws
+    the turn, which cancels this wait, so what follows it never runs. Bounded by SETTLE_BOUND_SECONDS."""
+    started = time.monotonic()
+    while continuation_possible(listener, turn_id, window=window):
+        if time.monotonic() - started >= SETTLE_BOUND_SECONDS:
+            break
+        await asyncio.sleep(SETTLE_POLL_SECONDS)
+    return time.monotonic() - started
 
 
 class TurnLog:
@@ -167,6 +251,7 @@ class TurnLog:
         deny_quietly: Callable[[str], Any],
         pending: Callable[[], Any],
         gap: float | None = None,
+        undo: bool = False,
     ) -> Withdrawal:
         """Stop the turn if nothing irreversible has run. The caller dispatches the joined sentence after
         "withdrawn", and the second half alone after "too_late" or "unknown"."""
@@ -175,7 +260,8 @@ class TurnLog:
             return Withdrawal("unknown")
         if state.ran or state.kept:
             self.carried = (state.verb, self._clock())
-            return Withdrawal("too_late", said_about(state.ran, state.kept), tuple(kind for kind, _ in state.ran))
+            said = said_about(state.ran, state.kept, undo=undo)
+            return Withdrawal("too_late", said, tuple(kind for kind, _ in state.ran))
         # Marked before the cancellation lands: a planner call that ends in between says nothing ("All set."), and
         # its company says no more lines.
         state.withdrawn = True

@@ -65,6 +65,19 @@ class ConversationMemory:
     def clear(self) -> None:
         self._turns.clear()
 
+    def snapshot(self) -> tuple[Turn, ...]:
+        """The conversation now, to go back to if what follows is withdrawn."""
+        return tuple(self._turns)
+
+    def restore(self, snapshot: tuple[Turn, ...]) -> int:
+        """Back to ``snapshot``: the turns added since are dropped (a first half replaced by the whole sentence).
+        Returns how many were dropped."""
+        kept = [turn for turn in self._turns if any(turn is old for old in snapshot)]
+        dropped = len(self._turns) - len(kept)
+        self._turns.clear()
+        self._turns.extend(kept)
+        return dropped
+
     @property
     def open(self) -> bool:
         return bool(self._turns) and self._clock() - self._turns[-1].at <= CONVERSATION_IDLE_SECONDS

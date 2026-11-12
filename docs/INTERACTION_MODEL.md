@@ -921,6 +921,49 @@ same scenarios on 0db01d9 before the change for comparison):
   6 s after the first half was dispatched: "unknown" until the server counts its limit on the gap. None is taken as "Stop" (two were, when
   "Hey Heliox" was said over Heliox).
 
+**A first half that sounds finished.** "Remind me to call the bank." | "tomorrow morning" reaches the server as two
+dispatches, and the first used to be answered before the rest arrived. In the bench's re-run (scratchpad
+bench_r5_split_cases.txt, under load) a reply was chosen for the first half in all 15 withdrawn lines, and 0.07 to
+0.29 s of it was heard in 3. The rules are read from the listener, never from the words. The listener reports its
+last turn, whether it is hearing or recognising speech that began within `CONTINUATION_SECONDS` (3 s) of that turn's
+end, and any continuation it has decided (`pilot.conversation.turns.settle`).
+
+- **Nothing changes while the person is audibly going on.** That covers every road: answering, Live's question,
+  planning, the executor's door, and the changes Heliox makes in its own code (to-dos, notes, settings). A
+  continuation withdraws the first half; speech that is not a continuation lets it go on. When the person is
+  silent, this costs nothing. In the bench's lines the second half began 0.4 to 0.55 s after the first half's last
+  word, before the first half had been recognised. Denials and approvals of a waiting plan never wait.
+- **In silence a change runs at once.** The one exception is a plan holding an action the risk classification calls
+  destructive or not undoable: `requires_confirmation` (it would need an approval if the learner had not waived it)
+  or `is_irreversible`. That plan waits out the window, up to 3 s after the turn's end. An approval dialog covers
+  the cases where one opens. Opening and reading things never wait.
+- **A change already made is too late.** If a reversible change ran on a first half and the person then continues
+  after a silence, the withdrawal answers "too late". Heliox says what it did, the rest is a new turn, and where the
+  undo journal keeps what it needs the sentence ends "Say undo to take it back." Changes made in Heliox's own code
+  (a to-do) have no undo, so none is offered.
+- **A withdrawn first half leaves no trace.**
+  - The conversation goes back to what it was before the first half, so neither its words nor its cut-off reply stay.
+  - What Heliox last said goes back too, so "say that again" never repeats the cut reply.
+  - Live drops the first half from what it compares the next request against.
+  - A request it showed on screen is taken back (`voice_withdrawn`), and its interaction ends as interrupted.
+- **The joined sentence is answered as one sentence.** The model and the planner see one sentence, never a first
+  half and then a correction of it.
+
+Time from the end of the sentence to the action, on the session server with a fake listener. The first half
+reaches the server 0.5 s after the end. "Going on" means speech from 0.4 to 1.9 s after the end, recognised until
+2.4 s, and not a continuation. Medians of 3; waits are real time; the machine was at 57 to 76% CPU with 0.7 to
+1.7 GB free, so read these as about.
+
+| Command | Before | Round 16 as first sent | Now |
+|---|---|---|---|
+| Quick road, volume: silence / going on | 0.53 / 0.52 s | 3.05 / 3.05 s | 0.52 / 2.45 s |
+| In code, a to-do: silence / going on | 0.51 / 0.51 s | 0.51 / 2.49 s | 0.51 / 2.44 s |
+| Planner, rename: silence / going on | 0.60 / 0.59 s | 3.05 / 3.02 s | 0.61 / 2.53 s |
+| Planner, delete (destructive, approval waived): silence / going on | 0.52 / 0.52 s | 3.01 / 3.03 s | 3.02 / 3.02 s |
+
+**Fakes only**: `tests/test_conversation_half_sentence.py`, on the real server with a fake listener and a stubbed
+planner, executor and model; `session.voice.test.ts` for the chat. Not yet re-run on the bench.
+
 **When the voice does not work.** A system voice that fails (`say`, espeak-ng or Windows' speech returning an
 error) or is missing makes the speech outcome "no_voice", never "spoken" (from the code; tested with fake system
 programs on each system's path). After it no follow-up window and no Live reply window open, since nothing was

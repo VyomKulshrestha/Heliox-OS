@@ -2949,6 +2949,19 @@ class PilotServer:
         action-command handler, git-conflict-resolution) are single quick
         actions outside the "Stop button" scope and are left untouched.
         """
+        from pilot.conversation.turns import changes_something, must_wait_out_window
+
+        state = self._voice_turns.current()
+        actions = list(getattr(plan, "actions", None) or [])
+        if state is not None and changes_something(actions):
+            # While the person is audibly going on (speech that began inside the continuation window, heard or still
+            # being recognised), nothing that changes anything starts. In silence a change runs at once, except a
+            # plan the risk classification calls destructive or not undoable (it would need an approval if the
+            # learner had not waived it): that waits out the window, up to CONTINUATION_SECONDS after the turn's
+            # end. A continuation withdraws the turn and cancels this wait.
+            waited = await self._settle_voice_turn(state.turn_id, window=must_wait_out_window(actions))
+            if waited >= 0.05:
+                logger.info("Held %s for %.2f s: the person could still go on", state.turn_id, waited)
         self._voice_turns.note_executing(plan)  # from here the voice turn that asked for it cannot be withdrawn
         return await self._await_execution_tracked(self._executor.execute(plan, **kwargs))
 
@@ -2986,6 +2999,36 @@ class PilotServer:
         if conversation is not None:
             conversation.cancel_provisional(turn_id, reason)
 
+    async def _settle_voice_turn(self, turn_id: str, *, window: bool) -> float:
+        """Wait while the person may be going on with voice turn ``turn_id`` (pilot.conversation.turns.settle)."""
+        from pilot.conversation.turns import settle
+
+        return await settle(self._voice_listener, turn_id, window=window)
+
+    async def _clear_withdrawn(self, state: Any) -> None:
+        """A first half replaced by the whole sentence leaves nothing behind: not its words or its cut-off reply in the
+        conversation, not that reply as the last thing said ("say that again"), not its request on screen, and not
+        its words in what Live compares the next request against."""
+        from pilot.conversation import layer_for
+        from pilot.conversation.adapters import forget_live_turn
+
+        memory = getattr(layer_for(self), "memory", None)
+        if state.memory_before is not None and memory is not None:
+            memory.restore(state.memory_before)
+        if state.spoken_before is not None:
+            self._last_spoken, self._last_spoken_reply, self._last_spoken_at, self._last_turn_kind = state.spoken_before
+        if state.live_text:
+            forget_live_turn(self, state.live_text)
+        if state.shown:
+            await self._broadcast_notification("voice_withdrawn", {"command": state.shown, "turn_id": state.turn_id})
+        if state.interaction_id:
+            with contextlib.suppress(Exception):
+                await self._interaction_runtime.transition(
+                    InteractionPhase.INTERRUPTED,
+                    message="Replaced by the whole sentence",
+                    interaction_id=state.interaction_id,
+                )
+
     async def withdraw_voice_turn(self, turn_id: str, joined: str, gap: float | None = None) -> Any:
         """The listener heard the rest of a sentence it had split at a pause (conv_interfaces.md, section b).
 
@@ -3006,12 +3049,18 @@ class PilotServer:
             await self._resolve_pending_denied(plan_id, resolution_path="withdrawn")
 
         result: Withdrawal = await self._voice_turns.withdraw(
-            turn_id, deny_quietly=deny_quietly, pending=lambda: list(self._pending_confirms), gap=gap
+            turn_id,
+            deny_quietly=deny_quietly,
+            pending=lambda: list(self._pending_confirms),
+            gap=gap,
+            undo=bool(getattr(self._undo_journal, "enabled", False)),  # "Say undo" only where the journal keeps it
         )
         if result.status == "withdrawn":
             from pilot.conversation import layer_for
 
             layer_for(self).interrupt()
+            if state is not None:
+                await self._clear_withdrawn(state)
             self._withdrawn_signature = signature
             self._withdrawn_acknowledged = acknowledged
 
@@ -14594,6 +14643,15 @@ def handle_tool(tool_name, params):
         voice_turn = self._voice_turns.begin(self._pending_confirms)
         self.last_voice_turn_id = voice_turn.turn_id
         conversation = layer_for(self)
+        # What this turn starts from, so a withdrawal leaves no trace of it (withdraw_voice_turn).
+        memory = getattr(conversation, "memory", None)
+        voice_turn.memory_before = memory.snapshot() if memory is not None else None
+        voice_turn.spoken_before = (
+            self._last_spoken,
+            self._last_spoken_reply,
+            self._last_spoken_at,
+            self._last_turn_kind,
+        )
         conversation.interrupt()  # a new utterance ends a reply still being written or spoken
 
         if self.config.voice.barge_in_enabled and self._speech_coordinator.status()["active"]:
@@ -14668,6 +14726,13 @@ def handle_tool(tool_name, params):
             )
             return
 
+        # The person is already going on (the rest of a sentence split at a pause): nothing is answered, asked or
+        # changed for this half until the listener has decided. A continuation withdraws it; anything else lets it
+        # go on. Denials and approvals above never wait.
+        waited = await self._settle_voice_turn(voice_turn.turn_id, window=False)
+        if waited >= 0.05:
+            logger.info("Waited %.2f s for the person to finish before taking %s", waited, voice_turn.turn_id)
+
         # Heliox Live sees every addressed turn before any road takes it (denials and approvals of a waiting plan,
         # corrections during a task and a turn the listener doubted were handled above and never go to it). A slip
         # ("Monday the nineteenth", a number unlike the one said a moment ago) is asked about in one short question,
@@ -14677,6 +14742,7 @@ def handle_tool(tool_name, params):
         from pilot.system.voice import voice_turn_addressed
 
         if not self._interactive_request_active and voice_turn_addressed.get() != "doubtful_follow_up":
+            voice_turn.live_text = command_text
             held = await offer_to_live(self, command_text)
             if held is not None:
                 if held.say:
@@ -14711,6 +14777,9 @@ def handle_tool(tool_name, params):
             again_action = True
             command_text = repeated[0]
         if not self._interactive_request_active and not again_action:
+            # A change Heliox makes in its own code (a to-do, a note, a setting) does not start while the person is
+            # audibly going on either; in silence it runs at once.
+            await self._settle_voice_turn(voice_turn.turn_id, window=False)
             timeline_answer = await self._control_reply(command_text)
             if timeline_answer is not None:
                 self._last_turn_kind = "answer"
@@ -14934,6 +15003,7 @@ def handle_tool(tool_name, params):
                 "proactive_decision": proactive_decision,
             },
         )
+        voice_turn.shown, voice_turn.interaction_id = spoken_command, interaction_id
         from pilot.conversation.turns import signature_of
 
         voice_turn.signature = signature_of(turn) if turn is not None else ""

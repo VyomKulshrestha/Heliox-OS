@@ -3839,6 +3839,16 @@ A live caption while the person is still talking, from the streaming recognizer 
 
 ---
 
+### `voice_withdrawn`
+The first half of a sentence the listener split at a pause was replaced by the whole sentence: its request leaves
+the chat, and the whole sentence follows as its own `voice_command`.
+
+```json
+{ "command": "Delete the draft.", "turn_id": "v1" }
+```
+
+---
+
 ### `voice_result`
 Result of a voice-triggered command execution.
 

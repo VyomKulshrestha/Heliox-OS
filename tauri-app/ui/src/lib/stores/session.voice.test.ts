@@ -171,6 +171,20 @@ describe("voice command session notifications", () => {
     });
   });
 
+  it("removes a withdrawn first half's request when the whole sentence replaces it", async () => {
+    const { session } = await import("./session");
+
+    notificationHandler!("voice_command", { command: "Delete the draft." });
+    expect(get(session).messages.at(-1)).toMatchObject({ type: "user", text: "Delete the draft." });
+
+    notificationHandler!("voice_withdrawn", { command: "Delete the draft.", turn_id: "v1" });
+    expect(get(session).messages.some((m) => m.text === "Delete the draft.")).toBe(false);
+    expect(get(session).loading).toBe(false);
+
+    notificationHandler!("voice_command", { command: "Delete the draft of the old report." });
+    expect(get(session).messages.at(-1)).toMatchObject({ type: "user", text: "Delete the draft of the old report." });
+  });
+
   it("queues an early companion follow-up until the terminal result is rendered", async () => {
     const { session } = await import("./session");
 

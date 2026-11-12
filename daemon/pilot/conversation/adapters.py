@@ -233,6 +233,24 @@ async def offer_to_live(server: Any, text: str) -> Any:
     return await live_hold(server, text)
 
 
+def forget_live_turn(server: Any, text: str) -> None:
+    """A first half replaced by the whole sentence: Live no longer compares the joined sentence against it (it would
+    read the one sentence as a correction of its first half)."""
+    turns = getattr(getattr(getattr(server, "_live", None), "turns", None), "turns", None)
+    if turns is None or not text:
+        return
+    try:
+        from pilot.live import spoken
+
+        written = {text, spoken.to_written(text)}
+        for turn in reversed(list(turns)):
+            if getattr(turn, "text", None) in written:
+                turns.remove(turn)
+                break
+    except Exception:
+        logger.debug("Live could not forget the withdrawn half", exc_info=True)
+
+
 def drop_live_hold(server: Any) -> None:
     """A new conversation: Live forgets a question it was waiting on and the turns it compared against."""
     drop = getattr(getattr(server, "_live", None), "drop_held", None)
