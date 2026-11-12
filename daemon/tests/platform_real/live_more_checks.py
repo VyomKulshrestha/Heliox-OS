@@ -127,7 +127,10 @@ class TextWindow:
             self.proc.stdin.close()
             self.proc.wait(timeout=5)
         except Exception:
+            pass
+        if self.proc.poll() is None:  # killed and waited for, so it stays in front of nothing
             self.proc.kill()
+            self.proc.wait(timeout=5)
 
 
 async def error_on_screen(prefix: str, python: str, folder: Path) -> None:
@@ -135,6 +138,11 @@ async def error_on_screen(prefix: str, python: str, folder: Path) -> None:
     try:
         if not check(f"{prefix}/error-window-shown", window.ready()):
             return
+        if sys.platform == "darwin":
+            import mac_front
+
+            route = mac_front.bring_to_front(window.proc.pid)
+            print(f"macos: error window pid {window.proc.pid} brought forward by: {route or '(nothing worked)'}")
         if shutil.which("xdotool") and os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
             subprocess.run(["xdotool", "search", "--sync", "--name", "Heliox CI build log", "windowfocus"], timeout=15)
         live = E.Live(folder / "ocr")
@@ -262,17 +270,20 @@ async def run(args: Any, folder: Path) -> None:
             for word in text.split(" "):
                 send(f"insert {word} ")
 
+        import mac_front
+
+        mac_front.diag("live more checks: start")
         try:
             if check("macos/never-read-fixture-started", fixture.stdout.readline().startswith("ready")):
                 threading.Thread(target=lambda: said.extend(fixture.stdout), daemon=True).start()
                 time.sleep(1.0)
                 live = E.Live(folder / "never")
                 live.fixture_pid = fixture.pid  # for the DIAG lines: whose window is in front
-                await never_read_steps("macos", live, send, type_text, front=lambda: send("front"))
+                await never_read_steps("macos", live, send, type_text, front=E.mac_front_for(fixture.pid, send))
         finally:
-            send("quit")
-            fixture.kill()
+            mac_front.end(fixture)
         await error_on_screen("macos", sys.executable, folder)
+        mac_front.diag("live more checks: end")
         skip("macos/live-back-and-forth", "nothing on the runner can give another process's window focus")
         return
     await linux_never_read(args.wayland, args.python, folder)

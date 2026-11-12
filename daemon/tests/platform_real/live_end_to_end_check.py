@@ -29,6 +29,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -122,33 +123,12 @@ class Live:
 
             shared = M.shared()
             say("the same read on the main thread", shared.read() if shared is not None else "(no reader)")
-            # Whose window is in front: the frontmost app's pid against the fixture's, and the on-screen windows.
-            try:
-                import AppKit
-
-                front = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
-                say(
-                    "frontmost app",
-                    f"pid {front.processIdentifier()} {front.localizedName()!r} {front.bundleIdentifier()!r}"
-                    if front is not None
-                    else None,
-                )
-            except Exception as exc:
-                say("frontmost app raised", f"{type(exc).__name__}: {exc}")
+            # What is in front, from the shared helper (frontmost pid, its focused window, the windows front to
+            # back), against the fixture's pid.
             say("the fixture's pid", getattr(self, "fixture_pid", None))
-            try:
-                windows = [
-                    (
-                        w.get("kCGWindowOwnerName"),
-                        w.get("kCGWindowOwnerPID"),
-                        w.get("kCGWindowName"),
-                        w.get("kCGWindowLayer"),
-                    )
-                    for w in M.window_list()
-                ]
-                say("on-screen windows (owner, pid, title, layer)", windows[:15])
-            except Exception as exc:
-                say("window list raised", f"{type(exc).__name__}: {exc}")
+            import mac_front
+
+            mac_front.diag(f"{prefix}: when Live read nothing")
         try:
             say("reader.status()", self.reader.status().as_dict())
         except Exception as exc:
@@ -307,6 +287,26 @@ async def linux(wayland: bool, python: str, folder: Path) -> None:
         fixture.close()
 
 
+def mac_front_for(pid: int, send) -> Callable[[], None]:
+    """Bring a macOS fixture forward the way that works on the runner: activation asked by this (the check's) process
+    through ``mac_front.bring_to_front``, which the fixture asking for itself is not (macOS 14's cooperative
+    activation ignores it after the job's first check). The fixture's own "front" then makes its window key and its
+    text field the first responder, which the helper does not do from outside. Prints the route whenever it
+    changes."""
+    import mac_front
+
+    last = [None]
+
+    def front() -> None:
+        route = mac_front.bring_to_front(pid)
+        if route != last[0]:
+            print(f"macos: fixture pid {pid} brought forward by: {route or '(nothing worked)'}", flush=True)
+            last[0] = route
+        send("front")
+
+    return front
+
+
 async def macos(folder: Path) -> None:
     from pilot.live import focused_text_macos as M
     from pilot.system import macos_permissions as mp
@@ -339,6 +339,9 @@ async def macos(folder: Path) -> None:
         send("quit")
         fixture.wait(timeout=10)
 
+    import mac_front
+
+    mac_front.diag("live end to end: start")
     try:
         if not check("macos/live-fixture-started", fixture.stdout.readline().startswith("ready")):
             return
@@ -348,10 +351,11 @@ async def macos(folder: Path) -> None:
         print(f"reader shared: {M.shared() is not None}")
         live = Live(folder)
         live.fixture_pid = fixture.pid
-        await steps("macos", live, type_text, lambda which: send(f"focus {which}"), close, front=lambda: send("front"))
+        front = mac_front_for(fixture.pid, send)
+        await steps("macos", live, type_text, lambda which: send(f"focus {which}"), close, front=front)
     finally:
-        if fixture.poll() is None:
-            fixture.kill()
+        mac_front.end(fixture)  # nothing this check started stays in front of the next one
+        mac_front.diag("live end to end: end")
 
 
 def main() -> int:
