@@ -37,6 +37,10 @@ def test_mac_labels_fall_back_in_order_and_never_read_a_fields_value():
     assert P.mac_label(getter({"AXHelp": "Send the  message"}), "AXButton") == "Send the message"
     assert P.mac_label(getter({"AXValue": "typed text"}), "AXTextField") == ""
     assert P.mac_label(getter({"AXValue": "Total: 3"}), "AXStaticText") == "Total: 3"
+    # The window's own buttons are named by their subrole; a plain button with nothing says nothing.
+    assert P.mac_label(getter({"AXSubrole": "AXCloseButton"}), "AXButton") == "close window"
+    assert P.mac_label(getter({"AXSubrole": "AXMinimizeButton"}), "AXButton") == "minimise window"
+    assert P.mac_label(getter({"AXSubrole": "AXSomethingElse"}), "AXButton") == ""
 
 
 def test_never_read_windows_are_refused():

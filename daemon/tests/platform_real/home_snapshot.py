@@ -1,11 +1,13 @@
 """What a first run and a removal leave in the home folder, for the real-removal CI job.
 
     python home_snapshot.py save BEFORE        # list the home folder (four levels down, links not followed)
-    python home_snapshot.py left BEFORE        # what is there now and was not before, and whose it is
+    python home_snapshot.py left BEFORE [--ignore PATH ...]   # what is new since, and whose it is
 
 Anything left that carries Heliox's names (heliox, com.helioxos.app, a .pilot folder that was not there) is a finding
 and fails the check. Everything else new is listed as left by other programs (pip's and uv's caches, for example,
-which the removal screen names as shared caches it leaves alone).
+which the removal screen names as shared caches it leaves alone). ``--ignore`` leaves out the checks' own files
+by their exact path (on a Linux runner the job's temporary folder is inside the home folder, and its state files
+carry Heliox's name: CI on 0a8edad reported them as left behind).
 """
 
 from __future__ import annotations
@@ -51,15 +53,22 @@ def new_tops(before: set[str], after: set[str]) -> list[str]:
     return tops
 
 
+def ignored_paths(argv: list[str], home: Path) -> set[str]:
+    """The exact paths after each ``--ignore``, relative to ``home`` as the listing writes them. Pure."""
+    paths = [argv[i + 1] for i, word in enumerate(argv[:-1]) if word == "--ignore"]
+    return {os.path.relpath(os.path.abspath(path), home) for path in paths}
+
+
 def main(argv: list[str]) -> int:
     mode, record = argv[0], Path(argv[1])
     home = Path.home()
+    ignore = ignored_paths(argv[2:], home)
     if mode == "save":
         record.write_text("\n".join(sorted(listing(home))), encoding="utf-8")
         print(f"home {home}: {len(listing(home))} paths recorded")
         return 0
     before = set(record.read_text(encoding="utf-8").splitlines())
-    tops = new_tops(before, listing(home))
+    tops = [path for path in new_tops(before, listing(home)) if path not in ignore]
     heliox = [path for path in tops if HELIOX.search(os.sep + path)]
     others = [path for path in tops if path not in heliox]
     print(f"left by other programs: {others}")

@@ -157,3 +157,18 @@ def test_the_ci_checks_read_cmdkey_and_tell_heliox_leftovers_from_other_programs
     tops = home.new_tops(before, after)
     assert tops == [f".cache{sep}uv", f".config{sep}heliox-os", ".pilot"]
     assert [t for t in tops if home.HELIOX.search(sep + t)] == [f".config{sep}heliox-os", ".pilot"]
+
+
+def test_an_empty_windows_store_is_an_empty_list_and_the_learner_key_is_known():
+    class Win32Error(Exception):
+        def __init__(self, code, function, message):
+            super().__init__(code, function, message)
+            self.winerror = code
+
+    assert cc.empty_store_error(Win32Error(1168, "CredEnumerate", "Element not found"))
+    assert cc.empty_store_error(Exception(1168, "CredEnumerate", "Element not found"))
+    assert not cc.empty_store_error(Win32Error(5, "CredEnumerate", "Access is denied"))
+    from pilot.security.vault import VAULT_SERVICE
+    from pilot.server import LEARNER_SNAPSHOT_KEY
+
+    assert LEARNER_SNAPSHOT_KEY in cc.known_accounts()[VAULT_SERVICE]

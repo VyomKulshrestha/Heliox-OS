@@ -151,12 +151,25 @@ def choose_action(names: Iterable[str]) -> int | None:
 MAC_LABEL_ATTRIBUTES = ("AXTitle", "AXDescription", "AXPlaceholderValue", "AXHelp")
 
 
+# The window's own buttons say what they are only in their subrole (CI on 0a8edad: two bare "Button" entries).
+MAC_WINDOW_BUTTONS = {
+    "AXCloseButton": "close window",
+    "AXMinimizeButton": "minimise window",
+    "AXZoomButton": "zoom window",
+    "AXFullScreenButton": "full screen",
+}
+
+
 def mac_label(get: Any, role: str) -> str:
-    """A control's label from ``get(attribute)``, never a field's value; static text is a label itself. Pure."""
+    """A control's label from ``get(attribute)``, never a field's value; static text is a label itself, and a
+    window's own button is named by its subrole. Pure."""
     for key in MAC_LABEL_ATTRIBUTES:
         value = get(key)
         if isinstance(value, str) and value.strip():
             return " ".join(value.split())
+    subrole = get("AXSubrole")
+    if isinstance(subrole, str) and subrole in MAC_WINDOW_BUTTONS:
+        return MAC_WINDOW_BUTTONS[subrole]
     if role == "AXStaticText":
         value = get("AXValue")
         return " ".join(value.split()) if isinstance(value, str) else ""

@@ -345,6 +345,17 @@ jobs:
           HELIOX_REAL_PULSE=1 pytest tests/test_call_detection_mac_linux.py tests/test_audio_health.py -q --timeout=120 \
             -k "real"
 
+      - name: Linux, audio - Heliox's voice reaches the default sink, and the default microphone is followed
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        # PulseAudio is still running from the step above.
+        run: |
+          set +e
+          failed=0
+          python tests/platform_real/audio_check.py playback || failed=$((failed + 1))
+          python tests/platform_real/audio_check.py follow || failed=$((failed + 1))
+          exit $failed
+
       - name: Linux, X11 session - type into a GTK field and read it through AT-SPI
         if: runner.os == 'Linux'
         run: |
@@ -381,6 +392,42 @@ jobs:
             python tests/platform_real/linux_windows_check.py --python /usr/bin/python3 || failed=$((failed + 1))
             exit $failed
           '
+
+      # What a first-day person meets beyond typing: the screen read without a desktop's own OCR, the fallback voice,
+      # notifications, a GTK 4 app and Firefox, a control with no accessibility action, an app that hangs, and a
+      # protected folder named in another case. "Before" checks run before their package is installed.
+      - name: Linux, X11 - OCR, speech, notifications, GTK 4 and Firefox, a centre click, a hung app, a protected folder
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          set +e
+          failed=0
+          python tests/platform_real/speech_check.py no-voice || failed=$((failed + 1))
+          python tests/platform_real/notify_check.py missing || failed=$((failed + 1))
+          python tests/platform_real/protected_case_check.py || failed=$((failed + 1))
+          sudo apt-get install -y -q --no-install-recommends tesseract-ocr scrot espeak-ng libnotify-bin dunst \
+            gir1.2-gtk-4.0 openbox
+          pip install -q pyautogui
+          python tests/platform_real/speech_check.py speak || failed=$((failed + 1))
+          dbus-run-session -- bash -c '
+            Xvfb :97 -screen 0 1280x800x24 >/tmp/xvfb-more.log 2>&1 &
+            export DISPLAY=:97 GTK_A11Y=atspi
+            sleep 2
+            openbox >/tmp/openbox-more.log 2>&1 &
+            sleep 1
+            failed=0
+            python tests/platform_real/notify_check.py no-daemon || failed=$((failed + 1))
+            dunst >/tmp/dunst.log 2>&1 &
+            sleep 1
+            python tests/platform_real/notify_check.py shown || failed=$((failed + 1))
+            python tests/platform_real/ocr_check.py linux || failed=$((failed + 1))
+            python tests/platform_real/toolkit_check.py gtk4 --python /usr/bin/python3 || failed=$((failed + 1))
+            python tests/platform_real/toolkit_check.py firefox || failed=$((failed + 1))
+            python tests/platform_real/click_hang_check.py --python /usr/bin/python3 || failed=$((failed + 1))
+            exit $failed
+          '
+          failed=$((failed + $?))
+          exit $failed
 
       # Weston's headless backend has no seat, so nothing can take keyboard focus there (first run: GTK logged
       # gdk_seat_get_keyboard assertions and no element was ever focused). Sway on wlroots' headless backend
@@ -482,6 +529,26 @@ jobs:
         if: runner.os == 'macOS'
         continue-on-error: true
         run: python tests/platform_real/apps_check.py
+
+      - name: macOS - OCR without pyobjc, speech to a file, a notification, APFS case, a centre click, a hung app, the probe
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          set +e
+          failed=0
+          pip install -q pyautogui
+          python tests/platform_real/ocr_check.py render "$RUNNER_TEMP/line.png" || failed=$((failed + 1))
+          python -m venv "$RUNNER_TEMP/no-pyobjc"
+          "$RUNNER_TEMP/no-pyobjc/bin/pip" install -q --disable-pip-version-check -e . || failed=$((failed + 1))
+          brew install tesseract >/dev/null 2>&1 || echo "tesseract could not be installed; its route is not run"
+          "$RUNNER_TEMP/no-pyobjc/bin/python" tests/platform_real/ocr_check.py mac-fallback "$RUNNER_TEMP/line.png" \
+            || failed=$((failed + 1))
+          python tests/platform_real/speech_check.py speak || failed=$((failed + 1))
+          python tests/platform_real/notify_check.py shown || failed=$((failed + 1))
+          python tests/platform_real/protected_case_check.py || failed=$((failed + 1))
+          python tests/platform_real/click_hang_check.py || failed=$((failed + 1))
+          python tests/platform_real/probe_check.py || failed=$((failed + 1))
+          exit $failed
           reader=$?
           python tests/platform_real/live_end_to_end_check.py
           reader=$(( reader + $? ))
@@ -644,6 +711,9 @@ jobs:
           # Python or a half-finished deletion does: its interpreter is gone.
           pkill -f "pilot.server" 2>/dev/null || taskkill //F //IM python.exe >/dev/null 2>&1 || true
           sleep 2
+          # Settings and data must come through the repair byte for byte (a marker in each, and every file's hash).
+          if [ "$RUNNER_OS" = "Windows" ]; then OLD="$HOME/.config/heliox-os/env/Scripts/python.exe"; else OLD="$HOME/.config/heliox-os/env/bin/python"; fi
+          "$OLD" daemon/tests/platform_real/repair_data_check.py before "$RUNNER_TEMP/repair-data.json"
           if [ "$RUNNER_OS" = "Windows" ]; then
             export HELIOX_SETUP_DIR="$(cygpath -w "$HELIOX_SETUP_DIR")" HELIOX_CORE_REQ="$(cygpath -w "$HELIOX_CORE_REQ")"
             rm -f "$HOME/.config/heliox-os/env/Scripts/python.exe"
@@ -659,8 +729,11 @@ jobs:
           grep -q "no longer starts; building it again" "$RUNNER_TEMP/repair.log" || { echo "repair was not detected"; exit 1; }
           [ ! -e "$HOME/.config/heliox-os/env.broken" ] || { echo "the broken environment was left behind"; exit 1; }
           [ $status -eq 0 ] || exit $status
+          "$PY" daemon/tests/platform_real/repair_data_check.py after "$RUNNER_TEMP/repair-data.json"
+          kept=$?
           "$PY" -m pilot.server > "$RUNNER_TEMP/daemon2.log" 2>&1 &
           "$PY" daemon/tests/platform_real/first_run_rpc_check.py 240
+          exit $(( $? + kept ))
 
   # ── Update from the previous release (experimental, non-blocking) ──
   # Installs the released pilot-daemon 0.15.0 the way an older desktop app did, then runs the app's update path
@@ -810,6 +883,9 @@ jobs:
           fi
           echo "SYSPY=$(command -v python)" >> "$GITHUB_ENV"
           python daemon/tests/platform_real/home_snapshot.py save "$RUNNER_TEMP/home-before.txt"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            python daemon/tests/platform_real/windows_autostart_check.py save "$RUNNER_TEMP/autostart-before.json"
+          fi
 
       - name: First run through the app's own setup code
         working-directory: tauri-app/src-tauri
@@ -828,12 +904,20 @@ jobs:
           sleep 3
           exit $status
 
+      - name: Windows - after setup, nothing of Heliox starts by itself
+        if: runner.os == 'Windows'
+        run: python daemon/tests/platform_real/windows_autostart_check.py left "$RUNNER_TEMP/autostart-before.json"
+
       - name: Repair through the app's own code - the environment's interpreter is gone
         working-directory: tauri-app/src-tauri
         run: |
+          "$SYSPY" "$GITHUB_WORKSPACE/daemon/tests/platform_real/repair_data_check.py" before "$RUNNER_TEMP/repair-data.json"
           rm -f "$ENVPY"
           HELIOX_REAL_SETUP=1 cargo test --all-targets -- --ignored --exact \
             setup::tests::real_repair_through_the_apps_code --nocapture
+          status=$?
+          "$SYSPY" "$GITHUB_WORKSPACE/daemon/tests/platform_real/repair_data_check.py" after "$RUNNER_TEMP/repair-data.json"
+          exit $(( status + $? ))
 
       - name: Credential store and removal, for real
         run: |
@@ -842,6 +926,15 @@ jobs:
           else
             bash daemon/tests/platform_real/real_removal.sh
           fi
+
+      - name: Windows - nothing of Heliox starts by itself, and the probe skips the Store's stub
+        if: always() && runner.os == 'Windows'
+        run: |
+          set +e
+          python daemon/tests/platform_real/windows_autostart_check.py left "$RUNNER_TEMP/autostart-before.json"
+          left=$?
+          python daemon/tests/platform_real/probe_check.py
+          exit $(( left + $? ))
 
   # ── macOS type check of the desktop app (non-blocking) ──
   # The Rust job runs on Ubuntu and a Windows check is done locally; this compiles the app for macOS so a Mac-only

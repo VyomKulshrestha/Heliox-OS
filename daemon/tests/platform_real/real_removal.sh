@@ -13,6 +13,8 @@ ROOT=$(pwd)
 STATE="$RUNNER_TEMP/heliox-test-keys.json"
 CHECK="daemon/tests/platform_real/credential_store_check.py"
 HOME_CHECK="daemon/tests/platform_real/home_snapshot.py"
+# The checks' own state files: on Linux runners $RUNNER_TEMP is inside the home folder, so they are left out of
+# the home listing by their exact paths.
 failed=0
 
 part() {
@@ -42,14 +44,16 @@ setup_again() {
 part "Credential cleanup against the real store" "$ENVPY" "$CHECK" full
 part "Test keys for the removal" "$ENVPY" "$CHECK" write "$STATE"
 part "Remove everything: the daemon's code removes the keys" removal everything
-part "No test key left" "$SYSPY" "$CHECK" gone "$STATE"
-part "Nothing of Heliox left in the home folder" "$SYSPY" "$HOME_CHECK" left "$RUNNER_TEMP/home-before.txt"
+part "No test key and no key the daemon made is left" "$SYSPY" "$CHECK" gone "$STATE"
+part "Nothing of Heliox left in the home folder" "$SYSPY" "$HOME_CHECK" left "$RUNNER_TEMP/home-before.txt" \
+  --ignore "$STATE" --ignore "$RUNNER_TEMP/heliox-credential-check.json"
 part "Set up again through the app's code" setup_again
 part "Test keys again" "$ENVPY" "$CHECK" write "$STATE"
 part "Remove the app's files, keep my data" removal keep
 part "The keys stay with the data" "$SYSPY" "$CHECK" kept "$STATE"
 part "Then remove everything, with the environment already gone" removal everything
-part "Drop this check's own keys" "$SYSPY" "$CHECK" drop "$STATE"
-part "Nothing of Heliox left in the home folder" "$SYSPY" "$HOME_CHECK" left "$RUNNER_TEMP/home-before.txt"
+part "Drop the recorded keys (the check's own, and the daemon's on a runner)" "$SYSPY" "$CHECK" drop "$STATE"
+part "Nothing of Heliox left in the home folder" "$SYSPY" "$HOME_CHECK" left "$RUNNER_TEMP/home-before.txt" \
+  --ignore "$STATE" --ignore "$RUNNER_TEMP/heliox-credential-check.json"
 echo "real removal: $failed failed parts"
 exit $failed

@@ -47,6 +47,14 @@ def known_accounts() -> dict[str, list[str]]:
     # heliox_learner_snapshot: the learner's snapshot key, which versions before the key file kept in the keyring.
     vault = [*KNOWN_PROVIDERS, SIGNING_KEY_NAME, "heliox_learner_snapshot"]
     try:
+        # The learner's saved-state key: the daemon's first run writes it (CI, 12 November: the only Heliox entry
+        # in a fresh runner's store). The name comes from the module that owns it.
+        from pilot.server import LEARNER_SNAPSHOT_KEY
+
+        vault.append(LEARNER_SNAPSHOT_KEY)
+    except Exception:
+        pass
+    try:
         from pilot.config import PilotConfig
 
         config = PilotConfig.load()
@@ -68,6 +76,18 @@ def parse_security_output(text: str) -> str | None:
     return match.group(1) if match.group(1) is not None else match.group(2)
 
 
+ERROR_NOT_FOUND = 1168
+
+
+def empty_store_error(error: BaseException) -> bool:
+    """CredEnumerate raises ERROR_NOT_FOUND (1168, "Element not found") when the store holds no credentials at
+    all (CI, 12 November): that is an empty list, not a failed search. Pure."""
+    code = getattr(error, "winerror", None)
+    if code is None and getattr(error, "args", None):
+        code = error.args[0]
+    return code == ERROR_NOT_FOUND
+
+
 def windows_entries(service: str, enumerate_credentials: Callable[[], list[dict]] | None = None) -> list[str]:
     """Accounts under ``service`` in Windows Credential Manager (keyring names a target "service" or
     "account@service")."""
@@ -75,7 +95,12 @@ def windows_entries(service: str, enumerate_credentials: Callable[[], list[dict]
         from win32ctypes.pywin32 import win32cred  # keyring's own dependency on Windows
 
         def enumerate_credentials() -> list[dict]:
-            return list(win32cred.CredEnumerate(None, 0) or [])
+            try:
+                return list(win32cred.CredEnumerate(None, 0) or [])
+            except Exception as error:
+                if empty_store_error(error):
+                    return []
+                raise
 
     accounts = []
     for credential in enumerate_credentials():

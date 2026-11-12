@@ -3,18 +3,20 @@
 Run with the daemon environment's Python (the one ``keyring`` is installed in):
 
     python credential_store_check.py full          # write, remove with the daemon's cleanup, check none is left
-    python credential_store_check.py write STATE   # write one test entry per Heliox service; STATE lists them
+    python credential_store_check.py write STATE   # record Heliox's entries, write one test entry per service
     python credential_store_check.py gone STATE    # check with the system's tool that none of them is left
     python credential_store_check.py kept STATE    # check that all of them are still there ("keep my data")
-    python credential_store_check.py drop STATE    # remove this check's own entries with keyring, then "gone"
+    python credential_store_check.py drop STATE    # remove the recorded entries with keyring, then "gone"
 
 ``gone``, ``kept`` and ``drop`` need only ``keyring``, so they run with the runner's Python once the environment
 has been removed.
 
-The entries are written with ``keyring`` itself, one under each of Heliox's four services, with an account name
-made for this run. Before writing, the store is searched for any entry under those services (by service where the
-system allows it, and by every account name Heliox knows); if one exists, nothing is written and the check fails,
-so the cleanup can only ever meet entries this check created. The system tools: ``cmdkey /list`` on Windows,
+Before writing, the store is searched for Heliox's entries (by service where the system allows it, and by every
+account name Heliox knows). The daemon's first run makes some itself (the learner's saved-state key, for one), so
+on a runner they are recorded as the daemon's, and "everything" must remove them as well as the check's own. Off
+CI (``GITHUB_ACTIONS`` not "true"), any entry found stops the check before it writes anything: on a person's
+computer it touches nothing it did not create. The test entries are written with ``keyring``, one under each of
+Heliox's four services, with an account name made for this run. The system tools: ``cmdkey /list`` on Windows,
 ``security find-generic-password`` on macOS (the login keychain), ``secret-tool lookup`` on Linux (the Secret
 Service, a GNOME keyring unlocked for the session by ``with_keyring.sh``).
 
@@ -71,8 +73,8 @@ def present(service: str, account: str) -> bool:
     return code == 0
 
 
-def existing_entries() -> list[str]:
-    """Every Heliox entry the store shows before this check writes anything."""
+def existing_entries() -> list[tuple[str, str]]:
+    """Every Heliox entry (service, account) the store shows before this check writes anything."""
     import keyring
 
     from pilot.system import credential_cleanup as cleanup
@@ -80,17 +82,21 @@ def existing_entries() -> list[str]:
     finder = {"win32": cleanup.windows_entries, "darwin": cleanup.macos_entries}.get(
         sys.platform, cleanup.linux_entries
     )
-    found = []
+    found: set[tuple[str, str]] = set()
     known = cleanup.known_accounts()
     for service in cleanup.services():
         try:
-            found += [f"{service} / {account}" for account in finder(service)]
+            found.update((service, account) for account in finder(service))
         except Exception as error:
-            print(f"search of {service} by service failed: {type(error).__name__}: {error}")
+            check(f"credentials/search-by-service {service}", False, f"{type(error).__name__}: {error}")
         for account in known.get(service, []):
             if keyring.get_password(service, account) is not None:
-                found.append(f"{service} / {account}")
-    return sorted(set(found))
+                found.add((service, account))
+    return sorted(found)
+
+
+def label(pairs) -> list[str]:
+    return [f"{service} / {account}" for service, account in pairs]
 
 
 def write(state: Path) -> list[tuple[str, str]]:
@@ -99,43 +105,47 @@ def write(state: Path) -> list[tuple[str, str]]:
     from pilot.system import credential_cleanup as cleanup
 
     print(f"keyring backend: {keyring.get_keyring()!r}")
-    before = existing_entries()
-    if not check("credentials/store-has-no-heliox-entries-before", not before, repr(before)):
-        print("RESULT: entries this check did not create exist; nothing was written and nothing will be removed.")
+    daemons = existing_entries()
+    on_ci = os.environ.get("GITHUB_ACTIONS") == "true"
+    if daemons and not on_ci:
+        check("credentials/store-has-no-heliox-entries-before", False, repr(label(daemons)))
+        print("RESULT: not on CI, and entries this check did not create exist; nothing was written or removed.")
         return []
+    print(f"Heliox entries already in the store, made by the daemon: {label(daemons)}")
     account = f"heliox-ci-{os.getpid()}"
-    written = []
+    own = []
     for service in cleanup.services():
         try:
             keyring.set_password(service, account, f"test secret for {service}")
-            written.append((service, account))
+            own.append((service, account))
         except Exception as error:
             check(f"credentials/write {service}", False, f"{type(error).__name__}: {error}")
-    state.write_text(json.dumps(written), encoding="utf-8")
-    seen = [f"{s} / {a}" for s, a in written if present(s, a)]
+    state.write_text(json.dumps({"own": own, "daemon": daemons}), encoding="utf-8")
+    seen = [pair for pair in [*own, *daemons] if present(*pair)]
     check(
-        "credentials/system-tool-sees-the-test-entries",
-        len(written) == len(cleanup.services()) and len(seen) == len(written),
-        f"{len(seen)} of {len(written)} written: {seen}",
+        "credentials/system-tool-sees-the-entries",
+        len(own) == len(cleanup.services()) and len(seen) == len(own) + len(daemons),
+        f"{len(seen)} of {len(own)} test and {len(daemons)} daemon entries: {label(seen)}",
     )
-    return written
+    return own + daemons
 
 
-def written_in(state: Path) -> list[tuple[str, str]]:
-    return [(str(pair[0]), str(pair[1])) for pair in json.loads(state.read_text(encoding="utf-8"))]
+def recorded(state: Path) -> list[tuple[str, str]]:
+    data = json.loads(state.read_text(encoding="utf-8"))
+    return [(str(s), str(a)) for s, a in [*data.get("own", []), *data.get("daemon", [])]]
 
 
 def kept(state: Path) -> None:
-    written = written_in(state)
-    there = [f"{s} / {a}" for s, a in written if present(s, a)]
-    check("credentials/kept-with-the-data", bool(written) and len(there) == len(written), f"{there}")
+    pairs = recorded(state)
+    there = [pair for pair in pairs if present(*pair)]
+    check("credentials/kept-with-the-data", bool(pairs) and len(there) == len(pairs), f"{label(there)}")
 
 
 def drop(state: Path) -> None:
-    """Remove only the entries this check wrote, then check none is left."""
+    """Remove the recorded entries (this check's and the daemon's, on a runner), then check none is left."""
     import keyring
 
-    for service, account in written_in(state):
+    for service, account in recorded(state):
         try:
             keyring.delete_password(service, account)
         except Exception as error:
@@ -144,12 +154,12 @@ def drop(state: Path) -> None:
 
 
 def gone(state: Path) -> None:
-    written = written_in(state)
-    left = [f"{s} / {a}" for s, a in written if present(s, a)]
+    pairs = recorded(state)
+    left = [pair for pair in pairs if present(*pair)]
     check(
         "credentials/system-tool-finds-none-left",
-        bool(written) and not left,
-        f"{len(written)} written, left: {left}",
+        bool(pairs) and not left,
+        f"{len(pairs)} recorded, left: {label(left)}",
     )
 
 
@@ -165,8 +175,8 @@ def main(argv: list[str]) -> int:
         drop(Path(argv[1]))
     else:
         state = Path(os.environ.get("RUNNER_TEMP", ".")) / "heliox-credential-check.json"
-        written = write(state)
-        if written:
+        pairs = write(state)
+        if pairs:
             code, out = run([sys.executable, "-m", "pilot.system.credential_cleanup", "remove"])
             report = {}
             for line in reversed(out.splitlines()):
@@ -178,8 +188,8 @@ def main(argv: list[str]) -> int:
             print(f"cleanup exit {code}: {json.dumps(report)}")
             removed = set(report.get("removed", []))
             check(
-                "credentials/cleanup-reports-each-test-entry-removed",
-                all(f"{s} / {a}" in removed for s, a in written) and not report.get("remaining"),
+                "credentials/cleanup-reports-each-entry-removed",
+                all(entry in removed for entry in label(pairs)) and not report.get("remaining"),
                 f"removed {sorted(removed)}, remaining {report.get('remaining')}",
             )
             gone(state)
