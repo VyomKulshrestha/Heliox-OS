@@ -49,6 +49,9 @@ class CaptureState:
     zero_seconds: float  # how long every frame has been exact digital zeros
     active: bool  # a stream is open
     default_name: str = ""  # the system default microphone now ("" when it cannot be read)
+    # Its own identifier, which two microphones of the same model do not share ("" when the system gives none; the
+    # name is compared then). See default_microphone_identity.
+    default_key: str = ""
     auto: bool = True  # the setting follows the system default
     configured_available: bool = False  # the configured microphone is present again (after a fallback)
     using_fallback: bool = False
@@ -73,6 +76,7 @@ class CaptureWatchdog:
         self._last_frames = -1
         self._frames_changed_at = clock()
         self._opened_default = ""
+        self._opened_key = ""
         self._error_at_open = ""
         self._failures = 0
         self._next_attempt = 0.0
@@ -81,9 +85,10 @@ class CaptureWatchdog:
         self.problem = ""  # what is wrong now, for the status ("" when healthy)
         self._problem_frames = 0
 
-    def opened(self, default_name: str = "", error: str = "") -> None:
+    def opened(self, default_name: str = "", error: str = "", default_key: str = "") -> None:
         now = self._clock()
         self._opened_default = default_name
+        self._opened_key = default_key
         self._error_at_open = error
         self._frames_changed_at = now
         self._last_silent_reopen = now
@@ -93,9 +98,15 @@ class CaptureWatchdog:
         self._failures += 1
         self._next_attempt = self._clock() + delay
 
-    def reopen_succeeded(self, default_name: str = "", error: str = "") -> None:
+    def reopen_succeeded(self, default_name: str = "", error: str = "", default_key: str = "") -> None:
         """The stream opened again; the backoff is cleared only once sound actually flows (``recovered``)."""
-        self.opened(default_name, error)
+        self.opened(default_name, error, default_key)
+
+    def _default_changed(self, state: CaptureState) -> bool:
+        """By identifier when both readings have one (two microphones of one model share a name), else by name."""
+        if state.default_key and self._opened_key:
+            return state.default_key != self._opened_key
+        return bool(state.default_name and self._opened_default and state.default_name != self._opened_default)
 
     def recovered(self, state: CaptureState) -> bool:
         """True once, when sound flows again after a reported problem."""
@@ -123,7 +134,7 @@ class CaptureWatchdog:
             return self._reopen("stream_failed", f"The microphone stopped ({state.error}); reopening it.")
         if now - self._frames_changed_at >= STALL_SECONDS:
             return self._reopen("no_audio", "The microphone stopped sending sound; reopening it.")
-        if state.auto and state.default_name and self._opened_default and state.default_name != self._opened_default:
+        if state.auto and self._default_changed(state):
             return self._reopen("default_changed", f"Switching to the new default microphone, {state.default_name}.")
         if state.using_fallback and state.configured_available:
             return self._reopen("device_returned", "The chosen microphone is back; switching to it.")
@@ -187,6 +198,25 @@ def default_microphone_key(platform: str | None = None) -> str:
     if (platform or sys.platform).startswith("linux"):
         return str(getattr(microphone, "id", "") or "")
     return str(getattr(microphone, "name", "") or "")
+
+
+def default_microphone_identity() -> tuple[str, str]:
+    """(identifier, name) of the system default microphone now; ("", "") when it cannot be read.
+
+    The identifier tells apart two microphones of the same model, which share a name (two USB microphones, a dock's
+    and a headset's of one maker): soundcard's ``id`` is the source name on PulseAudio/PipeWire (Linux), the
+    endpoint id on WASAPI (Windows, "{0.0.1.00000000}.{...}") and the AudioObjectID on CoreAudio (macOS). The macOS
+    one changes when the device is plugged in again, which only means one reopen more, after a replug that needs one
+    anyway; it is never stored (default_microphone_key is the stored one). No identifier: the name stands in.
+    """
+    try:
+        import soundcard as sc
+
+        microphone = sc.default_microphone()
+    except Exception:
+        return "", ""
+    name = str(getattr(microphone, "name", "") or "")
+    return str(getattr(microphone, "id", "") or "") or name, name
 
 
 def pulse_sources() -> list[dict[str, str]]:

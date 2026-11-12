@@ -3147,7 +3147,7 @@ class ContinuousVoiceListener:
         from pilot.system.audio_health import (
             CaptureState,
             CaptureWatchdog,
-            default_microphone_name,
+            default_microphone_identity,
             default_speaker_name,
             microphone_present,
         )
@@ -3160,11 +3160,13 @@ class ContinuousVoiceListener:
         # PipeWire through soundcard) and answer "" when they cannot tell, which turns the default checks off.
         live_devices = True
 
-        async def default_name() -> str:
-            return await asyncio.to_thread(default_microphone_name) if live_devices else ""
+        async def default_mic() -> tuple[str, str]:
+            """(identifier, name): compared by identifier, so two microphones of one model are told apart."""
+            return await asyncio.to_thread(default_microphone_identity) if live_devices else ("", "")
 
         watchdog = self._capture_watchdog = CaptureWatchdog()
-        watchdog.opened(await default_name(), recorder.last_error)
+        key, name = await default_mic()
+        watchdog.opened(name, recorder.last_error, key)
         permission_checked_at = -1e9
         await self._check_microphone_permission()  # macOS: a refused permission is said at once, not after 30 s
         while self._running:
@@ -3172,12 +3174,14 @@ class ContinuousVoiceListener:
             if not self._running:
                 return
             fallback = bool(recorder.using_fallback_input)
+            key, name = await default_mic()
             state = CaptureState(
                 frames=int(recorder.frames_received),
                 error=str(recorder.last_error or ""),
                 zero_seconds=float(recorder.zero_seconds),
                 active=bool(recorder.is_active),
-                default_name=await default_name(),
+                default_name=name,
+                default_key=key,
                 auto=auto,
                 configured_available=bool(
                     fallback and live_devices and await asyncio.to_thread(microphone_present, configured_name)
@@ -3211,7 +3215,8 @@ class ContinuousVoiceListener:
                     recorder.last_error = str(error)
                     opened = False
                 if opened:
-                    watchdog.reopen_succeeded(await default_name(), recorder.last_error)
+                    key, name = await default_mic()
+                    watchdog.reopen_succeeded(name, recorder.last_error, key)
                     self._mic_quality.reset()  # possibly another microphone: judge it afresh
                 else:
                     watchdog.reopen_failed()

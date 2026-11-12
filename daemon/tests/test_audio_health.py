@@ -219,7 +219,7 @@ async def test_the_listener_follows_a_new_default_microphone(monkeypatch):
 
     names = iter(["USB mic", "USB mic", "Headset (Jabra)"] + ["Headset (Jabra)"] * 100)
     monkeypatch.setattr(voice, "CURRENT_PLATFORM", Platform.WINDOWS)
-    monkeypatch.setattr(audio_health, "default_microphone_name", lambda: next(names))
+    monkeypatch.setattr(audio_health, "default_microphone_identity", lambda: (lambda n: (n, n))(next(names)))
     monkeypatch.setattr(audio_health, "default_speaker_name", lambda: "")
     statuses: list[tuple[str, dict]] = []
 
@@ -358,7 +358,7 @@ async def test_a_wasapi_stream_invalidated_by_a_call_app_is_reopened(monkeypatch
     monkeypatch.setitem(sys.modules, "soundcard", card)
     monkeypatch.setattr(voice, "CURRENT_PLATFORM", Platform.WINDOWS)
     monkeypatch.setattr(audio_health, "STALL_SECONDS", 0.2)
-    monkeypatch.setattr(audio_health, "default_microphone_name", lambda: "")
+    monkeypatch.setattr(audio_health, "default_microphone_identity", lambda: ("", ""))
     monkeypatch.setattr(audio_health, "default_speaker_name", lambda: "")
     statuses: list[tuple[str, dict]] = []
 
@@ -424,3 +424,74 @@ def test_real_pulseaudio_names_and_opening_a_chosen_source():
         assert os.environ.get("PULSE_SOURCE") == "heliox_mic"
     finally:
         recorder._close_capture()
+
+
+# Two microphones of the same model share a name: the watch tells them apart by the system's own identifier.
+TWINS = {
+    "linux": ("alsa_input.usb-0d8c_USB_Audio-00.mono", "alsa_input.usb-0d8c_USB_Audio-01.mono"),  # PulseAudio sources
+    "win32": ("{0.0.1.00000000}.{6a7c1f0e-0001}", "{0.0.1.00000000}.{6a7c1f0e-0002}"),  # WASAPI endpoint ids
+    "darwin": ("71", "84"),  # CoreAudio AudioObjectIDs
+}
+
+
+@pytest.mark.parametrize("system", sorted(TWINS))
+def test_the_identity_of_the_default_microphone_is_the_system_s_own_id(system, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    first, _second = TWINS[system]
+    mic = SimpleNamespace(id=first, name="USB Audio Device")
+    monkeypatch.setitem(sys.modules, "soundcard", SimpleNamespace(default_microphone=lambda: mic))
+    assert audio_health.default_microphone_identity() == (first, "USB Audio Device")
+    mic.id = ""  # no identifier given: the name stands in
+    assert audio_health.default_microphone_identity() == ("USB Audio Device", "USB Audio Device")
+
+
+@pytest.mark.parametrize("system", sorted(TWINS))
+def test_switching_between_two_microphones_with_one_name_is_seen(system):
+    first, second = TWINS[system]
+    clock = [0.0]
+    watchdog = audio_health.CaptureWatchdog(clock=lambda: clock[0])
+    watchdog.opened("USB Audio Device", "", first)
+
+    def state(key: str) -> audio_health.CaptureState:
+        clock[0] += 1.0
+        return audio_health.CaptureState(
+            frames=int(clock[0]) * 10, error="", zero_seconds=0.0, active=True,
+            default_name="USB Audio Device", default_key=key,
+        )  # fmt: skip
+
+    assert watchdog.check(state(first)).action == "ok"
+    decision = watchdog.check(state(second))
+    assert decision.action == "reopen" and decision.reason == "default_changed"
+    watchdog.reopen_succeeded("USB Audio Device", "", second)
+    assert watchdog.check(state(second)).action == "ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("system", sorted(TWINS))
+async def test_the_listener_follows_a_new_default_with_the_same_name(system, monkeypatch):
+    from pilot.system import voice
+    from pilot.system.platform_detect import Platform
+
+    first, second = TWINS[system]
+    keys = iter([first, first, second] + [second] * 100)
+    monkeypatch.setattr(voice, "CURRENT_PLATFORM", {"linux": Platform.LINUX, "win32": Platform.WINDOWS,
+                                                    "darwin": Platform.MACOS}[system])  # fmt: skip
+    monkeypatch.setattr(audio_health, "default_microphone_identity", lambda: (next(keys), "USB Audio Device"))
+    monkeypatch.setattr(audio_health, "default_speaker_name", lambda: "")
+    listener = voice.ContinuousVoiceListener(wake_words=["hey heliox"], config=PilotConfig())
+    from unittest.mock import AsyncMock
+
+    listener._check_microphone_permission = AsyncMock()  # macOS: no real permission check in a test
+    fake = FakeRecorder()
+    listener._recorder = fake
+    listener._running = True
+    watch = asyncio.ensure_future(listener._watch_capture(every_seconds=0.01))
+    for _ in range(300):
+        if fake.reopened:
+            break
+        await asyncio.sleep(0.01)
+    listener._running = False
+    await asyncio.wait_for(watch, 5)
+    assert fake.reopened == 1
