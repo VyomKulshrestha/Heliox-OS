@@ -96,6 +96,7 @@ impl Host for CheckHost {
             .args(["-c", WRAPPER])
             .arg(&self.control)
             .stdin(std::process::Stdio::null());
+        supervisor::own_group(&mut command); // as the app starts its daemon (main.rs try_spawn_with)
         if let Some(seen) = supervisor::take_previous_exit() {
             command.env(supervisor::PREVIOUS_EXIT_VARIABLE, seen);
         }
@@ -490,10 +491,12 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
         *host.daemon.lock().unwrap() = host.launch();
         let after = wait_ready(Duration::from_secs(180));
         let last_run = after.as_ref().and_then(|s| s.get("last_run")).cloned();
-        // Not a clean end: the daemon never marked its run as ended, so the next start says so.
+        // Not a clean end: the daemon never marked its run as ended, and the app left word that it did not answer.
         check(
             "stop-on-purpose-of-a-daemon-that-cannot-answer-is-reported",
-            after.is_some() && last_run.as_ref().is_some_and(|run| !run.is_null()),
+            after.is_some()
+                && last_run.as_ref().is_some_and(|run| !run.is_null())
+                && ended(&after) == "stopped answering",
             format!(
                 "ready: {}, last_run ended \"{}\", notice \"{}\"",
                 after.is_some(),

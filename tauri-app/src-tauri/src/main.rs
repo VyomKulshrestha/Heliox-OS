@@ -64,6 +64,7 @@ fn try_spawn_with(python: &std::path::Path) -> Option<Child> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    supervisor::own_group(&mut cmd); // so a forced end takes everything under it (supervisor::kill_tree)
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;

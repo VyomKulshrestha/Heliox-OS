@@ -72,6 +72,12 @@ impl Folders {
         self.setup.join("env")
     }
 
+    /// Left by the app when it had to end a daemon that did not answer its stop (supervisor::stop_on_purpose), for
+    /// the next start's run record (pilot.system.run_record APP_NOTE_FILE), beside run_state.json.
+    pub fn app_note_file(&self) -> PathBuf {
+        self.state.join("ended_by_app")
+    }
+
     /// The shortcut the person chose, kept by the app beside setup's files.
     pub fn shortcut_file(&self) -> PathBuf {
         self.setup.join("shortcut.txt")
@@ -294,6 +300,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_daemon_reads_the_note_the_app_leaves_where_the_app_leaves_it() {
+        let run_record = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../daemon/pilot/system/run_record.py"
+        ));
+        let folders = Folders::resolve("linux", &|_| None, Path::new("/home/sam"), 1000, &|_| true);
+        let name = folders.app_note_file();
+        let name = name.file_name().unwrap().to_string_lossy();
+        assert!(run_record.contains(&format!("APP_NOTE_FILE = \"{name}\"")));
+        assert!(run_record.contains(&format!("\"{}\"", crate::supervisor::NO_ANSWER_AT_STOP)));
+        assert_eq!(
+            folders.app_note_file().parent(),
+            Some(folders.state.as_path())
+        );
     }
 
     #[test]

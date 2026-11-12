@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from pilot.system.run_record import HISTORY, RunRecord
+from pilot.system.run_record import APP_NOTE_FILE, HISTORY, RunRecord
 
 START = 1_763_000_000.0  # 13 November 2025, any fixed moment
 
@@ -73,6 +73,33 @@ def test_what_the_supervisor_saw_is_said_when_it_passed_it(tmp_path, seen, ended
     last = record(path, at=START + 60, previous_exit=seen).begin()
 
     assert last["ended"] == ended and words in last["notice"]
+
+
+def test_a_daemon_the_app_had_to_end_at_a_stop_is_said_to_have_stopped_answering_once(tmp_path):
+    """The app quit (or updated, repaired, removed) and the daemon took its stop request without answering: the app
+    ended it and left a note beside the record (supervisor.rs stop_on_purpose). The note is the later word, so it
+    wins over what a supervisor passed, and it is read once."""
+    path = tmp_path / "run_state.json"
+    record(path, at=START).begin()
+    (tmp_path / APP_NOTE_FILE).write_text("hung-at-stop\n", encoding="utf-8")
+
+    last = record(path, at=START + 60, previous_exit="1").begin()
+
+    assert last["ended"] == "stopped answering"
+    assert "had stopped answering" in last["notice"] and "crash" not in last["notice"].lower()
+    assert not (tmp_path / APP_NOTE_FILE).exists()
+    assert record(path, at=START + 120).begin()["ended"] == "did not end cleanly"  # nothing left to read
+
+
+def test_a_note_after_a_clean_end_says_nothing_and_is_removed(tmp_path):
+    path = tmp_path / "run_state.json"
+    run = record(path, at=START)
+    run.begin()
+    run.end_cleanly("stopped")
+    (tmp_path / APP_NOTE_FILE).write_text("hung-at-stop", encoding="utf-8")
+
+    assert record(path, at=START + 60).begin() is None
+    assert not (tmp_path / APP_NOTE_FILE).exists()
 
 
 def test_a_daemon_replaced_on_purpose_ended_cleanly(tmp_path):

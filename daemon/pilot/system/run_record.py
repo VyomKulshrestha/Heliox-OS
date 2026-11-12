@@ -10,6 +10,8 @@ or ending the process in the task manager leave the same marker. What is said:
 - the computer restarted since that run started (``psutil.boot_time``): nothing to the window, a line in the log;
 - the desktop app's supervisor restarted Heliox and passed what it saw (``HELIOX_PREVIOUS_EXIT``): an exit code, a
   hang it ended, or a signal;
+- the desktop app had to end it because it did not answer a stop (quitting, an update, a repair, removal): the app
+  leaves ``ended_by_app`` beside the record, and the next start says it had stopped answering;
 - otherwise "did not end cleanly".
 
 The last HISTORY unclean ends are kept in the same file. Nothing here ever stops or slows a start: a data folder that
@@ -32,6 +34,10 @@ logger = logging.getLogger("pilot.system.run_record")
 FILE_NAME = "run_state.json"
 HISTORY = 20
 PREVIOUS_EXIT_VARIABLE = "HELIOX_PREVIOUS_EXIT"  # set by the desktop app's supervisor when it restarts the daemon
+# Left beside the record by the desktop app (supervisor.rs stop_on_purpose) when it had to end a daemon that took its
+# stop request and did not answer: "hung-at-stop". Read and removed by the next start; it wins over the variable,
+# being the later word on the run before.
+APP_NOTE_FILE = "ended_by_app"
 
 
 def _boot_time() -> float | None:
@@ -89,6 +95,7 @@ class RunRecord:
 
     def _begin(self, folder_writable: bool, replaced_pid: int | None) -> dict[str, Any] | None:
         self._started_at = self._clock()
+        self._take_app_note()
         previous, readable = self._read()
         self._history = [entry for entry in (previous or {}).get("history", []) if isinstance(entry, dict)]
         self._history = self._history[-HISTORY:]
@@ -110,6 +117,19 @@ class RunRecord:
             log = logger.info if self.last_run["ended"] == "computer restarted" else logger.warning
             log("Heliox's last run (started %s) %s", self.last_run["started_at_text"], self.last_run["ended"])
         return self.last_run
+
+    def _take_app_note(self) -> None:
+        note = self._path.with_name(APP_NOTE_FILE)
+        try:
+            text = note.read_text(encoding="utf-8").strip()
+        except OSError:
+            return
+        try:
+            note.unlink()
+        except OSError:
+            pass
+        if text:
+            self._previous_exit = text
 
     def _read(self) -> tuple[dict[str, Any] | None, bool]:
         source = self._path
@@ -150,6 +170,13 @@ class RunRecord:
         exit_seen = (self._previous_exit or "").strip()
         if exit_seen == "hung":
             ended, notice = "stopped answering", "Heliox's background service stopped answering and was restarted."
+        elif exit_seen == "hung-at-stop":
+            when = f" (started {entry['started_at_text']})" if entry["started_at_text"] else ""
+            ended = "stopped answering"
+            notice = (
+                f"Heliox's background service{when} had stopped answering, so it had to be ended when it was stopped. "
+                "It is running again."
+            )
         elif exit_seen.lstrip("-").isdigit() and exit_seen != "0":
             ended = f"stopped with exit code {exit_seen}"
             notice = f"Heliox's background service stopped unexpectedly (exit code {exit_seen}) and was started again."

@@ -644,13 +644,26 @@ async fn request_reply(
     .map_err(|e| format!("Send failed: {e}"))?;
     tokio::time::timeout(limit, read_reply(ws, &id))
         .await
-        .map_err(|_| "The daemon did not reply in time".to_string())?
+        .map_err(|_| REPLY_TIMED_OUT.to_string())?
+}
+
+const REPLY_TIMED_OUT: &str = "The daemon did not reply in time";
+
+/// What a stop request got back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StopAnswer {
+    /// The daemon said it is stopping.
+    Stopping,
+    /// Nothing listened, there was no token yet, or the daemon refused: it was not reached.
+    NotReached,
+    /// It took the connection but did not answer in time: stuck or suspended.
+    NoAnswer,
 }
 
 /// Ask the daemon this app started to stop on purpose (daemon_stop), before the app ends it: the daemon then marks
 /// its run as ended cleanly (pilot.system.run_record), so quitting, updating or repairing is not reported as an
-/// unclean end next time. True when the daemon said it is stopping.
-pub(crate) async fn ask_daemon_to_stop(reason: &str) -> bool {
+/// unclean end next time. At most 3 s.
+pub(crate) async fn ask_daemon_to_stop(reason: &str) -> StopAnswer {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "daemon_stop",
@@ -658,17 +671,23 @@ pub(crate) async fn ask_daemon_to_stop(reason: &str) -> bool {
         "id": "native-stop"
     });
     let attempt = async {
-        let mut ws = connect_authenticated().await.ok()?;
-        request_reply(&mut ws, &request, std::time::Duration::from_secs(2))
-            .await
-            .ok()
-    };
-    match tokio::time::timeout(std::time::Duration::from_secs(3), attempt).await {
-        Ok(Some(reply)) => {
-            reply.get("result").and_then(|r| r.get("status")) == Some(&serde_json::json!("ok"))
+        let Ok(mut ws) = connect_authenticated().await else {
+            return StopAnswer::NotReached;
+        };
+        match request_reply(&mut ws, &request, std::time::Duration::from_secs(2)).await {
+            Ok(reply)
+                if reply.get("result").and_then(|r| r.get("status"))
+                    == Some(&serde_json::json!("ok")) =>
+            {
+                StopAnswer::Stopping
+            }
+            Err(error) if error == REPLY_TIMED_OUT => StopAnswer::NoAnswer,
+            _ => StopAnswer::NotReached,
         }
-        _ => false,
-    }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(3), attempt)
+        .await
+        .unwrap_or(StopAnswer::NoAnswer)
 }
 
 /// One authenticated request to the daemon and its result, within `limit` (the real supervisor check reads
