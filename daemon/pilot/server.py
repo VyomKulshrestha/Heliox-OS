@@ -3348,6 +3348,9 @@ class PilotServer:
         if not attachments and review_inputs is None and expansion is None and self._conversation_ready():
             from pilot.conversation.adapters import TYPED_SOURCES, typed_turn
 
+            if interaction_source in TYPED_SOURCES:
+                # The chat view shows it is working from the first notification, as on the planner road.
+                await ws.send(_notification("status", {"phase": "receiving input"}))
             typed = (
                 await typed_turn(self, str(user_input), ws, _notification)
                 if interaction_source in TYPED_SOURCES
