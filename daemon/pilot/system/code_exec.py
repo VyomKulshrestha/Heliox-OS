@@ -303,10 +303,14 @@ async def _execute_cmd(code: str, timeout: int = 30) -> str:
         script_path = f.name
 
     try:
+        from pilot.system.command_line import UnsafeCommandLine, batch_file_command
+
+        try:
+            command = batch_file_command(script_path)
+        except UnsafeCommandLine as refusal:
+            return f"ERROR: {refusal}"
         proc = await asyncio.create_subprocess_exec(
-            "cmd",
-            "/c",
-            script_path,
+            *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

@@ -104,18 +104,18 @@ async def screenshot(
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        # Use PowerShell with .NET. The path sits in a single-quoted PowerShell string, where a quote is doubled:
-        # a home folder such as C:\Users\O'Brien would otherwise end the string and run the rest as code.
-        quoted = output_path.replace("'", "''")
+        # Use PowerShell with .NET. The path is data ($HelioxArgs), never part of the script: it comes from a plan
+        # or the home folder, and any quote in it (C:\Users\O'Brien, or a typographic one) would end a string.
         code, out, err = await run_powershell(
-            f"Add-Type -AssemblyName System.Windows.Forms; "
-            f"$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
-            f"$bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height); "
-            f"$graphics = [System.Drawing.Graphics]::FromImage($bitmap); "
-            f"$graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size); "
-            f"$bitmap.Save('{quoted}'); "
-            f"$graphics.Dispose(); $bitmap.Dispose(); "
-            f"'Screenshot saved to {quoted}'"
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
+            "$bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height); "
+            "$graphics = [System.Drawing.Graphics]::FromImage($bitmap); "
+            "$graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size); "
+            "$bitmap.Save($HelioxArgs['out']); "
+            "$graphics.Dispose(); $bitmap.Dispose(); "
+            "'Screenshot saved to ' + $HelioxArgs['out']",
+            values={"out": output_path},
         )
 
     elif CURRENT_PLATFORM == Platform.MACOS:

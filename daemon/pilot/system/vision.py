@@ -228,29 +228,10 @@ def _get_install_hint() -> str:
 # ──────────────────────────────────────────────────────────────────────
 
 
-def _powershell_literal(value: str) -> str:
-    """Escape text for a single-quoted PowerShell string.
-
-    Single-quoted PowerShell strings are literal, so backslashes stay as they
-    are and only a single quote needs doubling. Doubling backslashes here made
-    WinRT reject every path, which silently pushed all screen OCR to EasyOCR.
-    """
-    return value.replace("'", "''")
-
-
-async def _ocr_windows_native(img_bytes: bytes) -> str:
-    """Use Windows 10/11 built-in OCR via PowerShell WinRT APIs.
-
-    Writes the PS script to a temp file to avoid escaping issues.
-    """
-    folder = _scratch_folder()
-    tmp_img = os.path.join(folder, "image.png")
-    tmp_ps1 = os.path.join(folder, "ocr.ps1")
-    Path(tmp_img).write_bytes(img_bytes)
-
-    # PowerShell script that uses WinRT OCR
-    ps_script = f"""
-try {{
+# Windows OCR through WinRT, as a constant script in a file; the image's path is passed as the script's argument,
+# so no quote in it (a user name such as O’Brien, typographic or not) can end a string and become code.
+_WINDOWS_OCR_SCRIPT = r"""
+try {
     Add-Type -AssemblyName System.Runtime.WindowsRuntime
 
     # Load WinRT types
@@ -259,21 +240,21 @@ try {{
     [void][Windows.Storage.StorageFile, Windows.Foundation, ContentType=WindowsRuntime]
 
     # Helper to await WinRT async operations
-    $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{
+    $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
         $_.Name -eq 'AsTask' -and
         $_.GetParameters().Count -eq 1 -and
         $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
-    }})[0]
+    })[0]
 
-    Function Await($WinRtTask, $ResultType) {{
+    Function Await($WinRtTask, $ResultType) {
         $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
         $netTask = $asTask.Invoke($null, @($WinRtTask))
         $netTask.Wait(-1) | Out-Null
         $netTask.Result
-    }}
+    }
 
     # Open image file
-    $imgPath = '{_powershell_literal(tmp_img)}'
+    $imgPath = $args[0]  # the image's path is an argument, never part of the script
     $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($imgPath)) ([Windows.Storage.StorageFile])
 
     # Open stream and create decoder
@@ -283,10 +264,10 @@ try {{
 
     # Create OCR engine and recognize
     $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-    if ($engine -eq $null) {{
+    if ($engine -eq $null) {
         Write-Error "OCR engine could not be created"
         exit 1
-    }}
+    }
     $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
 
     # Output text
@@ -294,16 +275,25 @@ try {{
 
     # Cleanup
     $stream.Dispose()
-}} catch {{
+} catch {
     Write-Error $_.Exception.Message
     exit 1
-}}
+}
 """
+
+
+async def _ocr_windows_native(img_bytes: bytes) -> str:
+    """Use Windows 10/11 built-in OCR via PowerShell WinRT APIs (a script file, the image path as its argument)."""
+    folder = _scratch_folder()
+    tmp_img = os.path.join(folder, "image.png")
+    tmp_ps1 = os.path.join(folder, "ocr.ps1")
+    Path(tmp_img).write_bytes(img_bytes)
+    ps_script = _WINDOWS_OCR_SCRIPT
     Path(tmp_ps1).write_text(ps_script, encoding="utf-8")
 
     try:
         code, out, err = await run_command(
-            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmp_ps1],
+            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmp_ps1, tmp_img],
             timeout=15,
         )
         if code == 0 and out.strip():

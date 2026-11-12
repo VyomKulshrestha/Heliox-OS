@@ -55,8 +55,8 @@ async def clipboard_write(content: str) -> str:
         pass
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        escaped = content.replace("'", "''")
-        code, out, err = await run_powershell(f"Set-Clipboard -Value '{escaped}'")
+        # The text is data ($HelioxArgs; a long text travels in an owner-only file), never part of the command.
+        code, out, err = await run_powershell("Set-Clipboard -Value $HelioxArgs['text']", values={"text": content})
         if code != 0:
             raise RuntimeError(f"Clipboard write failed: {err.strip()}")
         return f"Copied {len(content)} characters to clipboard"

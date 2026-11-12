@@ -366,7 +366,13 @@ class RestrictedBackend(_SandboxBackend):
             return "ERROR: Subprocess staging blocked by filesystem host constraints."
 
         try:
-            return await self._run_proc(["cmd", "/c", script_path], config.timeout, env, config)
+            from pilot.system.command_line import UnsafeCommandLine, batch_file_command
+
+            try:
+                command = batch_file_command(script_path)
+            except UnsafeCommandLine as refusal:
+                return f"ERROR: {refusal}"
+            return await self._run_proc(command, config.timeout, env, config)
         finally:
             if script_path:
                 _safe_unlink(script_path)
@@ -377,13 +383,18 @@ class RestrictedBackend(_SandboxBackend):
         if sys.platform == "win32":
             return cmd
 
-        mem_kb = config.memory_mb * 1024
-        cpu_seconds = max(config.timeout, 5)
+        mem_kb = int(config.memory_mb) * 1024
+        cpu_seconds = max(int(config.timeout), 5)
+        # The command and its arguments (the interpreter and the sandbox's script path) are bash's positional
+        # arguments, run by "exec "$@"", never pasted into the -c text: a path holding $ ` " or ; stays a path.
         return [
             "bash",
             "-c",
-            f"ulimit -v {mem_kb} -t {cpu_seconds} -f 102400; exec "
-            + " ".join(f'"{a}"' if " " in a else a for a in cmd),
+            'ulimit -v "$1" -t "$2" -f 102400; shift 2; exec "$@"',
+            "heliox-sandbox",
+            str(mem_kb),
+            str(cpu_seconds),
+            *cmd,
         ]
 
     @staticmethod

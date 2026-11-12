@@ -1821,13 +1821,17 @@ class Executor:
 
     async def _exec_shell_command(self, action: Action) -> str:
         params: ShellCommandParams = action.parameters  # type: ignore[assignment]
+        from pilot.system.command_line import windows_command_line
         from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
-        cmd = [params.command] + (params.args or [])
-        # On Windows, built-in commands (tree, dir, type) and .com/.bat
-        # files need cmd /c to execute properly
-        if CURRENT_PLATFORM == Platform.WINDOWS:
-            cmd = ["cmd", "/c"] + cmd
+        cmd = (
+            windows_command_line(params.command, params.args or [])
+            if CURRENT_PLATFORM == Platform.WINDOWS
+            else [
+                params.command,
+                *(params.args or []),
+            ]
+        )
         code, out, err = await run_command(
             cmd,
             timeout=params.timeout,
@@ -1870,10 +1874,13 @@ class Executor:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
 
+        from pilot.system.command_line import open_with_system
         from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
         if CURRENT_PLATFORM == Platform.WINDOWS:
-            code, _, err = await run_command(["cmd", "/c", "start", "", url])
+            # The address goes to the system's handler for it (ShellExecute), never through cmd: "cmd /c start"
+            # read & | > < ^ in an address as more commands.
+            code, err = await open_with_system(url)
         elif CURRENT_PLATFORM == Platform.MACOS:
             code, _, err = await run_command(["open", url])
         else:

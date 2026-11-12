@@ -115,16 +115,15 @@ def _find_start_menu_shortcuts() -> list[_NamedTarget]:
     return shortcuts
 
 
-def _powershell_literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
 async def _resolve_shortcut_target(shortcut: Path) -> str:
     from pilot.system.platform_detect import run_powershell
 
-    literal = _powershell_literal(str(shortcut))
-    script = "$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut(" + literal + "); $shortcut.TargetPath"
-    code, stdout, stderr = await run_powershell(script, timeout=10)
+    # The shortcut's path is data: installers name their Start-menu shortcuts, and a name is never code.
+    code, stdout, stderr = await run_powershell(
+        "$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($HelioxArgs['path']); $shortcut.TargetPath",
+        timeout=10,
+        values={"path": str(shortcut)},
+    )
     target = stdout.strip()
     if code != 0 or not target:
         detail = stderr.strip() or "shortcut has no executable target"

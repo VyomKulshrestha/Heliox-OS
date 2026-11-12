@@ -67,19 +67,21 @@ async def test_native_ocr_finding_no_text_does_not_load_easyocr(screen, monkeypa
     assert screen.gpu_requests == []
 
 
-async def test_windows_ocr_script_keeps_the_path_literal(monkeypatch):
-    scripts: list[str] = []
+async def test_windows_ocr_passes_the_image_path_as_an_argument(monkeypatch):
+    calls: list[tuple[str, list[str]]] = []
 
     async def run(argv, timeout=None):
-        scripts.append(open(argv[-1], encoding="utf-8").read())
+        calls.append((open(argv[-2], encoding="utf-8").read(), list(argv)))
         return 0, "Hello", ""
 
     monkeypatch.setattr(vision, "run_command", run)
 
     assert await vision._ocr_windows_native(_png()) == "Hello"
-    image_line = next(line for line in scripts[0].splitlines() if "$imgPath =" in line)
-    assert "\\\\" not in image_line  # single-quoted PowerShell strings are literal
-    assert vision._powershell_literal("C:\\Users\\o'brien\\a.png") == "C:\\Users\\o''brien\\a.png"
+    ((script, argv),) = calls
+    image = argv[-1]
+    assert image.endswith("image.png") and argv[-2].endswith("ocr.ps1")
+    # The path (it holds the person's user name, which can hold any quote) is never part of the script.
+    assert image not in script and "$imgPath = $args[0]" in script
 
 
 def _arbiter_reading(monkeypatch, tmp_path, temperature: float) -> object:

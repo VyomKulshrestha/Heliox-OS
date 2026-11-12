@@ -11,12 +11,12 @@ async def mount_exists(*, device: str | None = None, mount_point: str | None = N
         raise ValueError("Device or mount point is required")
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        target = (mount_point or device or "").replace("'", "''")
         code, out, err = await run_powershell(
-            f"$target = '{target}'.TrimEnd('\\'); "
+            "$target = ([string]$HelioxArgs['target']).TrimEnd('\\'); "
             "$match = Get-CimInstance Win32_LogicalDisk | Where-Object { "
             "$_.DeviceID -eq $target -or $_.ProviderName -eq $target }; "
-            "if ($match) { 'present' }"
+            "if ($match) { 'present' }",
+            values={"target": mount_point or device or ""},
         )
         if code != 0:
             raise RuntimeError(f"Mount observation failed: {err.strip()}")

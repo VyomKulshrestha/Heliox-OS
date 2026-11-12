@@ -98,12 +98,12 @@ async def process_exists(pid: int | None = None, name: str | None = None) -> boo
     if CURRENT_PLATFORM == Platform.WINDOWS:
         if pid is not None:
             code, out, err = await run_powershell(
-                f"if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ 'present' }}"
+                f"if (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue) {{ 'present' }}"
             )
         else:
-            escaped = str(name).replace("'", "''")
             code, out, err = await run_powershell(
-                f"if (Get-Process -Name '{escaped}' -ErrorAction SilentlyContinue) {{ 'present' }}"
+                "if (Get-Process -Name $HelioxArgs['name'] -ErrorAction SilentlyContinue) { 'present' }",
+                values={"name": str(name)},
             )
         if code != 0:
             raise RuntimeError(f"Process observation failed: {err.strip()}")

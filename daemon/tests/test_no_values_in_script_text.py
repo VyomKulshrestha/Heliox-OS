@@ -29,24 +29,18 @@ SAFE = {
     "system/screen.py::brightness_set": "an integer brightness level",
     "system/power.py::power_transition_observed": "a log name and event id from fixed tables",
     "system/processes.py::process_info": "an integer process id",
+    "system/processes.py::process_exists": "an integer process id (the name is a $HelioxArgs value)",
     "system/voice.py::_record_audio": "an integer duration",
     "agents/screen_vision.py::_sync_fallback_screenshot_hash": "the daemon's own temporary file path",
     "system/accessibility.py::capture_snapshot": "a window handle and a limit, both integers",
     "system/accessibility.py::press_in_background": "a runtime id checked against a digits-and-dots regex first",
-    "system/code_exec.py::_execute_cmd": "runs the approved code from the daemon's own temporary .cmd file",
+    "system/command_line.py::windows_command_line": "cmd /c only after every part is checked for cmd's code characters",
+    "system/command_line.py::batch_file_command": "cmd /c on the daemon's own temporary file, its path checked",
     "system/platform_detect.py::run_shell_script": "the script is the approved shell_script action itself",
 }
 
 # Still to be fixed (patches 2 and 3 of the sweep). This list only shrinks; a new place fails the test.
-NOT_YET = {
-    "agents/executor.py::_exec_shell_command",
-    "agents/executor.py::_exec_open_url",
-    "system/clipboard.py::clipboard_write",
-    "system/processes.py::process_exists",
-    "system/disks.py::mount_exists",
-    "system/applications.py::_resolve_shortcut_target",
-    "system/screen.py::screenshot",
-}
+NOT_YET: set[str] = set()
 
 
 def _call_name(node: ast.Call) -> str:
@@ -201,7 +195,9 @@ def places() -> set[str]:
             (name, _Scope(list(fn.body), functions, module)) for name, fn in functions.items()
         ]
         for scope_name, scope in scopes:
-            if any(_pasted(node, scope) for node in scope.nodes if isinstance(node, ast.Call)):
+            calls = [node for node in scope.nodes if isinstance(node, ast.Call)]
+            lists = [node for node in scope.nodes if isinstance(node, (ast.List, ast.Tuple))]
+            if any(_pasted(node, scope) for node in calls) or any(_pasted_list(node, scope) for node in lists):
                 found.add(f"{rel}::{scope_name}")
     return found
 
@@ -211,6 +207,19 @@ def _pasted(node: ast.Call, scope: _Scope) -> bool:
     if any_value and any(not _constant_text(arg, scope) for arg in code):
         return True
     return any(_built(arg, scope, set()) for arg in code)
+
+
+def _pasted_list(node: ast.List | ast.Tuple, scope: _Scope) -> bool:
+    """An argument list built anywhere (returned, stored, passed on) that starts an interpreter with -c or /c, whose
+    code argument is built from a value: the sandbox's old ulimit wrapper pasted a path into "bash -c" this way."""
+    items = list(node.elts)
+    if len(items) < 3 or not (_text_constant(items[0]) and _text_constant(items[1])):
+        return False
+    if str(items[0].value).casefold() not in INTERPRETERS or str(items[1].value) not in ("-c", "/c", "-Command"):
+        return False
+    return _built(items[2], scope, set()) or (
+        str(items[0].value).casefold() in ("cmd", "cmd.exe") and not all(_constant_text(i, scope) for i in items[2:])
+    )
 
 
 def test_no_value_is_pasted_into_interpreter_code():
@@ -238,6 +247,12 @@ def test_the_scan_catches_each_way_of_building_code():
         scope = _Scope(list(functions["f"].body), functions, _Scope(top, functions))
         return any(_pasted(node, scope) for node in scope.nodes if isinstance(node, ast.Call))
 
+    def scan_lists(source: str) -> bool:
+        tree = ast.parse(textwrap.dedent(source))
+        functions = {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        scope = _Scope(list(functions["f"].body), functions, _Scope([], functions))
+        return any(_pasted_list(n, scope) for n in scope.nodes if isinstance(n, (ast.List, ast.Tuple)))
+
     assert scan("def f(x):\n    run_powershell(f\"Get-Item '{x}'\")")
     assert scan("def f(x):\n    s = 'Get-Item ' + x\n    run_powershell(s)")
     assert scan("def f(x):\n    run_powershell('Get-Item %s' % x)")
@@ -246,6 +261,8 @@ def test_the_scan_catches_each_way_of_building_code():
     assert scan("def f(url):\n    run_command(['cmd', '/c', 'start', '', url])")
     assert scan("def f(cmd):\n    run_command(['cmd', '/c'] + cmd)")
     assert scan("def f(x):\n    subprocess.run(['sh', '-c', 'ls ' + x])")
+    assert scan_lists("def f(cmd):\n    return ['bash', '-c', 'ulimit -v 1; exec ' + ' '.join(cmd)]")
+    assert not scan_lists("def f(cmd):\n    return ['bash', '-c', 'exec \"$@\"', 'x', *cmd]")
     assert not scan("def f(x):\n    run_powershell('Get-Item $HelioxArgs[\\'p\\']', values={'p': x})")
     assert not scan("def f(x):\n    run_command(['notify-send', '--', x])")
     assert not scan("def f():\n    run_powershell('Get-Date; ' + 'Get-Item .')")

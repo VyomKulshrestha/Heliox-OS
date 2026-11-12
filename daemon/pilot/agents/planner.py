@@ -568,6 +568,10 @@ def _mcp_tool_params(params: dict[str, Any]) -> dict[str, Any]:
     return params
 
 
+# Seconds a Windows script running slow system commands (systeminfo, wmic, tasklist...) is given.
+SLOW_SCRIPT_TIMEOUT = 180
+
+
 class Planner:
     """Converts natural language to structured action plans."""
 
@@ -1710,56 +1714,19 @@ class Planner:
                         d = d.replace("/", "\\")
                         action.parameters.destination = d
 
-        # --- Fix 7: Convert slow shell_script with system commands to code_execute ---
-        # On Windows, 'systeminfo', 'wmic', 'tasklist', 'netstat' are very slow
-        # and often timeout. Convert to code_execute using subprocess for better control.
+        # --- Fix 7: give slow Windows system commands time, and run them as the person approved them ---
+        # systeminfo, wmic, tasklist, netstat, ipconfig and driverquery can take longer than a script's default 60 s.
+        # This used to rewrite such a script into generated Python that ran each line with shell=True, pasting the
+        # lines between quotes; it imported a CodeParams that does not exist, so on Windows any plan holding such a
+        # script failed at this point. The script now stays the shell_script that was shown and approved, with
+        # enough time.
         if sys.platform == "win32":
-            _SLOW_CMDS = {"systeminfo", "wmic", "tasklist", "netstat", "ipconfig", "driverquery"}
-            for i, action in enumerate(fixed):
+            _SLOW_CMDS = ("systeminfo", "wmic", "tasklist", "netstat", "ipconfig", "driverquery")
+            for action in fixed:
                 if action.action_type == ActionType.SHELL_SCRIPT:
-                    script = getattr(action.parameters, "script", "") or ""
-                    script_lower = script.lower()
-                    # Check if script contains slow system commands
-                    has_slow = any(cmd in script_lower for cmd in _SLOW_CMDS)
-                    if has_slow:
-                        # Convert to code_execute with subprocess
-                        from pilot.actions import CodeParams
-
-                        python_code = "import subprocess, os\ncommands = {}\n"
-                        # Parse lines from the script that look like commands
-                        lines = [l.strip() for l in script.split("\n") if l.strip() and not l.strip().startswith("#")]
-                        cmd_dict_parts = []
-                        for line in lines:
-                            cmd_name = line.split()[0] if line.split() else ""
-                            if cmd_name.lower() in _SLOW_CMDS or "|" in line:
-                                safe_line = line.replace("'", "\\'")
-                                cmd_dict_parts.append(f"    '{safe_line}': '{safe_line}'")
-                        if cmd_dict_parts:
-                            python_code = "import subprocess\nresults = []\n"
-                            for line in lines:
-                                if line.strip():
-                                    safe_line = line.replace("'", "\\'")
-                                    python_code += (
-                                        f"try:\n"
-                                        f"    r = subprocess.run('{safe_line}', shell=True, capture_output=True, text=True, timeout=45)\n"
-                                        f"    results.append('=== {safe_line} ===\\n' + r.stdout)\n"
-                                        f"except Exception as e:\n"
-                                        f"    results.append('=== {safe_line} === FAILED: ' + str(e))\n"
-                                    )
-                            python_code += "print('\\n'.join(results))\n"
-
-                            fixed[i] = Action(
-                                action_type=ActionType.CODE_EXECUTE,
-                                target="system_commands",
-                                description=action.description or "Run system commands",
-                                risk_level=action.risk_level,
-                                parameters=CodeParams(
-                                    code=python_code,
-                                    language="python",
-                                ),
-                                use_previous_output=False,
-                            )
-                            logger.info("Post-process: converted slow shell_script to code_execute at index %d", i)
+                    script = (getattr(action.parameters, "script", "") or "").lower()
+                    if any(cmd in script for cmd in _SLOW_CMDS) and hasattr(action.parameters, "timeout"):
+                        action.parameters.timeout = max(int(action.parameters.timeout or 0), SLOW_SCRIPT_TIMEOUT)
 
         return fixed
 
