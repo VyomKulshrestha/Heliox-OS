@@ -164,7 +164,9 @@ said over it is a cut-off ("stop"), as before, and a longer sentence over it is 
 not taken and opens nothing (`tests/test_live_reply_window.py`, with the real `Addressing` and listener; text). Of
 the 981 utterances not addressed to Heliox in the synthetic hour (transcript replay, both recognisers' words), none
 is one of these replies, so the room speech measured so far could not be taken in the window; a real room has not
-been recorded yet. The dispatch is marked `voice_turn_addressed` "live_reply".
+been recorded yet. The dispatch is marked `voice_turn_addressed` "live_reply". **Fakes only**: the real listener and
+`Addressing` fed recognised text, and the transcript replay; no recorded voice session yet (the conversation bench's
+audio-level run is pending).
 
 ### What leaves the machine
 
@@ -535,12 +537,12 @@ the code: the cut-off is judged on the length of the voice, not its words; shown
 **Overheard speech** goes only to Heliox Live, marked not addressed, which does not check it: no card, nothing kept.
 It is never stored as conversation and never sent to a cloud model. **Fakes only**: unit tests with recognised text.
 
-**A slip in something said to Heliox, asked about before it is acted on** (`pilot.live.held`). Live decides and
-holds today; no addressed turn is offered to it yet. Offering every addressed turn, typed or spoken, to
-`LiveCompanion.hold` before any road takes it is the conversation side's next patch, which also changes this
-paragraph to say so. What follows is what Live does with a turn once it is offered: **Fakes only** (text through
-`live_hold`: the four slips of the conversation bench's slips.json held, the must-not-fire cases silent). A weekday
-that does not match its date
+**A slip in something said to Heliox is asked about before it is acted on** (`pilot.live.held`). Every addressed
+turn, spoken or typed, is offered to `LiveCompanion.hold` before any road takes it (`conversation.adapters.offer_to_live`,
+from the voice dispatch and the typed path), and a new conversation drops what Live was waiting on. **Fakes only**:
+text through the real dispatch and `live_hold` (the four slips of the conversation bench's slips.json held, the
+must-not-fire cases silent; in the conversation session suite also "never mind" and an unclear answer); the bench's
+audio-level run is pending. A weekday that does not match its date
 ("put the review in for Monday the nineteenth", when the nineteenth is a Thursday), a date that does not exist (the
 thirty-first of November), or an amount that differs from one the person stated earlier in the same conversation
 ("the invoice for Acme is 2,400", then "email the Acme invoice for 4,200"; or "email it for 4,200", where "it" or
