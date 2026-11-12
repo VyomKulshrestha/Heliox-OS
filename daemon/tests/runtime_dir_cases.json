@@ -1,0 +1,17 @@
+{
+  "about": "Where the daemon's runtime folder (its token files and port lock) is, per system. Read by daemon/tests/test_runtime_dir_cases.py (pilot.config._default_runtime_dir) and by the Rust test in tauri-app/src-tauri/src/commands.rs (daemon_runtime_dir), so the window and the daemon cannot drift apart. run_user_writable: /run/user/<uid> exists and this user may write it. Paths use forward slashes; both tests compare with forward slashes.",
+  "cases": [
+    {"system": "linux", "env": {}, "home": "/home/sam", "uid": 1000, "run_user_writable": true, "expected": "/run/user/1000/heliox-os"},
+    {"system": "linux", "env": {}, "home": "/home/sam", "uid": 1001, "run_user_writable": true, "expected": "/run/user/1001/heliox-os"},
+    {"system": "linux", "env": {}, "home": "/home/sam", "uid": 1001, "run_user_writable": false, "expected": "/tmp/heliox-os-runtime-1001"},
+    {"system": "linux", "env": {"TMPDIR": "/var/tmp"}, "home": "/home/sam", "uid": 1234, "run_user_writable": false, "expected": "/var/tmp/heliox-os-runtime-1234"},
+    {"system": "linux", "env": {"XDG_RUNTIME_DIR": "/run/user/1234"}, "home": "/home/sam", "uid": 1234, "run_user_writable": false, "expected": "/run/user/1234/heliox-os"},
+    {"system": "linux", "env": {"XDG_RUNTIME_DIR": "  "}, "home": "/home/sam", "uid": 1234, "run_user_writable": true, "expected": "/run/user/1234/heliox-os"},
+    {"system": "macos", "env": {}, "home": "/Users/sam", "uid": 501, "run_user_writable": false, "expected": "/Users/sam/Library/Caches/heliox-os/runtime"},
+    {"system": "macos", "env": {"XDG_RUNTIME_DIR": "/Users/sam/run"}, "home": "/Users/sam", "uid": 501, "run_user_writable": false, "expected": "/Users/sam/run/heliox-os"},
+    {"system": "windows", "env": {"LOCALAPPDATA": "C:/Users/sam/AppData/Local"}, "home": "C:/Users/sam", "uid": 1000, "run_user_writable": false, "expected": "C:/Users/sam/AppData/Local/heliox-os/runtime"},
+    {"system": "windows", "env": {"LOCALAPPDATA": "D:/profiles/sam/Local"}, "home": "C:/Users/sam", "uid": 1000, "run_user_writable": false, "expected": "D:/profiles/sam/Local/heliox-os/runtime"},
+    {"system": "windows", "env": {}, "home": "C:/Users/sam", "uid": 1000, "run_user_writable": false, "expected": "C:/Users/sam/AppData/Local/heliox-os/runtime"},
+    {"system": "windows", "env": {"LOCALAPPDATA": ""}, "home": "C:/Users/sam", "uid": 1000, "run_user_writable": false, "expected": "C:/Users/sam/AppData/Local/heliox-os/runtime"}
+  ]
+}

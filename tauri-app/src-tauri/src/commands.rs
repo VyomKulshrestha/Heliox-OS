@@ -871,15 +871,112 @@ pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
     crate::hotkey::update_shortcut(&app, &shortcut)
 }
 
-/// Read the daemon auth token from the runtime file written by the Python daemon.
-///
-/// The Python daemon writes the token to:
-///   $XDG_RUNTIME_DIR/pilot/auth_token   (Linux/macOS)
-///   %LOCALAPPDATA%\pilot\auth_token      (Windows fallback)
+/// The daemon's runtime folder, where it writes its token files (auth_token, mcp_auth_token, neural_auth_token)
+/// and its port lock, by pilot.config's own rules (`_default_runtime_dir`), case by case:
+///   $XDG_RUNTIME_DIR/heliox-os when that variable is set and not blank, on every system;
+///   macOS: ~/Library/Caches/heliox-os/runtime;
+///   Windows: %LOCALAPPDATA%\heliox-os\runtime, or ~\AppData\Local\heliox-os\runtime without it;
+///   Linux and other Unix: /run/user/<uid>/heliox-os when that folder exists and is writable, else
+///   $TMPDIR/heliox-os-runtime-<uid> ("/tmp" when TMPDIR is unset), with the real uid.
+/// daemon/tests/runtime_dir_cases.json holds cases both this and pilot.config are tested against.
+pub(crate) fn daemon_runtime_dir() -> Option<std::path::PathBuf> {
+    let system = if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        "linux"
+    };
+    runtime_dir_for(
+        system,
+        |name| std::env::var(name).ok(),
+        dirs::home_dir(),
+        current_uid(),
+        folder_writable,
+    )
+}
+
+fn runtime_dir_for(
+    system: &str,
+    var: impl Fn(&str) -> Option<String>,
+    home: Option<std::path::PathBuf>,
+    uid: u32,
+    writable_folder: impl Fn(&std::path::Path) -> bool,
+) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    if let Some(xdg) = var("XDG_RUNTIME_DIR").filter(|value| !value.trim().is_empty()) {
+        return Some(PathBuf::from(xdg.trim()).join("heliox-os"));
+    }
+    match system {
+        "macos" => home.map(|home| {
+            home.join("Library")
+                .join("Caches")
+                .join("heliox-os")
+                .join("runtime")
+        }),
+        "windows" => {
+            let local = var("LOCALAPPDATA")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .or_else(|| home.map(|home| home.join("AppData").join("Local")))?;
+            Some(local.join("heliox-os").join("runtime"))
+        }
+        _ => {
+            let run_user = PathBuf::from(format!("/run/user/{uid}"));
+            if writable_folder(&run_user) {
+                return Some(run_user.join("heliox-os"));
+            }
+            let tmp = var("TMPDIR").unwrap_or_else(|| "/tmp".to_string());
+            Some(PathBuf::from(tmp).join(format!("heliox-os-runtime-{uid}")))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn current_uid() -> u32 {
+    // SAFETY: getuid has no preconditions and cannot fail.
+    unsafe { libc::getuid() }
+}
+
+#[cfg(not(unix))]
+fn current_uid() -> u32 {
+    1000 // pilot.config's value where there is no uid; the Windows rule does not use it
+}
+
+/// An existing folder this process may write into (pilot.config: is_dir() and os.access(W_OK)).
+#[cfg(unix)]
+fn folder_writable(folder: &std::path::Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    if !folder.is_dir() {
+        return false;
+    }
+    let Ok(path) = std::ffi::CString::new(folder.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: a valid NUL-terminated path; access only reads it.
+    unsafe { libc::access(path.as_ptr(), libc::W_OK) == 0 }
+}
+
+#[cfg(not(unix))]
+fn folder_writable(folder: &std::path::Path) -> bool {
+    folder.is_dir()
+}
+
+/// The token the window and the app's own requests authenticate with: the daemon's runtime folder first
+/// (daemon_runtime_dir), then the places older versions used. Before 13 November 2026 only those older places were
+/// read, so on macOS, and on Linux outside uid 1000's /run/user folder, the window never found the token.
 ///
 /// Returns an empty string if the file does not exist yet (daemon still starting up).
 #[tauri::command]
 pub fn get_auth_token() -> String {
+    if let Some(folder) = daemon_runtime_dir() {
+        if let Ok(content) = std::fs::read_to_string(folder.join("auth_token")) {
+            let trimmed = content.trim().to_string();
+            if !trimmed.is_empty() {
+                return trimmed;
+            }
+        }
+    }
     let local_app_data = std::env::var("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
@@ -1106,6 +1203,46 @@ mod tests {
         let reply = serde_json::json!({"jsonrpc": "2.0", "error": {"code": -32010, "message": "Disk full"}, "id": "native-git-resolution"});
 
         assert_eq!(result_or_error(reply).unwrap_err(), "Disk full");
+    }
+
+    /// The table pilot.config is tested against too (daemon/tests/test_runtime_dir_cases.py): the window looks for
+    /// the token where the daemon writes it, on every system.
+    #[test]
+    fn the_token_is_looked_for_where_the_daemon_writes_it_on_every_system() {
+        let table: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../daemon/tests/runtime_dir_cases.json"
+        )))
+        .unwrap();
+        let cases = table["cases"].as_array().unwrap();
+        assert!(cases.len() >= 10);
+        for case in cases {
+            let system = case["system"].as_str().unwrap();
+            let env = case["env"].as_object().unwrap().clone();
+            let home = std::path::PathBuf::from(case["home"].as_str().unwrap());
+            let uid = case["uid"].as_u64().unwrap() as u32;
+            let run_user_writable = case["run_user_writable"].as_bool().unwrap();
+            let run_user = format!("/run/user/{uid}");
+            let found = runtime_dir_for(
+                system,
+                |name| {
+                    env.get(name)
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string)
+                },
+                Some(home),
+                uid,
+                |folder| {
+                    run_user_writable && folder.to_string_lossy().replace('\\', "/") == run_user
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                found.to_string_lossy().replace('\\', "/"),
+                case["expected"].as_str().unwrap(),
+                "{case}"
+            );
+        }
     }
 
     #[tokio::test]
