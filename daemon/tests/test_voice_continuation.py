@@ -5,6 +5,7 @@ short cut-off is "stop". A wake-phrased turn is addressed whatever state the lis
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -78,7 +79,9 @@ async def test_without_the_server_s_withdraw_the_second_half_is_one_new_turn_nev
     item._on_command = on_command
     recorder = item._recorder
     said = iter([("Hey Heliox, remind me to", 0.0), ("call the bank tomorrow morning.", 1.4)])
-    clock = [1000.0]
+    # The recorder's stamps here are compared with stamps the listener takes from the real monotonic clock, so they
+    # start from it: a made-up 1000.0 is in the future on a machine that booted five minutes ago (every CI runner).
+    clock = [time.monotonic()]
 
     async def transcribe(**_kwargs):
         try:
@@ -174,7 +177,9 @@ async def split_sentence(withdraw):
     item.withdraw_turn = withdraw_turn
     recorder = item._recorder
     said = iter([("Hey Heliox, remind me to", 0.0), ("call the bank tomorrow morning.", 1.4)])
-    clock = [1000.0]
+    # The recorder's stamps here are compared with stamps the listener takes from the real monotonic clock, so they
+    # start from it: a made-up 1000.0 is in the future on a machine that booted five minutes ago (every CI runner).
+    clock = [time.monotonic()]
 
     async def transcribe(**_kwargs):
         try:

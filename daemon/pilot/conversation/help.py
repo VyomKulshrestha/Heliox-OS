@@ -41,7 +41,9 @@ def _sentence(chosen: list[str]) -> str:
     quoted = [f'"{example}"' for example in chosen]
     if len(quoted) == 1:
         return f"You can also say {quoted[0]}."
-    return f"You can say things like {', '.join(quoted[:-1])}, or {quoted[-1]}."
+    # Short enough to be one breath on every system: with "things like" the Linux sentence ("open the terminal")
+    # came to 26 words, one over what Heliox says unasked.
+    return f"You can say {', '.join(quoted[:-1])}, or {quoted[-1]}."
 
 
 class SpokenHelp:

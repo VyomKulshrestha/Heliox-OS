@@ -11,10 +11,10 @@ def test_two_sentences_three_examples_and_more():
     help_ = SpokenHelp(clock=lambda: 0.0)
     first = help_.first(setup="claude", live=True, platform="win32")
     assert first == (
-        'You can say things like "open Notepad", "remind me in 20 minutes to stretch", or '
+        'You can say "open Notepad", "remind me in 20 minutes to stretch", or '
         '"why might my build be slow?". Say "more" for others.'
     )
-    assert help_.more("More.", setup="claude", live=True, platform="win32").startswith("You can say things like")
+    assert help_.more("More.", setup="claude", live=True, platform="win32").startswith("You can say ")
 
 
 @pytest.mark.parametrize(

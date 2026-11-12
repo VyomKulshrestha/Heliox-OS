@@ -127,7 +127,7 @@ async def test_what_can_i_say_opens_the_palette(server):
     assert len(reply.split()) <= 30  # two spoken sentences, not a list of features
     server._broadcast_notification.assert_awaited_with("open_command_palette", {})
     more = await server._control_reply("more")
-    assert more and more.startswith("You can say things like") and more != reply
+    assert more and more.startswith("You can say ") and more != reply
     assert await server._help_request("what can you do") is None  # left to the conversational answer
 
 
