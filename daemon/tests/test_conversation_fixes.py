@@ -243,3 +243,44 @@ def test_a_polite_gerund_names_the_action():
     decided = route("Would you mind muting the sound?")
     assert (decided.kind, decided.verb) == (TurnKind.ACTION, "mute")
     assert route("I was thinking about it").kind is TurnKind.CONVERSATION
+
+
+# ── how the turn was addressed ──
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["Where we store home", "What do you think about that?", "Open the other one"])
+async def test_a_doubtful_follow_up_costs_nothing_says_sorry_once_and_opens_nothing(text):
+    model = Model("should never be asked")
+    told = []
+    layer = ConversationLayer(
+        sink=Sink(),
+        model=lambda: model,
+        addressed=lambda: "doubtful_follow_up",
+        not_understood=lambda: told.append(1),
+    )
+    first = await layer.take(text)
+    second = await layer.take(text)
+    assert first.done and second.done and not first.understood and not second.understood
+    assert layer._sink.said == ["Sorry?"]  # once per conversation
+    assert model.calls == [] and told == [1, 1]
+    assert layer.memory.recent() == []  # not kept as conversation
+    layer.clear()
+    await layer.take(text)
+    assert layer._sink.said == ["Sorry?", "Sorry?"]  # a new conversation may say it once again
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("addressed", ["wake", "button", "follow_up", ""])
+async def test_after_a_wake_phrase_or_a_confident_follow_up_an_unclear_turn_is_asked_about(addressed):
+    model = Model("Sorry, I didn't catch that. Do you mean your home folder? ")
+    layer = ConversationLayer(sink=Sink(), model=lambda: model, addressed=lambda: addressed, hold_after=60.0)
+    result = await layer.take("Where we store home")
+    assert result.understood and model.calls and layer._sink.said[-1].endswith("?")
+
+
+@pytest.mark.asyncio
+async def test_a_control_word_on_a_doubtful_follow_up_still_works():
+    layer = ConversationLayer(sink=Sink(), model=lambda: None, addressed=lambda: "doubtful_follow_up")
+    result = await layer.take("cancel")
+    assert result.understood and layer._sink.said == ["Okay."]

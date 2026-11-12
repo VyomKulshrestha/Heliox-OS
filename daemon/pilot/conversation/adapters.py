@@ -205,6 +205,22 @@ def _turn_ended() -> float | None:
     return voice_turn_ended_at.get()
 
 
+def _turn_addressed() -> str:
+    """How the person addressed this turn, as the listener reports it (see pilot.system.voice)."""
+    from pilot.system import voice
+
+    marker = getattr(voice, "voice_turn_addressed", None)  # added by the speech side
+    return str(marker.get() or "") if marker is not None else ""
+
+
+def _not_understood(server: Any) -> None:
+    """Tell the listener the last turn was not understood, so its follow-up window is not extended."""
+    listener = getattr(server, "_voice_listener", None)
+    note = getattr(listener, "note_not_understood", None)  # added by the speech side
+    if callable(note):
+        note()
+
+
 def layer_for(server: Any) -> Any:
     """The server's conversation layer, built on first use from what the server already has."""
     existing = getattr(server, "_conversation", None)
@@ -285,6 +301,8 @@ def layer_for(server: Any) -> Any:
         prepare=lambda text: _prepare_speech(server, text),
         turn_ended=_turn_ended,
         search_url=lambda: str(getattr(settings(), "search_url", "") or ""),
+        addressed=_turn_addressed,
+        not_understood=lambda: _not_understood(server),
     )
     server._conversation = layer
     return layer

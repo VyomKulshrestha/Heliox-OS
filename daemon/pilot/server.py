@@ -7933,12 +7933,19 @@ class PilotServer:
 
     async def _help_request(self, text: str) -> str | None:
         """ "What can I say?": open the command palette and say what Heliox handles right away."""
-        from pilot.workflows.command_guide import HELP_REQUEST, SPOKEN_HELP
+        from pilot.conversation.help import help_for, server_state
+        from pilot.workflows.command_guide import HELP_REQUEST
 
+        # Two spoken sentences with three examples that work here and now; "more" gives the next three, and the
+        # command palette, opened at the same time, keeps the whole list on screen.
+        state = server_state(self)
+        more = help_for(self).more(text, **state)
+        if more is not None:
+            return more
         if not HELP_REQUEST.match(_normalize_spoken_phrase(text)):
             return None
         await self._broadcast_notification("open_command_palette", {})
-        return SPOKEN_HELP
+        return help_for(self).first(**state)
 
     async def _handle_command_guide(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Everything Heliox answers or does right away, with examples that work as written."""

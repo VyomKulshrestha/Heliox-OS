@@ -10,7 +10,7 @@ from pilot.config import PilotConfig, TimelineConfig, UndoConfig
 from pilot.workflows.activity_timeline import ActivityTimeline
 from pilot.workflows.app_reminders import AppReminders
 from pilot.workflows.clipboard_history import ClipboardHistory
-from pilot.workflows.command_guide import SPOKEN_HELP, all_examples, guide
+from pilot.workflows.command_guide import all_examples, guide
 from pilot.workflows.companion import Companion
 from pilot.workflows.file_finder import FileFinder
 from pilot.workflows.focus import FocusSession, QuietHours
@@ -122,8 +122,12 @@ def test_no_example_can_become_a_shortcut(server, example):
 
 @pytest.mark.asyncio
 async def test_what_can_i_say_opens_the_palette(server):
-    assert await server._control_reply("What can I say?") == SPOKEN_HELP
+    reply = await server._control_reply("What can I say?")
+    assert reply.endswith('Say "more" for others.') and reply.count(".") + reply.count("?") <= 4
+    assert len(reply.split()) <= 30  # two spoken sentences, not a list of features
     server._broadcast_notification.assert_awaited_with("open_command_palette", {})
+    more = await server._control_reply("more")
+    assert more and more.startswith("You can say things like") and more != reply
     assert await server._help_request("what can you do") is None  # left to the conversational answer
 
 
@@ -134,3 +138,16 @@ async def test_command_guide_rpc(server):
     assert result["status"] == "ok"
     assert [group["group"] for group in result["groups"]] == [group["group"] for group in guide()]
     assert all(group["examples"] for group in result["groups"])
+
+
+@pytest.mark.asyncio
+async def test_the_spoken_help_examples_that_need_no_model_are_answered_in_code(server):
+    from pilot.conversation.help import examples
+
+    local = [
+        e for e in examples(setup="none", live=False, platform="win32") if not e.startswith(("open ", "mute", "search"))
+    ]
+    for example in local:
+        reply = await server._control_reply(example)
+        expansion = await server._expand_request(example) if reply is None else None
+        assert reply is not None or expansion is not None, example

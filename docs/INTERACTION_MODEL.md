@@ -419,8 +419,78 @@ On the further checks (53 turns on Claude Haiku 5.5), before these fixes and aft
 | Quick road where expected | 7 of 7 | 7 of 7 |
 | A fresh opening | 21 of 22 | 21 to 23 of 23 (varies between runs) |
 
+### Turns the listener doubted
+
+The listener tells the layer how each turn reached it (`voice_turn_addressed`: "wake", "button", "follow_up" or
+"doubtful_follow_up"). After the wake phrase, the button or a confident follow-up, words that make no sense are
+answered with a question, as before. A doubtful follow-up is probably speech that was not meant for Heliox: it is
+never sent to a model, never acted on and never kept as conversation; Heliox says one short "Sorry?" at most once
+per conversation, then tells the listener the turn was not understood (`note_not_understood()`), which closes the
+follow-up window instead of extending it. Control words still work.
+
+### "What can I say?"
+
+Answered in two spoken sentences with three examples that work for this person right now: an app their system
+has, a reminder, and a question when a model is set up ("why did you say that?" when Live is on), then "Say 'more'
+for others." "More" within two minutes gives the next three. The command palette opens at the same time with the
+full list. Every example that needs no model is answered in code (a test checks each).
+
 ## 4. Not in this pass
 
 * The quick road covers single actions only; anything with two steps goes to the planner.
 * The planner does not see the conversation turns held here; it gets the written-out request instead.
 * The existing Claude provider (`models/cloud.py`) still calls the API over plain HTTP, non-streamed.
+
+## 5. When Heliox takes speech as meant for it
+
+The listener (`pilot/system/voice.py`) asks one rule about every utterance (`pilot/system/addressing.py`). The line
+that does not move: nothing said near the microphone that is not addressed to Heliox is acted on, stored as
+conversation, or sent to a cloud model.
+
+**Opening a conversation.** Outside an open conversation, only two things open one: the wake phrase at the very
+start of an utterance, or the microphone button (or hotkey). A sentence is never taken as addressed because it
+sounds like a command; "Open the deck" in a meeting is for the meeting.
+
+**The wake phrase counts only when it is said to Heliox.** It must open the utterance, optionally after "Hey",
+"Hi", "Okay" or "Hello", and be followed by a pause or by words said to Heliox: "Hey Heliox, open my mail",
+"Heliox, what time is it?", "Hey Heliox." It does not count when Heliox is talked about ("Heliox is the app I use",
+"Heliox's settings", "I asked Heliox"), for a web address ("Heliox.com"), or for words that only resemble it
+("Helix", "Hello, Alex", "Helium"). Recognisers write the name in other ways ("Heliocs", "Helios"); such a spelling
+counts only when the second recogniser heard the same words after it, so a misheard name needs two opinions while
+the exact name needs one. The merged transcript holds the wake phrase once ("Hey Heliox, Hey Heliocs, undo that"
+became an undo with the phrase twice).
+
+**A follow-up.** After Heliox finishes speaking in an open conversation, the next utterance needs no wake phrase
+only if all of these hold:
+- it starts within 8 seconds of Heliox's last word (people reply within about a second; 8 s leaves room to think,
+  where the old 30 s window let a room in);
+- it did not begin while Heliox was still talking, unless it is a control word ("Stop", "Wait");
+- it is plausibly meant for Heliox: a control word, a reply to the question Heliox just asked, or a direct request
+  or question (imperative, or second person);
+- it is not third-person talk, narration ("So then we went...", "I'll send Priya the deck") or a monologue of more
+  than 8 seconds of voice.
+A running task the person started, or an approval waiting, keeps the conversation open for control words and
+replies without the time limit.
+
+**No cascade.** A follow-up that might be for Heliox but is not clearly so is dispatched as a doubtful follow-up:
+the conversation layer says one short "Sorry?" at most per conversation, sends it to no model, stores nothing, and
+calls `note_not_understood()`, which closes the window. Only a confidently addressed utterance keeps the
+conversation open. After 20 seconds without one the conversation is closed and the wake phrase is needed again.
+During a call the conversation is closed and nothing is taken.
+
+**Overheard speech** goes only to Heliox Live, marked not addressed, which gives silent cards at most. It is never
+stored as conversation and never sent to a cloud model.
+
+**What the person sees.** The voice bar shows when a conversation is open and when it closes. When a direct
+request or question in the second person was not taken because no conversation was open, it says once: "Say 'Hey
+Heliox' first."
+
+**Settings.** `voice.continuous_conversation_enabled`, which took sentences that looked like commands as addressed
+without the wake phrase, defaults to off; its text says that it makes Heliox act on what other people say.
+
+**Hooks.** Each dispatch sets `pilot.system.voice.voice_turn_addressed` ("wake", "button", "follow_up",
+"doubtful_follow_up") beside `voice_turn_ended_at`; the conversation layer calls
+`ContinuousVoiceListener.note_not_understood()` after a "Sorry?".
+
+Measured: (to come, from the Conversation Bench: the 62 minutes not addressed to Heliox, the owner's wake sentences
+and follow-ups, and the control words).

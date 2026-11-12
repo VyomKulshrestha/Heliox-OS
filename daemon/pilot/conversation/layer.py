@@ -115,6 +115,8 @@ YES = frozenset(
 )  # fmt: skip
 _QUESTION_WORDS = re.compile(r"^(?:how|what|why|when|where|which|who|whats|what's|hows|how's)\b")
 _ASKS_TO_ACT = re.compile(r"^(?:can|could|would|will) you\b|^please\b")
+DOUBTFUL = "doubtful_follow_up"
+SORRY = "Sorry?"
 LOST_MID_REPLY = "I lost the connection there."
 # No text from a cloud model by then: it is treated as not answering. A local model may be loading into memory.
 FIRST_TEXT_DEADLINE = 4.5  # the holding phrase at 2 s, then at most 2.5 s more of quiet
@@ -137,6 +139,7 @@ class TurnResult:
     intent: HandoverIntent | None = None
     target: HandoverTarget = HandoverTarget.FULL_PLANNER
     source: str = "voice"  # "voice" or "typed"
+    understood: bool = True  # False: the turn was not understood and opens nothing (the listener is told)
     _sink: Any = None  # the sink for this turn when it is not the layer's own (typed chat)
     quick: QuickPlan | None = None  # the one-action plan for the quick road, when there is one
     route: Route | None = None
@@ -183,6 +186,8 @@ class ConversationLayer:
         hold_after: float = HOLD_AFTER_SECONDS,
         first_text_deadline: float = FIRST_TEXT_DEADLINE,
         prepare: Callable[[str], None] | None = None,
+        addressed: Callable[[], str] = lambda: "",
+        not_understood: Callable[[], None] = lambda: None,
         search_url: Callable[[], str] = lambda: "",
         turn_ended: Callable[[], float | None] = lambda: None,
     ) -> None:
@@ -206,6 +211,11 @@ class ConversationLayer:
         self._said_loading = False
         # Synthesise the next sentence while this one plays (one ahead only), and when the person's last word ended.
         self._prepare = prepare
+        # How the turn reached Heliox ("wake", "button", "follow_up", "doubtful_follow_up"; "" unknown), and how to
+        # tell the listener a turn was not understood so its follow-up window is not extended.
+        self._addressed = addressed
+        self._not_understood = not_understood
+        self._sorry_said = False
         self._search_url = search_url
         self._turn_ended = turn_ended
         self._last_ack = ""
@@ -245,6 +255,7 @@ class ConversationLayer:
         """The "new conversation" call: earlier turns no longer frame the next question."""
         self.interrupt()
         self.memory.clear()
+        self._sorry_said = False
         self.last_result = ""
 
     async def take(self, text: str, *, source: str = "voice", sink: Sink | None = None) -> TurnResult | None:
@@ -272,6 +283,22 @@ class ConversationLayer:
             # refuses a spoken yes before this layer is asked.
             self.memory.add_user(text)
             return self._hand_over(result, offer[1], quick=offer[2])
+        if decided.kind is not TurnKind.CONTROL and source == "voice" and self._how_addressed() == DOUBTFUL:
+            # A follow-up the listener doubted was meant for Heliox: probably speech that was not addressed to it.
+            # It is never sent to a model (overheard speech never reaches one), never acted on, not kept as
+            # conversation, opens nothing, and at most one short "Sorry?" is said per conversation.
+            result.understood = False
+            result.done = True
+            if not self._sorry_said:
+                self._sorry_said = True
+                outcome = await self._sink(SORRY, "final_answer", f"conv-sorry:{id(result)}")
+                if outcome in HEARD:
+                    result.spoken.append(SORRY)
+            try:
+                self._not_understood()
+            except Exception:
+                logger.debug("Could not tell the listener the turn was not understood", exc_info=True)
+            return result
         if decided.kind is TurnKind.ACTION:
             self.memory.add_user(text)
             return self._hand_over(result, intent_from_route(decided, text))
@@ -504,6 +531,12 @@ class ConversationLayer:
                 self._prepare(clean)
             except Exception:
                 logger.debug("Preparing the next sentence failed", exc_info=True)
+
+    def _how_addressed(self) -> str:
+        try:
+            return str(self._addressed() or "")
+        except Exception:
+            return ""
 
     @staticmethod
     def _only_asked(text: str) -> bool:
