@@ -127,7 +127,7 @@ def test_the_scripts_keep_the_rules():
     assert "type -q nc; or exit" in fish
     # zsh never waits on a Heliox that stopped reading, and leaves it alone for a while after.
     assert "zselect -t 0 -w $_heliox_fd" in zsh and "_heliox_quiet_until" in zsh
-    assert "[[ -o zle ]] && add-zle-hook-widget" in zsh
+    assert "[[ -o interactive ]] && add-zle-hook-widget" in zsh
 
 
 @POSIX
@@ -281,3 +281,40 @@ async def test_real_fish_reaches_heliox_and_gives_up_on_a_silent_one_within_the_
 async def test_real_zsh_reaches_heliox():
     ready = await dry_run("zsh")
     assert ready.ok, ready.problem
+
+
+# ── a socket path too long for the system (a long TMPDIR on macOS) ──
+
+
+def test_a_socket_path_too_long_falls_back_to_tmp_and_says_so_when_even_that_is():
+    from pilot.live.shell_line import MAX_SOCKET_PATH, fits
+
+    long = "/var/folders/" + "x" * 90 + "/T"
+    assert socket_path({"TMPDIR": long}, 501) == Path("/tmp/heliox-501/live-shell.sock")
+    assert socket_path({"XDG_RUNTIME_DIR": "/run/user/" + "9" * 100, "TMPDIR": "/tmp"}, 7) == Path(
+        "/tmp/heliox-7/live-shell.sock"
+    )
+    assert socket_path({"TMPDIR": "/var/folders/ab/T"}, 501) == Path("/var/folders/ab/T/heliox-501/live-shell.sock")
+    assert fits(Path("/" + "a" * (MAX_SOCKET_PATH - 1))) and not fits(Path("/" + "a" * MAX_SOCKET_PATH))
+
+
+@pytest.mark.asyncio
+async def test_open_refuses_a_path_too_long_and_says_why(tmp_path):
+    server = ShellLineServer(ShellLines(), enabled=lambda: True, path=tmp_path / ("d" * 120) / "s.sock", uid=0)
+    if sys.platform == "win32":
+        assert not await server.open()  # nothing to open on Windows
+        return
+    assert not await server.open()
+    assert server.problem.startswith("the socket's path is too long for this system")
+
+
+def test_the_dry_runs_throwaway_folder_is_short_enough(monkeypatch, tmp_path):
+    import tempfile
+
+    from pilot.live.shell_line import fits, short_temp_folder
+
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path / ("t" * 110)))
+    made: list[str] = []
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix, dir: made.append(dir) or f"{dir}/{prefix}abc")
+    folder = short_temp_folder("heliox-dry-")
+    assert [Path(d) for d in made] == [Path("/tmp")] and fits(folder / "silent.sock")

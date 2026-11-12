@@ -1,0 +1,54 @@
+# Live's terminal check in real zsh and fish sessions, on its own: started by hand (Actions, "Live shell check",
+# Run workflow) so a re-run takes minutes, not the whole pipeline. The same script runs in ci.yml's platform-readers
+# job. Each check prints a CHECK line; a failed one is followed by DIAG lines that say why.
+name: Live shell check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-check:
+    name: Shell check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    defaults:
+      run:
+        working-directory: daemon
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the daemon
+        run: pip install -e .
+
+      - name: Install zsh, fish and nc
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q --no-install-recommends zsh fish netcat-openbsd
+          else
+            brew install fish >/dev/null
+          fi
+          zsh --version; fish --version; command -v nc
+
+      - name: Live terminal check in real zsh and fish sessions
+        run: python tests/platform_real/shell_integration_check.py
+
+      - name: Unit tests of the shell check
+        if: always()
+        run: |
+          pip install pytest pytest-asyncio pytest-timeout
+          pytest tests/test_live_shell_line.py -q --timeout=120

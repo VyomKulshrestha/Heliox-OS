@@ -66,13 +66,33 @@ _TOKENISH = re.compile(r"(?<![\w/.-])[A-Za-z0-9_+/=-]{32,}|\b(?:sk|pk|ghp|gho|xo
 # ── where the socket lives (pure) ──
 
 
+# A Unix socket's path must fit in sockaddr_un: 104 bytes on macOS and the BSDs, 108 on Linux, with the closing NUL.
+MAX_SOCKET_PATH = 103
+
+
+def fits(path: Path) -> bool:
+    return len(os.fsencode(str(path))) <= MAX_SOCKET_PATH
+
+
 def socket_path(env: dict[str, str], uid: int) -> Path:
-    """The socket in a folder only this user can open: the session's runtime folder, else a per-user temp folder."""
+    """The socket in a folder only this user can open: the session's runtime folder, else a per-user temp folder,
+    else, when either path is too long for a socket (a long TMPDIR on macOS), /tmp/heliox-<uid>. The folder rules
+    (ours, 0700) are the same wherever it is; ``ShellLineServer.open`` says so when even that path is too long."""
     runtime = env.get("XDG_RUNTIME_DIR", "")
-    if runtime:
+    if runtime and fits(Path(runtime) / "heliox" / "live-shell.sock"):
         return Path(runtime) / "heliox" / "live-shell.sock"
     temp = env.get("TMPDIR", "") or "/tmp"
-    return Path(temp) / f"heliox-{uid}" / "live-shell.sock"
+    if fits(Path(temp) / f"heliox-{uid}" / "live-shell.sock"):
+        return Path(temp) / f"heliox-{uid}" / "live-shell.sock"
+    return Path("/tmp") / f"heliox-{uid}" / "live-shell.sock"
+
+
+def short_temp_folder(prefix: str) -> Path:
+    """A new private folder (0700) whose sockets' paths fit: the usual temp folder when short enough, else /tmp."""
+    base = Path(tempfile.gettempdir())
+    if not fits(base / f"{prefix}xxxxxxxx" / "silent.sock"):
+        base = Path("/tmp")
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=str(base)))
 
 
 def folder_problem(mode: int, owner: int, uid: int) -> str:
@@ -200,6 +220,13 @@ class ShellLineServer:
     async def open(self) -> bool:
         if sys.platform == "win32" or self._server is not None:
             return self._server is not None
+        if not fits(self.path):
+            self.problem = (
+                f"the socket's path is too long for this system ({len(os.fsencode(str(self.path)))} bytes, at most "
+                f"{MAX_SOCKET_PATH}): {self.path}"
+            )
+            logger.warning("Not opening the Live shell socket: %s", self.problem)
+            return False
         folder = self.path.parent
         try:
             folder.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -334,7 +361,7 @@ _heliox_line_changed() {
     _heliox_send "$BUFFER"
   fi
 }
-[[ -o zle ]] && add-zle-hook-widget line-pre-redraw _heliox_line_changed
+[[ -o interactive ]] && add-zle-hook-widget line-pre-redraw _heliox_line_changed
 """
 
 FISH_SCRIPT = """# Heliox Live: Enter asks Heliox first, so a risky command (for example rm -rf ~/) is not run by accident.
@@ -560,7 +587,7 @@ async def dry_run(
         return Ready(shell, False, f"{shell} is not installed here.", install_hint(shell, platform, which))
     if platform == "win32":
         return Ready(shell, False, "On Windows Heliox reads the terminal itself.")
-    folder = Path(tempfile.mkdtemp(prefix="heliox-dry-"))  # 0700, ours
+    folder = short_temp_folder("heliox-dry-")  # 0700, ours, and short enough for a socket path
     servers: list[Any] = []
     held: list[Any] = []
     try:
