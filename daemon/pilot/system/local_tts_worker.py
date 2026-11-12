@@ -259,6 +259,112 @@ def ends_sentence(piece: str) -> bool:
     return piece.rstrip("\"')]”’").endswith((".", "!", "?", "…"))
 
 
+HEAD_CACHE_ENTRIES = 40  # at most; each a second or two of 24 kHz audio, so about 3 MB in all
+HEAD_CACHE_WORDS = 6  # a head longer than this is too particular to say twice
+HEAD_CACHE_AFTER = 2  # said this many times: its audio is kept; from the next time it plays at once
+HEAD_CACHE_VERSION = 1
+
+
+class HeadCache:
+    """The heads this person's Heliox says most, kept as audio so the next one plays without being synthesised.
+
+    Keyed by the head's exact text and everything that makes its sound (engine, voice, speed, the trim settings, this
+    version), so a head plays from the cache only when the piece about to be spoken is exactly that text, made the
+    same way: it never adds, drops or changes a word of a reply. Filled only from audio Heliox has already made for a
+    reply (never synthesised for the cache), bounded to HEAD_CACHE_ENTRIES (the least recently used go first), kept
+    beside Heliox's other caches (``~/.cache/heliox/voice_heads``, which removal deletes on every system), and
+    emptied of every entry made another way when the voice or its settings change (``keep_only``)."""
+
+    def __init__(self, folder: Path | None = None) -> None:
+        if folder is None:
+            from pilot.config import CACHE_DIR
+
+            folder = CACHE_DIR / "voice_heads"
+        self.folder = folder
+        self._index: dict[str, dict[str, Any]] | None = None
+
+    @staticmethod
+    def signature(engine: str, voice: str, speed: float = 1.0) -> str:
+        return json.dumps([HEAD_CACHE_VERSION, engine, voice, speed, KEEP_LEAD_SECONDS, KEEP_CLAUSE_SECONDS])
+
+    @staticmethod
+    def key(text: str, signature: str) -> str:
+        import hashlib
+
+        return hashlib.sha256(json.dumps([text, signature]).encode("utf-8")).hexdigest()[:32]
+
+    def _load(self) -> dict[str, dict[str, Any]]:
+        if self._index is None:
+            try:
+                self._index = json.loads((self.folder / "index.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                self._index = {}
+        return self._index
+
+    def _save(self) -> None:
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            (self.folder / "index.json").write_text(json.dumps(self._load(), indent=1), encoding="utf-8")
+        except OSError:
+            logger.debug("Could not save the voice's head cache index", exc_info=True)
+
+    def lookup(self, text: str, signature: str) -> Path | None:
+        """The kept audio for exactly ``text`` made this way, or None."""
+        entry = self._load().get(self.key(text, signature))
+        if not entry or entry.get("text") != text or entry.get("signature") != signature:
+            return None
+        path = self.folder / f"{self.key(text, signature)}.wav"
+        if not path.is_file():
+            return None
+        entry["last"] = time.time()
+        return path
+
+    def said(self, text: str, signature: str, audio: Path) -> bool:
+        """``text`` was just spoken from ``audio`` (made for a reply). Counts it, and keeps a copy of the audio once it
+        has been said HEAD_CACHE_AFTER times. True when it was kept now."""
+        if len(text.split()) > HEAD_CACHE_WORDS or not audio.is_file():
+            return False
+        index = self._load()
+        key = self.key(text, signature)
+        entry = index.setdefault(key, {"text": text, "signature": signature, "count": 0, "kept": False})
+        entry["count"] += 1
+        entry["last"] = time.time()
+        kept = False
+        if entry["count"] >= HEAD_CACHE_AFTER and not entry["kept"]:
+            try:
+                import shutil
+
+                self.folder.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(audio, self.folder / f"{key}.wav")
+                entry["kept"] = kept = True
+            except OSError:
+                logger.debug("Could not keep a head's audio", exc_info=True)
+        self._prune()
+        self._save()
+        return kept
+
+    def keep_only(self, signature: str) -> None:
+        """Drop every entry made another way (the voice or its settings changed): they would never be played."""
+        index = self._load()
+        for key in [k for k, e in index.items() if e.get("signature") != signature]:
+            self._drop(key)
+        self._save()
+
+    def _drop(self, key: str) -> None:
+        self._load().pop(key, None)
+        with contextlib.suppress(OSError):
+            (self.folder / f"{key}.wav").unlink()
+
+    def _prune(self) -> None:
+        index = self._load()
+        kept = sorted((e.get("last", 0.0), k) for k, e in index.items() if e.get("kept"))
+        for _last, key in kept[: max(0, len(kept) - HEAD_CACHE_ENTRIES)]:
+            self._drop(key)
+        counted = sorted((e.get("last", 0.0), k) for k, e in index.items() if not e.get("kept"))
+        for _last, key in counted[: max(0, len(counted) - 4 * HEAD_CACHE_ENTRIES)]:
+            self._drop(key)
+
+
 # Kokoro pads every synthesis with 0.32 to 0.40 s of silence before the first word and 0.45 to 0.55 s after the
 # last (measured 12 November). Played as made, the first sound came that much after the audio began, and a clause
 # seam had about 0.8 s of silence where one synthesis pauses 0.3 to 0.5 s at a comma. So every piece keeps
@@ -387,6 +493,8 @@ class LocalTTSWorkerManager:
         self.cpu_for_session = ""
         # Where the running worker's voice runs and why, in plain words, for the model health status.
         self.device_reason = ""
+        # The heads this Heliox says most, kept as audio (HeadCache); None: nothing kept (tests, a written file).
+        self.head_cache: HeadCache | None = None
         self.gpu_lease = False  # the running worker holds Heliox's GPU lease (the arbiter said the card is usable)
         # Free system memory now, or None: the worker is not started when less than VOICE_HOST_RAM_BYTES is free
         # (on an 8 GB machine the model's 1.6-1.9 GB can push everything into swap); the system voice speaks.
@@ -753,7 +861,15 @@ class LocalTTSWorkerManager:
         folder: Path,
         play: PlayFile,
     ) -> None:
+        heads = self.head_cache
+        signature = HeadCache.signature(engine, voice)
+        cached_head = heads.lookup(sentences[0], signature) if heads is not None and sentences else None
+
         def make(index: int) -> asyncio.Future[Path]:
+            if index == 0 and cached_head is not None:
+                done: asyncio.Future[Path] = asyncio.get_running_loop().create_future()
+                done.set_result(cached_head)  # exactly this text, made this way: played as kept
+                return done
             ahead = self._prepared.pop((engine, voice, sentences[index]), None)
             if ahead is not None and not ahead.cancelled():
                 return ahead  # synthesised while the sentence before it played
@@ -768,6 +884,9 @@ class LocalTTSWorkerManager:
                 upcoming = make(index + 1) if index + 1 < len(sentences) else None
                 await play(path)
                 self.note_activity()
+                if index == 0 and heads is not None and cached_head is None:
+                    with contextlib.suppress(Exception):
+                        await asyncio.to_thread(heads.said, sentences[0], signature, path)
                 if self._prepared_dir is not None and path.parent == self._prepared_dir:
                     with contextlib.suppress(OSError):
                         path.unlink()
@@ -847,6 +966,12 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
     _manager.on_gpu_fault = gpu_arbiter.arbiter().record_fault
     _manager.free_memory = lambda: gpu_arbiter.probe_host_memory()[0]
     engine = str(getattr(voice_config, "tts_engine", ""))
+    if engine in LOCAL_ENGINES:
+        # The heads this voice says most, ready to play; entries made with another voice or settings are dropped.
+        if _manager.head_cache is None:
+            _manager.head_cache = HeadCache()
+        with contextlib.suppress(Exception):
+            _manager.head_cache.keep_only(HeadCache.signature(engine, str(getattr(voice_config, "tts_voice", ""))))
     if _manager.running and (_manager.engine != engine or _manager.process_device != _manager.device):
         with contextlib.suppress(RuntimeError):
             task = asyncio.get_running_loop().create_task(_manager.shutdown())

@@ -130,6 +130,44 @@ the head 1.1 to 2.0 s, and every later piece was ready before the one before had
 person keeps Kokoro as the default: it runs at under half real time, so speaking clause by clause never waits
 for it. What it costs them is the head's synthesis, about 1 s, against about 0.1 s on a GPU.
 
+**A shorter head was measured and rejected (13 November).** The next idea was to cut a one-to-three-word opener
+("Okay,", "Sure,", "Got it,") off as its own piece, so the first sound comes sooner. Measured with Kokoro alone on
+the CPU with 4 threads, under a scratch root, with the processor 67 to 83 % busy from other work (one run each, so
+read these as about):
+
+| Reply | whole first sentence made in | opener made in | next piece made in | opener plays for | silence after the opener | pause at that comma inside one synthesis |
+|---|---|---|---|---|---|---|
+| "Okay, your files..." | 2.59 s | 1.29 s | 2.36 s | 0.80 s | 1.94 s | 0.12 s |
+| "Sure, I'll remind..." | 2.52 s | 1.31 s | 2.28 s | 0.74 s | 1.92 s | 0.14 s |
+| "Got it, opening..." | 2.98 s | 1.26 s | 2.67 s | 0.81 s | 2.24 s | 0.08 s |
+| "Okay, your next meeting... at two." | 4.45 s | 1.33 s | 4.05 s | 0.80 s | 3.63 s | 0.43 s |
+
+The opener sounds about 1.3 s after the text arrives instead of 2.5 to 3 s, but the next piece is nowhere near ready
+when it ends, so the person hears "Okay," and then 1.9 to 3.6 s of silence. Cutting the rest shorter did not help,
+because Kokoro takes about 1.3 s for any piece, however short. On a graphics card the head is already about 0.1 s,
+so there is no machine the opener helps. Do not try it again without new evidence about synthesis speed.
+
+**Heads said often are kept as audio (`local_tts_worker.HeadCache`).** When the first piece of a reply is exactly a
+piece of six words or fewer that this Heliox has already spoken twice with the same engine, voice, speed and trim
+settings, the kept audio plays at once and nothing is synthesised for it. The key is the exact text and those
+settings, so a reply that only starts like a kept head ("Okay, done then." against a kept "Okay, done.") is made in
+full: the cache never adds, drops or changes a word. It holds at most 40 entries (the least recently used go first,
+about 3 MB in all), lives in `~/.cache/heliox/voice_heads` on Windows, macOS and Linux (removed with Heliox's other
+caches on uninstall), and drops every entry made another way when the voice or its settings change. It is filled only
+from audio already made for a reply. Of the 129 distinct sentences the conversation and personal layers write
+themselves, 62 start with a fixed piece of six words or fewer that it can keep ("Okay.", "Done.", "Working on it.",
+"Next track.", "Still checking the plan.", "Sorry, I didn't catch that."), and 45 of those are the whole reply. Once
+said twice, those play at once instead of after about 1.3 s of synthesis on a CPU. It does nothing for the model's
+own answers unless one starts with exactly such a piece.
+
+**No cheap seconds are left in the listener or the voice on a processor.** Measured on the owner's machine: the
+end of the turn is decided 400 ms after the last word, and ending it 200 ms sooner costs false starts (section 6);
+Kokoro on the CPU makes even a one-word piece in about 1.3 s and a first sentence in 2.2 to 4.5 s, by length and load; the
+clause cut already makes every later piece ready in time, and a shorter head only moves the wait behind the first
+word. The remaining time is the model's first word and the synthesis speed itself, so that is where the next person
+should look: a faster first word from the model, a faster voice model or runtime, or the graphics card, not new cut
+points.
+
 **Whisper on an NVIDIA card.** Whisper's runtime needs NVIDIA's CUDA 12 cuBLAS and cuDNN libraries, which only the
 "Voice on the graphics card" part installs (docs/FIRST_RUN.md). Measured on the owner's laptop on 12 November with
 those two libraries added to the development environment (an RTX 4060 Laptop GPU; Whisper base; the libraries'
@@ -1205,6 +1243,34 @@ split, 23 corpus lines split, 0 of 181 finished sentences later. The 8 "fixes" a
 at the wrong word. The cuts are at commas after a complete clause ("Close Chrome, | it's eating all the memory."),
 where the words so far are a finished sentence; no word list can see that the person is going on. Not adopted. The
 flush's computing cost per check was measured only under load, so it is not quoted.
+
+**Re-measured 13 November with both repairs in the loop, and left off.** The replay and turn-split set as it is now
+(78 clips, owner and synthetic, 16 of them 3 s or longer) was fed the same way on the audio's own clock, with
+Parakeet as the final pass, and every split was checked against the two things that can repair it: the
+unfinished-words wait (`sounds_unfinished`) and the server joining a second utterance that follows within
+`CONTINUATION_SECONDS` (3 s) by withdrawing the first turn.
+
+| `early_turn_threshold` | clips split | of the 16 long clips | repaired by the unfinished-words wait | repaired by the server join | not repaired | turns ended early | quiet before the end saved per turn |
+|---|---|---|---|---|---|---|---|
+| 1.0 (off) | 0 | 0 | - | - | - | 0 | baseline: median 400 ms of quiet |
+| 0.99 | 0 | 0 | - | - | - | 0 | none |
+| 0.97 | 9 | 6 | 1 | 8 | 0 | 31 of 67 | median 0 ms, mean 93 ms, at most 200 ms |
+| 0.95 | 16 | 10 | 1 | 15 | 0 | 40 of 60 | median 200 ms, mean 133 ms, at most 200 ms |
+
+Most splits fall after the wake word ("A heliox. | Email the Acme invoice for four thousand...", "Hey Hilliogs. |
+What did I do this morning?": 5 of 9 at 0.97, 12 of 16 at 0.95). One is a real correction ("Sorry, I meant the other
+folder. | The one on the desktop.") and one is cut inside a date ("The invoice is due on the thirty-first o | Of
+November.", which the unfinished-words wait catches). Every second half began straight after the first, so the join
+repairs all of them and no request runs twice. What it cannot repair is what the person hears: the first half is a
+complete turn, so Heliox starts answering it ("Yes?", or an answer to "Sorry, I meant the other folder."), then the
+second half arrives, the turn is withdrawn and the voice stops. At 0.95 that is an audible false start on 16 of 78
+turns, to save 200 ms on two turns in three. Making a wake-word-only first half always wait would remove 12 of the
+16 and still leave false starts on real corrections. So the setting stays at 1.0.
+
+What would reopen it: a way to end the turn early that never starts speaking on a first half. For example, the
+answer to an early end could be prepared but held silent until the usual 400 ms check confirms the turn, so a split
+costs nothing audible and a confirmed turn still gains the head start. That would need its own measurement of how
+often the held answer is thrown away.
 
 ## 7. What is not yet shown, and the recording that would show it
 
