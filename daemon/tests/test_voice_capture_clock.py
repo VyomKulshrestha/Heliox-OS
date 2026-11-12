@@ -109,7 +109,7 @@ async def run(script: list[tuple[list, str]], backlog: float, monkeypatch) -> li
 
 SPLIT = [
     (quiet(0.3), ""),
-    (tone(1.0), "Hey Heliox, remind me to"),
+    (tone(1.0), "Hey Heliox, set a reminder"),
     (quiet(1.4), ""),
     (tone(1.0), "call the bank tomorrow morning."),
     (quiet(1.5), ""),
@@ -127,7 +127,19 @@ NEW_TURN = [
 @pytest.mark.parametrize("backlog", [0.0, 7.0, 25.0])
 async def test_a_continuation_is_the_same_with_and_without_a_recognition_backlog(backlog, monkeypatch):
     dispatched = await run(SPLIT, backlog, monkeypatch)
-    assert dispatched == [("remind me to", "wake"), ("call the bank tomorrow morning", "follow_up")]
+    assert dispatched == [("set a reminder", "wake"), ("call the bank tomorrow morning", "follow_up")]
+
+
+HELD = [(quiet(0.3), ""), (tone(1.0), "Hey Heliox, remind me to"), *SPLIT[2:]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backlog", [0.0, 7.0, 25.0])
+async def test_words_that_stop_mid_sentence_wait_for_the_rest_with_and_without_a_backlog(backlog, monkeypatch):
+    """ "Remind me to" is not dispatched: the rest, 1.4 s later, is heard and the sentence goes once, whole, however
+    far behind the recogniser is (the wait is for speech to begin, and speech already captured counts)."""
+    dispatched = await run(HELD, backlog, monkeypatch)
+    assert dispatched == [("remind me to call the bank tomorrow morning", "wake")]
 
 
 @pytest.mark.asyncio

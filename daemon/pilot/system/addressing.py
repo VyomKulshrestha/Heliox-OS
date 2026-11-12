@@ -307,8 +307,13 @@ class Addressing:
         if heard.by_button:
             self._addressed()
             return Decision(True, heard.text.strip(), "button")
-        if heard.heliox_was_speaking and 0 < heard.voiced_seconds <= CUT_OFF_SECONDS:
+        if (
+            heard.heliox_was_speaking
+            and 0 < heard.voiced_seconds <= CUT_OFF_SECONDS
+            and vocative_wake(heard.wake_text or heard.text, heard.other_text) is None
+        ):
             # Heliox was talking and the person cut it off: it stops and acknowledges; the words go nowhere else.
+            # "Hey Heliox" over Heliox is not a stop: its voice has already stopped for it, and the request follows.
             return Decision(True, "Stop", "cut-off")
         wake = vocative_wake(heard.wake_text or heard.text, heard.other_text)
         if wake is None and heard.wake_text and heard.text != heard.wake_text:

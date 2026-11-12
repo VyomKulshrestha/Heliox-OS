@@ -51,6 +51,11 @@ voice_turn_tail: ContextVar[str] = ContextVar("voice_turn_tail", default="")  # 
 # first half's turn end, and Heliox had been talking 0.0 to 1.4 s.
 CONTINUATION_SECONDS = 3.0
 JUST_BEGUN_SECONDS = 2.0
+# An addressed turn whose words stop mid-sentence ("remind me to", "...during exams,") is not dispatched at once:
+# the listener waits this long, from when its words are ready, for the rest, and dispatches the sentence whole.
+# Speech that began while the first half was being recognised counts. On the bench's pause scenarios the rest
+# began 1.7 to 3.1 s after the last word, about 1.0 to 2.4 s after the first half's words were ready.
+UNFINISHED_WAIT_SECONDS = 2.5
 
 _VOICE_TRANSCRIPTION_PROMPT = (
     "Hey Heliox. Desktop command vocabulary: open, close, click, type, search, scroll, launch, switch, "
@@ -273,6 +278,51 @@ def _cancel(task: asyncio.Future[Any] | None) -> None:
 def is_short_decision(text: str) -> bool:
     """ "No", "Yes", "Stop": complete answers, however short."""
     return " ".join(text.casefold().strip(" \t,.:;!?-").split()) in _AUTONOMOUS_SHORT_DECISIONS
+
+
+# Words a request cannot end on: the person paused in the middle ("remind me to | call the bank", "open the | deck").
+_UNFINISHED_LAST = frozenset(
+    {"a", "an", "the", "to", "and", "or", "but", "nor", "of", "for", "with", "my", "your", "our", "their", "its"}
+    | {"at", "from", "into", "onto", "about", "because", "if", "than", "whether"}
+)
+# "Remind me too": how a recogniser writes "remind me to" when the sentence stops there.
+_UNFINISHED_TOO = re.compile(
+    r"\b(?:remind|ask|tell|want|wanted|need|have|going|got|try|trying|like|love|used|able|forget|forgot)\s+"
+    r"(?:me\s+|him\s+|her\s+|them\s+|us\s+)?too$"
+)
+
+
+_PAUSE_MARKS = " ,;:-.–—…"  # what a recogniser writes where the person paused
+
+
+def sounds_unfinished(text: str) -> bool:
+    """The words stop mid-sentence, so the listener waits for the rest (UNFINISHED_WAIT_SECONDS).
+
+    Never for words that are already a whole thing to act on, whatever mark a recogniser put after them: a control
+    word or phrase ("Stop,", "Never mind,", "Cancel that,"), a short decision ("No,", "Yes,") or a safe fast phrase,
+    of up to three words; nor for anything of one or two words ending in a pause mark ("Go on,", "Shut up,") unless
+    its last word is one no request ends on ("Open the,"). Otherwise: a trailing comma, dash or ellipsis (how the
+    recognisers write a pause in the middle of a sentence) after three or more words, or a last word no request ends
+    on ("remind me to", "remind me too"). "?" and "!" end a sentence whatever comes before."""
+    from pilot.system.addressing import CONTROL
+
+    stripped = text.strip()
+    if not stripped or stripped.endswith(("?", "!")):
+        return False
+    core = stripped.rstrip(_PAUSE_MARKS)
+    words = re.findall(r"[a-z0-9']+", core.casefold())  # "at 10." ends on 10, not on "at"
+    if not words:
+        return False
+    if len(words) <= 3 and (CONTROL.match(core.casefold()) or is_short_decision(core) or is_safe_fast_phrase(core)):
+        return False
+    ends_badly = words[-1] in _UNFINISHED_LAST or bool(_UNFINISHED_TOO.search(" ".join(words)))
+    if stripped.endswith((",", ";", ":", "-", "\u2013", "\u2014", "...", "\u2026")):
+        return ends_badly or len(words) > 2
+    return len(words) >= 2 and ends_badly
+
+
+# A reply to something Heliox asked or said is whole whatever it ends on ("No,", "The blue one,"), as is "stop".
+_ANSWER_REASONS = frozenset({"live reply", "follow-up: reply", "follow-up: control"})
 
 
 # How "Hey Heliox" comes out of a recogniser that has never heard the name: "Hay heliog", "Hey helioch's",
@@ -2237,7 +2287,11 @@ class _ContinuousRecorder:
         silence_frames_used = endpointer.silence_frames
 
         while True:
-            remaining = None if deadline is None else deadline - asyncio.get_event_loop().time()
+            # The deadline is for speech to begin: once the person is talking, the utterance is heard to its end
+            # (a long request after "Hey Heliox" alone was lost at the eighth second).
+            remaining = (
+                None if deadline is None or endpointer.is_speaking else deadline - asyncio.get_event_loop().time()
+            )
             if remaining is not None and remaining <= 0:
                 return None
             try:
@@ -3428,6 +3482,19 @@ class ContinuousVoiceListener:
 
                         continue
 
+                # The command with the mark the recogniser ended the utterance on: "Hey Heliox, ... during exams," loses
+                # its comma in the command, and "Hey Heliox, stop," must be judged as "stop,", not by its first words.
+                mark = transcript.rstrip()[-1:] if transcript.rstrip().endswith(tuple(_PAUSE_MARKS.strip())) else ""
+                judged = command_text.rstrip(" .") + mark if mark and mark != "." else command_text
+                answer = decision.why in _ANSWER_REASONS
+                if (
+                    not (cut_off or answer)
+                    and addressed_as != "continuation"
+                    and command_text
+                    and sounds_unfinished(judged)
+                ):
+                    command_text = await self._finish_sentence(command_text)
+
                 if self._workflow_control:
                     try:
                         consumed = await self._workflow_control(command_text)
@@ -3450,7 +3517,14 @@ class ContinuousVoiceListener:
                     if addressed_as == "continuation":  # only when the server can withdraw (_decide_addressed)
                         status = await self._withdraw(continues[1], command_text, self._continuation_gap)
                         if status == "withdrawn":
-                            continue  # the server dispatched the joined sentence in place of the first half
+                            # The server dispatched the joined sentence in place of the first half, as turn "<id>+".
+                            # It is now the turn a third piece continues ("..., but my oven runs hot, | so I take
+                            # it out at 35"): without this the third piece was judged alone and overheard.
+                            turn_end = getattr(self._recorder, "last_endpoint_at", None)
+                            if isinstance(turn_end, float):
+                                self._last_turn = (turn_end, command_text, f"{continues[1]}+")
+                                self._last_turn_word_end = ended
+                            continue
                         command_text, addressed_as = continues[2], "follow_up"  # the rest, as a new turn
                         continues = ("", "", "")
                     self._turns += 1
@@ -3480,6 +3554,35 @@ class ContinuousVoiceListener:
                     exc_info=True,
                 )
                 await asyncio.sleep(1.0)
+
+    async def _finish_sentence(self, first: str) -> str:
+        """The words stop mid-sentence ("remind me to"): wait up to UNFINISHED_WAIT_SECONDS for the rest and return
+        the whole sentence, so nothing is dispatched, acknowledged or answered for half of it. No rest: the words as
+        they were. The rest is a new request ("Hey Heliox, ...") or a stop word: that, alone, since half a sentence
+        is not a request."""
+        from pilot.system.addressing import CONTROL, vocative_wake
+
+        if self._on_turn_hold is not None:
+            self._schedule(self._on_turn_hold)  # still listening, as for a pause the turn detector held
+        rest = await self._record_and_transcribe(duration=8, timeout=UNFINISHED_WAIT_SECONDS, keep_backlog=True)
+        rest = (rest or "").strip()
+        if not rest or rest == "No speech detected" or looks_hallucinated(rest):
+            logger.info("Dispatching an unfinished sentence as it was: no more came (%r)", first)
+            return first
+        wake = vocative_wake(self._canonical_wake(rest))
+        if wake is not None:
+            return wake.command or first
+        tail = rest.strip(" \t,.:;!?-")
+        if CONTROL.match(tail.casefold()):
+            return tail
+        head = first.rstrip(_PAUSE_MARKS)
+        if head.casefold().endswith("too") and _UNFINISHED_TOO.search(
+            " ".join(re.findall(r"[a-z']+", head.casefold()))
+        ):
+            head = head[:-1]  # "remind me too" was "remind me to": it goes on
+        joined = f"{head} {tail[:1].lower() + tail[1:]}".strip()
+        logger.info("Joined a sentence the person finished after a pause: %r", joined)
+        return joined
 
     async def _withdraw(self, turn_id: str, joined: str, gap: float | None = None) -> str:
         """Ask the server to withdraw the first half's dispatch in favour of the joined sentence. "withdrawn",
@@ -3700,9 +3803,10 @@ class ContinuousVoiceListener:
             self._last_parakeet_text = self._last_wake_text = ""
             early = speculation.take() if self._recorder.is_active else None
             heard = await streaming.finish() if streaming is not None else ""
-            if self._cutting_off(final=True):
+            if self._cutting_off(final=True) and not loose_wake_prefix(heard):
                 # A short cut-off over Heliox is a stop whatever it says (is_cut_off_stop): no recogniser is waited
-                # for, and the streaming guess is kept only for the log.
+                # for, and the streaming guess is kept only for the log. One that sounds like "Hey Heliox" is read
+                # by the accurate pass: it is the start of a request, and the rule does not take it as a stop.
                 transcript = heard or "(cut off)"
                 self.last_transcription_engine = "none"
             elif heard and is_safe_fast_phrase(heard):

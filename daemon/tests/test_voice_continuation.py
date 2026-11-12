@@ -78,7 +78,7 @@ async def test_without_the_server_s_withdraw_the_second_half_is_one_new_turn_nev
 
     item._on_command = on_command
     recorder = item._recorder
-    said = iter([("Hey Heliox, remind me to", 0.0), ("call the bank tomorrow morning.", 1.4)])
+    said = iter([("Hey Heliox, set a reminder", 0.0), ("call the bank tomorrow morning.", 1.4)])
     # The recorder's stamps here are compared with stamps the listener takes from the real monotonic clock, so they
     # start from it: a made-up 1000.0 is in the future on a machine that booted five minutes ago (every CI runner).
     clock = [time.monotonic()]
@@ -105,7 +105,7 @@ async def test_without_the_server_s_withdraw_the_second_half_is_one_new_turn_nev
     item._record_and_transcribe = transcribe
     item._running = True
     await asyncio.wait_for(item._listen_loop(), timeout=5)
-    assert seen[0][:2] == ("remind me to", "wake") and seen[0][3] == "v1"
+    assert seen[0][:2] == ("set a reminder", "wake") and seen[0][3] == "v1"
     assert seen[1] == ("call the bank tomorrow morning", "follow_up", "", "v2", "", "")
     assert len(seen) == 2 and all(text != "Stop" for text, *_ in seen)
 
@@ -158,7 +158,7 @@ def test_a_wake_phrased_turn_is_addressed_when_the_wake_check_misreads_what_foll
 
 
 async def split_sentence(withdraw, pause: float = 1.4, withdraw_turn=None):
-    """ "Hey Heliox, remind me to" | ``pause`` | "call the bank tomorrow morning." through the listener, with the
+    """ "Hey Heliox, set a reminder" | ``pause`` | "call the bank tomorrow morning." through the listener, with the
     server's withdraw call answering ``withdraw`` (or ``withdraw_turn`` itself). Returns (dispatched, withdraw calls)."""
     item = listener()
     dispatched: list[tuple[str, str]] = []
@@ -182,7 +182,8 @@ async def split_sentence(withdraw, pause: float = 1.4, withdraw_turn=None):
     item._on_command = on_command
     item.withdraw_turn = two_arguments if custom is None else counted
     recorder = item._recorder
-    said = iter([("Hey Heliox, remind me to", 0.0), ("call the bank tomorrow morning.", pause)])
+    # A first half that does not sound unfinished: one that does is held for the rest (test_voice_unfinished).
+    said = iter([("Hey Heliox, set a reminder", 0.0), ("call the bank tomorrow morning.", pause)])
     # The recorder's stamps here are compared with stamps the listener takes from the real monotonic clock, so they
     # start from it: a made-up 1000.0 is in the future on a machine that booted five minutes ago (every CI runner).
     clock = [time.monotonic()]
@@ -214,8 +215,8 @@ async def test_a_withdrawn_first_half_is_replaced_by_the_joined_sentence_on_the_
     from types import SimpleNamespace
 
     dispatched, calls = await split_sentence(SimpleNamespace(status="withdrawn"))
-    assert calls == [("v1", "remind me to call the bank tomorrow morning")]
-    assert dispatched == [("remind me to", "wake")]  # the server dispatched the joined sentence in its place
+    assert calls == [("v1", "set a reminder call the bank tomorrow morning")]
+    assert dispatched == [("set a reminder", "wake")]  # the server dispatched the joined sentence in its place
 
 
 @pytest.mark.asyncio
@@ -224,7 +225,7 @@ async def test_too_late_or_unknown_runs_the_second_half_as_a_new_turn(status):
     from types import SimpleNamespace
 
     dispatched, _calls = await split_sentence(SimpleNamespace(status=status, said="I've already set it."))
-    assert dispatched == [("remind me to", "wake"), ("call the bank tomorrow morning", "follow_up")]
+    assert dispatched == [("set a reminder", "wake"), ("call the bank tomorrow morning", "follow_up")]
 
 
 @pytest.mark.asyncio
@@ -243,4 +244,4 @@ async def test_the_gap_on_the_capture_clock_reaches_the_server_so_a_slow_recogni
 
     dispatched, _calls = await split_sentence(None, pause=2.2, withdraw_turn=server_withdraw)
     assert seen and abs(seen[0] - 2.6) < 1e-6  # last word at +0.6, second half at +3.2
-    assert dispatched == [("remind me to", "wake")]  # withdrawn: the server runs the joined sentence
+    assert dispatched == [("set a reminder", "wake")]  # withdrawn: the server runs the joined sentence

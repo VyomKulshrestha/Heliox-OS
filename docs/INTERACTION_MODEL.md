@@ -785,6 +785,32 @@ taken as "Stop" (before, the 1.5 and 2.0 s pauses cancelled the request), and no
 So the single right action is shown for pauses up to 1.5 s, and the acknowledgement is said once only when nothing
 of the first half's was spoken.
 
+**Words that stop mid-sentence are not dispatched.** When the recognised words end on a comma, a dash or an ellipsis,
+or on a word no request ends on ("to", "the", "and", "for", "my"; "remind me too" as a recogniser writes "remind me
+to"), the listener does not dispatch them: it waits up to 2.5 s (`UNFINISHED_WAIT_SECONDS`, from when the words are
+ready; speech that began while they were being recognised counts) for the rest and dispatches the sentence once,
+whole. Nothing is acknowledged or answered for half a sentence, so there is nothing to withdraw. No rest: the words
+go as they were. A stop word or a new "Hey Heliox, ..." in place of the rest is taken alone. Words that are
+already whole never wait, whatever mark ends them: a control word, a short decision or a safe fast phrase of up
+to three words ("Stop,", "No,", "Cancel that,"), anything of one or two words, and any reply to Heliox's question
+or a Live remark. The cost is a finished request that ends on such a word ("Tell me what this is about."), which
+waits the full 2.5 s; none of the corpus's 994 transcripts or the 92 of the owner's own recordings ends that way. A wait for speech to
+begin no longer cuts off speech that began in time (a long request after "Hey Heliox" alone was lost at the eighth
+second). After the server joined a split sentence, that joined turn ("v1+") is the one a third piece continues;
+before, the third piece of "..., but my oven runs hot, | so I take it out at 35" was judged alone and overheard.
+"Hey Heliox" said over Heliox is the start of a request, never the short cut-off "stop": its voice has already
+stopped for it, and the request after it is heard as a command.
+Re-run on 12 November (main 8b21d6f with the bench's wired runner, synthetic voices, stub planner, timing-free; the
+same scenarios on 0db01d9 before the change for comparison):
+- The four pause scenarios: one dispatch each, of the whole sentence, and nothing said during the pause (before: the
+  half "remind me too" was dispatched, "Okay, setting that reminder." began in the pause, and the server withdrew
+  it once the rest was recognised and ran the joined sentence).
+- 23 sentences said to Heliox with a comma pause: 22 reach the server as one sentence, 10 joined before any
+  dispatch and 12 by withdrawal (there the first half's words ended in "." or "?"). Before: 20, 17 by withdrawal
+  and 3 never split, with a third piece dropped in one. The one left has a second half 10 s long, decided more than
+  6 s after the first half was dispatched: "unknown" until the server counts its limit on the gap. None is taken as "Stop" (two were, when
+  "Hey Heliox" was said over Heliox).
+
 **When the voice does not work.** A system voice that fails (`say`, espeak-ng or Windows' speech returning an
 error) or is missing makes the speech outcome "no_voice", never "spoken" (from the code; tested with fake system
 programs on each system's path). After it no follow-up window and no Live reply window open, since nothing was
