@@ -55,7 +55,10 @@ async def test_records_typed_ordered_events_with_context_and_provenance(ledger):
     assert events[0].schema_version == SCHEMA_VERSION
     assert events[0].session_id == "session-1"
     assert events[0].user_id == "user-1"
-    assert events[0].provenance == {"component": "test"}
+    from pilot import __version__
+
+    # The caller's provenance, and which Heliox wrote the row in what kind of process (the suite: its test root).
+    assert events[0].provenance == {"component": "test", "written_by": {"version": __version__, "run": "test root"}}
     assert events[0].confidence == 0.9
     assert events[1].parent_event_id == intent.event_id
     assert plan.plan_id == "p1"
@@ -215,3 +218,22 @@ async def test_rejects_invalid_confidence(ledger):
             ExperienceEventType.WORLD_PREDICTION,
             confidence=1.1,
         )
+
+
+def test_the_stamp_says_daemon_in_the_daemon_and_tool_on_the_real_folders(monkeypatch):
+    from pilot import __version__, real_folders
+    from pilot.intelligence import experience
+
+    experience._written_by.cache_clear()
+    monkeypatch.setattr(real_folders, "_daemon_entry", True)
+    assert experience.written_by() == {"version": __version__, "run": "daemon"}
+
+    monkeypatch.setattr(real_folders, "_daemon_entry", False)
+    monkeypatch.setattr(real_folders, "where_folders_are", lambda: ("real", []))
+    experience._written_by.cache_clear()
+    assert experience.written_by()["run"] == "tool"
+
+    monkeypatch.setattr(real_folders, "where_folders_are", lambda: ("fake home", []))
+    experience._written_by.cache_clear()
+    assert experience.written_by()["run"] == "fake home"
+    experience._written_by.cache_clear()

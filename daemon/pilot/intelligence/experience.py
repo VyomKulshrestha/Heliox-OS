@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
@@ -20,6 +21,38 @@ from typing import Any
 from pilot.db.sqlite_pool import AsyncSqlitePool
 
 SCHEMA_VERSION = 1
+
+# Every event says which Heliox wrote it and in what kind of process, under this key of provenance_json, so a later
+# question ("which of these rows did a test or a tool write?", "since which version?") is answered from the data.
+WRITTEN_BY = "written_by"
+
+
+def written_by() -> dict[str, str]:
+    """{"version": the daemon package's version, "run": "daemon" | "test root" | "fake home" | "tool"}.
+
+    "tool" is a process outside the daemon on the real folders, which only an explicit --real-folders allows."""
+    from pilot.real_folders import is_daemon
+
+    return dict(_written_by(is_daemon()))
+
+
+@functools.lru_cache(maxsize=2)
+def _written_by(daemon: bool) -> tuple[tuple[str, str], ...]:
+    """Worked out once per process (the folders are fixed when pilot.config loads), not on every event."""
+    from pilot import __version__
+    from pilot.real_folders import where_folders_are
+
+    if daemon:
+        run = "daemon"
+    else:
+        try:
+            kind = where_folders_are()[0]
+        except Exception:  # never let the stamp stop a write
+            kind = "real"
+        run = "tool" if kind == "real" else kind
+    return (("version", __version__), ("run", run))
+
+
 logger = logging.getLogger("pilot.intelligence.experience")
 DECODE_ON_LOOP_ROWS = 64  # list_events decodes bigger pages in a worker thread
 
@@ -358,7 +391,7 @@ class ExperienceLedger:
             source,
             json.dumps(redact_for_persistence(dict(payload or {})), sort_keys=True, separators=(",", ":")),
             json.dumps(
-                redact_for_persistence(dict(provenance or {})),
+                {**redact_for_persistence(dict(provenance or {})), WRITTEN_BY: written_by()},
                 sort_keys=True,
                 separators=(",", ":"),
             ),
