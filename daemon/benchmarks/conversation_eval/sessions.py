@@ -295,7 +295,10 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     for line in session.get("profile", []):
         with contextlib.suppress(Exception):
             server._user_profile.add(line)
-    server._reminders = ReminderStore(folder / "reminders.json", deliver=AsyncMock(), deliver_missed=AsyncMock())
+    server._reminders = ReminderStore(
+        folder / "reminders.json", deliver=AsyncMock(), deliver_missed=AsyncMock(), clock=lambda: NOW.timestamp()
+    )
+    server._wall_clock = lambda: NOW  # the session's morning, not the machine's
     server._shortcuts = ShortcutStore(folder / "shortcuts.json", reserved=server._phrase_reserved)
     server._focus = FocusSession(folder / "focus.json", on_end=server._on_focus_end)
 

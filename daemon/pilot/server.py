@@ -1035,6 +1035,8 @@ class PilotServer:
         self._focus: Any = None
         self._quiet_hours: Any = None
         self._last_spoken = ""
+        # The wall clock the day's spoken answers read ("good morning"); a test or the session suite pins it.
+        self._wall_clock: Any = datetime.now  # () -> datetime
         self._last_spoken_at = float("-inf")  # monotonic: when it was said, for follow-ups on it
         self._last_spoken_reply = ""  # the conversation reply _last_spoken belongs to, when it is one
         from pilot.conversation.turns import TurnLog
@@ -7605,7 +7607,7 @@ class PilotServer:
         morning, night = MORNING_REQUEST.match(normalized), NIGHT_REQUEST.match(normalized)
         if not morning and not night:
             return None
-        now = datetime.now()
+        now = self._wall_clock()
         reminders = await asyncio.to_thread(self._reminders.list) if self._reminders is not None else []
         todos = await asyncio.to_thread(self._todos.open_items) if self._todos is not None else []
         if morning:
@@ -14044,6 +14046,10 @@ def handle_tool(tool_name, params):
         from pilot.personal.wiring import note_heliox_speech
 
         note_heliox_speech(self, channel, dedupe_key)  # the conversation floor knows Heliox has started its reply
+        from pilot.conversation.style import speakable_numbers
+
+        # Every road's words reach the voice here: amounts, times, dates and percentages as a person says them.
+        text = speakable_numbers(text)
         if (
             self._focus is not None
             and self._focus.active

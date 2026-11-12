@@ -83,9 +83,68 @@ def _evaluate(node: ast.AST) -> float:
     raise ValueError("unsupported")
 
 
+_NUM_UNITS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19,
+}  # fmt: skip
+_NUM_TENS = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+_NUM_SCALES = {"thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}
+
+
+def numbers_in_words(text: str) -> str:
+    """ "twenty five times four" -> "25 times 4", "a hundred and twelve" -> "112": what a speech recogniser writes
+    for a sum, as digits. Words that are not part of a number are left as they are."""
+    words = re.sub(r"(?<=[a-z])-(?=[a-z])", " ", text).split()
+    out: list[str] = []
+    index = 0
+    while index < len(words):
+        run_end = index
+        total = current = 0
+        seen = False
+        position = index
+        while position < len(words):
+            word = words[position]
+            ahead = words[position + 1] if position + 1 < len(words) else ""
+            if word in _NUM_UNITS:
+                current += _NUM_UNITS[word]
+            elif word in _NUM_TENS:
+                current += _NUM_TENS[word]
+            elif word == "hundred":
+                current = (current or 1) * 100
+            elif word in _NUM_SCALES:
+                total += (current or 1) * _NUM_SCALES[word]
+                current = 0
+            elif word == "a" and ahead in ("hundred", *_NUM_SCALES):
+                pass  # "a hundred", "a thousand"
+            elif word == "and" and seen and (ahead in _NUM_UNITS or ahead in _NUM_TENS):
+                pass  # "a hundred and twelve"
+            else:
+                break
+            seen = seen or word not in ("a", "and")
+            position += 1
+            run_end = position
+        if seen:
+            out.append(str(total + current))
+            index = run_end
+        else:
+            out.append(words[index])
+            index += 1
+    return " ".join(out)
+
+
 def calculate(expression: str) -> str | None:
     """The answer to a spoken sum, or None when it is not plain arithmetic."""
-    text = expression.casefold().strip().rstrip("?.! ").replace(",", "")
+    text = numbers_in_words(expression.casefold().strip().rstrip("?.! ").replace(",", ""))
     for pattern, kind in ((PERCENT_OF, "of"), (PERCENT_OFF, "off"), (TIP, "tip")):
         match = pattern.match(text)
         if match:
@@ -424,7 +483,7 @@ class QuickAnswers:
         answer = date_answer(normalized, self._now())
         if answer is not None:
             return answer
-        answer = convert(normalized)
+        answer = convert(numbers_in_words(normalized))  # "five miles in km", as a recogniser writes it
         if answer is not None:
             return answer
         asked = MATH_REQUEST.match(text.casefold().strip().replace("’", "'").replace("what's", "what s"))

@@ -117,7 +117,7 @@ async def test_say_that_again_repeats_the_last_spoken_answer(tmp_path):
 
     assert await server._control_reply("say that again") == "I haven't said anything yet."
     await server._speak_companion_text("Your disk is 61% full.", channel=SpeechChannel.FINAL_ANSWER)
-    assert await server._control_reply("what did you say") == "Your disk is 61% full."
+    assert await server._control_reply("what did you say") == "Your disk is sixty-one percent full."  # as it was said
 
 
 @pytest.mark.asyncio

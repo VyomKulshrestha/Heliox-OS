@@ -126,7 +126,65 @@ def speakable_numbers(text: str) -> str:
     out = _DATED_FILE.sub(dated_file, text)
     out = _ISO_DATE.sub(iso, out)
     out = _GLUED_UNIT.sub(lambda m: f"{m.group(1)} {_UNITS[m.group(2).casefold()]}", out)
-    return _PERCENT.sub(r"\1 percent", out)
+    return say_numbers(out)
+
+
+# How a voice says what a recogniser or a model writes. A speech engine reads "4 200" (a recogniser's thousands
+# space) as "four, two hundred", "4200.00" with its zeros, and "3pm" letter by letter; a person says "four thousand
+# two hundred", "three p m". Each shape is converted only where it cannot be anything else: a version ("v1.2.0"), an
+# address ("192.168.1.1"), a plain year or count is left for the voice, which says those well.
+_MONEY = re.compile(r"(?<![\w.])([$£€₹])\s?(\d{1,3}(?:[, \u00a0\u202f]\d{3})+|\d+)(?:\.(\d{2}))?(?![\d.]*\d)")
+_CURRENCY = {"$": ("dollar", "cent"), "£": ("pound", "penny"), "€": ("euro", "cent"), "₹": ("rupee", "paisa")}
+_MERIDIEM = re.compile(r"\b(\d{1,2})(?::([0-5]\d))?\s?([ap])(?:\.\s?m\.|\s?m\b)", re.IGNORECASE)
+_CLOCK = re.compile(r"(?<![\d:.])([01]?\d|2[0-3]):([0-5]\d)(?![\d:])")
+_ORDINAL = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b", re.IGNORECASE)
+_GROUPED = re.compile(r"(?<![\w.,])(\d{1,3}(?:(?:,|[ \u00a0\u202f](?=\d{3}\b))\d{3})+)(\.\d+)?(?![\w,]|\.\d)")
+_ZERO_CENTS = re.compile(r"(?<![\w.])(\d+)\.00(?![\w.])")
+_PERCENT_NUMBER = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s?%")
+
+
+def say_numbers(text: str) -> str:
+    """Amounts, times, ordinals and percentages as words: "4 200" -> "four thousand two hundred", "10:30" -> "ten
+    thirty", "3pm" -> "three p m", "19th" -> "nineteenth", "50%" -> "fifty percent". Idempotent."""
+    from pilot.live.spoken import cardinal_words, number_words, ordinal_words, time_words
+
+    def plain(digits: str) -> int:
+        return int(re.sub(r"[, \u00a0\u202f]", "", digits))
+
+    def money(match: re.Match[str]) -> str:
+        unit, small = _CURRENCY[match.group(1)]
+        whole = plain(match.group(2))
+        said = f"{cardinal_words(whole)} {unit}{'' if whole == 1 else 's'}"
+        cents = int(match.group(3) or 0)
+        if cents:
+            small_word = small if cents == 1 else ("pence" if small == "penny" else small + "s")
+            said += f" and {cardinal_words(cents)} {small_word}"
+        return said
+
+    def meridiem(match: re.Match[str]) -> str:
+        hour, minute = int(match.group(1)), int(match.group(2) or 0)
+        if not 1 <= hour <= 12:
+            return match.group(0)
+        return f"{time_words(hour, minute)} {match.group(3).casefold()} m"
+
+    def clock(match: re.Match[str]) -> str:
+        hour, minute = int(match.group(1)), int(match.group(2))
+        if hour == 0:
+            return f"{time_words(12, minute)} a m"
+        if hour > 12:
+            return f"{time_words(hour - 12, minute)} p m"
+        return time_words(hour, minute)
+
+    def grouped(match: re.Match[str]) -> str:
+        return number_words(f"{plain(match.group(1))}{match.group(2) or ''}")
+
+    out = _MONEY.sub(money, text)
+    out = _MERIDIEM.sub(meridiem, out)
+    out = _CLOCK.sub(clock, out)
+    out = _ORDINAL.sub(lambda m: ordinal_words(int(m.group(1))) if 1 <= int(m.group(1)) <= 31 else m.group(0), out)
+    out = _GROUPED.sub(grouped, out)
+    out = _ZERO_CENTS.sub(lambda m: cardinal_words(int(m.group(1))), out)
+    return _PERCENT_NUMBER.sub(lambda m: f"{number_words(m.group(1))} percent", out)
 
 
 def clean_for_speech(text: str, *, first: bool = False) -> str:

@@ -14,12 +14,7 @@ from benchmarks.conversation_eval.sessions import KINDS, Record, check_session, 
 SESSIONS = load_pack()
 
 # (session, kind) -> the cause, owned elsewhere.
-KNOWN: dict[tuple[str, str], str] = {
-    ("a long answer and enough", "none"): (
-        "pilot/workflows/quick_answers.py: 'what's two plus two?' (numbers in words) is not answered in code, so a "
-        "person with no model gets no answer"
-    ),
-}
+KNOWN: dict[tuple[str, str], str] = {}
 
 
 @pytest.mark.parametrize("kind", KINDS)

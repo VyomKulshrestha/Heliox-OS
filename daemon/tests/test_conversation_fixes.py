@@ -90,7 +90,7 @@ def test_the_last_opening_is_in_the_context():
     [
         ("The file is 16GB.", "The file is 16 gigabytes."),
         ("It took 250 ms.", "It took 250 milliseconds."),
-        ("The disk is 79% full.", "The disk is 79 percent full."),
+        ("The disk is 79% full.", "The disk is seventy-nine percent full."),
         ("It's backup-2026-11-12.zip, 16GB.", "It's the backup from the twelfth of November, 16 gigabytes."),
         ("It changed on 2026-11-12.", "It changed on the twelfth of November."),
         ("Nothing to change here.", "Nothing to change here."),

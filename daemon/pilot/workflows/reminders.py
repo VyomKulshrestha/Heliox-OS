@@ -92,12 +92,54 @@ def _parse_clock(hour: str, minute: str | None, meridiem: str | None, now: datet
     return (h, m) if 0 <= h <= 23 and 0 <= m <= 59 else None
 
 
+_SAID_DATE = re.compile(
+    r"(?:(?:on|is|for) )?(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday) )?(?:the )?"
+    r"(?:(?P<dom>\d{1,2})(?:st|nd|rd|th)? (?:of )?(?P<month>" + "|".join(MONTHS) + r")"
+    r"|(?P<month2>" + "|".join(MONTHS) + r") (?:the )?(?P<dom2>\d{1,2})(?:st|nd|rd|th)?)"
+    r"(?: (?:at|by) (?P<hour>\d{1,2})(?::(?P<minute>\d{2}))? ?(?P<meridiem>am|pm|a m|p m)?)?"
+)
+
+
+def _said_date(rest: str, now: datetime) -> tuple[datetime, str] | None:
+    """ "that the launch call is Monday 12 November at 10": the date and time named anywhere in a "that" sentence,
+    and the sentence itself. The date wins over a weekday said with it (Heliox Live asks about a mismatch)."""
+    if not rest.startswith("that "):
+        return None
+    found = _SAID_DATE.search(rest)
+    if found is None:
+        return None
+    month = MONTHS.index(found.group("month") or found.group("month2")) + 1
+    clock = (9, 0)
+    if found.group("hour"):
+        clock = _parse_clock(found.group("hour"), found.group("minute"), found.group("meridiem"), now)
+        if clock is None:
+            return None
+    try:
+        due = datetime(now.year, month, int(found.group("dom") or found.group("dom2")), clock[0], clock[1])
+    except ValueError:
+        return None
+    if due <= now:
+        due = due.replace(year=now.year + 1)
+    if due - now > timedelta(days=366):
+        return None
+    return due, rest.removeprefix("that ").strip()
+
+
 def parse_reminder(text: str, now: datetime) -> tuple[float, str] | None:
-    """(due epoch, reminder text) from "remind me in 20 minutes to stretch" and similar; None if unclear."""
-    asked = SET_REQUEST.match(_normalize(text))
+    """(due epoch, reminder text) from "remind me in 20 minutes to stretch" and similar; None if unclear.
+
+    A recogniser writes numbers as words ("Monday the twelfth of November at ten"); they are read as the written
+    form first (pilot.live.spoken, which converts only where the words around them make the reading certain)."""
+    from pilot.live.spoken import to_written
+
+    asked = SET_REQUEST.match(_normalize(to_written(text)))
     if not asked:
         return None
     rest = asked.group("rest")
+    said = _said_date(rest, now)
+    if said is not None:
+        due, what = said
+        return (due.timestamp(), what) if what and len(what) <= MAX_TEXT else None
     when_patterns = (
         # "on friday", "on friday at 10am": first, so "to call mom on friday at 5" is not read as today at 5
         r"on (?P<weekday>monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
@@ -453,6 +495,8 @@ class ReminderStore:
             self.add(due, what)
         except ValueError as exc:
             return str(exc)
+        if _normalize(text).split(" remind me ", 1)[-1].removeprefix("remind me ").startswith("that "):
+            return f"Okay, I'll remind you {describe_time(due, now)}."  # what it is about was just said
         return f"Okay, I'll remind you {describe_time(due, now)} to {what}."
 
     async def answer_async(self, text: str) -> str | None:
