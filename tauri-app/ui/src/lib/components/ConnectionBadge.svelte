@@ -1,21 +1,43 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { session } from "../stores/session";
+  import { offNotification, onNotification } from "../api/daemon";
   import { _ } from "svelte-i18n";
   import { Wifi, Loader2 } from "@lucide/svelte";
 
   let wasConnected = $state(false);
+  /** While the daemon is still starting it already answers: what it is doing ("opening Heliox's records"). */
+  let starting = $state("");
+
+  type Startup = { state?: string; stage?: string };
+  function applyStartup(status: Startup) {
+    starting = status.state && status.state !== "ready" && status.state !== "failed" ? status.stage || "starting" : "";
+  }
+
+  const handler = (method: string, params: unknown) => {
+    if (method === "startup_status") applyStartup((params ?? {}) as Startup);
+  };
+  onNotification(handler);
+  onDestroy(() => offNotification(handler));
 
   $effect(() => {
     if ($session.daemonConnected) {
-      wasConnected = true;
+      wasConnected = true; // the daemon sends the start-up stage right after authentication while it starts
+    } else {
+      starting = "";
     }
   });
 
-  let stateClass = $derived($session.daemonConnected ? "online" : wasConnected ? "reconnecting" : "connecting");
+  let stateClass = $derived(
+    $session.daemonConnected ? (starting ? "starting" : "online") : wasConnected ? "reconnecting" : "connecting",
+  );
 </script>
 
-<div class="connection-hub {stateClass}">
-  {#if $session.daemonConnected}
+<div class="connection-hub {stateClass}" data-testid="connection-badge">
+  {#if $session.daemonConnected && starting}
+    <Loader2 size={14} class="spin" />
+    <span class="label">Starting: {starting}</span>
+  {:else if $session.daemonConnected}
     <Wifi size={14} />
     <span class="label">{$_("app.online", { default: "Online" })}</span>
   {:else if wasConnected}
@@ -59,6 +81,7 @@
 
   /* Connecting State - Shimmering, fluid glowing gradient */
   .connection-hub.connecting,
+  .connection-hub.starting,
   .connection-hub.reconnecting {
     background: linear-gradient(
       90deg,

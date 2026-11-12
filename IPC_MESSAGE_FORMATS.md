@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **327 WebSocket RPC methods**. That is the API
+The daemon currently registers **328 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -41,6 +41,11 @@ contract.
 ```
 
 Standard JSON-RPC error codes: `-32700` parse error, `-32600` invalid request, `-32601` method not found, `-32603` internal error.
+`-32000`: Heliox could not finish starting (the message says why), or a request waited ten minutes for start-up.
+
+**While the daemon starts** it already listens: `ping`, `health`, `ready` and `startup_status` are answered at
+once, and every other request waits until start-up has finished and is then answered as usual (never refused for
+"not ready yet"). Each stage is announced with the `startup_status` notification (same fields as the RPC).
 
 ---
 
@@ -1164,8 +1169,15 @@ and loaded agent roles.
 **Result:** `{ "uptime": 42.1, "memory_usage_mb": 180.4, "active_connections": 1, "loaded_agents": [...] }`
 
 #### `ready`
-Return `{ "ready": true }` only when the orchestrator has registered agents
-and every registered agent is running without an error state.
+Return `{ "ready": true }` only when start-up has finished, the orchestrator has registered agents
+and every registered agent is running without an error state. While starting:
+`{ "ready": false, "startup": {...} }` (fields as `startup_status`).
+
+#### `startup_status`
+Whether Heliox has finished starting, and what it is doing meanwhile, in plain words.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok", "state": "starting" | "waiting_for_storage" | "ready" | "failed", "stage": "opening Heliox's records", "reason": "", "stages_done": ["checking the data folder", ...] }`
 
 #### `system_info`
 Return exact HUD metrics for CPU, memory, disk, hostname, and uptime.

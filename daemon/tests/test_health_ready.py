@@ -104,6 +104,9 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
         # Replaces the former hardcoded `asyncio.sleep(0.2)` that caused
         # ConnectionRefusedError / WinError 1225 on slow or Windows machines.
         await _wait_for_port("127.0.0.1", server_port, server_task)
+        # The port opens before start-up has finished (the daemon listens first and says which stage it is in);
+        # these tests are about a started daemon, so wait for start() itself. The limit only matters on failure.
+        await asyncio.wait_for(server_task, timeout=600)
 
         uri = f"ws://127.0.0.1:{server_port}"
         yield uri
@@ -112,7 +115,6 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
         await server.stop()
         assert server._orchestrator is not None
         assert server._orchestrator._scheduler_task.done()
-        await server_task
 
 
 @pytest.mark.asyncio

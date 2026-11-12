@@ -279,6 +279,8 @@ RESTART_REQUIRED_SECTIONS = {"memory", "proxy", "redis"}
 # ``abort`` interrupts execution, ``interject`` revises it, and speech
 # replacement/stop must interrupt an in-flight utterance. All other RPCs
 # remain sequential per connection.
+# Answered while the daemon is still starting; every other request waits for readiness (pilot.system.startup).
+EARLY_STARTUP_METHODS = frozenset({"ping", "health", "ready", "startup_status"})
 OUT_OF_BAND_RPC_METHODS = frozenset(
     {
         "confirm",
@@ -1156,6 +1158,7 @@ class PilotServer:
             port=self.config.air_handoff.port,
         )
         self._wire_air_handoff_requests()
+        self._startup_stage("connecting the language model")
         model_router = ModelRouter(self.config, self._vault)
         self._model_router = model_router
         await model_router.initialize()
@@ -1169,6 +1172,7 @@ class PilotServer:
 
         self._circuit_breaker = CircuitBreaker(threshold=self.config.model.max_consecutive_failures)
 
+        self._startup_stage("opening Heliox's records")
         audit = AuditLogger()
         self._permission_audit = PermissionEscalationAuditStore()
         await self._permission_audit.initialize()
@@ -1193,6 +1197,7 @@ class PilotServer:
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
         self._permission_checker = permissions
+        self._startup_stage("loading memory")
         self._memory = MemoryStore(
             checkpoint_interval_seconds=self.config.memory.checkpoint_interval_seconds,
             pruning_interval_seconds=self.config.memory.pruning_interval_seconds,
@@ -1229,6 +1234,7 @@ class PilotServer:
         except Exception:
             logger.warning("CoAdaptationService init failed (non-critical)", exc_info=True)
 
+        self._startup_stage("preparing the planner")
         # ── Plan History Audit Log ──
         self._plan_history = PlanHistoryStore()
         await self._plan_history.initialize()
@@ -1384,6 +1390,7 @@ class PilotServer:
         from pilot.personal.wiring import start_offers
 
         start_offers(self, DATA_DIR)  # offers from routines, habits and goals (pilot.personal.offers)
+        self._startup_stage("starting Live, reminders and the timeline")
         from pilot.live.engine import LiveCompanion
         from pilot.live.focused_text import create_reader
 
@@ -2077,6 +2084,7 @@ class PilotServer:
             "health": self._handle_health,
             "ready": self._handle_ready,
             "ping": self._handle_ping,
+            "startup_status": self._handle_startup_status,
             "system_status": self._handle_system_status,
             "system_info": self._handle_system_info,
             "get_uptime": self._handle_get_uptime,
@@ -2461,6 +2469,10 @@ class PilotServer:
 
         # Auth passed — acknowledge and register as an active client
         await websocket.send(_success_response(first_req.id, {"status": "authenticated", "role": role.value}))
+        startup = getattr(self, "_startup", None)
+        if startup is not None and not startup.is_ready:
+            # A window that connects while Heliox starts learns the current stage at once, not at the next one.
+            await websocket.send(_notification("startup_status", startup.snapshot()))
         if role == RpcClientRole.UI:
             self._clients.add(websocket)
         self._authenticated_clients.add(websocket)
@@ -2491,6 +2503,14 @@ class PilotServer:
                             )
                         )
                     return
+                startup = getattr(self, "_startup", None)
+                if startup is not None and not startup.is_ready and request.method not in EARLY_STARTUP_METHODS:
+                    # Asked while Heliox is starting: wait for it, then answer as usual; never "not ready yet".
+                    not_ready = await startup.wait_ready()
+                    if not_ready:
+                        if request.id is not None:
+                            await websocket.send(_error_response(request.id, -32000, not_ready))
+                        return
                 if request.method == "confirm" and request.id is not None and current_task is not None:
                     confirmation = self._pending_confirms.get(str(request.params.get("plan_id", "")))
                     if confirmation is not None:
@@ -2575,6 +2595,9 @@ class PilotServer:
             A JSON-RPC response string, or None for notifications.
         """
         handler = self._handlers.get(request.method)
+        if handler is None and request.method in EARLY_STARTUP_METHODS:
+            # The full table is built during initialize(); these answer while Heliox is still starting.
+            handler = getattr(self, f"_handle_{request.method}")
         if handler is None:
             return _error_response(request.id, -32601, f"Method not found: {request.method}")
         if request.method not in CONFIG_MUTATING_RPC_METHODS:
@@ -10132,6 +10155,9 @@ class PilotServer:
         """
         from pilot.agents.base_agent import AgentStatus
 
+        startup = getattr(self, "_startup", None)
+        if startup is not None and not startup.is_ready:
+            return {"ready": False, "startup": startup.snapshot()}
         # If orchestrator is not initialized, not ready
         if not self._orchestrator:
             return {"ready": False}
@@ -10145,6 +10171,13 @@ class PilotServer:
                 return {"ready": False}
 
         return {"ready": True}
+
+    async def _handle_startup_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Whether Heliox has finished starting, and which stage it is in ("opening Heliox's records")."""
+        startup = getattr(self, "_startup", None)
+        if startup is None:
+            return {"status": "ok", "state": "ready", "stage": "", "reason": "", "stages_done": []}
+        return {"status": "ok", **startup.snapshot()}
 
     async def _handle_ping(self, params: dict, ws: ServerConnection) -> dict:
         """Ping the server to check connectivity.
@@ -10606,10 +10639,30 @@ class PilotServer:
                 storage().report_ok(announce=False)  # said below, once the stores are up
                 logger.info("The data folder can be written again; starting Heliox's stores")
                 await self.initialize()
+                startup = getattr(self, "_startup", None)
+                if startup is not None:
+                    startup.ready()
                 await self._broadcast_notification(
                     "storage_problem", {"kind": "", "message": "Heliox can save again and is fully started."}
                 )
                 return
+
+    def _startup_stage(self, words: str) -> None:
+        """Tell the window which stage start-up is in (only while start() runs; tests that call initialize() alone
+        have no progress to report)."""
+        startup = getattr(self, "_startup", None)
+        if startup is not None and not startup.is_ready:
+            startup.begin(words)
+
+    def _spawn_notification(self, method: str, params: dict[str, Any]) -> None:
+        """Broadcast from synchronous code (a progress callback); the task is kept until it is done."""
+        tasks: set[asyncio.Task[Any]] = self.__dict__.setdefault("_notice_tasks", set())
+        try:
+            task = asyncio.get_running_loop().create_task(self._broadcast_notification(method, params))
+        except RuntimeError:  # no running loop: the log line is enough
+            return
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
     def _announce_storage_problems(self) -> None:
         """A full disk or read-only data folder reaches every open window once (notification storage_problem)."""
@@ -12590,18 +12643,16 @@ def handle_tool(tool_name, params):
         configured host and port, and announces new features to clients.
         """
         self._running = True
+        from pilot.system.startup import StartupProgress
         from pilot.system.storage_health import preflight, storage
 
+        # Listen first, then load: the window sees which stage start-up is in instead of a refused connection, and
+        # requests made meanwhile wait for readiness (pilot.system.startup).
+        progress = StartupProgress()
+        self._startup = progress
+        progress.on_change = lambda snapshot: self._spawn_notification("startup_status", snapshot)
+        progress.begin("checking the data folder")
         blocked = await asyncio.to_thread(preflight, DATA_DIR)
-        if blocked is None:
-            await self.initialize()
-        else:
-            # A full disk or read-only data folder: say so and keep answering (ping, health, status), and start
-            # everything else once the folder can be written again, instead of failing part-way through start-up.
-            self._announce_storage_problems()
-            message = storage().report("data folder", blocked, "anything")
-            logger.error("Heliox cannot write its data folder %s (%s): %s", DATA_DIR, blocked, message)
-            self._storage_wait_task = asyncio.create_task(self._initialize_when_storage_returns())
 
         host = self.config.server.host
         port = self.config.server.port
@@ -12647,10 +12698,25 @@ def handle_tool(tool_name, params):
             ping_interval=30,  # send keepalive ping every 30s
             ping_timeout=300,  # allow up to 5 min for pong (matches LLM timeout)
         )
-        logger.info("Pilot daemon ready")
+        logger.info("Pilot daemon listening; loading the rest")
+        if blocked is None:
+            try:
+                await self.initialize()
+            except Exception as error:
+                progress.failed(f"{type(error).__name__}: {str(error)[:200]}")
+                raise
+        else:
+            # A full disk or read-only data folder: say so and keep answering (ping, health, status), and start
+            # everything else once the folder can be written again, instead of failing part-way through start-up.
+            self._announce_storage_problems()
+            message = storage().report("data folder", blocked, "anything") or str(blocked)
+            logger.error("Heliox cannot write its data folder %s (%s): %s", DATA_DIR, blocked, message)
+            progress.waiting_for_storage(message)
+            self._storage_wait_task = asyncio.create_task(self._initialize_when_storage_returns())
         self._recorded_workflow_scheduler = asyncio.create_task(
             self._run_recorded_workflow_scheduler(), name="recorded_workflow_scheduler"
         )
+        progress.begin("preparing the voice")
         self._start_tts_warmup()
 
         # Wayland: the app's own shortcut cannot grab keys there, so the daemon binds it through the desktop portal.
@@ -12680,6 +12746,10 @@ def handle_tool(tool_name, params):
                 logger.exception("Air Handoff failed to start; disabling the receiver")
                 self.config.air_handoff.enabled = False
                 self.config.save()
+
+        if blocked is None:
+            progress.ready()
+            logger.info("Pilot daemon ready")
 
         if hasattr(self, "_new_features_announcement") and self._new_features_announcement:
             await asyncio.sleep(1)
