@@ -93,6 +93,58 @@ def test_touches_protected_path_checks_parameter_fields():
     assert touches_protected_path(action, config) is not None
 
 
+def test_a_protected_package_name_no_longer_matches_inside_paths_and_words():
+    from pilot.actions import PackageParams, ShellCommandParams
+
+    config = PilotConfig()
+    config.restrictions.protected_packages = ["git", "Mozilla.Firefox"]
+    config.restrictions.protected_folders = ["/etc"]
+    # Before: "git" matched any path or command holding those letters, and "/etc" any path starting with them.
+    for target in ("/home/sam/github/notes.txt", "/home/sam/digital.txt", "/etcetera/x", "/home/sam/etc/x"):
+        assert touches_protected_path(_action(target=target), config) is None, target
+    status = Action(
+        action_type=ActionType.SHELL_COMMAND,
+        target="",
+        parameters=ShellCommandParams(command="git", args=["status"]),
+    )
+    assert touches_protected_path(status, config) is None
+    # Removing the package, by the package action or a removal command, still counts, whatever the case.
+    removal = Action(action_type=ActionType.PACKAGE_REMOVE, target="git", parameters=PackageParams(name="GIT"))
+    assert touches_protected_path(removal, config) == "git"
+    apt = Action(
+        action_type=ActionType.SHELL_COMMAND,
+        target="",
+        parameters=ShellCommandParams(command="sudo", args=["apt", "remove", "git"]),
+    )
+    assert touches_protected_path(apt, config) == "git"
+    winget = Action(
+        action_type=ActionType.SHELL_COMMAND,
+        target="",
+        parameters=ShellCommandParams(command="winget uninstall mozilla.firefox"),
+    )
+    assert touches_protected_path(winget, config) == "Mozilla.Firefox"
+    # A protected folder in command text counts at a path boundary.
+    cat = Action(
+        action_type=ActionType.SHELL_COMMAND, target="", parameters=ShellCommandParams(command="cat /etc/hosts")
+    )
+    assert touches_protected_path(cat, config) == "/etc"
+    notes = Action(
+        action_type=ActionType.SHELL_COMMAND, target="", parameters=ShellCommandParams(command="cat /etcetera/a")
+    )
+    assert touches_protected_path(notes, config) is None
+
+
+def test_a_protected_folder_written_with_a_tilde_is_matched_by_its_real_path(monkeypatch, tmp_path):
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(tmp_path))
+    config = PilotConfig()
+    config.restrictions.protected_folders = ["~/Documents/private"]
+    inside = _action(target=str(tmp_path / "Documents" / "private" / "plan.txt"))
+    assert touches_protected_path(inside, config) == "~/Documents/private"
+    beside = _action(target=str(tmp_path / "Documents" / "private-notes.txt"))
+    assert touches_protected_path(beside, config) is None
+
+
 def test_no_protected_paths_configured_returns_none():
     config = PilotConfig()
     action = _action(target="/anything")

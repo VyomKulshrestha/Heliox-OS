@@ -389,9 +389,11 @@ class ActionValidator:
                         raise ValidationError(idx, f"Path {candidate} is in protected folder {protected}")
 
         if isinstance(action.parameters, PackageParams) and action.action_type == ActionType.PACKAGE_REMOVE:
-            # Case-insensitive: winget ids and Homebrew names are, and "Firefox" must not slip past "firefox".
-            protected_names = {str(name).strip().casefold() for name in restrictions.protected_packages}
-            if action.parameters.name.strip().casefold() in protected_names:
+            # Ignoring case, and on Windows a winget id and the name after its last dot are the same package:
+            # "firefox" must not slip past a protected "Mozilla.Firefox" (pilot.security.package_names).
+            from pilot.security.package_names import is_protected
+
+            if is_protected(action.parameters.name, list(restrictions.protected_packages)):
                 raise ValidationError(
                     idx,
                     f"Package '{action.parameters.name}' is protected and cannot be removed",

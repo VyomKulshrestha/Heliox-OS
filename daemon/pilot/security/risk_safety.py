@@ -16,8 +16,11 @@ risk_score() for how this composes with the existing heuristic_risk().
 
 from __future__ import annotations
 
+import os
+import re
 from typing import TYPE_CHECKING
 
+from pilot.security.path_rules import rules_for
 from pilot.security.risk_model import PredictedOutcome
 from pilot.security.risk_observation import NOMINAL_PROC_CAPACITY
 
@@ -41,28 +44,65 @@ FORK_BOMB_RISK_WEIGHT = 0.7
 PROTECTED_PATH_RISK_WEIGHT = 0.9
 
 
-def _path_like_params(action: Action) -> list[str]:
-    """Every string-valued field on the action's parameters that plausibly
-    holds a filesystem path or package name — best-effort, mirrors
-    destructive_critic.py's own _format_action_list relevant-field list."""
-    candidates: list[str] = []
-    if action.target:
-        candidates.append(action.target)
-
+def _params(action: Action) -> dict:
     params = action.parameters
     if params is None:
-        return candidates
+        return {}
     try:
-        param_dict = params.model_dump(exclude_none=True)
+        return params.model_dump(exclude_none=True)
     except Exception:
-        return candidates
+        return {}
 
-    for key in ("path", "destination", "name", "package", "command", "script"):
-        value = param_dict.get(key)
-        if isinstance(value, str) and value:
-            candidates.append(value)
 
-    return candidates
+def _strings(values: dict, keys: tuple[str, ...]) -> list[str]:
+    return [value for key in keys if isinstance(value := values.get(key), str) and value.strip()]
+
+
+def _resolved(path: str) -> str:
+    try:
+        return os.path.realpath(os.path.expanduser(path.strip()))
+    except (OSError, ValueError):
+        return path
+
+
+def _is_absolute(path: str) -> bool:
+    expanded = os.path.expanduser(path.strip())
+    return os.path.isabs(expanded) or bool(re.match(r"^[A-Za-z]:[\\/]", expanded))
+
+
+def _fold(text: str) -> str:
+    """Case is folded where the file system ignores it (Windows, macOS), and kept on Linux."""
+    text = text.replace("\\", "/")
+    return text.casefold() if rules_for().case_insensitive else text
+
+
+# Where a protected folder written in command text ends: the end, a path separator, a space, a quote or a shell
+# operator. So "/etc" matches "cat /etc/hosts" but not "/etcetera" or "/home/sam/etc-notes".
+_FOLDER_END = r"(?=$|[/\s'\"`;|&)<>])"
+_FOLDER_START = r"(?<![\w.~-])"
+# A package name in command text is a whole token: "git" matches "apt remove git" but not "github" or "gitk".
+_PACKAGE_EDGE_BEFORE = r"(?<![\w.+-])"
+_PACKAGE_EDGE_AFTER = r"(?![\w.+-])"
+_REMOVAL_WORDS = re.compile(r"\b(uninstall|remove|purge|erase|autoremove)\b", re.IGNORECASE)
+
+
+def _folder_in_text(text: str, folder: str) -> bool:
+    folded = _fold(text)
+    forms = {_fold(folder.strip().rstrip("/\\")), _fold(_resolved(folder).rstrip("/\\"))}
+    return any(form and re.search(_FOLDER_START + re.escape(form) + _FOLDER_END, folded) is not None for form in forms)
+
+
+def _package_in_text(text: str, package: str) -> bool:
+    """A protected package named as a whole token in a command that removes packages."""
+    if not _REMOVAL_WORDS.search(text):
+        return False
+    from pilot.security.package_names import names_for
+
+    folded = text.casefold()
+    return any(
+        re.search(_PACKAGE_EDGE_BEFORE + re.escape(form) + _PACKAGE_EDGE_AFTER, folded) is not None
+        for form in names_for(package)
+    )
 
 
 def touches_protected_path(action: Action, config: PilotConfig) -> str | None:
@@ -70,18 +110,54 @@ def touches_protected_path(action: Action, config: PilotConfig) -> str | None:
     target or parameters touch one, else None. Heliox's direct analog of
     Ferrum's `deletes_own_config` check — a concrete fact about THIS
     action's own arguments, checked directly regardless of how the
-    predicted-outcome model scores the action otherwise."""
+    predicted-outcome model scores the action otherwise.
+
+    The matching rule (it was a substring of any field, so a protected "git" scored every path with "git" in it,
+    and "/etc" scored "/home/sam/etcetera"):
+    - a protected folder: an absolute path in the target, ``path`` or ``destination`` that is the folder or inside
+      it, after "~" and links are resolved (case folded on Windows and macOS); or the folder, as written or
+      resolved, at a path boundary in a ``command`` or ``script``;
+    - a protected package: the package action's name, the same package by ``package_names.is_protected``
+      (ignoring case; on Windows a winget id or the name after its last dot); or one of those as a whole token in a
+      ``command`` or ``script`` that removes packages (uninstall, remove, purge, erase, autoremove)."""
+    from pilot.actions import PackageParams
+    from pilot.security.package_names import is_protected
+    from pilot.security.path_rules import path_within
+
     restrictions = config.restrictions
-    protected = list(restrictions.protected_folders) + list(restrictions.protected_packages)
-    if not protected:
+    folders = [folder for folder in restrictions.protected_folders if str(folder).strip()]
+    packages = [package for package in restrictions.protected_packages if str(package).strip()]
+    if not folders and not packages:
         return None
 
-    for candidate in _path_like_params(action):
-        normalized = candidate.replace("\\", "/").lower()
-        for guard in protected:
-            guard_normalized = guard.replace("\\", "/").lower()
-            if guard_normalized and guard_normalized in normalized:
-                return guard
+    values = _params(action)
+    is_package = isinstance(action.parameters, PackageParams)
+    paths = _strings(values, ("path", "destination"))
+    if action.target and not is_package:
+        paths.append(action.target)
+    texts = _strings(values, ("script",))
+    command = values.get("command")
+    args = values.get("args")
+    if isinstance(command, str) and command.strip():
+        # A command and its arguments read as one line, so "apt" with ["remove", "git"] is seen whole (the
+        # arguments were not looked at before).
+        words = [str(arg) for arg in args] if isinstance(args, list) else []
+        texts.append(" ".join([command, *words]))
+    names = _strings(values, ("name", "package")) if is_package else []
+    if is_package and action.target:
+        names.append(action.target)
+
+    for folder in folders:
+        guard = _resolved(folder)
+        if any(_is_absolute(path) and path_within(_resolved(path), guard) for path in paths):
+            return folder
+        if any(_folder_in_text(text, folder) for text in texts):
+            return folder
+    for package in packages:
+        if any(is_protected(name, [package]) for name in names):
+            return package
+        if any(_package_in_text(text, package) for text in texts):
+            return package
     return None
 
 
