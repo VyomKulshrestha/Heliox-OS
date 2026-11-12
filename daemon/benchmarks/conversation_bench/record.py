@@ -14,6 +14,12 @@ Sets:
              the comma.
   wake       20 sentences that start with "Hey Heliox".
   room       5 minutes of a television, a video or another person talking near the microphone, not to Heliox.
+  followup   15 replies in a conversation, without Heliox running: the helper shows what Heliox said, gives a cue
+             when its voice would have ended, and records the reply (some are said to someone else, some after
+             thinking first); the time from the cue to the first word is stored with each clip. About 5 minutes.
+  echo       open speakers: the helper PLAYS a sentence in Heliox's voice while recording, and you say "Wait,
+             stop.", cough, type loudly or stay silent, as prompted. Runs only when asked for by name, says so
+             before it starts, and plays only when you press Enter for each take. About 5 minutes.
 
 Files go to ``<audio folder>/real/<mic>/<set>/<id>.wav`` (16 kHz mono) with ``manifest.json`` and
 ``scenarios.json`` beside them in ``real/<mic>/``; ``run`` picks those scenarios up automatically. They are
@@ -104,6 +110,43 @@ WAKE: tuple[str, ...] = (
 )
 CONTROL = {"Wait, stop.", "No, don't do that.", "Never mind.", "Undo that."}
 
+# (what Heliox said, what the person replies, label, how): from the session pack's exchanges.
+FOLLOWUP: tuple[tuple[str, str, str, str], ...] = (
+    ("Your first meeting is the launch call at ten.", "And tomorrow?", "addressed", "reply at once"),
+    ("It's twenty past three.", "Thanks.", "addressed", "reply at once"),
+    ("DNS turns names like example dot com into the numbers computers use, by asking a chain of servers that "
+     "each know part of the answer, and it keeps what it learns for a while.", "Shorter.", "addressed",
+     "reply at once"),
+    ("Opening Notepad.", "Again.", "addressed", "reply at once"),
+    ("You have two reminders today.", "What are they?", "addressed", "think for three seconds first"),
+    ("The battery is at eighty percent.", "Can you pass me the charger?", "not_addressed",
+     "say it to someone else in the room, not to Heliox"),
+    ("Your next meeting is in ten minutes.", "I'll be right there, give me a minute.", "not_addressed",
+     "say it to someone else in the room, not to Heliox"),
+    ("I set a timer for ten minutes.", "Make it fifteen.", "addressed", "reply at once"),
+    ("Tomorrow will be sunny, around eighteen degrees.", "And on Saturday?", "addressed", "reply at once"),
+    ("I found three files called invoice.", "The one from October.", "addressed", "think for four seconds first"),
+    ("Do you want me to delete them?", "No, leave them.", "addressed", "reply at once"),
+    ("Your flight is on Friday at nine.", "Did you book the taxi yet?", "not_addressed",
+     "say it to someone else in the room, not to Heliox"),
+    ("Muted.", "Okay, thanks.", "addressed", "reply at once"),
+    ("Priya sent the deck an hour ago.", "Read me the first line.", "addressed", "think for two seconds first"),
+    ("That's everything on your list.", "Right, lunch?", "not_addressed",
+     "say it to someone else in the room, not to Heliox"),
+)  # fmt: skip
+ECHO_SENTENCES = (
+    "Here is your morning: three meetings, the first at nine with the design team, then a review at eleven.",
+    "I found the invoice from last week. It is for two thousand four hundred and it is due on Friday.",
+    "Your flight is on Friday at nine, so I will remind you on Thursday evening to pack.",
+    "The battery is at eighty percent and the laptop will last about four more hours at this rate.",
+)
+ECHO_ACTIONS = (
+    ("stop", 'say "Wait, stop." while it talks', "Wait, stop."),
+    ("cough", "cough once while it talks", ""),
+    ("typing", "type loudly on the keyboard while it talks", ""),
+    ("silent", "stay silent and let it finish", ""),
+)
+
 
 class Capture(Protocol):
     """An input stream that records between start() and stop(); stop() returns 16 kHz mono float32 samples."""
@@ -147,6 +190,32 @@ class DeviceCapture:
             self.stream.close()
             self.stream = None
         return np.concatenate(self.blocks) if self.blocks else np.zeros(0, dtype=np.float32)
+
+
+class SpeakerPlayer:
+    """Plays one buffer on the default output device (the echo set only); stop() ends it at once."""
+
+    def __init__(self) -> None:
+        import sounddevice as sd
+
+        self.sd = sd
+
+    def play(self, audio: Any, rate: int) -> None:
+        self.sd.play(audio, rate)
+
+    def stop(self) -> None:
+        self.sd.stop()
+
+
+def kokoro_voice(text: str) -> tuple[Any, int]:
+    """A sentence in Heliox's own local voice (Kokoro, af_heart), on the CPU."""
+    import os
+
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+    from pilot.system import kokoro_tts
+
+    kokoro_tts.configure(device="cpu")
+    return kokoro_tts._generate(text, "af_heart")
 
 
 HEADSET_WORDS = ("headset", "bluetooth", "bt", "hands-free", "handsfree", "airpods", "buds")
@@ -202,8 +271,11 @@ def heliox_input_device() -> str | None:
 class Item:
     id: str
     set: str
-    text: str  # "" for the room recording
+    text: str  # what the person says; "" for the room recording and for a cough, typing or silence
     label: str  # addressed | control | not_addressed
+    heliox: str = ""  # followup and echo: what Heliox said (or plays) first
+    how: str = ""  # followup: how to reply; echo: what to do while Heliox talks
+    action: str = ""  # echo: stop | cough | typing | silent
 
 
 def items(which: str) -> list[Item]:
@@ -214,6 +286,13 @@ def items(which: str) -> list[Item]:
         return [Item(f"w{i:02d}", "wake", t, "addressed") for i, t in enumerate(WAKE)]
     if which == "room":
         return [Item("room00", "room", "", "not_addressed")]
+    if which == "followup":
+        return [Item(f"f{i:02d}", "followup", reply, label, heliox, how)
+                for i, (heliox, reply, label, how) in enumerate(FOLLOWUP)]  # fmt: skip
+    if which == "echo":
+        return [Item(f"e{i:02d}-{a[0]}", "echo", a[2], "control" if a[0] == "stop" else "not_addressed", sentence,
+                     a[1], a[0])
+                for i, sentence in enumerate(ECHO_SENTENCES) for a in ECHO_ACTIONS]  # fmt: skip
     raise ValueError(f"unknown set {which!r}")
 
 
@@ -233,9 +312,44 @@ def load_manifest(folder: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"mic": folder.name, "clips": {}}
 
 
-def scenario_for(item: Item, mic: str) -> dict[str, Any]:
+def first_voiced_s(samples: Any) -> float | None:
+    """Seconds from the start of a take to its first voiced 20 ms frame (pure numpy); None for silence."""
+    import numpy as np
+
+    x = np.asarray(samples, dtype=np.float32)
+    frame = RATE // 50
+    if len(x) < frame:
+        return None
+    levels = np.sqrt(np.mean(np.square(x[: len(x) // frame * frame].reshape(-1, frame)), axis=1))
+    floor = float(np.percentile(levels, 10))
+    threshold = max(4 * floor, 0.15 * float(levels.max()), 1e-3)
+    voiced = np.flatnonzero(levels > threshold)
+    return round(float(voiced[0]) * frame / RATE, 2) if len(voiced) else None
+
+
+def scenario_for(item: Item, mic: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     """The bench scenario for one recorded clip (written to the private scenarios.json, never to the repo)."""
+    extra = extra or {}
     ref = f"real/{mic}/{item.set}/{item.id}.wav"
+    if item.set == "followup":
+        note = f"reply began {extra.get('cue_to_voice_s')} s after Heliox's voice ended ({item.how})"
+        common = {"id": f"own-{mic}-{item.id}", "voice": "real", "mic": mic, "models": ["cloud"], "note": note,
+                  "setup": {"heliox_says": item.heliox},
+                  "steps": [{"say": ref, "text": item.text, "when": "heliox_done"}]}  # fmt: skip
+        if item.label == "not_addressed":
+            return {**common, "set": "not_addressed", "lines": ["2.2"], "expect": {"route": ["ignored", "overheard"]}}
+        return {**common, "set": "turn_taking", "lines": ["2.1c"], "expect": {"follow_up": True}}
+    if item.set == "echo":
+        offset = float(extra.get("playback_offset_s") or 0.0)
+        seconds = float(extra.get("seconds") or 0.0)
+        span = f"#{offset:.2f}-{seconds:.2f}" if seconds > offset else ""
+        stop = item.action == "stop"
+        return {"id": f"own-{mic}-{item.id}", "set": "control", "voice": "real", "mic": mic, "models": ["cloud"],
+                "lines": ["1.2b", "1.2c"] if stop else ["1.2d"],
+                "note": f"open speakers: Heliox's own voice through the room, and the person {item.how}",
+                "setup": {"heliox_says": item.heliox},
+                "steps": [{"say": ref + span, "text": item.text, "when": "heliox_audio"}],
+                "expect": {"stopped": True} if stop else {"stopped": False}}  # fmt: skip
     if item.set == "room":
         return {"id": f"own-{mic}-room", "set": "not_addressed", "voice": "real", "mic": mic, "lines": ["2.2"],
                 "models": ["cloud"], "note": "television or another person near the microphone",
@@ -251,8 +365,11 @@ def save(folder: Path, manifest: dict[str, Any]) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     mic = folder.name
-    clips = [Item(c["id"], c["set"], c["text"], c["label"]) for c in manifest["clips"].values()]
-    scenarios = [scenario_for(item, mic) for item in sorted(clips, key=lambda i: i.id)]
+    by_id = {i.id: i for which in ("sentences", "wake", "room", "followup", "echo") for i in items(which)}
+    scenarios = [
+        scenario_for(by_id.get(c["id"], Item(c["id"], c["set"], c["text"], c["label"])), mic, c)
+        for c in sorted(manifest["clips"].values(), key=lambda c: c["id"])
+    ]
     (folder / "scenarios.json").write_text(json.dumps({"scenarios": scenarios}, indent=1), encoding="utf-8")
 
 
@@ -265,13 +382,26 @@ def record_set(
     ask: Callable[[str], str] = input,
     say: Callable[[str], None] = print,
     sleep: Callable[[float], None] = time.sleep,
+    player: Any = None,
+    heliox_voice: Callable[[str], tuple[Any, int]] | None = None,
 ) -> dict[str, int]:
-    """Walk through one set; returns counts of kept, skipped and already-done clips. Resumes from the manifest."""
+    """Walk through one set; returns counts of kept, skipped and already-done clips. Resumes from the manifest.
+
+    ``player`` and ``heliox_voice`` are used by the echo set only: the first plays audio (``play(audio, rate)``,
+    ``stop()``), the second renders a sentence in Heliox's voice."""
     folder = mic_folder(root, mic)
     manifest = load_manifest(folder)
     counts = {"kept": 0, "skipped": 0, "already": 0}
-    check_sound = which != "room"  # the first kept take is checked for call-mode sound (a room may be anything)
+    check_sound = which not in ("room", "echo")  # the first kept take is checked for call-mode sound
     todo = items(which)
+    if which == "echo":
+        say("\nThis set PLAYS SOUND through your speakers: a sentence in Heliox's voice for each take, only when you "
+            "press Enter. Use open speakers, not headphones, at your usual volume.")  # fmt: skip
+        if player is None or heliox_voice is None:
+            say("Playing sound is not available here, so the echo set cannot run.")
+            return counts
+        if ask("Type yes to continue: ").strip().lower() != "yes":
+            return counts
     for n, item in enumerate(todo, 1):
         if item.id in manifest["clips"]:
             counts["already"] += 1
@@ -285,6 +415,27 @@ def record_set(
                     return counts
                 capture.start()
                 sleep(ROOM_SECONDS)
+            elif item.set == "followup":
+                say(f'\n[followup {n}/{len(todo)}]  Heliox says:  "{item.heliox}"')
+                say(f"   Your reply:  {item.text}   ({item.how})")
+                if ask("Read Heliox's line, then press Enter at the moment its voice would end (q to quit): ") == "q":
+                    save(folder, manifest)
+                    return counts
+                capture.start()
+                say(">>> Heliox has finished. Reply now.")
+                ask("Recording... press Enter when you have finished. ")
+            elif item.set == "echo":
+                say(f"\n[echo {n}/{len(todo)}]  When Heliox talks: {item.how}.")
+                if ask("Press Enter to play and record (q to quit): ").strip().lower() == "q":
+                    save(folder, manifest)
+                    return counts
+                audio, rate = heliox_voice(item.heliox)
+                capture.start()
+                began = time.perf_counter()
+                player.play(audio, rate)
+                extra_offset = round(time.perf_counter() - began, 3)
+                ask("Recording... press Enter when it has finished. ")
+                player.stop()
             else:
                 say(f"\n[{which} {n}/{len(todo)}]  Say:  {item.text}")
                 if ask("Press Enter, then say it (q to quit): ").strip().lower() == "q":
@@ -310,8 +461,14 @@ def record_set(
                 return counts
             check_sound = False
             wavio.write(folder / item.set / f"{item.id}.wav", samples)
-            manifest["clips"][item.id] = {"id": item.id, "set": item.set, "text": item.text, "label": item.label,
-                                          "seconds": round(seconds, 2), "recorded": time.strftime("%Y-%m-%d %H:%M")}  # fmt: skip
+            entry = {"id": item.id, "set": item.set, "text": item.text, "label": item.label,
+                     "seconds": round(seconds, 2), "recorded": time.strftime("%Y-%m-%d %H:%M")}  # fmt: skip
+            if item.set == "followup":
+                entry["cue_to_voice_s"] = first_voiced_s(samples)
+            if item.set == "echo":
+                entry["playback_offset_s"] = extra_offset
+                entry["action"] = item.action
+            manifest["clips"][item.id] = entry
             save(folder, manifest)
             counts["kept"] += 1
             break
@@ -336,7 +493,12 @@ def summary(root: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m benchmarks.conversation_bench.record", description=__doc__)
     parser.add_argument("--mic", required=True, help="a short name for this microphone: desk, laptop, headset, ...")
-    parser.add_argument("--set", choices=("sentences", "wake", "room"), default=None, help="default: all three")
+    parser.add_argument(
+        "--set",
+        choices=("sentences", "wake", "room", "followup", "echo"),
+        default=None,
+        help="default: sentences, wake, room and followup; echo (plays sound) only by name",
+    )
     parser.add_argument("--device", default=None, help="input device name or number (default: Heliox's)")
     parser.add_argument("--audio", default=None)
     args = parser.parse_args(argv)
@@ -349,14 +511,15 @@ def main(argv: list[str] | None = None) -> int:
     if hands_free(name) and not label_says_headset(args.mic):
         print(CALL_MODE_STOP.format(mic=args.mic))
         return 1
-    for which in [args.set] if args.set else ["sentences", "wake", "room"]:
-        counts = record_set(root, args.mic, which, capture)
+    for which in [args.set] if args.set else ["sentences", "wake", "room", "followup"]:
+        extra: dict[str, Any] = {"player": SpeakerPlayer(), "heliox_voice": kokoro_voice} if which == "echo" else {}
+        counts = record_set(root, args.mic, which, capture, **extra)
         if counts.get("stopped"):
             return 1
         print(f"{which}: {counts['kept']} kept, {counts['skipped']} skipped, {counts['already']} already recorded")
     print("\nRecorded so far:\n" + summary(root))
     print(f"\nRun the bench on it:\n  python -m benchmarks.conversation_bench run --audio {root} "
-          f"--sets understanding,not_addressed --only own-{safe_mic(args.mic)}")  # fmt: skip
+          f"--sets understanding,not_addressed,turn_taking,control --only own-{safe_mic(args.mic)}")  # fmt: skip
     return 0
 
 

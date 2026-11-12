@@ -417,3 +417,35 @@ def test_derived_conditions_apply_to_real_sentences_and_models_to_their_scenario
     assert ("u-real-desk-usb-cue-a", "bt-call", "cloud") in got
     assert {m for s, c, m in todo if s.id == "c-syn-stop"} == {"cloud", "local", "none"}
     assert {c for s, c, m in todo if s.id == "c-syn-stop"} == {"as-recorded"}
+
+
+class _Recorder:
+    frame_size = 320
+
+
+def test_a_stalled_loop_does_not_move_a_clip_on_the_audio_clock():
+    np = pytest.importorskip("numpy")
+    from benchmarks.conversation_bench.driver import FilePump, Log
+
+    pump = FilePump(_Recorder(), Log())
+    first = np.full(16000, 0.5, dtype=np.float32)  # one second of "speech"
+    end = pump.play(first, "a", first=0.0, last=1.0)
+    assert end == 16000
+    stream, marks = [], []
+    for _ in range(80):  # the pump keeps running while the event loop is stalled: 1.6 s of audio go by
+        block, due = pump.next_block()
+        stream.append(block)
+        marks += due
+    second = np.full(8000, -0.5, dtype=np.float32)
+    start = end + int(1.5 * 16000)  # a 1.5 s pause, queued late (after 0.6 s of it had already played)
+    assert pump.play(second, "b", first=0.0, last=0.5, start_at=start) == start + 8000
+    while pump.busy():
+        block, due = pump.next_block()
+        stream.append(block)
+        marks += due
+    audio = np.concatenate(stream)
+    assert int(np.argmax(audio < -10000)) == start  # the second clip begins exactly 1.5 s after the first ends
+    starts = [index for index, kind, data in marks if kind == tl.PERSON_STARTS]
+    assert starts == [0, start]
+    late = pump.play(second, "c", first=0.0, last=0.5, start_at=pump.played - 100)
+    assert late == pump.played + 8000  # a start already in the past begins at once, never before the clock

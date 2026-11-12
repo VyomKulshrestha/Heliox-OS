@@ -39,7 +39,7 @@ class ScenarioError(ValueError):
 class Step:
     say: str = ""  # audio reference
     text: str = ""  # what is said (the reference transcript); "" when unknown
-    when: str = "start"  # "start" | "heliox_audio" (after Heliox's voice starts) | "previous_done"
+    when: str = "start"  # "start" | "heliox_audio" (voice starts) | "heliox_done" (voice ended) | "previous_done"
     delay: float = 0.0
     set_state: dict[str, Any] = field(default_factory=dict)
     wait: float = 0.0
@@ -74,7 +74,7 @@ def _step(raw: dict[str, Any], where: str) -> Step:
     if raw.get("say"):
         parse_ref(str(raw["say"]))
     when = str(raw.get("when", "start"))
-    if when not in ("start", "heliox_audio", "previous_done"):
+    if when not in ("start", "heliox_audio", "heliox_done", "previous_done"):
         raise ScenarioError(f"{where}: unknown 'when' {when!r}")
     return Step(
         say=str(raw.get("say", "")),

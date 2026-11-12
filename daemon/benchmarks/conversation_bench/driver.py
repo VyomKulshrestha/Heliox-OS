@@ -75,7 +75,14 @@ def voiced_span(x: Any) -> tuple[float, float]:
 
 
 class FilePump:
-    """Stands in for the microphone: one block per frame period at ``pace`` times real time."""
+    """Stands in for the microphone: one block per frame period at ``pace`` times real time.
+
+    Everything is placed on the pump's own sample clock: a clip starts at a sample index (``start_at``), the gap
+    before it is filled with quiet room noise inside the audio stream itself, and the person's first word, last
+    word, start and stop are marked at absolute sample positions. A busy or stalled event loop therefore cannot
+    stretch a pause: a 1.5 s pause is 1.5 s of audio whenever the clip was queued, as long as it was queued before
+    its start. (On 12 November a pause scheduled with asyncio.sleep on a loaded loop became 12.6 s of real gap.)
+    """
 
     def __init__(self, recorder: Any, log: Log, pace: float = 1.0) -> None:
         import numpy as np
@@ -87,29 +94,51 @@ class FilePump:
         self.pending = np.zeros(0, dtype=np.int16)
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
-        self.marks: list[tuple[int, str, dict[str, Any]]] = []  # samples-left thresholds -> event
+        self.marks: list[tuple[int, str, dict[str, Any]]] = []  # absolute sample index -> event
         self.segments: list[dict[str, Any]] = []
-        self.played = 0
+        self.played = 0  # samples handed to the listener so far: the audio clock
         self.clip_started_at = 0
         self.rng = np.random.default_rng(1)
         self.max_lag = 0.0
 
-    def play(self, samples: Any, label: str, *, first: float, last: float, segments: Any = None) -> float:
+    def queued_end(self) -> int:
+        """The sample index where everything queued so far ends."""
+        with self.lock:
+            return self.played + len(self.pending)
+
+    def play(
+        self,
+        samples: Any,
+        label: str,
+        *,
+        first: float,
+        last: float,
+        segments: Any = None,
+        start_at: int | None = None,
+    ) -> int:
+        """Queue a clip to start at sample ``start_at`` (default: right after what is queued); returns its end."""
         np = self.np
         pcm = (np.clip(samples, -1, 1) * 32767).astype(np.int16)
         with self.lock:
-            base = len(self.pending)
+            end_of_queue = self.played + len(self.pending)
+            gap = max(0, start_at - end_of_queue) if start_at is not None else 0
+            if gap:
+                noise = (self.rng.standard_normal(gap) * ROOM_NOISE).astype(np.int16)
+                self.pending = np.concatenate([self.pending, noise])
+            start = end_of_queue + gap
             self.pending = np.concatenate([self.pending, pcm])
-            total = len(self.pending)
+            end = start + len(pcm)
+            data = {"clip": label}
             self.marks += [
-                (total - (base + int(first * wavio.RATE)), tl.FIRST_WORD, {"clip": label}),
-                (total - (base + int(last * wavio.RATE)), tl.LAST_WORD, {"clip": label}),
-                (0, tl.PERSON_STOPS, {"clip": label}),
+                (start, tl.PERSON_STARTS, {**data, "seconds": round(len(pcm) / wavio.RATE, 2)}),
+                (start + int(first * wavio.RATE), tl.FIRST_WORD, data),
+                (start + int(last * wavio.RATE), tl.LAST_WORD, data),
+                (end, tl.PERSON_STOPS, data),
             ]
-            self.clip_started_at = self.played + base
+            self.marks.sort(key=lambda m: m[0])
+            self.clip_started_at = start
             self.segments = list(segments or [])
-        self.log(tl.PERSON_STARTS, label, seconds=round(len(pcm) / wavio.RATE, 2))
-        return len(pcm) / wavio.RATE
+        return end
 
     def busy(self) -> bool:
         with self.lock:
@@ -124,27 +153,32 @@ class FilePump:
                 current = seg
         return current
 
-    def run(self) -> None:
+    def next_block(self) -> tuple[Any, list[tuple[int, str, dict[str, Any]]]]:
+        """The next frame of audio and the marks it reaches; advances the audio clock by one frame."""
         np = self.np
+        frame = self.recorder.frame_size
+        with self.lock:
+            if len(self.pending):
+                block = self.pending[:frame]
+                self.pending = self.pending[frame:]
+                if len(block) < frame:
+                    block = np.concatenate([block, np.zeros(frame - len(block), dtype=np.int16)])
+            else:
+                block = (self.rng.standard_normal(frame) * ROOM_NOISE).astype(np.int16)
+            reached = self.played + frame
+            due = [m for m in self.marks if m[0] < reached]
+            self.marks = [m for m in self.marks if m[0] >= reached]
+            self.played = reached
+        return block, due
+
+    def run(self) -> None:
         frame = self.recorder.frame_size
         next_at = time.perf_counter()
         while not self.stop_event.is_set():
-            with self.lock:
-                if len(self.pending):
-                    block = self.pending[:frame]
-                    self.pending = self.pending[frame:]
-                    left = len(self.pending)
-                    due = [m for m in self.marks if m[0] >= left]
-                    self.marks = [m for m in self.marks if m[0] < left]
-                    if len(block) < frame:
-                        block = np.concatenate([block, np.zeros(frame - len(block), dtype=np.int16)])
-                else:
-                    due = []
-                    block = (self.rng.standard_normal(frame) * ROOM_NOISE).astype(np.int16)
+            block, due = self.next_block()
             for _, kind, data in due:
-                self.log(kind, data.get("clip", ""), **data)
+                self.log(kind, data.get("clip", ""), **{k: v for k, v in data.items() if k != "clip"})
             self.recorder._publish_audio_block(block)
-            self.played += frame
             next_at += frame / wavio.RATE / self.pace
             delay = next_at - time.perf_counter()
             if delay > 0:
@@ -547,26 +581,36 @@ class Harness:
             log(tl.SETUP_SPEECH, self._setup_text[:80], setup=True)
             self._setup_task = asyncio.ensure_future(server._speak_voice_response(self._setup_text))
         last_audio_check = start
+        cursor: int | None = None  # where the previous clip ends, on the audio clock
         for step in scenario.steps:
-            if step.wait:
-                await asyncio.sleep(step.wait)
             if step.when == "heliox_audio":
                 since = last_audio_check
                 await self._wait(lambda since=since: any(e.event == tl.AUDIO_STARTS for e in log.since(since)), 30)
+                started = next((e for e in log.since(since) if e.event == tl.AUDIO_STARTS), None)
+                anchor = int(float(started.data.get("audio_t", 0)) * wavio.RATE) if started else pump.queued_end()
+            elif step.when == "heliox_done":
+                since = last_audio_check
+                await self._wait(
+                    lambda since=since: any(e.event in (tl.DONE, tl.CUT_OFF) for e in log.since(since)), 60
+                )
+                ended = next((e for e in log.since(since) if e.event in (tl.DONE, tl.CUT_OFF)), None)
+                anchor = int(float(ended.data.get("audio_t", 0)) * wavio.RATE) if ended else pump.queued_end()
             elif step.when == "previous_done":
                 # The previous utterance has been heard, acted on and answered before the next state and words.
                 await self._wait(lambda: not pump.busy(), 60)
                 await self._quiet_for(1.5, 90)
+                anchor = pump.queued_end()
+            else:  # "start": right after the previous clip, on the audio clock
+                anchor = cursor if cursor is not None else pump.queued_end()
             if step.set_state:
                 self._apply_state(step.set_state, scenario.id)
             if not step.say:
                 continue
-            if step.delay:
-                await asyncio.sleep(step.delay)
             clip, first, last, segments = self.load_clip(step.say, condition)
-            pump.play(clip, step.say, first=first, last=last, segments=segments)
-            await self._wait(lambda: not pump.busy(), len(clip) / wavio.RATE / pump.pace + 30)
+            start_at = anchor + int((step.wait + step.delay) * wavio.RATE)
+            cursor = pump.play(clip, step.say, first=first, last=last, segments=segments, start_at=start_at)
             last_audio_check = log.now()
+        await self._wait(lambda: not pump.busy(), (pump.queued_end() - pump.played) / wavio.RATE / pump.pace + 60)
         await self._settle(scenario)
         pending = server._pending_confirms.get(f"bench-{scenario.id}")
         if scenario.setup.get("pending_approval") or any(s.set_state.get("pending_approval") for s in scenario.steps):

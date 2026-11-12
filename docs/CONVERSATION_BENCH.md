@@ -304,6 +304,16 @@ to Heliox. You can stop at any point with q; next time it carries on where you l
 out to be a Bluetooth headset in call mode while you called it something else, it stops and asks you to run it
 again with `--mic headset`.
 
+Two more sets measure conversation itself. `--set followup` (about five minutes, run as part of the default pass)
+shows fifteen things Heliox might say, one at a time; read each, press Enter at the moment its voice would end, and
+answer as the prompt says: at once, after thinking for a few seconds, or to someone else in the room. Heliox does
+not need to be running, and the helper stores how long you took to start answering, so the bench can check
+whether replies are taken inside the follow-up window and remarks to other people are left alone. `--set echo`
+(about five minutes) is the only set that makes sound, so it runs only when you ask for it by name, warns you
+first and asks you to type yes. Use open speakers at your usual volume. For each take it plays a sentence in
+Heliox's voice when you press Enter, and you say "Wait, stop.", cough, type loudly or stay silent, as prompted;
+the bench then checks that only "Wait, stop." stops Heliox, and how fast.
+
 Then do the same with every other microphone you use, under another name (`--mic headset`, `--mic laptop`), so the
 results can be compared. The recordings stay in your private audio folder on this computer, never in the
 repository and never uploaded. When you finish, the helper prints what you recorded and the command that runs the

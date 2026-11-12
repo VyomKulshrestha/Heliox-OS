@@ -32,6 +32,7 @@ LINES: tuple[Line, ...] = (
     Line("1.2a", "Times Heliox started speaking over the person", "count", 0, "zero"),
     Line("1.2b", "Voice stops after the person speaks over it (worst)", "max", 0.4, "max", "s"),
     Line("1.2c", "Listens after being talked over (the interruption was heard)", "share", 1.0, "min"),
+    Line("1.2d", "Voice not stopped by a cough, typing, silence or its own echo", "share", 1.0, "min"),
     Line("1.3", "Owner's sentences split at a mid-sentence pause", "rate", 0.05, "max"),
     Line("1.4a", "Spoken replies passing the plain-speech rubric", "share", 1.0, "min"),
     Line("1.4b", "Same stock phrase said twice running", "count", 0, "zero"),

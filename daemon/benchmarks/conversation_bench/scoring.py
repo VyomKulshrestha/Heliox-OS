@@ -131,6 +131,8 @@ def score(scenario: Scenario, measures: Measures, *, condition: str = "as-record
         failures.append(f"card={m.card}, expected {expect['card']}")
     if expect.get("stopped") and m.stop_time is None:
         failures.append("Heliox's voice was not cut")
+    if expect.get("stopped") is False and m.stop_time is not None:
+        failures.append("Heliox's voice was cut by a sound that was not the person speaking to it")
     if expect.get("approved") is False and "confirmed=True" in m.approval:
         failures.append("approved by voice")
     if expect.get("denied") and "confirmed=False resolved=True" not in m.approval and m.approval != "gone":
@@ -159,6 +161,8 @@ def score(scenario: Scenario, measures: Measures, *, condition: str = "as-record
     if expect.get("stopped"):
         contrib.append(("1.2b", m.stop_time if m.stop_time is not None else float("inf")))
         contrib.append(("1.2c", m.interrupted_heard))
+    elif expect.get("stopped") is False:
+        contrib.append(("1.2d", m.stop_time is None))
     if expect.get("reply") and m.reply_start is not None:
         contrib.append(("1.1b" if m.used_model else "1.1a", m.reply_start))
         if m.used_model:
