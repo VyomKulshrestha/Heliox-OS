@@ -1546,8 +1546,12 @@ class PilotServer:
         self._startup_stage("starting Live, reminders and the timeline")
         from pilot.live.engine import LiveCompanion
         from pilot.live.focused_text import create_reader
+        from pilot.live.focused_text_policy import set_excluded_apps
 
         self._live_reader = create_reader()
+        # The readers ask an app to share its page (Electron on macOS, Chromium on Linux) only where Live may read;
+        # they read the person's excluded apps from the live settings each time.
+        set_excluded_apps(lambda: self.config.timeline.excluded_apps)
         from pilot.live.catches import BUILT_IN_DIR, CatchBook, install
 
         install(CatchBook([BUILT_IN_DIR, DATA_DIR / "live_catches"]))

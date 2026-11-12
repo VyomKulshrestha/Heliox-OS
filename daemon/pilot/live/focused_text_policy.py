@@ -93,6 +93,45 @@ def never_read(app: str, title: str, excluded: Iterable[str] = (), *, is_heliox:
     )
 
 
+HELIOX_BUNDLE_ID = "com.helioxos.app"  # tauri.conf.json "identifier"
+
+
+def _excluded_none() -> Iterable[str]:
+    return ()
+
+
+# Where the readers get the person's excluded apps when they act on an app before anything in it is read (the
+# daemon points it at its live settings, so a change applies at once). Until then: none excluded beyond the rules.
+_excluded_source: Callable[[], Iterable[str]] = _excluded_none
+
+
+def set_excluded_apps(source: Callable[[], Iterable[str]]) -> None:
+    """Tell the readers where the person's excluded apps are (a callable, read on every check)."""
+    global _excluded_source
+    _excluded_source = source
+
+
+def _bare_name(text: str) -> str:
+    return " ".join(text.casefold().replace("-", " ").replace("_", " ").split())
+
+
+def may_touch(app: str, title: str = "") -> bool:
+    """Whether a reader may act on an app it has not read yet, such as asking it to share its page with assistive
+    tools: ``never_read`` with the person's excluded apps, and Heliox's own window by name or title. ``title`` can be
+    a window title or, on macOS, the bundle id. False when the excluded list cannot be had: Heliox does not touch an
+    app it cannot tell is allowed."""
+    try:
+        excluded = [str(name) for name in _excluded_source()]
+    except Exception:
+        return False
+    is_heliox = (
+        _bare_name(app) in ("heliox os", "heliox")
+        or _bare_name(title) == "heliox os"
+        or title.strip().casefold() == HELIOX_BUNDLE_ID
+    )
+    return not never_read(app, title, excluded, is_heliox=is_heliox)
+
+
 def same_field(previous: FocusedText | None, current: FocusedText | None) -> bool:
     """Whether two reads are the same field (the person kept typing there), whatever happened to the title."""
     return bool(previous and current and previous.field and previous.field == current.field)

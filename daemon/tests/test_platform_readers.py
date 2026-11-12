@@ -338,8 +338,11 @@ class ChromeBus(L.Transport):
 
     unique_name = ":1.99"
 
-    def __init__(self, ui: int = 400, collection: bool = True) -> None:
+    def __init__(self, ui: int = 400, collection: bool = True, asleep: bool = False) -> None:
         self.collection = collection
+        # CI on 052f815: with only the desktop switch on, the active window's one child was the null object and
+        # asking it for its focused element answered nothing, until something asks an object for its attributes.
+        self.asleep = asleep
         self.focus = "/page/message"
         self.page_marked_focused = False
         frame_state = [L.STATE_ACTIVE, 8, 24, L.STATE_SHOWING, 30]
@@ -379,13 +382,23 @@ class ChromeBus(L.Transport):
             if bus == L.REGISTRY:
                 return ([(CHROME, L.ROOT_PATH)],)
             return ([(CHROME, "/frame"), (CHROME, "/frame2")],)
+        if method == "GetAttributes":
+            assert interface == L.ACCESSIBLE
+            self.asleep = False
+            return ({"toolkit": "Chromium"},)
         if method == "GetMatches":
             if not self.collection:
                 raise RuntimeError("[org.freedesktop.DBus.Error.UnknownMethod] No such interface Collection")
             assert interface == L.COLLECTION and signature == L.MATCH_SIGNATURE
             rule = body[0]
             assert rule[0] == bits(L.STATE_FOCUSED) and rule[1] == L.MATCH_ALL
+            if self.asleep:
+                return ([],)
             return ([(CHROME, p) for p in self.focused_paths()] if path == "/frame" else [],)
+        if self.asleep and path == "/frame" and method == "GetChildren":
+            return ([(CHROME, "/org/a11y/atspi/null")],)
+        if path == "/org/a11y/atspi/null":
+            raise RuntimeError("[org.freedesktop.DBus.Error.UnknownMethod] Method GetState doesn't exist")
         node = self.nodes[path]
         if method == "GetState":
             return (bits(*node["state"], *([L.STATE_FOCUSED] if path in self.focused_paths() else [])),)
@@ -428,6 +441,75 @@ def test_a_focused_field_in_chrome_is_found_by_asking_the_app_not_by_walking_its
     assert L.AtspiClient(ChromeBus(collection=False), clock=Clock()).focused() is None
     # A small window is still found by the walk when the app does not answer the call (GTK 4, Qt).
     assert L.AtspiClient(ChromeBus(ui=3, collection=False), clock=Clock()).focused() == (CHROME, "/page/message")
+
+
+def test_chrome_is_asked_for_attributes_once_so_it_puts_the_page_in_the_tree():
+    # CI on 052f815 (desktop switch on, no flag): the window's only child was the null object, asking it for the
+    # focused element answered nothing in 0.00 s, and the walk saw 2 objects. Chromium builds the page's tree once an
+    # assistive tool asks an object for its attributes, which the reader now does once per app.
+    bus = ChromeBus(asleep=True)
+    client = L.AtspiClient(bus, clock=Clock())
+    assert client.focused() == (CHROME, "/page/message")
+    assert client.describe((CHROME, "/page/message")).text == "hello chrome-switch"
+    wakes = [call for call in bus.calls if call[1] == "GetAttributes"]
+    assert wakes == [("/frame", "GetAttributes")], "the active window only, once"
+    # Never woken (as before this change), nothing is found: what CI on 052f815 reported.
+    unwoken = ChromeBus(asleep=True)
+    unwoken.call = _without_attributes(unwoken.call)
+    assert L.AtspiClient(unwoken, clock=Clock()).focused() is None
+    # Later searches on the same connection do not ask again.
+    clock = Clock()
+    client = L.AtspiClient(ChromeBus(), clock=clock)
+    bus2 = client._t
+    client.focused()
+    bus2.focus = "/nowhere"
+    clock.t += 10
+    client.focused()
+    assert [call for call in bus2.calls if call[1] == "GetAttributes"] == [("/frame", "GetAttributes")]
+
+
+@pytest.mark.parametrize(("comm", "title"), [("bitwarden", "Vault"), ("chrome", "Bitwarden - Google Chrome")])
+def test_a_password_managers_window_is_never_asked_for_its_attributes(monkeypatch, comm, title):
+    from pilot.live import focused_text_policy
+
+    monkeypatch.setattr(focused_text_policy, "_excluded_source", lambda: [])
+    monkeypatch.setattr(L, "comm_name", lambda pid: comm)
+    bus = ChromeBus(asleep=True)
+    original = bus.call
+
+    def named(bus_name, path, interface, method, signature="", body=()):
+        if method == "Get" and path == "/frame" and body[1] == "Name":
+            return (("s", title),)
+        return original(bus_name, path, interface, method, signature, body)
+
+    bus.call = named
+    client = L.AtspiClient(bus, clock=Clock())
+    assert client.focused() is None
+    assert not any(method == "GetAttributes" for _path, method in bus.calls)
+    assert client.refused_wakes == {CHROME}
+
+
+def test_an_excluded_apps_window_is_not_asked_until_the_person_allows_it(monkeypatch):
+    from pilot.live import focused_text_policy
+
+    excluded = ["google chrome"]
+    monkeypatch.setattr(focused_text_policy, "_excluded_source", lambda: excluded)
+    bus = ChromeBus(asleep=True)
+    clock = Clock()
+    client = L.AtspiClient(bus, clock=clock)
+    assert client.focused() is None and not any(m == "GetAttributes" for _p, m in bus.calls)
+    excluded.clear()
+    clock.t += 10
+    assert client.focused() == (CHROME, "/page/message")
+
+
+def _without_attributes(call):
+    def wrapped(bus, path, interface, method, signature="", body=()):
+        if method == "GetAttributes":
+            raise RuntimeError("[org.freedesktop.DBus.Error.UnknownMethod] GetAttributes")
+        return call(bus, path, interface, method, signature, body)
+
+    return wrapped
 
 
 def test_the_field_is_taken_when_the_app_marks_the_page_focused_too():
@@ -587,6 +669,139 @@ class FakeAX:
     def text_tail(self, element):
         self.text_reads += 1
         return element["AXValue"]
+
+
+class ElectronAX(FakeAX):
+    """An Electron app as CI on 052f815 showed it: with nothing set, no focused element; once AXManualAccessibility
+    is set on the app, the text area and then the password input (subrole AXSecureTextField)."""
+
+    def __init__(
+        self, electron: bool = True, before: bool | None = False, name: str = "Obsidian", bundle: str = "md.obsidian"
+    ) -> None:
+        super().__init__()
+        self.name = name
+        self.bundle = bundle
+        self.electron = electron
+        self.manual = before
+        self.sets: list[tuple[int, str, bool]] = []
+        self.text_area = {"AXRole": "AXTextArea", "AXSubrole": "", "AXValue": "hello", "hash": 9, "settable": True}
+
+    def focused(self):
+        return self.text_area if self.manual else None
+
+    def is_electron(self, pid):
+        return self.electron
+
+    def app_name(self, pid):
+        return self.name
+
+    def app_bool(self, pid, name):
+        assert name == "AXManualAccessibility"
+        return self.manual
+
+    def set_app_bool(self, pid, name, value):
+        self.sets.append((pid, name, value))
+        self.manual = value
+        return True
+
+
+def test_an_electron_app_is_asked_to_share_its_page_once_and_it_is_undone_when_live_stops(monkeypatch):
+    monkeypatch.setattr(M, "pid_alive", lambda pid: True)
+    ax = ElectronAX()
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    assert reader.read() is None  # nothing focused yet: the app is asked to share its page
+    assert ax.sets == [(501, "AXManualAccessibility", True)]
+    first = reader.read()
+    assert first is not None and first.text == "hello"
+    ax.text_area = {"AXRole": "AXTextField", "AXSubrole": "AXSecureTextField", "hash": 10, "settable": True}
+    secret = reader.read()
+    assert secret.password and secret.text == "" and ax.text_reads == 1
+    assert len(ax.sets) == 1, "once per app"
+    reader.undo_wakes()
+    assert ax.sets[-1] == (501, "AXManualAccessibility", False)
+    # Already on (a screen reader set it): Heliox neither sets nor undoes it.
+    ax = ElectronAX(before=True)
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    reader.read()
+    reader.undo_wakes()
+    assert ax.sets == []
+    # Its earlier value unreadable: set, but not undone, as Heliox cannot tell it was off.
+    ax = ElectronAX(before=None)
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    reader.read()
+    reader.undo_wakes()
+    assert ax.sets == [(501, "AXManualAccessibility", True)]
+    # Not Electron (Chrome rejects the attribute; other apps are left alone).
+    ax = ElectronAX(electron=False)
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    assert reader.read() is None and reader.read() is None
+    assert ax.sets == []
+
+
+@pytest.fixture
+def excluded_apps(monkeypatch):
+    from pilot.live import focused_text_policy
+
+    excluded: list[str] = []
+    monkeypatch.setattr(focused_text_policy, "_excluded_source", lambda: excluded)
+    monkeypatch.setattr(M, "pid_alive", lambda pid: True)
+    return excluded
+
+
+@pytest.mark.parametrize(
+    ("name", "bundle"),
+    [
+        ("1Password", "com.1password.1password"),
+        ("Bitwarden", "com.bitwarden.desktop"),
+        ("Heliox-OS", "com.helioxos.app"),
+        ("Passwords", "com.apple.Passwords"),
+    ],
+)
+def test_an_electron_password_manager_or_heliox_is_never_woken(excluded_apps, name, bundle):
+    ax = ElectronAX(name=name, bundle=bundle)
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    for _ in range(3):
+        assert reader.read() is None
+    assert ax.sets == [] and reader.woken[501].refused, "refused, and the refusal remembered"
+    reader.undo_wakes()
+    assert ax.sets == []
+
+
+def test_an_excluded_electron_app_is_never_woken_and_the_list_is_read_while_live_runs(excluded_apps):
+    excluded_apps.append("obsidian")
+    ax = ElectronAX()
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    assert reader.read() is None and ax.sets == []
+    # The person takes it off the list while Live runs: an app not yet woken is woken at the next read.
+    excluded_apps.clear()
+    assert reader.read() is None
+    assert ax.sets == [(501, "AXManualAccessibility", True)]
+
+
+def test_an_app_woken_and_then_excluded_is_turned_off_at_the_next_read(excluded_apps):
+    ax = ElectronAX(before=None)  # even where its earlier value could not be read
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    reader.read()
+    assert ax.sets == [(501, "AXManualAccessibility", True)]
+    excluded_apps.append("Obsidian")
+    reader.read()
+    assert ax.sets[-1] == (501, "AXManualAccessibility", False) and reader.woken[501].refused
+    assert reader.read() is None and len(ax.sets) == 2, "not woken again while excluded"
+    reader.undo_wakes()
+    assert len(ax.sets) == 2
+
+
+def test_an_app_cannot_be_judged_without_the_excluded_list(monkeypatch):
+    from pilot.live import focused_text_policy
+
+    def broken():
+        raise RuntimeError("settings unavailable")
+
+    monkeypatch.setattr(focused_text_policy, "_excluded_source", broken)
+    ax = ElectronAX()
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    reader.read()
+    assert ax.sets == []
 
 
 def test_macos_classification():

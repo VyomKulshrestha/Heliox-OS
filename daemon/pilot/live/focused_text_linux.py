@@ -45,6 +45,7 @@ from pilot.live.focused_text_policy import (
     FocusedText,
     ReaderStatus,
     admit,
+    may_touch,
 )
 
 logger = logging.getLogger("pilot.live.focused_text_linux")
@@ -97,8 +98,9 @@ SEARCH_EVERY_SECONDS = 3.0
 RESTART_BACKOFF_SECONDS = (2.0, 5.0, 15.0, 60.0)
 
 TOOLKIT_HINT = (
-    "GTK apps can be read. Qt, Chromium, Electron and Firefox apps share their text only when accessibility is on: "
-    "run 'gsettings set org.gnome.desktop.interface toolkit-accessibility true' and restart those apps."
+    "GTK apps can be read. Qt, Chrome, Electron and Firefox apps share their text only when accessibility is on: "
+    "run 'gsettings set org.gnome.desktop.interface toolkit-accessibility true' and restart those apps. Where a "
+    "window still shares nothing, Heliox says so and reads the screen instead."
 )
 NO_BUS = (
     "The desktop accessibility bus (AT-SPI) is not running, so Heliox cannot see the field you are typing in. "
@@ -324,6 +326,8 @@ class AtspiClient:
         self._focus: _Focus | None = None
         self._searched_at = -1e9
         self._pids: dict[str, int] = {}
+        self._woken: set[str] = set()
+        self.refused_wakes: set[str] = set()  # apps not asked, as Live may not read them (for checks and tests)
 
     def close(self) -> None:
         self._t.close()
@@ -425,6 +429,36 @@ class AtspiClient:
             self._focus = _Focus(ref)
         return ref
 
+    def wake(self, window: Ref) -> None:
+        """Ask an app's active window for its attributes, once per app (bus name) for this connection.
+
+        Chromium, and Electron built on it, put a page in the accessibility tree only once an assistive tool asks
+        for an object's attributes or relations: Chromium's AtkGetAttributes and AtkRefRelationSet call
+        OnExtendedPropertiesUsedInWebContent, which turns on its basic web mode plus extended properties
+        (ui/accessibility/platform/ax_platform_node_auralinux.cc). Orca asks for them; the reader asked only for
+        states, roles and children. So in CI on 052f815, with the desktop switch on, Chrome and Electron were on the
+        bus with an active window whose only child was the null object, and the page was never there to read.
+        Other toolkits answer the call and change nothing. The cost falls on that app: it builds its pages'
+        accessibility tree from then on, as it does for a screen reader.
+
+        Never for a window Live may not read (``may_touch``: password managers, the system's credential stores,
+        Heliox itself, the person's excluded apps), judged by the app's process name and the window's title each
+        time, as the person can switch windows between the caller's look and this search."""
+        if window[0] in self._woken:
+            return
+        try:
+            title = str(self._get(window, ACCESSIBLE, "Name") or "")
+        except Exception:
+            return  # a window whose title cannot be read cannot be judged, so it is not asked
+        if not may_touch(comm_name(self.pid(window[0])), title):
+            self.refused_wakes.add(window[0])
+            return
+        if len(self._woken) > 200:
+            self._woken.clear()
+        self._woken.add(window[0])
+        with contextlib.suppress(Exception):
+            self._t.call(window[0], window[1], ACCESSIBLE, "GetAttributes")
+
     def focused_in(self, window: Ref) -> Ref | None:
         """The focused element inside ``window``, asked of its application in one call (Collection.GetMatches with
         the FOCUSED state). None when the app has none focused there, does not implement Collection, or does not
@@ -470,6 +504,7 @@ class AtspiClient:
             except Exception:
                 continue
         for _rank, window in (item for item in windows if item[0] == 0):
+            self.wake(window)
             ref = self.focused_in(window)
             if ref is not None:
                 return ref

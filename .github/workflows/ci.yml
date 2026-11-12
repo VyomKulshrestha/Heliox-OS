@@ -601,8 +601,9 @@ jobs:
         run: python tests/platform_real/apps_check.py
 
       # Where people type on a Mac: Safari, Chrome and an Electron app, each showing a text field and a password
-      # field. The default setup of each is an ANSWER; with AXManualAccessibility set (what Heliox could do itself)
-      # or the app's own switch the field must be read; the password field must be refused wherever it was read.
+      # field. The default setup of each (with Heliox's reader as it is) and AXEnhancedUserInterface are ANSWERs,
+      # with how the window takes a move; with AXManualAccessibility set or the app's own switch the field must be
+      # read; the password field must be refused wherever it was read.
       - name: macOS - fields in Safari, Chrome and Electron, by default and with accessibility turned on
         if: ${{ !cancelled() && runner.os == 'macOS' }}
         continue-on-error: true
@@ -615,7 +616,7 @@ jobs:
           ls -l "$HELIOX_ELECTRON" || echo "electron did not install"
           ls -d "/Applications/Google Chrome.app" || echo "Google Chrome is not on this runner"
           python tests/platform_real/apps_fields_macos_check.py safari-default chrome-default chrome-manual \
-            chrome-forced electron-default electron-manual electron-forced
+            chrome-enhanced chrome-forced electron-default electron-manual electron-enhanced electron-forced
 
       - name: macOS - OCR without pyobjc, speech to a file, a notification, APFS case, a centre click, a hung app, the probe
         if: ${{ !cancelled() && runner.os == 'macOS' }}

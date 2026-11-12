@@ -25,10 +25,12 @@ title changes.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ctypes
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from pilot.live.focused_text_policy import (
@@ -41,6 +43,7 @@ from pilot.live.focused_text_policy import (
     PermissionGate,
     ReaderStatus,
     admit,
+    may_touch,
 )
 
 logger = logging.getLogger("pilot.live.focused_text_macos")
@@ -196,6 +199,29 @@ class AXBackend:
         app = self._appkit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
         return str(app.localizedName() or "") if app is not None else ""
 
+    def is_electron(self, pid: int) -> bool:
+        """Whether the app's bundle carries Electron's framework (Slack, VS Code, Discord, Obsidian and the like)."""
+        import os
+
+        app = self._appkit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        url = app.bundleURL() if app is not None else None
+        path = str(url.path()) if url is not None else ""
+        return bool(path) and os.path.isdir(
+            os.path.join(path, "Contents", "Frameworks", "Electron Framework.framework")
+        )
+
+    def app_bool(self, pid: int, name: str) -> bool | None:
+        """A boolean attribute of the app element; None when the app does not answer it."""
+        app = self._ax.AXUIElementCreateApplication(pid)
+        self._ax.AXUIElementSetMessagingTimeout(app, MESSAGING_TIMEOUT)
+        err, value = self._ax.AXUIElementCopyAttributeValue(app, name, None)
+        return bool(value) if err == 0 and value is not None else None
+
+    def set_app_bool(self, pid: int, name: str, value: bool) -> bool:
+        app = self._ax.AXUIElementCreateApplication(pid)
+        self._ax.AXUIElementSetMessagingTimeout(app, MESSAGING_TIMEOUT)
+        return self._ax.AXUIElementSetAttributeValue(app, name, value) == 0
+
     def text_tail(self, element: Any) -> str:
         count = self.attr(element, "AXNumberOfCharacters")
         if isinstance(count, int) and count > MAX_CHARS:
@@ -210,6 +236,17 @@ class AXBackend:
         return str(value) if isinstance(value, str) else ""
 
 
+@dataclass
+class Wake:
+    """What the reader decided about one app: refused (Live may not read it), already on, or set by Heliox."""
+
+    name: str
+    bundle: str
+    before: bool | None = None  # AXManualAccessibility before Heliox looked; None when it could not be read
+    set_by_heliox: bool = False
+    refused: bool = False
+
+
 class MacReader:
     """Blocking reads through an ``AXBackend``; ``secure_input`` is injectable for tests."""
 
@@ -217,19 +254,97 @@ class MacReader:
         self.backend = backend
         self.gate = PermissionGate(backend.trusted, backend.prompt)
         self._secure_input = secure_input
+        # What the reader decided about each app it considered waking, by pid (see ``wake_electron``).
+        self.woken: dict[int, Wake] = {}
+
+    def recheck_wakes(self) -> None:
+        """An app Heliox turned AXManualAccessibility on in that may no longer be touched (the person excluded it
+        while Live runs) has it turned off again, at the next read. Off, whatever it was before Heliox set it: the
+        line is that Heliox does not touch those windows."""
+        for pid, wake in self.woken.items():
+            if wake.set_by_heliox and not may_touch(wake.name, wake.bundle):
+                with contextlib.suppress(Exception):
+                    self.backend.set_app_bool(pid, "AXManualAccessibility", False)
+                wake.set_by_heliox = False
+                wake.refused = True
+
+    def wake_electron(self, pid: int) -> None:
+        """Turn on AXManualAccessibility in the Electron app ``pid``, once per process.
+
+        An Electron app shares its page with the Accessibility API only once an assistive app asks for it: by
+        default the focused element is missing and nothing can be read (CI on 052f815: electron-default "no").
+        AXManualAccessibility is the attribute Electron documents for assistive apps; set on the app element it
+        made the text area readable and the password input refused, 15 of 15, in the same run (electron-manual),
+        even with the window not in front. It changes nothing about how the app's windows behave; the app spends
+        some memory and time building its accessibility tree from then on. Chrome does not accept it (error -25205
+        in that run), and AXEnhancedUserInterface, which Chrome does accept, is not set: it changes how every
+        window of the app moves and resizes for other window tools.
+
+        Never in an app Live may not read (``may_touch``: password managers, many of them Electron apps, the
+        system's credential stores, Heliox itself, the person's excluded apps), checked here and not only by the
+        caller, as the person can switch apps between the caller's look and this read. A refusal is remembered
+        (``Wake.refused``) and checked again on the next call, so an app the person stops excluding can be woken."""
+        b = self.backend
+        if pid <= 0 or not hasattr(b, "is_electron"):
+            return
+        known = self.woken.get(pid)
+        if known is not None and not known.refused:
+            return
+        try:
+            name, bundle = (known.name, known.bundle) if known else (b.app_name(pid), b.bundle_id(pid))
+            if not may_touch(name, bundle):
+                self.woken[pid] = Wake(name, bundle, refused=True)
+                return
+            if len(self.woken) > 64:
+                self.woken = {p: w for p, w in self.woken.items() if w.set_by_heliox}
+            if not b.is_electron(pid):
+                self.woken[pid] = Wake(name, bundle)
+                return
+            before = b.app_bool(pid, "AXManualAccessibility")
+            if before is True:
+                self.woken[pid] = Wake(name, bundle, before=True)
+                return
+            done = bool(b.set_app_bool(pid, "AXManualAccessibility", True))
+            self.woken[pid] = Wake(name, bundle, before=before, set_by_heliox=done)
+            logger.debug("AXManualAccessibility on in Electron app %s: %s (before: %s)", pid, done, before)
+        except Exception:
+            logger.debug("Could not turn on accessibility in app %s", pid, exc_info=True)
+            self.woken[pid] = Wake("", "")
+
+    def undo_wakes(self) -> None:
+        """Live stopped: turn AXManualAccessibility off again where Heliox turned it on and it was off before, in
+        apps still running. Where its earlier value could not be read it is left on, as a screen reader may have
+        set it."""
+        b = self.backend
+        woken, self.woken = self.woken, {}
+        for pid, wake in woken.items():
+            if wake.set_by_heliox and wake.before is False and pid_alive(pid):
+                with contextlib.suppress(Exception):
+                    b.set_app_bool(pid, "AXManualAccessibility", False)
+
+    def _front_pid(self) -> int:
+        b = self.backend
+        app = b.focused_app()
+        pid = b.pid(app) if app is not None else 0
+        return pid or launch_services_front_pid()
 
     def read(self) -> FocusedText | None:
         if not self.gate.allowed():
             return None
         b = self.backend
+        if self.woken:
+            self.recheck_wakes()
         element = b.focused()
         if element is None:
+            self.wake_electron(self._front_pid())
             return None
         role = str(b.attr(element, "AXRole") or "")
         subrole = str(b.attr(element, "AXSubrole") or "")
         pid = b.pid(element)
         settable = b.settable(element, "AXValue")
         secure, kind = classify(role, subrole, settable, b.bundle_id(pid) if pid else "", self._secure_input())
+        if not kind and not secure:
+            self.wake_electron(pid)
         text = b.text_tail(element) if kind and not secure else None
         field = field_id(pid, b.element_hash(element))
         if kind and not secure:
@@ -473,4 +588,11 @@ class MacFocusedTextReader:
         return ReaderStatus("ready")
 
     async def close(self) -> None:
-        return None
+        """Live stopped: turn accessibility off again in the Electron apps the reader turned it on in."""
+
+        def undo() -> None:
+            with _lock:
+                if _reader is not None:
+                    _reader.undo_wakes()
+
+        await asyncio.to_thread(undo)

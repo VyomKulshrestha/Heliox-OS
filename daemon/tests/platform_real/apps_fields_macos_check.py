@@ -1,7 +1,7 @@
 """Fields where people type on a Mac: Safari, Chrome and an Electron app, read by Heliox's macOS reader.
 
-    python apps_fields_macos_check.py safari-default chrome-default chrome-manual chrome-forced \\
-        electron-default electron-manual electron-forced
+    python apps_fields_macos_check.py safari-default chrome-default chrome-manual chrome-enhanced chrome-forced \\
+        electron-default electron-manual electron-enhanced electron-forced
 
 Each target shows field_fixture.html: a text area and a password input. For each:
 
@@ -13,11 +13,17 @@ Each target shows field_fixture.html: a text area and a password input. For each
   attributes and the names of all attributes (never AXValue).
 
 The variants answer "does a person's default setup give Heliox the field":
-- ``*-default``: the app as a person has it. The read is an ANSWER line, yes or no; the password check still counts
-  when the field was read;
-- ``*-manual``: the check sets AXManualAccessibility on the app, the attribute an assistive app sets to make
-  Chrome and Electron expose their web content (what Heliox itself could do);
-- ``*-forced``: the app's own switch, ``--force-renderer-accessibility``. These two must read the field.
+- ``*-default``: the app as a person has it, read by Heliox's reader as it is (which turns AXManualAccessibility
+  on in an Electron app itself). The read is an ANSWER line, yes or no; the password check still counts when the
+  field was read;
+- ``*-manual``: the check sets AXManualAccessibility on the app, the attribute Electron documents for assistive
+  apps (Chrome rejected it in CI on 052f815);
+- ``*-enhanced``: the check sets AXEnhancedUserInterface on the app, the attribute VoiceOver sets, and puts the
+  value it found back afterwards. An ANSWER line;
+- ``*-forced``: the app's own switch, ``--force-renderer-accessibility``. Manual and forced must read the field.
+
+For Chrome and Electron an ANSWER line also says how the window takes a move through the Accessibility API (read
+back at once and after a second), which AXEnhancedUserInterface is said to disturb.
 
 Typing goes through pyautogui (CGEvents), which the runner's Accessibility grant allows. Everything the check
 starts it ends: its Chrome and Electron processes, and Safari (asked to quit, as it was not running before).
@@ -89,6 +95,63 @@ def set_manual_accessibility(pid: int) -> str:
     return f"AXManualAccessibility set: error {err}" if err else "AXManualAccessibility set"
 
 
+def app_bool(pid: int, name: str) -> bool | None:
+    a = ax()
+    err, value = a.AXUIElementCopyAttributeValue(a.AXUIElementCreateApplication(pid), name, None)
+    return bool(value) if err == 0 and value is not None else None
+
+
+def set_app_bool(pid: int, name: str, value: bool) -> int:
+    a = ax()
+    return int(a.AXUIElementSetAttributeValue(a.AXUIElementCreateApplication(pid), name, value))
+
+
+def window_move(target: str, pid: int) -> None:
+    """ANSWER: how the fixture's window takes a move through the Accessibility API, as window tools (and Heliox's own
+    window actions) move it. AXEnhancedUserInterface is said to make apps animate such moves, so a tool reading the
+    position back sees the old one; this is measured, with the app as it is and with the attribute on."""
+    from pilot.system.macos_windows import Backend
+
+    a = ax()
+    backend = Backend()
+    windows = [w for w in backend.windows(pid) if TITLE in str(backend.get(w, "AXTitle") or "")]
+    if not windows:
+        print(f"ANSWER {target}: window move not measured, no fixture window", flush=True)
+        return
+    window = windows[0]
+
+    def position() -> tuple[int, int] | None:
+        value = backend.get(window, "AXPosition")
+        if value is None:
+            return None
+        ok, point = a.AXValueGetValue(value, a.kAXValueCGPointType, None)
+        return (round(point.x), round(point.y)) if ok else None
+
+    def move_to(x: int, y: int) -> int:
+        import Quartz
+
+        value = a.AXValueCreate(a.kAXValueCGPointType, Quartz.CGPoint(x, y))
+        return int(a.AXUIElementSetAttributeValue(window, "AXPosition", value))
+
+    start = position()
+    if start is None:
+        print(f"ANSWER {target}: window move not measured, its position cannot be read", flush=True)
+        return
+    wanted = (start[0] + 60, start[1] + 40)
+    try:
+        err = move_to(*wanted)
+        at_once = position()
+        time.sleep(1.0)
+        later = position()
+        print(
+            f"ANSWER {target}: window move to {wanted} (error {err}): read back at once {at_once}, after 1 s {later}; "
+            f"took effect at once: {'yes' if at_once == wanted else 'no'}",
+            flush=True,
+        )
+    finally:
+        move_to(*start)
+
+
 def running_pid(bundle_id: str, timeout: float = 30.0) -> int:
     import AppKit
 
@@ -129,6 +192,8 @@ def run(target: str, workdir: Path) -> None:
     kind, _, variant = target.partition("-")
     page = workdir / "field_fixture.html"
     process: subprocess.Popen | None = None
+    pid = 0
+    enhanced_before: bool | None = None
     safari_was_running = running_pid("com.apple.Safari", timeout=0.1) != 0
     diag(f"at the start of {target}")
     try:
@@ -170,6 +235,12 @@ def run(target: str, workdir: Path) -> None:
         check(f"{target}/in-front", bool(route), f"route {route or 'none'}")
         if variant == "manual":
             print(f"DIAG {target}: {set_manual_accessibility(pid)}", flush=True)
+        if variant == "enhanced":
+            enhanced_before = app_bool(pid, "AXEnhancedUserInterface")  # written down, put back in finally
+            err = set_app_bool(pid, "AXEnhancedUserInterface", True)
+            print(f"DIAG {target}: AXEnhancedUserInterface was {enhanced_before}, set: error {err}", flush=True)
+        if kind in ("chrome", "electron"):
+            window_move(target, pid)
         time.sleep(2.0)
         reader = M.shared()
         if not check(f"{target}/reader", reader is not None, M._error):
@@ -185,10 +256,10 @@ def run(target: str, workdir: Path) -> None:
             time.sleep(0.3)
         ok = seen is not None and (seen.text or "").endswith(word)
         diag_focused(f"{target} text field")
-        if variant == "default":
-            print(
-                f"ANSWER {target}: Heliox reads the field with the default setup: {'yes' if ok else 'no'}", flush=True
-            )
+        if variant in ("default", "enhanced"):
+            print(f"ANSWER {target}: Heliox reads the field with this setup: {'yes' if ok else 'no'}", flush=True)
+            if kind == "electron":
+                print(f"DIAG {target}: the reader turned AXManualAccessibility on: {reader.woken!r}", flush=True)
         else:
             check(f"{target}/reads-typed-text", ok, repr(seen))
         if not ok:
@@ -219,6 +290,8 @@ def run(target: str, workdir: Path) -> None:
             f"{len(refused)} of {len(reads)} reads refused, leaked {leaked[:1]!r}",
         )
     finally:
+        if variant == "enhanced" and pid:
+            set_app_bool(pid, "AXEnhancedUserInterface", bool(enhanced_before))
         if process is not None:
             process.terminate()
             try:
