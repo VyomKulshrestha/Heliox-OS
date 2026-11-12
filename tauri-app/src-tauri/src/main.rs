@@ -526,6 +526,30 @@ fn stop_daemon(state: &DaemonProcess) {
 mod instance;
 mod not_answering;
 
+/// Whether Heliox counts as installed at launch, without waiting on the daemon: an environment, or (only when there
+/// is none) a daemon already answering, asked lazily.
+fn installed_at_launch(venv_exists: bool, port_answers: impl FnOnce() -> bool) -> bool {
+    venv_exists || port_answers()
+}
+
+fn port_answers(limit: Duration) -> bool {
+    use std::net::SocketAddr;
+    let address = SocketAddr::from(([127, 0, 0, 1], DAEMON_PORT));
+    TcpStream::connect_timeout(&address, limit).is_ok()
+}
+
+/// After the window is up: find a daemon already listening or start one, then watch it (supervise_daemon). The window
+/// meanwhile shows "Connecting...", and a request typed in it is kept until the daemon answers.
+fn start_daemon_after_window(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let child = spawn_daemon();
+        if let Ok(mut guard) = app.state::<DaemonProcess>().0.lock() {
+            *guard = child;
+        }
+        supervise_daemon(app);
+    });
+}
+
 fn main() {
     // One copy of the app per person: a second launch brings the first window forward and exits, before it starts
     // a daemon, a tray or a supervisor of its own (instance.rs).
@@ -548,17 +572,19 @@ fn main() {
             None
         }
     };
-    // Spawn the Python daemon before building the Tauri app
-    let daemon_child = spawn_daemon();
-    let installed = daemon_child.is_some()
-        || get_venv_python().exists()
-        || TcpStream::connect((DAEMON_HOST, DAEMON_PORT)).is_ok();
+    // The window first. The daemon is found or started after it, in the background (start_daemon_after_window):
+    // spawning it here held the window back by the half second daemon_child_started waits, a full second when the
+    // venv's daemon died and the system Python was tried too.
+    let installed = installed_at_launch(get_venv_python().exists(), || {
+        // Only without an environment (a daemon run from a checkout): refused at once when nothing listens.
+        port_answers(Duration::from_millis(150))
+    });
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(DaemonProcess(Mutex::new(daemon_child)))
+        .manage(DaemonProcess(Mutex::new(None)))
         .manage(setup::Setup(Mutex::new(setup::initial_state(installed))))
         .manage(commands::NeuralProcess::new())
         .manage(file_access::AllowedPaths::new())
@@ -586,7 +612,7 @@ fn main() {
             tray::setup_tray(app)?;
             hotkey::register_hotkey(app)?;
             setup::probe_in_background(app.handle().clone());
-            supervise_daemon(app.handle().clone());
+            start_daemon_after_window(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -686,6 +712,18 @@ mod startup_tests {
             .args(["-c", "sleep 2"])
             .spawn()
             .expect("spawn long-lived child")
+    }
+
+    #[test]
+    fn installed_at_launch_never_waits_on_the_port_when_there_is_an_environment() {
+        let mut asked = false;
+        assert!(installed_at_launch(true, || {
+            asked = true;
+            false
+        }));
+        assert!(!asked);
+        assert!(installed_at_launch(false, || true));
+        assert!(!installed_at_launch(false, || false));
     }
 
     #[test]

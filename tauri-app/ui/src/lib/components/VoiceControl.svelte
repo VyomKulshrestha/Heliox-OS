@@ -18,6 +18,7 @@
   import { onDestroy, onMount } from "svelte";
   import { get } from "svelte/store";
   import { settings } from "../stores/settings";
+  import { daemonStarting, LISTENING_STARTS_LINE } from "../stores/startup";
 
   // ── State ──
   let isListening = $state(false);
@@ -29,6 +30,9 @@
   let error = $state("");
   let pushToTalkEnabled = $state(true);
   let wakeWordBusy = $state(false);
+  // Before ready the daemon holds voice_listener_start, so nothing hears speech yet; always-listening running means
+  // it is ready. Push to talk waits too (stores/startup.ts).
+  let waitingForHeliox = $derived($daemonStarting && !wakeWordActive);
   const continuousPreferenceKey = "heliox-continuous-listening-enabled";
   let listenerHealthTimer: ReturnType<typeof setInterval> | null = null;
   let listenerRetryAfter = 0;
@@ -603,11 +607,23 @@
   <button
     class="voice-btn"
     class:listening={isListening && !wakeWordActive}
-    class:disabled={!pushToTalkEnabled && !wakeWordActive}
+    class:disabled={waitingForHeliox || (!pushToTalkEnabled && !wakeWordActive)}
     onclick={toggleListening}
-    disabled={!pushToTalkEnabled && !wakeWordActive}
-    title={wakeWordActive ? "Talk to Heliox now" : isListening ? "Stop listening" : "Push to talk"}
-    aria-label={wakeWordActive ? "Talk to Heliox now" : isListening ? "Stop listening" : "Push to talk"}
+    disabled={waitingForHeliox || (!pushToTalkEnabled && !wakeWordActive)}
+    title={waitingForHeliox
+      ? LISTENING_STARTS_LINE
+      : wakeWordActive
+        ? "Talk to Heliox now"
+        : isListening
+          ? "Stop listening"
+          : "Push to talk"}
+    aria-label={waitingForHeliox
+      ? LISTENING_STARTS_LINE
+      : wakeWordActive
+        ? "Talk to Heliox now"
+        : isListening
+          ? "Stop listening"
+          : "Push to talk"}
   >
     <div class="pulse-ring" style="--intensity: {pulseIntensity}"></div>
     <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -623,6 +639,9 @@
       {/if}
     </svg>
   </button>
+
+  <!-- Said before ready is not heard: the microphone opens once Heliox is ready (stores/startup.ts). -->
+  {#if waitingForHeliox}<span class="voice-starting" role="status">{LISTENING_STARTS_LINE}</span>{/if}
 
   <!-- Audio Visualizer -->
   <AudioVisualizer active={isListening} />
@@ -767,6 +786,11 @@
     animation: breathe 1.5s ease-in-out infinite;
   }
 
+  .voice-starting {
+    color: var(--text-secondary);
+    font-size: 11px;
+    white-space: nowrap;
+  }
   .voice-btn.disabled {
     opacity: 0.3;
     cursor: not-allowed;
