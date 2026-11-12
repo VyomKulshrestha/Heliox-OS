@@ -1,5 +1,5 @@
 {
-  "how_to_read": "Personal sessions: what a person tells Heliox, and whether it changes how Heliox talks and what it does after a restart. Read like sessions.json, plus: an 'event' of 'restart' starts a new session server over the same folder (what is on disk stays, the conversation does not); 'sent' and 'not_sent' are about what the fast model is sent in that turn (checked for every kind with a model); 'planned_with' is about what the planner is given; 'stored' and 'not_stored' are about everything on disk after the turn; 'never_sent' and 'never_stored' hold for the whole session. 'via': 'turn' dispatches as the listener does (PilotServer._voice_turn), with the personal context the daemon gives the layer. 'expect_cloud' holds for a model in the cloud only: a model on this computer may be sent more. 'config_saved_in_scratch' (turn): the turn saved the configuration, and every save went inside the scratch root, never the person's folders; 'real_config_untouched' (session): the person's own config folders are listed before and after (by the pytest folder guard under pytest) and must not change.",
+  "how_to_read": "Personal sessions: what a person tells Heliox, and whether it changes how Heliox talks and what it does after a restart. Read like sessions.json, plus: an 'event' of 'restart' starts a new session server over the same folder (what is on disk stays, the conversation does not); 'sent' and 'not_sent' are about what the fast model is sent in that turn (checked for every kind with a model); 'planned_with' is about what the planner is given; 'stored' and 'not_stored' are about everything on disk after the turn; 'never_sent' and 'never_stored' hold for the whole session. 'via': 'turn' dispatches as the listener does (PilotServer._voice_turn), with the personal context the daemon gives the layer. 'expect_cloud' holds for a model in the cloud only: a model on this computer may be sent more. 'config_saved_in_scratch' (turn): the turn saved the configuration, and every save went inside the scratch root, never the person's folders; 'real_config_untouched' (session): the person's own config folders are listed before and after (by the pytest folder guard under pytest) and must not change. Whether Heliox kept or changed something is checked on what was said ('has'/'not'): a reply that claims a change that did not happen, or denies one that did, fails the session.",
   "sessions": [
     {
       "name": "told once: the name to be called by",
@@ -62,7 +62,25 @@
         {
           "say": "Did you get that right?",
           "gap": 1.0,
-          "model": "Yes, I'll call you Sam.",
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "Yes"
+            ],
+            "not": [
+              "couldn't save",
+              "can't save",
+              "didn't save",
+              "not quite",
+              "didn't actually"
+            ]
+          }
+        },
+        {
+          "say": "What's a good name for a dog?",
+          "gap": 1.0,
+          "model": "Biscuit.",
           "expect": {
             "taken": true
           },
@@ -92,6 +110,112 @@
             ],
             "not_sent": [
               "done there: remembered"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "asked to keep or change something no handler takes",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, don't forget I'm vegan.",
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "didn't keep"
+            ],
+            "not": [
+              "got it",
+              "i'll remember",
+              "i'll call you",
+              "noted",
+              "i'll stay quiet",
+              "i'll keep",
+              "from now on i"
+            ],
+            "not_stored": [
+              "vegan"
+            ]
+          }
+        },
+        {
+          "say": "Did you get that?",
+          "gap": 1.0,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "No"
+            ],
+            "not": [
+              "Yes"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, from now on speak more slowly.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "didn't change"
+            ],
+            "not": [
+              "got it",
+              "i'll remember",
+              "i'll call you",
+              "noted",
+              "i'll stay quiet",
+              "i'll keep",
+              "from now on i"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, don't interrupt me while I'm writing.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "didn't change"
+            ],
+            "not": [
+              "got it",
+              "i'll remember",
+              "i'll call you",
+              "noted",
+              "i'll stay quiet",
+              "i'll keep",
+              "from now on i"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, remember when we went to Paris?",
+          "gap": 2,
+          "model": "I don't have anything about a Paris trip.",
+          "expect": {
+            "taken": true
+          },
+          "expect_model": {
+            "model": true
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what do you know about me?",
+          "gap": 5,
+          "expect": {
+            "taken": true,
+            "not": [
+              "vegan"
             ]
           }
         }
@@ -281,6 +405,13 @@
             "model": false,
             "has": [
               "quiet"
+            ],
+            "not": [
+              "couldn't save",
+              "can't save",
+              "didn't save",
+              "not quite",
+              "didn't actually"
             ]
           }
         },
@@ -322,7 +453,12 @@
               "Sam"
             ],
             "not": [
-              "Alex"
+              "Alex",
+              "couldn't save",
+              "can't save",
+              "didn't save",
+              "not quite",
+              "didn't actually"
             ],
             "stored": [
               "Sam"

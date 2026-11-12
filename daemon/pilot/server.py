@@ -14828,6 +14828,7 @@ def handle_tool(tool_name, params):
                         if CODE_ANSWER_BY.get() in CODE_ANSWERS_ANY_MODEL or _conversation_model_local(conversation)
                         else answered_here(tuple(voice_turn.kept))
                     )
+                    conversation.note_code_answer(timeline_answer, tuple(voice_turn.kept))
                 await self._broadcast_notification(
                     "voice_result", {"command": command_text, "status": "answered", "message": timeline_answer}
                 )

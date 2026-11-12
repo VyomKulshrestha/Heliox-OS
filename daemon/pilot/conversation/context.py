@@ -169,7 +169,7 @@ def never_sent(line: str) -> bool:
 # in the system prompt alone did not stop "Got it, I'll call you Sam" on the real model).
 SAVE_OR_CHANGE = re.compile(
     r"^(?:(?:no|nope|actually|ok|okay|and|oh|wait)[,.! ]+)*(?:please |hey heliox,? )?"
-    r"(?:call me (?!(?:later|back|tomorrow|when|if|at|in|on)\b)|my name is|my name's|i'm called|remember(?! (?:when|where|how|what|who|if|whether|me|us)\b)|keep in mind|note that|don't forget|"
+    r"(?:call me (?!(?:later|back|tomorrow|when|if|at|in|on)\b)|my name is|my name's|i'm called|remember(?! (?:to|when|where|how|what|who|if|whether|me|us)\b)|keep in mind|note that|don't forget(?! to\b)|"
     r"(?:stay|be|keep) quiet|don't (?:interrupt|disturb)|stop (?:interrupting|suggesting|offering)|speak up|"
     r"(?:be|keep it|keep your answers|give me) (?:short|brief|shorter|detailed|more detail))\b"
     r"|\bfrom now on\b",

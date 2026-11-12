@@ -139,13 +139,67 @@ def test_a_hand_over_says_who_my_manager_is():
 # ── the model never claims to have saved or changed something ──
 
 
-def test_the_model_is_told_it_cannot_save_and_how_the_person_can():
+def test_the_prompt_only_says_the_record_is_the_truth():
+    """The blanket "you cannot save anything" made the model deny a save that happened; the line is conditional."""
     from pilot.conversation.style import SYSTEM_PROMPT, TYPED_SYSTEM_PROMPT
 
     for prompt in (SYSTEM_PROMPT, TYPED_SYSTEM_PROMPT):
-        assert "You cannot save or remember anything for later" in prompt
-        assert "never say it was" in prompt and '"remember that ..."' in prompt and "Settings" in prompt
-        assert "(answered on this computer; done there: ...)" in prompt  # how it is told what Heliox did
+        assert "You cannot save" not in prompt
+        assert '("done there: ...")' in prompt and "never contradict it" in prompt
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.t = 100.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _layer():
+    async def sink(*_args):
+        return "spoken"
+
+    clock = Clock()
+    return ConversationLayer(sink=sink, model=lambda: None, clock=clock), clock
+
+
+@pytest.mark.parametrize(
+    ("words", "starts"),
+    [
+        ("No, call me Sam", "I didn't change your name."),
+        ("don't interrupt me while I'm writing", "I didn't change when I speak up."),
+        ("give me more detail from now on", "I didn't change how long my answers are."),
+        ("don't forget I'm vegan", "I didn't keep that."),
+        ("from now on answer in French", "I didn't change anything."),
+    ],
+)
+def test_a_request_to_keep_or_change_that_no_handler_took_gets_one_true_sentence(words, starts):
+    layer, _clock = _layer()
+    assert (layer._kept_or_changed(words, None) or "").startswith(starts)
+
+
+@pytest.mark.parametrize(
+    "words",
+    ["call me later about it", "remember when we went to Paris?", "remember to buy milk", "why is the sky blue?"],
+)
+def test_other_words_still_go_to_the_model(words):
+    layer, _clock = _layer()
+    assert layer._kept_or_changed(words, None) is None
+
+
+def test_did_you_get_that_is_answered_from_the_record():
+    layer, clock = _layer()
+    saved = ("Nice to meet you, Sam. I'll call you that.", ("remembered that",), clock())
+    assert layer._kept_or_changed("Did you get that right?", saved) == (
+        "Yes, I remembered that. Nice to meet you, Sam. I'll call you that."
+    )
+    nothing = ('I didn\'t keep that. Say "remember that" and then the fact.', (), clock())
+    assert layer._kept_or_changed("did you save that?", nothing) == "No, nothing was saved or changed."
+    answered = ("It's nine a m.", (), clock())
+    assert layer._kept_or_changed("did you get that?", answered) is None  # not about a save: the usual road
+    clock.t += 61.0
+    assert layer._kept_or_changed("did you get that?", saved) is None  # too long ago to be about that turn
 
 
 def test_a_turn_answered_in_code_tells_a_cloud_model_what_was_done_without_the_data():
@@ -163,6 +217,7 @@ def test_a_turn_answered_in_code_tells_a_cloud_model_what_was_done_without_the_d
         ("remember that I like tea", True),
         ("from now on answer in French", True),
         ("keep your answers short", True),
+        ("remember to buy milk", False),
         ("call me later about it", False),
         ("remember when we went to Paris?", False),
         ("what do you remember about me?", False),

@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pilot.conversation import provisional as prov
-from pilot.conversation.context import ContextSources, ConversationMemory, build_messages
+from pilot.conversation.context import SAVE_OR_CHANGE, ContextSources, ConversationMemory, build_messages
 from pilot.conversation.fast_model import FastModel, FastModelUnavailable
 from pilot.conversation.handover import (
     HandoverIntent,
@@ -123,6 +123,34 @@ YES = frozenset(
 _QUESTION_WORDS = re.compile(r"^(?:how|what|why|when|where|which|who|whats|what's|hows|how's)\b")
 _ASKS_TO_ACT = re.compile(r"^(?:can|could|would|will) you\b|^please\b")
 DOUBTFUL = "doubtful_follow_up"
+# Whether Heliox kept or changed something is never the model's to say (three paid runs: it claimed saves that
+# did not happen and denied one that did). A request to keep something or behave differently that no handler
+# took gets one fixed, true sentence, by kind; "did you get that?" right after is answered from the record.
+NOT_KEPT = (
+    (
+        re.compile(r"\b(?:call me|my name is|my name's|i'm called)\b", re.I),
+        'I didn\'t change your name. Say "call me" and then the name.',
+    ),
+    (
+        re.compile(r"\b(?:quiet|interrupt|interrupting|speak up|suggest|suggesting|offers?)\b", re.I),
+        'I didn\'t change when I speak up. Say "stay quiet unless I ask", or "you can speak up again".',
+    ),
+    (
+        re.compile(r"\b(?:short|shorter|brief|detail|detailed|longer)\b", re.I),
+        'I didn\'t change how long my answers are. Say "keep it short" or "be detailed".',
+    ),
+    (
+        re.compile(r"\b(?:remember|keep in mind|note|forget)\b", re.I),
+        'I didn\'t keep that. Say "remember that" and then the fact.',
+    ),
+)
+NOT_CHANGED = 'I didn\'t change anything. Say "remember that" and the fact to keep it, or use Settings.'
+DID_YOU = re.compile(
+    r"^(?:so |and |ok |okay |wait |hey heliox,? )?(?:did you (?:get|save|keep|store|catch|change|do|note) "
+    r"(?:that|it|this|my name)(?: right| down)?|what did you (?:just )?do|did that work|is that (?:saved|done|kept)"
+    r"|have you (?:saved|got|kept) (?:that|it))$"
+)
+DONE_SECONDS = 60.0  # how long "did you get that?" is about the turn before
 # Words that start a stop, a denial or an undo (the listener's own rule): never answered early.
 _CONTROL_START = re.compile(
     r"^(?:stop|wait|hold on|no|nope|cancel|never ?mind|undo|skip|don'?t|do not|not (?:that|now)|actually|instead|"
@@ -255,6 +283,8 @@ class ConversationLayer:
         self._saw_screen_text = False
         self._turn_ended = turn_ended
         self._last_ack = ""
+        # The last turn Heliox answered in code: (its answer, what it changed, when). None: the last turn was not.
+        self._last_done: tuple[str, tuple[str, ...], float] | None = None
         self.last_result = ""
         self.turns: list[TurnResult] = []  # recent turns, for measurement and the debug log
         # Answers started on the listener's words before the turn was confirmed (pilot.conversation.provisional).
@@ -459,6 +489,17 @@ class ConversationLayer:
                 self._not_understood()
             except Exception:
                 logger.debug("Could not tell the listener the turn was not understood", exc_info=True)
+            return result
+        done, self._last_done = self._last_done, None
+        settled = self._kept_or_changed(text, done)
+        if settled is not None:
+            # Answered in code, true by construction: the model is not asked whether anything was kept.
+            self.memory.add_user(text)
+            await self._say_one(result, settled, started)
+            self.memory.add_heliox(settled)
+            if done is None:
+                self._last_done = (settled, (), self._clock())  # "did you get that?" next: no
+            result.done = True
             return result
         if decided.kind is TurnKind.ACTION:
             self.memory.add_user(text)
@@ -761,6 +802,27 @@ class ConversationLayer:
             return dict(self.sources.people() or {})
         except Exception:
             return {}
+
+    def note_code_answer(self, answer: str, changed: tuple[str, ...] | list[str]) -> None:
+        """The server answered this turn in code (a handler took the words): what it said, and what it changed."""
+        self._last_done = (str(answer or ""), tuple(changed or ()), self._clock())
+
+    def _kept_or_changed(self, text: str, done: tuple[str, tuple[str, ...], float] | None) -> str | None:
+        """The fixed sentence for words about keeping or changing something, or None to go on as usual.
+
+        "Did you get that?" right after a turn Heliox answered in code: from what that turn changed. A request to keep
+        something or behave differently that reached this layer: no handler took it, so nothing was kept or changed."""
+        words = normalize(text)
+        if done is not None and self._clock() - done[2] <= DONE_SECONDS and DID_YOU.match(words):
+            answer, changed, _at = done
+            if changed:
+                return f"Yes, I {' and '.join(changed[:2])}. {answer}".strip()
+            if answer.startswith("I didn't"):
+                return "No, nothing was saved or changed."
+            # A turn answered in code that changed nothing ("what time is it?"): the question is not about a save.
+        if not SAVE_OR_CHANGE.search(text.strip()):
+            return None
+        return next((sentence for pattern, sentence in NOT_KEPT if pattern.search(words)), NOT_CHANGED)
 
     def _word_cap(self) -> int:
         """How long a spoken reply may run: the person's own answer style when they set one ("keep it short",
