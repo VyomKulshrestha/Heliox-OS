@@ -345,7 +345,12 @@ class Harness:
         async def planner_stub(params: dict, ws: Any) -> dict:
             model = self.model  # read at call time: one harness serves every kind of model
             log(tl.PLANNER, str(params.get("input", ""))[:120], model=model.name)
-            await asyncio.sleep(model.plan_seconds())
+            try:
+                await asyncio.sleep(model.plan_seconds())
+            except asyncio.CancelledError:
+                # The turn was stopped before its plan came back (a split sentence withdrawn, a stop): no action.
+                log(tl.PLANNER_CANCELLED, str(params.get("input", ""))[:120])
+                raise
             if not model.available:
                 return {"status": "error", "message": NO_MODEL_MESSAGE}
             return {"status": "success", "message": STUB_SUCCESS}
@@ -439,6 +444,14 @@ class Harness:
         turn_entry, _ = server_listener_wiring(SERVER_SOURCE.read_text(encoding="utf-8"))
         original_dispatch = getattr(server, turn_entry)
 
+        async def server_turn(text: str) -> None:
+            # A turn the server starts itself (the joined sentence after a withdrawal): on the timeline too.
+            self._busy_until = 0.0
+            log(tl.DISPATCH, text, joined=True)
+            await original_dispatch(text)
+
+        setattr(server, turn_entry, server_turn)  # the listener's own turns still go through ``dispatch`` below
+
         async def dispatch(text: str) -> None:
             lst = self.listener
             rec = lst._recorder
@@ -467,6 +480,15 @@ class Harness:
         # Wired exactly as the server wires its own listener (read from its source), so a sentence split at a
         # pause can be withdrawn and joined; without it every bench run was the unwired case.
         wire_like_server(listener, server)
+        server_withdraw = getattr(listener, "withdraw_turn", None)
+        if server_withdraw is not None:
+
+            async def withdraw(turn_id: str, joined: str, gap: float | None = None) -> Any:
+                result = await server_withdraw(turn_id, joined, gap)
+                log(tl.WITHDRAW, joined[:120], turn_id=turn_id, gap=gap, status=str(getattr(result, "status", result)))
+                return result
+
+            listener.withdraw_turn = withdraw  # the server's own method, with what it decided on the timeline
         self.listener = listener
         original_note = listener.note_interruption
 
@@ -694,6 +716,7 @@ class Harness:
             and not transcribing
             and self._speech_idle()
             and not listener._command_tasks
+            and not any(not t.done() for t in getattr(self.server, "_background_dispatches", ()))
             and not listener.user_is_speaking
         )
 
@@ -713,8 +736,8 @@ class Harness:
         self._setup_task = None
         self._setup_text = ""
         await server._speech_coordinator.stop_all()
-        for task in list(listener._command_tasks):
-            task.cancel()
+        for task in [*listener._command_tasks, *getattr(server, "_background_dispatches", set())]:
+            task.cancel()  # a joined turn the server started must not speak into the next scenario
         server._pending_confirms.clear()
         server._active_plan_id = ""
         server._interactive_request_active = False

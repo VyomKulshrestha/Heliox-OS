@@ -351,6 +351,20 @@ headset. A desk number good to about 2.5 points near 8% needs about 40 different
 microphone, plus about 20 wake sentences per microphone for the 19-in-20 line: what the recording helper below
 collects.
 
+## Split sentences and slips on 008f1a0 (synthetic voice, timing-free)
+
+With the listener wired as the server wires it, a sentence split at a pause is withdrawn and joined: on the four
+pause scenarios ("Hey Heliox, remind me to | call the bank tomorrow morning", 0.6 to 2.0 s) the first half's
+planner call is cancelled and one planner call carries the joined sentence, and Heliox never starts speaking over
+the person (0 of 4). The first half's progress line ("I'm working out the steps.") is said again for the joined
+sentence at 1.0, 1.5 and 2.0 s. Of the 23 corpus lines the listener cuts at a comma, said to Heliox, 21 end as one
+joined turn; the two others are three-part sentences, joined once and then continued again. The five slip
+scenarios: 5 of 5 as expected (the four slips said to Heliox held with a question before anything acts, the remark
+to a colleague silent).
+
+The bench now logs a withdrawal (with the server's answer and the gap), a cancelled planner call, and a turn the
+server starts itself; before, it counted the cancelled first half as an action and missed the joined turn.
+
 ## Recording your own voice
 
 The bench needs more of your own voice before two lines mean anything: how many words Heliox gets wrong, and how
