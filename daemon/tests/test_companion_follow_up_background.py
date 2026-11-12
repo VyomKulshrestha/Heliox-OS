@@ -1,5 +1,4 @@
 import asyncio
-import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -40,7 +39,6 @@ async def test_companion_follow_up_never_blocks_terminal_result_delivery():
     plan = ActionPlan(actions=[], explanation="Done")
     verification = VerificationResult(passed=True, details=["verified"])
 
-    started = time.perf_counter()
     server._spawn_companion_follow_up(
         user_input="show system information",
         plan=plan,
@@ -49,9 +47,9 @@ async def test_companion_follow_up_never_blocks_terminal_result_delivery():
         result_text="Windows 11",
         chat_session_id="chat-1",
     )
-    elapsed = time.perf_counter() - started
-
-    assert elapsed < 0.05
+    # Ordered, not timed: the call has returned while the companion is still held, its work left in a task.
+    pending = tuple(server._companion_follow_up_tasks)
+    assert len(pending) == 1 and not pending[0].done()
     server._broadcast_notification.assert_not_awaited()
 
     companion.release.set()

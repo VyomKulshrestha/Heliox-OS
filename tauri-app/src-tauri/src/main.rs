@@ -254,6 +254,7 @@ fn spawn_daemon() -> Option<Child> {
             "[Heliox OS] Reusing daemon already listening on ws://{}:{}",
             DAEMON_HOST, DAEMON_PORT
         );
+        BORROW_AT_START.store(true, std::sync::atomic::Ordering::SeqCst);
         return None;
     }
 
@@ -288,6 +289,11 @@ fn launch_daemon() -> Option<Child> {
                 println!("[Heliox OS] Daemon is initializing; the UI will reconnect when ready");
                 return Some(child);
             }
+            if exited_as_another_copy(&mut child) {
+                println!("[Heliox OS] Another copy of the daemon is serving; using it");
+                BORROW_AT_START.store(true, std::sync::atomic::Ordering::SeqCst);
+                return None;
+            }
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -306,11 +312,44 @@ fn launch_daemon() -> Option<Child> {
             println!("[Heliox OS] Daemon is initializing; the UI will reconnect when ready");
             return Some(child);
         }
+        if exited_as_another_copy(&mut child) {
+            println!("[Heliox OS] Another copy of the daemon is serving; using it");
+            BORROW_AT_START.store(true, std::sync::atomic::Ordering::SeqCst);
+            return None;
+        }
         let _ = child.kill();
         let _ = child.wait();
     }
 
     None
+}
+
+/// Set when a daemon this app started found another copy serving the port (exit code 3), or when the app found a
+/// daemon already listening at launch: the supervisor then watches that copy instead of owning one.
+static BORROW_AT_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True when the child has exited with the daemon's "another copy is serving" code. Strategy 2 (system Python) is
+/// not tried then: it would find the same copy.
+fn exited_as_another_copy(child: &mut Child) -> bool {
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            supervisor::exit_observation(status.code()) == supervisor::Observation::AnotherCopy
+        }
+        _ => false,
+    }
+}
+
+/// Is anything answering on the daemon's port? In borrowed mode that is the only question: the other copy's own
+/// supervisor (or the person who ran it) deals with its start-up and hangs.
+fn daemon_port_answers() -> bool {
+    use std::net::{SocketAddr, ToSocketAddrs};
+    let addresses: Vec<SocketAddr> = (DAEMON_HOST, DAEMON_PORT)
+        .to_socket_addrs()
+        .map(|found| found.collect())
+        .unwrap_or_default();
+    addresses
+        .iter()
+        .any(|address| TcpStream::connect_timeout(address, Duration::from_secs(1)).is_ok())
 }
 
 /// Watch the daemon this app started; restart it when it exits or stops answering (see supervisor.rs).
@@ -325,13 +364,18 @@ pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
         .lock()
         .map(|guard| guard.is_some())
         .unwrap_or(false);
-    if !owned || SUPERVISING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+    let borrowed = !owned && BORROW_AT_START.load(std::sync::atomic::Ordering::SeqCst);
+    if !(owned || borrowed) || SUPERVISING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
     std::thread::spawn(move || {
         let _guard = SupervisingGuard;
         let mut watch = Watch::default();
         watch.started();
+        if borrowed {
+            watch.borrow();
+            BORROW_AT_START.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
         loop {
             std::thread::sleep(CHECK_EVERY);
             if APP_EXITING.load(std::sync::atomic::Ordering::SeqCst) {
@@ -343,15 +387,35 @@ pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
                 continue;
             }
             let state = app.state::<DaemonProcess>();
-            let exited = match state.0.lock() {
-                Ok(mut guard) => match guard.as_mut() {
-                    Some(child) => !matches!(child.try_wait(), Ok(None)),
-                    None => true, // a restart that failed to launch: keep trying
-                },
-                Err(_) => return,
+            let exited = if watch.borrowed {
+                None // another copy's daemon: only its port is watched
+            } else {
+                match state.0.lock() {
+                    Ok(mut guard) => match guard.as_mut() {
+                        Some(child) => match child.try_wait() {
+                            Ok(None) => None,
+                            Ok(Some(status)) => Some(supervisor::exit_observation(status.code())),
+                            Err(_) => Some(Observation::Exited),
+                        },
+                        // A restart that failed to launch: keep trying, unless it found another copy serving.
+                        None if BORROW_AT_START
+                            .swap(false, std::sync::atomic::Ordering::SeqCst) =>
+                        {
+                            Some(Observation::AnotherCopy)
+                        }
+                        None => Some(Observation::Exited),
+                    },
+                    Err(_) => return,
+                }
             };
-            let seen = if exited {
-                Observation::Exited
+            let seen = if let Some(exit) = exited {
+                exit
+            } else if watch.borrowed {
+                if daemon_port_answers() {
+                    Observation::Answered
+                } else {
+                    Observation::Silent
+                }
             } else if tauri::async_runtime::block_on(commands::daemon_answers()) {
                 Observation::Answered
             } else {
@@ -386,10 +450,28 @@ pub(crate) fn supervise_daemon(app: tauri::AppHandle) {
                             }
                         }
                         if TcpStream::connect((DAEMON_HOST, DAEMON_PORT)).is_ok() {
-                            // Someone else started a daemon meanwhile (for example from a terminal): leave it.
+                            // Someone else started a daemon meanwhile (for example from a terminal): leave it, and
+                            // watch it as a borrowed one.
                             println!("[Heliox OS] Another daemon is listening; not starting one");
-                            return;
+                            watch.borrow();
+                            continue;
                         }
+                        *guard = launch_daemon();
+                    }
+                    watch.started();
+                }
+                Step::Borrow => {
+                    if let Ok(mut guard) = state.0.lock() {
+                        if let Some(mut old) = guard.take() {
+                            let _ = old.wait(); // it has exited: reap it
+                        }
+                    }
+                }
+                Step::TakeOver => {
+                    if APP_EXITING.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    if let Ok(mut guard) = state.0.lock() {
                         *guard = launch_daemon();
                     }
                     watch.started();
@@ -419,7 +501,28 @@ fn stop_daemon(state: &DaemonProcess) {
         }
     }
 }
+mod instance;
+
 fn main() {
+    // One copy of the app per person: a second launch brings the first window forward and exits, before it starts
+    // a daemon, a tray or a supervisor of its own (instance.rs).
+    let first_copy = match instance::claim(&get_app_data_dir()) {
+        instance::Launch::First(first) => Some(first),
+        instance::Launch::Second => {
+            if instance::ask_first_to_show(&get_app_data_dir()) {
+                println!("[Heliox OS] Heliox is already open; brought its window forward");
+            } else {
+                eprintln!("[Heliox OS] Heliox is already open but did not answer; not opening a second copy");
+            }
+            return;
+        }
+        instance::Launch::Unknown(reason) => {
+            eprintln!(
+                "[Heliox OS] Could not check for another open copy ({reason}); opening anyway"
+            );
+            None
+        }
+    };
     // Spawn the Python daemon before building the Tauri app
     let daemon_child = spawn_daemon();
     let installed = daemon_child.is_some()
@@ -435,12 +538,26 @@ fn main() {
         .manage(commands::NeuralProcess::new())
         .manage(file_access::AllowedPaths::new())
         .manage(commands::GestureCursor::init())
-        .setup(|app| {
+        .setup(move |app| {
             let window = app.get_webview_window("main").unwrap();
 
             // Show the window when the user starts the app, rather than hiding it
             window.show().unwrap();
             window.set_focus().unwrap();
+            if let Some(first) = first_copy {
+                let handle = app.handle().clone();
+                let listening = first.listen(move || {
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                });
+                if let Err(error) = listening {
+                    eprintln!("[Heliox OS] A second launch will not find this window: {error}");
+                }
+                app.manage(first); // the lock is held for as long as the app runs
+            }
             tray::setup_tray(app)?;
             hotkey::register_hotkey(app)?;
             setup::probe_in_background(app.handle().clone());

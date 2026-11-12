@@ -1180,6 +1180,7 @@ class PilotServer:
 
         self._startup_stage("opening Heliox's records")
         audit = AuditLogger()
+        self._audit_logger = audit  # the archive action holds its write lock (pilot.security.audit_archive)
         self._permission_audit = PermissionEscalationAuditStore()
         await self._permission_audit.initialize()
         self._checkpoint_store = WorkflowCheckpointStore()
@@ -1969,6 +1970,8 @@ class PilotServer:
             "receipt_get": self._handle_receipt_get,
             "receipt_verify": self._handle_receipt_verify,
             "receipts_verify_chain": self._handle_receipts_verify_chain,
+            "storage_sizes": self._handle_storage_sizes,
+            "audit_archive": self._handle_audit_archive,
             "timeline_status": self._handle_timeline_status,
             "timeline_search": self._handle_timeline_search,
             "timeline_summary": self._handle_timeline_summary,
@@ -10721,6 +10724,24 @@ class PilotServer:
 
         storage().notify = notify
 
+    def _data_size(self) -> Any:
+        """Sizes of the data folder and its unbounded stores, and the once-per-crossing warning (pilot.system.data_rpc)."""
+        data_size = self.__dict__.get("_data_size_state")
+        if data_size is None:
+            from pilot.system.data_rpc import DataSize
+
+            data_size = self._data_size_state = DataSize(self, DATA_DIR)
+        return data_size
+
+    async def _handle_storage_sizes(self, params: dict, ws: ServerConnection) -> dict:
+        """Settings, Your data: how big the data folder and its unbounded stores are, and the warning limit."""
+        return await self._data_size().storage_sizes(params)
+
+    async def _handle_audit_archive(self, params: dict, ws: ServerConnection) -> dict:
+        """Move audit log entries dated before ``older_than`` (YYYY-MM-DD) to a dated file beside it. Person-started;
+        nothing is deleted (pilot.security.audit_archive)."""
+        return await self._data_size().audit_archive(params, self.__dict__.get("_audit_logger"))
+
     def _neural_sidecar_state(self) -> dict[str, Any]:
         """Whether the neural sidecar is linked now; after a drop, that it reconnects by itself and must be armed
         again (the daemon disarmed when it went away)."""
@@ -12815,6 +12836,7 @@ def handle_tool(tool_name, params):
         from pilot.system.wake import watch as watch_for_wake
 
         self._wake_task = asyncio.create_task(watch_for_wake(self._on_wake), name="wake_watch")
+        self._size_task = asyncio.create_task(self._data_size().watch_forever(), name="data_size_watch")
 
         if hasattr(self, "_new_features_announcement") and self._new_features_announcement:
             await asyncio.sleep(1)
@@ -12902,6 +12924,10 @@ def handle_tool(tool_name, params):
         if wake_task is not None and not wake_task.done():
             wake_task.cancel()
             await self._bounded_stop_step("wake watch", asyncio.gather(wake_task, return_exceptions=True))
+        size_task = self.__dict__.get("_size_task")
+        if size_task is not None and not size_task.done():
+            size_task.cancel()
+            await self._bounded_stop_step("data size watch", asyncio.gather(size_task, return_exceptions=True))
         storage_wait = self.__dict__.get("_storage_wait_task")
         if storage_wait is not None and not storage_wait.done():
             storage_wait.cancel()

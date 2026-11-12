@@ -466,6 +466,15 @@ class ReceiptsConfig:
 
 
 @dataclass
+class StorageConfig:
+    """Heliox's data folder (see pilot.system.data_size). The audit log, the durable task tables, the checkpoints
+    and the experience ledger are never pruned on their own; their sizes are shown in Settings, and Heliox says once
+    when the whole data folder passes ``data_folder_warn_gb``."""
+
+    data_folder_warn_gb: int = 5
+
+
+@dataclass
 class BriefConfig:
     """Daily brief (see pilot.workflows.daily_brief). Off by default. At ``time`` (24-hour
     HH:MM, local) Heliox sends one short summary of the day: what it ran, where your
@@ -832,6 +841,7 @@ class PilotConfig:
     preview: PreviewConfig = field(default_factory=PreviewConfig)
     undo: UndoConfig = field(default_factory=UndoConfig)
     receipts: ReceiptsConfig = field(default_factory=ReceiptsConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
     timeline: TimelineConfig = field(default_factory=TimelineConfig)
     brief: BriefConfig = field(default_factory=BriefConfig)
     clipboard: ClipboardConfig = field(default_factory=ClipboardConfig)
@@ -1221,6 +1231,9 @@ def _validate_config_types(raw: dict) -> None:
             "enabled": bool,
             "retention_days": int,
         },
+        "storage": {
+            "data_folder_warn_gb": int,
+        },
         "timeline": {
             "enabled": bool,
             "retention_days": int,
@@ -1601,6 +1614,9 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         config.receipts.enabled = bool(r_raw.get("enabled", config.receipts.enabled))
         if "retention_days" in r_raw:
             config.receipts.retention_days = min(max(int(r_raw["retention_days"]), 1), 3650)
+
+    if "storage" in raw and isinstance(raw["storage"], dict) and "data_folder_warn_gb" in raw["storage"]:
+        config.storage.data_folder_warn_gb = min(max(int(raw["storage"]["data_folder_warn_gb"]), 1), 100000)
 
     if "timeline" in raw and isinstance(raw["timeline"], dict):
         t_raw = raw["timeline"]

@@ -398,7 +398,9 @@ async def test_the_companion_stops_waiting_when_the_other_reviews_are_done_and_s
         )
 
     assert review.status == "unavailable" and review.reviewed is False
-    assert 0.95 <= loop.time() - started < 1.5  # its own limit, not the 20 s ceiling
+    # Its own 1 s limit: it waited past the others (timers never fire early), and it gave up rather than wait for the
+    # 5 s model under the 20 s ceiling, which would have returned the model's answer instead of "unavailable".
+    assert loop.time() - started >= 0.95
     assert model.cancelled == 1
     message = caplog.records[-1].getMessage()
     assert "did not answer within 1.0 s" in message and "limit 1 s" in message
@@ -413,10 +415,20 @@ async def test_after_a_timeout_the_companion_only_rides_along_with_the_other_rev
     assert first.status == "unavailable"  # its own 1 s limit
 
     others_until = loop.time() + 0.3
-    started = loop.time()
-    second = await companion.review("Show the OS version.", _plan(), others_running=lambda: loop.time() < others_until)
+    checks_after_others_finished = 0
+
+    def others_running() -> bool:
+        nonlocal checks_after_others_finished
+        if loop.time() < others_until:
+            return True
+        checks_after_others_finished += 1
+        return False
+
+    second = await companion.review("Show the OS version.", _plan(), others_running=others_running)
     assert second.status == "unavailable"
-    assert loop.time() - started < 0.6  # stopped when the others finished, not 1 s later
+    # Counted, not timed: it stopped at the first check after the others finished; waiting out its own 1 s limit
+    # would have meant checking again every poll.
+    assert checks_after_others_finished == 1
 
     third = await companion.review("Show the OS version.", _plan(), others_running=lambda: False)
     assert third.status == "skipped_slow"  # nothing to ride along with: no call at all

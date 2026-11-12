@@ -1564,16 +1564,22 @@ class _ReviewRecorder:
         self.cancelled: set[str] = set()
         self.started = asyncio.Event()
         self.companion_others: list[bool] = []
+        self.running = 0
+        self.most_at_once = 0  # how many reviews were in flight together: ordering, not timing
 
     async def _run(self, name: str):
         loop = asyncio.get_running_loop()
         begin = loop.time()
         self.started.set()
+        self.running += 1
+        self.most_at_once = max(self.most_at_once, self.running)
         try:
             await asyncio.sleep(self.delay)
         except asyncio.CancelledError:
             self.cancelled.add(name)
             raise
+        finally:
+            self.running -= 1
         self.spans[name] = (begin, loop.time())
 
     def companion(self):
@@ -1650,17 +1656,12 @@ async def test_plan_reviews_run_at_the_same_time_and_every_result_still_counts()
 
     server._wait_for_confirmation = decline
     ws = _FakeWs()
-    loop = asyncio.get_running_loop()
-    started = loop.time()
 
     result = await server._handle_execute({"input": "shut down the computer"}, ws)
 
-    elapsed = loop.time() - started
     assert set(recorder.spans) == {"companion", "critic", "gnomon"}
-    # In a row they would take 0.9 s; together, about the slowest one.
-    assert elapsed < 0.75, f"plan reviews ran one after another ({elapsed:.2f} s)"
-    starts = sorted(begin for begin, _end in recorder.spans.values())
-    assert starts[-1] - starts[0] < 0.1
+    # Together, not one after another: all three were in flight at once (counted, so a slow runner cannot fail it).
+    assert recorder.most_at_once == 3, "plan reviews ran one after another"
     # Gnomon's escalation and the critic's warning both reached the approval, and the person's "no" stands.
     assert "Gnomon graded the harm" in seen["reason"] and seen["force_all_actions"] is True
     assert result["status"] != "success"

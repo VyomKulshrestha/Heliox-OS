@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **328 WebSocket RPC methods**. That is the API
+The daemon currently registers **330 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -433,6 +433,20 @@ Anyone can check an exported receipt offline with
 #### `receipts_verify_chain`
 Check every stored receipt's signature and its link to the previous one.
 **Result:** `{"status": "ok", "result": {"valid": false, "count": 41, "problems": [{"file": "...", "reason": "The receipt before this one was changed or removed."}]}}`.
+
+#### `storage_sizes`
+How big Heliox's data folder is, and each store Heliox never prunes on its own. Saying this is also when the
+once-per-crossing warning for `storage.data_folder_warn_gb` is checked (it then arrives as a `storage_problem`
+notification with `kind: "size"`).
+**Result:** `{"status": "ok", "folder": "...", "total_bytes": 6442450944, "warn_gb": 5, "over": true, "stores": [{"name": "Audit log", "bytes": 3221225472}, {"name": "Audit log archives", "bytes": 0}, {"name": "Durable tasks", "bytes": 1048576}, {"name": "Checkpoints", "bytes": 409600}, {"name": "Experience ledger", "bytes": 2359296}]}`.
+
+#### `audit_archive`
+Started by the person only. Moves audit log entries dated before `older_than` to a dated file beside the audit log
+(`audit-2026-11-12.jsonl`) after checking free space, fsyncing it and reading it back; the live file is rewritten
+beside the old one and renamed, never truncated in place. Nothing is deleted.
+**Params:** `{ "older_than": "2026-08-01" }`
+**Result:** `{"status": "ok", "message": "Moved 4120 audit entries from before 2026-08-01 to audit-2026-11-12.jsonl, beside the audit log. Nothing was deleted.", "archived": {"archive": "audit-2026-11-12.jsonl", "lines": 4120, "sha256": "...", "live_lines_kept": 913, "older_than": "2026-08-01", "cut_at": "..."}, "sizes": {...}}`,
+or `{"status": "error", "message": "There is not enough free space to archive the audit log: ..."}`.
 
 #### `timeline_status`
 **Result:** `{"status": "ok", "enabled": true, "paused_until": null, "span_count": 812, "retention_days": 7}`.

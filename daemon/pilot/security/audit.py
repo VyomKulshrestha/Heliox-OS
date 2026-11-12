@@ -127,6 +127,16 @@ class AuditLogger:
         )
         await self._write(entry)
 
+    async def archive_older_than(self, older_than: Any, **options: Any) -> dict[str, Any]:
+        """Move entries dated before ``older_than`` to a dated archive file (pilot.security.audit_archive).
+
+        Holds the write lock throughout, so no entry is appended between the read and the rename.
+        """
+        from pilot.security.audit_archive import archive_older_than
+
+        async with self._lock:
+            return await asyncio.to_thread(archive_older_than, self._file, older_than, **options)
+
     async def _write(self, entry: AuditEntry) -> None:
         line = json.dumps(entry.to_dict(), separators=(",", ":")) + "\n"
         try:

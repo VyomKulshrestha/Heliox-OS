@@ -8,7 +8,12 @@
 //! the window reconnects on its own as it always did.
 //!
 //! A daemon the app did not start (for example one run from a terminal during development, found already listening
-//! at launch) is never touched: `DaemonProcess` holds `None` and the supervisor only watches.
+//! at launch) is never touched: `DaemonProcess` holds `None` and the supervisor only watches its port ("borrowed").
+//!
+//! A daemon that exits with code 3 found another copy serving the port (`AlreadyRunningError` in the daemon). That is
+//! not a crash: there is no restart and no alarm, one calm line says the window is using the copy that is running,
+//! and the supervisor borrows that copy too. If a borrowed copy's port stays silent for TAKE_OVER_AFTER, it has gone
+//! and this app starts its own daemon.
 
 use std::process::Child;
 use std::time::Duration;
@@ -21,38 +26,91 @@ pub(crate) const HANG_AFTER: Duration = Duration::from_secs(60);
 /// After this long without a restart, the back-off starts again from 2 s.
 pub(crate) const STABLE_AFTER: Duration = Duration::from_secs(300);
 pub(crate) const PING_TIMEOUT: Duration = Duration::from_secs(10);
+/// The daemon's exit code when another copy already serves its port (pilot.server main, AlreadyRunningError).
+pub(crate) const ANOTHER_COPY_EXIT_CODE: i32 = 3;
+/// While borrowing another copy's daemon: how long its port may stay silent before this app starts its own. A minute,
+/// so a developer restarting a daemon from a source checkout (import, data-folder check, tokens, listen) gets the port
+/// back before the app takes it.
+pub(crate) const TAKE_OVER_AFTER: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Observation {
     Exited,
+    /// Exited with ANOTHER_COPY_EXIT_CODE: another copy serves the port.
+    AnotherCopy,
     Answered,
     Silent,
+}
+
+/// What an exit status means: code 3 is "another copy is serving", anything else is a crash.
+pub(crate) fn exit_observation(code: Option<i32>) -> Observation {
+    if code == Some(ANOTHER_COPY_EXIT_CODE) {
+        Observation::AnotherCopy
+    } else {
+        Observation::Exited
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Step {
     Wait,
-    Restart { after: Duration },
+    Restart {
+        after: Duration,
+    },
     KillHung,
+    /// Another copy serves the port: drop the exited child, watch that copy, say so once.
+    Borrow,
+    /// The borrowed copy's port went silent: start this app's own daemon now.
+    TakeOver,
 }
 
 /// Pure bookkeeping for one owned daemon: what each observation means. Tested without processes or sockets.
 #[derive(Debug, Default)]
 pub(crate) struct Watch {
     pub(crate) restarts_in_row: u32,
+    /// Watching a daemon another copy started; observations are "its port answers" or not.
+    pub(crate) borrowed: bool,
     since_start: Duration,
     since_answer: Duration,
 }
 
 impl Watch {
     pub(crate) fn started(&mut self) {
+        self.borrowed = false;
         self.since_start = Duration::ZERO;
+        self.since_answer = Duration::ZERO;
+    }
+
+    /// From now on, watch another copy's daemon instead of one this app owns.
+    pub(crate) fn borrow(&mut self) {
+        self.borrowed = true;
+        self.restarts_in_row = 0;
         self.since_answer = Duration::ZERO;
     }
 
     pub(crate) fn observe(&mut self, seen: Observation, elapsed: Duration) -> Step {
         self.since_start += elapsed;
+        if self.borrowed {
+            return match seen {
+                Observation::Answered => {
+                    self.since_answer = Duration::ZERO;
+                    Step::Wait
+                }
+                _ => {
+                    self.since_answer += elapsed;
+                    if self.since_answer >= TAKE_OVER_AFTER {
+                        Step::TakeOver
+                    } else {
+                        Step::Wait
+                    }
+                }
+            };
+        }
         match seen {
+            Observation::AnotherCopy => {
+                self.borrow();
+                Step::Borrow
+            }
             Observation::Exited => {
                 let after = restart_delay(self.restarts_in_row);
                 self.restarts_in_row += 1;
@@ -93,6 +151,14 @@ pub(crate) fn notice(step: Step) -> Option<String> {
             "Heliox's background service stopped. Starting it again in {} s.",
             after.as_secs()
         )),
+        Step::Borrow => Some(
+            "Heliox's background service is already running from another copy; this window is using it."
+                .to_string(),
+        ),
+        Step::TakeOver => Some(
+            "The other copy of Heliox's background service stopped, so this app is starting its own."
+                .to_string(),
+        ),
     }
 }
 
@@ -170,7 +236,58 @@ mod tests {
     }
 
     #[test]
+    fn exit_code_3_is_another_copy_not_a_crash() {
+        assert_eq!(exit_observation(Some(3)), Observation::AnotherCopy);
+        assert_eq!(exit_observation(Some(1)), Observation::Exited);
+        assert_eq!(exit_observation(None), Observation::Exited); // ended by a signal
+        let mut watch = Watch::default();
+        watch.started();
+        assert_eq!(
+            watch.observe(Observation::AnotherCopy, CHECK_EVERY),
+            Step::Borrow
+        );
+        assert!(watch.borrowed);
+        assert_eq!(watch.restarts_in_row, 0);
+        // While the other copy answers: no restart and no line, however long.
+        for _ in 0..1000 {
+            let step = watch.observe(Observation::Answered, CHECK_EVERY);
+            assert_eq!(step, Step::Wait);
+            assert_eq!(notice(step), None);
+        }
+    }
+
+    #[test]
+    fn a_borrowed_daemon_that_goes_silent_is_taken_over_once_after_the_limit() {
+        let mut watch = Watch::default();
+        watch.borrow();
+        let checks = TAKE_OVER_AFTER.as_secs() / CHECK_EVERY.as_secs();
+        let steps: Vec<Step> = (0..checks)
+            .map(|_| watch.observe(Observation::Silent, CHECK_EVERY))
+            .collect();
+        assert_eq!(steps.last(), Some(&Step::TakeOver));
+        assert!(steps[..steps.len() - 1]
+            .iter()
+            .all(|step| *step == Step::Wait));
+        // A port that answers in between starts the count again (the other copy restarting itself).
+        watch.borrow();
+        watch.observe(Observation::Silent, CHECK_EVERY);
+        watch.observe(Observation::Answered, CHECK_EVERY);
+        assert_eq!(watch.observe(Observation::Silent, CHECK_EVERY), Step::Wait);
+        // Once this app starts its own, it owns it again: an exit is a restart with the usual back-off.
+        watch.started();
+        assert!(!watch.borrowed);
+        assert!(matches!(
+            watch.observe(Observation::Exited, CHECK_EVERY),
+            Step::Restart { .. }
+        ));
+    }
+
+    #[test]
     fn the_notice_is_one_plain_line() {
+        assert!(notice(Step::Borrow)
+            .unwrap()
+            .contains("this window is using it"));
+        assert!(notice(Step::TakeOver).unwrap().contains("starting its own"));
         assert_eq!(notice(Step::Wait), None);
         assert_eq!(
             notice(Step::Restart {

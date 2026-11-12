@@ -25,6 +25,7 @@ The test files are in `daemon/tests/` unless they end in `.test.ts`, which are i
 | An approval was open when the connection dropped or the daemon stopped | Approvals fail closed: the dialog closes and nothing in it is approved. | "Lost the connection to Heliox, so the approval dialog was closed. Nothing in it was approved." | A task still waiting after the reconnect shows its approval again; it must be approved again. | Drill: `test_pending_resolution_lock.py`, `test_confirmation_unanswered.py`; `session.confirm.test.ts`. |
 | The daemon is stopped while things are in flight | Speech stops first, then the conversation turn, then voice turns, then the running task, then the subsystems; requests still open are cancelled before any store closes. Each step waits at most 10 s and the whole stop at most 30 s; anything slower is logged and left behind. | Speech stops at once. | Not needed: stop() always completes. | Fakes: `test_daemon_stop_releases_workers.py`, `test_server_background_lifecycle.py`. |
 | A second copy starts: the app is opened twice, or a daemon is already running from a checkout | The second copy claims the port (bound, not yet listening) before anything else. If the port is taken, it stops: it writes no tokens, opens no store and leaves the running copy alone. A copy that does start writes its token files before it listens, so a client that connects has read this run's token, never the last run's. Windows uses SO_EXCLUSIVEADDRUSE (never SO_REUSEADDR) on the claim; Linux and macOS use SO_REUSEADDR so a restart is not refused during TIME_WAIT, plus a per-port lock file so two copies started in the same instant cannot both pass the claim. Every address the host resolves to is served, as before. | "Heliox: Port 8785 is already in use, most likely by another copy of Heliox, so this copy did not start and left the running one alone. Close the other copy (or the program using that port) and start again." The process exits with code 3. | Use the copy that is running. | Drill: `test_second_copy.py` (a real socket holding the port; a real first copy whose token files stay byte-identical; token order at the instant the port accepts; restart on the same port after stop). |
+| A second copy of the desktop app is opened, or the app starts while a daemon from a source checkout is starting | A second launch of the app brings the first window forward and exits (a per-person lock file, `app.lock` in `~/.config/heliox-os`, and a loopback port only the first copy's secret opens). A daemon the app starts that exits with code 3 ("another copy is serving") is not a crash: no restart, no alarm. | "Heliox's background service is already running from another copy; this window is using it." If that copy's port then stays silent for a minute: "The other copy of Heliox's background service stopped, so this app is starting its own." | Nothing to do. A developer who restarts a checkout daemon within a minute gets the port back; after that the app's own daemon holds it and the checkout daemon stops with the "already in use" sentence. | Rust unit tests: `supervisor.rs` (exit 3, borrowing, take-over), `instance.rs` (lock, bring forward, a wrong secret, an absent first copy). Not run as two real app launches. |
 | The config file is half written, has a key from a newer version, or cannot be opened | Heliox starts on the defaults and keeps a copy of the file. It never rewrites your file: saving is refused until you fix it or choose Reset to defaults. | Settings shows "config.toml could not be read (<what was wrong>). A copy was kept at <path>." | Fix the file and restart Heliox, or choose Reset to defaults. | Fakes: `test_settings_safety.py`. |
 | Logs over a long day | `pilot.log` rolls over at 10 MB and keeps three old files (40 MB at most). The Gnomon worker's log rolls over at 5 MB and keeps one old file (10 MB). | Nothing. | Not needed. | Fakes: `test_log_bounds.py`. |
 | Two hours of use | No list or dictionary reachable from the server grew without bound. A thread blocked on the voice worker, which kept the process alive 300 s after stop, was fixed. | Nothing. | Not needed. | Drill: a soak script (two simulated hours at ten times the density of real use), run by hand. It is not part of CI. |
@@ -83,8 +84,25 @@ The test files are in `daemon/tests/` unless they end in `.test.ts`, which are i
 - In memory: the conversation keeps its last 6 turns and the last 20 turn results; Live keeps its last 20 remarks;
   notifications held for a window that is not connected are capped (`MAX_ATTENTION_NOTIFICATION_BUFFER`).
   The two-hour soak found nothing else growing.
-- Not bounded yet (listed under Not covered): the audit log, the durable task and checkpoint tables, and the
-  experience ledger. Each grows by one row or line per action or task.
+- Never pruned by Heliox on its own: the audit log, the durable task and checkpoint tables, and the experience
+  ledger. Settings (Your data, Size on disk) shows each one's size and the data folder's; Heliox says once when the
+  folder passes `storage.data_folder_warn_gb` (default 5 GB, the person can change it). The audit log alone can be
+  archived by the person: older entries move to a dated file beside it after a free-space check, an fsync and a
+  read-back, and the live file is replaced by rename, never truncated in place.
+
+Measured over a scripted day of 200 requests (`daemon/benchmarks/store_growth.py`: the real request path with the
+real stores in a temporary folder, a fixed planner, no model or network; half one-step reads, half a write then a
+read):
+
+| Store | Bytes per request | Per day of 200 requests | Per year at that rate |
+|---|---|---|---|
+| Audit log (`audit.jsonl`) | 1,099 | 215 KB | 77 MB |
+| Durable tasks (`durable_tasks.db`) | 5,018 | 980 KB | 349 MB |
+| Checkpoints (`workflow_checkpoints.db`) | 2,048 | 400 KB | 143 MB |
+| Experience ledger (`experience.db`) | 11,756 | 2.3 MB | 818 MB |
+
+None passes 1 GB a year at that rate, so the size warning is the answer for now. The experience ledger is the one to
+watch: it passes 1 GB a year above about 245 requests a day, or with plans of more steps than this mix.
 
 ## By system
 
@@ -105,8 +123,9 @@ The test files are in `daemon/tests/` unless they end in `.test.ts`, which are i
 - The app restarting a daemon that really crashed has not been run on any system. The Rust is type-checked and linted
   on Windows only; CI compiles it on its runners.
 - A real sleep and wake has not been tested; the clocks are injected.
-- The audit log (`audit.jsonl`), the durable task and checkpoint tables, and the experience ledger have no size bound.
-  They are tamper-evident records, so pruning them needs a retention decision first.
+- The durable task and checkpoint tables and the experience ledger have no size bound and no archive: archiving
+  them could let a finished action run twice, break undo, and change what the learners read. Only their size is shown.
+- The growth figures come from a scripted day, not from the two-hour soak.
 - A real network drop on the planner path has not been tested; the provider is a stub.
 - Two copies started in the same instant on Linux, where two SO_REUSEADDR sockets can bind one address while neither
   listens, are settled by a per-port lock file (`daemon-<port>.lock` in the runtime folder) before either writes its

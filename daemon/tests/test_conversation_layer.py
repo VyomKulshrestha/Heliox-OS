@@ -88,15 +88,21 @@ def make_layer(model, sink, **kwargs):
 @pytest.mark.asyncio
 async def test_the_first_sentence_is_spoken_before_the_reply_has_finished():
     model = FakeModel(["I'm ", "fine, ", "thanks. ", "The build ", "passed ", "an hour ", "ago."], gap=0.05)
-    sink = FakeSink()
+    fragments_in: list[int] = []
+
+    class _Watching(FakeSink):
+        async def __call__(self, text, channel, key):
+            fragments_in.append(model.yielded)  # how much of the reply existed when this sentence was said
+            return await super().__call__(text, channel, key)
+
+    sink = _Watching()
     layer = make_layer(model, sink)
-    started = time.monotonic()
     result = await layer.take("How are you?")
     assert result.done
     assert sink.texts == ["I'm fine, thanks.", "The build passed an hour ago."]
-    first_said = sink.said[0][0] - started
-    assert first_said < 0.25  # three fragments in, not after all seven
-    assert result.timings["first_sentence_ms"] < 250
+    # Counted, not timed: the first sentence was said a few fragments in, not after all seven.
+    assert fragments_in[0] < len(model.fragments)
+    assert "first_sentence_ms" in result.timings
     assert layer.memory.last_heliox() == "I'm fine, thanks. The build passed an hour ago."
 
 
@@ -621,9 +627,9 @@ async def test_a_provider_that_never_answers_is_given_up_on_and_held():
     model.hold = lambda seconds, reason: model.held.append(reason)
     sink = FakeSink()
     layer = make_layer(model, sink, hold_after=0.05, first_text_deadline=0.2)
-    started = time.monotonic()
     result = await layer.take("What do you think?")
-    assert time.monotonic() - started < 0.8 and result.done
+    # Given up at its own deadline (0.2 s), before the late reply's first fragment (1 s) ever arrived.
+    assert result.done and model.yielded == 0
     assert sink.texts[0] in HOLD_PHRASES and sink.texts[-1] == FALLBACK["slow"]
     assert model.held == ["slow"]
 

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
   import { settings } from "../stores/settings";
+  import DataFolderSize from "./DataFolderSize.svelte";
 
   type Store = {
     key: string;
@@ -166,6 +167,7 @@
       {/each}
     </ul>
   {/if}
+  <DataFolderSize />
 </section>
 
 <style>

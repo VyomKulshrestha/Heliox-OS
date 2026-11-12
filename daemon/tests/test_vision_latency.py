@@ -80,8 +80,11 @@ async def test_screen_analyze_falls_back_when_cloud_exceeds_latency_cap(monkeypa
 
 @pytest.mark.asyncio
 async def test_screen_analyze_enforces_one_total_provider_deadline(monkeypatch) -> None:
+    finished: list[str] = []
+
     async def slow_provider(*_args, **_kwargs):
-        await asyncio.sleep(1)
+        await asyncio.sleep(30)  # far past any deadline: finishing at all would mean it was waited for
+        finished.append("late")
         return "late"
 
     async def capture(*_args, **_kwargs):
@@ -106,9 +109,8 @@ async def test_screen_analyze_enforces_one_total_provider_deadline(monkeypatch) 
     monkeypatch.setattr(vision, "VISION_CLOUD_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr(vision, "VISION_OCR_TIMEOUT_SECONDS", 0.01)
 
-    started = time.perf_counter()
     result = await vision.screen_analyze("What is visible?")
 
-    assert time.perf_counter() - started < 0.2
+    assert not finished  # ordered, not timed: the answer came from the deadlines, not from a slow provider
     assert "Semantic screen analysis unavailable" in result
     assert "Codex" in result

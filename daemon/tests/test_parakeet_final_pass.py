@@ -134,14 +134,16 @@ async def test_mid_conversation_parakeet_runs_alone_and_whisper_checks_a_lone_wo
     tmp_path, monkeypatch, said, whisper_heard, expected, whisper_runs
 ):
     import asyncio
-    import time
 
     import numpy as np
 
     item = listener(tmp_path, "parakeet", with_model=True)
+    order: list[str] = []
 
     async def slow_whisper(_path, **_kwargs):  # the wake check runs beside Parakeet; a reply must not wait for it
-        await asyncio.sleep(0.5)
+        # Ordered, not timed: when the reply must not wait, Whisper takes far longer than any runner could stall.
+        await asyncio.sleep(0.05 if whisper_runs else 30.0)
+        order.append("whisper")
         return whisper_heard
 
     item._transcribe_whisper_text = slow_whisper
@@ -151,10 +153,9 @@ async def test_mid_conversation_parakeet_runs_alone_and_whisper_checks_a_lone_wo
     monkeypatch.setattr("pilot.system.voice._load_pcm_wav_for_whisper", lambda _path: np.zeros(16000, np.float32))
     item._addressing._addressed()  # a conversation someone opened with the wake phrase
     item.arm_follow_up_window(30)
-    started = time.perf_counter()
     assert await item._transcribe_path("utterance.wav") == expected
-    waited = time.perf_counter() - started
-    assert (waited >= 0.45) == whisper_runs  # Whisper's answer was waited for only when it decides something
+    order.append("reply")
+    assert (order[0] == "whisper") == whisper_runs  # Whisper's answer was waited for only when it decides something
 
 
 @pytest.mark.asyncio
@@ -191,14 +192,16 @@ async def test_mid_conversation_live_gets_parakeets_words_before_whisper_answers
 @pytest.mark.asyncio
 async def test_after_the_microphone_button_parakeets_words_are_used_without_waiting(tmp_path, monkeypatch):
     import asyncio
-    import time
 
     import numpy as np
 
     item = listener(tmp_path, "parakeet", with_model=True)
 
+    whisper_finished: list[bool] = []
+
     async def slow_whisper(_path, **_kwargs):
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(30.0)  # far longer than any runner could stall: finishing first would mean it was awaited
+        whisper_finished.append(True)
         return WHISPER
 
     item._transcribe_whisper_text = slow_whisper
@@ -207,9 +210,8 @@ async def test_after_the_microphone_button_parakeets_words_are_used_without_wait
     monkeypatch.setattr(item, "_parakeet", lambda: fake)
     monkeypatch.setattr("pilot.system.voice._load_pcm_wav_for_whisper", lambda _path: np.zeros(16000, np.float32))
     item.note_interruption(by_button=True)
-    started = time.perf_counter()
     assert await item._transcribe_path("utterance.wav") == PARAKEET
-    assert time.perf_counter() - started < 0.4
+    assert not whisper_finished
 
 
 # ── the wake phrase read from the opening, while the person is still speaking ──
