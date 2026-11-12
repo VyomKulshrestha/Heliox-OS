@@ -2,6 +2,8 @@
 
 What happens the first time someone opens Heliox on Windows, macOS or Linux, and why.
 
+Each testable sentence says how it is known, in the words of the legend at the top of [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md): Run for real (with the CI job and check, or the owner's Windows machine and the date), Fakes only, or Not tested. "CI on 3793a0d" is the CI run on that commit (12 November); "CI on 0a8edad" is the run whose results are still to come.
+
 ## What was wrong
 
 The desktop app used to set itself up in the background as soon as it opened. It ran `python3 -m venv` (`python` on Windows) and then `pip install pilot-daemon[all]`, which is several gigabytes: PyTorch, speech models' libraries, OCR, Chromium.
@@ -15,20 +17,20 @@ The desktop app used to set itself up in the background as soon as it opened. It
 
 ## What happens now
 
-1. **Nothing is installed when the app opens.** If Heliox's environment is missing and no daemon answers, the app shows one screen: "Set up Heliox" (`FirstRunInstall.svelte`).
-2. **The screen says what setting up Python will take on this machine.** The app learns this from the setup script's `probe` mode, which looks and installs nothing.
+1. **Nothing is installed when the app opens.** If Heliox's environment is missing and no daemon answers, the app shows one screen: "Set up Heliox" (`FirstRunInstall.svelte`). Fakes only: the screen in vitest; the built app has not been run through it.
+2. **The screen says what setting up Python will take on this machine.** The app learns this from the setup script's `probe` mode, which looks and installs nothing. The probe: Run for real (CI `first-run` on all three systems; the owner's Windows machine, 12 November).
    - **A suitable Python is already there.** Suitable means a version inside the tested range in `tauri-app/src-tauri/setup/python-versions.json` (3.11 to 3.13 on 12 November 2026), with `venv` and `ensurepip`. Heliox uses it to create its own environment and changes nothing about it.
      - The upper bound matters as much as the lower one. A newer Python can lack prebuilt wheels for the core's dependencies: numpy 2.2.6, scipy 1.15 and river 0.23 stop at 3.13. pip then tries to compile them, which failed on CI's Mac with Homebrew's Python 3.15 ("Unknown compiler(s): gfortran").
      - The same file feeds `setup.rs`, which passes the range to the scripts, and the first-run CI job. `daemon/tests/test_python_versions.py` checks that the CI test matrix stays inside the range and that `requires-python` agrees with it.
-     - On macOS, `/usr/bin/python3` is never run.
-     - On Windows, the Store stub is skipped.
-   - **If the core still cannot be installed on that Python, Heliox falls back once.** It says so ("trying again with Heliox's own Python"), removes the environment, downloads its private Python and tries again. Only then does it report a failure.
+     - On macOS, `/usr/bin/python3` is never run. Not tested: every hosted Mac has a real Python on PATH.
+     - On Windows, the Store stub is skipped. Not tested: every hosted Windows runner has a real Python.
+   - **If the core still cannot be installed on that Python, Heliox falls back once.** It says so ("trying again with Heliox's own Python"), removes the environment, downloads its private Python and tries again. Only then does it report a failure. Run for real on the owner's Windows machine (12 November); on macOS and Linux: Not tested.
    - **No suitable Python.** Heliox downloads a private one. Before that, the screen shows the size and the source:
-     - uv 0.13.5 from `github.com/astral-sh/uv`. The screen shows its exact size from the probe. Its SHA-256 for each platform is fixed in the script and checked before uv is unpacked.
+     - uv 0.13.5 from `github.com/astral-sh/uv`. The screen shows its exact size from the probe. Its SHA-256 for each platform is fixed in the script and checked before uv is unpacked. Run for real (CI `first-run`, private Python, on all three systems).
      - Python 3.12 from python-build-standalone, downloaded by `uv python install`, which checks its own checksums.
-     - Both stay in Heliox's folder: `~/.config/heliox-os/tools`, `python` and `env`. They take about 110 MB on disk, measured on CI.
-     - The system Python and the PATH are not touched.
-3. **The person chooses the optional groups.** The core is always installed. The screen shows its download and, where CI has measured it, its size on disk: about 460 to 530 MB once installed. The optional groups are:
+     - Both stay in Heliox's folder: `~/.config/heliox-os/tools`, `python` and `env`. They take about 110 to 160 MB on disk. Run for real: 112 MB on Windows, 119 MB on macOS and 157 MB on Linux (`firstRunSizes.json`, measured by run 43162118953).
+     - The system Python and the PATH are not touched. Not tested: no check compares them before and after.
+3. **The person chooses the optional groups.** The core is always installed. The screen shows its download and, where CI has measured it, its size on disk once installed: about 450 MB on Windows, 430 MB on macOS and 530 MB on Linux. Run for real: 450, 426 and 529 MB in `firstRunSizes.json`, measured by run 43162118953. The optional groups are:
 
    | Group | What it gives | Preselected |
    |---|---|---|
@@ -40,7 +42,9 @@ The desktop app used to set itself up in the background as soon as it opened. It
    | Built-in local model runner (`llamacpp`) | GGUF models inside Heliox; builds llama.cpp, so it needs a C and C++ compiler; not needed with Ollama or a cloud provider | no |
    | Everything else | documents, network discovery, remote machines, plugin sandbox, typing supervision, memory search | no |
 
-   Nothing is downloaded until the person presses "Set up Heliox". The total is shown next to the button.
+   Installed for real in CI: the core, and the macOS and Linux readers (CI `first-run`). The voice, screen, browser, local and everything-else groups: Not tested by a real install, and their sizes are estimates. The speech models' downloads are the speech workstream's; this page cites no run of them.
+
+   Nothing is downloaded until the person presses "Set up Heliox". The total is shown next to the button. Fakes only (vitest).
 
    **Where the sizes come from.** No number is written into the screen's text:
    - The install groups' sizes are in `tauri-app/ui/src/lib/firstRunSizes.json`, per system. Each entry has a download size and, when known, a size on disk, and an entry measured by CI names the run.
@@ -48,11 +52,12 @@ The desktop app used to set itself up in the background as soon as it opened. It
    - `daemon/tests/platform_real/first_run_sizes.py update` writes the job's log into the file.
    - The speech models' sizes come from the daemon's manifest.
    - Every number on screen says "about".
-4. **Each step shows its progress, and a failure shows its reason, what to do, and Retry.** Progress is the step and the last line of pip's output. "Show details" gives the last 40 lines.
-   - **The core decides whether setup succeeded.** When it is in, the app starts the daemon itself and its supervisor watches it from then on; no restart is needed.
-   - **A failed optional group never blocks the app.** The person can retry it on the spot or later, from Settings > Optional parts.
-5. **Once the daemon answers,** the screen asks it for each speech model the person ticked (`speech_model_download`). It keeps the ticks until each has been accepted, across a restart, because the daemon allows one download at a time. Progress then shows in Settings > Voice. The screen also starts the first conversation if the profile is empty (`getting_to_know`: status, then start). Otherwise the daemon offers that conversation later as a card.
-6. **Settings > Optional parts** offers every group again, each with its size and source. A group added there is used after Heliox restarts.
+   - The measuring itself: Run for real (CI `first-run`, `FIRST_RUN_SIZES` lines).
+4. **Each step shows its progress, and a failure shows its reason, what to do, and Retry.** Progress is the step and the last line of pip's output. "Show details" gives the last 40 lines. The screen: Fakes only (vitest); the lines it reads: Run for real (the scripts' `@@` lines in CI `first-run`).
+   - **The core decides whether setup succeeded.** When it is in, the app starts the daemon itself and its supervisor watches it from then on; no restart is needed. Not tested in the app; the start through `launch_daemon` after a repair is in CI on 0a8edad (`real-removal`), result to come.
+   - **A failed optional group never blocks the app.** The person can retry it on the spot or later, from Settings > Optional parts. The script carrying on past a failed group: Run for real on the owner's Windows machine (12 November); the retry: Fakes only (vitest).
+5. **Once the daemon answers,** the screen asks it for each speech model the person ticked (`speech_model_download`). It keeps the ticks until each has been accepted, across a restart, because the daemon allows one download at a time. Progress then shows in Settings > Voice. The screen also starts the first conversation if the profile is empty (`getting_to_know`: status, then start). Otherwise the daemon offers that conversation later as a card. Fakes only (vitest).
+6. **Settings > Optional parts** offers every group again, each with its size and source. A group added there is used after Heliox restarts. Fakes only (vitest).
 
 The app can only ask for groups from a fixed list: `group_extras` in `src/setup.rs`. Each version is pinned to the app's own release (`pilot-daemon==<app version>`). `HELIOX_DAEMON_SOURCE` points the install at a local checkout, for development and CI.
 
@@ -60,14 +65,14 @@ The app can only ask for groups from a fixed list: `group_extras` in `src/setup.
 
 A person who installed an earlier version has an environment with an older daemon. The old desktop app installed `pilot-daemon[all]==<its version>`. When the app's own version is newer than the daemon's, the app offers an update.
 
-1. **Detection costs nothing.** At start, the app reads the daemon's version from the `pilot_daemon-<version>.dist-info` folder in the environment. If that version is older than the app's, the "Update Heliox" screen says which version is installed and which this app is. A newer daemon is never downgraded. "Not now" keeps the installed version for this run, and the offer comes back at the next start.
-2. **The plan changes nothing.** "See what changes" runs `update.py plan`, which uses `pip install --dry-run --report` with `--upgrade-strategy only-if-needed`. The screen lists every package that will change (from → to, or new) and the download size the package index reports.
-3. **The person's parts are kept.** The groups come from `~/.config/heliox-os/setup.json`, which first-run setup and every update now write. For an install made before that file existed, they are inferred from what is installed: `faster-whisper` means voice, `easyocr` means screen reading, and so on. So an old `[all]` install keeps every group.
+1. **Detection costs nothing.** At start, the app reads the daemon's version from the `pilot_daemon-<version>.dist-info` folder in the environment. If that version is older than the app's, the "Update Heliox" screen says which version is installed and which this app is. A newer daemon is never downgraded. "Not now" keeps the installed version for this run, and the offer comes back at the next start. Fakes only (Rust unit tests and vitest).
+2. **The plan changes nothing.** "See what changes" runs `update.py plan`, which uses `pip install --dry-run --report` with `--upgrade-strategy only-if-needed`. The screen lists every package that will change (from → to, or new) and the download size the package index reports. Run for real (the owner's Windows machine, 12 November; CI `update-path`, whose CHECK lines this page does not quote yet).
+3. **The person's parts are kept.** The groups come from `~/.config/heliox-os/setup.json`, which first-run setup and every update now write. For an install made before that file existed, they are inferred from what is installed: `faster-whisper` means voice, `easyocr` means screen reading, and so on. So an old `[all]` install keeps every group. Fakes only (`test_update_path.py`).
 4. **Unchanged packages are not touched.** The update runs in place with `only-if-needed`, so only the packages in the plan are replaced.
 5. **The update is all or nothing.** Before pip runs, `update.py apply` keeps a copy of the environment made of hard links, so no data is copied. pip replaces a file by removing it and writing a new one, so the copy keeps the old files intact. After installing, it checks that `pilot.server` imports and reports the new version.
    - On success it deletes the copy and records the version and groups.
-   - On any failure it puts the copy back, so the environment is exactly as it was, and says so with a Retry. Retry plans again, and "Keep the current version" closes the screen.
-6. **The daemon is stopped for the update and started again after it.** On Windows its files are locked while it runs. The supervisor is paused for the duration (`DAEMON_PAUSED` in `setup.rs`) so it does not restart the daemon into a half-changed environment. If a daemon the app did not start is listening, the update refuses and asks the person to quit it.
+   - On any failure it puts the copy back, so the environment is exactly as it was, and says so with a Retry. Retry plans again, and "Keep the current version" closes the screen. The rollback: Run for real (the owner's Windows machine, 12 November, and CI `update-path`); the screen: Fakes only (vitest).
+6. **The daemon is stopped for the update and started again after it.** On Windows its files are locked while it runs. The supervisor is paused for the duration (`DAEMON_PAUSED` in `setup.rs`) so it does not restart the daemon into a half-changed environment. If a daemon the app did not start is listening, the update refuses and asks the person to quit it. Not tested: the app has not driven an update.
 
 `update.py` runs with the environment's base Python, named in `env/pyvenv.cfg`, never the environment's own interpreter. An environment whose Python no longer starts, for example after Homebrew upgraded the Python it was made from, is sent to Repair, which rebuilds it.
 
@@ -82,9 +87,9 @@ A person who installed an earlier version has an environment with an older daemo
 
 ## Repair
 
-At start, the app checks that the environment's own Python starts and sees the daemon package. This is cheap: it does not import the daemon.
+At start, the app checks that the environment's own Python starts and sees the daemon package. This is cheap: it does not import the daemon. Run for real in the scripts (CI `first-run`, the repair step); through the app's `startup_check`: in CI on 0a8edad, result to come.
 
-If the environment is broken, the first-run screen shows "Repair Heliox" and says which parts it will build again. Typical causes: Homebrew upgraded the Python it was made from, the private Python was deleted, or part of the environment was removed.
+If the environment is broken, the first-run screen shows "Repair Heliox" and says which parts it will build again. Typical causes: Homebrew upgraded the Python it was made from, the private Python was deleted, or part of the environment was removed. The screen: Fakes only (vitest).
 
 Repair runs the first-run script with the recorded groups. The script then:
 - sets the broken environment aside as `env.broken`;
@@ -92,20 +97,20 @@ Repair runs the first-run script with the recorded groups. The script then:
 - installs the core and the groups;
 - deletes `env.broken` only once the core is in.
 
-Settings and data are not touched.
+Settings and data are not touched. Not tested: no check compares them before and after a repair yet.
 
 **How it is tested:**
 - **Real run on Windows (12 November).** A venv whose `python.exe` was deleted was detected ("no longer starts; building it again"), rebuilt from the system Python and given its core.
-- **CI, job `first-run`.** On all three systems, with the runner's Python and with a private one, the job deletes the environment's interpreter after setup. It then reruns the script and checks three things: that the repair was detected, that `env.broken` is gone, and that the rebuilt daemon answers.
-- **CI, job `real-removal`, through the app's own Rust code.** On all three systems, a headless run of the same functions the Repair button uses (`startup_check`, `run_command` with the recorded groups, `read_lines` into the screen's state, `write_groups`, then `launch_daemon`), after the job deleted the environment's interpreter. It checks that the start-up check finds `needs_repair`, that the repair finishes with the core in, that `env.broken` is gone, that the groups are kept, and that the daemon starts from the result the way the app starts it.
+- **CI, job `first-run`.** On all three systems, with the runner's Python and with a private one, the job deletes the environment's interpreter after setup. It then reruns the script and checks three things: that the repair was detected, that `env.broken` is gone, and that the rebuilt daemon answers. Run for real: in CI on 3793a0d `first-run/daemon-answers` and `first-run/daemon-ready` passed after the repair on all six combinations.
+- **CI, job `real-removal`, through the app's own Rust code** (in CI on 0a8edad, result to come). On all three systems, a headless run of the same functions the Repair button uses (`startup_check`, `run_command` with the recorded groups, `read_lines` into the screen's state, `write_groups`, then `launch_daemon`), after the job deleted the environment's interpreter. It checks that the start-up check finds `needs_repair`, that the repair finishes with the core in, that `env.broken` is gone, that the groups are kept, and that the daemon starts from the result the way the app starts it.
 - **What no CI run proves:** the window itself (the "Repair Heliox" screen, its button, the `setup-progress` events reaching it) and `setup_repair`'s own two lines, which pause the supervisor and stop the daemon the app holds. A headless runner has no window to press; vitest covers the screen, and the Rust above covers everything the button starts.
 - **Unit tests.** The start-up decision (repair before update, nothing to do, update) has Rust unit tests; the screen has vitest.
 
 ## Removing Heliox's files
 
-Settings > "Remove Heliox's files" lists everything Heliox put on this computer, with sizes, before anything is deleted. The list is computed by `src/uninstall.rs` from the home folder and the system's app-data folders. The UI cannot add a path to it.
+Settings > "Remove Heliox's files" lists everything Heliox put on this computer, with sizes, before anything is deleted. The list is computed by `src/uninstall.rs` from the home folder and the system's app-data folders. The UI cannot add a path to it. Run for real on a real file system in the Rust tests (below).
 
-Every folder in the list carries a name that is Heliox's alone, and the code says why beside each one: `heliox-os`, `.heliox`, `heliox` under `.cache`, `com.helioxos.app`. When the home folder is not known, nothing is listed and nothing is removed. As a second lock, every path must be absolute and at least two folders below the root.
+Every folder in the list carries a name that is Heliox's alone, and the code says why beside each one: `heliox-os`, `.heliox`, `heliox` under `.cache`, `com.helioxos.app`. When the home folder is not known, nothing is listed and nothing is removed. As a second lock, every path must be absolute and at least two folders below the root. Fakes only (Rust unit tests).
 
 | Where | What | Kind |
 |---|---|---|
@@ -120,21 +125,21 @@ Every folder in the list carries a name that is Heliox's alone, and the code say
 | Runtime folder: `%LOCALAPPDATA%\heliox-os`, `~/Library/Caches/heliox-os` | runtime files | app |
 | The app's web view data: `%LOCALAPPDATA%\com.helioxos.app`; `~/Library/Application Support`, `Caches` and `WebKit` under `com.helioxos.app`; `~/.local/share` and `~/.cache` under `com.helioxos.app` | interface settings stored in the browser view | app |
 
-**The person chooses** between "remove the app's files, keep my data" (the default) and "remove everything". They see the total size, and they tick that they understand the files will be deleted. Only then does the button work.
+**The person chooses** between "remove the app's files, keep my data" (the default) and "remove everything". They see the total size, and they tick that they understand the files will be deleted. Only then does the button work. Fakes only (vitest).
 
-**Before deleting**, the daemon is stopped and the supervisor paused.
+**Before deleting**, the daemon is stopped and the supervisor paused. Not tested: the app has not driven a removal.
 
 **Saved keys.** With "remove everything", the saved keys go before any file is deleted:
-- They are removed from the credential store by the daemon's own code, `python -m pilot.system.credential_cleanup remove`, using the environment that still exists, with a 30 s limit.
-- The daemon finds the entries by service where the store allows it: Windows' credential list, macOS's `security` tool, the Linux Secret Service. It also tries the accounts it knows by name.
+- They are removed from the credential store by the daemon's own code, `python -m pilot.system.credential_cleanup remove`, using the environment that still exists, with a 30 s limit. Fakes only (a fake keyring); against the real stores in CI on 0a8edad, result to come.
+- The daemon finds the entries by service where the store allows it: Windows' credential list, macOS's `security` tool, the Linux Secret Service. It also tries the accounts it knows by name. Windows' search: Run for real on the owner's machine (12 November, names listed, nothing removed); macOS and Linux: in CI on 0a8edad, result to come.
 - Anything it cannot remove is listed by service and account, with how to remove it on that system.
-- If the environment cannot run, or the step fails or runs out of time, the screen lists the four services by name instead. That list is `setup/credential_services.json`, which a test keeps equal to the daemon's own list.
+- If the environment cannot run, or the step fails or runs out of time, the screen lists the four services by name instead. That list is `setup/credential_services.json`, which a test keeps equal to the daemon's own list. Fakes only (Rust unit tests); the case of an environment already gone is in CI on 0a8edad, result to come.
 
-With "keep my data", the keys stay, and the screen says which services hold them.
+With "keep my data", the keys stay, and the screen says which services hold them. Fakes only; against the real stores in CI on 0a8edad, result to come.
 
-**After the removal**, the window shows what was removed and what failed. On Windows, the app's own web view folder fails while the app runs; the screen says it goes when the app is uninstalled. It also shows which saved keys remain and the manual steps, with a Quit button instead of a reconnecting screen.
+**After the removal**, the window shows what was removed and what failed. On Windows, the app's own web view folder is expected to fail while the app runs (Not tested: no run has seen it), and the screen says it goes when the app is uninstalled. It also shows which saved keys remain and the manual steps, with a Quit button instead of a reconnecting screen. Fakes only (vitest).
 
-**Deletion never follows a link out of Heliox's folders.** A symbolic link or junction inside them is removed as a link, and what it points to stays. Rust's `remove_dir_all` does not follow links (Rust 1.58 and later).
+**Deletion never follows a link out of Heliox's folders.** A symbolic link or junction inside them is removed as a link, and what it points to stays. Rust's `remove_dir_all` does not follow links (Rust 1.58 and later). Run for real on all three file systems (the Rust tests below).
 
 **Heliox leaves these to the person, and the screen says so:**
 - the app itself (the system's own uninstall);
@@ -142,13 +147,13 @@ With "keep my data", the keys stay, and the screen says which services hold them
 - on macOS, the privacy grants: System Settings, or `tccutil reset All com.helioxos.app`;
 - on Wayland, the global shortcut the desktop stores.
 
-Heliox creates no login item, service or scheduled task.
+Heliox creates no login item, service or scheduled task. Not tested: a reading of the code. The real-removal job's home listing would show a launch agent or a systemd user unit; Windows' scheduled tasks and Run key are not compared yet.
 
 **How it is tested:**
-- **Rust tests on a real file system.** On Windows here, on Linux in the Rust job and on macOS in the `rust-macos` job, the tests build a home folder with an environment, settings and a quarantined file, plus a link pointing outside. Removing with "keep my data" deletes the environment and keeps the settings and the quarantined file. Removing everything deletes Heliox's folders. In both cases the file outside is untouched.
+- **Rust tests on a real file system.** On Windows here, on Linux in the Rust job and on macOS in the `rust-macos` job, the tests build a home folder with an environment, settings and a quarantined file, plus a link pointing outside. Removing with "keep my data" deletes the environment and keeps the settings and the quarantined file. Removing everything deletes Heliox's folders. In both cases the file outside is untouched. Run for real: the Rust suite on Windows here, in the `rust` job on Linux, and in `rust-macos` (8 removal tests passed in CI on 3793a0d).
 - **Credential cleanup with a fake keyring** (`daemon/tests/test_credential_cleanup.py`): entries are removed by service search and by known name, an entry the store refuses is listed with how to remove it, and a store that cannot be searched still has its known names removed. The search by service also ran for real on Windows here, listing names only.
-- **Credential cleanup against real stores, CI job `real-removal`** (`daemon/tests/platform_real/credential_store_check.py`). On each runner the check writes one test entry under each of the four services with `keyring`, then sees them with the system's own tool: `cmdkey /list` on Windows, `security find-generic-password` in the macOS login keychain, `secret-tool lookup` on Linux with a GNOME keyring unlocked for a `dbus-run-session` (`with_keyring.sh`). It runs the daemon's cleanup and checks with the same tool that none is left. Before writing, it searches the store for any Heliox entry and refuses to go on if one exists, so only entries the check created are ever touched.
-- **A real removal, CI job `real-removal`** (`daemon/tests/platform_real/real_removal.sh`). After a first run and a repair through the app's Rust code in the runner's real home folder, `uninstall::remove_heliox` runs through an ignored Rust test that runs only under GitHub Actions:
+- **Credential cleanup against real stores, CI job `real-removal`** (`daemon/tests/platform_real/credential_store_check.py`; in CI on 0a8edad, result to come). On each runner the check writes one test entry under each of the four services with `keyring`, then sees them with the system's own tool: `cmdkey /list` on Windows, `security find-generic-password` in the macOS login keychain, `secret-tool lookup` on Linux with a GNOME keyring unlocked for a `dbus-run-session` (`with_keyring.sh`). It runs the daemon's cleanup and checks with the same tool that none is left. Before writing, it searches the store for any Heliox entry and refuses to go on if one exists, so only entries the check created are ever touched.
+- **A real removal, CI job `real-removal`** (`daemon/tests/platform_real/real_removal.sh`; in CI on 0a8edad, result to come). After a first run and a repair through the app's Rust code in the runner's real home folder, `uninstall::remove_heliox` runs through an ignored Rust test that runs only under GitHub Actions:
   - "everything" while the environment exists: the test keys go through the daemon's code, then the files;
   - setup again, then "keep my data": the environment goes, the data folders and the keys stay;
   - then "everything" with the environment already gone: the files go and the four services are listed for the person, as the screen would show;
@@ -179,7 +184,7 @@ Heliox creates no login item, service or scheduled task.
   - A second run skipped the existing environment.
 - **CI, job `first-run`** (non-blocking; ubuntu-24.04, macos-latest and windows-latest, each with the runner's Python and with a private Python):
   - It runs the script in an empty home folder with the core from the checkout, plus the platform readers on macOS and Linux.
-  - It starts the daemon it installed and checks that the daemon answers an authenticated `ping` (`daemon/tests/platform_real/first_run_rpc_check.py`).
+  - It starts the daemon it installed and checks that the daemon answers an authenticated `ping` (`daemon/tests/platform_real/first_run_rpc_check.py`). Run for real: `first-run/daemon-answers` and `first-run/daemon-ready` passed on all six combinations in CI on 3793a0d.
   - It prints the time taken and the size of each folder, which replaces the estimates above once measured.
 - **Real run on Windows (12 November, second round):** a Python range that excludes every Python on the machine leads to the private download, and a core that cannot be installed on the system Python falls back to a private Python once before failing.
 - **Not tested:**
@@ -189,7 +194,7 @@ Heliox creates no login item, service or scheduled task.
 
 ## What an unsigned build asks of the person
 
-Signing costs money and accounts, so it is the owner's decision. Until then, this is what someone sees.
+Signing costs money and accounts, so it is the owner's decision. Until then, this is what someone is expected to see. Not tested with Heliox's own build: the steps below come from Apple's and Microsoft's documented behaviour.
 
 **macOS (15 Sequoia and later), with an app that is ad-hoc signed and not notarised:**
 
@@ -205,4 +210,14 @@ Signing costs money and accounts, so it is the owner's decision. Until then, thi
 2. The installer's UAC prompt says "Publisher: Unknown" (an install for all users).
 3. On Windows 11 with Smart App Control on, which is the default on some fresh installs, an unsigned app is blocked with no "run anyway". The only way through is turning Smart App Control off, which cannot be turned back on without resetting Windows.
 
-**Linux:** no signing prompt. The .deb and .rpm declare their dependencies. The AppImage needs `chmod +x` or the file manager's "Allow executing as program".
+**Linux:** no signing prompt. The .deb and .rpm declare their dependencies (Not tested against a built package). The AppImage needs `chmod +x` or the file manager's "Allow executing as program".
+
+## What only a person at a real machine can show
+
+No hosted runner can show these; each needs someone at a real computer:
+
+1. The built app driving setup, an update, a repair and a removal in its own window: the screens, their buttons, the progress reaching them, and the daemon the app holds being stopped and the supervisor paused.
+2. A Mac and a Windows PC with no Python at all: the probe choosing Heliox's own Python, and no developer-tools dialog on the Mac.
+3. The unsigned-build dialogs with Heliox's own downloads: Gatekeeper on macOS 15 (and "Open Anyway" twice), SmartScreen and the "Publisher: Unknown" UAC prompt on Windows, and Smart App Control on a fresh Windows 11.
+4. On Windows, removing Heliox's files while the app runs: whether its web view folder is held open.
+5. The permission prompts, a real GNOME or KDE desktop and two audio devices: see the same list in [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md).

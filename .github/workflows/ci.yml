@@ -360,6 +360,25 @@ jobs:
             exit $(( reader + $? ))
           '
 
+      # A first-day person opens an app by name and moves its windows: the planner's launch, the names the timeline
+      # shows, and the window tools, against a real window manager (openbox) with two GTK windows.
+      - name: Linux, X11 - launching an app by its desktop entry, app names, and window actions under openbox
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y -q --no-install-recommends openbox wmctrl x11-utils
+          dbus-run-session -- bash -c '
+            Xvfb :98 -screen 0 1280x800x24 >/tmp/xvfb-wm.log 2>&1 &
+            export DISPLAY=:98 GTK_A11Y=atspi
+            sleep 2
+            openbox >/tmp/openbox.log 2>&1 &
+            sleep 1
+            failed=0
+            python tests/platform_real/apps_check.py || failed=$((failed + 1))
+            python tests/platform_real/linux_windows_check.py --python /usr/bin/python3 || failed=$((failed + 1))
+            exit $failed
+          '
+
       # Weston's headless backend has no seat, so nothing can take keyboard focus there (first run: GTK logged
       # gdk_seat_get_keyboard assertions and no element was ever focused). Sway on wlroots' headless backend
       # always has a seat, focuses new windows, and accepts keys from wtype through the virtual-keyboard protocol.
@@ -453,6 +472,11 @@ jobs:
         run: |
           sw_vers
           python tests/platform_real/macos_ax_check.py
+
+      - name: macOS - launching TextEdit by name, and app names from real bundles
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: python tests/platform_real/apps_check.py
           reader=$?
           python tests/platform_real/live_end_to_end_check.py
           exit $(( reader + $? ))
