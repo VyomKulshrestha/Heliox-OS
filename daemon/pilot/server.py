@@ -6188,7 +6188,10 @@ class PilotServer:
         timed_out = False
         try:
             try:
-                await asyncio.wait_for(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
+                # asyncio.timeout, not wait_for: before Python 3.12, wait_for can lose a cancellation (a Stop, a
+                # correction, a withdrawn turn) that arrives as the wait finishes, and the task then never ends.
+                async with asyncio.timeout(CONFIRM_TIMEOUT_SECONDS):
+                    await pending.event.wait()
             except TimeoutError:
                 timed_out = True
             async with pending.decision_lock:

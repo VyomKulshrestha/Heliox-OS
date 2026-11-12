@@ -177,8 +177,9 @@ class TurnLog:
         task = state.task
         if task is not None and not task.done() and task is not asyncio.current_task():
             task.cancel()
-            with contextlib.suppress(BaseException):
-                await asyncio.wait_for(asyncio.shield(task), 2.0)
+            # Wait a moment for it to end, without wait_for (which can lose a cancellation before Python 3.12) and
+            # without being cancelled ourselves through it.
+            await asyncio.wait({task}, timeout=2.0)
         for plan_id in set(pending()) - state.approvals_before:
             with contextlib.suppress(Exception):
                 await deny_quietly(plan_id)

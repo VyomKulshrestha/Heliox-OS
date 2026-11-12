@@ -368,7 +368,8 @@ class ConversationLayer:
         screen = None
         if self.sources.screen_async is not None:
             try:
-                screen = await asyncio.wait_for(self.sources.screen_async(bool(getattr(model, "local", False))), 0.5)
+                async with asyncio.timeout(0.5):  # not wait_for: it can lose a cancellation before 3.12
+                    screen = await self.sources.screen_async(bool(getattr(model, "local", False)))
             except Exception:
                 screen = None  # not available here, or too slow to wait for
         else:
@@ -460,7 +461,10 @@ class ConversationLayer:
             while True:
                 if first and not held and not typed:
                     try:
-                        sentence = await asyncio.wait_for(queue.get(), self._hold_after)
+                        # asyncio.timeout, not wait_for: before Python 3.12 an interrupt arriving as the first
+                        # sentence is dequeued could be lost, and Heliox would go on talking after being stopped.
+                        async with asyncio.timeout(self._hold_after):
+                            sentence = await queue.get()
                     except TimeoutError:
                         held = True
                         # Said alongside the wait: when the answer is ready it follows (and outranks) the phrase.

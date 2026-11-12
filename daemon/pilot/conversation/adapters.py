@@ -141,7 +141,8 @@ class FocusSource:
         try:
             from pilot.agents.screen_vision import _get_active_window
 
-            app, title = await asyncio.wait_for(asyncio.to_thread(_get_active_window), self._timeout)
+            async with asyncio.timeout(self._timeout):  # not wait_for: it can lose a cancellation before 3.12
+                app, title = await asyncio.to_thread(_get_active_window)
         except Exception:
             return None
         return Focus(app=str(app or ""), title=str(title or "")) if app else None

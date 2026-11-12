@@ -87,6 +87,7 @@ class Record:
     withdrawals: dict[int, str] = field(default_factory=dict)  # a continuation turn -> what the server said to it
     ended: dict[int, float] = field(default_factory=dict)  # when the person stopped talking, per taken turn
     tasks: dict[int, set[Any]] = field(default_factory=dict)  # every asyncio task a turn spawned, by that turn
+    stuck: list[str] = field(default_factory=list)  # every bounded wait that ran out, and on what
     seq: int = 0
     turn: int = -1
 
@@ -99,6 +100,7 @@ class Record:
 # spawns (speech said later, Live's end-of-turn delivery, an acknowledgement), so what is said or shown is the turn's
 # by origin, not by when it happens to run. -1: outside any turn.
 SESSION_TURN: ContextVar[int] = ContextVar("session_turn", default=-1)
+END_SECONDS = 5.0  # real time a cancelled dispatch may take to end when the session is over
 SETTLE_SECONDS = 8.0  # real time a turn's own tasks may take to finish (a delayed acknowledgement waits 2.5 s)
 
 
@@ -534,8 +536,12 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
             record.turn = len(session["turns"])
             for task in pending:
                 task.cancel()
-                with contextlib.suppress(BaseException):
-                    await task
+                done, _ = await asyncio.wait({task}, timeout=END_SECONDS)
+                if not done:  # a task told to stop that does not end is a failure to name, not a hang
+                    record.stuck.append(
+                        f"a dispatch still running {END_SECONDS:.0f} s after it was cancelled at the end of the session "
+                        f"({_describe(task)}; {_server_state(server)})"
+                    )
         finally:
             for undo in patches:
                 undo()
@@ -548,13 +554,42 @@ async def _settle(record: Record, index: int, dispatch: Any, asked: Any, winding
     server's state, never by a fixed sleep."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + SETTLE_SECONDS
+    running: set[Any] = set()
     while loop.time() < deadline:
-        running = {task for task in record.tasks.get(index, set()) if not task.done()}
+        running = {task for task in record.tasks.get(index, set()) if not task.done() and not _is_timer(task)}
         if not running and not winding_down():
             return
         if asked() and any(s.turn == index and "approv" in s.text.casefold() for s in record.said):
             return  # the plan waits for the person's click; the rest of this turn waits with it
         await asyncio.sleep(0.005)
+    record.stuck.append(
+        f"turn {index + 1} still had work running after {SETTLE_SECONDS:.0f} s: "
+        + "; ".join(_describe(task) for task in sorted(running, key=id)[:4])
+        + (" (and a task it ended had not given the floor back)" if winding_down() else "")
+    )
+
+
+# Work a turn starts that is meant to outlive it: a pomodoro's or a focus session's own timer. Not turn work.
+TIMERS = {"_wait_and_end"}
+
+
+def _is_timer(task: Any) -> bool:
+    frames = task.get_stack(limit=8)
+    return any(frame.f_code.co_name in TIMERS for frame in frames)
+
+
+def _describe(task: Any) -> str:
+    """Where a task is waiting, for a failure message: its name and the innermost frame."""
+    frames = task.get_stack(limit=8) if not task.done() else []
+    where = f"{frames[-1].f_code.co_name} at line {frames[-1].f_lineno}" if frames else "finished"
+    return f"{task.get_name()} in {where}"
+
+
+def _server_state(server: Any) -> str:
+    return (
+        f"interactive task active: {bool(server._interactive_request_active)}, "
+        f"approvals waiting: {sorted(server._pending_confirms)}"
+    )
 
 
 def _track_tasks(record: Record) -> Any:
@@ -611,7 +646,7 @@ STOCK = re.compile(
 
 def check_session(session: dict[str, Any], kind: str, record: Record) -> list[str]:
     """Every way the session went wrong for this kind of person, one line each ("" list: it passed)."""
-    failures: list[str] = []
+    failures: list[str] = [f"never finished: {line}" for line in record.stuck]
     for index, turn in enumerate(session["turns"]):
         if turn.get("event"):
             continue
