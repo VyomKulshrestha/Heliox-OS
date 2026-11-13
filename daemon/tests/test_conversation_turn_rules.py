@@ -207,3 +207,43 @@ async def test_a_correction_marks_the_wrong_answer_and_a_check_in_gets_one_line(
     assert [turn.text for turn in wrong] == ["Sydney."]
     await layer.take("are you there?")
     assert sink.said[-1] == "I'm here." and model.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_after_a_cut_a_new_answer_never_starts_the_cut_reply_over_unasked():
+    model = Model(
+        "Mostly it's the many small files. |Each one is opened and closed in turn.",
+        "I can't see the drive from here. |Mostly it's the many small files.",
+    )
+    sink = CutSink("Each one is opened and closed in turn.", "Each one is")
+    layer = ConversationLayer(
+        sink=sink,
+        model=lambda: model,
+        hold_after=5.0,
+        sources=ContextSources(heard_of=lambda text: "Each one is" if text.startswith("Each one") else text),
+    )
+    await layer.take("why do my backups take so long?")
+    await layer.take("is the backup drive full?")
+    assert sink.said[-1] == "I can't see the drive from here."  # the start over is not said
+
+
+@pytest.mark.asyncio
+async def test_as_i_was_saying_is_dropped_when_nothing_was_cut():
+    layer, sink = layer_with(Model("As I was saying, something is using the processor."))
+    await layer.take("why is my fan loud?")
+    assert sink.said == ["Something is using the processor."]
+
+
+@pytest.mark.asyncio
+async def test_a_long_honest_answer_keeps_its_rest_for_go_on():
+    long = (
+        "A vaccine shows your immune system a harmless piece of a germ, so it learns the shape. |"
+        "Later, if the real germ arrives, the body recognises it and fights it off much faster. |"
+        "That is why a booster helps."
+    )
+    model = Model(long)
+    layer, sink = layer_with(model)
+    await layer.take("how do vaccines work?")
+    assert not any("recognises it" in line for line in sink.said)  # the word cap: not said unasked
+    await layer.take("go on")
+    assert any("recognises it" in line for line in sink.said) and model.calls == 1

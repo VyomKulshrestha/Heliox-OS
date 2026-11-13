@@ -176,6 +176,20 @@ WHAT_WERE_YOU_SAYING = re.compile(
     r"finish what you were saying|what were you going to say|sorry,? go on|go ahead,? finish)$"
 )
 UNSAID_SECONDS = 120.0
+_RESUME_LEAD = re.compile(
+    r"^(?:as i was saying|like i was saying|as i said|to pick up where i left off|going back to what i was saying)"
+    r"\s*[,:]?\s*",
+    re.IGNORECASE,
+)
+
+
+def _without_resume_lead(sentence: str) -> str:
+    rest = _RESUME_LEAD.sub("", sentence, count=1)
+    if rest == sentence or not rest:
+        return sentence
+    return rest[:1].upper() + rest[1:]
+
+
 # "Are you there?": the person checks Heliox is listening.
 ARE_YOU_THERE = re.compile(
     r"^(?:are you (?:still )?there|you there|are you (?:still )?listening|can you hear me|are you awake|"
@@ -375,6 +389,7 @@ class ConversationLayer:
         self._company_said: tuple[str, float] | None = None  # the last company line said, and when
         self._last_thanks = ""  # the last reply to a plain thanks: the next one is different
         self._unsaid: tuple[str, float] | None = None  # the rest of a reply the person talked over, and when
+        self._cut_heard: list[str] = []  # what was heard of that reply, sentence by sentence (normalized)
         self._thanks_said = 0
         self._search_url = search_url
         # Whether the planner's model may be given screen text (conversation.share_screen_text), and whether the
@@ -835,6 +850,9 @@ class ConversationLayer:
                     break
                 # Spoken text is cleaned for the ear; typed text keeps its markdown for the chat view.
                 clean = drop_action_claims(sentence) if typed else clean_for_speech(sentence, first=first)
+                if not typed and not self._was_cut_lately():
+                    # "As I was saying" when nothing was cut off: there was nothing to pick up.
+                    clean = _without_resume_lead(clean)
                 verb = promised_action(clean)
                 if verb:
                     # "I'll open Notepad" with no ACT line would leave a promise and no action: not said here;
@@ -857,7 +875,10 @@ class ConversationLayer:
                 words_so_far = sum(len(part.split()) for part in said)
                 if not typed and said and words_so_far + len(clean.split()) > self._word_cap():
                     # Long enough to listen to: the reply ends at the last whole sentence (never after a clause
-                    # cut at a comma: those are joined to their sentence before this point).
+                    # cut at a comma: those are joined to their sentence before this point). What was already
+                    # written is kept for "go on", as after a cut, and never said unasked.
+                    self._unsaid = (" ".join([clean, *_waiting(queue)]), self._clock())
+                    self._cut_heard = []
                     capped = True
                     break
                 if not typed and self._user_speaking():
@@ -970,6 +991,11 @@ class ConversationLayer:
         self._last_thanks = reply
         return reply
 
+    def _was_cut_lately(self) -> bool:
+        """A reply of Heliox's was talked over in the last few turns (its words are in the conversation, marked)."""
+        replies = [turn for turn in self.memory.recent() if turn.role == "assistant"][-RECENT_REPLIES:]
+        return any(turn.cut_off for turn in replies)
+
     @property
     def cut_reply_at(self) -> float | None:
         """When a reply was cut off with words still unsaid (this layer's clock, time.monotonic by default), or None
@@ -1008,6 +1034,9 @@ class ConversationLayer:
         (pilot.personal.wiring.offer_in_reply: on, not the first week, not quiet, in a call or over a cap, not
         declined or silenced); an offer made is then an offer like any other ("yes", "why?", "not today")."""
         words = normalize(sentence)
+        if not repeat_asked and self._was_cut_lately() and any(words.startswith(heard) for heard in self._cut_heard):
+            logger.info("Dropped a sentence that starts the cut reply over: %r", sentence)
+            return False
         if not repeat_asked and words and words in self._recent_heliox_sentences():
             logger.info("Dropped a sentence Heliox said a moment ago: %r", sentence)
             return False
@@ -1119,6 +1148,8 @@ class ConversationLayer:
         rest = [cut] if cut and len(heard) < len(cut) else []  # resumed from the start of the cut sentence
         rest += [part for part in (unsaid or []) if part]
         self._unsaid = (" ".join(part for part in rest if part), self._clock()) if any(rest) else None
+        # What the person did hear of the cut reply: a later reply that starts it over unasked is not said.
+        self._cut_heard = [normalize(part) for part in [*said, heard] if len(normalize(part).split()) >= 3]
         if said or heard:
             self.memory.add_heliox(" ".join([*said, heard] if heard else said), cut_off=True)
 

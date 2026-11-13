@@ -2071,7 +2071,7 @@
    ]
   },
   {
-   "name": "talked over mid-reply: the voice stops, the rest waits until asked",
+   "name": "talked over mid-reply: the voice stops, the rest waits until asked, and nothing starts over",
    "barge_in": true,
    "turns": [
     {
@@ -2160,6 +2160,99 @@
      "expect": {
       "taken": true,
       "model": false
+     }
+    },
+    {
+     "say": "Hey Heliox, why do my backups take so long?",
+     "gap": 3,
+     "detail": true,
+     "model": "Mostly it's the many small files. Each one is opened and closed in turn. Big files go fast; tiny ones crawl.",
+     "expect": {
+      "taken": true
+     }
+    },
+    {
+     "say": "Hey Heliox, is the backup drive full?",
+     "interrupts": 9,
+     "gap": 0.3,
+     "model": "I can't see the drive from here. Mostly it's the many small files.",
+     "expect": {
+      "taken": true
+     },
+     "expect_stub": {
+      "has": [
+       "can't see the drive"
+      ],
+      "not": [
+       "mostly it's the many"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, go on.",
+     "gap": 1.5,
+     "detail": true,
+     "expect": {
+      "taken": true
+     },
+     "expect_stub": {
+      "model": false,
+      "has": [
+       "each one is opened",
+       "tiny ones crawl"
+      ],
+      "not": [
+       "mostly it's the many"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, why is my fan loud?",
+     "gap": 3,
+     "model": "As I was saying, something is using the processor.",
+     "expect": {
+      "taken": true
+     },
+     "expect_stub": {
+      "has": [
+       "something is using the processor"
+      ],
+      "not": [
+       "as i was saying"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, how do vaccines work?",
+     "gap": 3,
+     "model": "A vaccine shows your immune system a harmless piece of a germ, so it learns the shape. Later, if the real germ arrives, the body recognises it and fights it off much faster. That is why a second dose or a booster often makes the protection last longer.",
+     "expect": {
+      "taken": true
+     },
+     "expect_stub": {
+      "has": [
+       "shows your immune system"
+      ],
+      "not": [
+       "recognises it"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, go on.",
+     "gap": 1.5,
+     "detail": true,
+     "expect": {
+      "taken": true
+     },
+     "expect_stub": {
+      "model": false,
+      "has": [
+       "recognises it and fights it off"
+      ],
+      "not": [
+       "shows your immune system"
+      ]
      }
     }
    ]
