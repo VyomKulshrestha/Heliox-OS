@@ -427,6 +427,11 @@
       showDeviceNotice(micFault);
       return;
     }
+    if (status === "recogniser_out_of_memory") {
+      // A recogniser ran out of memory: what Heliox listens with now, or that it cannot hear, until it is freed.
+      showDeviceNotice(String(payload.message ?? ""));
+      return;
+    }
     if (status === "recogniser_missing") {
       showDeviceNotice(String(payload.message ?? "") || "Speech recognition needs a model.");
       const offer = payload.recommended as

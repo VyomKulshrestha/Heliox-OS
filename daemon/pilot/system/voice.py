@@ -1798,6 +1798,8 @@ async def _transcribe_speech(
         except ImportError:
             if normalized_engine == "faster_whisper":
                 raise
+        except MemoryError:
+            raise  # OpenAI Whisper would need as much memory again: the listener falls back to a smaller model
         except Exception as error:
             if normalized_engine == "faster_whisper":
                 raise
@@ -2584,6 +2586,7 @@ CHEAP_PASS_RTF = 0.1
 # utterance captured while the models load or warm waits at most this long for them. Still not ready by then (a slow
 # machine, a cold disk), it is not read and the bar asks the person to say it again (_until_warm).
 WARM_STEP_SECONDS = 30.0
+WHISPER_SMALLEST_FIRST = ("tiny", "base", "small", "medium", "large-v3")  # the fallback after running out of memory
 WARM_WAIT_SECONDS = 20.0
 
 
@@ -2720,6 +2723,9 @@ class ContinuousVoiceListener:
         self._transcriber_warmup_task: asyncio.Task[None] | None = None
         # Set when every recogniser has run its first inference (_warm_recognisers); None before start().
         self._warmed: asyncio.Event | None = None
+        # After a recogniser ran out of memory: the Whisper size used instead, and Parakeet set aside (_out_of_memory).
+        self._whisper_after_memory_error = ""
+        self._parakeet_out_of_memory = False
         self.warm_ms: dict[str, float] = {}
         self._command_tasks: set[asyncio.Task[None]] = set()
         self._diagnostic_waiter: asyncio.Future[dict[str, Any]] | None = None
@@ -2852,11 +2858,46 @@ class ContinuousVoiceListener:
         (model_presence.usable_whisper_model)."""
         from pilot.system.model_presence import usable_whisper_model
 
+        if self._whisper_after_memory_error:
+            return self._whisper_after_memory_error
         configured = str(self.config.voice.whisper_model)
         try:
             return usable_whisper_model(configured)
         except Exception:
             return configured
+
+    def _smallest_whisper_present(self, other_than: str) -> str:
+        """The smallest Whisper size on this computer other than ``other_than``, or ""."""
+        from pilot.system.model_presence import whisper_present
+
+        for size in WHISPER_SMALLEST_FIRST:
+            if size != other_than:
+                try:
+                    if whisper_present(size):
+                        return size
+                except Exception:
+                    continue
+        return ""
+
+    def _out_of_memory(self, recogniser: str, fallback: str) -> None:
+        """A recogniser ran out of memory: say so once on the bar and in health (capture_notice: hears is a fault with
+        this sentence), naming what Heliox listens with now."""
+        if fallback:
+            message = (
+                f"There isn't enough free memory for {recogniser}, so Heliox listens with {fallback} for now. "
+                "Closing some programs frees it."
+            )
+        else:
+            message = (
+                f"There isn't enough free memory for {recogniser}, and no smaller recogniser is on this computer, so "
+                "Heliox can't hear you right now. Closing some programs frees it."
+            )
+        logger.warning("Voice: %s ran out of memory; %s", recogniser, fallback or "nothing smaller to use")
+        if message == self.capture_notice:
+            return
+        self.capture_notice = message
+        if self._on_status:
+            self._schedule(self._on_status, "recogniser_out_of_memory", {"message": message})
 
     def _continuation(self, transcript: str) -> Any:
         """The Decision for an utterance that finishes the last dispatched turn ("remind me to | call the bank
@@ -3868,8 +3909,9 @@ class ContinuousVoiceListener:
             )
 
     def _parakeet(self) -> Any:
-        """The Parakeet final pass when it is chosen and its files are present, else None (Whisper is used)."""
-        if getattr(self.config.voice, "final_pass", "whisper") != "parakeet":
+        """The Parakeet final pass when it is chosen and its files are present, else None (Whisper is used). Set aside
+        for the session once it has run out of memory."""
+        if getattr(self.config.voice, "final_pass", "whisper") != "parakeet" or self._parakeet_out_of_memory:
             return None
         if str(getattr(self.config.voice, "language", "auto")).casefold() not in {"auto", "en", "english"}:
             return None  # Parakeet is English-only: another language set in Settings keeps Whisper
@@ -3926,7 +3968,14 @@ class ContinuousVoiceListener:
                 if early_wake is not None and opening_cannot_confirm(early_wake):
                     early_wake = None
                 wake_check = whole_utterance_check() if early_wake is None else None
-                said = await asyncio.to_thread(_counted, parakeet.transcribe, samples)
+                try:
+                    said = await asyncio.to_thread(_counted, parakeet.transcribe, samples)
+                except MemoryError:
+                    _cancel(wake_check)
+                    self._parakeet_out_of_memory = True
+                    smaller = self._whisper_model()
+                    self._out_of_memory("Parakeet", f"Whisper {smaller}")
+                    return await self._transcribe_path(audio_path, speculative=speculative)
                 self._last_parakeet_text = said
                 addressed = self._addressed()  # the microphone button, or talking over Heliox
                 in_conversation = addressed or self.conversation_open()
@@ -4020,6 +4069,22 @@ class ContinuousVoiceListener:
             # No Whisper on this computer: nothing is downloaded; with Parakeet its words still count.
             self._note_recogniser_missing()
             return ""
+        except MemoryError:
+            failed = self._whisper_model()
+            smaller = self._smallest_whisper_present(failed)
+            self._out_of_memory(f"Whisper {failed}", f"Whisper {smaller}" if smaller else "")
+            if not smaller:
+                return ""
+            self._whisper_after_memory_error = smaller
+            try:
+                result = await _transcribe_speech(
+                    audio_path, language or self.config.voice.language, smaller, "faster_whisper"
+                )
+            except Exception:
+                logger.warning("Whisper %s failed as well", smaller, exc_info=True)
+                return ""
+            self.last_detected_language = result["language"]
+            return result["text"]
         except ImportError:
             pass
 
