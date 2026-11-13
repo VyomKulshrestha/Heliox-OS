@@ -1,0 +1,96 @@
+name: "Voice memory — what the voice stack costs (report only)"
+
+# Resident memory at each stage of the voice stack on Windows, macOS and Linux: a daemon started, the recognisers
+# loaded and warm, the local voice loaded, after one spoken reply, after ten idle minutes. Peak and settled, printed
+# as MEMORY lines (daemon/tests/platform_real/voice_memory_report.py). Report only: no number passes or fails yet.
+# The speech models are the conversation-timing workflow's, fetched the same way and checked by their SHA-256.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "11 1 * * *" # nightly, 01:11 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voice-memory-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Voice memory (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: daemon
+        shell: bash
+    env:
+      # Every Heliox folder of the prefetch and the report (pilot.real_folders.use_scratch_folders); its models part
+      # is cached with the conversation-timing key. Never the runner's own folders.
+      HELIOX_BENCH_ROOT: ${{ github.workspace }}/.heliox-bench
+      CUDA_VISIBLE_DEVICES: ""
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: System libraries (Linux: PortAudio, libsndfile, espeak-ng)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libportaudio2 libsndfile1 espeak-ng
+
+      - name: System libraries (macOS: espeak-ng)
+        if: runner.os == 'macOS'
+        run: brew install espeak-ng
+
+      - name: Install the daemon with the voice extras (CPU-only PyTorch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[voice]" psutil
+
+      - name: Restore speech models
+        id: models-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.heliox-bench/.local/share/heliox-os/models
+            ~/.cache/huggingface
+          key: speech-${{ runner.os }}-${{ hashFiles('daemon/pilot/system/speech_models.json', 'daemon/benchmarks/conversation_bench/ci_prefetch.py') }}
+
+      - name: Fetch the speech set through Heliox's own download path (checked by SHA-256)
+        env:
+          HF_HUB_OFFLINE: "0"
+        run: python -m benchmarks.conversation_bench.ci_prefetch --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Save speech models
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.heliox-bench/.local/share/heliox-os/models
+            ~/.cache/huggingface
+          key: ${{ steps.models-cache.outputs.cache-primary-key }}
+
+      - name: The report's own inputs
+        timeout-minutes: 5
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: python tests/platform_real/voice_memory_report.py --inputs
+
+      - name: Memory at each stage
+        timeout-minutes: 50
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: python tests/platform_real/voice_memory_report.py
