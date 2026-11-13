@@ -2641,6 +2641,9 @@ class ContinuousVoiceListener:
         self._on_overheard = on_overheard
         # Callable() -> bool, set by the server: a task the person started is running or an approval is waiting.
         self.task_open: Any = None
+        # Callable() -> float | None, set by the server: when a reply was cut off with words unsaid (the conversation
+        # layer's cut_reply_at), so "what were you saying?" is taken as a follow-up shortly after.
+        self.reply_cut_at: Any = None
         # Callable(addressed) -> bool, set by the server (PilotServer.warm_for_speech): open the cloud model's
         # connection now, so the reply does not pay 0.3 to 0.9 s for a new one. Called only for speech known to be
         # for Heliox ("wake", "button", "follow_up"; _warm_if_for_heliox), never awaited; it returns at once
@@ -2775,6 +2778,11 @@ class ContinuousVoiceListener:
             rule.language = voice_words.voice_language(str(self.config.voice.language))
         except Exception:
             rule.language = "en"
+        try:
+            cut = self.reply_cut_at() if self.reply_cut_at else None
+            rule.reply_cut_at = float(cut) if cut is not None else None
+        except Exception:
+            rule.reply_cut_at = None
         recorder = self._recorder
         voiced = getattr(recorder, "last_voiced_seconds", None)
         ended = getattr(recorder, "last_turn_ended_at", None)

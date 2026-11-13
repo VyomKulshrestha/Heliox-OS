@@ -7003,6 +7003,15 @@ class PilotServer:
         await self._deliver_daily_brief(overview)
         return {"status": "ok", "text": overview["brief"]}
 
+    def _reply_cut_at(self) -> float | None:
+        """When the conversation layer's last reply was cut off with words unsaid (its cut_reply_at), or None."""
+        from pilot.conversation import layer_for
+
+        try:
+            return getattr(layer_for(self), "cut_reply_at", None)
+        except Exception:
+            return None
+
     def _spoken_language(self) -> str:
         """The person's voice language ("auto": the system's), for the stop and deny words."""
         try:
@@ -15670,6 +15679,7 @@ def handle_tool(tool_name, params):
             on_overheard=self._voice_overheard,
         )
         replacement.task_open = self._voice_task_open
+        replacement.reply_cut_at = self._reply_cut_at
         replacement.withdraw_turn = self.withdraw_voice_turn  # a sentence it split at a pause (conv_interfaces.md b)
         replacement.warm_model = self.warm_for_speech  # speech said to Heliox: open the fast model's connection
         self._voice_listener = replacement
@@ -15708,6 +15718,7 @@ def handle_tool(tool_name, params):
             on_overheard=self._voice_overheard,
         )
         self._voice_listener.task_open = self._voice_task_open
+        self._voice_listener.reply_cut_at = self._reply_cut_at
         self._voice_listener.withdraw_turn = self.withdraw_voice_turn  # a sentence split at a pause
         self._voice_listener.warm_model = (
             self.warm_for_speech

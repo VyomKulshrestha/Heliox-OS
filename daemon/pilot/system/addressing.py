@@ -78,6 +78,15 @@ CONTROL = re.compile(
 )
 # Acknowledgements are replies only as a whole short utterance: "Okay, thanks" is to Heliox, "okay so anyway we went
 # to lunch" is not.
+# Asking for the rest of a reply that was cut short ("Sorry, what were you saying?", "go on"): a follow-up only
+# within RESUME_SECONDS of the cut, when the conversation layer still holds the unsaid rest (Addressing.reply_cut_at),
+# so these words do not widen the follow-up rule otherwise.
+RESUME = re.compile(  # the same phrases the conversation layer answers from code (its WHAT_WERE_YOU_SAYING)
+    r"^(?:sorry\s+)?(?:what were you saying|you were saying|go on|carry on|keep going|continue|"
+    r"finish what you were saying|what were you going to say|go ahead finish)$",
+    re.I,
+)
+RESUME_SECONDS = 120.0
 SHORT_REPLY = re.compile(r"^(?:yes|yeah|yep|sure|okay|ok|thanks|thank you|great|perfect|got it|sorry)\b", re.I)
 # Follow-ups on Heliox's last answer that read as talk out of context. The repeat and shorter phrases are the ones
 # the conversation layer answers in code (pilot/conversation/followups.py, AGAIN and SHORTER; copied, not imported:
@@ -270,6 +279,9 @@ class Addressing:
     heliox_ended_at: float | None = None
     question_open: bool = False
     task_open: bool = False  # a task the person started is running or an approval waits
+    # When a reply was cut off with words still unsaid (the conversation layer's cut_reply_at, time.monotonic), or
+    # None: "what were you saying?" is taken within RESUME_SECONDS of it (_resume).
+    reply_cut_at: float | None = None
     language: str = "en"  # the person's voice language (voice_words.voice_language), for its stop and deny words
     _sorry_given: bool = False
     _at: float | None = None
@@ -355,6 +367,9 @@ class Addressing:
             # The command in the words acted on (Parakeet's), the wake phrase decided by the wake check's.
             spoken = vocative_wake(heard.text) if heard.wake_text else None
             return Decision(True, spoken.command if spoken is not None else wake.command, "wake")
+        if self._resume(heard):
+            self._addressed()
+            return Decision(True, heard.text.strip(" \t,.:;!?-"), "follow-up: resume")
         if not self.conversation_open and self._live_reply(heard):
             self.live_spoke_at = None  # one reply per remark; Live speaking again opens the next
             return Decision(True, heard.text.strip(" \t,.:;!?-"), "live reply")
@@ -408,6 +423,13 @@ class Addressing:
         if not 0 <= heard.started - self.heliox_ended_at <= self.follow_up_seconds:
             return False
         return heard.voiced_seconds >= THANKS_VOICE_SECONDS
+
+    def _resume(self, heard: Heard) -> bool:
+        """ "What were you saying?", "go on": asked within RESUME_SECONDS of a reply cut short, not over Heliox's voice."""
+        cut = self.reply_cut_at
+        if cut is None or heard.heliox_was_speaking or not 0 <= heard.started - cut <= RESUME_SECONDS:
+            return False
+        return bool(RESUME.match(" ".join(w.group(0) for w in _words(heard.text))))
 
     def _quick_reply(self, heard: Heard) -> bool:
         """A short answer that starts right after Heliox's own question and not over its voice."""
