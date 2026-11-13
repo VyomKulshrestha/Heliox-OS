@@ -373,6 +373,7 @@ jobs:
           failed=0
           python tests/platform_real/audio_check.py playback || failed=$((failed + 1))
           python tests/platform_real/audio_check.py follow || failed=$((failed + 1))
+          python tests/platform_real/audio_check.py taken || failed=$((failed + 1))
           exit $failed
 
       - name: Volume - set, stepped, muted and unmuted through the system's own call, read back each time
