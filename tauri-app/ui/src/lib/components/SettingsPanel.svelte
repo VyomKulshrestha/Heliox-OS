@@ -2,6 +2,7 @@
   import { ShieldAlert, ShieldCheck } from "@lucide/svelte";
   import { settings, settingsLoadErrors, type SettingsSaveResult } from "../stores/settings";
   import SpeechModels from "./SpeechModels.svelte";
+  import LazyPanel from "./LazyPanel.svelte";
   import WakeTeach from "./WakeTeach.svelte";
   import FollowUpCounts from "./FollowUpCounts.svelte";
   import ProfileSharing from "./ProfileSharing.svelte";
@@ -14,38 +15,6 @@
   import { invoke } from "../api/invoke";
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
   import ConfirmPrompt from "./ConfirmPrompt.svelte";
-  import PermissionAuditLog from "./PermissionAuditLog.svelte";
-  import GatewayPolicyEditor from "./GatewayPolicyEditor.svelte";
-  import GatewayAuditLog from "./GatewayAuditLog.svelte";
-  import RiskWorldModelPanel from "./RiskWorldModelPanel.svelte";
-  import TemporalMemoryPanel from "./TemporalMemoryPanel.svelte";
-  import OnlineLearningPanel from "./OnlineLearningPanel.svelte";
-  import CoAdaptationPanel from "./coadaptation/CoAdaptationPanel.svelte";
-  import StrategyEvolutionPanel from "./StrategyEvolutionPanel.svelte";
-  import EvolutionHarnessPanel from "./EvolutionHarnessPanel.svelte";
-  import AgentMeshPanel from "./AgentMeshPanel.svelte";
-  import PeerMeshPanel from "./PeerMeshPanel.svelte";
-  import AirHandoffPanel from "./AirHandoffPanel.svelte";
-  import CalendarIntegrationPanel from "./CalendarIntegrationPanel.svelte";
-  import EmailIntegrationPanel from "./EmailIntegrationPanel.svelte";
-  import SshIntegrationPanel from "./SshIntegrationPanel.svelte";
-  import McpServersPanel from "./McpServersPanel.svelte";
-  import ScheduledRunsPanel from "./ScheduledRunsPanel.svelte";
-  import ReceiptsPanel from "./ReceiptsPanel.svelte";
-  import TimelinePanel from "./TimelinePanel.svelte";
-  import VoiceShortcutsPanel from "./VoiceShortcutsPanel.svelte";
-  import YourDataPanel from "./YourDataPanel.svelte";
-  import LiveCompanionPanel from "./LiveCompanionPanel.svelte";
-  import LocalModelsPanel from "./LocalModelsPanel.svelte";
-  import OffersPanel from "./OffersPanel.svelte";
-  import PassingNotesPanel from "./PassingNotesPanel.svelte";
-  import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
-  import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
-  import RecordedWorkflowsPanel from "./RecordedWorkflowsPanel.svelte";
-  import SelfHealingPanel from "./SelfHealingPanel.svelte";
-  import NarrationPanel from "./NarrationPanel.svelte";
-  import SupervisionPanel from "./SupervisionPanel.svelte";
-  import NeuralControlPanel from "./NeuralControlPanel.svelte";
   import { getSharedGestureCalibrationStore } from "../gesture/calibration";
   import { gazeRuntime, resetGazeRuntime } from "../stores/gazeRuntime";
   import {
@@ -57,8 +26,6 @@
     toTauriHotkey,
     type HotkeyStatus,
   } from "../hotkey";
-  import OptionalParts from "./OptionalParts.svelte";
-  import RemoveHelioxFiles from "./RemoveHelioxFiles.svelte";
   import { companion } from "../stores/companion";
   import { NOT_CHANGED } from "../api/configSync";
 
@@ -2393,71 +2360,71 @@
   </section>
 
   <section class="settings-group audit-log-section">
-    <PermissionAuditLog />
+    <LazyPanel load={() => import("./PermissionAuditLog.svelte")} />
   </section>
 
   <section class="settings-group audit-log-section">
-    <GatewayPolicyEditor />
+    <LazyPanel load={() => import("./GatewayPolicyEditor.svelte")} />
   </section>
 
   <section class="settings-group audit-log-section">
-    <GatewayAuditLog />
+    <LazyPanel load={() => import("./GatewayAuditLog.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <RiskWorldModelPanel />
+    <LazyPanel load={() => import("./RiskWorldModelPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <NeuralControlPanel />
+    <LazyPanel load={() => import("./NeuralControlPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <TemporalMemoryPanel />
+    <LazyPanel load={() => import("./TemporalMemoryPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <OnlineLearningPanel />
+    <LazyPanel load={() => import("./OnlineLearningPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <CoAdaptationPanel />
+    <LazyPanel load={() => import("./coadaptation/CoAdaptationPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <StrategyEvolutionPanel />
+    <LazyPanel load={() => import("./StrategyEvolutionPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <EvolutionHarnessPanel />
+    <LazyPanel load={() => import("./EvolutionHarnessPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <AgentMeshPanel />
+    <LazyPanel load={() => import("./AgentMeshPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <GestureWorkflowBindings />
+    <LazyPanel load={() => import("./GestureWorkflowBindings.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <VoiceGestureWorkflowStatus />
+    <LazyPanel load={() => import("./VoiceGestureWorkflowStatus.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <RecordedWorkflowsPanel />
+    <LazyPanel load={() => import("./RecordedWorkflowsPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <SelfHealingPanel />
+    <LazyPanel load={() => import("./SelfHealingPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <NarrationPanel />
+    <LazyPanel load={() => import("./NarrationPanel.svelte")} />
   </section>
 
   <section class="settings-group feature-panel-section">
-    <SupervisionPanel />
+    <LazyPanel load={() => import("./SupervisionPanel.svelte")} />
   </section>
 
   <section class="settings-group">
@@ -2711,23 +2678,23 @@
     {/if}
   </section>
 
-  <CalendarIntegrationPanel />
-  <EmailIntegrationPanel />
-  <SshIntegrationPanel />
-  <McpServersPanel />
-  <ScheduledRunsPanel />
-  <PeerMeshPanel />
-  <AirHandoffPanel />
-  <ReceiptsPanel />
-  <TimelinePanel />
-  <VoiceShortcutsPanel />
-  <YourDataPanel />
-  <LiveCompanionPanel />
-  <LocalModelsPanel />
-  <OffersPanel />
-  <PassingNotesPanel />
-  <OptionalParts />
-  <RemoveHelioxFiles />
+  <LazyPanel load={() => import("./CalendarIntegrationPanel.svelte")} />
+  <LazyPanel load={() => import("./EmailIntegrationPanel.svelte")} />
+  <LazyPanel load={() => import("./SshIntegrationPanel.svelte")} />
+  <LazyPanel load={() => import("./McpServersPanel.svelte")} />
+  <LazyPanel load={() => import("./ScheduledRunsPanel.svelte")} />
+  <LazyPanel load={() => import("./PeerMeshPanel.svelte")} />
+  <LazyPanel load={() => import("./AirHandoffPanel.svelte")} />
+  <LazyPanel load={() => import("./ReceiptsPanel.svelte")} />
+  <LazyPanel load={() => import("./TimelinePanel.svelte")} />
+  <LazyPanel load={() => import("./VoiceShortcutsPanel.svelte")} />
+  <LazyPanel load={() => import("./YourDataPanel.svelte")} />
+  <LazyPanel load={() => import("./LiveCompanionPanel.svelte")} />
+  <LazyPanel load={() => import("./LocalModelsPanel.svelte")} />
+  <LazyPanel load={() => import("./OffersPanel.svelte")} />
+  <LazyPanel load={() => import("./PassingNotesPanel.svelte")} />
+  <LazyPanel load={() => import("./OptionalParts.svelte")} />
+  <LazyPanel load={() => import("./RemoveHelioxFiles.svelte")} />
 </div>
 
 <style>

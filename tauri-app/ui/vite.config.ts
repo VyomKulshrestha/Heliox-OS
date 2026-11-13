@@ -29,9 +29,25 @@ const MEDIAPIPE_TASKS_VISION_ASSET_DIR = "mediapipe/tasks-vision";
 const MEDIAPIPE_TASKS_VISION_WASM_DIR = join(CONFIG_DIR, "node_modules", "@mediapipe", "tasks-vision", "wasm");
 const MEDIAPIPE_TASKS_VISION_MODEL_DIR = join(CONFIG_DIR, "vendor", "mediapipe");
 
+// The co-adaptation feature (its study, its rules editor, its consent screen, its store and its words) loads with
+// the app: App starts its study. It sat in the Settings chunk until 13 November, because a manual chunk takes in
+// every module it imports that no other manual chunk claims; once the Settings panels far down the page moved to
+// their own chunks (LazyPanel.svelte), it fell into the entry chunk instead and pushed that over the budget. Its own
+// chunk keeps both well under. The co-adaptation panel in Settings is not part of it: it loads with Settings' late
+// panels.
+const COADAPTATION = [
+  "/src/lib/components/coadaptation/",
+  "/src/lib/coadaptation/",
+  "/src/lib/stores/coadaptation",
+  "/src/locales/coadaptation.",
+];
+
 function productionChunk(id: string): string | undefined {
   const normalized = id.replace(/\\/g, "/");
   if (normalized.includes("/src/lib/components/SettingsPanel.svelte")) return "settings-panel";
+  if (COADAPTATION.some((part) => normalized.includes(part)) && !normalized.includes("/CoAdaptationPanel.svelte")) {
+    return "coadaptation";
+  }
   if (!normalized.includes("/node_modules/")) return undefined;
   if (normalized.includes("/@mediapipe/")) return "vision-runtime";
   if (normalized.includes("/@tauri-apps/")) return "tauri-runtime";
