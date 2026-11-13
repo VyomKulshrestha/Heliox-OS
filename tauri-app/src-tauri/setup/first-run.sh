@@ -79,6 +79,31 @@ sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
 
+# fetch <url> <file>: download with curl, else wget, else Python's urllib, whichever this computer has (an AppImage
+# declares no dependencies, and a minimal system can lack curl: CI on f806416, a clean Ubuntu 24.04, had none, and
+# setup said only that the download "did not arrive"). FETCH_TOOL names what was used ("none" when nothing was
+# there), FETCH_ERROR its last error line; the file exists only when the download finished.
+fetch() {
+  FETCH_ERROR=""
+  if command -v curl >/dev/null 2>&1; then
+    FETCH_TOOL=curl
+    FETCH_ERROR="$(curl -fsSL --retry 2 --connect-timeout 20 -o "$2" "$1" 2>&1 | tail -n 1)" || true
+  elif command -v wget >/dev/null 2>&1; then
+    FETCH_TOOL=wget
+    FETCH_ERROR="$(wget -q -T 20 -t 3 -O "$2" "$1" 2>&1 | tail -n 1)" || true
+  elif command -v python3 >/dev/null 2>&1; then
+    FETCH_TOOL=python3
+    FETCH_ERROR="$(python3 -c 'import shutil, sys, urllib.request
+with urllib.request.urlopen(sys.argv[1], timeout=30) as answer, open(sys.argv[2], "wb") as out:
+    shutil.copyfileobj(answer, out)' "$1" "$2" 2>&1 | tail -n 1)" || true
+  else
+    FETCH_TOOL=none
+  fi
+  # A tool that failed may leave a partial or empty file: only a file with something in it counts, and the
+  # checksum is checked after.
+  if [ -n "$FETCH_ERROR" ] || [ ! -s "$2" ]; then rm -f "$2"; fi
+}
+
 fail() { # id message hint
   say "@@step $1 failed $2"
   [ -n "${3:-}" ] && say "@@hint $1 $3"
@@ -135,9 +160,16 @@ env_from_private() {
   say "@@step uv running Downloading uv ${UV_VERSION} (${ASSET_SIZE} bytes) from github.com/astral-sh/uv"
   if [ ! -f "$ARCHIVE" ] || [ "$(sha256_of "$ARCHIVE")" != "$ASSET_SHA" ]; then
     rm -f "$ARCHIVE"
-    curl -fL --retry 2 --connect-timeout 20 -o "$ARCHIVE" "$URL" 2>&1 | tr '\r' '\n' || true
+    fetch "$URL" "$ARCHIVE"
   fi
-  [ -f "$ARCHIVE" ] || fail uv "The download from github.com did not arrive." "Check the internet connection and press Retry."
+  if [ ! -f "$ARCHIVE" ]; then
+    if [ "$FETCH_TOOL" = none ]; then
+      fail uv "There is nothing on this computer to download uv with: no curl, wget or python3." \
+        "Install curl (on Debian or Ubuntu: sudo apt install curl) and press Retry."
+    fi
+    fail uv "The download from github.com did not arrive ($FETCH_TOOL: ${FETCH_ERROR:-no answer})." \
+      "Check the internet connection and press Retry."
+  fi
   GOT="$(sha256_of "$ARCHIVE")"
   if [ "$GOT" != "$ASSET_SHA" ]; then
     rm -f "$ARCHIVE"

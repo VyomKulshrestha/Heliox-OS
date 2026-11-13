@@ -110,7 +110,7 @@ jobs:
           deb="$(ls tauri-app/src-tauri/target/release/bundle/deb/*.deb | head -1)"
           mkdir -p "$RUNNER_TEMP/out-24.04"
           set +e
-          docker run --rm -e GITHUB_ACTIONS -e RUNNER_TEMP=/out -v "$PWD:/src:ro" \
+          docker run --rm --init -e GITHUB_ACTIONS -e RUNNER_TEMP=/out -v "$PWD:/src:ro" \
             -v "$RUNNER_TEMP/tools/bin:/tools:ro" -v "$RUNNER_TEMP/out-24.04:/out" ubuntu:24.04 \
             timeout 2400 bash /src/daemon/tests/platform_real/deb_install_check.sh "/src/$deb" /tools deb full
           status=$?
@@ -126,7 +126,7 @@ jobs:
           deb="$(ls tauri-app/src-tauri/target/release/bundle/deb/*.deb | head -1)"
           mkdir -p "$RUNNER_TEMP/out-22.04"
           set +e
-          docker run --rm -e GITHUB_ACTIONS -e RUNNER_TEMP=/out -v "$PWD:/src:ro" \
+          docker run --rm --init -e GITHUB_ACTIONS -e RUNNER_TEMP=/out -v "$PWD:/src:ro" \
             -v "$RUNNER_TEMP/tools/bin:/tools:ro" -v "$RUNNER_TEMP/out-22.04:/out" ubuntu:22.04 \
             timeout 1100 bash /src/daemon/tests/platform_real/deb_install_check.sh "/src/$deb" /tools deb-22.04 offer
           status=$?
@@ -142,7 +142,7 @@ jobs:
           appimage="$(ls tauri-app/src-tauri/target/release/bundle/appimage/*.AppImage | head -1)"
           mkdir -p "$RUNNER_TEMP/out-appimage"
           set +e
-          docker run --rm -e GITHUB_ACTIONS -e RUNNER_TEMP=/out -v "$PWD:/src:ro" \
+          docker run --rm --init -e GITHUB_ACTIONS -e RUNNER_TEMP=/out -v "$PWD:/src:ro" \
             -v "$RUNNER_TEMP/tools/bin:/tools:ro" -v "$RUNNER_TEMP/out-appimage:/out" ubuntu:24.04 \
             timeout 2400 bash /src/daemon/tests/platform_real/appimage_check.sh "/src/$appimage" /tools
           status=$?
@@ -156,5 +156,5 @@ jobs:
         timeout-minutes: 20
         run: |
           rpm="$(ls tauri-app/src-tauri/target/release/bundle/rpm/*.rpm | head -1)"
-          docker run --rm -e GITHUB_ACTIONS -e RUNNER_TEMP=/tmp -v "$PWD:/src:ro" fedora:latest \
+          docker run --rm --init -e GITHUB_ACTIONS -e RUNNER_TEMP=/tmp -v "$PWD:/src:ro" fedora:latest \
             sh -c "cat /etc/fedora-release; timeout 1100 bash /src/daemon/tests/platform_real/rpm_install_check.sh /src/$rpm"

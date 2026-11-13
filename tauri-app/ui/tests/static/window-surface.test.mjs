@@ -32,8 +32,16 @@ assert.deepEqual(directives["frame-src"], ["'none'"]);
 assert.deepEqual(directives["frame-ancestors"], ["'none'"]);
 assert.deepEqual(directives["form-action"], ["'none'"]);
 assert.deepEqual(directives["base-uri"], ["'self'"]);
+// The app's own IPC address: ipc: on macOS and Linux, http://ipc.localhost in WebView2 on Windows. Without it Windows
+// refused every command's first route (CI on f806416, "connect-src blocked http://ipc.localhost").
+assert(directives["connect-src"].includes("ipc:") && directives["connect-src"].includes("http://ipc.localhost"));
+const TAURI_OWN = new Set(["http://ipc.localhost"]);
+// No data: fonts: fonts ship as files (vite.config.ts, assetsInlineLimit), so the policy need not allow them.
+assert(!(directives["font-src"] ?? []).includes("data:"), "fonts ship as files; the policy does not allow data: fonts");
+assert(/assetsInlineLimit:[^\n]*woff2/.test(readFileSync(join(root, "vite.config.ts"), "utf8")), "fonts never inlined");
 for (const [name, values] of Object.entries(directives)) {
   for (const value of values) {
+    if (TAURI_OWN.has(value)) continue;
     assert(!/^https?:\/\/(?!127\.0\.0\.1|localhost)/.test(value), `${name} names a remote origin: ${value}`);
     assert(value !== "*" && value !== "https:" && value !== "http:", `${name} allows any origin: ${value}`);
   }

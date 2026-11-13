@@ -53,7 +53,7 @@ def call(driver, command: str, args: dict, timeout: float) -> object:
     )
 
     def answered():
-        value = driver.run("return window.__helioxCall")
+        value = base.once_more(driver, f"reading {command}'s answer", lambda: driver.run("return window.__helioxCall"))
         return value if value != "pending" else None
 
     value = wait_until(answered, timeout, every=1)
@@ -170,6 +170,7 @@ def main(appimage: str, tools: str) -> int:
             ):
                 base.check(name, False, "not run: the setup did not finish")
     finally:
+        print(f"DIAG driver retries in this run: {len(base.RETRIES)} ({', '.join(base.RETRIES) or 'none'})", flush=True)
         base.end([pid for pid, _, _, uid in base.processes() if uid != 0], wait=5)
         display.terminate()
     return base.failures

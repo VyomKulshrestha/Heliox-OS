@@ -17,25 +17,31 @@ esac
 while IFS=: read -r _ _ uid _ _ home _; do
     [ "$uid" = 0 ] || [ "$uid" -ge 1000 ] 2>/dev/null || continue
     folder="$home/.config/heliox-os"
-    [ -d "$folder/env" ] || [ -d "$folder/python" ] || [ -d "$folder/tools" ] || continue
-    parts=""
-    megabytes=0
-    for name in env python tools uv-cache setup setup.json; do
-        if [ -e "$folder/$name" ]; then
-            parts="$parts \"$folder/$name\""
-            size="$(du -sm "$folder/$name" 2>/dev/null | cut -f 1)"
-            megabytes=$((megabytes + ${size:-0}))
-        fi
-    done
-    echo "Heliox was removed, but its own program files are still in $folder (about $megabytes MB):"
-    echo "its Python environment and tools. Your Heliox settings and data beside them are kept."
-    echo "To delete the program files:  rm -rf$parts"
     # The app's working files (docs/FIRST_RUN.md's words): logs, the web view's storage and its cache, at their
-    # default places; safe to delete, and not the person's data.
+    # default places; safe to delete, and not the person's data. Named even when setup never finished and there are
+    # no program files (CI on f806416: the web view's storage was there and nothing was said).
     working=""
     for path in "$home/.local/state/heliox-os" "$home/.local/share/com.helioxos.app" "$home/.cache/com.helioxos.app"; do
         [ -e "$path" ] && working="$working $path"
     done
+    if [ -d "$folder/env" ] || [ -d "$folder/python" ] || [ -d "$folder/tools" ]; then
+        parts=""
+        megabytes=0
+        for name in env python tools uv-cache setup setup.json; do
+            if [ -e "$folder/$name" ]; then
+                parts="$parts \"$folder/$name\""
+                size="$(du -sm "$folder/$name" 2>/dev/null | cut -f 1)"
+                megabytes=$((megabytes + ${size:-0}))
+            fi
+        done
+        echo "Heliox was removed, but its own program files are still in $folder (about $megabytes MB):"
+        echo "its Python environment and tools. Your Heliox settings and data beside them are kept."
+        echo "To delete the program files:  rm -rf$parts"
+    elif [ -n "$working" ]; then
+        echo "Heliox was removed. Your Heliox settings and data, if any, are kept."
+    else
+        continue
+    fi
     if [ -n "$working" ]; then
         echo "The app's working files (logs, the web view's storage and cache) are safe to delete too:$working"
     fi

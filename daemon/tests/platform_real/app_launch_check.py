@@ -304,12 +304,13 @@ def mark_page(driver: Driver) -> str:
     return mark
 
 
-def aftermath(driver: Driver, mark: str, before: dict[str, list[int]]) -> tuple[bool, str, bool]:
+def aftermath(driver: Driver, mark: str, before: dict[str, list[int]], listing=None) -> tuple[bool, str, bool]:
     """After a step lost its connection: what was still alive, and whether the same session and page still answer.
     The last value says whether only the driver's connection dropped (the app running, the same session answering,
-    the page's mark kept, no process changed), the one case a step is tried again."""
+    the page's mark kept, no process changed), the one case a step is tried again. listing replaces this
+    check's own process listing (deb_install_check.py reads /proc, without psutil)."""
     time.sleep(1)
-    after = processes()
+    after = (listing or processes)()
     changed = {
         name: {"before": before.get(name, []), "after": after.get(name, [])}
         for name in sorted(set(before) | set(after))
@@ -446,29 +447,36 @@ def removed_permission_async(driver: Driver) -> None:
     check("async-route-survives-refused-command", str(answer).startswith("refused"), str(answer)[:300])
 
 
-def handed_to_browser() -> tuple[bool, str]:
+def handed_to_browser() -> tuple[bool, list[str]]:
     """Whether the system's browser can be watched here ($BROWSER is a script that writes down each address, on
-    Linux), and what it was handed so far, one address per line in the log, joined on one line."""
+    Linux), and every address it was handed so far, in order. Each step compares the list after it with the list
+    before it, so a line names only what its own step handed over."""
     browser_log = os.environ.get("HELIOX_BROWSER_LOG", "")
     if not browser_log:
-        return False, ""
+        return False, []
     handed = Path(browser_log).read_text(encoding="utf-8", errors="replace") if Path(browser_log).exists() else ""
-    return True, ", ".join(handed.split())
+    return True, handed.split()
+
+
+def handed_during(before: list[str]) -> list[str]:
+    return handed_to_browser()[1][len(before) :]
 
 
 def script_cannot_navigate(driver: Driver) -> None:
     """A navigation the page's script starts is refused and opens nothing: neither the window nor the browser goes."""
+    watched, before = handed_to_browser()
     driver.run("location.href = 'https://example.com/heliox-navigate'; return 1;")
     time.sleep(3)
     url = driver.url()
-    watched, handed = handed_to_browser()
-    ok = on_app(url) and "example.com/heliox-navigate" not in handed
-    check("script-cannot-navigate", ok, f"{url}; handed to the browser: {handed or 'nothing'}" if watched else url)
+    new = handed_during(before)
+    detail = f"{url}; handed to the browser in this step: {', '.join(new) or 'nothing'}" if watched else url
+    check("script-cannot-navigate", on_app(url) and not new, detail)
 
 
 def link_click_not_followed(driver: Driver) -> None:
     """A link the person clicks (WebDriver's click is input the browser marks trusted) stays out of the window and
     opens in the system's browser."""
+    watched, before = handed_to_browser()
     driver.run(
         "const a = document.createElement('a'); a.id = 'heliox-link-test';"
         "a.href = 'https://example.org/heliox-link'; a.textContent = 'link';"
@@ -478,14 +486,16 @@ def link_click_not_followed(driver: Driver) -> None:
     driver.click("#heliox-link-test")
     time.sleep(3)
     url = driver.url()
-    watched, handed = handed_to_browser()
-    detail = f"{url}; handed to the browser: {handed or 'nothing' if watched else 'not observable here'}"
-    check("link-click-not-followed", on_app(url) and (not watched or "example.org/heliox-link" in handed), detail)
+    new = handed_during(before)
+    handed = (", ".join(new) or "nothing") if watched else "not observable here"
+    ok = on_app(url) and (not watched or any("example.org/heliox-link" in address for address in new))
+    check("link-click-not-followed", ok, f"{url}; handed to the browser in this step: {handed}")
 
 
 def script_click_opens_nothing(driver: Driver) -> None:
     """A click a script dispatches on a link (not trusted, as a stray auto-clicking piece of markup would be) leaves
     the window on the app and hands nothing to the browser."""
+    watched, before = handed_to_browser()
     driver.run(
         "const a = document.createElement('a'); a.href = 'https://example.net/heliox-synthetic?q=secret';"
         "a.textContent = 'synthetic'; document.body.append(a); a.click();"
@@ -493,9 +503,9 @@ def script_click_opens_nothing(driver: Driver) -> None:
     )
     time.sleep(3)
     url = driver.url()
-    watched, handed = handed_to_browser()
-    ok = on_app(url) and "example.net/heliox-synthetic" not in handed
-    check("script-click-opens-nothing", ok, f"{url}; handed to the browser: {handed or 'nothing'}" if watched else url)
+    new = handed_during(before)
+    detail = f"{url}; handed to the browser in this step: {', '.join(new) or 'nothing'}" if watched else url
+    check("script-click-opens-nothing", on_app(url) and not new, detail)
 
 
 def webassembly_compiles(driver: Driver) -> None:

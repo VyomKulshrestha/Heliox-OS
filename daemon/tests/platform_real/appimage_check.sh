@@ -6,7 +6,8 @@
 #
 # Run as root inside a fresh ubuntu:24.04 container (the linux-package workflow starts one), never anywhere else. An
 # AppImage declares no dependencies, so only the test's own tools are installed: a virtual display, a session bus,
-# Python for the check, and WebKitWebDriver. The container has no FUSE, so the AppImage runs extracted
+# Python for the check, WebKitWebDriver, and the certificate store every desktop has. Neither curl nor wget is
+# installed, so first-run setup downloads uv with Python (first-run.sh, fetch). The container has no FUSE, so the AppImage runs extracted
 # (APPIMAGE_EXTRACT_AND_RUN=1), which its runtime supports and which still sets APPIMAGE. Each result is a CHECK
 # line named appimage/<check>; the exit code is the number of failed checks.
 if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ -z "${RUNNER_TEMP:-}" ]; then
@@ -22,7 +23,7 @@ export DEBIAN_FRONTEND=noninteractive
 appimage="$1"
 tools="$2"
 timeout 300 apt-get update -q > /tmp/apt-update.log 2>&1
-if ! timeout 600 apt-get install -y -q --no-install-recommends xvfb dbus-x11 webkit2gtk-driver python3 \
+if ! timeout 600 apt-get install -y -q --no-install-recommends xvfb dbus-x11 webkit2gtk-driver python3 ca-certificates \
     > /tmp/harness.log 2>&1; then
     echo "CHECK appimage/test-tools: FAIL - $(tail -5 /tmp/harness.log | tr '\n' ' ')"
     exit 1

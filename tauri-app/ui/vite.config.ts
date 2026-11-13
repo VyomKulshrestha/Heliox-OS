@@ -543,6 +543,11 @@ export default defineConfig({
   envPrefix: ["VITE_", "TAURI_"],
   build: {
     target: "esnext",
+    // Fonts always ship as files. Vite inlines any asset under 4 KiB as a data: address, which caught the small
+    // fontsource subsets (JetBrains Mono's Cyrillic-ext, about 2 KiB), and the content policy's font rule
+    // (default-src 'self') refuses data: addresses: WebView2 reported "font-src blocked data" (CI on f806416).
+    // Shipping them as files keeps the policy as narrow as it is.
+    assetsInlineLimit: (file: string) => (/\.(woff2?|ttf|otf|eot)$/i.test(file) ? false : undefined),
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: {

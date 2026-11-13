@@ -92,19 +92,53 @@ def check(name: str, ok: bool, detail: str) -> bool:
 
 
 def processes() -> list[tuple[int, str, str, int]]:
-    """(pid, name, command line, uid) of every process, from /proc."""
+    """(pid, name, command line, uid) of every living process, from /proc. A zombie (ended, not yet reaped by its
+    parent) is not running and is left out: in a container without an init, one the check ended earlier stays a
+    zombie with its name, and CI on f806416 counted it as the app still running after apt-get remove."""
     found = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
             continue
         try:
+            status = (entry / "status").read_text()
+            if "\nState:\tZ" in status:
+                continue
             name = (entry / "comm").read_text().strip()
             command = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
-            uid = (entry / "status").read_text().split("\nUid:")[1].split()[0]
+            uid = status.split("\nUid:")[1].split()[0]
         except (OSError, IndexError):
             continue
         found.append((int(entry.name), name, command, int(uid)))
     return found
+
+
+def listing() -> dict[str, list[int]]:
+    """The processes by name, as app_launch_check.aftermath compares them before and after a dropped connection."""
+    found: dict[str, list[int]] = {}
+    for pid, name, _, _ in processes():
+        if name in ("heliox-os", "WebKitWebProcess", "WebKitNetworkProcess", "WebKitWebDriver"):
+            found.setdefault(name.casefold(), []).append(pid)
+    return {name: sorted(pids) for name, pids in found.items()}
+
+
+RETRIES: list[str] = []  # the driver's dropped connections tried again (app_launch_check's rule), counted in DIAG
+
+
+def once_more(driver, what: str, call):
+    """Run ``call``; when the driver's connection drops and only that happened (app running, same session, page mark
+    kept, no process changed: app_launch_check.aftermath), run it once more, and count it. Anything else raises."""
+    from app_launch_check import aftermath, mark_page
+
+    before, mark = listing(), mark_page(driver)
+    try:
+        return call()
+    except Exception as error:
+        _, state, only_the_driver = aftermath(driver, mark, before, listing)
+        if not only_the_driver:
+            raise RuntimeError(f"{type(error).__name__}: {error}; {state}") from error
+        RETRIES.append(f"{what} ({type(error).__name__})")
+        print(f"DIAG {what}: the driver dropped its connection with nothing else changed; tried once more", flush=True)
+        return call()
 
 
 def app_pids() -> list[int]:
@@ -330,13 +364,20 @@ def first_run_through_the_window(person: Person, binary: str, tools: str, log: D
             press = SETUP_BUTTON.replace(
                 "if (b) return b.disabled ? 'disabled' : 'ready';", "if (b) { b.click(); return 'pressed'; }"
             )
-            driver.run(press)
-            started = time.monotonic()
             title_script = "const t = document.querySelector('#first-run-title'); return t ? t.textContent.trim() : '';"
+
+            def press_once() -> object:
+                # A press whose answer was lost may have happened: press only while the choice screen still shows.
+                if driver.run(title_script) != "Set up Heliox":
+                    return "already pressed"
+                return driver.run(press)
+
+            print(f"DIAG the setup button: {once_more(driver, 'pressing Set up Heliox', press_once)}", flush=True)
+            started = time.monotonic()
             title = ""
             while time.monotonic() - started < 1500:
-                title = window.read(title_script)
-                if title in ("Heliox is ready", "Setup stopped") or not title or title.startswith("unreadable"):
+                title = str(once_more(driver, "reading the setup screen", lambda: driver.run(title_script)))
+                if title in ("Heliox is ready", "Setup stopped") or not title:
                     break
                 time.sleep(5)
             seconds = time.monotonic() - started
@@ -446,8 +487,11 @@ def removal(person: Person, binary: str, package: str, log: DaemonLog, before: d
     measured = sum(groups["program"].values()) / 1e6
     working = [str(person.home / prefix) for prefix in groups["working"]]
     unnamed = [path for path in working if path not in said]
-    told = folder in said and "rm -rf" in said and size_said is not None and not unnamed
-    close = size_said is not None and abs(int(size_said.group(1)) - measured) <= max(5, measured * 0.25)
+    if any(part in groups["program"] for part in (f"{ENVIRONMENT}/{name}" for name in ("env", "python", "tools"))):
+        told = folder in said and "rm -rf" in said and size_said is not None and not unnamed
+        close = size_said is not None and abs(int(size_said.group(1)) - measured) <= max(5, measured * 0.25)
+    else:  # setup never put program files there: only the working files, if any, have to be named
+        told, close = not unnamed and (not working or "Heliox was removed" in said), True
     lines = [line for line in said.splitlines() if "Heliox" in line or "rm -rf" in line]
     check(
         "remove-says-what-is-left",
@@ -493,6 +537,8 @@ def main(binary: str, package: str, tools: str, label: str, mode: str) -> int:
             check("daemon-answers-with-token", False, "not run: the setup did not finish")
         removal(person, binary, package, log, before)
     finally:
+        # Counted every run (app_launch_check prints the same), so a rising number of driver drops is seen.
+        print(f"DIAG driver retries in this run: {len(RETRIES)} ({', '.join(RETRIES) or 'none'})", flush=True)
         source = home / ".local/state/heliox-os/pilot.log"
         if source.exists():
             (OUT / "daemon-pilot.log").write_bytes(source.read_bytes()[-200_000:])
