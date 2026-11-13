@@ -396,7 +396,7 @@ def test_a_listener_that_gives_up_leaves_no_output_line_it_opened(monkeypatch):
     assert voice._output_line.stream is None and not voice._output_line.pinned
 
 
-def test_on_one_device_the_line_opens_at_the_default_latency_and_logs_it_once(monkeypatch, caplog):
+def test_on_one_device_the_line_opens_at_the_default_latency_and_logs_every_open(monkeypatch, caplog):
     """Round 4d: a "low" output stopped the 16 kHz input beside it; at the default latency the input kept going."""
     caplog.set_level("INFO", logger=voice.logger.name)
     sd, recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, IN_AND_OUT)
@@ -405,7 +405,10 @@ def test_on_one_device_the_line_opens_at_the_default_latency_and_logs_it_once(mo
     wait_for(lambda: sd.events.count(f"open input {IN_AND_OUT} 16000") == 2)
     assert sd.output_latencies == ["high", "high"]
     logged = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Output line opened at latency")]
-    assert logged == ["Output line opened at latency 'high': latency 100 ms at 24000 Hz"]
+    assert logged == [
+        "Output line opened at latency 'high': latency 100 ms at 24000 Hz on the default output",
+        "Output line opened at latency 'high': latency 100 ms at 48000 Hz on the default output",
+    ]
     finish(recorder)
 
 
@@ -575,9 +578,10 @@ def speaker(monkeypatch, name: str) -> None:
     monkeypatch.setattr("pilot.system.audio_health.default_speaker_name", lambda: name)
 
 
-def test_a_default_output_moved_away_and_back_on_a_same_device_mac(monkeypatch):
+def test_a_default_output_moved_away_and_back_on_a_same_device_mac(monkeypatch, caplog):
     """Run 43439172983: "Speaking on Apple Virtual Sound Device now", then the line reopened on BlackHole, because
     PortAudio's default is only re-read with no microphone open. PortAudio's default stays BlackHole here throughout."""
+    caplog.set_level("INFO", logger=voice.logger.name)
     sd, recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, IN_AND_OUT)
     speaker(monkeypatch, "BlackHole 2ch")
     assert recorder._open_capture()
@@ -606,6 +610,12 @@ def test_a_default_output_moved_away_and_back_on_a_same_device_mac(monkeypatch):
     ]  # output first at the default latency, then the sustained reopen
     assert sd.output_latencies[-1] == "high" and line.pinned
     assert line.notice == "Speaking on BlackHole 2ch now."
+    logged = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Output line opened at latency")]
+    assert logged == [  # one line per open: the start, away, back
+        "Output line opened at latency 'high': latency 100 ms at 24000 Hz on BlackHole 2ch",
+        "Output line opened at latency 'low': latency 10 ms at 24000 Hz on Apple Virtual Sound Device",
+        "Output line opened at latency 'high': latency 100 ms at 24000 Hz on BlackHole 2ch",
+    ]
     finish(recorder)
 
 
@@ -721,4 +731,25 @@ def test_a_failed_start_closes_the_stream_it_opened(monkeypatch):
     sd.input_plan = ["fails", "works"]
     assert recorder._open_capture()
     assert sd.events[1:3] == [f"failed input {IN_AND_OUT}", f"close input {IN_AND_OUT}"]
+    finish(recorder)
+
+
+@pytest.mark.parametrize(
+    ("platform", "default_out"),
+    [(Platform.WINDOWS, IN_AND_OUT), (Platform.LINUX, IN_AND_OUT), (Platform.MACOS, SPEAKERS)],
+)
+def test_without_a_same_device_listener_the_latency_is_logged_once_per_setting(
+    monkeypatch, caplog, platform, default_out
+):
+    caplog.set_level("INFO", logger=voice.logger.name)
+    sd, recorder = setup(monkeypatch, platform, IN_AND_OUT, default_out)
+    speaker(monkeypatch, "MacBook Pro Speakers")  # on macOS found by name in PortAudio's list
+    assert recorder._open_capture()
+    if platform == Platform.MACOS:
+        recorder.stop()  # no listener: the line has no microphone to decide by
+    line = voice._output_line
+    line.ensure(24000, 1)
+    line.ensure(22050, 1)  # the line reopens for another voice rate
+    logged = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Output line opened at latency")]
+    assert logged == ["Output line opened at latency 'low': latency 10 ms at 24000 Hz on MacBook Pro Speakers"]
     finish(recorder)

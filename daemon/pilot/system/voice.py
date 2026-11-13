@@ -565,7 +565,7 @@ class _OutputLine:
         # line's device on macOS. A line open at another latency is reopened at the next ensure().
         self.wanted_latency: Any = "low"
         self._opened_latency: Any = None
-        self._latency_logged: set[str] = set()  # each setting's measured buffer is logged once
+        self._latency_logged: set[str] = set()  # outside the macOS listener, each setting's buffer is logged once
         self.running = threading.Event()  # set by the first callback after an open
         self._just_opened = False
 
@@ -637,17 +637,28 @@ class _OutputLine:
             return stream
 
     def _log_latency(self, stream: Any, latency: Any) -> None:
-        """Log once per setting the output buffer PortAudio reports: how late a cut-off is still heard (the fade
-        acts on the next block; what the device already holds plays out)."""
-        if str(latency) in self._latency_logged:
+        """Log the output buffer PortAudio reports, which is how late a cut-off is still heard (the fade acts on the
+        next block; what the device already holds plays out), and where the line opened. On macOS while a listener
+        has given the line its microphone, every open: each one decides pinned and latency, and they are rare (the
+        start, a moved default output, a device lost). Elsewhere once per setting: there the line reopens for each
+        voice rate, and the figure does not change."""
+        every_open = CURRENT_PLATFORM == Platform.MACOS and self.microphone_index is not None
+        if not every_open and str(latency) in self._latency_logged:
             return
         self._latency_logged.add(str(latency))
         try:
             seconds = float(stream.latency)
         except (AttributeError, TypeError, ValueError):
             return
+        where = self.device_name or (
+            f"device {self.device_index}" if self.device_index is not None else "the default output"
+        )
         logger.info(
-            "Output line opened at latency %r: latency %d ms at %d Hz", latency, round(seconds * 1000), self.rate
+            "Output line opened at latency %r: latency %d ms at %d Hz on %s",
+            latency,
+            round(seconds * 1000),
+            self.rate,
+            where,
         )
 
     def _decide_pin_locked(self, sd: Any, index: int | None) -> None:
