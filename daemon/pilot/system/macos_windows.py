@@ -20,6 +20,7 @@ screen's coordinates are pure functions tested on every system.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -154,9 +155,31 @@ class Backend:
         x, y, width, height = frame
         position = self.ax.AXValueCreate(self.ax.kAXValueCGPointType, Quartz.CGPoint(x, y))
         size = self.ax.AXValueCreate(self.ax.kAXValueCGSizeType, Quartz.CGSize(width, height))
-        moved = self.ax.AXUIElementSetAttributeValue(window, "AXPosition", position) == 0
-        sized = self.ax.AXUIElementSetAttributeValue(window, "AXSize", size) == 0
+        # With AXEnhancedUserInterface on (VoiceOver, or Live in a Chromium browser), AppKit animates a window's
+        # moves and resizes, so a resize sent right after a move can land on the old frame. It is off for the move
+        # and the resize, and put back as it was, as window tools such as Rectangle do.
+        with self.enhanced_ui_paused(window):
+            moved = self.ax.AXUIElementSetAttributeValue(window, "AXPosition", position) == 0
+            sized = self.ax.AXUIElementSetAttributeValue(window, "AXSize", size) == 0
         return moved and sized
+
+    @contextlib.contextmanager
+    def enhanced_ui_paused(self, window: Any):
+        """Turn AXEnhancedUserInterface off on the window's app for the block, when it is on, and back on after."""
+        app = None
+        err, pid = self.ax.AXUIElementGetPid(window, None)
+        if err == 0 and pid:
+            app = self.ax.AXUIElementCreateApplication(pid)
+            got, value = self.ax.AXUIElementCopyAttributeValue(app, "AXEnhancedUserInterface", None)
+            if got != 0 or not value:
+                app = None
+        if app is not None:
+            self.ax.AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface", False)
+        try:
+            yield
+        finally:
+            if app is not None:
+                self.ax.AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface", True)
 
 
 class MacWindows:

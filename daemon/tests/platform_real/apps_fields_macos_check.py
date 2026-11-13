@@ -1,7 +1,7 @@
 """Fields where people type on a Mac: Safari, Chrome and an Electron app, read by Heliox's macOS reader.
 
     python apps_fields_macos_check.py safari-default chrome-default chrome-manual chrome-enhanced chrome-forced \\
-        electron-default electron-manual electron-enhanced electron-forced
+        edge-default edge-enhanced electron-default electron-manual electron-enhanced electron-forced
 
 Each target shows field_fixture.html: a text area and a password input. For each:
 
@@ -14,10 +14,10 @@ Each target shows field_fixture.html: a text area and a password input. For each
 
 The variants answer "does a person's default setup give Heliox the field":
 - ``*-default``: the app as a person has it, read by Heliox's reader as it is (which turns AXManualAccessibility
-  on in an Electron app itself). The read is an ANSWER line, yes or no; the password check still counts when the
+  on in an Electron app, and AXEnhancedUserInterface in Chrome and Edge, itself). The read is an ANSWER line, yes or no; the password check still counts when the
   field was read;
 - ``*-manual``: the check sets AXManualAccessibility on the app, the attribute Electron documents for assistive
-  apps (Chrome rejected it in CI on 052f815);
+  apps (Chrome rejected it in CI on 052f815, so for the browsers it is an ANSWER line);
 - ``*-enhanced``: the check sets AXEnhancedUserInterface on the app, the attribute VoiceOver sets, and puts the
   value it found back afterwards. An ANSWER line;
 - ``*-forced``: the app's own switch, ``--force-renderer-accessibility``. Manual and forced must read the field.
@@ -47,6 +47,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 HERE = Path(__file__).resolve().parent
 TITLE = "Heliox field fixture"
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+# Chromium browsers the check runs when the runner has them; Heliox wakes each with AXEnhancedUserInterface.
+BROWSERS = {"chrome": CHROME, "edge": "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"}
 failures = 0
 
 
@@ -200,12 +202,13 @@ def run(target: str, workdir: Path) -> None:
         if kind == "safari":
             subprocess.run(["/usr/bin/open", "-a", "Safari", str(page)], capture_output=True, timeout=30, check=False)
             pid = running_pid("com.apple.Safari")
-        elif kind == "chrome":
-            if not Path(CHROME).exists():
-                print(f"ANSWER {target}: not run, Google Chrome is not on this runner", flush=True)
+        elif kind in BROWSERS:
+            program = BROWSERS[kind]
+            if not Path(program).exists():
+                print(f"ANSWER {target}: not run, {Path(program).name} is not on this runner", flush=True)
                 return
             args = [
-                CHROME,
+                program,
                 f"--user-data-dir={workdir / f'chrome-{target}'}",  # a profile per target: no handing off
                 "--no-first-run",
                 "--no-default-browser-check",
@@ -239,7 +242,7 @@ def run(target: str, workdir: Path) -> None:
             enhanced_before = app_bool(pid, "AXEnhancedUserInterface")  # written down, put back in finally
             err = set_app_bool(pid, "AXEnhancedUserInterface", True)
             print(f"DIAG {target}: AXEnhancedUserInterface was {enhanced_before}, set: error {err}", flush=True)
-        if kind in ("chrome", "electron"):
+        if kind in (*BROWSERS, "electron"):
             window_move(target, pid)
         time.sleep(2.0)
         reader = M.shared()
@@ -256,10 +259,11 @@ def run(target: str, workdir: Path) -> None:
             time.sleep(0.3)
         ok = seen is not None and (seen.text or "").endswith(word)
         diag_focused(f"{target} text field")
-        if variant in ("default", "enhanced"):
+        # Chrome refuses AXManualAccessibility, so its manual target is an answer, not a check.
+        if variant in ("default", "enhanced") or (kind in BROWSERS and variant == "manual"):
             print(f"ANSWER {target}: Heliox reads the field with this setup: {'yes' if ok else 'no'}", flush=True)
-            if kind == "electron":
-                print(f"DIAG {target}: the reader turned AXManualAccessibility on: {reader.woken!r}", flush=True)
+            if kind != "safari":
+                print(f"DIAG {target}: what the reader turned on: {reader.woken!r}", flush=True)
         else:
             check(f"{target}/reads-typed-text", ok, repr(seen))
         if not ok:

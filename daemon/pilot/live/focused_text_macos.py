@@ -242,9 +242,32 @@ class Wake:
 
     name: str
     bundle: str
-    before: bool | None = None  # AXManualAccessibility before Heliox looked; None when it could not be read
+    before: bool | None = None  # the attribute before Heliox looked; None when it could not be read
     set_by_heliox: bool = False
     refused: bool = False
+    attribute: str = "AXManualAccessibility"  # AXEnhancedUserInterface for Chrome and its relatives
+
+
+# Chromium browsers, which share their pages only once AXEnhancedUserInterface is set on the app (Chrome refused
+# AXManualAccessibility, error -25205, in CI on 052f815; with AXEnhancedUserInterface set, chrome-enhanced read the
+# field and refused the password input 15 of 15 in CI on 9aa37d8).
+CHROMIUM_BUNDLES = frozenset(
+    {
+        "com.google.Chrome",
+        "com.google.Chrome.beta",
+        "com.google.Chrome.dev",
+        "com.google.Chrome.canary",
+        "org.chromium.Chromium",
+        "com.microsoft.edgemac",
+        "com.microsoft.edgemac.Beta",
+        "com.microsoft.edgemac.Dev",
+        "com.microsoft.edgemac.Canary",
+        "com.brave.Browser",
+        "company.thebrowser.Browser",
+        "com.vivaldi.Vivaldi",
+        "com.operasoftware.Opera",
+    }
+)
 
 
 class MacReader:
@@ -254,31 +277,38 @@ class MacReader:
         self.backend = backend
         self.gate = PermissionGate(backend.trusted, backend.prompt)
         self._secure_input = secure_input
-        # What the reader decided about each app it considered waking, by pid (see ``wake_electron``).
+        # What the reader decided about each app it considered waking, by pid (see ``wake_app``).
         self.woken: dict[int, Wake] = {}
 
     def recheck_wakes(self) -> None:
-        """An app Heliox turned AXManualAccessibility on in that may no longer be touched (the person excluded it
+        """An app Heliox turned its accessibility attribute on in that may no longer be touched (the person excluded it
         while Live runs) has it turned off again, at the next read. Off, whatever it was before Heliox set it: the
         line is that Heliox does not touch those windows."""
         for pid, wake in self.woken.items():
             if wake.set_by_heliox and not may_touch(wake.name, wake.bundle):
                 with contextlib.suppress(Exception):
-                    self.backend.set_app_bool(pid, "AXManualAccessibility", False)
+                    self.backend.set_app_bool(pid, wake.attribute, False)
                 wake.set_by_heliox = False
                 wake.refused = True
 
-    def wake_electron(self, pid: int) -> None:
-        """Turn on AXManualAccessibility in the Electron app ``pid``, once per process.
+    def wake_app(self, pid: int) -> None:
+        """Ask the app ``pid`` to share its pages with the Accessibility API, once per process: AXManualAccessibility
+        in an Electron app, AXEnhancedUserInterface in Chrome and its relatives (``CHROMIUM_BUNDLES``).
 
         An Electron app shares its page with the Accessibility API only once an assistive app asks for it: by
         default the focused element is missing and nothing can be read (CI on 052f815: electron-default "no").
         AXManualAccessibility is the attribute Electron documents for assistive apps; set on the app element it
         made the text area readable and the password input refused, 15 of 15, in the same run (electron-manual),
         even with the window not in front. It changes nothing about how the app's windows behave; the app spends
-        some memory and time building its accessibility tree from then on. Chrome does not accept it (error -25205
-        in that run), and AXEnhancedUserInterface, which Chrome does accept, is not set: it changes how every
-        window of the app moves and resizes for other window tools.
+        some memory and time building its accessibility tree from then on.
+
+        Chrome does not accept AXManualAccessibility (error -25205 in that run); AXEnhancedUserInterface, the
+        attribute VoiceOver sets, makes it share its pages (chrome-enhanced, CI on 9aa37d8: read, password refused
+        15 of 15). Its cost has a reputation: with it on, AppKit animates a window's moves and resizes, so a window
+        tool that moves and then sizes a window can see the old frame. On the runner a move through the
+        Accessibility API took effect at once with it on, in every Chrome and Electron target. Heliox's own window
+        actions turn it off around a move or resize of that app and back on after (macos_windows.Backend.set_frame);
+        tools such as Rectangle do the same on their side.
 
         Never in an app Live may not read (``may_touch``: password managers, many of them Electron apps, the
         system's credential stores, Heliox itself, the person's excluded apps), checked here and not only by the
@@ -297,22 +327,26 @@ class MacReader:
                 return
             if len(self.woken) > 64:
                 self.woken = {p: w for p, w in self.woken.items() if w.set_by_heliox}
-            if not b.is_electron(pid):
+            if bundle in CHROMIUM_BUNDLES:
+                attribute = "AXEnhancedUserInterface"
+            elif b.is_electron(pid):
+                attribute = "AXManualAccessibility"
+            else:
                 self.woken[pid] = Wake(name, bundle)
                 return
-            before = b.app_bool(pid, "AXManualAccessibility")
+            before = b.app_bool(pid, attribute)
             if before is True:
-                self.woken[pid] = Wake(name, bundle, before=True)
+                self.woken[pid] = Wake(name, bundle, before=True, attribute=attribute)
                 return
-            done = bool(b.set_app_bool(pid, "AXManualAccessibility", True))
-            self.woken[pid] = Wake(name, bundle, before=before, set_by_heliox=done)
-            logger.debug("AXManualAccessibility on in Electron app %s: %s (before: %s)", pid, done, before)
+            done = bool(b.set_app_bool(pid, attribute, True))
+            self.woken[pid] = Wake(name, bundle, before=before, set_by_heliox=done, attribute=attribute)
+            logger.debug("%s on in app %s (%s): %s (before: %s)", attribute, pid, bundle, done, before)
         except Exception:
             logger.debug("Could not turn on accessibility in app %s", pid, exc_info=True)
             self.woken[pid] = Wake("", "")
 
     def undo_wakes(self) -> None:
-        """Live stopped: turn AXManualAccessibility off again where Heliox turned it on and it was off before, in
+        """Live stopped: turn the attribute off again where Heliox turned it on and it was off before, in
         apps still running. Where its earlier value could not be read it is left on, as a screen reader may have
         set it."""
         b = self.backend
@@ -320,7 +354,7 @@ class MacReader:
         for pid, wake in woken.items():
             if wake.set_by_heliox and wake.before is False and pid_alive(pid):
                 with contextlib.suppress(Exception):
-                    b.set_app_bool(pid, "AXManualAccessibility", False)
+                    b.set_app_bool(pid, wake.attribute, False)
 
     def _front_pid(self) -> int:
         b = self.backend
@@ -336,7 +370,7 @@ class MacReader:
             self.recheck_wakes()
         element = b.focused()
         if element is None:
-            self.wake_electron(self._front_pid())
+            self.wake_app(self._front_pid())
             return None
         role = str(b.attr(element, "AXRole") or "")
         subrole = str(b.attr(element, "AXSubrole") or "")
@@ -344,7 +378,7 @@ class MacReader:
         settable = b.settable(element, "AXValue")
         secure, kind = classify(role, subrole, settable, b.bundle_id(pid) if pid else "", self._secure_input())
         if not kind and not secure:
-            self.wake_electron(pid)
+            self.wake_app(pid)
         text = b.text_tail(element) if kind and not secure else None
         field = field_id(pid, b.element_hash(element))
         if kind and not secure:

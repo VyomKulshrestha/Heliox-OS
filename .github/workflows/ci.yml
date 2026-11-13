@@ -618,8 +618,10 @@ jobs:
           export HELIOX_ELECTRON="$RUNNER_TEMP/electron/node_modules/.bin/electron"
           ls -l "$HELIOX_ELECTRON" || echo "electron did not install"
           ls -d "/Applications/Google Chrome.app" || echo "Google Chrome is not on this runner"
+          ls -d "/Applications/Microsoft Edge.app" || echo "Microsoft Edge is not on this runner"
           python tests/platform_real/apps_fields_macos_check.py safari-default chrome-default chrome-manual \
-            chrome-enhanced chrome-forced electron-default electron-manual electron-enhanced electron-forced
+            chrome-enhanced chrome-forced edge-default edge-enhanced electron-default electron-manual \
+            electron-enhanced electron-forced
 
       - name: macOS - OCR without pyobjc, speech to a file, a notification, APFS case, a centre click, a hung app, the probe
         if: ${{ !cancelled() && runner.os == 'macOS' }}

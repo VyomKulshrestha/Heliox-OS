@@ -4,6 +4,7 @@ tested here with a fake of its accessibility interface, on every system CI runs.
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 
@@ -1296,3 +1297,84 @@ def test_two_tesseract_reads_at_once_each_use_their_own_files(monkeypatch):
 
     assert asyncio.run(both()) == ["first", "second"]
     assert images[0] != images[1] and not any(Path(image).parent.exists() for image in images)
+
+
+class ChromeAX(ElectronAX):
+    """Google Chrome as CI showed it: nothing shared until AXEnhancedUserInterface is set (it refuses
+    AXManualAccessibility, error -25205)."""
+
+    def __init__(self, before: bool | None = False, bundle: str = "com.google.Chrome") -> None:
+        super().__init__(electron=False, before=before, name="Google Chrome", bundle=bundle)
+
+    def app_bool(self, pid, name):
+        assert name == "AXEnhancedUserInterface"
+        return self.manual
+
+
+@pytest.mark.parametrize("bundle", ["com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser"])
+def test_a_chromium_browser_is_asked_with_enhanced_user_interface_and_it_is_undone(excluded_apps, bundle):
+    ax = ChromeAX(bundle=bundle)
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    assert reader.read() is None
+    assert ax.sets == [(501, "AXEnhancedUserInterface", True)]
+    assert reader.read().text == "hello" and len(ax.sets) == 1
+    reader.undo_wakes()
+    assert ax.sets[-1] == (501, "AXEnhancedUserInterface", False)
+    # Excluded while Live runs: turned off at the next read.
+    ax = ChromeAX(bundle=bundle)
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    reader.read()
+    excluded_apps.append("Google Chrome")
+    reader.read()
+    assert ax.sets[-1] == (501, "AXEnhancedUserInterface", False)
+
+
+def test_a_browser_that_is_not_chromium_and_not_electron_is_left_alone(excluded_apps):
+    ax = ChromeAX(bundle="com.apple.Safari")
+    reader = M.MacReader(ax, secure_input=lambda: False)
+    reader.read()
+    assert ax.sets == []
+
+
+def test_heliox_moves_a_window_with_enhanced_user_interface_paused(monkeypatch):
+    import types
+
+    from pilot.system import macos_windows
+
+    calls: list[tuple[str, object]] = []
+
+    class FakeAxModule:
+        kAXValueCGPointType = 1
+        kAXValueCGSizeType = 2
+
+        def __init__(self, enhanced):
+            self.enhanced = enhanced
+
+        def AXUIElementGetPid(self, window, _none):  # noqa: N802
+            return 0, 777
+
+        def AXUIElementCreateApplication(self, pid):  # noqa: N802
+            return ("app", pid)
+
+        def AXUIElementCopyAttributeValue(self, element, name, _none):  # noqa: N802
+            return 0, self.enhanced
+
+        def AXUIElementSetAttributeValue(self, element, name, value):  # noqa: N802
+            calls.append((name, value))
+            return 0
+
+        def AXValueCreate(self, kind, value):  # noqa: N802
+            return (kind, value)
+
+    monkeypatch.setitem(
+        sys.modules, "Quartz", types.SimpleNamespace(CGPoint=lambda x, y: (x, y), CGSize=lambda w, h: (w, h))
+    )
+    backend = macos_windows.Backend.__new__(macos_windows.Backend)
+    backend.ax = FakeAxModule(enhanced=True)
+    assert backend.set_frame("window", (0, 25, 800, 600))
+    assert [name for name, _ in calls] == ["AXEnhancedUserInterface", "AXPosition", "AXSize", "AXEnhancedUserInterface"]
+    assert calls[0][1] is False and calls[-1][1] is True
+    calls.clear()
+    backend.ax = FakeAxModule(enhanced=False)
+    assert backend.set_frame("window", (0, 25, 800, 600))
+    assert [name for name, _ in calls] == ["AXPosition", "AXSize"]
