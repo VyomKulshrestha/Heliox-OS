@@ -18,7 +18,6 @@
   let stores = $state<Store[]>([]);
   let backups = $state<Backup[]>([]);
   let includeTimeline = $state(false);
-  let armed = $state("");
   let notice = $state("");
   let error = $state("");
   let busy = $state(false);
@@ -27,6 +26,7 @@
     error = "";
     try {
       const result = await call<Result>(method, params);
+      if (result.status === "cancelled") return result; // the person said no in Heliox's dialog: not an error
       if (result.status !== "ok") throw new Error(result.message || "The daemon refused the request.");
       return result;
     } catch (err) {
@@ -42,23 +42,12 @@
     if (listed) backups = (listed.backups as Backup[]) ?? [];
   }
 
-  /** Two clicks for anything that deletes or replaces data: the first arms the button. */
-  function confirmed(id: string): boolean {
-    if (armed === id) {
-      armed = "";
-      return true;
-    }
-    armed = id;
-    setTimeout(() => {
-      if (armed === id) armed = "";
-    }, 5000);
-    return false;
-  }
-
+  // Heliox asks in its own approval dialog, saying what will be deleted and how much: one click here.
   async function clear(store: Store) {
-    if (!confirmed(`clear:${store.key}`)) return;
-    const result = await request("privacy_clear", { key: store.key, confirmed: true });
-    if (result) {
+    const result = await request("privacy_clear", { key: store.key });
+    if (result?.status === "cancelled") {
+      notice = "Nothing was deleted.";
+    } else if (result) {
       stores = (result.stores as Store[]) ?? stores;
       notice = `${store.label} cleared.`;
     }
@@ -92,11 +81,12 @@
   }
 
   async function restore(item: Backup) {
-    if (!confirmed(`restore:${item.name}`)) return;
     busy = true;
-    const result = await request("backup_restore", { name: item.name, confirmed: true });
+    const result = await request("backup_restore", { name: item.name });
     busy = false;
-    if (result) {
+    if (result?.status === "cancelled") {
+      notice = "Nothing was restored.";
+    } else if (result) {
       notice = `Restored: ${(result.restored as string[]).join(", ") || "nothing"}.`;
       await load();
     }
@@ -142,9 +132,7 @@
         {#if store.key === "timeline"}
           <button type="button" onclick={forgetLastHour}>Forget last hour</button>
         {/if}
-        <button type="button" aria-label={`Clear ${store.label}`} onclick={() => clear(store)}>
-          {armed === `clear:${store.key}` ? "Click again to clear" : "Clear"}
-        </button>
+        <button type="button" aria-label={`Clear ${store.label}`} onclick={() => clear(store)}> Clear </button>
       </li>
     {/each}
   </ul>
@@ -161,7 +149,7 @@
             ><strong>{item.name}</strong> <small>{new Date(item.at * 1000).toLocaleString()} · {item.size}</small></span
           >
           <button type="button" aria-label={`Restore ${item.name}`} disabled={busy} onclick={() => restore(item)}>
-            {armed === `restore:${item.name}` ? "Click again to restore" : "Restore"}
+            Restore
           </button>
         </li>
       {/each}

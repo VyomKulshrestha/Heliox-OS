@@ -141,8 +141,13 @@ async def test_privacy_rpcs(tmp_path, monkeypatch):
 
     listed = await server._handle_privacy_inventory({}, MagicMock())
     assert {row["key"]: row["items"] for row in listed["stores"]}["notes"] == 1
-    assert (await server._handle_privacy_clear({"key": "notes"}, MagicMock()))["status"] == "error"
-    cleared = await server._handle_privacy_clear({"key": "notes", "confirmed": True}, MagicMock())
+    server._wait_for_confirmation = _answers(False)
+    assert (await server._handle_privacy_clear({"key": "notes", "confirmed": True}, MagicMock()))[
+        "status"
+    ] == "cancelled"
+    assert server._notes.list() != []
+    server._wait_for_confirmation = _answers(True)
+    cleared = await server._handle_privacy_clear({"key": "notes"}, MagicMock())
     assert cleared["status"] == "ok" and server._notes.list() == []
 
     server._notes.add("keep me")
@@ -150,7 +155,7 @@ async def test_privacy_rpcs(tmp_path, monkeypatch):
     assert made["status"] == "ok"
     assert (await server._handle_backup_list({}, MagicMock()))["backups"][0]["name"] == made["name"]
     server._notes.delete(server._notes.list()[0]["id"])
-    restored = await server._handle_backup_restore({"name": made["name"], "confirmed": True}, MagicMock())
+    restored = await server._handle_backup_restore({"name": made["name"]}, MagicMock())
     assert restored["status"] == "ok" and server._notes.list()[0]["text"] == "keep me"
 
 
@@ -165,3 +170,13 @@ async def test_forget_by_voice(tmp_path, monkeypatch):
 
     assert reply == "Done. I removed 1 timeline entry from the last 1 hour(s)."
     assert server._activity_timeline.spans(0, 2e10) == []
+
+
+def _answers(confirmed: bool):
+    """The person's answer in Heliox's approval dialog (clearing and restoring ask there, test_data_clears_ask)."""
+
+    async def answer(plan_id, plan, ws, **kwargs):
+        everything = set(range(len(plan.actions)))
+        return confirmed, (everything if confirmed else set()), everything
+
+    return answer

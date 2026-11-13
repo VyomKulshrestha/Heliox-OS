@@ -44,17 +44,28 @@ describe("YourDataPanel", () => {
     });
   });
 
-  it("clears a store only on the second click", async () => {
+  it("asks Heliox to clear a store with one click and sends no approval of its own", async () => {
     render(YourDataPanel);
     await waitFor(() => expect(screen.getByText("Notes")).toBeTruthy());
 
     await fireEvent.click(screen.getByRole("button", { name: "Clear Notes" }));
-    expect(daemonMocks.call).not.toHaveBeenCalledWith("privacy_clear", expect.anything());
+
+    await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("privacy_clear", { key: "notes" }));
+  });
+
+  it("says nothing was deleted, not an error, when the person says no in Heliox's dialog", async () => {
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "privacy_clear") return { status: "cancelled", message: "Nothing was deleted." };
+      if (method === "privacy_inventory") return { status: "ok", stores };
+      return { status: "ok", backups: [] };
+    });
+    render(YourDataPanel);
+    await waitFor(() => expect(screen.getByText("Notes")).toBeTruthy());
+
     await fireEvent.click(screen.getByRole("button", { name: "Clear Notes" }));
 
-    await waitFor(() =>
-      expect(daemonMocks.call).toHaveBeenCalledWith("privacy_clear", { key: "notes", confirmed: true }),
-    );
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Nothing was deleted."));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("forgets the last hour, backs up and restores", async () => {
@@ -69,8 +80,8 @@ describe("YourDataPanel", () => {
 
     const restore = screen.getByRole("button", { name: "Restore heliox-backup-20261024-120000.zip" });
     await fireEvent.click(restore);
-    await fireEvent.click(restore);
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Restored: notes.json."));
+    expect(daemonMocks.call).toHaveBeenCalledWith("backup_restore", { name: "heliox-backup-20261024-120000.zip" });
   });
 
   it("turns clipboard history on from its row and shows it is memory only", async () => {

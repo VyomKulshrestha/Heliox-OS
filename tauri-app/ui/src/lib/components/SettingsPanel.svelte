@@ -171,7 +171,6 @@
   let previewSaving = $state(false);
   let undoSaving = $state(false);
   let undoToast = $state("");
-  let undoClearArmed = $state(false);
   let previewToast = $state("");
   let typedDecisionSaving = $state(false);
   let typedDecisionToast = $state("");
@@ -789,18 +788,17 @@
     setTimeout(() => (undoToast = ""), 5000);
   }
 
-  // Two clicks: the first arms the button, the second deletes every saved copy.
+  // Heliox asks in its own approval dialog, saying how much will be deleted: one click here.
   async function clearUndoHistory() {
-    if (!undoClearArmed) {
-      undoClearArmed = true;
-      setTimeout(() => (undoClearArmed = false), 5000);
-      return;
-    }
-    undoClearArmed = false;
     undoSaving = true;
     try {
-      const res = (await call("undo_clear", { confirmed: true })) as { status: string; message?: string };
-      undoToast = res.status === "ok" ? $_("settings.undo_cleared") : (res.message ?? $_("settings.undo_clear_failed"));
+      const res = (await call("undo_clear", {})) as { status: string; message?: string };
+      undoToast =
+        res.status === "ok"
+          ? $_("settings.undo_cleared")
+          : res.status === "cancelled"
+            ? "Nothing was deleted."
+            : (res.message ?? $_("settings.undo_clear_failed"));
     } catch (err) {
       undoToast = String(err instanceof Error ? err.message : err);
     } finally {
@@ -1630,7 +1628,7 @@
         <span class="setting-desc">{$_("settings.undo_clear_desc")}</span>
       </div>
       <button class="btn-save" onclick={clearUndoHistory} disabled={undoSaving}>
-        {undoClearArmed ? $_("settings.undo_clear_confirm") : $_("settings.undo_clear_button")}
+        {$_("settings.undo_clear_button")}
       </button>
     </div>
   </section>

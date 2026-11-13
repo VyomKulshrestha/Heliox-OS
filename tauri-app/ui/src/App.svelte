@@ -88,12 +88,13 @@
     activeModal === "confirmation" || activeModal === "undo" || activeModal === "interrupt",
   );
   // Approvals asked for from outside the Command tab show over whatever is open (any tab, the wizard): a change of
-  // setting that takes a protection away (Settings, the setup wizard), and a plugin's tool run from the Plugins tab.
+  // setting that takes a protection away (Settings, the setup wizard), a plugin's tool run from the Plugins tab, and
+  // clearing or restoring the person's data (Settings).
   let settingApproval = $derived(
     activeModal === "confirmation" &&
       $session.confirmActions.length > 0 &&
       ($session.confirmActions.every((action) => action.action_type === "setting_change") ||
-        String($session.confirmPlanId ?? "").startsWith("plugin-")),
+        /^(plugin|data)-/.test(String($session.confirmPlanId ?? ""))),
   );
   let documentVisible = $state(typeof document === "undefined" || document.visibilityState === "visible");
   let previousStudyActive = false;

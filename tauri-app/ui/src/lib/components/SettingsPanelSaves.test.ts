@@ -155,18 +155,15 @@ describe("SettingsPanel saves", () => {
     expect(rpm.value).toBe("60");
   });
 
-  it("turns undo history off and clears it only on a second click", async () => {
+  it("turns undo history off and asks Heliox to clear it with one click", async () => {
     settingsMocks.updateSectionDetailed.mockResolvedValue({ ok: true, message: "", restartRequired: false });
     await renderPanel();
 
     await fireEvent.click(screen.getByRole("button", { name: "Keep undo history" }));
     await waitFor(() => expect(settingsMocks.updateSectionDetailed).toHaveBeenCalledWith("undo", { enabled: false }));
 
-    const clear = screen.getByRole("button", { name: "Clear" });
-    await fireEvent.click(clear);
-    expect(daemonMocks.call).not.toHaveBeenCalledWith("undo_clear", expect.anything());
-    await fireEvent.click(screen.getByRole("button", { name: "Click again to delete" }));
-    await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("undo_clear", { confirmed: true }));
+    await fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("undo_clear", {}));
   });
 
   it("says when a saved change needs a restart", async () => {

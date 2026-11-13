@@ -224,7 +224,12 @@ async def test_rpcs_voice_setting_and_your_data(tmp_path, board):
 
     rows = {row["key"]: row for row in (await server._handle_privacy_inventory({}, ws))["stores"]}
     assert rows["clipboard"]["items"] == 1
-    await server._handle_privacy_clear({"key": "clipboard", "confirmed": True}, ws)
+
+    async def approve(plan_id, plan, ws, **kwargs):  # the person's yes in Heliox's dialog
+        return True, {0}, {0}
+
+    server._wait_for_confirmation = approve
+    await server._handle_privacy_clear({"key": "clipboard"}, ws)
     assert server._clipboard_history.list() == []
 
     assert (await server._handle_update_config({"section": "clipboard", "values": {"history": "yes"}}, ws))[

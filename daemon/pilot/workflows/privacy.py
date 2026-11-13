@@ -196,6 +196,25 @@ def list_backups(target_dir: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def backup_contents(target_dir: Path, name: str) -> list[str]:
+    """What restoring backup ``name`` would replace, by store label, in the order of BACKUP_FILES; checked as
+    restore_backup checks it (name, size, format). Raises the same errors."""
+    if not re.fullmatch(rf"{re.escape(BACKUP_PREFIX)}[\w-]+\.zip", name):
+        raise ValueError("Choose one of the Heliox backups in your Downloads folder")
+    path = Path(target_dir) / name
+    if not path.is_file() or path.stat().st_size > MAX_BACKUP_BYTES:
+        raise ValueError("That backup is missing or too large")
+    labels = {relative: label for label, relative, _about in STORES.values()}
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        if "FORMAT" not in names or archive.read("FORMAT").decode("utf-8", "replace") != BACKUP_FORMAT:
+            raise ValueError("This is not a Heliox backup")
+        found = [labels.get(file, file) for file in BACKUP_FILES if file in names]
+        if any(re.fullmatch(r"receipts/[\w.-]+\.json", n) for n in names):
+            found.append("receipts this computer does not have yet")
+    return found
+
+
 def restore_backup(data_dir: Path, target_dir: Path, name: str) -> list[str]:
     """Restore the known stores from a backup in ``target_dir``. Returns what was restored."""
     if not re.fullmatch(rf"{re.escape(BACKUP_PREFIX)}[\w-]+\.zip", name):

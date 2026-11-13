@@ -7031,16 +7031,60 @@ class PilotServer:
         return result
 
     async def _handle_undo_clear(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Delete all undo history and the copies it keeps."""
-        if params.get("confirmed") is not True:
-            return {"status": "error", "message": "Clearing undo history needs confirmation."}
+        """Delete all undo history and the copies it keeps, after the person approves it in the daemon's dialog (a
+        "confirmed" a client sends is a request, never the approval)."""
         if self._undo_journal is None:
             return {"status": "error", "message": "Undo is not ready yet."}
         busy = self._undo_busy_message()
         if busy:
             return {"status": "error", "message": busy}
+        if not await self._ask_about_data(ws, [await self._clear_line("undo")]):
+            return {"status": "cancelled", "message": "Nothing was deleted."}
         await self._undo_journal.clear()
         return {"status": "ok"}
+
+    async def _clear_line(self, key: str) -> dict[str, Any]:
+        """The approval line for emptying one personal store: what it is, how much, in words."""
+        from pilot.workflows.privacy import STORES, inventory
+
+        rows = await asyncio.to_thread(inventory, DATA_DIR, await self._privacy_counts())
+        row = next((r for r in rows if r["key"] == key), {"label": STORES[key][0], "items": None, "size": "0 B"})
+        items = row.get("items")
+        amount = (
+            f"{items} item{'s' if items != 1 else ''} ({row['size']})"
+            if isinstance(items, int)
+            else f"everything in it ({row['size']})"
+        )
+        return {
+            "action_type": "delete_data",
+            "target": f"Delete {row['label']}",
+            "description": f"{amount} will be deleted from this computer. This cannot be undone.",
+            "irreversible": True,
+            "undo": {"kind": "not_undoable", "reason": "Deleted data cannot be brought back by Heliox."},
+        }
+
+    async def _ask_about_data(self, ws: ServerConnection, lines: list[dict[str, Any]]) -> bool:
+        """Ask in the daemon's approval dialog before deleting or replacing the person's data, every line shown in
+        words. True only when the person approved every line."""
+        from pilot.actions import Action, ActionPlan, ActionType, NotifyParams
+
+        placeholders = [
+            Action(
+                action_type=ActionType.NOTIFY,
+                target=line["target"],
+                parameters=NotifyParams(summary=line["target"], body=line["description"]),
+            )
+            for line in lines
+        ]
+        confirmed, approved, required = await self._wait_for_confirmation(
+            f"data-{uuid.uuid4().hex[:8]}",
+            ActionPlan(actions=placeholders, explanation=lines[0]["target"], raw_input="your data"),
+            ws,
+            reason=lines[0]["description"] if len(lines) == 1 else "",
+            force_all_actions=True,
+            shown=lines,
+        )
+        return bool(confirmed) and not (required - approved)
 
     async def _autonomous_broadcast(self, method: str, params: dict[str, Any]) -> None:
         """Forward background-job notifications, adding undo and a receipt when a job ends."""
@@ -8639,14 +8683,17 @@ class PilotServer:
         return {"status": "ok", "stores": await asyncio.to_thread(inventory, DATA_DIR, counts)}
 
     async def _handle_privacy_clear(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Delete everything in one personal store. Needs ``confirmed`` to be exactly true."""
+        """Delete everything in one personal store, after the person approves it in the daemon's dialog, which says
+        what and how much (a "confirmed" a client sends is a request, never the approval)."""
         from pilot.workflows.privacy import STORES, clear_store
 
         key = params.get("key")
         if key not in STORES:
             return {"status": "error", "message": "Unknown store"}
-        if params.get("confirmed") is not True:
-            return {"status": "error", "message": "Clearing needs confirmation."}
+        if key == "undo" and self._undo_journal is not None and (busy := self._undo_busy_message()):
+            return {"status": "error", "message": busy}
+        if not await self._ask_about_data(ws, [await self._clear_line(key)]):
+            return {"status": "cancelled", "message": "Nothing was deleted."}
         if key == "timeline" and self._activity_timeline is not None:
             await asyncio.to_thread(self._activity_timeline.clear)
         elif key == "clipboard":
@@ -8702,14 +8749,31 @@ class PilotServer:
         return {"status": "ok", "backups": await asyncio.to_thread(list_backups, self._export_dir())}
 
     async def _handle_backup_restore(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Restore a Heliox backup from the Downloads folder. Needs ``confirmed`` to be exactly true."""
+        """Restore a Heliox backup from the Downloads folder, after the person approves it in the daemon's dialog,
+        which names what the backup replaces (a "confirmed" a client sends is a request, never the approval)."""
         from pilot.workflows.privacy import restore_backup
 
         name = params.get("name")
         if not isinstance(name, str):
             return {"status": "error", "message": "name is required"}
-        if params.get("confirmed") is not True:
-            return {"status": "error", "message": "Restoring needs confirmation."}
+        from pilot.workflows.privacy import backup_contents
+
+        try:
+            replaces = await asyncio.to_thread(backup_contents, self._export_dir(), name)
+        except (ValueError, OSError, zipfile.BadZipFile) as exc:
+            return {"status": "error", "message": str(exc)}
+        line = {
+            "action_type": "replace_data",
+            "target": f"Restore {name}",
+            "description": (
+                f"What you have now in {', '.join(replaces) or 'nothing'} is replaced by the copies in this backup. "
+                "This cannot be undone."
+            ),
+            "irreversible": True,
+            "undo": {"kind": "not_undoable", "reason": "What is replaced is not kept."},
+        }
+        if not await self._ask_about_data(ws, [line]):
+            return {"status": "cancelled", "message": "Nothing was restored."}
         try:
             restored = await asyncio.to_thread(restore_backup, DATA_DIR, self._export_dir(), name)
         except (ValueError, OSError, zipfile.BadZipFile) as exc:
