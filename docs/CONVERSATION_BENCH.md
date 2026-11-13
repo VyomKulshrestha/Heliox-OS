@@ -266,6 +266,15 @@ n=2 lines for local and no model, and the first scenario of the run (c-syn-stop,
 the others took 3.5 s), which carries a cold voice worker. The file-fed microphone kept real-time pace (the two
 clocks agree).
 
+### Parakeet's thread count (closed, 13 November)
+
+On a 4-core runner, 2 threads beat 3 and 4 by about 0.1 and 0.3 s to the reply (run 43290465258, read from its
+log), and 1 thread was no better than 2 beyond a few hundredths in any stage (run 43327749484, 3 repeats, 2 threads
+against 1: recognition +0.01 to +0.03 s, synthesis -0.02 to +0.04 s, medians over the repeats), so the default of
+half the cores, at most 4, stays. The second runner was faster than the first (an AMD EPYC 9V45 against a 7763;
+calibration Python loop 0.077 s against 0.140 s), so stage times are not comparable between the two runs, only the
+differences between settings inside each run.
+
 ## Soak, 20 minutes (12 November)
 
 `soak --minutes 20` ran 24 minutes of wall time (16 activities: requests, barge-ins, control words, two five-minute
