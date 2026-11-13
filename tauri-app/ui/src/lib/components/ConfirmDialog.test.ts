@@ -405,4 +405,23 @@ describe("ConfirmDialog setting changes", () => {
     expect(screen.getByText("Let Heliox act as administrator")).toBeTruthy();
     expect(screen.getByText("shell_script")).toBeTruthy();
   });
+
+  it("shows text that would leave this computer in words, with the usual title", () => {
+    const sendOff = {
+      index: 0,
+      action_type: "send_off",
+      target: "Send the conflicting lines of app.py to api.anthropic.com",
+      description: "5 lines from /repo/app.py will go to api.anthropic.com to propose a resolution.",
+      irreversible: true,
+      requires_root: false,
+      destructive: false,
+      parameters: {},
+    };
+    render(ConfirmDialog, { actions: [sendOff], onconfirm: vi.fn(), ondeny: vi.fn() });
+
+    expect(screen.getByRole("dialog", { name: "Confirmation Required" })).toBeTruthy();
+    expect(screen.getByText("Send the conflicting lines of app.py to api.anthropic.com")).toBeTruthy();
+    expect(screen.getByText(/5 lines from \/repo\/app.py/)).toBeTruthy();
+    expect(screen.queryByText("send_off")).toBeNull();
+  });
 });

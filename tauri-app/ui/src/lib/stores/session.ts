@@ -1817,6 +1817,19 @@ function createSession() {
           message?: string;
           conflicts?: GitConflictBlock[];
         };
+        if (res.status === "cancelled") {
+          // The person did not approve sending the file's conflicts to a model that is not on this computer.
+          update((s) => ({
+            ...s,
+            loading: false,
+            phase: "",
+            messages: [
+              ...s.messages,
+              { type: "system" as MessageType, text: res.message || "Nothing was sent.", timestamp: Date.now() },
+            ],
+          }));
+          return;
+        }
         if (res.status !== "success") {
           throw new Error(res.message || "Git conflict detection failed.");
         }

@@ -47,6 +47,9 @@
 
   /** A change of setting that takes a protection away; the daemon asks before it takes effect. */
   const isSettingChange = (action: PlanAction) => action.action_type === "setting_change";
+  // A line the daemon wrote in words (a setting change, or text that would leave this computer): its target and
+  // description, not an action type and its target.
+  const isPlainLine = (action: PlanAction) => isSettingChange(action) || action.action_type === "send_off";
   let settingsOnly = $derived(actions.length > 0 && actions.every(isSettingChange));
   // For one setting the reason is that line's own description; it is said once, under the line.
   let reasonShown = $derived(
@@ -297,7 +300,7 @@
                   onchange={() => toggle(i)}
                 />
               </label>
-              {#if isSettingChange(action)}
+              {#if isPlainLine(action)}
                 <span class="setting-target">{action.target}</span>
               {:else}
                 <strong>{action.action_type}</strong> on
@@ -318,7 +321,7 @@
                 <span class="undo-tag" title={action.undo.reason}>{$_("undo.badge_not_undoable")}</span>
               {/if}
             </div>
-            {#if isSettingChange(action) && action.description}
+            {#if isPlainLine(action) && action.description}
               <p class="setting-description">{action.description}</p>
             {/if}
             {#if stepFindings[i]?.length}
@@ -331,7 +334,7 @@
                 {/each}
               </ul>
             {/if}
-            {#each isSettingChange(action) ? [] : describeAction(action) as detail (detail.label)}
+            {#each isPlainLine(action) ? [] : describeAction(action) as detail (detail.label)}
               <div class="action-detail">
                 <span class="detail-label">{detail.label}</span>
                 {#if detail.code}<pre>{detail.value}</pre>{:else}<span class="detail-value">{detail.value}</span>{/if}

@@ -1318,12 +1318,6 @@ does not receive the browser callback or credential. The UI must call
 
 **Result:** `{ "status": "started"|"missing"|"error", "message": "..." }`
 
-#### `extract_file_text`
-Extract text from a user-selected file for UI context injection.
-
-**Params:** `{ "path": "C:/path/to/document.pdf" }`
-**Result:** `{ "status": "ok", "text": "...", ... }` or a clear unsupported/read error.
-
 ### Secure productivity integrations
 
 These desktop-only methods configure integrations without putting credentials
@@ -1359,7 +1353,7 @@ A request never runs on the phone's say-so: see `phone_request_run`.
 | `air_handoff_start_pairing` | Create a short-lived QR pairing payload. |
 | `air_handoff_cancel_pairing` | Expire the current pairing offer. |
 | `air_handoff_revoke_device` | Revoke one paired receiver by daemon-issued device ID. |
-| `air_handoff_grab` | Stage a screenshot, bounded text value, or immutable file snapshot. |
+| `air_handoff_grab` | Stage a screenshot or a bounded text value (`kind`: `screenshot` or `text`). |
 | `air_handoff_drop` | Encrypt and deliver the staged draft to one explicitly selected device. |
 | `air_handoff_cancel` | Discard the staged draft without sending it. |
 
@@ -3364,7 +3358,10 @@ confirmation gates.
 
 #### `resolve_git_conflict`
 Read the file at the given path, find its conflict blocks (`<<<<<<<` to `>>>>>>>`) and ask the language model for a
-resolution of each. The two sides are always the file's own; the model only proposes `proposed_resolution_code`
+resolution of each. The file must pass the path rules every file Heliox reads passes (Heliox's own folders and
+protected folders are refused) and lie in a git working tree. When the model is not on this computer, the daemon
+first asks in the approval dialog, once per file for the run, naming where the lines go and how many; declined, the
+reply is `{ "status": "cancelled" }` and nothing is sent. The two sides are always the file's own; the model only proposes `proposed_resolution_code`
 (the file's own side when the model fails). The daemon remembers each proposal for `apply_git_resolution`.
 
 **Params:**

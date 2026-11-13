@@ -20,6 +20,7 @@ import time
 import uuid
 import zipfile
 from collections import deque
+from dataclasses import asdict as _dc_asdict
 from dataclasses import dataclass, field
 from dataclasses import replace as _dc_replace
 from datetime import datetime, timezone
@@ -2264,7 +2265,6 @@ class PilotServer:
             "background_tasks": self._handle_background_tasks,
             "background_start": self._handle_background_start,
             "background_stop": self._handle_background_stop,
-            "extract_file_text": self._handle_extract_file_text,
             "agent_routing": self._handle_agent_routing,
             "agent_stats": self._handle_agent_stats,
             "agent_capabilities": self._handle_agent_capabilities,
@@ -2555,26 +2555,6 @@ class PilotServer:
                 if value:
                     return method, f"{key}:{value}"
         return method, "latest"
-
-    async def _handle_extract_file_text(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Extract text from a file (e.g. PDF) for UI context injection."""
-        path = params.get("path")
-        if not path:
-            return {"status": "error", "message": "No file path provided"}
-
-        import os
-
-        if not os.path.exists(path):
-            return {"status": "error", "message": f"File not found: {path}"}
-
-        try:
-            from pilot.system.file_intel import parse_file
-
-            text = await parse_file(path)
-            return {"status": "ok", "text": text}
-        except Exception as e:
-            logger.error("Error extracting text from %s: %s", path, e)
-            return {"status": "error", "message": str(e)}
 
     async def _handle_connection(self, websocket: ServerConnection) -> None:
         """Handle a WebSocket connection from a client.
@@ -14523,9 +14503,7 @@ def handle_tool(tool_name, params):
                     str(params.get("text", "")),
                     filename=str(params.get("filename", "heliox-note.txt")),
                 )
-            elif kind == "file":
-                draft = await self._air_handoff_manager.grab_file(str(params.get("path", "")))
-            else:
+            else:  # "file" is not offered: the window grabs the screen or text only
                 return {"status": "error", "message": "Unsupported handoff kind"}
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
@@ -17422,8 +17400,11 @@ def handle_tool(tool_name, params):
             return {"status": "error", "message": "Model router not initialized"}
 
         filepath = params.get("filepath") or params.get("path")
-        if not filepath:
+        if not filepath or not isinstance(filepath, str):
             return {"status": "error", "message": "Missing filepath or path parameter"}
+        refusal = await self._git_conflict_refusal(filepath, ws)
+        if refusal is not None:
+            return refusal
 
         try:
             from pilot.system.git_conflict import resolve_conflicts_in_file
@@ -17438,6 +17419,64 @@ def handle_tool(tool_name, params):
         except Exception as e:
             logger.exception("Failed to resolve git conflict in handler")
             return {"status": "error", "message": str(e)}
+
+    async def _git_conflict_refusal(self, filepath: str, ws: ServerConnection) -> dict[str, Any] | None:
+        """Before resolve_git_conflict reads a file and sends its conflicts to the model: the file must pass the path
+        rules every file Heliox reads passes (pilot.security.validator: Heliox's own folders, protected folders,
+        the sanitizer's path rules) and lie in a git working tree; and when the model is not on this computer, the
+        person approves, once per file for this run, the lines that will go to it. None when it may go ahead."""
+        from pilot.actions import Action, ActionPlan, ActionType, FileParams
+        from pilot.security.guard_changes import model_destination
+        from pilot.security.validator import ActionValidator
+        from pilot.system.git_conflict import extract_conflict_blocks, in_git_work_tree
+
+        target = Path(filepath)
+        if not target.is_file():
+            return {"status": "error", "message": f"{filepath} is not a file that exists"}
+        resolved = target.resolve()
+        read = Action(action_type=ActionType.FILE_READ, target=str(resolved), parameters=FileParams(path=str(resolved)))
+        try:
+            ActionValidator(self.config).validate_action(read, 0)
+        except Exception as exc:  # the validator's refusal, said as it is
+            return {"status": "error", "message": f"Heliox may not read {filepath}: {exc}"}
+        if not in_git_work_tree(resolved):
+            return {"status": "error", "message": f"{filepath} is not inside a git repository"}
+        destination = model_destination(_dc_asdict(self.config.model))
+        if not destination:
+            return None  # a model on this computer: nothing leaves it
+        approved = self.__dict__.setdefault("_git_files_sent", set())
+        if (str(resolved), destination) in approved:
+            return None
+        try:
+            blocks = extract_conflict_blocks(await asyncio.to_thread(resolved.read_text, "utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            return {"status": "error", "message": f"{filepath} could not be read as text: {exc}"}
+        if not blocks:
+            return None  # nothing will be sent
+        lines = sum(block["full_block"].count("\n") for block in blocks)
+        line = {
+            "action_type": "send_off",
+            "target": f"Send the conflicting lines of {resolved.name} to {destination}",
+            "description": f"{lines} lines from {resolved} will go to {destination} to propose a resolution.",
+            "setting": "model.provider",
+            "irreversible": True,
+            "undo": {"kind": "not_undoable", "reason": "Text that was sent cannot be taken back."},
+        }
+        placeholder = Action(
+            action_type=ActionType.FILE_READ, target=str(resolved), parameters=FileParams(path=str(resolved))
+        )
+        confirmed, chosen, required = await self._wait_for_confirmation(
+            f"git-send-{uuid.uuid4().hex[:8]}",
+            ActionPlan(actions=[placeholder], explanation="Send a file's conflicts to the model", raw_input=filepath),
+            ws,
+            reason=line["description"],
+            force_all_actions=True,
+            shown=[line],
+        )
+        if not confirmed or required - chosen:
+            return {"status": "cancelled", "message": "Nothing was sent."}
+        approved.add((str(resolved), destination))
+        return None
 
     def _git_proposals(self) -> dict[tuple[str, str], str]:
         """The resolutions resolve_git_conflict proposed, by (file, conflict block): apply_git_resolution writes one

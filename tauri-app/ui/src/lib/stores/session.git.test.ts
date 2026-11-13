@@ -43,4 +43,14 @@ describe("session git conflict shortcut", () => {
       text: "The file could not be read",
     });
   });
+
+  it("says nothing was sent, not an error, when the person keeps a file's conflicts on this computer", async () => {
+    daemonMocks.call.mockResolvedValue({ status: "cancelled", message: "Nothing was sent." });
+    const { session } = await import("./session");
+
+    await session.sendCommand("/git-resolve app.py");
+
+    expect(get(session).messages.at(-1)).toMatchObject({ type: "system", text: "Nothing was sent." });
+    expect(get(session).loading).toBe(false);
+  });
 });
