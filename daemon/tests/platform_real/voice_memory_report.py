@@ -65,6 +65,23 @@ def tree_rss(pid: int) -> int:
         return 0
 
 
+def tree_private(pid: int) -> int:
+    """Memory the process tree holds for itself: private bytes on Windows (its resident set, the working set, is
+    trimmed when idle: 40 MB for a loaded voice in run 43404791124), the unique set elsewhere."""
+    try:
+        processes = [psutil.Process(pid), *psutil.Process(pid).children(recursive=True)]
+    except psutil.Error:
+        return 0
+    total = 0
+    for process in processes:
+        try:
+            info = process.memory_full_info()
+            total += int(getattr(info, "private", 0) or getattr(info, "uss", 0) or info.rss)
+        except psutil.Error:
+            continue
+    return total
+
+
 class Sampler:
     """The peak of a process tree's resident memory, twice a second, from a thread."""
 
@@ -92,6 +109,7 @@ def line(stage: str, peak: int, settled: int, **extra) -> None:
         "stage": stage,
         "peak_mb": round(peak / MB),
         "settled_mb": round(settled / MB),
+        "private_mb": round(tree_private(os.getpid() if extra.get("process") != "daemon" else extra.pop("pid")) / MB),
         "system_total_mb": round(memory.total / MB),
         "system_available_mb": round(memory.available / MB),
         **extra,
@@ -130,7 +148,7 @@ async def started_daemon() -> None:
         session = await real_daemon.connect(300)
         ready, _status = await session.wait_ready(300)
         await asyncio.sleep(5)
-        line("started", sampler.peak, tree_rss(daemon.pid), ready=ready, process="daemon")
+        line("started", sampler.peak, tree_rss(daemon.pid), ready=ready, process="daemon", pid=daemon.pid)
     finally:
         sampler.stop()
         await real_daemon.stop(daemon, session)
@@ -189,6 +207,11 @@ async def voice_stages(idle_minutes: float) -> None:
             tree_rss(me),
             voice_worker_running=manager.running,
             keep_loaded_seconds=manager.keep_loaded_seconds,
+            # Which rule decided (keep-by-memory, voice.tts_release): kept past keep_loaded_seconds while the computer
+            # has the memory, released by the clock otherwise; and every release the manager logged.
+            release_rule="clock" if manager.keep_while is None else "memory",
+            kept_by_memory=bool(manager.keep_while is not None and manager._kept_by_memory()),
+            releases=[reason for kind, reason, _at in getattr(manager, "reload_log", []) if kind == "released"],
             process="report + voice",
         )
         await manager.shutdown()
