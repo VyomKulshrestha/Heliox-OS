@@ -1,0 +1,759 @@
+[
+  {
+    "name": "near_name fires 01: Hi Priay, the deck is attached for tomorrow.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (1)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "Hi Priay, the deck is attached for tomorrow."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name fires 02: Hello Pirya, quick question about the budget.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (2)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "Hello Pirya, quick question about the budget."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name fires 03: Dear Prya, thanks for the notes from Monday.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (3)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "Dear Prya, thanks for the notes from Monday."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name fires 04: Thanks Daneil, see you at six.",
+    "app": "slack.exe",
+    "title": "#team - Slack (4)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "Thanks Daneil, see you at six."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name fires 05: Hey Danniel, are we still on for dinner?",
+    "app": "slack.exe",
+    "title": "#team - Slack (5)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "Hey Danniel, are we still on for dinner?"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name fires 06: Hi Hanah, happy Friday!",
+    "app": "slack.exe",
+    "title": "#team - Slack (6)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "Hi Hanah, happy Friday!"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name fires 07: Morning Hannnah, did you get my message?",
+    "app": "slack.exe",
+    "title": "#team - Slack (7)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "Morning Hannnah, did you get my message?"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name fires 08: Dear Micheal, I need to move my appointment.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (8)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "Dear Micheal, I need to move my appointment."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 09: @Prija can you review this before lunch?",
+    "app": "slack.exe",
+    "title": "#team - Slack (9)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "@Prija can you review this before lunch?"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name fires 10: @Pryia can you review this before lunch?",
+    "app": "slack.exe",
+    "title": "#team - Slack (10)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "@Pryia can you review this before lunch?"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name fires 11: Prriya, can you send the figures by noon?",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (11)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "Prriya, can you send the figures by noon?"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name fires 12: Thanks, Michal, see you on Tuesday.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (12)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "near_name"
+    ],
+    "steps": [
+      {
+        "type": "Thanks, Michal, see you on Tuesday."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 13: Hi Priya, the deck is attached for tomorrow.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (13)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hi Priya, the deck is attached for tomorrow."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 14: Hi Maria, welcome to the team.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (14)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hi Maria, welcome to the team."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 15: Hi Brian, the scan results look fine.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (15)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hi Brian, the scan results look fine."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 16: Dear Daniela, thanks for your note.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (16)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Dear Daniela, thanks for your note."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 17: Hi Dan, see you later.",
+    "app": "slack.exe",
+    "title": "#team - Slack (17)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hi Dan, see you later."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 18: Hannah's birthday is on Friday.",
+    "app": "slack.exe",
+    "title": "#team - Slack (18)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hannah's birthday is on Friday."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 19: Michaels, the craft store, has a sale this week.",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (19)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Michaels, the craft store, has a sale this week."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 20: Thanks Mike!",
+    "app": "slack.exe",
+    "title": "#team - Slack (20)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Thanks Mike!"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 21: Hi team, the release is out.",
+    "app": "slack.exe",
+    "title": "#team - Slack (21)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hi team, the release is out."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 22: Hey there, Priya said yes.",
+    "app": "slack.exe",
+    "title": "#team - Slack (22)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hey there, Priya said yes."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 23: greeting = 'Hi Priay, welcome'",
+    "app": "Code.exe",
+    "title": "plan.py - Visual Studio Code (23)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "greeting = 'Hi Priay, welcome'"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 24: echo Hi Priay,",
+    "app": "WindowsTerminal.exe",
+    "title": "PowerShell (24)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "echo Hi Priay,"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 25: He wrote \"Hi Priay\" by mistake in the invite.",
+    "app": "notepad.exe",
+    "title": "notes.txt - Notepad (25)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "He wrote \"Hi Priay\" by mistake in the invite."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 26: Dear Sir or Madam, I am writing about my order.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (26)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Dear Sir or Madam, I am writing about my order."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 27: Hello Hanna, nice to meet you.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (27)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hello Hanna, nice to meet you."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 28: Hi Danielle, see you soon.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (28)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hi Danielle, see you soon."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 29: Morning all, coffee is ready.",
+    "app": "slack.exe",
+    "title": "#team - Slack (29)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Morning all, coffee is ready."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 30: Thanks, everyone, for coming.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (30)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Thanks, everyone, for coming."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 31: Dear Michelle, thank you for the flowers.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (31)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Dear Michelle, thank you for the flowers."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 32: Hey Hana, long time no see!",
+    "app": "slack.exe",
+    "title": "#team - Slack (32)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hey Hana, long time no see!"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 33: Hi Michael Smith, your order has shipped.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (33)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hi Michael Smith, your order has shipped."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 34: Hi Mikael, the meeting moved to three.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (34)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hi Mikael, the meeting moved to three."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "near_name quiet 35: Hello, Priya and Daniel, the plan is below.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (35)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Hello, Priya and Daniel, the plan is below."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  }
+]

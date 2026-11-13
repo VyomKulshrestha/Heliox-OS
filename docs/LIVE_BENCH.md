@@ -209,6 +209,24 @@ into an email. A kind with a false alarm anywhere there would be a card only, ne
   11 that must fire, 22 that must not; 11/11 caught and 0 false alarms in all 6 runs. False alarms elsewhere: 0 on
   the bench, 0 of 975 sentences, 0 of 2,127 commit messages in each window. Spoken when left alone, like the
   others.
+- **A name one letter off someone you told Heliox about** (`near_name`). Rule: where a name addresses someone (the
+  start of the text or a line before a comma; after "hi", "hello", "dear", "thanks" and the like; after "@" or
+  "cc"), a word one letter off the first name, five letters or more, of exactly one person the person told Heliox
+  about ("my manager is Priya"): two neighbouring letters swapped ("Priay"), or one inner letter doubled, added or
+  dropped ("Danniel", "Prya"). Never one letter swapped for another (Maria and Mario both exist), never the first
+  letter, never an added or dropped last letter (Daniela, Hanna and Michaels are other people or words), and
+  nothing when two known people could be meant, when the window (recipient or subject) spells it that way, or when
+  a surname after it is not the known person's ("Hi Priay Kumar" to a known Priya Shah). Jan and Jon, Maria and
+  Mario, Anna and Anne never fire: one letter for another, and names under five letters, are left alone. Not in code,
+  terminals or quotes. Reads: the field's text and the names in the person's profile (UserProfile's people, one
+  name per relation), compared on this computer and nothing more. The card asks, never corrects: "Did you mean
+  Priya?", "You wrote Priay; your manager is Priya.", with "If Priay is someone else, ignore this." and the name
+  as the fix. A card only, never spoken at any level (`policy.CARD_ONLY_KINDS`): a different person's correct
+  name must never be corrected aloud. No "You sent" card, because a misspelt greeting once sent cannot be mended. Pack: 11 that must fire, 24 that must not; 11/11
+  caught by the steady and thinker personas, 10/11 by the quick one in the pack on its own ("Prriya," typed as the
+  very first word of a new field is already there at Live's first look, so it counts as text that was there
+  before), 11/11 in all six runs of the whole bench; 0 false alarms in the pack. False alarms elsewhere: 0 on the
+  bench, 0 of 975 sentences, 0 of 2,128 commit messages in each window.
 
 ## What it does not show
 

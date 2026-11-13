@@ -53,6 +53,9 @@ MIN_RELEVANCE_TO_SPEAK = 0.5
 MIN_RELEVANCE_TO_SHOW = 0.2
 MAX_VISIBLE_CARDS = 3
 
+# Kinds that are a card only, never said aloud whatever the level: a name one letter off may be someone else's
+# correct name, so it is asked on screen, never said into the room.
+CARD_ONLY_KINDS = frozenset({"near_name"})
 # Errors are worth a moment to read before being explained; the rest only need the person to pause.
 MIN_DWELL_SECONDS = {"error_on_screen": 5.0, "missing_attachment": 2.0}
 
@@ -162,7 +165,8 @@ def decide(
     if act.focus_active or act.visible_cards >= MAX_VISIBLE_CARDS:
         return WAIT
     speakable = (
-        correction.urgency in level.speak
+        correction.kind not in CARD_ONLY_KINDS
+        and correction.urgency in level.speak
         and relevance >= MIN_RELEVANCE_TO_SPEAK
         and correction.kind not in quiet
         and not act.heliox_speaking

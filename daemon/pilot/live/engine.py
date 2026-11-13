@@ -46,6 +46,7 @@ from pilot.live.detectors import (
 )
 from pilot.live.held import HOLD_SECONDS, Held, Turns, hold_for, is_answer, resolve
 from pilot.live.policy import (
+    CARD_ONLY_KINDS,
     DEFAULT_LEVEL,
     DROP,
     LEVELS,
@@ -95,6 +96,7 @@ OWN_WORDS_KINDS = frozenset(
         "missing_attachment",
         "repeated_word",
         "past_date",
+        "near_name",
         "community_catch",
         "personal_fact",
         COMMITMENT,
@@ -259,6 +261,8 @@ def because(entry: dict[str, Any]) -> str:
         return join(lead, title, message, detail)
     if kind == SAID_VS_TYPED:  # what they said, what they wrote, and where they wrote it
         return join(f"{message.rstrip('.')}, and {_lower_first(title)}", detail)
+    if kind == "near_name":  # a question about a name: what they wrote, then the question, as the card asks it
+        return join(f'{where}you wrote "{evidence}"' if where else f'You wrote "{evidence}"', title, detail)
     if title.endswith("?"):  # an offer: a promise without a reminder, or signs of being stuck
         reason = message.rstrip(".")
         if kind == COMMITMENT:
@@ -1083,6 +1087,7 @@ class LiveCompanion:
                 or self.in_call(now)
                 or self._focus_active()
                 or item.correction.kind in self.quiet_kinds()
+                or item.correction.kind in CARD_ONLY_KINDS
                 or self.relevance.score(item.correction.kind) < MIN_RELEVANCE_TO_SPEAK
                 or now - self._last_spoken_at < level.spoken_gap_seconds
             ):

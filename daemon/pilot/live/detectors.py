@@ -35,6 +35,7 @@ KINDS = (
     "commitment",  # pilot.live.commitments: a promise with a deadline, with an offer to set a reminder
     "said_vs_typed",  # pilot.live.crosscheck: a date said to Heliox against the date just typed for the same thing
     "past_date",  # a date that has already passed, written as if it were still ahead
+    "near_name",  # a greeting to someone the person told Heliox about, with their name one letter off
 )
 
 KIND_LABELS = {
@@ -52,6 +53,7 @@ KIND_LABELS = {
     "commitment": "Promises you make, with a reminder",
     "said_vs_typed": "A date you say that differs from the one you just wrote",
     "past_date": "A date that has already passed, written as if it were ahead",
+    "near_name": "A name one letter off someone you told me about",
 }
 # Kinds found by a model rather than a rule: still there while their quoted evidence is in the text.
 MODEL_KINDS = frozenset({"personal_fact"})
@@ -1457,6 +1459,89 @@ def past_date(text: str, ctx: TextContext) -> list[Correction]:
     return list(found.values())
 
 
+# ── A name one letter off someone the person told Heliox about ─────────────────────────────────────────────────
+
+# "Hi Priay," to the manager Priya. Only names the person gave Heliox (one person for the relation), of five letters
+# or more, and only where a name is used to address someone: the start of the text or of a line before a comma,
+# after "hi", "hello", "dear", "thanks" and the like, or after "@" or "cc". One letter off means two neighbouring
+# letters swapped ("Priay"), or one inner letter doubled, added or dropped (never the first or last letter: Daniela,
+# Hanna and Michaels are other people or other words), and never one letter swapped for another (Maria, Mario).
+# Nothing either when the window (the recipient or subject) spells it that way, or when a surname after it is not the
+# surname of the person they know. The card asks ("Did you mean Priya?") and is never spoken (policy.CARD_ONLY_KINDS).
+# Each looked for on its own, so "Thanks, Michal," is a greeting and then a name, not one word before a comma.
+_ADDRESS = (
+    re.compile(r"(?:^|\n)[ \t]*(?P<name>[A-Za-z]{4,})(?=[ \t]*,)"),
+    re.compile(
+        r"\b(?:hi|hello|hey|dear|thanks|thank you|cheers|morning|afternoon|evening|cc)\b,?[ \t]+(?P<name>[A-Za-z]{4,})\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"@(?P<name>[A-Za-z]{4,})\b"),
+)
+
+
+def _one_letter_off(word: str, name: str) -> bool:
+    w, n = word.casefold(), name.casefold()
+    if w == n or w[0] != n[0]:
+        return False
+    if len(w) == len(n):  # the last two letters may be the swapped pair: "Priay"
+        diff = [i for i in range(len(w)) if w[i] != n[i]]
+        return len(diff) == 2 and diff[1] == diff[0] + 1 and w[diff[0]] == n[diff[1]] and w[diff[1]] == n[diff[0]]
+    if w[-1] != n[-1]:
+        return False
+    if len(w) == len(n) + 1:
+        return any(w[:i] + w[i + 1 :] == n for i in range(1, len(w) - 1))
+    if len(w) == len(n) - 1:
+        return any(n[:i] + n[i + 1 :] == w for i in range(1, len(n) - 1))
+    return False
+
+
+def near_name(text: str, ctx: TextContext) -> list[Correction]:
+    """A name in an addressing spot that is one letter off a person the person told Heliox about."""
+    if ctx.source != "focused_field" or ctx.is_terminal or ctx.is_code_editor or not ctx.people:
+        return []
+    known: dict[str, tuple[str, str, str]] = {}  # first name -> (relation, first name, surname or "")
+    for relation, name in ctx.people.items():
+        parts = name.split()
+        first = parts[0] if parts else ""
+        if len(first) >= 5 and first.isalpha():
+            known[first.casefold()] = (relation, first, parts[-1] if len(parts) > 1 else "")
+    where = ctx.title.casefold()
+    found: dict[str, Correction] = {}
+    for match in (m for pattern in _ADDRESS for m in pattern.finditer(text)):
+        group = "name"
+        word = match[group]
+        if not word[:1].isupper() or word.casefold() in known:
+            continue  # the name of someone they told Heliox about, spelled as they told it
+        if word.casefold() in where:
+            continue  # the window (the recipient, the subject) has it this way: likely a different person
+        hits = [entry for entry in known.values() if _one_letter_off(word, entry[1])]
+        if len(hits) != 1:
+            continue  # nobody, or two people it could be: say nothing
+        relation, first, surname = hits[0]
+        after = text[match.end(group) :].lstrip(" \t").split(maxsplit=1)
+        following = after[0].strip(",.;:!?") if after else ""
+        if surname and following[:1].isupper() and following.casefold() != surname.casefold():
+            continue  # "Hanah Jones" when they told Heliox about Hannah Smith: someone else
+        key = f"near_name:{word.casefold()}"
+        if key in found:
+            continue
+        found[key] = Correction(
+            kind="near_name",
+            key=key,
+            # A question, never a correction: "Jon" may be right, and someone other than the person they know.
+            title=f"Did you mean {first}?",
+            message=f"You wrote {word}; your {relation} is {first}.",
+            evidence=word,
+            detail=f"You told me your {relation} is {first}. If {word} is someone else, ignore this.",
+            fix=first,
+            fix_kind="replace",
+            urgency=NORMAL,
+            confidence=0.8,
+            trailing=_at_end(text, match.end(group)),
+        )
+    return list(found.values())
+
+
 DETECTORS = {
     "community_catch": community_catch,
     "risky_command": risky_command,
@@ -1468,6 +1553,7 @@ DETECTORS = {
     "missing_attachment": missing_attachment,
     "repeated_word": repeated_word,
     "past_date": past_date,
+    "near_name": near_name,
 }
 
 # What a spoken sentence can be checked for; screen-only checks (commands, errors, typing) do not apply.
@@ -1523,6 +1609,7 @@ MENTION_KINDS = frozenset(
         "profile_fact",
         "missing_attachment",
         "past_date",
+        "near_name",
     }
 )
 _QUOTE_MARKS = frozenset('"`\u201c\u201d')
