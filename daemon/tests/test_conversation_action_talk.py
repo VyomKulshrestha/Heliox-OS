@@ -137,3 +137,16 @@ async def test_the_session_check_catches_an_under_way_claim_before_the_approval(
     record, _failures = await run_session(session, kind)
     lines = check_session(session, kind, record)
     assert any("'Deleting that now.' says it is under way" in line for line in lines), lines
+
+
+def test_a_thanks_after_heliox_asked_something_is_left_to_the_conversation():
+    """ "Want me to check what?" then "Thanks.": maybe a no, maybe a yes; never answered with "You're welcome."."""
+    from pilot.conversation.layer import ConversationLayer
+
+    layer = ConversationLayer(sink=None, model=lambda: None)
+    layer.memory.add_heliox("Something is using the processor. Want me to check what?")
+    assert layer._thanks_reply("Thanks.", None) == ""
+    layer.memory.add_heliox("Fan noise usually means the processor is working hard.")
+    assert layer._thanks_reply("Thanks.", None) == "You're welcome."
+    assert layer._thanks_reply("Thanks.", ("offer",)) == ""  # an offer is still open
+    assert layer._thanks_reply("Thanks, now open Notepad.", None) == ""

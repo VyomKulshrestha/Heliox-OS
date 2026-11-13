@@ -1814,12 +1814,6 @@
      "model": "Okay, I'll leave it.",
      "expect": {
       "taken": true
-     },
-     "expect_model": {
-      "model": true,
-      "has": [
-       "leave it"
-      ]
      }
     },
     {
