@@ -121,7 +121,15 @@ def every_card_visible(monkeypatch):
 @pytest.mark.parametrize("fail_on", ["speak", "load", "exit"])
 async def test_after_a_gpu_error_the_same_voice_goes_on_on_the_cpu_for_the_session_said_once(fail_on):
     manager, started, leases, _asked, faults, said = manager_on_a_failing_card(fail_on)
-    assert len(await speak(manager, "The backup is done.")) == 1  # spoken, by the local voice, not the system one
+    if fail_on == "load":
+        assert len(await speak(manager, "The backup is done.")) == 1  # the load failed: nothing was said yet
+    else:
+        # The card failed on this sentence: the system voice says it (no wait for the voice to load again on the
+        # processor), and the same voice is ready on the processor for the next one.
+        with pytest.raises(local_tts_worker.LocalVoiceNotReady) as raised:
+            await speak(manager, "The backup is done.")
+        assert raised.value.unspoken == ""  # the whole reply: nothing of it was heard
+        await manager.ensure_ready("kokoro_tts", "af_heart")
     assert [w.device for w in started] == ["auto", "cpu"] and leases == [True, False]
     assert faults and faults[0][0] == "voice"  # the arbiter hears about the fault
     assert [s for s, _ in said].count("voice_on_cpu") == 1
@@ -196,3 +204,31 @@ def test_kokoro_configured_for_the_card_runs_on_the_cpu_when_every_card_is_hidde
         assert kokoro_tts._device == "cuda"
     finally:
         kokoro_tts.configure(device="auto")
+
+
+@pytest.mark.asyncio
+async def test_a_card_failing_partway_through_a_reply_leaves_only_the_unheard_part_to_the_system_voice():
+    manager, started, _leases, _asked, _faults, _said = manager_on_a_failing_card("")
+    played: list[Path] = []
+
+    async def play(path: Path) -> None:
+        played.append(path)
+        started[0].fail_on = "speak"  # the card fails from the second sentence on
+
+    with pytest.raises(local_tts_worker.LocalVoiceNotReady) as raised:
+        await manager.speak("kokoro_tts", "The backup is done. It took four minutes. Nothing failed.", "af_heart",
+                            None, play)  # fmt: skip
+    assert len(played) == 1  # the first sentence was heard, in the local voice
+    assert raised.value.unspoken == "It took four minutes. Nothing failed."
+    await manager.ensure_ready("kokoro_tts", "af_heart")
+    assert [w.device for w in started] == ["auto", "cpu"]  # the processor's worker loaded in the background
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_file_someone_asked_for_still_waits_for_the_voice_on_the_processor(tmp_path):
+    manager, started, _leases, _asked, _faults, _said = manager_on_a_failing_card("speak")
+    target = tmp_path / "reply.wav"
+    await manager.speak("kokoro_tts", "The backup is done.", "af_heart", str(target), None)
+    assert target.read_bytes() == b"RIFF-test-audio" and [w.device for w in started] == ["auto", "cpu"]
+    await manager.shutdown()

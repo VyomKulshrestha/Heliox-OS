@@ -1309,6 +1309,7 @@ async def _speak_impl(
         except Exception as e:
             if isinstance(e, LocalVoiceNotReady):
                 loading = "kokoro_tts"  # the system voice speaks this reply while Heliox's own voice loads
+                spoken_text = e.unspoken or spoken_text  # stopped partway: only what was not said yet
             elif not getattr(e, "already_logged", False):
                 logger.warning("Kokoro TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
             local_unavailable = str(e) or type(e).__name__
@@ -1329,6 +1330,7 @@ async def _speak_impl(
         except Exception as e:
             if isinstance(e, LocalVoiceNotReady):
                 loading = "pocket_tts"  # the system voice speaks this reply while Heliox's own voice loads
+                spoken_text = e.unspoken or spoken_text  # stopped partway: only what was not said yet
             elif not getattr(e, "already_logged", False):
                 logger.warning("Pocket TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
             local_unavailable = str(e) or type(e).__name__

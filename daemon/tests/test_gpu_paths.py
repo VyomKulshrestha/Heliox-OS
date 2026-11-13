@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from pilot.system import gpu_paths, model_health
+from pilot.system import gpu_paths, local_tts_worker, model_health
 from pilot.system.local_tts_worker import LocalTTSWorkerManager
 from pilot.system.parakeet_asr import ParakeetTranscriber, choose_provider
 
@@ -169,10 +169,16 @@ def cuda_torch(monkeypatch):
 
 
 async def speak(manager):
+    """A sentence whose worker fails on the card is spoken by the system voice (LocalVoiceNotReady) while the same
+    voice loads on the processor in the background; that load is waited for here."""
+
     async def play(path):
         return None
 
-    await manager.speak("kokoro_tts", "Hello there.", "af_heart", None, play)
+    try:
+        await manager.speak("kokoro_tts", "Hello there.", "af_heart", None, play)
+    except local_tts_worker.LocalVoiceNotReady:
+        await manager.ensure_ready("kokoro_tts", "af_heart")
 
 
 @pytest.mark.asyncio

@@ -140,6 +140,22 @@ async def test_the_system_voice_speaks_the_whole_reply_without_logging_a_failure
 
 
 @pytest.mark.asyncio
+async def test_after_the_card_failed_partway_the_system_voice_says_only_what_was_not_heard(monkeypatch):
+    config = PilotConfig()
+    config.voice = VoiceConfig(tts_engine="kokoro_tts", tts_voice="af_heart")
+    monkeypatch.setattr(PilotConfig, "load", lambda: config)
+    monkeypatch.setattr(voice, "CURRENT_PLATFORM", Platform.WINDOWS)
+    partway = LocalVoiceNotReady("kokoro_tts: loading on the CPU after a GPU fault")
+    partway.unspoken = "It took four minutes."
+    with (
+        patch.object(voice, "_run_local_tts_worker", new=AsyncMock(side_effect=partway)),
+        patch.object(voice, "_tts_windows", new=AsyncMock(return_value="Spoken: It took....")) as system,
+    ):
+        await voice._speak_impl("The backup is done. It took four minutes.")
+    assert system.await_args.args[0] == "It took four minutes."  # the first sentence was heard already
+
+
+@pytest.mark.asyncio
 async def test_with_no_system_voice_the_reply_waits_for_heliox_s_own_voice_never_silence(monkeypatch):
     """A Linux computer without speech-dispatcher or espeak (or a system voice that fails): the reply is not dropped.
     It waits for the local voice, and is spoken by it once loaded."""

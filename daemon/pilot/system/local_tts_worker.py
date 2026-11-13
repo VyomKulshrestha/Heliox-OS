@@ -238,7 +238,12 @@ class ReplyVoice:
 
 class LocalVoiceNotReady(LocalTTSUnavailable):
     """The local voice is still loading when a reply is ready to be spoken: this reply is spoken with the system voice,
-    whole, and the local voice takes over from the next one. Not a failure: nothing is marked failed."""
+    and the local voice takes over from the next one. Not a failure: nothing is marked failed.
+
+    ``unspoken``: the part of the reply the local voice has not said, when it stopped partway (its worker moved from
+    the graphics card to the processor after a fault and is loading again); "" means the whole reply."""
+
+    unspoken: str = ""
 
 
 class _MovedToCpu(LocalTTSUnavailable):
@@ -1052,7 +1057,20 @@ class LocalTTSWorkerManager:
 
     # Speaking ----------------------------------------------------------------
 
-    async def synthesize(self, engine: str, text: str, voice: str, output_file: Path, request_dir: Path) -> None:
+    async def synthesize(
+        self,
+        engine: str,
+        text: str,
+        voice: str,
+        output_file: Path,
+        request_dir: Path,
+        *,
+        wait_after_gpu_fault: bool = True,
+    ) -> None:
+        """Make ``text`` into ``output_file``. After a GPU fault the voice moves to the CPU: with
+        ``wait_after_gpu_fault`` (a file someone asked for) this piece waits for the CPU worker; without it (speech)
+        the CPU worker loads in the background and LocalVoiceNotReady says so at once, so no sentence waits the
+        5 to 12 s of a load (the system voice speaks it meanwhile)."""
         if engine not in LOCAL_ENGINES:
             raise ValueError(f"Unsupported local TTS engine: {engine}")
         if not text or len(text) > MAX_TEXT_CHARACTERS:
@@ -1068,6 +1086,12 @@ class LocalTTSWorkerManager:
                 process, engine, request, timeout=LOAD_TIMEOUT_SECONDS if not self.loaded else REQUEST_TIMEOUT_SECONDS
             )
         except _MovedToCpu:
+            if not wait_after_gpu_fault:
+                self._start_prewarm(engine, voice)  # the same voice on the CPU, for the next sentence
+                logger.info(
+                    "Local voice moved to the CPU after a GPU fault; this sentence is spoken by the system voice"
+                )
+                raise LocalVoiceNotReady(f"{engine}: loading on the CPU after a GPU fault") from None
             # The same sentence, once, from the same voice started on the CPU.
             process = await self._usable_process(engine, voice)
             await self._request(process, engine, request, timeout=LOAD_TIMEOUT_SECONDS)
@@ -1237,7 +1261,12 @@ class LocalTTSWorkerManager:
         try:
             for index in range(len(sentences)):
                 assert upcoming is not None
-                path = await upcoming
+                try:
+                    path = await upcoming
+                except LocalVoiceNotReady as not_ready:
+                    # What was said stays said: the system voice takes over from this sentence on.
+                    not_ready.unspoken = " ".join(sentences[index:]) if index else ""
+                    raise
                 words = len(sentences[index].split())
                 speech_trace.emit(
                     "piece ready", index=index, words=words, source=sources.get(index, ""), at=time.monotonic()
@@ -1347,7 +1376,7 @@ class LocalTTSWorkerManager:
         return made
 
     async def _make(self, engine: str, text: str, voice: str, target: Path, folder: Path) -> Path:
-        await self.synthesize(engine, text, voice, target, folder)
+        await self.synthesize(engine, text, voice, target, folder, wait_after_gpu_fault=False)
         keep_tail = None if ends_sentence(text) else KEEP_CLAUSE_SECONDS
         try:
             await asyncio.to_thread(trim_silence, target, KEEP_LEAD_SECONDS, keep_tail)
