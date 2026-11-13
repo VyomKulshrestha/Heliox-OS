@@ -136,21 +136,13 @@ async def synthesize(text: str, voice: str) -> tuple[Any, int]:
     return await asyncio.to_thread(_generate, text, voice)
 
 
-def _play_blocking(audio: Any, sample_rate: int) -> None:
-    import sounddevice as sd
-
-    sd.play(audio, sample_rate)
-    sd.wait()
-
-
 async def play(audio: Any, sample_rate: int) -> None:
-    try:
-        await asyncio.to_thread(_play_blocking, audio, sample_rate)
-    except asyncio.CancelledError:
-        import sounddevice as sd
+    """Play already-synthesised audio through the daemon's shared output line (voice.play_on_output_line), never a
+    stream of its own: on a Mac whose microphone is on the output's device a second output stream in this process
+    stops the microphone. Cancelling (barge-in) cuts it at once."""
+    from pilot.system.voice import play_on_output_line
 
-        sd.stop()
-        raise
+    await play_on_output_line(audio, sample_rate)
 
 
 async def synthesize_and_play(text: str, voice: str) -> None:

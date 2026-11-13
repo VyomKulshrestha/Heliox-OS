@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from types import ModuleType
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -124,42 +124,32 @@ def _fake_sounddevice_module(play=None, wait=None, stop=None) -> ModuleType:
 
 
 @pytest.mark.asyncio
-async def test_play_calls_sounddevice_play_and_wait():
+async def test_play_goes_through_the_shared_output_line(monkeypatch):
+    """Never sd.play: a second output stream in the daemon stops the microphone on a Mac whose microphone is on the
+    output's device. The shared line (voice.play_on_output_line) fades on a cut."""
+    from pilot.system import voice
+
     audio = np.array([1, 2, 3], dtype=np.float32)
-    play_mock = MagicMock()
-    wait_mock = MagicMock()
-
-    with patch.dict(sys.modules, {"sounddevice": _fake_sounddevice_module(play_mock, wait_mock)}):
-        await pocket_tts.play(audio, 24000)
-
-    play_mock.assert_called_once_with(audio, 24000)
-    wait_mock.assert_called_once()
+    line = AsyncMock()
+    monkeypatch.setattr(voice, "play_on_output_line", line)
+    await pocket_tts.play(audio, 24000)
+    line.assert_awaited_once_with(audio, 24000)
 
 
 @pytest.mark.asyncio
-async def test_play_calls_sounddevice_stop_on_cancellation():
-    audio = np.array([1, 2, 3], dtype=np.float32)
-    stop_mock = MagicMock()
-    fake_sd = _fake_sounddevice_module(wait=MagicMock(side_effect=asyncio.CancelledError()), stop=stop_mock)
+async def test_synthesize_and_play_composes_synthesize_and_play(monkeypatch):
+    from pilot.system import voice
 
-    with patch.dict(sys.modules, {"sounddevice": fake_sd}), pytest.raises(asyncio.CancelledError):
-        await pocket_tts.play(audio, 24000)
-
-    stop_mock.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_synthesize_and_play_composes_synthesize_and_play():
     model = _fake_model(sample_rate=24000)
     fake_pocket_tts = _fake_pocket_tts_module(model)
-    play_mock = MagicMock()
-    fake_sd = _fake_sounddevice_module(play_mock)
+    line = AsyncMock()
+    monkeypatch.setattr(voice, "play_on_output_line", line)
 
-    with patch.dict(sys.modules, {"pocket_tts": fake_pocket_tts, "sounddevice": fake_sd}):
+    with patch.dict(sys.modules, {"pocket_tts": fake_pocket_tts}):
         await pocket_tts.synthesize_and_play("hello", "alba")
 
     model.generate_audio.assert_called_once_with("state-for-alba", "hello")
-    play_mock.assert_called_once()
+    line.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -549,8 +549,21 @@ class _OutputLine:
         self.device_name = ""
         self._stale_devices = False
         self.notice = ""
+        # macOS, with the microphone on the default output's Core Audio device (_same_core_audio_device): the line
+        # stays open while the listener runs (no idle close), and after every new open the microphone is reopened
+        # (``on_opened``), since opening an output stream in this process stops that device's input stream.
+        self.pinned = False
+        self.on_opened: Any = None  # callable() -> None, run in its own thread after the line opened a new stream
+        # The latency new streams open with: "low" everywhere, MAC_SAME_DEVICE_LATENCY while the microphone shares the
+        # line's device on macOS. A line open at another latency is reopened at the next ensure().
+        self.wanted_latency: Any = "low"
+        self._opened_latency: Any = None
+        self._latency_logged: set[str] = set()  # each setting's measured buffer is logged once
+        self.running = threading.Event()  # set by the first callback after an open
+        self._just_opened = False
 
     def callback(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
+        self.running.set()  # the device has asked for audio: the stream is really running
         with self._current_lock:
             current = self.current
         if current is None:
@@ -565,8 +578,22 @@ class _OutputLine:
 
     def ensure(self, rate: int, channels: int) -> Any:
         """The open stream for this format, opening (or reopening for another format) when needed."""
+        stream = self._ensure_locked(rate, channels)
+        hook = self.on_opened
+        if stream is not None and getattr(self, "_just_opened", False) and hook is not None:
+            self._just_opened = False
+            threading.Thread(target=hook, name="heliox-input-after-output", daemon=True).start()
+        return stream
+
+    def _ensure_locked(self, rate: int, channels: int) -> Any:
         with self._lock:
-            if self.stream is not None and self.rate == rate and self.channels == channels:
+            self._just_opened = False
+            if (
+                self.stream is not None
+                and self.rate == rate
+                and self.channels == channels
+                and self._opened_latency == self.wanted_latency
+            ):
                 return self.stream
             self._close_locked()
             import sounddevice as sd
@@ -577,13 +604,48 @@ class _OutputLine:
             from pilot.system.audio_health import default_speaker_name
 
             self.device_name = default_speaker_name()
+            latency = self.wanted_latency
             stream = sd.OutputStream(
-                samplerate=rate, channels=channels, dtype="float32", callback=self.callback, latency="low"
+                samplerate=rate, channels=channels, dtype="float32", callback=self.callback, latency=latency
             )
+            self.running.clear()
             stream.start()
             self.stream, self.rate, self.channels = stream, rate, channels
+            self._opened_latency = latency
+            self._log_latency(stream, latency)
+            self._just_opened = True
             self._touch_locked()
             return stream
+
+    def _log_latency(self, stream: Any, latency: Any) -> None:
+        """Log once per setting the output buffer PortAudio reports: how late a cut-off is still heard (the fade
+        acts on the next block; what the device already holds plays out)."""
+        if str(latency) in self._latency_logged:
+            return
+        self._latency_logged.add(str(latency))
+        try:
+            seconds = float(stream.latency)
+        except (AttributeError, TypeError, ValueError):
+            return
+        logger.info(
+            "Output line opened at latency %r: latency %d ms at %d Hz", latency, round(seconds * 1000), self.rate
+        )
+
+    def rate_for(self, rate: int) -> int:
+        """The rate a sentence at ``rate`` plays at. While the line is pinned (macOS, the microphone on its device) it
+        is the line's own rate, or LOCAL_VOICE_RATE when the line is closed: a reopen for another rate would stop
+        the microphone (run 43426052142: a 22050 Hz sentence cost 3.2 s of hearing). Elsewhere, ``rate`` itself:
+        the line reopens for it as before."""
+        with self._lock:
+            if not self.pinned:
+                return rate
+            return self.rate if self.stream is not None and self.rate else LOCAL_VOICE_RATE
+
+    def channels_for(self, channels: int) -> int:
+        with self._lock:
+            if not self.pinned:
+                return channels
+            return self.channels if self.stream is not None and self.channels else 1
 
     def attach(self, playback: _Playback) -> None:
         with self._current_lock:
@@ -606,6 +668,8 @@ class _OutputLine:
 
     def _close_if_idle(self) -> None:
         with self._lock:
+            if self.pinned:
+                return  # the microphone shares its device: closing and reopening the line would stop it again
             if self.current is None and time.monotonic() - self.last_used >= OUTPUT_LINE_IDLE_SECONDS - 0.5:
                 self._close_locked()
 
@@ -647,7 +711,7 @@ class _OutputLine:
             logger.info("Output line: %s", self.notice)
             self._stale_devices = True
             self._close_locked()
-        rate = self.rate or LOCAL_VOICE_RATE
+        rate = LOCAL_VOICE_RATE if self.pinned else (self.rate or LOCAL_VOICE_RATE)
         warm_output_line(rate)
         return True
 
@@ -676,6 +740,52 @@ def _refresh_portaudio_devices(sd: Any) -> None:
         logger.debug("Could not refresh the audio device list", exc_info=True)
 
 
+# macOS, microphone on the output's Core Audio device. On a runner (run 43416412651) an input opened straight after
+# the output line got PortAudio err -50 and delivered nothing; in round 3 a reopen a few seconds after the line opened
+# worked. So the input is opened with retries while the line stays open: each attempt must deliver frames within
+# MIC_FRAMES_WITHIN_SECONDS, with these pauses before attempts 2, 3 and 4.
+MIC_RETRY_PAUSES = (0.2, 0.5, 1.0)
+MIC_FRAMES_WITHIN_SECONDS = 0.5
+# An attempt is a working microphone only when frames keep arriving: over MIC_SUSTAIN_SECONDS at least
+# MIC_SUSTAIN_SHARE of the blocks the rate promises, and still arriving in its second half. A first burst is not
+# enough: on run 43419901063 an input delivered 0.09 s after its open and stalled for good a second later.
+MIC_SUSTAIN_SECONDS = 1.0
+MIC_SUSTAIN_SHARE = 0.8
+# The output line's latency on macOS while the microphone shares its device: PortAudio's default for an output
+# ("high"). Round 4d (run 43422532624): a "low" output stopped a 16 kHz input opened beside it 0.1 to 5 s later (err
+# -50, no frames); at the default latency the same input kept delivering.
+MAC_SAME_DEVICE_LATENCY = "high"
+OUTPUT_RUNNING_WITHIN_SECONDS = 0.5  # how long to wait for the line's first callback before opening the input
+# "output_first": the line opens before the microphone at start (variant A). "input_first": today's order at start,
+# and the microphone reopened (with retries) only after a later open of the line (variant B).
+MAC_SAME_DEVICE_ORDER = "output_first"
+
+
+def _same_core_audio_device(sd: Any, input_device: Any) -> bool:
+    """macOS only: the microphone and the default output are one Core Audio device (a USB headset, an audio
+    interface, an aggregate device). Compared by PortAudio device index, which on Core Audio is one index per device
+    for its inputs and outputs together; never by name. False on Windows and Linux, and when it cannot be read.
+
+    Why: on a macOS runner (mac-voice round 3, run 43413218552, BlackHole 2ch) opening the output line while the
+    microphone's input stream ran on the same device stopped the input (PaMacCore err -10863) for the whole sentence
+    and 3.5 s after it, until the watchdog reopened it; an input opened after the output kept running."""
+    if CURRENT_PLATFORM != Platform.MACOS:
+        return False
+    try:
+        default_in, default_out = (list(sd.default.device) + [None, None])[:2]
+        out_index = default_out if default_out is not None and int(default_out) >= 0 else None
+        if out_index is None:
+            out_index = sd.query_devices(kind="output")["index"]
+        in_index = input_device
+        if in_index is None:
+            in_index = default_in if default_in is not None and int(default_in) >= 0 else None
+        if in_index is None:
+            in_index = sd.query_devices(kind="input")["index"]
+        return int(in_index) == int(out_index)
+    except Exception:
+        return False
+
+
 _portaudio_inputs_open = 0  # microphone streams opened through PortAudio (the non-Windows path)
 _output_line = _OutputLine()
 LOCAL_VOICE_RATE = 24000  # Kokoro's output; another rate reopens the line
@@ -686,7 +796,7 @@ def warm_output_line(rate: int = LOCAL_VOICE_RATE) -> None:
 
     def open_line() -> None:
         try:
-            _output_line.ensure(rate, 1)
+            _output_line.ensure(_output_line.rate_for(rate), _output_line.channels_for(1))
         except Exception:
             logger.debug("Could not open the output line ahead of speech", exc_info=True)
 
@@ -697,7 +807,8 @@ class _Playback:
     """Plays one buffer on the shared output line, so a cut-off can fade out at once instead of draining.
 
     The callback ramps the voice down over FADE_SECONDS; after that the line plays silence, and only what the
-    device had already buffered (its "low" latency, about 90 ms here) is still heard.
+    device had already buffered (its "low" latency, about 90 ms here; the default latency on macOS when the
+    microphone shares the device, logged once as "Output line opened at latency") is still heard.
     """
 
     def __init__(self, audio: Any, sample_rate: int) -> None:
@@ -726,7 +837,21 @@ class _Playback:
         if self.position >= len(self.audio) and not self.finished.is_set():
             self.finished.set()
 
+    def fit_to_line(self) -> None:
+        """On a pinned line, bring the sentence to the line's rate and channels (once, before it plays), so the line
+        is not reopened under the microphone. Elsewhere nothing changes and the line reopens for the format."""
+        rate = _output_line.rate_for(self.sample_rate)
+        channels = _output_line.channels_for(self.audio.shape[1])
+        audio = self.audio
+        if channels != audio.shape[1]:
+            audio = audio.mean(axis=1, keepdims=True) if channels == 1 else audio[:, :1].repeat(channels, axis=1)
+        if rate != self.sample_rate:
+            logger.debug("Sentence at %d Hz resampled to the output line's %d Hz", self.sample_rate, rate)
+            audio = resample_for_line(audio, self.sample_rate, rate)
+        self.audio, self.sample_rate = audio, rate
+
     def play(self) -> None:
+        self.fit_to_line()
         self.stream = _output_line.ensure(self.sample_rate, self.audio.shape[1])
         _output_line.attach(self)
         # The device can disappear mid-sentence (headphones unplugged): its callbacks stop, and without a limit
@@ -745,6 +870,23 @@ class _Playback:
         the audio device, so a slow machine cannot turn the fade into a click."""
         self.fade_left = int(self.sample_rate * FADE_SECONDS)
         self.finished.set()
+
+
+def resample_for_line(audio: Any, rate: int, line_rate: int) -> Any:
+    """``audio`` (frames x channels, float32) at ``line_rate``: a polyphase filter over the whole sentence at once,
+    with the ends extended along their own slope (padtype "line") so the first and last samples do not dip to zero
+    and click."""
+    import math
+
+    import numpy as np
+    from scipy.signal import resample_poly
+
+    audio = np.asarray(audio, dtype=np.float32)
+    if rate == line_rate or len(audio) == 0:
+        return audio
+    common = math.gcd(int(rate), int(line_rate))
+    out = resample_poly(audio, int(line_rate) // common, int(rate) // common, axis=0, padtype="line")
+    return np.clip(out, -1.0, 1.0).astype(np.float32)
 
 
 def fade_block(block: Any, fade_left: int, fade_total: int) -> Any:
@@ -767,6 +909,18 @@ def _read_audio_file(path: Path) -> tuple[Any, int]:
 
     audio, sample_rate = soundfile.read(path, dtype="float32")
     return audio, int(sample_rate)
+
+
+async def play_on_output_line(audio: Any, sample_rate: int) -> None:
+    """Play audio through the shared output line: the one way the daemon puts sound out in its own process, so the
+    line's rules hold for it (kept open, faded on a cut, and on a Mac with the microphone on the same device, the
+    microphone reopened after any new open). Cancelling cuts it at once."""
+    playback = _Playback(audio, sample_rate)
+    try:
+        await asyncio.to_thread(playback.play)
+    except asyncio.CancelledError:
+        await asyncio.to_thread(playback.cut)
+        raise
 
 
 async def _play_local_tts_file(path: Path) -> None:
@@ -1887,6 +2041,13 @@ class _ContinuousRecorder:
         self.headset_input_choices: dict[str, str] = {}
 
         self._stream: Any = None
+        # One reopen of the capture at a time: the reopen after the output line opened (_input_after_output) and the
+        # watchdog's (reopen). ``reopening`` is True while one runs and ``reopen_generation`` counts its starts and
+        # ends, so the watchdog never reads a reopen's own close as "the stream closed".
+        self._reopen_lock = threading.Lock()
+        self.reopening = False
+        self.reopen_generation = 0
+        self._stopped = False  # stop() ran: a reopen still in progress closes what it opens
         self._soundcard_recorder: Any = None
         self._soundcard_thread: threading.Thread | None = None
         self._soundcard_stop: threading.Event | None = None
@@ -1977,6 +2138,7 @@ class _ContinuousRecorder:
         if self._stream is not None:
             return True
 
+        self._stopped = False
         self.using_fallback_input = False
         self.input_device_notice = ""
         self._loop = asyncio.get_event_loop()
@@ -2061,25 +2223,175 @@ class _ContinuousRecorder:
                         f"Configured microphone '{configured}' is unavailable; using '{resolved_id}' until it returns."
                     )
                     logger.warning(self.input_device_notice)
-            self._stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=1,
-                dtype="int16",
-                blocksize=self.frame_size,
-                callback=_callback,
-                device=self.input_device,
-            )
-            self._stream.start()
+
+            def open_input() -> Any:
+                stream = sd.InputStream(
+                    samplerate=self.sample_rate,
+                    channels=1,
+                    dtype="int16",
+                    blocksize=self.frame_size,
+                    callback=_callback,
+                    device=self.input_device,
+                )
+                stream.start()
+                return stream
+
+            if self._output_before_input(sd):
+                self._stream = self._open_input_beside_output(open_input)
+            else:
+                self._stream = open_input()
             global _portaudio_inputs_open
             _portaudio_inputs_open += 1
             self.capture_backend = "portaudio"
             self.last_error = ""
+            if self._stopped:
+                # stop() ran while this open was retrying beside the output line: it found no stream to close.
+                logger.info("Listener stopped while the microphone was reopening: the new stream is closed")
+                self._close_capture()
+                return False
             return True
         except Exception as exc:
             self.last_error = str(exc)
             logger.warning("Failed to open continuous audio input stream", exc_info=True)
             self._stream = None
             return False
+
+    def _output_before_input(self, sd: Any) -> bool:
+        """macOS with the microphone on the default output's device: open the output line before the input and keep
+        it open (pinned), and reopen the input whenever the line opens a new stream later (another rate, a new
+        default output). Anywhere else: unpin and do nothing, as before."""
+        line = _output_line
+        if CURRENT_PLATFORM != Platform.MACOS:
+            return False
+        # On macOS the hook stays while the listener runs, so a default output moved onto the microphone's device
+        # later is caught too; it acts only when the two are one device.
+        line.on_opened = self._input_after_output
+        if not _same_core_audio_device(sd, self.input_device):
+            line.pinned = False
+            line.wanted_latency = "low"
+            logger.info("Microphone and output line on separate devices: today's order")
+            return False
+        line.pinned = True
+        line.wanted_latency = MAC_SAME_DEVICE_LATENCY  # a "low" line already open is reopened below, before the input
+        if MAC_SAME_DEVICE_ORDER == "output_first" and not getattr(self, "_reopening_after_output", False):
+            try:
+                opened = line.stream is None
+                # The local voice's rate: the line keeps it while listening, other rates are resampled to it. A
+                # sentence playing at this moment keeps its own format, or it would play at the wrong speed.
+                playing = line.stream is not None and line.current is not None
+                rate, channels = (line.rate, line.channels) if playing else (LOCAL_VOICE_RATE, 1)
+                line._ensure_locked(rate, channels)  # no hook: the input opens next
+                self._opened_output_line = opened or getattr(self, "_opened_output_line", False)
+                logger.info("Output line opened before the microphone on its device")
+            except Exception as error:
+                logger.info("Output line could not open before the microphone (%s): today's order", error)
+                return False
+        if line.stream is None:
+            logger.info("Microphone opens on the output's device with no output line open")
+            return False
+        if line.running.wait(OUTPUT_RUNNING_WITHIN_SECONDS):
+            logger.info("Output line running before the microphone opens")
+        else:
+            logger.info(
+                "Output line not running after %.1f s; opening the microphone anyway", OUTPUT_RUNNING_WITHIN_SECONDS
+            )
+        return True
+
+    def _open_input_beside_output(self, open_input: Any) -> Any:
+        """Open the microphone while the output line runs on its device: up to 1 + len(MIC_RETRY_PAUSES) attempts,
+        each kept only when frames keep arriving (_sustained). When every attempt fails at the
+        listener's start, the line is closed and the microphone opened first, as before the fix (it may then stop while
+        Heliox speaks, until the watchdog reopens it). After a later open of the line, a last plain open is made and
+        the watchdog does the rest, as before."""
+        attempts = (0.0, *MIC_RETRY_PAUSES)
+        for number, pause in enumerate(attempts, 1):
+            if pause:
+                time.sleep(pause)
+            before = self.frames_received
+            try:
+                stream = open_input()
+            except Exception as error:
+                logger.info("Microphone attempt %d beside the output line failed: %s", number, error)
+                continue
+            verdict = self._sustained(before)
+            if verdict == "sustained":
+                logger.info("Microphone delivering beside the output line at attempt %d (sustained)", number)
+                return stream
+            logger.info("Microphone attempt %d beside the output line: %s", number, verdict)
+            with contextlib.suppress(Exception):
+                stream.stop()
+            with contextlib.suppress(Exception):
+                stream.close()
+        if getattr(self, "_reopening_after_output", False):
+            logger.info("Microphone: every attempt beside the output line failed; a plain open, the watchdog follows")
+            return open_input()
+        logger.info("Microphone: every attempt beside the output line failed; output line closed, microphone first")
+        self._release_output_line()
+        return open_input()
+
+    def _sustained(self, before: int) -> str:
+        """Whether frames keep arriving after an open: "sustained", or why not ("no audio", "stopped after a first
+        burst", "too few frames: N of M")."""
+        block_seconds = self.frame_size / float(self.sample_rate)
+        expected = MIC_SUSTAIN_SECONDS / block_seconds
+        waited = 0.0
+        while self.frames_received == before and waited < MIC_FRAMES_WITHIN_SECONDS:
+            time.sleep(0.02)
+            waited += 0.02
+        if self.frames_received == before:
+            return "no audio"
+        start = self.frames_received
+        time.sleep(MIC_SUSTAIN_SECONDS / 2)
+        middle = self.frames_received
+        time.sleep(MIC_SUSTAIN_SECONDS / 2)
+        end = self.frames_received
+        if end == middle:
+            return "stopped after a first burst"
+        if end - start < MIC_SUSTAIN_SHARE * expected:
+            return f"too few frames: {end - start} of {expected:.0f}"
+        return "sustained"
+
+    def _release_output_line(self) -> None:
+        """Close the output line this recorder opened before the microphone, and unpin it: the listener is then as it
+        was before the fix (the line opens again when Heliox next speaks)."""
+        line = _output_line
+        line.pinned = False
+        line.wanted_latency = "low"
+        if getattr(self, "_opened_output_line", False):
+            self._opened_output_line = False
+            logger.info("Output line closed: it was opened for the microphone, which is no longer beside it")
+            line.close()
+
+    def _input_after_output(self) -> None:
+        """The output line opened a new stream while this input ran on the same Core Audio device: reopen the input
+        now (the output open stopped it), instead of waiting for the watchdog. Not when the line moved to another
+        device: then the line is unpinned and the input is left as it is."""
+        if self._stream is None or getattr(self, "_reopening_after_output", False):
+            return
+        try:
+            import sounddevice as sd
+        except ImportError:
+            return
+        if not _same_core_audio_device(sd, self.input_device):
+            _output_line.pinned = False  # the line moved to another device: nothing to reopen, and it may idle out
+            _output_line.wanted_latency = "low"
+            return
+        _output_line.pinned = True
+        _output_line.wanted_latency = MAC_SAME_DEVICE_LATENCY  # from the line's next open
+        if not self._reopen_lock.acquire(blocking=False):
+            # The watchdog is reopening: its sustained test sees whether the line's open stopped its input.
+            logger.info("Output line opened on the microphone's device while a reopen runs: that reopen carries on")
+            return
+        self._reopening_after_output = True
+        try:
+            self._begin_reopen()
+            logger.info("Output line opened on the microphone's device: reopening the microphone")
+            self._close_capture()
+            self._open_capture()
+        finally:
+            self._reopening_after_output = False
+            self._end_reopen()
+            self._reopen_lock.release()
 
     def feed(self, block: Any, captured: float | None = None) -> None:
         """A supported audio source besides the microphone (the Conversation Bench's file pump): one block of
@@ -2242,18 +2554,45 @@ class _ContinuousRecorder:
 
     def reopen(self) -> bool:
         """Close the capture backend and open it again on the current device, keeping the frame queue, so an
-        utterance being waited for carries on with the new stream. Blocking: call from a worker thread."""
-        portaudio = self.capture_backend == "portaudio"
-        self._close_capture()
-        self.last_error = ""
-        if portaudio:
-            # PortAudio (macOS, Linux, and Windows when WASAPI capture is unavailable) reads the device list once:
-            # without a refresh a new default microphone, or one plugged back in, is not seen.
-            _refresh_audio_devices()
-        return self._open_capture()
+        utterance being waited for carries on with the new stream. Blocking: call from a worker thread. When another
+        reopen is running (after the output line opened), wait for it and take its result instead of a second one."""
+        if not self._reopen_lock.acquire(blocking=False):
+            logger.info("Microphone reopen already running (after the output line opened): the watchdog waits for it")
+            with self._reopen_lock:
+                return self.is_active
+        try:
+            self._begin_reopen()
+            portaudio = self.capture_backend == "portaudio"
+            self._close_capture()
+            self.last_error = ""
+            if portaudio:
+                # PortAudio (macOS, Linux, and Windows when WASAPI capture is unavailable) reads the device list
+                # once: without a refresh a new default microphone, or one plugged back in, is not seen.
+                _refresh_audio_devices()
+            return self._open_capture()
+        finally:
+            self._end_reopen()
+            self._reopen_lock.release()
+
+    def _begin_reopen(self) -> None:
+        self.reopening = True
+        self.reopen_generation += 1
+
+    def _end_reopen(self) -> None:
+        self.reopen_generation += 1
+        self.reopening = False
+
+    def reopened_since(self, generation: int) -> bool:
+        """Whether a reopen ran (or is running) since ``generation`` was read: the watchdog's state from that time
+        may show the reopen's own close."""
+        return self.reopening or self.reopen_generation != generation
 
     def stop(self) -> None:
+        self._stopped = True
         self._close_capture()
+        if _output_line.on_opened == self._input_after_output:
+            _output_line.on_opened = None
+            self._release_output_line()  # a listener that gives up leaves no line it opened behind
         if self._queue is not None:
             self._queue.put_nowait(_RECORDER_STOP)
         self._queue = None
@@ -3359,6 +3698,7 @@ class ContinuousVoiceListener:
             await asyncio.sleep(every_seconds)
             if not self._running:
                 return
+            generation = int(getattr(recorder, "reopen_generation", 0))
             fallback = bool(recorder.using_fallback_input)
             key, name = await default_mic()
             state = CaptureState(
@@ -3374,6 +3714,9 @@ class ContinuousVoiceListener:
                 ),
                 using_fallback=fallback,
             )
+            reopened_since = getattr(recorder, "reopened_since", None)
+            if callable(reopened_since) and reopened_since(generation):
+                continue  # a reopen ran meanwhile: its own close is not "the stream closed"; look again next second
             if (
                 state.zero_seconds >= 2.0
                 and not self.capture_notice

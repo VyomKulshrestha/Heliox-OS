@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from types import ModuleType
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -98,15 +98,15 @@ async def test_empty_generation_is_an_error():
 
 
 @pytest.mark.asyncio
-async def test_play_stops_device_when_cancelled():
+async def test_play_goes_through_the_shared_output_line(monkeypatch):
+    """Never a stream of its own: the daemon's output line (voice.play_on_output_line), which fades on a cut."""
+    from pilot.system import voice
+
     audio = np.array([0.1], dtype=np.float32)
-    stop = MagicMock()
-    fake_sd = _fake_sounddevice(wait=MagicMock(side_effect=asyncio.CancelledError()), stop=stop)
-
-    with patch.dict(sys.modules, {"sounddevice": fake_sd}), pytest.raises(asyncio.CancelledError):
-        await kokoro_tts.play(audio, 24000)
-
-    stop.assert_called_once()
+    line = AsyncMock()
+    monkeypatch.setattr(voice, "play_on_output_line", line)
+    await kokoro_tts.play(audio, 24000)
+    line.assert_awaited_once_with(audio, 24000)
 
 
 @pytest.mark.asyncio
