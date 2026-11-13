@@ -100,7 +100,9 @@ impl Host for CheckHost {
         if let Some(seen) = supervisor::take_previous_exit() {
             command.env(supervisor::PREVIOUS_EXIT_VARIABLE, seen);
         }
-        command.spawn().ok()
+        let child = command.spawn().ok()?;
+        note_pid(&self.control, "wrappers.txt", child.id());
+        Some(child)
     }
     fn notice(&self, line: &str) {
         println!("INFO notice: {line}");
@@ -121,9 +123,39 @@ fn startup_status() -> Option<serde_json::Value> {
     .ok()
 }
 
-/// Wait for a daemon that says it is ready; its startup_status, or None after `limit`.
-fn wait_ready(limit: Duration) -> Option<serde_json::Value> {
-    let deadline = Instant::now() + limit;
+/// The whole check's limit: whatever it waits on, it ends here with a CHECK line (the CI step's own limit is
+/// longer). Until 13 November 2026 a wait on a suspended daemon's handshake had no limit and the check hung for
+/// the job's 75 minutes on Windows.
+const CHECK_TIME_LIMIT: Duration = Duration::from_secs(12 * 60);
+/// How long one wait for a ready daemon may take.
+const READY_LIMIT: Duration = Duration::from_secs(180);
+/// What the check is doing now, for the time-limit line.
+static STEP: Mutex<String> = Mutex::new(String::new());
+/// Set when a wait ran out: the check fails even if no later CHECK line does.
+static A_WAIT_RAN_OUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn step(what: &str) {
+    if let Ok(mut current) = STEP.lock() {
+        *current = what.to_string();
+    }
+}
+
+fn note_pid(control: &Path, file: &str, pid: u32) {
+    use std::io::Write;
+    if let Ok(mut pids) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(control.join(file))
+    {
+        let _ = writeln!(pids, "{pid}");
+    }
+}
+
+/// Wait up to READY_LIMIT for a daemon that says it is ready; its startup_status. When the wait runs out, a CHECK
+/// line says which wait it was and what is still running, and the check fails.
+fn wait_ready(control: &Path, what: &str) -> Option<serde_json::Value> {
+    step(&format!("waiting for a ready daemon: {what}"));
+    let deadline = Instant::now() + READY_LIMIT;
     while Instant::now() < deadline {
         if let Some(status) = startup_status() {
             if status.get("state").and_then(|s| s.as_str()) == Some("ready") {
@@ -132,6 +164,11 @@ fn wait_ready(limit: Duration) -> Option<serde_json::Value> {
         }
         std::thread::sleep(Duration::from_millis(500));
     }
+    A_WAIT_RAN_OUT.store(true, std::sync::atomic::Ordering::SeqCst);
+    println!(
+        "CHECK supervisor/wait-{what}: FAIL - no ready daemon within {READY_LIMIT:?}; still running: {:?}",
+        still_running(control)
+    );
     None
 }
 
@@ -144,6 +181,9 @@ fn tick_until_relaunch(
     since: Instant,
     limit: Duration,
 ) -> Option<Duration> {
+    step(&format!(
+        "ticking the supervisor until \"{wanted}\" and a new daemon"
+    ));
     let mut paused = false;
     let deadline = Instant::now() + limit;
     let launches_before = launches(&host.control);
@@ -183,10 +223,9 @@ fn last_daemon_exit(control: &Path) -> String {
         .to_string()
 }
 
-/// Every daemon process any wrapper started that is still running, as "pid name".
+/// Every process the check started (wrappers, daemons and what they started) that is still running, as "pid name".
 fn still_running(control: &Path) -> Vec<String> {
-    let pids = std::fs::read_to_string(control.join("daemons.txt")).unwrap_or_default()
-        + &std::fs::read_to_string(control.join("children.txt")).unwrap_or_default();
+    let pids = started_pids(control);
     let mut system = sysinfo::System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     pids.lines()
@@ -252,19 +291,19 @@ fn notice_of(status: &Option<serde_json::Value>) -> String {
         .to_string()
 }
 
-/// End the wrapper and every daemon any wrapper started, whatever state they are in.
-fn end_everything(host: &CheckHost) {
-    if let Ok(mut guard) = host.daemon.lock() {
-        if let Some(mut child) = guard.take() {
-            supervisor::kill_tree(&mut child);
-            let _ = child.wait();
-        }
-    }
-    let pids = std::fs::read_to_string(host.control.join("daemons.txt")).unwrap_or_default()
-        + &std::fs::read_to_string(host.control.join("children.txt")).unwrap_or_default();
+/// Every process id the check wrote down: the wrappers, the daemons they started and what those started.
+fn started_pids(control: &Path) -> String {
+    ["wrappers.txt", "daemons.txt", "children.txt"]
+        .iter()
+        .map(|file| std::fs::read_to_string(control.join(file)).unwrap_or_default())
+        .collect()
+}
+
+/// End every process the check wrote down, whatever state it is in (a suspended one included).
+fn end_started(control: &Path) {
     let mut system = sysinfo::System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-    for pid in pids
+    for pid in started_pids(control)
         .lines()
         .filter_map(|line| line.trim().parse::<u32>().ok())
     {
@@ -272,6 +311,32 @@ fn end_everything(host: &CheckHost) {
             process.kill();
         }
     }
+}
+
+/// End the wrapper and every daemon any wrapper started, whatever state they are in.
+fn end_everything(host: &CheckHost) {
+    if let Ok(mut guard) = host.daemon.lock() {
+        if let Some(mut child) = guard.take() {
+            supervisor::kill_tree(&mut child);
+        }
+    }
+    end_started(&host.control);
+}
+
+/// After CHECK_TIME_LIMIT, whatever the check is waiting on: a CHECK line with the step and what is still running,
+/// everything it started ended, and the test process ends with a failure.
+fn start_time_limit(control: PathBuf) {
+    std::thread::spawn(move || {
+        std::thread::sleep(CHECK_TIME_LIMIT);
+        let at = STEP.lock().map(|s| s.clone()).unwrap_or_default();
+        println!(
+            "CHECK supervisor/time-limit: FAIL - not finished after {CHECK_TIME_LIMIT:?}; the step: {at}; still \
+             running: {:?}",
+            still_running(&control)
+        );
+        end_started(&control);
+        std::process::exit(1);
+    });
 }
 
 #[test]
@@ -316,10 +381,12 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
         results.push(ok);
     };
 
+    start_time_limit(control.clone());
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        step("starting the first daemon");
         *host.daemon.lock().unwrap() = host.launch();
         watch.started();
-        let first = wait_ready(Duration::from_secs(180));
+        let first = wait_ready(&control, "first-start");
         check(
             "first-start",
             first.is_some(),
@@ -367,7 +434,7 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
                 "notice \"...Starting it again in 2 s.\", started again {back:?} after the crash"
             ),
         );
-        let after = wait_ready(Duration::from_secs(180));
+        let after = wait_ready(&control, "after-the-crash");
         let said = ended(&after);
         check(
             "crash-reported-with-its-code",
@@ -398,7 +465,7 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
                 "notice \"...Starting it again in 4 s.\", started again {back:?} after the crash"
             ),
         );
-        let _ = wait_ready(Duration::from_secs(180));
+        let _ = wait_ready(&control, "after-the-second-crash");
 
         // A hang: the daemon is suspended; after the grace and the hang rule it is ended and started again. The
         // grace is ticked through first, while the daemon answers.
@@ -439,7 +506,7 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
             back.is_some(),
             format!("notice \"...stopped answering, so it is being restarted.\", started again {back:?} after the freeze"),
         );
-        let after = wait_ready(Duration::from_secs(180));
+        let after = wait_ready(&control, "after-the-hang");
         let said = ended(&after);
         check(
             "hang-reported",
@@ -465,7 +532,7 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
             ),
         );
         *host.daemon.lock().unwrap() = host.launch();
-        let after = wait_ready(Duration::from_secs(180));
+        let after = wait_ready(&control, "after-the-clean-stop");
         let last_run = after.as_ref().and_then(|s| s.get("last_run")).cloned();
         check(
             "stop-on-purpose-next-start-reports-nothing",
@@ -489,7 +556,7 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
             ),
         );
         *host.daemon.lock().unwrap() = host.launch();
-        let after = wait_ready(Duration::from_secs(180));
+        let after = wait_ready(&control, "after-the-forced-stop");
         let last_run = after.as_ref().and_then(|s| s.get("last_run")).cloned();
         // Not a clean end: the daemon never marked its run as ended, and the app left word that it did not answer.
         check(
@@ -511,7 +578,9 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
         std::panic::resume_unwind(panic);
     }
     assert!(
-        !results.is_empty() && results.iter().all(|ok| *ok),
+        !results.is_empty()
+            && results.iter().all(|ok| *ok)
+            && !A_WAIT_RAN_OUT.load(std::sync::atomic::Ordering::SeqCst),
         "a CHECK failed"
     );
 }

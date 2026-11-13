@@ -59,11 +59,19 @@ def _child(role: str, *extra: str) -> subprocess.Popen:
 
 
 def _first_line(process: subprocess.Popen, limit: float = 120.0) -> str:
-    started = time.monotonic()
-    line = process.stdout.readline() if process.stdout else ""
-    if not line and time.monotonic() - started >= limit:
-        raise TimeoutError("the harness said nothing")
-    return line.strip()
+    """The harness's first line, read in a thread so a harness that says nothing cannot hold the check: before 13
+    November 2026 readline() waited with no limit, and the limit was looked at only after it returned."""
+    import threading
+
+    found: list[str] = []
+    reader = threading.Thread(
+        target=lambda: found.append(process.stdout.readline() if process.stdout else ""), daemon=True
+    )
+    reader.start()
+    reader.join(limit)
+    if reader.is_alive() or not found:
+        raise TimeoutError(f"the harness said nothing in {limit:g} s")
+    return found[0].strip()
 
 
 # ── 1. the worker ends when the process that started it is killed ──
@@ -248,6 +256,10 @@ def main(argv: list[str]) -> int:
     if argv[:1] == ["task-holder"]:
         task_holder(argv[1])
         return 0
+    sys.path.insert(0, str(HERE.parent))
+    import real_daemon
+
+    real_daemon.time_limit("kill", 300)  # no check may hang: a CHECK line and exit 1 instead
     wanted = set(argv) or {"worker", "task"}
     results = []
     if "worker" in wanted:

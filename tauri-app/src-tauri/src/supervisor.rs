@@ -696,8 +696,38 @@ mod tests {
         assert!(descendants(&links, 99).is_empty());
     }
 
-    /// A real tree three levels deep, every level suspended on macOS and Linux: kill_tree ends all of it. Before 13
-    /// November 2026 the grandchild outlived it.
+    #[cfg(unix)]
+    fn suspend(pid: u32) {
+        // SAFETY: a plain signal to a process this test started.
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGSTOP) };
+    }
+
+    /// NtSuspendProcess, as psutil's suspend() (the real check's wrapper) does it.
+    #[cfg(windows)]
+    fn suspend(pid: u32) {
+        use std::ffi::c_void;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+            fn CloseHandle(handle: *mut c_void) -> i32;
+        }
+        #[link(name = "ntdll")]
+        extern "system" {
+            fn NtSuspendProcess(handle: *mut c_void) -> i32;
+        }
+        const PROCESS_SUSPEND_RESUME: u32 = 0x0800;
+        // SAFETY: a handle to a process this test started, used once and closed.
+        unsafe {
+            let handle = OpenProcess(PROCESS_SUSPEND_RESUME, 0, pid);
+            if !handle.is_null() {
+                NtSuspendProcess(handle);
+                CloseHandle(handle);
+            }
+        }
+    }
+
+    /// A real tree three levels deep, every level suspended (as a frozen daemon's tree is): kill_tree ends all of
+    /// it. Before 13 November 2026 the grandchild outlived it.
     #[test]
     fn kill_tree_ends_a_real_tree_three_levels_deep() {
         use sysinfo::{Pid, ProcessesToUpdate, System};
@@ -749,10 +779,9 @@ mod tests {
             std::thread::sleep(Duration::from_millis(100));
         }
         assert!(tree.len() >= 2, "the tree under the shell: {tree:?}");
-        #[cfg(unix)]
+        // Every level suspended, as the real check's wrapper freezes a hung daemon's tree.
         for pid in tree.iter().copied().chain([child.id()]) {
-            // SAFETY: a plain signal to a process this test started.
-            unsafe { libc::kill(pid as libc::pid_t, libc::SIGSTOP) };
+            suspend(pid);
         }
 
         kill_tree(&mut child);

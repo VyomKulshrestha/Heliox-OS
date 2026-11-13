@@ -33,6 +33,51 @@ def write_config(extra: str = "") -> None:
 
 
 _output: list[Path] = []  # where each daemon this process started wrote its stdout and stderr
+_started: list[subprocess.Popen] = []  # every daemon this process started, for the time limit's clean-up
+
+
+def time_limit(name: str, seconds: float, clean_up: Any = None) -> None:
+    """No check may hang. After ``seconds``, whatever it is waiting on: a CHECK line saying so, with every process
+    this check started that is still running (pid and name); then ``clean_up`` (firewall rules, mounts), every
+    process under this one is ended, suspended ones included, and the process exits with 1. The CI step's own time
+    limit is longer. Imports nothing from pilot, so a check that does not start a daemon can use it too."""
+    import threading
+
+    def expire() -> None:
+        import psutil
+
+        try:
+            under = psutil.Process().children(recursive=True)
+        except psutil.Error:
+            under = []
+        running = []
+        for process in under:
+            try:
+                running.append(f"{process.pid} {process.name()} {process.status()}")
+            except psutil.Error:
+                continue
+        print(
+            f"CHECK {name}/time-limit: FAIL - not finished after {seconds:g} s (the last line above is the step it "
+            f"was in); still running: {running}",
+            flush=True,
+        )
+        if clean_up is not None:
+            try:
+                clean_up()
+            except Exception as error:  # the exit below must happen whatever the clean-up does
+                print(f"INFO clean-up after the time limit failed: {type(error).__name__}: {error}", flush=True)
+        for process in under:
+            try:
+                process.kill()
+            except psutil.Error:
+                pass
+        for popen in _started:
+            end_tree(popen)
+        os._exit(1)
+
+    timer = threading.Timer(seconds, expire)
+    timer.daemon = True
+    timer.start()
 
 
 def start(env: dict[str, str] | None = None) -> subprocess.Popen:
@@ -44,12 +89,14 @@ def start(env: dict[str, str] | None = None) -> subprocess.Popen:
     path = folder / f"heliox-daemon-output-{os.getpid()}-{len(_output)}.log"
     _output.append(path)
     with open(path, "wb") as sink:  # the child keeps its own copy of the handle
-        return subprocess.Popen(
+        popen = subprocess.Popen(
             [sys.executable, "-m", "pilot.server"],
             stdout=sink,
             stderr=subprocess.STDOUT,
             env={**os.environ, **(env or {})},
         )
+    _started.append(popen)
+    return popen
 
 
 def output_tail(lines: int = 40) -> list[str]:

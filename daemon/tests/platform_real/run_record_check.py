@@ -39,6 +39,8 @@ sys.path.insert(0, str(HERE))
 
 import real_daemon  # noqa: E402
 
+real_daemon.time_limit("run-record", 300)  # no check may hang: a CHECK line and exit 1 instead
+
 results: list[bool] = []
 
 

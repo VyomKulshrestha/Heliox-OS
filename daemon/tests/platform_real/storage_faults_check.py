@@ -397,6 +397,7 @@ async def remounted_read_only() -> None:
 
 
 async def run() -> int:
+    real_daemon.time_limit("storage", 600, unmount)  # no check may hang; the test file system is let go first
     cases = [read_only_at_start, full_while_running]
     if sys.platform.startswith("linux"):
         cases.append(remounted_read_only)  # the kernel stopping a failing ext4: Linux only

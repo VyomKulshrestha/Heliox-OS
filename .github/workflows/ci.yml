@@ -1022,6 +1022,7 @@ jobs:
       # cargo and rustup folders stay the runner's.
       - name: The app's supervisor restarts a real daemon after a crash and after a hang
         continue-on-error: true
+        timeout-minutes: 15  # about three times what it needs; the check has its own limit inside
         working-directory: tauri-app/src-tauri
         run: |
           export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
@@ -1145,6 +1146,7 @@ jobs:
 
       - name: Hard kills (a worker's parent, a task in the middle)
         continue-on-error: true
+        timeout-minutes: 6  # about three times what it needs; the check has its own limit inside
         run: |
           export HOME="$RUNNER_TEMP/kill" USERPROFILE="$RUNNER_TEMP/kill"
           mkdir -p "$HOME"
@@ -1181,6 +1183,7 @@ jobs:
       - name: The network goes away in the middle of a request (the kernel drops the packets), then comes back
         if: runner.os == 'Linux'
         continue-on-error: true
+        timeout-minutes: 8  # about three times what it needs; the check has its own limit inside
         run: |
           export HOME="$RUNNER_TEMP/netdrop" USERPROFILE="$RUNNER_TEMP/netdrop" LOCALAPPDATA="$RUNNER_TEMP/netdrop/AppData/Local"
           mkdir -p "$HOME"
@@ -1188,6 +1191,7 @@ jobs:
 
       - name: A stand-in for sleep (the daemon frozen for 100 s, then let go)
         continue-on-error: true
+        timeout-minutes: 12  # about three times what it needs; the check has its own limit inside
         run: |
           export HOME="$RUNNER_TEMP/frozen" USERPROFILE="$RUNNER_TEMP/frozen" LOCALAPPDATA="$RUNNER_TEMP/frozen/AppData/Local"
           mkdir -p "$HOME"
@@ -1220,6 +1224,7 @@ jobs:
 
       - name: The last run, killed then stopped cleanly (startup_status says the unclean end once, the clean one never)
         continue-on-error: true
+        timeout-minutes: 6  # about three times what it needs; the check has its own limit inside
         run: |
           export HOME="$RUNNER_TEMP/runrecord" USERPROFILE="$RUNNER_TEMP/runrecord" LOCALAPPDATA="$RUNNER_TEMP/runrecord/AppData/Local"
           mkdir -p "$HOME"
@@ -1227,6 +1232,7 @@ jobs:
 
       - name: A full disk and a read-only data folder (Linux tmpfs and ext4, a macOS disk image, a Windows VHD)
         continue-on-error: true
+        timeout-minutes: 12  # about three times what it needs; the check has its own limit inside
         run: |
           export HOME="$RUNNER_TEMP/disk" USERPROFILE="$RUNNER_TEMP/disk" LOCALAPPDATA="$RUNNER_TEMP/disk/AppData/Local"
           mkdir -p "$HOME"

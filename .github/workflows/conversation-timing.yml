@@ -145,6 +145,7 @@ jobs:
       # outlives the daemon (it has no parent watch; it ends when its stdin closes). Uses the models fetched above.
       - name: The voice worker after a stop and after a hard kill
         continue-on-error: true
+        timeout-minutes: 10  # about three times what it needs; the check has its own limit inside
         env:
           HF_HUB_OFFLINE: "1"
           PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring

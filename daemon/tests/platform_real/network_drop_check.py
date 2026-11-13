@@ -25,6 +25,7 @@ import json
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from ci_only import require_runner
 
@@ -54,6 +55,12 @@ def restore() -> None:
     while rules:
         rule = rules.pop()
         subprocess.run(["sudo", "iptables", "-D", *rule, "-j", "DROP"], check=False)
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import real_daemon  # noqa: E402
+
+real_daemon.time_limit("network-drop", 420, restore)  # no check may hang; the packets flow again first
 
 
 async def serve() -> tuple[asyncio.AbstractServer, int]:

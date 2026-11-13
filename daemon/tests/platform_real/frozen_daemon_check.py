@@ -37,6 +37,8 @@ os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 import psutil  # noqa: E402
 import real_daemon  # noqa: E402
 
+real_daemon.time_limit("frozen", 600)  # no check may hang: a CHECK line and exit 1 instead
+
 FROZEN = 100.0  # seconds: past the reminder (60 s) and past WAKE_THRESHOLD_SECONDS (60 s) plus a check
 ANSWER_BOUND = 10.0
 WAKE_BOUND = 15.0  # the wake watch looks every 5 s

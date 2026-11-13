@@ -11,7 +11,23 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 type DaemonSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+/// The longest a connection and its sign-in may take. A daemon that is suspended or stuck still has its port
+/// accepted by the system, so without a limit the websocket handshake waited for ever (the real supervisor check
+/// hung on Windows on 2f6f461 and 5816eb0 waiting on such a daemon).
+const CONNECT_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 async fn connect_authenticated_to(url: &str, auth_token: &str) -> Result<DaemonSocket, String> {
+    tokio::time::timeout(CONNECT_LIMIT, connect_and_sign_in(url, auth_token))
+        .await
+        .map_err(|_| {
+            format!(
+                "The daemon did not let the app sign in within {} s",
+                CONNECT_LIMIT.as_secs()
+            )
+        })?
+}
+
+async fn connect_and_sign_in(url: &str, auth_token: &str) -> Result<DaemonSocket, String> {
     if auth_token.is_empty() {
         return Err("Daemon authentication token is unavailable".to_string());
     }
@@ -1008,6 +1024,26 @@ mod tests {
     use super::*;
     use tokio::net::TcpListener;
     use tokio_tungstenite::accept_async;
+
+    /// A daemon that takes the connection and never completes the handshake (suspended, stuck): the app gives up
+    /// after CONNECT_LIMIT instead of waiting for ever.
+    #[tokio::test]
+    async fn a_daemon_that_never_answers_the_handshake_is_given_up_on() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await; // holds the connection, says nothing
+        });
+        let started = std::time::Instant::now();
+
+        let outcome = connect_authenticated_to(&format!("ws://{address}"), "test-token").await;
+
+        assert!(outcome.unwrap_err().contains("did not let the app sign in"));
+        let took = started.elapsed();
+        assert!(took >= CONNECT_LIMIT && took < CONNECT_LIMIT + std::time::Duration::from_secs(5));
+        server.abort();
+    }
 
     #[tokio::test]
     async fn daemon_bridge_authenticates_before_returning_socket() {

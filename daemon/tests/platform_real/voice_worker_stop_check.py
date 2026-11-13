@@ -51,6 +51,8 @@ os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 import psutil  # noqa: E402
 import real_daemon  # noqa: E402
 
+real_daemon.time_limit("voice-worker-stop", 480)  # no check may hang: a CHECK line and exit 1 instead
+
 STOP_BOUND = 30.0
 WORKER_BOUND = 10.0  # after the daemon is gone, loading or idle (the parent watch)
 GIVE_UP = 150.0  # how long it looks before calling the worker left behind
