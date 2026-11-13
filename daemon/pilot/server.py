@@ -617,6 +617,8 @@ ANSWERED_HELIOX_QUESTION: contextvars.ContextVar[str] = contextvars.ContextVar("
 REACH_LIMITED: contextvars.ContextVar[bool] = contextvars.ContextVar("heliox_reach_limited", default=False)
 # How an utterance must be known to be addressed before the fast model's connection is warmed for it.
 # A doubtful follow-up, or anything the addressing rule has not taken, never warms it.
+VOICE_PREPARE_REASONS = frozenset({"focus", "typing"})
+VOICE_PREPARE_SECONDS = 2.0  # voice_prepare from the window: repeats within this are ignored
 QUIET_FOR_MAKING_SECONDS = 1.0  # making fixed sentences ahead waits for this long with nothing heard
 WARM_FOR = frozenset({"wake", "button", "follow_up", "continuation", "live_reply"})
 
@@ -1243,6 +1245,7 @@ class PilotServer:
         self._recent_companion_context = ""
         self._recent_companion_context_by_session: dict[str, str] = {}
         self._tts_warmup_task: asyncio.Task[None] | None = None
+        self._voice_prepared_at = float("-inf")  # the last voice_prepare acted on (_handle_voice_prepare)
         self._rss_agent: Any = None
         # ── LAN Mesh Network ──
         self._mesh: Any = None
@@ -2221,6 +2224,7 @@ class PilotServer:
             "live_status": self._handle_live_status,
             "live_set": self._handle_live_set,
             "live_feedback": self._handle_live_feedback,
+            "voice_prepare": self._handle_voice_prepare,
             "offers": self._handle_offers,
             "live_shell": self._handle_live_shell,
             "getting_to_know": self._handle_getting_to_know,
@@ -8257,8 +8261,30 @@ class PilotServer:
         verdict = str(params.get("verdict", ""))
         if self._live is None or verdict not in ("helpful", "dismissed", "used_fix", "mute"):
             return {"status": "error", "message": "verdict must be helpful, dismissed, used_fix or mute"}
+        self._prewarm_voice()  # the person is answering Heliox: its voice may be wanted next
         # A button on the card is the person's own answer: "Not now" holds that kind back as saying it does.
         return await self._live.feedback(str(params.get("id", "")), verdict, from_person=True)
+
+    async def _handle_voice_prepare(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Heliox's window says the person may talk or type to Heliox soon (``reason``: "focus" when the window gained
+        focus, "typing" when typing began in its box): start loading the local voice if it is released. The window
+        tells it; nothing about other programs is read. Harmless from a second or stale window: it only asks for a
+        load that is started once and refused when memory is short, and repeats within VOICE_PREPARE_SECONDS are
+        ignored."""
+        reason = str(params.get("reason", ""))
+        if reason not in VOICE_PREPARE_REASONS:
+            return {"status": "error", "message": "reason must be focus or typing"}
+        now = time.monotonic()
+        if now - self._voice_prepared_at < VOICE_PREPARE_SECONDS:
+            return {"status": "ok", "started": False}
+        self._voice_prepared_at = now
+        from pilot.system.local_tts_worker import LOCAL_ENGINES, manager
+
+        if self.config.voice.tts_engine not in LOCAL_ENGINES or manager().running:
+            return {"status": "ok", "started": False}
+        logger.info("Heliox's window says it may be used (%s): loading the local voice", reason)
+        self._prewarm_voice()
+        return {"status": "ok", "started": True}
 
     async def _handle_live_explain(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         if self._live is None:

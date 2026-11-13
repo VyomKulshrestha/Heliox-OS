@@ -1,5 +1,6 @@
 <script lang="ts">
   import { session } from "../stores/session";
+  import { voiceMayBeWanted } from "../voiceUse";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { listen } from "@tauri-apps/api/event";
@@ -169,6 +170,7 @@
       aria-label={placeholder}
       {placeholder}
       onkeydown={handleKeydown}
+      oninput={() => voiceMayBeWanted("typing")}
       autocomplete="off"
       spellcheck="false"></textarea>
 

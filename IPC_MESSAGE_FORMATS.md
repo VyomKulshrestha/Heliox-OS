@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **337 WebSocket RPC methods**. That is the API
+The daemon currently registers **338 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -642,6 +642,13 @@ Offers are computed on this computer (`pilot.personal.offers`), at most one an h
 
 Notifications: `offer {id, key, kind, text, request}` and `offer_withdrawn {id, reason}` (answered on the card, by
 voice or in chat).
+
+#### `voice_prepare`
+`voice_prepare {reason}` with `focus` (Heliox's window gained focus) or `typing` (typing began in its box) ->
+`{"status": "ok", "started": bool}`. Heliox's own window sends it so the local voice starts loading when it is
+released, before there is anything to say; the daemon reads nothing about other programs for it. Repeats within 2 s
+are ignored, and a load is refused when memory is short, so a second or stale window can do no harm. An unknown
+reason returns `{"status": "error"}`.
 
 #### `live_status` / `live_set` / `live_feedback` / `live_explain` (Heliox Live, `[live]`)
 The always-on companion (`pilot.live`). Off by default; `[live] enabled` or "be my live companion" turns it on.

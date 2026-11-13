@@ -15,6 +15,7 @@
   import FocusBanner from "./lib/components/FocusBanner.svelte";
   import CommandPalette from "./lib/components/CommandPalette.svelte";
   import { onNotification, offNotification } from "./lib/api/daemon";
+  import { voiceMayBeWanted } from "./lib/voiceUse";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
   import SetupWizard from "./lib/components/SetupWizard.svelte";
   import FirstRunInstall from "./lib/components/FirstRunInstall.svelte";
@@ -294,6 +295,7 @@
 </script>
 
 <svelte:document onvisibilitychange={() => (documentVisible = document.visibilityState === "visible")} />
+<svelte:window onfocus={() => voiceMayBeWanted("focus")} />
 <FirstRunInstall />
 {#if showWizard}
   <SetupWizard oncomplete={onSetupComplete} />
