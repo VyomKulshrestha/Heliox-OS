@@ -20,6 +20,9 @@ on:
       - "tauri-app/src-tauri/**"
       - "tauri-app/package.json"
       - "tauri-app/package-lock.json"
+      - "tauri-app/ui/package.json"
+      - "tauri-app/ui/package-lock.json"
+      - "daemon/tests/platform_real/build_inputs_check.sh"
       - "tauri-app/ui/src/lib/firstRun*"
       - "tauri-app/ui/src/lib/components/FirstRunInstall.svelte"
       - "daemon/tests/platform_real/deb_install_check.*"
@@ -47,6 +50,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tauri-app/ui/package-lock.json
+
+      - name: The build's inputs are consistent (a minute, before the long build)
+        timeout-minutes: 5
+        run: bash daemon/tests/platform_real/build_inputs_check.sh
+
       - name: Install the build dependencies (as the release job does)
         run: |
           sudo apt-get update -q
@@ -62,19 +76,22 @@ jobs:
           workspaces: "tauri-app/src-tauri -> target"
           key: linux-package-release
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: tauri-app/ui/package-lock.json
+      - name: Install the page's dependencies (as the release job does)
+        working-directory: tauri-app/ui
+        run: npm ci
 
-      - name: Build the .deb, the .rpm and the AppImage (release build)
+      # The release's own build: the same action, version and projectPath. Without tagName, releaseName or releaseId
+      # it creates no release and uploads nothing, and the job's token can only read.
+      - name: Build the .deb, the .rpm and the AppImage (as the release builds them)
         id: build
         timeout-minutes: 45
+        uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: "tauri-app"
+          args: "--bundles deb,rpm,appimage"
+
+      - name: The built packages
         run: |
-          (cd tauri-app/ui && npm ci)
-          (cd tauri-app && npm ci && npx tauri build --bundles deb,rpm,appimage)
           ls -l tauri-app/src-tauri/target/release/bundle/deb tauri-app/src-tauri/target/release/bundle/rpm \
             tauri-app/src-tauri/target/release/bundle/appimage
 

@@ -15,6 +15,9 @@ on:
       - "tauri-app/src-tauri/**"
       - "tauri-app/package.json"
       - "tauri-app/package-lock.json"
+      - "tauri-app/ui/package.json"
+      - "tauri-app/ui/package-lock.json"
+      - "daemon/tests/platform_real/build_inputs_check.sh"
       - "tauri-app/ui/src/lib/firstRun*"
       - "tauri-app/ui/src/lib/components/FirstRunInstall.svelte"
       - "daemon/tests/platform_real/windows_package_check.py"
@@ -42,6 +45,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tauri-app/ui/package-lock.json
+
+      - name: The build's inputs are consistent (a minute, before the long build)
+        timeout-minutes: 5
+        run: bash daemon/tests/platform_real/build_inputs_check.sh
+
       - name: Setup Python (for the check itself)
         uses: actions/setup-python@v6
         with:
@@ -56,19 +70,21 @@ jobs:
           workspaces: "tauri-app/src-tauri -> target"
           key: windows-package-release
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: tauri-app/ui/package-lock.json
+      - name: Install the page's dependencies (as the release job does)
+        working-directory: tauri-app/ui
+        run: npm ci
 
-      - name: Build the NSIS installer (release build)
+      # The release's own build: the same action, version and projectPath. Without tagName, releaseName or releaseId
+      # it creates no release and uploads nothing, and the job's token can only read.
+      - name: Build the NSIS installer (as the release builds it)
         timeout-minutes: 50
-        run: |
-          (cd tauri-app/ui && npm ci)
-          (cd tauri-app && npm ci && npx tauri build --bundles nsis)
-          ls -l tauri-app/src-tauri/target/release/bundle/nsis
+        uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: "tauri-app"
+          args: "--bundles nsis"
+
+      - name: The built installer
+        run: ls -l tauri-app/src-tauri/target/release/bundle/nsis
 
       - name: Install, set up, use and uninstall it
         timeout-minutes: 45
