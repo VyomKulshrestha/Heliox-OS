@@ -349,3 +349,53 @@ def test_a_timed_method_logs_each_call_and_is_wrapped_once():
 
     assert calls == [(voice_latency.RECOGNISER, "smart turn")]
     voice_latency._time_method(log, None, "probability", "smart turn")  # no detector: nothing to time
+
+
+def test_a_turn_carries_its_warm_up_stamps_and_its_first_sentences_length():
+    vl = voice_latency
+    events = [
+        _event(19.5, vl.MODEL_WARM_STARTED, audio_t=11.5),
+        _event(20.0, tl.LAST_WORD, audio_t=12.0),
+        _event(20.6, tl.DISPATCH, audio_t=12.6),
+        _event(20.6, vl.TRACE + "request sent", audio_t=12.6),
+        _event(20.9, vl.MODEL_WARM, opened=True, audio_t=12.9),
+        tl.Event(
+            t=21.6,
+            event=tl.SPEAKS,
+            detail="The capital of Australia is Canberra.",
+            data={"setup": False, "audio_t": 13.6},
+        ),  # fmt: skip
+        _event(22.7, tl.AUDIO_STARTS, audio_t=14.7),
+    ]
+    got = vl.stages(events)
+
+    assert got["warm_at_request"] == "in progress"
+    assert got["warm_started"]["audio"] == -0.5 and got["warm_done"]["audio"] == 0.9
+    assert got["request"]["audio"] == 0.6
+    assert got["first_sentence_words"] == 6 and got["synthesis_s"] == 1.1
+
+
+def test_the_warm_up_and_synthesis_tables():
+    vl = voice_latency
+    rows = [
+        {"route": "model answer", "warm_at_request": "in progress", "warm_started": {"audio": -0.5},
+         "warm_done": {"audio": 0.9}, "request": {"audio": 0.6}, "first_sentence_words": 3, "synthesis_s": 0.8,
+         "cpu_percent": 10.0},
+        {"route": "model answer", "warm_at_request": "finished", "warm_started": {"audio": -1.5},
+         "warm_done": {"audio": 0.1}, "request": {"audio": 0.5}, "first_sentence_words": 10, "synthesis_s": 1.2,
+         "cpu_percent": 10.0},
+        {"route": "local answer", "first_sentence_words": 7, "synthesis_s": 1.0, "cpu_percent": 90.0},
+    ]  # fmt: skip
+
+    warm = vl.warm_up_table(rows)
+    assert (warm["turns"], warm["finished"], warm["in progress"], warm["none"]) == (2, 1, 1, 0)
+    assert warm["request sent"] == 0.55
+
+    table = vl.synthesis_table(rows, 50.0)
+    assert table["1-4"] == {"n": 1, "median_s": 0.8, "min_s": 0.8, "max_s": 0.8}
+    assert table["9-12"]["n"] == 1 and table["5-8"]["n"] == 0  # the loaded turn is left out
+    assert vl.length_band(20) == "13+"
+
+
+def test_every_mode_is_named():
+    assert voice_latency.MODES == ("full", "first-utterance", "warm-up", "synthesis")

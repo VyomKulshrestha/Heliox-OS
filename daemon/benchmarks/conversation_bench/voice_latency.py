@@ -43,6 +43,17 @@ minutes) and refuses on a busy machine unless ``--allow-busy``; it samples the l
 beside each number. A number taken at 50 % or more is marked "under load" and is not a measurement of Heliox.
 
 Scenario names are not printed for the person's own recordings, only a short code, and no words of theirs.
+
+Modes (``--mode``), so each measurement others depend on is one command and its table lines up run to run:
+
+- ``full`` (the default): the person's recordings and the synthetic model turns, every table below.
+- ``first-utterance``: the first of the chosen recordings straight after start-up ("cold"), then every recogniser is
+  given one call on a short clip by the bench, then the same recording again ("warmed"). Each recogniser's first
+  call against its later ones is printed with it.
+- ``warm-up``: the synthetic model turns only, with the model connection's own stamps per turn: when its warm-up
+  started and ended against "request sent", and how many requests went out on a finished, a running or no warm-up.
+- ``synthesis``: the same turns as ``full``, reported as the time from the first sentence handed to the voice to its
+  first sound, by the first sentence's length in words.
 """
 
 from __future__ import annotations
@@ -110,6 +121,8 @@ MODEL_TURNS = (
 )
 MODEL_TURN_VOICES = (("af_bella", 1.0), ("am_michael", 1.0), ("bm_lewis", 1.0))
 MODEL_TURN_FOLDER = "model_turns"
+MODES = ("full", "first-utterance", "warm-up", "synthesis")
+LENGTHS = ((1, 4), (5, 8), (9, 12), (13, 10_000))  # words in the first sentence
 
 
 # Stamps --------------------------------------------------------------------------------------------------------
@@ -165,7 +178,51 @@ def stages(events: list[tl.Event]) -> dict[str, Any] | None:
     sent = next((e for e in after if e.event == TRACE + "request sent"), None)
     out["warm_before_handover"] = warm_state(events, handed) == "finished"
     out["warm_at_request"] = warm_state(events, sent or handed)
+    reference = sent or handed
+    if reference is not None:
+        before = [e for e in events if e.t <= reference.t]
+        started_warm = next((e for e in reversed(before) if e.event == MODEL_WARM_STARTED), None)
+        ended = next((e for e in events if e.event == MODEL_WARM and started_warm is not None
+                      and e.t >= started_warm.t), None)  # fmt: skip
+        out["warm_started"] = None if started_warm is None else stamp(started_warm)
+        out["warm_done"] = None if ended is None else stamp(ended)
+        out["request"] = stamp(reference)
+    answer = picked["first sentence"]
+    if answer is not None:
+        out["first_sentence_words"] = len(answer.detail.split())
+        heard = out.get("answer sound")
+        out["synthesis_s"] = None if heard is None else round(heard["audio"] - out["first sentence"]["audio"], 3)
     return out
+
+
+def length_band(words: int) -> str:
+    return next(f"{low}-{high}" if high < 10_000 else f"{low}+" for low, high in LENGTHS if low <= words <= high)
+
+
+def synthesis_table(rows: list[dict[str, Any]], threshold: float) -> dict[str, dict[str, Any]]:
+    """First sentence handed to the voice to its first sound, by the sentence's length in words (quiet turns)."""
+    out: dict[str, dict[str, Any]] = {}
+    for low, high in LENGTHS:
+        band = length_band(low)
+        values = [r["synthesis_s"] for r in rows if r.get("synthesis_s") is not None
+                  and low <= r.get("first_sentence_words", 0) <= high
+                  and not machine.is_busy(r.get("cpu_percent"), threshold)]  # fmt: skip
+        out[band] = {"n": len(values), "median_s": _median(values),
+                     "min_s": min(values) if values else None, "max_s": max(values) if values else None}  # fmt: skip
+    return out
+
+
+def warm_up_table(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The model turns' warm-up at the request: how many finished, running, none; and its stamps (median)."""
+    turns = [r for r in rows if r.get("route") == "model answer"]
+    counts = {state: sum(r.get("warm_at_request") == state for r in turns) for state in ("finished", "in progress",
+                                                                                           "none")}  # fmt: skip
+
+    def median_of(key: str) -> float | None:
+        return _median([r[key]["audio"] for r in turns if r.get(key)])
+
+    return {"turns": len(turns), **counts, "warm-up started": median_of("warm_started"),
+            "warm-up done": median_of("warm_done"), "request sent": median_of("request")}  # fmt: skip
 
 
 def warm_state(events: list[tl.Event], at: tl.Event | None) -> str:
@@ -321,6 +378,37 @@ def _time_method(log: Any, target: Any, name: str, label: str) -> None:
         setattr(target, name, timed)
     except (AttributeError, TypeError):  # a compiled object that does not take attributes: not timed
         return
+
+
+async def warm_recognisers(harness: Any, clip: Path) -> list[str]:
+    """One call on each recogniser on ``clip``, as a start-up warm-up would make; returns which were called."""
+    import numpy as np
+
+    listener = harness.listener
+    samples = wavio.read(clip).astype(np.float32) / 32768.0
+    called = []
+    whisper = getattr(listener, "_transcribe_whisper_text", None)
+    if whisper is not None:
+        await whisper(str(clip), language="en")
+        called.append("whisper")
+    parakeet = listener._parakeet()
+    if parakeet is not None:
+        await asyncio.to_thread(parakeet.transcribe, samples)
+        called.append("parakeet")
+    detector = getattr(listener, "_turn_detector", None)
+    if detector is not None and getattr(detector, "ready", False):
+        await asyncio.to_thread(detector.probability, samples)
+        called.append("smart turn")
+    streaming = getattr(listener, "_streaming", None)
+    recognizer = getattr(streaming, "_recognizer", None)
+    if recognizer is not None:
+        stream = recognizer.create_stream()
+        stream.accept_waveform(16000, samples)
+        stream.input_finished()
+        while recognizer.is_ready(stream):
+            recognizer.decode_stream(stream)
+        called.append("streaming decode")
+    return called
 
 
 # The talk model -------------------------------------------------------------------------------------------------
@@ -532,6 +620,12 @@ async def _main(args: argparse.Namespace) -> int:
                       owner_settings=True)  # fmt: skip
     own = [s for s in load_all() if not s.pending and any(s.id.startswith(p) for p in args.only.split(",") if p)]
     synthetic = model_turn_scenarios(args.model_turns)
+    if args.mode == "first-utterance":
+        own, plan = own[:1], own[:1]  # the same recording, cold and then warmed
+    elif args.mode == "warm-up":
+        plan = synthetic
+    else:
+        plan = own + synthetic
     made = render_model_turns(root, synthetic)  # into the bench root, before the server and its voice load
     if made:
         print(f"rendered {made} synthetic model-turn clips with the local voice")
@@ -565,7 +659,12 @@ async def _main(args: argparse.Namespace) -> int:
     rows: list[dict[str, Any]] = []
     model_turns_seen = 0
     try:
-        for scenario in own + synthetic:
+        warmed = False
+        for index, scenario in enumerate(plan + (own if args.mode == "first-utterance" else [])):
+            if args.mode == "first-utterance" and index == len(plan) and not warmed:
+                called = await warm_recognisers(harness, root / synthetic[0].steps[0].say)
+                warmed = True
+                print(f"warmed by the bench: {', '.join(called)}", flush=True)
             synthetic_turn = scenario in synthetic
             harness.audio_root = str(root) if synthetic_turn else args.audio
             cpu = machine.cpu_percent(1.0)
@@ -579,6 +678,8 @@ async def _main(args: argparse.Namespace) -> int:
                    "seconds": None if sound is None else sound["audio"], **found,
                    "dropped": drop_reason(events, _expected_silent(scenario)),
                    "closed_at": events[-1].t if events else None}  # fmt: skip
+            if args.mode == "first-utterance":
+                row["state"] = "warmed" if warmed else "cold (first after start-up)"
             if row.get("route") == "model answer":
                 model_turns_seen += 1
                 row["first after start-up"] = model_turns_seen == 1
@@ -594,7 +695,8 @@ async def _main(args: argparse.Namespace) -> int:
                     extra = f", connection warm-up at the request: {warm}" if args.model == "configured" else ""
                     extra += ", first model turn after start-up" if row["first after start-up"] else ""
                 shown = f"{row['route']}: {sound['audio']:.2f} s{extra}"
-            print(f"{row['case']}{label}: {shown}, CPU {worst} %{mark}", flush=True)
+            state = f" [{row['state']}]" if row.get("state") else ""
+            print(f"{row['case']}{label}{state}: {shown}, CPU {worst} %{mark}", flush=True)
             if found:
                 print("   " + stage_line(found, worst, args.threshold), flush=True)
         session = harness.log.since(0.0)
@@ -607,10 +709,14 @@ async def _main(args: argparse.Namespace) -> int:
             print(f"no sound, why: {row['case']}: {row['dropped']}")
     recognisers = recogniser_summary(session)
     recognisers["kokoro (first sentence to first sound)"] = synthesis_summary(session)
-    result = {"model": args.model, "threshold": args.threshold, "rows": rows,
+    result = {"mode": args.mode, "model": args.model, "threshold": args.threshold, "rows": rows,
               "summary": summary(rows, args.threshold), "recognisers": recognisers,
+              "warm_up": warm_up_table(rows), "synthesis_by_length": synthesis_table(rows, args.threshold),
               "calls": None if cap is None else {"made": cap.calls, "refused": cap.refused}}  # fmt: skip
-    print(json.dumps({k: result[k] for k in ("summary", "recognisers", "calls")}, indent=1))
+    shown = {"full": ("summary", "recognisers", "warm_up", "synthesis_by_length", "calls"),
+             "first-utterance": ("recognisers",), "warm-up": ("warm_up", "calls"),
+             "synthesis": ("synthesis_by_length",)}[args.mode]  # fmt: skip
+    print(json.dumps({k: result[k] for k in shown}, indent=1))
     if args.out:
         Path(args.out).write_text(json.dumps(result, indent=1), encoding="utf-8")
     return 0
@@ -643,6 +749,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--audio", default=None)
     parser.add_argument("--only", default="u-real", help="comma-separated scenario id prefixes")
     parser.add_argument("--model-turns", type=int, default=12, help="synthetic questions for the talk model")
+    parser.add_argument("--mode", choices=MODES, default="full", help="which measurement (see the module text)")
     parser.add_argument("--model", choices=("stub", "configured"), default="stub")
     parser.add_argument("--paid", action="store_true", help="with --model configured: spend the printed bound")
     parser.add_argument("--max-calls", type=int, default=PAID_CALLS_AT_MOST)
