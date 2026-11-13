@@ -1,0 +1,86 @@
+name: "Windows installer, install to uninstall"
+
+# The Windows installer a person downloads (Tauri's NSIS bundle, release build, as the release job builds it),
+# installed silently for the current user on windows-latest, the environment set up with the script the app embeds,
+# the installed app starting its daemon, then the uninstaller run silently: what it ends, takes, leaves (in
+# FIRST_RUN.md's three kinds) and holds open, and what its interactive wording and "delete app data" box say, read
+# from the built installer's script (daemon/tests/platform_real/windows_package_check.py). The .msi is not covered.
+# A release build is slow, so this runs when the app, its bundle settings, the installer hooks or this check change
+# on main, nightly, and by hand; never on every push.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tauri-app/src-tauri/**"
+      - "tauri-app/package.json"
+      - "tauri-app/package-lock.json"
+      - "tauri-app/ui/src/lib/firstRun*"
+      - "tauri-app/ui/src/lib/components/FirstRunInstall.svelte"
+      - "daemon/tests/platform_real/windows_package_check.py"
+      - "daemon/tests/platform_real/first_run_rpc_check.py"
+      - ".github/workflows/windows-package.yml"
+  schedule:
+    - cron: "47 2 * * *" # nightly, 02:47 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-package:
+    name: Windows installer, install to uninstall
+    runs-on: windows-latest
+    timeout-minutes: 100
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python (for the check itself)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "tauri-app/src-tauri -> target"
+          key: windows-package-release
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tauri-app/ui/package-lock.json
+
+      - name: Build the NSIS installer (release build)
+        timeout-minutes: 50
+        run: |
+          (cd tauri-app/ui && npm ci)
+          (cd tauri-app && npm ci && npx tauri build --bundles nsis)
+          ls -l tauri-app/src-tauri/target/release/bundle/nsis
+
+      - name: Install, set up, use and uninstall it
+        timeout-minutes: 45
+        run: |
+          python -m pip install --disable-pip-version-check -q psutil
+          setup_exe="$(ls tauri-app/src-tauri/target/release/bundle/nsis/*-setup.exe | head -1)"
+          set +e
+          python daemon/tests/platform_real/windows_package_check.py "$(cygpath -w "$setup_exe")" \
+            "$(cygpath -w tauri-app/src-tauri/target/release/nsis/x64/installer.nsi)"
+          status=$?
+          for log in "$RUNNER_TEMP"/windows-package/*.log; do
+            [ -f "$log" ] && { echo "--- $(basename "$log")"; tail -40 "$log"; }
+          done
+          echo "--- daemon log"; tail -40 "$HOME/.local/state/heliox-os/pilot.log" 2>/dev/null
+          exit $status

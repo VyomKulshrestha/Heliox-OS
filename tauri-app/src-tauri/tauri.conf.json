@@ -47,7 +47,10 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "both"
+        "installMode": "both",
+        "installerHooks": "windows/installer-hooks.nsh",
+        "languages": ["English"],
+        "customLanguageFiles": { "English": "windows/English.nsh" }
       }
     },
     "macOS": {

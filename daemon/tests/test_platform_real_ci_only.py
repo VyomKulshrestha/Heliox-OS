@@ -32,6 +32,7 @@ GUARDED = (
     "frozen_daemon_check.py",
     "run_record_check.py",
     "deb_install_check.py",  # installs a package and creates a user, in a container
+    "windows_package_check.py",  # installs and uninstalls the app in the real profile
     # the desktop drivers: they open windows and type, click or show notifications
     "app_launch_check.py",
     "apps_check.py",
