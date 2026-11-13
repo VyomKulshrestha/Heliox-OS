@@ -282,11 +282,15 @@ class Harness:
         pace: float = 1.0,
         configure: Callable[[Any], None] | None = None,
         owner_settings: bool = False,
+        wait_until_ready: bool = True,
     ) -> None:
         self.configure = configure  # adjusts the loaded settings before the server is built (CI: models it fetched)
         # A local run: the person's [model] and named [voice] settings copied, the speech models read in place
         # (bench_root). Off on a runner, which has neither.
         self.owner_settings = owner_settings
+        # False: the first scenario may start while the listener's recognisers and the local voice are still
+        # loading, as a person who speaks right after start-up would (the first-utterance mode's "during loading").
+        self.wait_until_ready = wait_until_ready
         self.copied_settings: list[str] = []
         self.models_found: dict[str, str] = {}
         self.audio_root = audio_root
@@ -570,6 +574,9 @@ class Harness:
                 )
 
         self._vad_watch = asyncio.ensure_future(watch_voice_activity())
+        if not self.wait_until_ready:
+            log("ready", "not waited for")
+            return
         for _ in range(900):
             if listener._streaming is not None and listener._streaming.ready and listener._turn_detector is not None:
                 break

@@ -413,3 +413,18 @@ def test_the_layers_warm_up_done_stamp_counts_as_finished_only_when_the_connecti
 
     assert vl.warm_state([start, answered, request], request) == "finished"
     assert vl.warm_state([start, unanswered, request], request) == "in progress"
+
+
+def test_a_sentence_said_while_loading_is_reported_by_the_listeners_own_statuses():
+    vl = voice_latency
+    session = [
+        tl.Event(t=1.0, event="voice status", detail="hearing_loading"),
+        tl.Event(t=2.0, event="voice status", detail="listening"),
+        tl.Event(t=9.0, event="voice status", detail="hearing_ready"),
+        tl.Event(t=30.0, event="voice status", detail="hearing_not_ready"),
+    ]
+
+    assert vl.hearing_statuses(session, 0.0, 20.0, 5.0) == ["hearing_loading at -4.00 s", "hearing_ready at +4.00 s"]
+    assert vl.hearing_statuses(session, 0.0, 20.0, None) == ["hearing_loading", "hearing_ready"]
+    asked = [tl.Event(t=3.0, event="voice status", detail="hearing_not_ready")]
+    assert vl.drop_reason(asked, False) == "came before the listener was ready, asked to say it again"

@@ -49,7 +49,10 @@ Modes (``--mode``), so each measurement others depend on is one command and its 
 - ``full`` (the default): the person's recordings and the synthetic model turns, every table below.
 - ``first-utterance``: the first of the chosen recordings straight after start-up ("cold"), then every recogniser is
   given one call on a short clip by the bench, then the same recording again ("warmed"). Each recogniser's first
-  call against its later ones is printed with it.
+  call against its later ones is printed with it. With ``--during-loading`` the recording is played at once, while
+  the listener's models are still loading, and again after the listener says "hearing_ready"; each row prints the
+  listener's own hearing statuses (hearing_loading, hearing_ready, hearing_not_ready) with their times, so a
+  sentence held and read, or asked for again, is told from one that was lost.
 - ``warm-up``: the synthetic model turns only, with the model connection's own stamps per turn: when its warm-up
   started and ended against "request sent", and how many requests went out on a finished, a running or no warm-up.
 - ``synthesis``: the same turns as ``full``, reported as the time from the first sentence handed to the voice to its
@@ -122,6 +125,7 @@ MODEL_TURNS = (
 MODEL_TURN_VOICES = (("af_bella", 1.0), ("am_michael", 1.0), ("bm_lewis", 1.0))
 MODEL_TURN_FOLDER = "model_turns"
 MODES = ("full", "first-utterance", "warm-up", "synthesis")
+HEARING = ("hearing_loading", "hearing_ready", "hearing_not_ready")
 LENGTHS = ((1, 4), (5, 8), (9, 12), (13, 10_000))  # words in the first sentence
 
 
@@ -271,6 +275,8 @@ def drop_reason(events: list[tl.Event], expected_silent: bool) -> str | None:
 
     if any(e.event == tl.AUDIO_STARTS and not e.data.get("setup") for e in events):
         return None
+    if any(e.event == "voice status" and e.detail == "hearing_not_ready" for e in events):
+        return "came before the listener was ready, asked to say it again"
     if expected_silent:
         return "expected (scenario expects it ignored)"
     words = tl.all_of(events, tl.TRANSCRIPT)
@@ -283,6 +289,16 @@ def drop_reason(events: list[tl.Event], expected_silent: bool) -> str | None:
     if not loose_wake_prefix(heard):
         return "no wake phrase in the wake pass"
     return "wake phrase heard, not taken as addressed"
+
+
+def hearing_statuses(session: list[tl.Event], since: float, until: float, last_word: float | None) -> list[str]:
+    """The listener's hearing statuses between two moments, each with its time after the row's last word."""
+    out = []
+    for e in session:
+        if e.event == "voice status" and e.detail in HEARING and since <= e.t <= until:
+            when = "" if last_word is None else f" at {e.t - last_word:+.2f} s"
+            out.append(f"{e.detail}{when}")
+    return out
 
 
 def recogniser_summary(events: list[tl.Event]) -> dict[str, dict[str, Any]]:
@@ -626,8 +642,9 @@ async def _main(args: argparse.Namespace) -> int:
             config, ("conversation",), only=CONVERSATION_FIELDS)) or "none")  # fmt: skip
 
     root = Path(args.root)
+    loading = args.mode == "first-utterance" and args.during_loading
     harness = Harness(audio_root=args.audio, data_dir=root, model=KINDS["cloud"], configure=configure,
-                      owner_settings=True)  # fmt: skip
+                      owner_settings=True, wait_until_ready=not loading)  # fmt: skip
     own = [s for s in load_all() if not s.pending and any(s.id.startswith(p) for p in args.only.split(",") if p)]
     synthetic = model_turn_scenarios(args.model_turns)
     if args.mode == "first-utterance":
@@ -672,9 +689,14 @@ async def _main(args: argparse.Namespace) -> int:
         warmed = False
         for index, scenario in enumerate(plan + (own if args.mode == "first-utterance" else [])):
             if args.mode == "first-utterance" and index == len(plan) and not warmed:
-                called = await warm_recognisers(harness, root / synthetic[0].steps[0].say)
+                if loading:
+                    ready = await harness._wait(lambda: any(e.event == "voice status" and e.detail == "hearing_ready"
+                                                            for e in harness.log.since(0.0)), 120)  # fmt: skip
+                    print(f"listener said hearing_ready: {'yes' if ready else 'not within 120 s'}", flush=True)
+                else:
+                    called = await warm_recognisers(harness, root / synthetic[0].steps[0].say)
+                    print(f"warmed by the bench: {', '.join(called)}", flush=True)
                 warmed = True
-                print(f"warmed by the bench: {', '.join(called)}", flush=True)
             synthetic_turn = scenario in synthetic
             harness.audio_root = str(root) if synthetic_turn else args.audio
             cpu = machine.cpu_percent(1.0)
@@ -689,7 +711,14 @@ async def _main(args: argparse.Namespace) -> int:
                    "dropped": drop_reason(events, _expected_silent(scenario)),
                    "closed_at": events[-1].t if events else None}  # fmt: skip
             if args.mode == "first-utterance":
-                row["state"] = "warmed" if warmed else "cold (first after start-up)"
+                if loading:
+                    row["state"] = "after hearing_ready" if warmed else "during loading"
+                else:
+                    row["state"] = "warmed" if warmed else "cold (first after start-up)"
+                last = tl.all_of(events, tl.LAST_WORD)
+                since = rows[-1]["closed_at"] if rows and rows[-1].get("closed_at") is not None else 0.0
+                row["hearing"] = hearing_statuses(harness.log.since(0.0), since, events[-1].t if events else since,
+                                                  last[-1].t if last else None)  # fmt: skip
             if row.get("route") == "model answer":
                 model_turns_seen += 1
                 row["first after start-up"] = model_turns_seen == 1
@@ -709,6 +738,8 @@ async def _main(args: argparse.Namespace) -> int:
             print(f"{row['case']}{label}{state}: {shown}, CPU {worst} %{mark}", flush=True)
             if found:
                 print("   " + stage_line(found, worst, args.threshold), flush=True)
+            if row.get("hearing") is not None:
+                print("   hearing: " + (", ".join(row["hearing"]) or "no status"), flush=True)
         session = harness.log.since(0.0)
     finally:
         await exits.aclose()  # the person's budget store closed: the spend lands in pilot.db, its threads end
@@ -760,6 +791,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", default="u-real", help="comma-separated scenario id prefixes")
     parser.add_argument("--model-turns", type=int, default=12, help="synthetic questions for the talk model")
     parser.add_argument("--mode", choices=MODES, default="full", help="which measurement (see the module text)")
+    parser.add_argument("--during-loading", action="store_true",
+                        help="first-utterance: speak while the listener is still loading")  # fmt: skip
     parser.add_argument("--model", choices=("stub", "configured"), default="stub")
     parser.add_argument("--paid", action="store_true", help="with --model configured: spend the printed bound")
     parser.add_argument("--max-calls", type=int, default=PAID_CALLS_AT_MOST)
