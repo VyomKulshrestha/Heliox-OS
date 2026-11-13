@@ -116,6 +116,9 @@ class Session:
     def __init__(self, ws: Any) -> None:
         self.ws = ws
         self._next = 100
+        # Every notification that arrived on this connection, from the moment it signed in: a check that reads
+        # replies must not swallow them (a reminder held for the next window is sent right after sign-in).
+        self.notifications: list[dict] = []
 
     async def call(self, method: str, params: dict | None = None, timeout: float = 60.0) -> dict:
         self._next += 1
@@ -132,6 +135,20 @@ class Session:
                     return {"rpc_error": message["error"]}
                 result = message.get("result")
                 return result if isinstance(result, dict) else {"value": result}
+            if "method" in message and "id" not in message:
+                self.notifications.append(message)
+
+    async def collect(self, limit: float) -> list[dict]:
+        """Keep reading notifications for ``limit`` seconds; all of them, from sign-in on."""
+        deadline = time.monotonic() + limit
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                message = json.loads(await asyncio.wait_for(self.ws.recv(), remaining))
+            except (asyncio.TimeoutError, TimeoutError):
+                break
+            if "method" in message and "id" not in message:
+                self.notifications.append(message)
+        return self.notifications
 
     async def ask(self, text: str, timeout: float = 120.0) -> str:
         """A typed request, as the window sends it; the sentence Heliox answered with."""
@@ -183,6 +200,8 @@ async def connect(limit: float = 240.0) -> Session:
                     message = json.loads(await asyncio.wait_for(ws.recv(), 10))
                     if message.get("id") == 1:
                         break
+                    if "method" in message and "id" not in message:
+                        session.notifications.append(message)
                 if "error" in message:
                     await session.close()
                     last = str(message["error"])

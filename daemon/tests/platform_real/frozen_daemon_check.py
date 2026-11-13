@@ -58,22 +58,25 @@ def interpreter(pid: int) -> list[psutil.Process]:
     return [root, *root.children(recursive=True)]
 
 
-async def held_reminders(limit: float) -> list[dict]:
-    """Connect as a window does and collect the reminder notifications that arrive within ``limit``."""
-    session = await real_daemon.connect(60)
+def reminders_in(notifications: list[dict]) -> list[dict]:
+    """The reminders among a connection's notifications: one "reminder", or each in a "reminders_missed" card."""
     found: list[dict] = []
-    deadline = time.monotonic() + limit
+    for message in notifications:
+        params = message.get("params") or {}
+        if message.get("method") == "reminder":
+            found.append(params)
+        elif message.get("method") == "reminders_missed":
+            found.extend(item for item in params.get("reminders", []) if isinstance(item, dict))
+    return found
+
+
+async def held_reminders(limit: float) -> list[dict]:
+    """Connect as a window does and collect the reminders that arrive within ``limit`` (a second window)."""
+    session = await real_daemon.connect(60)
     try:
-        while time.monotonic() < deadline:
-            try:
-                message = json.loads(await asyncio.wait_for(session.ws.recv(), deadline - time.monotonic()))
-            except (asyncio.TimeoutError, TimeoutError):
-                break
-            if message.get("method") == "reminder":
-                found.append(message.get("params") or {})
+        return reminders_in(await session.collect(limit))
     finally:
         await session.close()
-    return found
 
 
 async def run() -> int:
@@ -99,6 +102,8 @@ async def run() -> int:
             process.resume()
         resumed = time.monotonic()
         frozen = []
+        # No window for a moment, as after a real wake: the reminder that came due is held, not given to nobody.
+        await asyncio.sleep(1.0)
 
         answered = None
         while time.monotonic() - resumed < 60 and answered is None:
@@ -127,18 +132,25 @@ async def run() -> int:
             f"'Clock event: wake' logged {woke:.1f} s after the freeze ended" if woke is not None else "no wake logged",
         )
 
+        # The first window after the freeze gets the reminder, on the connection that answered the ping: held and
+        # given on connect ("late", "This was due ..."), or, if that window came first, as an ordinary reminder.
+        first = reminders_in(await session.collect(10)) if session is not None else []
         if session is not None:
             await session.close()
             session = None
-        delivered = await held_reminders(10)
-        mine = [item for item in delivered if REMINDER_TEXT in json.dumps(item)]
+        second = await held_reminders(5)  # it went out once: a later window does not get it again
+        mine = [item for item in [*first, *second] if REMINDER_TEXT in json.dumps(item)]
         session = await real_daemon.connect(30)
         waiting = await session.call("reminder_list")
         still = [item for item in (waiting.get("reminders") or []) if REMINDER_TEXT in json.dumps(item)]
+        late = [item for item in mine if item.get("late")]
+        said_when = all(str(item.get("message", "")).startswith("This was due ") for item in late)
         check(
             "reminder-went-out",
-            not still and bool(mine),
-            f"held for the window and delivered on connect: {bool(mine)} ({mine[:1]}); still waiting: {still}",
+            len(mine) == 1 and not still and said_when,
+            f"given {len(mine)} time(s): first window {len([i for i in first if REMINDER_TEXT in json.dumps(i)])}, "
+            f"a later one {len([i for i in second if REMINDER_TEXT in json.dumps(i)])}; held and said late: "
+            f"{bool(late)} ({late[0].get('message') if late else 'on time'}); still waiting: {still}",
         )
     finally:
         for process in frozen:
