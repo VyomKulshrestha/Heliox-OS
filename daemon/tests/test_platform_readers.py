@@ -1154,6 +1154,32 @@ def test_macos_frontmost_app_is_cached_briefly(monkeypatch):
     assert M.frontmost_app_name() == "Mail" and len(calls) == 2
 
 
+def test_macos_when_accessibility_gives_no_answer_live_asks_launch_services_less_often(monkeypatch):
+    """No grant, or no app the Accessibility API sees in front: each fallback answer is two lsappinfo processes, and
+    Live looks every 0.6 s. The front app and the front pid are each asked at most once in
+    FALLBACK_FRONT_APP_SECONDS; with an answer from the Accessibility API, LaunchServices is not asked."""
+    import threading
+    from types import SimpleNamespace
+
+    names, pids = [], []
+    clock = [100.0]
+    answered = [False]
+    reader = SimpleNamespace(foreground=lambda: ("Mail", "Inbox") if answered[0] else None)
+    monkeypatch.setattr(M, "launch_services_front_app", lambda run=None: names.append(1) or "Mail")
+    monkeypatch.setattr(M, "launch_services_front_pid", lambda run=None: pids.append(1) or 42)
+    monkeypatch.setattr(M, "_front_cache", [-1e9, ""])
+    monkeypatch.setattr(M, "_front_pid_cache", [-1e9, 0])
+    monkeypatch.setattr(M, "_lock", threading.Lock())
+    monkeypatch.setattr(M, "shared", lambda: reader)
+    monkeypatch.setattr(M.time, "monotonic", lambda: clock[0])
+    for _ in range(10):  # six seconds of Live's looks
+        assert M.foreground_window() == ("Mail", "") and M.cached_front_pid() == 42
+        clock[0] += 0.6
+    assert len(names) == 2 and len(pids) == 2  # was 10 each: lsappinfo processes on every look
+    answered[0] = True
+    assert M.foreground_window() == ("Mail", "Inbox") and len(names) == 2
+
+
 # ── whether a field's window still exists (Live drops a card when it has gone) ──
 
 

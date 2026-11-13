@@ -83,6 +83,47 @@ def cpu_s(processes: list[psutil.Process]) -> float:
     return total
 
 
+def ended_children_cpu_s(process: psutil.Process) -> float:
+    """CPU time of the daemon's child processes that have already ended (short helpers such as lsappinfo), which
+    ``cpu_s`` never sees; 0 where the system does not count it (Windows)."""
+    try:
+        times = process.cpu_times()
+    except psutil.Error:
+        return 0.0
+    return float(getattr(times, "children_user", 0.0) or 0.0) + float(getattr(times, "children_system", 0.0) or 0.0)
+
+
+def remove_folder(folder: Path, seconds: float = 30.0) -> None:
+    """Remove the typing folder. A browser still holding its profile is given ``seconds`` (the processes using the
+    folder are ended once), and a folder that still cannot go is left for the runner to discard: a clean-up is never
+    why a measurement is lost."""
+    import shutil
+
+    deadline = time.monotonic() + seconds
+    ended = False
+    while True:
+        try:
+            shutil.rmtree(folder)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            if not ended:
+                ended = True
+                for process in psutil.process_iter(["cmdline"]):
+                    try:
+                        if str(folder) in " ".join(process.info.get("cmdline") or []):
+                            process.kill()
+                    except psutil.Error:
+                        pass
+            if time.monotonic() >= deadline:
+                print(
+                    f"DIAG live-cost: left {folder} for the runner to discard: {type(exc).__name__}: {exc}", flush=True
+                )
+                return
+            time.sleep(1.0)
+
+
 def sentences():
     """A sentence at a time, every third one with a weekday that does not match its date."""
     n = 0
@@ -185,6 +226,7 @@ async def run(args: argparse.Namespace) -> int:
     daemon = real_daemon.start()
     session = None
     typist = None
+    folder: Path | None = None
     try:
         session = await real_daemon.connect(240)
         ready, _status = await session.wait_ready(240)
@@ -193,34 +235,37 @@ async def run(args: argparse.Namespace) -> int:
             return 1
         status = await session.call("live_status")
         print(f"INFO live-cost: Live on {status.get('enabled')}; reads focused text {status.get('reads_focused_text')}")
+        # What the reader needs (a macOS Accessibility grant, a Linux package): a reader that cannot read measures an
+        # idle reader, whatever is typed.
+        print(f"INFO live-cost: reader {status.get('focused_text') or 'no status'}", flush=True)
         served = real_daemon.serving_process(daemon)
         main = psutil.Process(served.pid) if served is not None else psutil.Process(daemon.pid)
         await session.collect(30.0)  # settle: start-up work done
 
         start_rss, start_tree = rss_mb([main]), rss_mb(tree(main))
-        cpu0, cpu0_tree = cpu_s([main]), cpu_s(tree(main))
+        cpu0, cpu0_tree, ended0 = cpu_s([main]), cpu_s(tree(main)), ended_children_cpu_s(main)
         samples: list[tuple[float, float]] = []
         began = time.monotonic()
         while time.monotonic() - began < args.idle:
             await session.collect(SAMPLE_SECONDS)
             samples.append((time.monotonic() - began, rss_mb([main])))
         idle_rss, idle_tree = rss_mb([main]), rss_mb(tree(main))
-        cpu1, cpu1_tree = cpu_s([main]), cpu_s(tree(main))
+        cpu1, cpu1_tree, ended1 = cpu_s([main]), cpu_s(tree(main)), ended_children_cpu_s(main)
 
-        with tempfile.TemporaryDirectory(prefix="heliox-live-cost-") as folder:
-            typist = Typist(args.python, Path(folder))
-            print(f"INFO live-cost: typing with {typist.how}", flush=True)
-            cards_before = sum(1 for m in session.notifications if m.get("method") == "live_interjection")
-            source = sentences()
-            began = time.monotonic()
-            while time.monotonic() - began < args.typing:
-                await asyncio.to_thread(typist.type, next(source))
-                await session.collect(4.0)  # a pause after each sentence, as people make
-            cards = sum(1 for m in session.notifications if m.get("method") == "live_interjection") - cards_before
-            typist.close()
-            typist = None
+        folder = Path(tempfile.mkdtemp(prefix="heliox-live-cost-"))
+        typist = Typist(args.python, folder)
+        print(f"INFO live-cost: typing with {typist.how}", flush=True)
+        cards_before = sum(1 for m in session.notifications if m.get("method") == "live_interjection")
+        source = sentences()
+        began = time.monotonic()
+        while time.monotonic() - began < args.typing:
+            await asyncio.to_thread(typist.type, next(source))
+            await session.collect(4.0)  # a pause after each sentence, as people make
+        cards = sum(1 for m in session.notifications if m.get("method") == "live_interjection") - cards_before
         end_rss, end_tree = rss_mb([main]), rss_mb(tree(main))
-        cpu2, cpu2_tree = cpu_s([main]), cpu_s(tree(main))
+        cpu2, cpu2_tree, ended2 = cpu_s([main]), cpu_s(tree(main)), ended_children_cpu_s(main)
+        typist.close()  # after the figures: the fixture's end is not the daemon's cost
+        typist = None
 
         print(
             f"INFO live-cost: system {sys.platform}; total memory {round(psutil.virtual_memory().total / 2**30, 1)} GB"
@@ -232,6 +277,8 @@ async def run(args: argparse.Namespace) -> int:
               f"in {args.typing:.0f} s")  # fmt: skip
         print(f"INFO live-cost: CPU s, with its helpers: idle {cpu1_tree - cpu0_tree:.1f}, typing "
               f"{cpu2_tree - cpu1_tree:.1f}")  # fmt: skip
+        print(f"INFO live-cost: CPU s, short helpers that already ended (lsappinfo and the like): idle "
+              f"{ended1 - ended0:.1f}, typing {ended2 - ended1:.1f}")  # fmt: skip
         print(f"INFO live-cost: Live cards raised while typing: {cards}", flush=True)
 
         late = [rss for at, rss in samples if at >= args.idle - 120]
@@ -248,6 +295,8 @@ async def run(args: argparse.Namespace) -> int:
         if typist is not None:
             typist.close()
         await real_daemon.stop(daemon, session)
+        if folder is not None:
+            remove_folder(folder)  # after every figure is printed, bounded, never raising
     return 0 if results and all(results) else 1
 
 

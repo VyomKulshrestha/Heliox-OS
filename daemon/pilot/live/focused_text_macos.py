@@ -360,7 +360,7 @@ class MacReader:
         b = self.backend
         app = b.focused_app()
         pid = b.pid(app) if app is not None else 0
-        return pid or launch_services_front_pid()
+        return pid or cached_front_pid()
 
     def read(self) -> FocusedText | None:
         if not self.gate.allowed():
@@ -543,7 +543,7 @@ def window_list() -> list[dict]:
         return []
 
 
-def frontmost_app_name() -> str:
+def frontmost_app_name(max_age: float | None = None) -> str:
     """The frontmost app's name without any permission; "" when it cannot be told.
 
     LaunchServices first: it names the app that owns the menu bar, even one with no window open. The Quartz
@@ -552,11 +552,11 @@ def frontmost_app_name() -> str:
     frontmostApplication is not used: in a process without a running AppKit event loop, such as the daemon, it
     keeps the value from when it was first asked.
 
-    The answer is kept for ``FRONT_APP_CACHE_SECONDS`` so Live's look and the timeline's look in the same moment
-    share one pair of lsappinfo processes.
+    The answer is kept for ``FRONT_APP_CACHE_SECONDS`` (or ``max_age``) so Live's look and the timeline's look in
+    the same moment share one pair of lsappinfo processes.
     """
     now = time.monotonic()
-    if now - _front_cache[0] < FRONT_APP_CACHE_SECONDS:
+    if now - _front_cache[0] < (FRONT_APP_CACHE_SECONDS if max_age is None else max_age):
         return _front_cache[1]
     name = launch_services_front_app() or front_window_owner(window_list())
     _front_cache[0], _front_cache[1] = now, name
@@ -564,6 +564,23 @@ def frontmost_app_name() -> str:
 
 
 FRONT_APP_CACHE_SECONDS = 0.5
+# When the Accessibility API gives no answer (no grant, or no app it sees in front), the front app comes from
+# LaunchServices: two lsappinfo processes each time. Live looks every 0.6 s, so that answer is kept this long, and
+# so is the front pid asked for when no field has focus; before, such a Mac started up to four processes a look.
+FALLBACK_FRONT_APP_SECONDS = 3.0
+_front_pid_cache: list = [-1e9, 0]
+
+
+def cached_front_pid() -> int:
+    """launch_services_front_pid, kept for FALLBACK_FRONT_APP_SECONDS."""
+    now = time.monotonic()
+    if now - _front_pid_cache[0] < FALLBACK_FRONT_APP_SECONDS:
+        return int(_front_pid_cache[1])
+    pid = launch_services_front_pid()
+    _front_pid_cache[0], _front_pid_cache[1] = now, pid
+    return pid
+
+
 _front_cache: list = [-1e9, ""]
 
 
@@ -584,7 +601,7 @@ def foreground_window() -> tuple[str, str] | None:
             found = None
     if found is not None:
         return found
-    name = frontmost_app_name()
+    name = frontmost_app_name(FALLBACK_FRONT_APP_SECONDS)
     return (name, "") if name else None
 
 

@@ -202,12 +202,13 @@ that changes Live or the readers it uses, nightly, and by hand) measures it on e
 (`tests/platform_real/live_cost_check.py`): a real daemon with Live on, reading typed text, no screen
 reading and no listening; five minutes idle, then five minutes of typing into the readers' fixture. It reports
 resident memory at the start, after the idle phase and after the typing phase, for the daemon and for the daemon
-with the helpers it started, and the CPU time each phase used; it fails only when memory is still climbing through
+with the helpers it started, and the CPU time each phase used (also that of short helpers that already ended), with
+what the reader needs and how many Live cards the typing raised; it fails only when memory is still climbing through
 the end of the idle phase. No absolute figure is a pass or a fail yet.
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| Resident memory, CPU time | first run pending | first run pending | first run pending |
+| Resident memory, CPU time | Pending: the first run (on f806416, run 43365351775) stopped on its own clean-up, a temporary folder Edge still held, before printing a figure. The check now prints every figure first and gives the folder a bounded wait | `macos-latest`, 7.0 GB (same run): the daemon 310 MB at the start, 219 MB after five idle minutes, 218 MB after five minutes of typing (macOS took memory back after the first minute: 310, then 254, then 229 MB). CPU 10.8 s idle and 11.1 s typing, each in 300 s, six times Linux's. Caveat: no app came to the front on the runner (the Accessibility API saw none; the fixture could not be brought forward), so 0 cards were raised and the typing phase measured an idle reader. The run did not print whether the daemon had the grant; the check now prints the reader's state. With no answer from the Accessibility API (no grant, or no app it sees in front), every Live look (every 0.6 s) asked LaunchServices for the front app, and for its pid, through up to four `lsappinfo` processes; each answer is now kept 3 s. Fakes only, result to come | `ubuntu-24.04`, 15.6 GB (same run): the daemon 294 MB at the start, 296 MB idle, 298 MB after typing; 302 MB with its helpers. CPU 1.8 s idle and 3.6 s typing, each in 300 s (about half a percent of one core, then a little over one percent), with 3 cards raised. No runaway growth |
 
 A hosted CI runner is not a person's laptop: other load, other memory, a virtual display. These numbers say what
 this daemon costs there.
