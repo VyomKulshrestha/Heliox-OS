@@ -1,0 +1,717 @@
+[
+  {
+    "name": "past_date fires 01: See you on 5 November at the office.",
+    "app": "slack.exe",
+    "title": "#team - Slack (1)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "See you on 5 November at the office."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date fires 02: The report is due on 10 November, please send it",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (2)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "The report is due on 10 November, please send it over."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date fires 03: Let's meet on Monday 9 November to go through th",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (3)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "Let's meet on Monday 9 November to go through the plan."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date fires 04: Can we book the room for 2 November?",
+    "app": "slack.exe",
+    "title": "#team - Slack (4)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "Can we book the room for 2 November?"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date fires 05: The deadline for entries is 30 October.",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (5)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "The deadline for entries is 30 October."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date fires 06: Please send the invoice by 11 November.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (6)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "Please send the invoice by 11 November."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date fires 07: I'll call you on 12 November in the afternoon.",
+    "app": "slack.exe",
+    "title": "#team - Slack (7)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "I'll call you on 12 November in the afternoon."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date fires 08: The workshop is on 6 November in Leeds.",
+    "app": "notepad.exe",
+    "title": "notes.txt - Notepad (8)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "The workshop is on 6 November in Leeds."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date fires 09: We will launch the beta on November 3.",
+    "app": "slack.exe",
+    "title": "#team - Slack (9)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "We will launch the beta on November 3."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date fires 10: Next review: 8 November at 3pm.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (10)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "Next review: 8 November at 3pm."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date fires 11: Tickets are booked for the 1st of November.",
+    "app": "slack.exe",
+    "title": "#team - Slack (11)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "past_date"
+    ],
+    "steps": [
+      {
+        "type": "Tickets are booked for the 1st of November."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 12: We met on 5 November and agreed the plan.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (12)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "We met on 5 November and agreed the plan."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 13: The report was sent on 10 November.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (13)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "The report was sent on 10 November."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 14: Decisions from the meeting on 9 November: ship t",
+    "app": "WINWORD.EXE",
+    "title": "Team minutes 9 Nov.docx - Word (14)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Decisions from the meeting on 9 November: ship the beta."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 15: Last time we spoke, on 2 November, you mentioned",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (15)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Last time we spoke, on 2 November, you mentioned the budget."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 16: Thanks for your email of 11 November.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (16)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Thanks for your email of 11 November."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 17: Invoice dated 30 October attached.",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (17)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Invoice dated 30 October attached."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 18: See you on 20 November!",
+    "app": "slack.exe",
+    "title": "#team - Slack (18)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "See you on 20 November!"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 19: The conference is on 5 November 2027.",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (19)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "The conference is on 5 November 2027."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 20: In 2025 the launch was on 5 November.",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (20)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "In 2025 the launch was on 5 November."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 21: He wrote \"see you on 5 November\" in his note.",
+    "app": "notepad.exe",
+    "title": "notes.txt - Notepad (21)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "He wrote \"see you on 5 November\" in his note."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 22: deadline = '5 November'  # due by then",
+    "app": "Code.exe",
+    "title": "plan.py - Visual Studio Code (22)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "deadline = '5 November'  # due by then"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 23: echo 'meet on 5 November'",
+    "app": "WindowsTerminal.exe",
+    "title": "PowerShell (23)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "echo 'meet on 5 November'"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 24: Since 1 November the office opens at 9.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (24)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Since 1 November the office opens at 9."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 25: Back on 3 November we decided to wait.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (25)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Back on 3 November we decided to wait."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 26: The payment was received on 12 November, thank y",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (26)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "The payment was received on 12 November, thank you."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 27: The meeting is on 13 November at 4.",
+    "app": "slack.exe",
+    "title": "#team - Slack (27)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "The meeting is on 13 November at 4."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 28: Our next offsite is on 4 December.",
+    "app": "slack.exe",
+    "title": "#team - Slack (28)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Our next offsite is on 4 December."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 29: By 5 November 2025 we had shipped the first vers",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (29)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "By 5 November 2025 we had shipped the first version."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 30: Released on 2 November: faster sync. Next releas",
+    "app": "notepad.exe",
+    "title": "CHANGELOG.md - Notepad (30)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Released on 2 November: faster sync. Next release by 10 November."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 31: It has already been a week since 6 November.",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (31)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "It has already been a week since 6 November."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 32: The 5 November fireworks will be loud again next",
+    "app": "slack.exe",
+    "title": "#team - Slack (32)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "The 5 November fireworks will be loud again next year."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "past_date quiet 33: Happy birthday for 8 November!",
+    "app": "slack.exe",
+    "title": "#team - Slack (33)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Happy birthday for 8 November!"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  }
+]

@@ -82,7 +82,7 @@ OCR_KINDS = ("error_on_screen",)  # a whole-screen OCR is too noisy for anything
 STICKY_KINDS = frozenset({STUCK, COMMITMENT})
 # Kinds that still matter once the message is sent: a slip that was whole on the page before it was sent is raised
 # once as a card that says what was sent, never spoken. Never a typo or a doubled word. (A promise is sticky anyway.)
-SENT_KINDS = frozenset({"weekday_date", "arithmetic"})
+SENT_KINDS = frozenset({"weekday_date", "arithmetic", "past_date"})
 GROUNDED_PAUSE_SECONDS = 1.0  # typing stopped this long: worth asking the local model about the last sentence
 GROUNDED_EVERY_SECONDS = 5.0  # and at most this often, so a laptop CPU is not kept busy
 # Kinds about the person's own words. Text that was already in a field when it got focus (a quoted email, a
@@ -94,6 +94,7 @@ OWN_WORDS_KINDS = frozenset(
         "profile_fact",
         "missing_attachment",
         "repeated_word",
+        "past_date",
         "community_catch",
         "personal_fact",
         COMMITMENT,

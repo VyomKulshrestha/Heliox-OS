@@ -193,6 +193,23 @@ The 105 earlier scenarios: catches, misses, false alarms and cut-offs unchanged 
 and without `--keep-typing`; nothing lands mid-word. The whole bench (108 scenarios): 58/59 caught in each run, no
 false alarms.
 
+## New kinds (13 November 2026)
+
+Each new kind has a pack of its own (`bench_scenarios/watch-<kind>.json`, run after the older packs so that what they teach the timing model is unchanged, "today" is Friday 13 November 2026, each
+scenario in a field of its own), a switch in Settings > Live like the others, and a line in Settings' answers. Every
+pack runs with every policy and persona. False alarms are counted on the whole bench, on the conversation bench's 975
+not-addressed sentences typed into a chat, and on this repository's last 2,127 commit messages typed into a note and
+into an email. A kind with a false alarm anywhere there would be a card only, never spoken.
+
+- **A date that has already passed, written as if it were ahead** (`past_date`). Rule: a day and month, up to 45
+  days back and in this year, in a sentence that looks ahead ("see you", "will", "is due", "by", "next") and has no
+  word that looks back ("was", "met", "last", "since", "already", "said"), and nothing about every year
+  ("birthday", "next year"). Not in code, terminals, minutes, logs or changelogs; not in quotes; not in what is
+  said. Reads: the field's text and the date. "You sent" applies, because a wrong date sent still matters. Pack:
+  11 that must fire, 22 that must not; 11/11 caught and 0 false alarms in all 6 runs. False alarms elsewhere: 0 on
+  the bench, 0 of 975 sentences, 0 of 2,127 commit messages in each window. Spoken when left alone, like the
+  others.
+
 ## What it does not show
 
 These are scripted sessions and simulated people, not recordings of real ones. The personas are three points on

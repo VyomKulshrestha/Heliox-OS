@@ -34,6 +34,7 @@ KINDS = (
     "stuck",  # pilot.live.stuck: offers help when the person seems stuck (not a detector over one text)
     "commitment",  # pilot.live.commitments: a promise with a deadline, with an offer to set a reminder
     "said_vs_typed",  # pilot.live.crosscheck: a date said to Heliox against the date just typed for the same thing
+    "past_date",  # a date that has already passed, written as if it were still ahead
 )
 
 KIND_LABELS = {
@@ -50,6 +51,7 @@ KIND_LABELS = {
     "stuck": "Offers to help when you seem stuck",
     "commitment": "Promises you make, with a reminder",
     "said_vs_typed": "A date you say that differs from the one you just wrote",
+    "past_date": "A date that has already passed, written as if it were ahead",
 }
 # Kinds found by a model rather than a rule: still there while their quoted evidence is in the text.
 MODEL_KINDS = frozenset({"personal_fact"})
@@ -1370,6 +1372,91 @@ def community_catch(text: str, ctx: TextContext) -> list[Correction]:
     return find(text, ctx)
 
 
+# ── A date that has already passed, written as if it were ahead ───────────────────────────────────────────────
+
+# "See you on 5 November" written on the 13th. Only a day and month (a weekday and this year's number may come with
+# them), only up to PAST_DATE_DAYS back (further back, a yearless date means next year), and only in a sentence
+# that looks ahead ("see you", "will", "is due", "let's", "by", "until", "next") and has no word that looks back
+# ("was", "had", "met", "last", "ago", "since", "already"...). Minutes, notes from a meeting, logs and changelogs
+# are about the past on purpose, so their windows are left alone.
+PAST_DATE_DAYS = 45
+_PD_DAY = r"(?:(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?\.?,?\s+(?:the\s+)?)?"
+_PAST_DATE = (
+    re.compile(
+        rf"\b{_PD_DAY}(?P<d>\d{{1,2}})(?:st|nd|rd|th)?(?:\s+of)?\s+{_MONTH_RE}\b\.?(?:,?\s+(?P<y>\d{{4}}))?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b{_PD_DAY}{_MONTH_RE}\.?\s+(?:the\s+)?(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s+(?P<y>\d{{4}}))?",
+        re.IGNORECASE,
+    ),
+)
+_AHEAD = re.compile(
+    r"\b(?:see you|meet(?:ing)?|let'?s|we'?ll|i'?ll|you'?ll|they'?ll|will|shall|going to|is due|are due|due (?:on|by)|"
+    r"deadline|by|until|till|planned for|scheduled for|book(?:ed)? for|reserved? for|next|upcoming|"
+    r"starts?|kicks? off|is on|are on|happening|please|can we|could we|would|tomorrow)\b",
+    re.IGNORECASE,
+)
+_BEHIND = re.compile(
+    r"\b(?:was|were|had|did|met|went|sent|came|ago|last|yesterday|since|earlier|already|held|happened|took place|"
+    r"completed|finished|shipped|released|merged|launched|started|ended|closed|signed|paid|received|delivered|"
+    r"recap|minutes|back on|as of|been|said|wrote|told)\b",
+    re.IGNORECASE,
+)
+# A date that comes round every year is meant: "the 5 November fireworks next year", "her birthday on 8 November".
+_EVERY_YEAR = re.compile(r"\b(?:next year|every year|each year|annual(?:ly)?|anniversary|birthday)\b", re.IGNORECASE)
+_PAST_WINDOWS = ("minutes", "meeting notes", "changelog", "release notes", "log", "journal", "diary", "history")
+
+
+def _sentence_around(text: str, start: int, end: int) -> str:
+    left = max(text.rfind(mark, 0, start) for mark in (".", "!", "?", "\n"))
+    rights = [i for i in (text.find(mark, end) for mark in (".", "!", "?", "\n")) if i >= 0]
+    return text[left + 1 : min(rights) if rights else len(text)]
+
+
+def past_date(text: str, ctx: TextContext) -> list[Correction]:
+    """A date that has already passed, in a sentence that looks ahead."""
+    if ctx.source != "focused_field" or ctx.is_terminal or ctx.is_code_editor:
+        return []
+    if any(word in ctx.where for word in _PAST_WINDOWS):
+        return []
+    found: dict[str, Correction] = {}
+    for pattern in _PAST_DATE:
+        for match in pattern.finditer(text):
+            try:
+                day, month = int(match["d"]), _month_number(match["m"])
+                stated = int(match["y"]) if match["y"] else None
+                when = date(stated or ctx.today.year, month, day)
+            except ValueError:
+                continue
+            if stated is not None and stated != ctx.today.year:
+                continue
+            gone = (ctx.today - when).days
+            if not 1 <= gone <= PAST_DATE_DAYS:
+                continue
+            # The time words around the date, but not the date itself ("by" must not come from a weekday's "Tue").
+            sentence = _sentence_around(text, match.start(), match.end())
+            around = sentence.replace(match.group(0), " ")
+            if not _AHEAD.search(around) or _BEHIND.search(around) or _EVERY_YEAR.search(around):
+                continue
+            key = f"past_date:{when.isoformat()}"
+            if key in found:
+                continue
+            ago = "yesterday" if gone == 1 else f"{gone} days ago"
+            found[key] = Correction(
+                kind="past_date",
+                key=key,
+                title=f"{_on(day, month, ctx)} has already passed",
+                message=f"That was {ago}; today is {ctx.today.strftime('%A')} {_on(ctx.today.day, ctx.today.month, ctx)}.",
+                evidence=_short(match.group(0).strip().rstrip(".,")),
+                detail="If you meant next year, add the year.",
+                urgency=NORMAL,
+                confidence=0.8,
+                trailing=_at_end(text, match.end()),
+            )
+    return list(found.values())
+
+
 DETECTORS = {
     "community_catch": community_catch,
     "risky_command": risky_command,
@@ -1380,6 +1467,7 @@ DETECTORS = {
     "error_on_screen": error_on_screen,
     "missing_attachment": missing_attachment,
     "repeated_word": repeated_word,
+    "past_date": past_date,
 }
 
 # What a spoken sentence can be checked for; screen-only checks (commands, errors, typing) do not apply.
@@ -1427,7 +1515,15 @@ def _in_said_words(correction: Correction, norm: sp.Spoken) -> Correction:
 # not using them: a commit message quoting "Tuesday 14 November" as an example, an email quoting someone's "could of".
 # Risky commands and keys are not in it: quoting one does not make it safe.
 MENTION_KINDS = frozenset(
-    {"weekday_date", "arithmetic", "repeated_word", "community_catch", "profile_fact", "missing_attachment"}
+    {
+        "weekday_date",
+        "arithmetic",
+        "repeated_word",
+        "community_catch",
+        "profile_fact",
+        "missing_attachment",
+        "past_date",
+    }
 )
 _QUOTE_MARKS = frozenset('"`\u201c\u201d')
 _QUOTED = re.compile(
