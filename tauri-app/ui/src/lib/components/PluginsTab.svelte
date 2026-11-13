@@ -17,6 +17,9 @@
     url: string;
     tools: PluginTool[];
     installed: boolean;
+    /** Installed copies: whether a trusted key vouched for it (false: signed only by its own key). An older daemon
+     *  does not send it, and then nothing is shown. */
+    verified?: boolean;
     local_only?: boolean;
     source?: "github" | "local";
     capabilities: {
@@ -411,6 +414,13 @@
               {#if plugin.local_only}
                 <span class="local-badge">Local only</span>
               {/if}
+              {#if plugin.installed && plugin.verified === false}
+                <span class="unverified-badge" title="Nobody Heliox trusts has checked this plugin's code."
+                  >Unverified: signed only by its own key</span
+                >
+              {:else if plugin.installed && plugin.verified === true}
+                <span class="verified-badge">Verified</span>
+              {/if}
               <span class="version">v{plugin.version}</span>
               <span class="author">by {plugin.author}</span>
             </div>
@@ -557,6 +567,19 @@
   }
 
   .catalog-source,
+  .unverified-badge,
+  .verified-badge {
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+  }
+  .unverified-badge {
+    color: var(--warning, #e0a040);
+  }
+  .verified-badge {
+    color: var(--text-secondary, #9aa4b2);
+  }
   .local-badge {
     width: fit-content;
     padding: 3px 8px;

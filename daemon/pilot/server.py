@@ -13228,6 +13228,8 @@ class PilotServer:
                 item["installed"] = name in installed_by_name
                 item["local_only"] = False
                 item["source"] = catalog.source
+                if name in installed_by_name:  # whether a trusted key vouched for the copy installed here
+                    item["verified"] = bool(installed_by_name[name].verified)
                 plugins.append(item)
 
             for plugin in installed_plugins:
