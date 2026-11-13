@@ -84,12 +84,21 @@ def kinds(home: Path) -> dict[str, list[str]]:
     return found
 
 
+def as_the_person(args: list[str]) -> bytes:
+    """``args`` run as the person the app runs as. The check is root in a container without CAP_SYS_PTRACE, and
+    without it root may not read another user's /proc/<pid>/environ or exe: on 51f6a71 both came back empty."""
+    done = subprocess.run(["runuser", "-u", base.PERSON, "--", *args], capture_output=True, timeout=30, check=False)
+    return done.stdout if done.returncode == 0 else b""
+
+
 def environ(pid: int) -> dict[str, str]:
-    """A process's environment, from /proc (the check runs as root)."""
+    """A process's environment, from /proc: directly, else as the person who owns the process."""
     try:
         raw = Path(f"/proc/{pid}/environ").read_bytes()
     except OSError:
-        return {}
+        raw = b""
+    if not raw:
+        raw = as_the_person(["cat", f"/proc/{pid}/environ"])
     pairs = (entry.split("=", 1) for entry in raw.decode(errors="replace").split("\0") if "=" in entry)
     return dict(pairs)
 
@@ -116,6 +125,8 @@ def image_folder(pid: int, env: dict[str, str]) -> str:
     try:
         program = os.readlink(f"/proc/{pid}/exe")
     except OSError:
+        program = as_the_person(["readlink", f"/proc/{pid}/exe"]).decode(errors="replace").strip()
+    if not program:
         return ""
     head, marker, _ = program.partition("/usr/bin/")
     return head if marker else str(Path(program).parent)
@@ -148,7 +159,16 @@ def the_daemons_environment() -> None:
             "daemon-environment-outside-the-appimage", False, f"not read: daemon {daemons}, APPDIR {APPDIR[0]!r}"
         )
         return
-    leftovers = {pid: into_the_appimage(environ(pid), APPDIR[0]) for pid in daemons}
+    environments = {pid: environ(pid) for pid in daemons}
+    if not all(environments.values()):
+        # An environment that cannot be read must not pass as one without the AppImage's entries.
+        base.check(
+            "daemon-environment-outside-the-appimage",
+            False,
+            f"not read: the environment of daemon {[pid for pid, env in environments.items() if not env]}",
+        )
+        return
+    leftovers = {pid: into_the_appimage(env, APPDIR[0]) for pid, env in environments.items()}
     base.check(
         "daemon-environment-outside-the-appimage",
         not any(leftovers.values()),
