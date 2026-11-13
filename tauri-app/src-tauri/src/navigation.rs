@@ -59,7 +59,7 @@ pub fn open_external_link(url: String) -> Result<(), String> {
     if !opens_outside(&parsed) {
         return Err("Heliox opens only web and mail links outside the app".into());
     }
-    opener::open_browser(parsed.as_str()).map_err(|error| error.to_string())
+    crate::outside_env::open_browser(parsed.as_str())
 }
 
 #[cfg(test)]

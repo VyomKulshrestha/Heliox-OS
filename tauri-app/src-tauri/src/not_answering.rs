@@ -144,6 +144,7 @@ pub(crate) fn tell_the_person() -> Option<&'static str> {
     eprintln!("[Heliox OS] {text}");
     for dialog in dialogs(this_system(), &text) {
         let mut command = Command::new(dialog.program);
+        crate::outside_env::apply(&mut command);
         command.args(&dialog.args);
         #[cfg(target_os = "windows")]
         {

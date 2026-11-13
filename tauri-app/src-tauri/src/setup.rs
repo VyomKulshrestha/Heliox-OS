@@ -259,6 +259,7 @@ fn script_command(mode: &str) -> std::io::Result<Command> {
         let path = dir.join("first-run.ps1");
         std::fs::write(&path, SCRIPT_PS1)?;
         let mut command = Command::new("powershell");
+        crate::outside_env::apply(&mut command);
         command.args([
             "-NoProfile",
             "-NonInteractive",
@@ -272,6 +273,7 @@ fn script_command(mode: &str) -> std::io::Result<Command> {
         let path = dir.join("first-run.sh");
         std::fs::write(&path, SCRIPT_SH.replace("\r\n", "\n"))?;
         let mut command = Command::new("/bin/sh");
+        crate::outside_env::apply(&mut command);
         command.arg(path).arg(mode);
         command
     };
@@ -644,6 +646,7 @@ fn update_command(mode: &str) -> std::io::Result<Command> {
         )
     })?;
     let mut command = Command::new(python);
+    crate::outside_env::apply(&mut command);
     command
         .arg(script)
         .arg(mode)
@@ -679,6 +682,7 @@ fn environment_works() -> bool {
         env.join("bin").join("python")
     };
     let mut command = Command::new(python);
+    crate::outside_env::apply(&mut command);
     command
         .args([
             "-c",

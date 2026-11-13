@@ -6,6 +6,7 @@ mod file_access;
 mod folders;
 mod hotkey;
 mod navigation;
+mod outside_env;
 #[cfg(test)]
 mod real_supervision;
 mod setup;
@@ -61,6 +62,7 @@ pub(crate) fn get_venv_python() -> std::path::PathBuf {
 /// Try to launch the daemon using a specific python path.
 fn try_spawn_with(python: &std::path::Path) -> Option<Child> {
     let mut cmd = Command::new(python);
+    outside_env::apply(&mut cmd);
     cmd.args(["-m", "pilot.server"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -222,7 +224,9 @@ fn get_rss_feed() -> Vec<serde_json::Value> {
         "url": "https://github.com/VyomKulshrestha/Heliox-OS/releases",
         "source": "Current Build"
     })];
-    if let Ok(output) = std::process::Command::new("git")
+    let mut git = std::process::Command::new("git");
+    outside_env::apply(&mut git);
+    if let Ok(output) = git
         .args([
             "tag",
             "-l",

@@ -605,6 +605,7 @@ fn remove_credentials(home: &Path, os: &str) -> Credentials {
         env.join("bin").join("python")
     };
     let mut command = Command::new(python);
+    crate::outside_env::apply(&mut command);
     command
         .args(["-m", "pilot.system.credential_cleanup", "remove"])
         .stdin(Stdio::null())

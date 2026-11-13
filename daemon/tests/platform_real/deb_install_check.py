@@ -328,7 +328,11 @@ def offers_private_python(person: Person, binary: str, tools: str) -> None:
     try:
         with window:
             state = window.setup_screen_ready()
-            sentence, total = window.read(PYTHON_SENTENCE), window.read(TOTAL)
+            # Through the shared retry: a dropped driver connection here failed the 22.04 line once (f6a1f8e).
+            sentence = str(
+                once_more(window.driver, "reading the Python sentence", lambda: window.driver.run(PYTHON_SENTENCE))
+            )
+            total = str(once_more(window.driver, "reading the download total", lambda: window.driver.run(TOTAL)))
     except Exception as error:
         check("setup-offers-private-python", False, f"no window to read: {type(error).__name__}: {error}")
         return
@@ -347,7 +351,7 @@ def offers_private_python(person: Person, binary: str, tools: str) -> None:
     )
 
 
-def first_run_through_the_window(person: Person, binary: str, tools: str, log: DaemonLog) -> bool:
+def first_run_through_the_window(person: Person, binary: str, tools: str, log: DaemonLog, while_open=None) -> bool:
     window = Window(person, binary, tools)
     try:
         with window as driver:
@@ -391,6 +395,8 @@ def first_run_through_the_window(person: Person, binary: str, tools: str, log: D
             done = check("first-run-setup", finished and environment.exists(), detail)
             if done:
                 daemon_checks(person, log)
+                if while_open is not None:  # more checks while the app that ran the setup is open
+                    while_open()
             return done
     except Exception as error:
         return check("first-run-setup", False, f"no window to drive: {type(error).__name__}: {error}")

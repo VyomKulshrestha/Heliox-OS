@@ -84,6 +84,59 @@ def kinds(home: Path) -> dict[str, list[str]]:
     return found
 
 
+def environ(pid: int) -> dict[str, str]:
+    """A process's environment, from /proc (the check runs as root)."""
+    try:
+        raw = Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return {}
+    pairs = (entry.split("=", 1) for entry in raw.decode(errors="replace").split("\0") if "=" in entry)
+    return dict(pairs)
+
+
+def into_the_appimage(env: dict[str, str], appdir: str) -> dict[str, str]:
+    """The entries that point into the mounted AppImage, and the Python search settings, which no program outside
+    it should inherit (the app's outside_env rule removes both)."""
+    return {
+        name: value
+        for name, value in sorted(env.items())
+        if (appdir and appdir in value) or name in ("PYTHONHOME", "PYTHONPATH")
+    }
+
+
+APPDIR: list[str] = [""]  # the mount the app saw, read from its own environment at its first start
+
+
+def the_app_environment() -> None:
+    """Print what the AppImage's start-up gave the app: the entries that point into the AppImage."""
+    for pid in base.app_pids():
+        env = environ(pid)
+        APPDIR[0] = env.get("APPDIR", APPDIR[0])
+        print(
+            f"DIAG the app's own environment, pointing into the AppImage: {into_the_appimage(env, APPDIR[0])}",
+            flush=True,
+        )
+        return
+    print("DIAG the app's own environment: no app process to read", flush=True)
+
+
+def the_daemons_environment() -> None:
+    """The daemon the app started from the environment it set up must carry none of the AppImage's entries
+    (src-tauri/src/outside_env.rs): the line that proves the app starts programs outside the AppImage cleanly."""
+    daemons = base.daemon_pids()
+    if not daemons or not APPDIR[0]:
+        base.check(
+            "daemon-environment-outside-the-appimage", False, f"not read: daemon {daemons}, APPDIR {APPDIR[0]!r}"
+        )
+        return
+    leftovers = {pid: into_the_appimage(environ(pid), APPDIR[0]) for pid in daemons}
+    base.check(
+        "daemon-environment-outside-the-appimage",
+        not any(leftovers.values()),
+        f"APPDIR {APPDIR[0]}; the daemon's entries pointing into it: {leftovers}",
+    )
+
+
 def removal(person, appimage: str, tools: str) -> None:
     from app_launch_check import wait_until
 
@@ -152,16 +205,18 @@ def main(appimage: str, tools: str) -> int:
         time.sleep(20)
         output = (base.OUT / "app-first-start.log").read_text(encoding="utf-8", errors="replace")
         running = base.app_pids()
+        the_app_environment()
         base.check(
             "app-starts",
             bool(running) and "error while loading shared libraries" not in output,
             f"running after 20 s: {bool(running)}; exit code {first.poll()}; last output: {output[-300:]!r}",
         )
         base.end(base.app_pids())
-        if base.first_run_through_the_window(person, appimage, tools, log):
+        if base.first_run_through_the_window(person, appimage, tools, log, the_daemons_environment):
             removal(person, appimage, tools)
         else:
             for name in (
+                "daemon-environment-outside-the-appimage",
                 "page-reaches-daemon",
                 "daemon-answers-with-token",
                 "removal-names-the-appimage-file",

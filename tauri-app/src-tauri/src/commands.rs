@@ -280,6 +280,7 @@ fn neural_python() -> PathBuf {
 
 fn hidden_python_command() -> Command {
     let mut command = Command::new(neural_python());
+    crate::outside_env::apply(&mut command);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -663,7 +664,9 @@ pub(crate) async fn daemon_result(
 
 pub fn open_terminal() -> Result<String, String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    Command::new("cmd")
+    let mut command = Command::new("cmd");
+    crate::outside_env::apply(&mut command);
+    command
         .args([
             "/C",
             &format!("start powershell -NoProfile -NoExit -Command \"cd '{}'; echo '=== Heliox OS System Terminal Active ==='\"", cwd.display())
@@ -747,7 +750,7 @@ pub fn open_logs_folder() -> Result<(), String> {
         std::fs::create_dir_all(log_dir).map_err(|e| e.to_string())?;
     }
 
-    opener::open(log_dir).map_err(|e| e.to_string())?;
+    crate::outside_env::open(log_dir)?;
     Ok(())
 }
 
