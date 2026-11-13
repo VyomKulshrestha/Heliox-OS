@@ -235,7 +235,10 @@ def warm_state(events: list[tl.Event], at: tl.Event | None) -> str:
     if at is None:
         return "none"
     started = [e.t for e in events if e.event == MODEL_WARM_STARTED and e.t <= at.t]
-    finished = [e.t for e in events if e.event == MODEL_WARM and e.data.get("opened") and e.t <= at.t]
+    # The layer's own "warm-up done" stamp (opened: the connection's HEAD came back) when it has one, and the
+    # bench's around warm() otherwise.
+    finished = [e.t for e in events if e.event in (MODEL_WARM, TRACE + "warm-up done") and e.data.get("opened")
+                and e.t <= at.t]  # fmt: skip
     if started and (not finished or max(started) > max(finished)):
         return "in progress"
     return "finished" if finished else "none"
@@ -455,12 +458,15 @@ def wrap_model(harness: Any, server: Any, cap: CallCap | None) -> None:
                 yield piece
 
         async def warm() -> None:
-            before = getattr(chosen, "_warmed_at", None)
+            # "Opened" is the connection answering (_warm_done_at, set when the warm-up's request came back);
+            # _warmed_at only says a warm-up was started, so it is the fallback for a model without the former.
+            marker = "_warm_done_at" if hasattr(chosen, "_warm_done_at") else "_warmed_at"
+            before = getattr(chosen, marker, None)
             started = time.perf_counter()
             harness.log(MODEL_WARM_STARTED, "")
             if original_warm is not None:
                 await original_warm()
-            opened = getattr(chosen, "_warmed_at", None) != before or original_warm is None
+            opened = getattr(chosen, marker, None) != before or original_warm is None
             harness.log(MODEL_WARM, "", opened=bool(opened), seconds=round(time.perf_counter() - started, 3))
 
         chosen.stream = stream

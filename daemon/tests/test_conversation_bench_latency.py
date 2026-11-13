@@ -402,3 +402,14 @@ def test_the_warm_up_and_synthesis_tables():
 
 def test_every_mode_is_named():
     assert voice_latency.MODES == ("full", "first-utterance", "warm-up", "synthesis")
+
+
+def test_the_layers_warm_up_done_stamp_counts_as_finished_only_when_the_connection_answered():
+    vl = voice_latency
+    start = _event(19.0, vl.MODEL_WARM_STARTED)
+    request = _event(20.6, vl.TRACE + "request sent")
+    answered = _event(20.2, vl.TRACE + "warm-up done", opened=True, ms=180)
+    unanswered = _event(20.2, vl.TRACE + "warm-up done", opened=False, ms=5000)
+
+    assert vl.warm_state([start, answered, request], request) == "finished"
+    assert vl.warm_state([start, unanswered, request], request) == "in progress"
