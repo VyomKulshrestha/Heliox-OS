@@ -957,6 +957,15 @@ class ConversationLayer:
         self._last_thanks = reply
         return reply
 
+    @property
+    def cut_reply_at(self) -> float | None:
+        """When a reply was cut off with words still unsaid (this layer's clock, time.monotonic by default), or None
+        once the rest was said, two minutes passed, or a new reply replaced it. The listener reads it to take "what
+        were you saying?" as a follow-up (pilot.system.addressing)."""
+        if self._unsaid is None or self._clock() - self._unsaid[1] > UNSAID_SECONDS:
+            return None
+        return self._unsaid[1]
+
     def _the_rest(self, text: str) -> str:
         """ "What were you saying?" right after the person talked over a reply: the rest of it, as it was written.
         "" when there is no cut-off reply from the last two minutes (the turn then goes on as usual)."""

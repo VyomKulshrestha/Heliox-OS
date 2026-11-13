@@ -1031,6 +1031,21 @@ has a session for all four kinds of person:
 - **A long quiet, then "are you there?"** It gets "I'm here." from code, with nothing about the old topic and no
   model call.
 
+**A sentence repaired as it is said** ("open, no, close Spotify"). Before, both halves reached the planner as one
+request ("open" with the target "no close spotify"). `pilot.conversation.repair` now resolves the sentence before
+anything acts on it, so only the repair is acted on, never both halves:
+- A repair that starts with a verb is the whole new request.
+- A number replaces the last number ("remind me at four, no, five to call mum").
+- Otherwise the repair replaces what was named: the object ("open Notepad, no, Spotify"), the last place ("flights
+  to Lisbon, no, Porto"), or from the repeated preposition on ("about the invoice, no, about the report").
+- Nothing after the marker ("open Spotify, no") takes the request back: "Okay, I've left it."
+- What does not clearly read as a repair is left as said: "No, stop.", "no more than fifty", or a pause ("um")
+  with no new verb after it.
+- A destructive repaired request still goes through the planner's approval, which shows what will be done.
+
+**Fakes only** (`tests/test_conversation_repair.py`, and the session "a sentence repaired as it is said: only the
+repair is acted on").
+
 "Sorry, what were you saying?" said as a follow-up is doubted by the addressing rule and gets "Sorry?". This was
 sent to the speech work; the session uses the wake phrase for it. A second person using the wake phrase waits for
 the speech side; there is no speaker identification to build on.

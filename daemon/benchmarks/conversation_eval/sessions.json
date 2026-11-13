@@ -2237,6 +2237,125 @@
      }
     }
    ]
+  },
+  {
+   "name": "a sentence repaired as it is said: only the repair is acted on",
+   "plans": {
+    "screenshots": [
+     {
+      "action_type": "file_delete",
+      "target": "C:/Users/me/Downloads/screenshots",
+      "parameters": {
+       "path": "C:/Users/me/Downloads/screenshots"
+      }
+     }
+    ],
+    "logs": [
+     {
+      "action_type": "file_delete",
+      "target": "C:/Users/me/Downloads/logs",
+      "parameters": {
+       "path": "C:/Users/me/Downloads/logs"
+      }
+     }
+    ]
+   },
+   "runs_count": {
+    "open_application": 1,
+    "file_delete": 0
+   },
+   "turns": [
+    {
+     "say": "Hey Heliox, open Notepad, no, Spotify.",
+     "expect": {
+      "taken": true,
+      "runs": [
+       "open_application"
+      ],
+      "has": [
+       "spotify"
+      ],
+      "not": [
+       "notepad"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, mute, I mean unmute.",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "unmuting"
+      ],
+      "runs": [
+       "volume_mute"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, set a timer for ten, no, fifteen minutes.",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "fifteen|15"
+      ],
+      "not": [
+       "ten minutes|10 minutes"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, delete the logs, no wait, the screenshots.",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     },
+     "expect_model": {
+      "approval": true,
+      "planned_with": [
+       "delete the screenshots"
+      ]
+     },
+     "expect_none": {
+      "approval": false
+     }
+    },
+    {
+     "say": "No.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     }
+    },
+    {
+     "say": "Hey Heliox, open Spotify, no.",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true,
+      "has": [
+       "left it"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, what time is it, no, what day is it?",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "thursday"
+      ],
+      "not": [
+       "nine a m"
+      ]
+     }
+    }
+   ]
   }
  ]
 }

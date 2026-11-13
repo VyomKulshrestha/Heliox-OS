@@ -588,6 +588,7 @@ CODE_ANSWERS_ANY_MODEL = frozenset(
     }
 )
 ANSWERED_ON_THIS_COMPUTER = "(answered on this computer)"
+REQUEST_TAKEN_BACK = "Okay, I've left it."  # "open Spotify, no": taken back as it was said
 # How an utterance must be known to be addressed before the fast model's connection is warmed for it.
 # A doubtful follow-up, or anything the addressing rule has not taken, never warms it.
 WARM_FOR = frozenset({"wake", "button", "follow_up", "continuation", "live_reply"})
@@ -15010,6 +15011,17 @@ def handle_tool(tool_name, params):
         from pilot.conversation import layer_for
 
         command_text = self._voice_turns.rest_of_split(command_text)  # "and Spotify" after "open Notepad"
+        from pilot.conversation.repair import resolve as resolve_repair
+
+        repaired = resolve_repair(command_text)  # "open, no, close Spotify": only the repair is acted on, never both
+        if repaired == "":
+            logger.info("The person took the request back as they said it: %r", command_text)
+            await self._speak_voice_response(REQUEST_TAKEN_BACK, dedupe_key=f"voice-taken-back:{uuid.uuid4()}")
+            await self._arm_voice_follow_up()
+            return
+        if repaired is not None:
+            logger.info("Repaired as it was said: %r -> %r", command_text, repaired)
+            command_text = repaired
         voice_turn = self._voice_turns.begin(self._pending_confirms)
         self.last_voice_turn_id = voice_turn.turn_id
         conversation = layer_for(self)
