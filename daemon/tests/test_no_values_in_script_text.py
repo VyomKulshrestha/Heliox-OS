@@ -24,8 +24,6 @@ PROCESS_CALLS = {"run_command", "run", "Popen", "check_output", "check_call", "c
 SAFE = {
     "plugins/media/media_plugin.py::volume_set": "an integer volume level",
     "plugins/media/media_plugin.py::media_key": "a key code from a fixed table",
-    "system/volume.py::volume_set": "an integer volume level",
-    "system/volume.py::volume_mute": "true or false",
     "system/screen.py::brightness_set": "an integer brightness level",
     "system/power.py::power_transition_observed": "a log name and event id from fixed tables",
     "system/processes.py::process_info": "an integer process id",

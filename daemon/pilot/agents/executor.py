@@ -2177,8 +2177,12 @@ class Executor:
         from pilot.system.volume import volume_set
 
         params: VolumeParams = action.parameters  # type: ignore[assignment]
+        if params.step is not None:
+            from pilot.system.volume import volume_step
+
+            return await volume_step(params.step)
         if params.level is None:
-            raise ValueError("volume_set requires a level")
+            raise ValueError("volume_set requires a level or a step")
         return await volume_set(params.level)
 
     async def _exec_volume_mute(self, action: Action) -> str:

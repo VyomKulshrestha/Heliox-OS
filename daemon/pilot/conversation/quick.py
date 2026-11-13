@@ -203,9 +203,10 @@ def admissible(action: Action, *, platform: str | None = None, home: Path | None
             return False, "too many presses"
         return True, ""
     if action.action_type is ActionType.VOLUME_SET:
-        level = getattr(params, "level", None)
-        if not (isinstance(level, int) and 0 <= level <= 100):
-            return False, "a volume level from 0 to 100"
+        level, step = getattr(params, "level", None), getattr(params, "step", None)
+        stepping = isinstance(step, int) and 0 < abs(step) <= 25 and level is None
+        if not (stepping or (isinstance(level, int) and 0 <= level <= 100)):
+            return False, "a volume level from 0 to 100, or a step of at most 25"
         return True, ""
     return True, ""
 
@@ -281,9 +282,12 @@ def from_words(
     action: Action | None = None
     for pattern, key in _MEDIA:
         if pattern.search(text):
-            action = _action(
-                ActionType.KEYBOARD_PRESS, key, KeyboardParams(key=key, presses=5 if "volume" in key else 1)
-            )
+            if key in {"volumeup", "volumedown"}:
+                # The system's own volume call, read back (pilot.system.volume), not five key presses.
+                step = VOLUME_STEP if key == "volumeup" else -VOLUME_STEP
+                action = _action(ActionType.VOLUME_SET, "", VolumeParams(step=step))
+            else:
+                action = _action(ActionType.KEYBOARD_PRESS, key, KeyboardParams(key=key, presses=1))
             break
     sound = {"", "the sound", "the volume", "sound", "volume", "the audio", "audio", "it", "everything"}
     if action is None and verb in {"mute", "unmute"} and target.strip() in sound:
@@ -416,6 +420,8 @@ def quick_acknowledgement(plan: QuickPlan, words: str) -> str:
         return f"Switching to {_title(getattr(params, 'title', '') or 'it')}."
     if kind is ActionType.VOLUME_MUTE:
         return "Muting." if getattr(params, "mute", True) else "Unmuting."
+    if kind is ActionType.VOLUME_SET and getattr(params, "step", None):
+        return "Turning it up." if params.step > 0 else "Turning it down."
     if kind is ActionType.VOLUME_SET:
         return f"Setting the volume to {params.level}."
     if kind is ActionType.KEYBOARD_PRESS:
@@ -426,17 +432,20 @@ def quick_acknowledgement(plan: QuickPlan, words: str) -> str:
 
 
 # Which one-step commands may run while a task is running, by how each is carried out on each system (read from
-# pilot/system/volume.py and pilot/system/input_control.py, 13 November). A command that is sent as a key press, or
-# that brings a window to the front, could land in the window the task is typing in, so it waits for the task:
-#   volume up and down, "louder", next and previous track, play and pause: a media key press through pyautogui on
-#     every system (a key event: SendInput on Windows, a system-defined key event on macOS, an X key event on Linux);
-#   mute and setting the volume on Windows: WScript.Shell SendKeys of the volume keys (also key presses);
-#   opening an app or a site, switching to a window: they change which window is in front.
+# pilot/system/volume.py and pilot/system/input_control.py). A command sent as a key press, or one that brings a
+# window to the front, could land in the window the task is typing in, so it waits for the task:
+#   next and previous track, play and pause: a media key press through pyautogui on every system (no system's media
+#     session call is used yet: see docs/PLATFORM_SUPPORT.md, "Media keys");
+#   opening an app or a site, switching to a window: they change which window is in front;
+#   the volume commands on a computer where the system's volume call is missing (they fall back to key presses).
 # A command that is a system call and cannot land in a window runs at once:
-#   mute and setting the volume on macOS (osascript "set volume") and Linux (pactl, else amixer);
+#   volume up and down, louder and quieter, mute, unmute and a level, through the system's own volume call (Core
+#     Audio on Windows, osascript on macOS, pactl or amixer on Linux), where it is there;
 #   the read-only checks on every system (battery, disk, memory, CPU, processes, system information, the volume).
-# No system's media session API (Windows' media transport controls, MPRIS on Linux, MediaRemote on macOS) is used
-# today, so the media keys wait everywhere.
+VOLUME_STEP = 10
+_VOLUME_SAID = re.compile(
+    r"^(?:Volume is at|Already (?:un)?muted|(?:Un)?muted\.|The sound is|I (?:pressed|set|changed|muted|unmuted))"
+)
 _READ_ONLY = frozenset(
     {
         ActionType.SYSTEM_INFO,
@@ -445,19 +454,24 @@ _READ_ONLY = frozenset(
         ActionType.MEMORY_USAGE,
         ActionType.CPU_USAGE,
         ActionType.PROCESS_LIST,
-        ActionType.VOLUME_GET,
     }
 )
-_SYSTEM_CALL_VOLUME = frozenset({ActionType.VOLUME_MUTE, ActionType.VOLUME_SET})
+_VOLUME = frozenset({ActionType.VOLUME_MUTE, ActionType.VOLUME_SET, ActionType.VOLUME_GET})
 
 
-def runs_beside_a_task(plan: QuickPlan, platform: str | None = None) -> bool:
-    """Whether this one-step command may run at once while a task runs (a system call that cannot land in a window)."""
-    platform = platform or _platform()
+def runs_beside_a_task(plan: QuickPlan, volume_call: bool | None = None) -> bool:
+    """Whether this one-step command may run at once while a task runs (a system call that cannot land in a window).
+    ``volume_call``: whether this system's own volume call is here (pilot.system.volume.volume_call_available)."""
     kind = plan.plan.actions[0].action_type
     if kind in _READ_ONLY:
         return True
-    return kind in _SYSTEM_CALL_VOLUME and platform in {"macos", "linux"}
+    if kind not in _VOLUME:
+        return False
+    if volume_call is None:
+        from pilot.system.volume import volume_call_available
+
+        volume_call = volume_call_available()
+    return volume_call
 
 
 _QUEUED_MEDIA = {
@@ -495,6 +509,8 @@ def queued_sentence(plan: QuickPlan, words: str) -> str:
         what = f"switch to {_title(getattr(params, 'title', '') or 'it')}"
     elif kind is ActionType.VOLUME_MUTE:
         what = "mute the sound" if getattr(params, "mute", True) else "unmute the sound"
+    elif kind is ActionType.VOLUME_SET and getattr(params, "step", None):
+        what = "turn the volume up" if params.step > 0 else "turn the volume down"
     elif kind is ActionType.VOLUME_SET:
         what = f"set the volume to {params.level}"
     elif kind is ActionType.KEYBOARD_PRESS:
@@ -516,6 +532,8 @@ def quick_result_sentence(plan: QuickPlan, result: str, status: str) -> str:
     state = speakable_state(result)
     if state:
         return state
+    if action.action_type in _VOLUME and _VOLUME_SAID.match((result or "").strip()):
+        return result.strip()  # pilot.system.volume says what is true now: "Volume is at 30.", "Already unmuted."
     if action.action_type is ActionType.OPEN_APPLICATION and not getattr(action.parameters, "args", None):
         return f"{_title(action.parameters.name)} is open."
     if action.action_type is ActionType.OPEN_URL:

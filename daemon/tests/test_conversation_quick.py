@@ -107,7 +107,8 @@ def plan_for(text: str, platform: str = "win32", home: Path = Path("C:/Users/sam
         ("set the volume to 30", "volume_set", {"level": 30}),
         ("next song", "keyboard_press", {"key": "nexttrack"}),
         ("pause the music", "keyboard_press", {"key": "playpause"}),
-        ("turn the volume up", "keyboard_press", {"key": "volumeup", "presses": 5}),
+        ("turn the volume up", "volume_set", {"step": 10}),  # the system's volume call, not five key presses
+        ("quieter", "volume_set", {"step": -10}),
         ("How much disk space do I have left?", "disk_usage", {}),
         ("what's the battery level", "battery_info", {}),
     ],

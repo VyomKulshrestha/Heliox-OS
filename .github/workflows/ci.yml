@@ -375,6 +375,12 @@ jobs:
           python tests/platform_real/audio_check.py follow || failed=$((failed + 1))
           exit $failed
 
+      - name: Volume - set, stepped, muted and unmuted through the system's own call, read back each time
+        continue-on-error: true
+        # Linux: PulseAudio is still running from the steps above; the check loads a null sink to set. macOS and
+        # Windows: the runner's own output, or one NOT-POSSIBLE line when it has none.
+        run: python tests/platform_real/volume_check.py
+
       - name: Linux, X11 session - type into a GTK field and read it through AT-SPI
         if: runner.os == 'Linux'
         run: |

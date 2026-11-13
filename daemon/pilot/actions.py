@@ -610,6 +610,7 @@ class VolumeParams(BaseModel):
 
     level: int | None = None  # 0-100
     mute: bool | None = None
+    step: int | None = None  # volume_set: change by this many points (-100 to 100) instead of to a level
 
 
 class BrightnessParams(BaseModel):

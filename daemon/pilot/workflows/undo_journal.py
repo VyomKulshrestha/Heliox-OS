@@ -199,9 +199,9 @@ async def _read_level(kind: str) -> int | None:
     """The current volume or brightness in percent, or None when it cannot be read."""
     try:
         if kind == "volume":
-            from pilot.system.volume import volume_get
+            from pilot.system.volume import volume_state
 
-            text = await volume_get()
+            return (await volume_state()).level
         else:
             from pilot.system.screen import brightness_get
 
