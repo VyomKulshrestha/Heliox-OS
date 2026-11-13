@@ -30,8 +30,8 @@
     <span class="setting-label">Spent this month</span>
     {#if stats}
       <span class="setting-desc">
-        {usd(stats.cost_usd)}{stats.limit_usd ? ` of ${usd(stats.limit_usd)}` : ""}, as Heliox counts it. The
-        provider's own bill is the final word.
+        {usd(stats.cost_usd)}{stats.limit_usd ? ` of ${usd(stats.limit_usd)}` : ""}, as Heliox counts it. The provider's
+        own bill is the final word.
       </span>
       {#each stats.estimated_high ?? [] as line (line)}
         <span class="setting-desc">{line[0].toUpperCase() + line.slice(1)}.</span>
