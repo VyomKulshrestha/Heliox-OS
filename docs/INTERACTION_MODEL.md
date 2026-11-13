@@ -1055,7 +1055,8 @@ anything acts on it, so only the repair is acted on, never both halves:
 - A change said after a plan's dialog opened ("No, the screenshots.") closes that dialog, never approving it, and
   plans the change. Heliox says "Okay, I've closed that one and I'm changing it." and, when the changed plan waits
   for approval in turn, "The changed one is on the screen; press Approve if you want it." Before, nothing was said
-  after the change, and the new dialog appeared without a word.
+  after the change, and the new dialog appeared without a word. If the person then drops it ("No."), Heliox names
+  the change, not the first request: "Okay, I've dropped the changed one: the screenshots. Nothing ran."
 
 **Fakes only** (`tests/test_conversation_repair.py`, and the session "a sentence repaired as it is said: only the
 repair is acted on").

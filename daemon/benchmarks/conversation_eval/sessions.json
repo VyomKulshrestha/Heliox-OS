@@ -2565,7 +2565,15 @@
      "gap": 1.5,
      "expect": {
       "taken": true,
-      "runs_nothing": true
+      "runs_nothing": true,
+      "not": [
+       "delete the logs"
+      ]
+     },
+     "expect_model": {
+      "has": [
+       "dropped the changed one: the screenshots"
+      ]
      }
     },
     {

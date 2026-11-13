@@ -1178,6 +1178,7 @@ class PilotServer:
         # The request a voice task is carrying out, and whether the person ended it by voice and was already told
         # so ("Okay, I've dropped that: ..."): then the task's own ending is not said a second time.
         self._voice_request = ""
+        self._voice_request_change = ""  # the last change said to it while it ran or waited ("No, the screenshots.")
         self._voice_end_said = False
         # When the person last cut Heliox's voice off: "Wait, stop." right after it is acknowledged aloud.
         self._voice_cut_off_at = float("-inf")  # never: 0.0 would be "just now" in the first seconds after boot
@@ -3038,6 +3039,16 @@ class PilotServer:
     def _dropped_sentence(self) -> str:
         """What the person hears when they drop a plan that was waiting for their approval: what, in their words."""
         words = " ".join(self._voice_request.split()).rstrip(".!?")
+        change = re.sub(
+            r"^(?:no|wait|actually|sorry|instead|rather|i mean)\b[,\s]*",
+            "",
+            " ".join(self._voice_request_change.split()),
+            flags=re.IGNORECASE,
+        ).rstrip(".!?")
+        if change:
+            # It was changed before it was dropped: what is dropped is the changed request, said as the change.
+            short = " ".join(change.split()[:10])
+            return f"Okay, I've dropped the changed one: {short[:1].lower() + short[1:]}. Nothing ran."
         if not words:
             return "Okay, I've dropped that. Nothing ran."
         short = " ".join(words.split()[:10])
@@ -15657,6 +15668,8 @@ def handle_tool(tool_name, params):
             mode = {"mode": "ask"} if is_question else {"mode": "stop"} if stop_now else {}
             # A change said while the plan's dialog is open closes that dialog (it is never approved) and plans again.
             changing_approval = not is_question and not stop_now and bool(self._interactive_pending_confirmation())
+            if not is_question and not stop_now:
+                self._voice_request_change = command_text  # what a later "no" drops is this changed request
             before = self._interaction_runtime.status().get("sequence")
             result = await self._handle_interject(
                 {"input": question_text if is_question else command_text, **mode},
@@ -15789,6 +15802,7 @@ def handle_tool(tool_name, params):
                 interaction_id=interaction_id,
             )
             self._voice_request, self._voice_end_said = command_text, False
+            self._voice_request_change = ""
             self._voice_task_turn = voice_turn  # what this task has run so far: a stop before anything ran drops it
             try:
                 response = await self._handle_execute(
