@@ -1,17 +1,23 @@
-"""Heliox Live end to end on real macOS and Linux, for the ``platform-readers`` CI job.
+"""Heliox Live end to end on real macOS, Linux and Windows, for the ``platform-readers`` CI job.
 
 The reader checks prove the field is read; this proves that a slip typed into a real window becomes a Live card.
 Everything is the daemon's own code: ``PilotServer._live_observe`` (the foreground window, ``never_read`` for
 excluded apps, the platform's focused-text reader, the password refusal) feeds a real ``LiveCompanion`` with the
 default settings and Live turned on, ticked at its own pace. Only its speech is a silent stub.
 
-Against the GTK fixture (X11 under Xvfb, or Wayland under sway with ``--wayland``) or the AppKit fixture on macOS:
+Against the GTK fixture (X11 under Xvfb, or Wayland under sway with ``--wayland``), the AppKit fixture on macOS, or
+on Windows the readers' own page (``field_fixture.html``) in Edge as a person has it (read through UI Automation in
+CI on 49bd35f), typed into with pyautogui:
 
 1. the fixture's app is excluded: a sentence with a wrong weekday typed into its field gives no card;
 2. the exclusion is lifted and a second such sentence is typed: a ``weekday_date`` card with that sentence's
    weekday and date as evidence;
 3. a third one typed into the password field: no card;
 4. the window is closed: the card is withdrawn with reason ``closed``.
+
+On Windows two more: the same page in a window titled like a password manager ("Bitwarden - My Vault") and, as an
+app window titled exactly "Heliox-OS" (Edge's ``--app`` mode shows the page title alone), as Heliox's own window:
+the daemon's observe returns nothing and a slip typed there gives no card.
 
 Each step prints one ``CHECK`` line (``SKIP`` where the runner cannot read fields); the exit code is the number of
 failed checks.
@@ -358,6 +364,80 @@ async def macos(folder: Path) -> None:
         mac_front.diag("live end to end: end")
 
 
+async def windows(folder: Path) -> None:
+    """Edge as a person has it, the readers' page, pyautogui typing (SendInput), the daemon's own observe."""
+    import pyautogui
+    import windows_fields_check as W
+
+    program = next((path for path in W.BROWSERS["edge"] if Path(path).exists()), None)
+    if program is None:
+        skip("windows/live-end-to-end", "Microsoft Edge is not on this runner")
+        return
+    started: list[subprocess.Popen] = []
+
+    def open_page(title: str, *, app: bool = False) -> tuple[int, str] | None:
+        work = Path(tempfile.mkdtemp(prefix="heliox-live-win-", dir=folder))
+        page = work / "page.html"
+        page.write_text(
+            (HERE / "field_fixture.html").read_text(encoding="utf-8").replace(W.TITLE, title), encoding="utf-8"
+        )
+        args = [program, f"--user-data-dir={work / 'profile'}", "--no-first-run", "--no-default-browser-check"]
+        args += [f"--app={page.as_uri()}"] if app else ["--new-window", page.as_uri()]
+        started.append(subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            shown = W.windows_titled(title)
+            if shown:
+                hwnd, _pid, seen = shown[0]
+                W.bring_to_front(hwnd)
+                time.sleep(2.0)  # the page loads and its text area takes focus (autofocus)
+                return hwnd, seen
+            time.sleep(0.5)
+        return None
+
+    def type_text(text: str) -> None:
+        pyautogui.write(text, interval=0.02)
+
+    def focus(which: str) -> None:
+        if which == "password":
+            pyautogui.press("tab")  # the text area, then the password input
+            time.sleep(0.6)
+
+    try:
+        opened = await asyncio.to_thread(open_page, W.TITLE)
+        if not check("windows/live-fixture-started", opened is not None):
+            return
+        hwnd, _title = opened
+        live = Live(folder)
+
+        def close() -> None:
+            W.end_tree(started[0].pid)
+
+        await steps("windows", live, type_text, focus, close, front=lambda: W.bring_to_front(hwnd))
+
+        for days, title, app in ((20, "Bitwarden - My Vault", False), (23, "Heliox-OS", True)):
+            name = "windows/live-never-reads-" + ("a-password-manager" if not app else "heliox-own-window")
+            opened = await asyncio.to_thread(open_page, title, app=app)
+            if opened is None:
+                skip(name, f"no window titled {title!r} appeared")
+                continue
+            hwnd, seen_title = opened
+            if app and seen_title != title:
+                skip(name, f"Edge's app window is titled {seen_title!r}, not exactly {title!r}")
+                continue
+            observed = await live.engine._observe()
+            sentence, evidence = slip(days)
+            before = len(live.cards())
+            await live.while_typing(
+                type_text, sentence, QUIET_WAIT, until=lambda before=before: len(live.cards()) > before
+            )
+            fresh = [c.get("evidence") for c in live.cards()[before:]]
+            check(name, observed is None and evidence not in fresh, f"observe {observed!r}; cards {fresh!r}")
+    finally:
+        for process in started:
+            W.end_tree(process.pid)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--wayland", action="store_true")
@@ -369,7 +449,7 @@ def main() -> int:
         elif sys.platform.startswith("linux"):
             asyncio.run(linux(args.wayland, args.python, Path(folder)))
         else:
-            skip("live-end-to-end", "macOS and Linux only; Windows has its own reader checks")
+            asyncio.run(windows(Path(folder)))
     return failures
 
 

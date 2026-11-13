@@ -701,6 +701,16 @@ jobs:
           pip install -q pyautogui
           python tests/platform_real/windows_fields_check.py edge-default chrome-default chrome-forced
 
+      # Live end to end on Windows: a slip typed into Edge becomes a card; Edge's password input, a window titled
+      # like a password manager and one titled as Heliox's own window give none; the card goes when the window
+      # closes. Its own step, so a failed field check above does not hide it.
+      - name: Windows - Live end to end in Edge, and the windows Live never reads
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        continue-on-error: true
+        run: |
+          pip install -q pyautogui
+          python tests/platform_real/live_end_to_end_check.py
+
       - name: Unit tests for the readers on this runner
         if: ${{ !cancelled() }}
         run: |
