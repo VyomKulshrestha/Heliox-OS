@@ -139,6 +139,7 @@ async def run(
     harness = Harness(
         audio_root=args.audio, data_dir=bench_root_for(results), model=KINDS["cloud"], configure=configure
     )
+    harness.keep_voice_log(results)  # the voice worker's INFO lines, uploaded with the results
     await harness.build()
     stack.enable(harness)
     name, values, repeats, _wanted, todo = plan(args)

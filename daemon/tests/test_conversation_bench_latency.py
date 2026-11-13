@@ -401,7 +401,7 @@ def test_the_warm_up_and_synthesis_tables():
 
 
 def test_every_mode_is_named():
-    assert voice_latency.MODES == ("full", "first-utterance", "warm-up", "synthesis")
+    assert voice_latency.MODES == ("full", "first-utterance", "warm-up", "synthesis", "voice-released")
 
 
 def test_the_layers_warm_up_done_stamp_counts_as_finished_only_when_the_connection_answered():
@@ -428,3 +428,32 @@ def test_a_sentence_said_while_loading_is_reported_by_the_listeners_own_statuses
     assert vl.hearing_statuses(session, 0.0, 20.0, None) == ["hearing_loading", "hearing_ready"]
     asked = [tl.Event(t=3.0, event="voice status", detail="hearing_not_ready")]
     assert vl.drop_reason(asked, False) == "came before the listener was ready, asked to say it again"
+
+
+def test_after_a_release_the_reload_is_timed_from_the_managers_own_stamps():
+    vl = voice_latency
+    log = [("released", "the bench", 100.0), ("load_started", "kokoro_tts", 101.5), ("load_ended", "kokoro_tts", 121.5)]
+    assert vl.voice_back(log, 100.0) == {"reload_started_s": 1.5, "reload_ended_s": 21.5, "reload_failed": None}
+    failed = [("released", "x", 100.0), ("load_started", "kokoro_tts", 101.0), ("load_failed", "OSError", 102.0)]
+    assert vl.voice_back(failed, 100.0)["reload_failed"] == "OSError"
+    assert vl.voice_back(log, 200.0) == {"reload_started_s": None, "reload_ended_s": None, "reload_failed": None}
+
+
+def test_the_released_table_keeps_warm_and_after_release_apart():
+    vl = voice_latency
+    rows = [
+        {"state": "warm", "seconds": 1.4, "spoke_with": "local", "branch": "ready"},
+        {"state": "after release", "seconds": 1.9, "spoke_with": "system", "branch": "system_still_loading",
+         "reload_ended_s": 21.0},
+        {"state": "after release", "seconds": 2.1, "spoke_with": "system", "branch": "system_still_loading",
+         "reload_ended_s": 23.0},
+    ]  # fmt: skip
+    got = vl.released_table(rows)
+
+    assert got["warm"] == {"n": 1, "first_sound_median_s": 1.4, "voices": {"local/ready": 1},
+                           "reload_ended_median_s": None}  # fmt: skip
+    assert got["after release"]["voices"] == {"system/system_still_loading": 2}
+    assert got["after release"]["reload_ended_median_s"] == 22.0
+    events = [tl.Event(t=1.0, event=tl.VOICE_REPLY, detail="", data={"voice": "store", "branch": "store"})]
+    assert vl.reply_voice(events) == {"spoke_with": "store", "branch": "store", "reason": None}
+    assert vl.reply_voice([]) == {}

@@ -64,6 +64,77 @@ class Log:
             return [e for e in self.events if e.t >= t]
 
 
+def voice_marks() -> tuple[int, int]:
+    """Where the voice manager's records stand now: (reply sequence, synthesis records so far)."""
+    try:
+        from pilot.system import local_tts_worker as worker
+
+        return worker.reply_sequence(), len(worker.manager().synth_log)
+    except Exception:  # an older tree without the records: no evidence, never in the way
+        return 0, 0
+
+
+def voice_evidence(mark: tuple[int, int]) -> dict[str, Any]:
+    """Which voice spoke since ``mark`` and how its first reply piece was made (numbers and labels only)."""
+    try:
+        from pilot.system import local_tts_worker as worker
+
+        manager = worker.manager()
+        record = manager.last_reply
+        records = list(manager.synth_log)
+    except Exception:
+        return {}
+    out: dict[str, Any] = {}
+    if record is not None and record.sequence > mark[0]:
+        out.update(voice=record.voice, branch=record.branch, reason=record.reason or None)
+    return {**out, **synth_wait(records, mark[1])}
+
+
+def synth_wait(records: list[tuple[str, int, float, float, float]], since: int) -> dict[str, Any]:
+    """The first reply piece made since record ``since``: how long it waited before the worker took it, how long it
+    took, and whether a piece made ahead was being synthesised when it was asked for."""
+    replies = [r for r in records[since:] if r[0] == "reply"]
+    if not replies:
+        return {}
+    _kind, _words, requested, started, done = replies[0]
+    behind = any(r[0] == "ahead" and r[3] <= requested < r[4] for r in records)
+    return {"synth_wait_s": round(started - requested, 3), "synth_s": round(done - started, 3),
+            "behind_ahead_piece": behind}  # fmt: skip
+
+
+def voice_replies(events: list[tl.Event]) -> dict[str, Any]:
+    """Each spoken sentence (not set-up speech): which voice spoke it, whether it waited behind a piece made ahead,
+    and the seconds from its hand-over to its first audio; counted and the medians kept apart."""
+    import statistics
+
+    rows = []
+    for i, e in enumerate(events):
+        if e.event != tl.SPEAKS or e.data.get("setup"):
+            continue
+        later = events[i + 1 :]
+        until = next((j for j, x in enumerate(later) if x.event == tl.SPEAKS), len(later))
+        window = later[:until]
+        sound = next((x for x in window if x.event == tl.AUDIO_STARTS), None)
+        voice = next((x for x in window if x.event == tl.VOICE_REPLY), None)
+        data = voice.data if voice is not None else {}
+        rows.append({"voice": data.get("voice"), "behind": bool(data.get("behind_ahead_piece")),
+                     "wait": data.get("synth_wait_s"),
+                     "to_audio_s": None if sound is None else round(sound.t - e.t, 3)})  # fmt: skip
+
+    def group(pick: Any) -> dict[str, Any]:
+        chosen = [r for r in rows if pick(r)]
+        times = [r["to_audio_s"] for r in chosen if r["to_audio_s"] is not None]
+        waits = [r["wait"] for r in chosen if r["wait"] is not None]
+        return {"n": len(chosen), "median_to_audio_s": round(statistics.median(times), 3) if times else None,
+                "median_synth_wait_s": round(statistics.median(waits), 3) if waits else None}  # fmt: skip
+
+    groups = {f"voice {name}": group(lambda r, name=name: r["voice"] == name) for name in ("local", "store", "system")}
+    groups["voice not recorded"] = group(lambda r: r["voice"] is None)
+    groups["waited behind a piece made ahead"] = group(lambda r: r["behind"])
+    groups["no piece made ahead in the way"] = group(lambda r: not r["behind"])
+    return groups
+
+
 def voiced_span(x: Any) -> tuple[float, float]:
     """First and last loud sample (above 15 percent of the peak), in seconds."""
     import numpy as np
@@ -391,8 +462,10 @@ class Harness:
             setup = bool(self._setup_text) and text == self._setup_text
             log(tl.SPEAKS, text[:300], setup=setup, stub=text == STUB_SUCCESS)
             self._speaking_setup = setup
+            mark = voice_marks()
             try:
                 result = await original_speaker(text, recorder)
+                log(tl.VOICE_REPLY, "", setup=setup, **voice_evidence(mark))
                 log(tl.DONE, "", setup=setup)
                 return result
             except asyncio.CancelledError:
@@ -592,6 +665,36 @@ class Harness:
         if babble.exists():
             self.babble = wavio.read(babble)
 
+    def voice_store_counts(self) -> dict[str, int]:
+        """The store of ready-made audio at the end of the run: how many entries, fixed, kept (counts only)."""
+        import json
+
+        from pilot.config import CACHE_DIR
+
+        index = Path(CACHE_DIR) / "voice_heads" / "index.json"
+        try:
+            entries = json.loads(index.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"entries": 0, "fixed": 0, "kept": 0}
+        values = [e for e in entries.values() if isinstance(e, dict)] if isinstance(entries, dict) else []
+        return {"entries": len(values), "fixed": sum(bool(e.get("fixed")) for e in values),
+                "kept": sum(bool(e.get("kept")) for e in values)}  # fmt: skip
+
+    def keep_voice_log(self, folder: Path) -> Path:
+        """The voice worker's and the voice's INFO lines, from now on, in ``<folder>/voice_worker.log``."""
+        import logging
+
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / "voice_worker.log"
+        handler = logging.FileHandler(path, encoding="utf-8")
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+        for name in ("pilot.system.local_tts_worker", "pilot.system.voice"):
+            logger = logging.getLogger(name)
+            logger.setLevel(logging.INFO)
+            logger.addHandler(handler)
+        return path
+
     def save_session(self, folder: Path) -> Path:
         """Every event of the run, between scenarios included (a transcript that came after its scenario had
         closed, the drain before the next one), one per line: ``<folder>/session.jsonl``."""
@@ -607,6 +710,12 @@ class Harness:
     async def close(self, session_to: Path | None = None) -> None:
         if session_to is not None:
             self.save_session(session_to)
+            import json
+
+            with self.log.lock:
+                events = list(self.log.events)
+            evidence = {"store": self.voice_store_counts(), "replies": voice_replies(events)}
+            (session_to / "voice_store.json").write_text(json.dumps(evidence, indent=1), encoding="utf-8")
         if getattr(self, "_vad_watch", None) is not None:
             self._vad_watch.cancel()
         if self.pump:

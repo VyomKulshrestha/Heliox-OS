@@ -36,6 +36,10 @@ CARD = "card"
 APPROVAL = "approval state"
 STORED = "stored"
 SETUP_SPEECH = "setup speech"
+# Which voice spoke a sentence and how it was made, from the voice manager's own records (local_tts_worker):
+# voice/branch/reason, the wait before the worker took it, its synthesis time, and whether a piece made ahead
+# was being synthesised when it was asked for.
+VOICE_REPLY = "voice reply"
 
 _PROBE_NAMES = {
     "person's last word ends": LAST_WORD,

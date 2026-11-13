@@ -55,6 +55,11 @@ Modes (``--mode``), so each measurement others depend on is one command and its 
   sentence held and read, or asked for again, is told from one that was lost.
 - ``warm-up``: the synthetic model turns only, with the model connection's own stamps per turn: when its warm-up
   started and ended against "request sent", and how many requests went out on a finished, a running or no warm-up.
+- ``voice-released``: the first chosen recording ``--repeats`` times as a pair: once with the local voice loaded
+  ("warm"), then again right after the bench released the voice through the voice manager's own release (what the
+  idle release runs, forced: no five-minute wait). Each row: last word to first sound, which voice spoke the reply
+  and by which branch of the voice rule (local, store or system; ready, loaded_within_grace, system_still_loading
+  and the rest), and when the local voice was back after the release, from the manager's own load stamps.
 - ``synthesis``: the same turns as ``full``, reported as the time from the first sentence handed to the voice to its
   first sound, by the first sentence's length in words.
 """
@@ -124,7 +129,7 @@ MODEL_TURNS = (
 )
 MODEL_TURN_VOICES = (("af_bella", 1.0), ("am_michael", 1.0), ("bm_lewis", 1.0))
 MODEL_TURN_FOLDER = "model_turns"
-MODES = ("full", "first-utterance", "warm-up", "synthesis")
+MODES = ("full", "first-utterance", "warm-up", "synthesis", "voice-released")
 HEARING = ("hearing_loading", "hearing_ready", "hearing_not_ready")
 LENGTHS = ((1, 4), (5, 8), (9, 12), (13, 10_000))  # words in the first sentence
 
@@ -220,6 +225,25 @@ def synthesis_table(rows: list[dict[str, Any]], threshold: float) -> dict[str, d
     return out
 
 
+def released_table(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Warm turns against turns right after a release: first sound (median), which voices spoke, the reload."""
+    out: dict[str, Any] = {}
+    for state in ("warm", "after release"):
+        mine = [r for r in rows if r.get("state") == state]
+        if not mine:
+            continue
+        voices: dict[str, int] = {}
+        for r in mine:
+            key = f"{r.get('spoke_with')}/{r.get('branch')}"
+            voices[key] = voices.get(key, 0) + 1
+        out[state] = {"n": len(mine), "first_sound_median_s": _median([r["seconds"] for r in mine
+                                                                         if r.get("seconds") is not None]),
+                      "voices": voices,
+                      "reload_ended_median_s": _median([r["reload_ended_s"] for r in mine
+                                                        if r.get("reload_ended_s") is not None])}  # fmt: skip
+    return out
+
+
 def warm_up_table(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """The model turns' warm-up at the request: how many finished, running, none; and its stamps (median)."""
     turns = [r for r in rows if r.get("route") == "model answer"]
@@ -289,6 +313,40 @@ def drop_reason(events: list[tl.Event], expected_silent: bool) -> str | None:
     if not loose_wake_prefix(heard):
         return "no wake phrase in the wake pass"
     return "wake phrase heard, not taken as addressed"
+
+
+def reply_voice(events: list[tl.Event]) -> dict[str, Any]:
+    """The first spoken sentence's voice record in a turn (voice, branch, reason), or {}."""
+    found = next((e for e in events if e.event == tl.VOICE_REPLY and not e.data.get("setup")), None)
+    return {} if found is None else {"spoke_with": found.data.get("voice"), "branch": found.data.get("branch"),
+                                     "reason": found.data.get("reason")}  # fmt: skip
+
+
+def voice_back(reload_log: list[tuple[str, str, float]], released_at: float) -> dict[str, Any]:
+    """After a release at ``released_at`` (time.monotonic()): when the reload started and ended, in seconds after
+    the release, or how it failed; from the manager's reload_log."""
+    after = [r for r in reload_log if r[2] >= released_at]
+    started = next((r[2] for r in after if r[0] == "load_started"), None)
+    ended = next((r[2] for r in after if r[0] == "load_ended"), None)
+    failed = next((r[1] for r in after if r[0] == "load_failed"), None)
+    return {
+        "reload_started_s": None if started is None else round(started - released_at, 3),
+        "reload_ended_s": None if ended is None else round(ended - released_at, 3),
+        "reload_failed": failed,
+    }
+
+
+async def release_voice(reason: str = "the bench", wait_s: float = 15.0) -> float | None:
+    """Release the local voice through the manager's own release (forced), once it is not speaking or making
+    anything; the time.monotonic() of the release, or None when it could not be released in ``wait_s``."""
+    from pilot.system.local_tts_worker import manager
+
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        if await manager().release(reason, force=True):
+            return time.monotonic()
+        await asyncio.sleep(0.2)
+    return None
 
 
 def hearing_statuses(session: list[tl.Event], since: float, until: float, last_word: float | None) -> list[str]:
@@ -649,6 +707,8 @@ async def _main(args: argparse.Namespace) -> int:
     synthetic = model_turn_scenarios(args.model_turns)
     if args.mode == "first-utterance":
         own, plan = own[:1], own[:1]  # the same recording, cold and then warmed
+    elif args.mode == "voice-released":
+        plan = own[:1] * (2 * args.repeats)  # pairs: warm, then right after a release
     elif args.mode == "warm-up":
         plan = synthetic
     else:
@@ -697,6 +757,10 @@ async def _main(args: argparse.Namespace) -> int:
                     called = await warm_recognisers(harness, root / synthetic[0].steps[0].say)
                     print(f"warmed by the bench: {', '.join(called)}", flush=True)
                 warmed = True
+            released_at = None
+            if args.mode == "voice-released" and index % 2 == 1:
+                released_at = await release_voice()
+                print(f"voice released: {'yes' if released_at is not None else 'could not, within 15 s'}", flush=True)
             synthetic_turn = scenario in synthetic
             harness.audio_root = str(root) if synthetic_turn else args.audio
             cpu = machine.cpu_percent(1.0)
@@ -719,6 +783,15 @@ async def _main(args: argparse.Namespace) -> int:
                 since = rows[-1]["closed_at"] if rows and rows[-1].get("closed_at") is not None else 0.0
                 row["hearing"] = hearing_statuses(harness.log.since(0.0), since, events[-1].t if events else since,
                                                   last[-1].t if last else None)  # fmt: skip
+            if args.mode == "voice-released":
+                from pilot.system.local_tts_worker import manager
+
+                row["state"] = "after release" if index % 2 == 1 else "warm"
+                row.update(reply_voice(events))
+                if released_at is not None:
+                    await harness._wait(lambda at=released_at: any(r[0] in ("load_ended", "load_failed") and r[2] >= at
+                                                    for r in manager().reload_log), 120)  # fmt: skip
+                    row.update(voice_back(list(manager().reload_log), released_at))
             if row.get("route") == "model answer":
                 model_turns_seen += 1
                 row["first after start-up"] = model_turns_seen == 1
@@ -740,6 +813,13 @@ async def _main(args: argparse.Namespace) -> int:
                 print("   " + stage_line(found, worst, args.threshold), flush=True)
             if row.get("hearing") is not None:
                 print("   hearing: " + (", ".join(row["hearing"]) or "no status"), flush=True)
+            if args.mode == "voice-released":
+                back = row.get("reload_ended_s")
+                print(f"   voice: {row.get('spoke_with')} ({row.get('branch')}"
+                      + (f"; {row['reason']}" if row.get("reason") else "") + ")"
+                      + ("" if row["state"] == "warm" else
+                         f"; local voice back {back} s after the release" if back is not None else
+                         f"; local voice not back ({row.get('reload_failed') or 'no reload seen'})"), flush=True)  # fmt: skip
         session = harness.log.since(0.0)
     finally:
         await exits.aclose()  # the person's budget store closed: the spend lands in pilot.db, its threads end
@@ -753,10 +833,11 @@ async def _main(args: argparse.Namespace) -> int:
     result = {"mode": args.mode, "model": args.model, "threshold": args.threshold, "rows": rows,
               "summary": summary(rows, args.threshold), "recognisers": recognisers,
               "warm_up": warm_up_table(rows), "synthesis_by_length": synthesis_table(rows, args.threshold),
+              "voice_released": released_table(rows),
               "calls": None if cap is None else {"made": cap.calls, "refused": cap.refused}}  # fmt: skip
     shown = {"full": ("summary", "recognisers", "warm_up", "synthesis_by_length", "calls"),
              "first-utterance": ("recognisers",), "warm-up": ("warm_up", "calls"),
-             "synthesis": ("synthesis_by_length",)}[args.mode]  # fmt: skip
+             "synthesis": ("synthesis_by_length",), "voice-released": ("voice_released",)}[args.mode]  # fmt: skip
     print(json.dumps({k: result[k] for k in shown}, indent=1))
     if args.out:
         Path(args.out).write_text(json.dumps(result, indent=1), encoding="utf-8")
@@ -791,6 +872,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", default="u-real", help="comma-separated scenario id prefixes")
     parser.add_argument("--model-turns", type=int, default=12, help="synthetic questions for the talk model")
     parser.add_argument("--mode", choices=MODES, default="full", help="which measurement (see the module text)")
+    parser.add_argument("--repeats", type=int, default=3, help="voice-released: warm / after-release pairs")
     parser.add_argument("--during-loading", action="store_true",
                         help="first-utterance: speak while the listener is still loading")  # fmt: skip
     parser.add_argument("--model", choices=("stub", "configured"), default="stub")

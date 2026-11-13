@@ -23,7 +23,7 @@ on:
         description: "Run voice_latency in this mode instead of the timing lines (empty: the timing lines)"
         required: false
         type: choice
-        options: ["", "full", "first-utterance", "warm-up", "synthesis"]
+        options: ["", "full", "first-utterance", "warm-up", "synthesis", "voice-released"]
         default: ""
       during_loading:
         description: "With latency_mode first-utterance: speak while the listener is still loading"

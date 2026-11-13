@@ -248,7 +248,7 @@ def _step(text: str, name: str) -> str:
 def test_a_latency_mode_runs_instead_of_the_timing_lines_on_synthetic_voices_only():
     # Read as text (PyYAML is not a dependency of the test run); the YAML itself is parsed before every hand-over.
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert 'options: ["", "full", "first-utterance", "warm-up", "synthesis"]' in text
+    assert 'options: ["", "full", "first-utterance", "warm-up", "synthesis", "voice-released"]' in text
     timing = _step(text, "Timing lines (load-checked before every scenario)")
     latency = _step(text, "Voice latency mode (synthetic voices, stub model)")
     assert "if: inputs.latency_mode == ''" in timing and "if: inputs.latency_mode != ''" in latency
