@@ -248,8 +248,12 @@ async def _speak_nothing(_text, _urgent):
     return "spoken"
 
 
-def test_what_was_offered(person):
+@pytest.fixture(scope="module")
+def offered(person, tmp_path_factory) -> list[tuple[str, str, str]]:
+    """The day's offers, (time, kind, key), through the real offer rules, with the working day the person told, their
+    habits, goals and list, and a routine record holding a request they made at ten on the weekdays before."""
     from pilot.personal.offers import Offers, day_moments
+    from pilot.personal.routines import RoutineRecord
     from pilot.personal.wiring import quiet_now
     from pilot.workflows.suggestions import Suggester
 
@@ -257,17 +261,30 @@ def test_what_was_offered(person):
     goals = [dict(g) for g in DAY["person"]["goals"]]
     todos = [{"id": str(i), "text": f"thing {i}"} for i in range(DAY["person"]["todos"])]
     clock = person.clock
+    history = DAY["offers"]["routine_history"]
+    record_path = tmp_path_factory.mktemp("routines") / "routines.json"
+    days, back = [], 1
+    while len(days) < history["weekdays_before"]:
+        day = THURSDAY - timedelta(days=back)
+        if day.weekday() < 5:
+            days.append(day)
+        back += 1
+    verb, _, target = history["request"].partition(" ")
+    record_path.write_text(json.dumps({"requests": [
+        {"kind": verb, "target": target, "day": d.date().isoformat(), "hour": history["hour"]} for d in days
+    ]}), encoding="utf-8")  # fmt: skip
+    record = RoutineRecord(record_path, now=clock.wall)
     suggester = Suggester(stale_goals=lambda: goals, habits=lambda: list(habits.values()), open_todos=lambda: todos,
                           now=clock.wall)  # fmt: skip
     offers = Offers(
         mode=lambda: "auto", profile_empty=person.profile.is_empty, suggestions=suggester.picks,
         moments=lambda now: day_moments(now, start=person.profile.work_start_minute(),
-                                        end=person.profile.work_end_minute()),
+                                        end=person.profile.work_end_minute()) + record.offers(now),
         now=clock.wall, clock=clock.tick, timeline_off=lambda: False,
     )  # fmt: skip
     meeting = DAY["offers"]["meeting"]
     answers = DAY["offers"]["answers"]
-    made: list[tuple[str, str]] = []
+    made: list[tuple[str, str, str]] = []
     clock.now = at("07:00")
     while clock.now < at("23:00"):
         hhmm = clock.now.strftime("%H:%M")
@@ -276,12 +293,18 @@ def test_what_was_offered(person):
             offer = offers.next_offer()
             if offer is not None:
                 offers.mark_offered(offer)
-                made.append((hhmm, offer.kind))
+                made.append((hhmm, offer.kind, offer.key))
                 said = answers.get(offer.key) or answers.get(offer.kind)
                 if said:
                     offers.reply(said)
         clock.now += timedelta(minutes=5)
-    unwelcome = [m for m in made if m[1] not in DAY["offers"]["welcome"]]
+    return made
+
+
+def test_what_was_offered(offered):
+    made = [(t, k) for t, k, _key in offered]
+    meeting = DAY["offers"]["meeting"]
+    unwelcome = [m for m in made if m[1] not in DAY["offers"]["welcome"] + ["learned_routine"]]
     assert not unwelcome, f"Heliox offered what Sam's day did not call for: {unwelcome}"
     assert not [m for m in made if m[0] >= "18:00"], f"Heliox made an offer after six: {made}"
     assert not [m for m in made if meeting["from"] <= m[0] < meeting["to"]], (
@@ -289,6 +312,59 @@ def test_what_was_offered(person):
     )
     assert "routine" in [k for _t, k in made], f"Sam told Heliox their working day and got no offer from it: {made}"
     assert len(made) <= 3, f"Heliox made {len(made)} offers in one day, more than its own cap: {made}"
+
+
+# ── personal: the moments a person would expect Heliox to use what it knows, unasked ──
+
+
+def personal_moments(
+    record: Any, marks: dict[str, Any], offered: list[tuple[str, str, str]]
+) -> list[tuple[str, bool, str]]:
+    """(the moment, delivered, what happened) for every moment the day file marks."""
+    found = []
+    for turn, mark in marks["turn"].items():
+        moment = mark.get("moment")
+        if not moment:
+            continue
+        reply = said_on(record, turn)
+        given = " ".join(record.planned.get(turn, []))
+        hit = all(word.casefold() in f"{reply} {given}".casefold() for word in moment["expects"])
+        found.append((moment["name"], hit, f"said {reply!r}"))
+    wrap = DAY["wrap_up_moment"]
+    from pilot.workflows.day_briefing import compose_night
+
+    night = compose_night(at("17:55"), brief="", focus_seconds=0, finished_todos=0, open_todos=0, reminders=[])
+    found.append((wrap["name"], wrap["expects"].casefold() in night.casefold(), f"said {night!r}"))
+    for moment in DAY["offers"]["moments"]:
+        if "quiet" in moment:
+            begin, end = moment["quiet"]
+            during = [o for o in offered if begin <= o[0] < end]
+            found.append((moment["name"], not during, f"offers then: {during}"))
+            continue
+        begin, end = moment["between"]
+        hits = [o for o in offered if begin <= o[0] < end and o[1] == moment["kind"]
+                and ("key" not in moment or o[2] == moment["key"])]  # fmt: skip
+        found.append((moment["name"], bool(hits), f"offers: {[o for o in offered]}"))
+    return found
+
+
+def test_personal_moments_delivered_against_expected(days, offered, capsys):
+    """The number first: each run's delivered moments against the expected ones, never fewer than the day file's
+    baseline. The misses are printed in a person's words."""
+    baseline = DAY["personal_moments_baseline"]
+    lines = []
+    worse = []
+    for label in ("no model", "cloud, auto", "cloud, off"):
+        record, marks = days[label]
+        found = personal_moments(record, marks, offered)
+        delivered = sum(hit for _name, hit, _what in found)
+        lines.append(f"{label}: {delivered} of {len(found)}")
+        lines += [f"    missed: {name} ({what})" for name, hit, what in found if not hit]
+        if baseline.get(label) is not None and delivered < baseline[label]:
+            worse.append(f"{label}: {delivered}, was {baseline[label]}")
+    with capsys.disabled():
+        print("\nPersonal moments, delivered of expected:\n" + "\n".join(lines))
+    assert not worse, f"Heliox used less of what it knows about Sam than before: {worse}"
 
 
 def test_the_lid_closed_over_a_reminder(tmp_path):
