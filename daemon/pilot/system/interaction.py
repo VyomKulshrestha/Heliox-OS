@@ -71,7 +71,7 @@ def acknowledgement_for(user_input: str) -> str:
     if any(token in normalized for token in ("show ", "check ", "inspect ", "what is", "what’s")):
         return "I’ll check."
     if any(token in normalized for token in ("open ", "launch ", "start ")):
-        return "Opening it now."
+        return "I’ll open it."
     if any(token in normalized for token in ("create ", "write ", "build ", "make ")):
         return "I’ll put that together."
     return "I’m on it."

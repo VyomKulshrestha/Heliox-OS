@@ -43,6 +43,7 @@ from pilot.real_folders import use_scratch_folders  # noqa: E402
 
 TEST_ROOT = use_scratch_folders()
 
+from pilot.conversation.action_talk import claims_running  # noqa: E402
 from pilot.conversation.layer import SPOKEN_WORD_CAP  # noqa: E402
 
 PACK = Path(__file__).with_name("sessions.json")
@@ -91,6 +92,7 @@ class Ran:
     turn: int
     action_type: str
     target: str
+    seq: int = 0
 
 
 @dataclass
@@ -110,6 +112,7 @@ class Record:
     stored: dict[int, str] = field(default_factory=dict)  # everything on disk after the turn, as text
     config_saves: dict[int, list[str]] = field(default_factory=dict)  # where each config save went, by turn
     config_after: dict[int, dict[str, Any]] = field(default_factory=dict)  # the scratch config.toml after the turn
+    approved: dict[int, int] = field(default_factory=dict)  # a turn whose plan was approved on the dialog -> when
     folder: str = ""  # the session's own folder
     real_config_before: dict[str, tuple[int, int]] = field(default_factory=dict)  # the person's, by name
     real_config_after: dict[str, tuple[int, int]] = field(default_factory=dict)
@@ -351,7 +354,10 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
         results = []
         for action in run_plan.actions:
             kind_of = action.action_type.value
-            record.ran.append(Ran(_turn_of(record), kind_of, str(action.target or "")))
+            record.ran.append(Ran(_turn_of(record), kind_of, str(action.target or ""), record.next()))
+            if kind_of in session.get("fails", []):  # the action itself goes wrong
+                results.append(ActionResult(action=action, success=False, output="", error="Access is denied."))
+                continue
             results.append(ActionResult(action=action, success=True, output=outputs.get(kind_of, "Done")))
         return results
 
@@ -367,7 +373,18 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     server._multi_agent.get_routing_summary.return_value = {"assigned_agents": []}
     server._permission_checker = PermissionChecker(config)
     server._memory = AsyncMock()  # long-term memory: recorded into nowhere
-    server._verifier = SimpleNamespace(verify=AsyncMock(return_value=VerificationResult(passed=True, details=["ok"])))
+
+    async def verify(run_plan: Any, results: list[Any]) -> Any:
+        # As pilot.agents.verifier does: a result that failed fails the check; nothing is observed independently.
+        failed = [index for index, result in enumerate(results) if not result.success]
+        return VerificationResult(
+            passed=not failed,
+            details=[f"Action {index} ({results[index].action.action_type.value}): FAILED" for index in failed]
+            or ["ok"],
+            failed_actions=failed,
+        )
+
+    server._verifier = SimpleNamespace(verify=verify)
     # Receipts are written and read as they would be; what "do that again" repeats is the last request (below).
     server._task_receipts = SimpleNamespace(
         finalize=AsyncMock(return_value=None),
@@ -492,6 +509,12 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                 if event == "call":
                     listener.in_call = str(turn.get("app", "Teams"))
                     continue
+                if event == "approve":
+                    # The person presses Approve on the dialog (the only way an approval is given): the plan the
+                    # last asking turn waits on goes ahead, and what it says belongs to that turn.
+                    await _approve(server, record, pending)
+                    pending = [task for task in pending if not task.done()]
+                    continue
                 if event == "call_end":
                     listener.in_call = ""
                     continue
@@ -548,6 +571,7 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                             None,
                             lambda before=asked_before, on=server: set(on._pending_confirms) - before,
                             winding_down,
+                            joins=first,
                         )
                     continue
                 voiced = float(turn.get("voiced", max(0.6, _words(text) / WORDS_PER_SECOND)))
@@ -631,10 +655,39 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
     return record, check_session(session, kind, record)
 
 
-async def _settle(record: Record, index: int, dispatch: Any, asked: Any, winding_down: Any = lambda: False) -> None:
+async def _approve(server: Any, record: Record, pending: list[Any]) -> None:
+    asking = [s.turn for s in record.shown if s.method == "confirm_required"]
+    if not asking:
+        return  # nothing asked for approval (a person with no model: nothing was planned); the turns say so
+    if not server._pending_confirms:
+        record.stuck.append("an approve event with no approval waiting")
+        return
+    plan_id = list(server._pending_confirms)[-1]
+    record.approved[asking[-1]] = record.next()
+    reply = await server._handle_confirm({"plan_id": plan_id, "confirmed": True}, None)
+    if reply.get("status") != "ok":
+        record.stuck.append(f"the approval was not taken: {reply}")
+        return
+    waiting = [task for task in pending if not task.done()]
+    if waiting:
+        _done, still = await asyncio.wait(waiting, timeout=SETTLE_SECONDS)
+        if still:
+            record.stuck.append(f"the approved plan was still running after {SETTLE_SECONDS:.0f} s")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + SETTLE_SECONDS
+    while any(not task.done() and not _is_timer(task) for task in record.tasks.get(asking[-1], set())):
+        if loop.time() > deadline:
+            break
+        await asyncio.sleep(0.005)
+
+
+async def _settle(
+    record: Record, index: int, dispatch: Any, asked: Any, winding_down: Any = lambda: False, joins: int = -1
+) -> None:
     """Wait until everything turn ``index`` set going has finished, or is waiting on the approval dialog after
     saying so, and no earlier task this turn ended is still winding down. Decided by the turns' own tasks and the
-    server's state, never by a fixed sleep."""
+    server's state, never by a fixed sleep. ``joins``: the turn whose withdrawn first half this one completes; the
+    approval sentence that half said stands for the joined request (pilot.conversation.handover.keep_company)."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + SETTLE_SECONDS
     running: set[Any] = set()
@@ -642,7 +695,7 @@ async def _settle(record: Record, index: int, dispatch: Any, asked: Any, winding
         running = {task for task in record.tasks.get(index, set()) if not task.done() and not _is_timer(task)}
         if not running and not winding_down():
             return
-        if asked() and any(s.turn == index and "approv" in s.text.casefold() for s in record.said):
+        if asked() and any(s.turn in (index, joins) and "approv" in s.text.casefold() for s in record.said):
             return  # the plan waits for the person's click; the rest of this turn waits with it
         await asyncio.sleep(0.005)
     record.stuck.append(
@@ -835,6 +888,16 @@ def check_session(session: dict[str, Any], kind: str, record: Record) -> list[st
         if "runs_nothing" in expect and expect["runs_nothing"] and ran:
             failures.append(f"{where}: expected nothing to run; ran {ran}")
         asked = any(s.method == "confirm_required" and s.turn == index for s in record.shown)
+        # pilot.conversation.action_talk: "Deleting that now." only while something runs, never for a turn that ran
+        # nothing or one that waits on the approval dialog.
+        approved_at = record.approved.get(index)
+        for line in said:
+            waiting = asked and (approved_at is None or line.seq < approved_at)
+            if claims_running(line.text) and (not ran or waiting):
+                failures.append(
+                    f"{where}: {line.text!r} says it is under way, but "
+                    + ("it waits for approval" if waiting else "nothing ran")
+                )
         if "approval" in expect and asked != expect["approval"]:
             failures.append(f"{where}: approval {'asked' if asked else 'not asked'}; expected the opposite")
         if "withdrawal" in expect and record.withdrawals.get(index) != expect["withdrawal"]:

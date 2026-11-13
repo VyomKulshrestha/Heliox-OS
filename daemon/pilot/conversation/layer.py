@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pilot.conversation import provisional as prov
+from pilot.conversation.action_talk import needs_approval_first, result_sentence, said_again
 from pilot.conversation.context import SAVE_OR_CHANGE, ContextSources, ConversationMemory, build_messages
 from pilot.conversation.fast_model import FastModel, FastModelUnavailable
 from pilot.conversation.handover import (
@@ -156,6 +157,28 @@ _CONTROL_START = re.compile(
     r"^(?:stop|wait|hold on|no|nope|cancel|never ?mind|undo|skip|don'?t|do not|not (?:that|now)|actually|instead|"
     r"go ahead|continue|that'?s (?:it|enough|all)|enough)\b"
 )
+# "Thanks" on its own (after normalize): the whole sentence, so "thanks, now open Notepad" is never taken here.
+THANKS = re.compile(
+    r"^(?:(?:ok(?:ay)?|great|perfect|cool|nice|lovely|brilliant|awesome) )?"
+    r"(?:thanks|thank you|thank you so much|thanks a lot|thanks so much|many thanks|cheers|ta)"
+    r"(?: (?:heliox|very much|again|mate))?$"
+)
+
+
+def ends_with_question(sentence: str) -> bool:
+    return sentence.rstrip().rstrip("\"')]").endswith("?")
+
+
+THANKS_REPLIES = ("You're welcome.", "Any time.", "Sure.", "Glad to help.")
+
+
+def _safe_call(source: Any, default: Any) -> Any:
+    try:
+        return source() if source is not None else default
+    except Exception:
+        return default
+
+
 CARRY_SECONDS = 10.0  # a joined sentence does not repeat a company line its first half said this recently
 ASK_WHAT = "Which ones do you mean?"
 ASK_MORE = "Could you tell me a bit more?"
@@ -215,10 +238,10 @@ class TurnResult:
         return params
 
     def spoken_result(self, result: str, status: str = "success") -> str:
-        """The quick road's result in a sentence ("" leaves the server's own wording): a state read in words, a
-        done action briefly, a failure with what failed."""
+        """The result in a sentence ("" leaves the server's own wording): on the quick road a state read in words, a
+        done action briefly, a failure with what failed; on the planner's, from its end state (action_talk)."""
         if self.quick is None:
-            return ""
+            return result_sentence(status, result)
         return quick_result_sentence(self.quick, result, status)
 
     def finish(self, status: str, result: str) -> None:
@@ -276,6 +299,8 @@ class ConversationLayer:
         self._sorry_said = False
         self._said_local_slow = False  # "the model on this computer is slow the first time" said once
         self._company_said: tuple[str, float] | None = None  # the last company line said, and when
+        self._last_thanks = ""  # the last reply to a plain thanks: the next one is different
+        self._thanks_said = 0
         self._search_url = search_url
         # Whether the planner's model may be given screen text (conversation.share_screen_text), and whether the
         # fast model was shown some in this conversation (then Heliox's lines may repeat it).
@@ -499,6 +524,14 @@ class ConversationLayer:
             self.memory.add_heliox(settled)
             if done is None:
                 self._last_done = (settled, (), self._clock())  # "did you get that?" next: no
+            result.done = True
+            return result
+        thanked = self._thanks_reply(text, offer)
+        if thanked:
+            # A plain thanks with nothing pending: a short reply from code, with no model call and no wait.
+            self.memory.add_user(text)
+            await self._say_one(result, thanked, started)
+            self.memory.add_heliox(thanked)
             result.done = True
             return result
         if decided.kind is TurnKind.ACTION:
@@ -732,6 +765,10 @@ class ConversationLayer:
                 if outcome in HEARD or outcome == "duplicate":
                     said.append(clean)
                     result.spoken.append(clean)
+                if not typed and ends_with_question(clean):
+                    # One question per turn, and it ends the reply: the person answers it, not a second one.
+                    capped = True
+                    break
             if not capped:
                 await producer  # (when capped, the finally below closes the stream, so it stops costing tokens)
         except asyncio.CancelledError:
@@ -803,6 +840,25 @@ class ConversationLayer:
         except Exception:
             return {}
 
+    def _thanks_reply(self, text: str, offer: Any) -> str:
+        """ "Thanks" said on its own, with nothing pending: a short reply, not the same as the last one. "" when the
+        thanks may be part of something open (an approval waiting, a task running, a question or offer of Heliox's
+        not yet answered) or the sentence asks for more ("thanks, now open Notepad"): the turn goes on as usual."""
+        if not THANKS.match(normalize(text)):
+            return ""
+        if offer is not None:
+            return ""
+        state = _safe_call(self.sources.task_state, {})
+        if isinstance(state, dict) and (state.get("approval_waiting") or state.get("running")):
+            return ""
+        if self.memory.last_heliox().rstrip().endswith("?"):
+            return ""
+        options = [reply for reply in THANKS_REPLIES if reply != self._last_thanks]
+        reply = options[self._thanks_said % len(options)]
+        self._thanks_said += 1
+        self._last_thanks = reply
+        return reply
+
     def note_code_answer(self, answer: str, changed: tuple[str, ...] | list[str]) -> None:
         """The server answered this turn in code (a handler took the words): what it said, and what it changed."""
         self._last_done = (str(answer or ""), tuple(changed or ()), self._clock())
@@ -816,7 +872,9 @@ class ConversationLayer:
         if done is not None and self._clock() - done[2] <= DONE_SECONDS and DID_YOU.match(words):
             answer, changed, _at = done
             if changed:
-                return f"Yes, I {' and '.join(changed[:2])}. {answer}".strip()
+                said = re.sub(r"^(?:okay|ok|done)[,.]\s+", "", answer.strip(), flags=re.IGNORECASE)
+                said = said[:1].upper() + said[1:]  # "Yes, I remembered that. You're a founder.", not "Okay, ..."
+                return f"Yes, I {' and '.join(changed[:2])}. {said}".strip()
             if answer.startswith("I didn't"):
                 return "No, nothing was saved or changed."
             # A turn answered in code that changed nothing ("what time is it?"): the question is not about a save.
@@ -971,10 +1029,26 @@ class ConversationLayer:
         """What the person hears first for a hand-over (the same sentence keep_company says)."""
         if result.intent is None:
             return ""
-        ack = (quick_acknowledgement(result.quick, result.intent.words) if result.quick is not None else "") or (
-            acknowledgement(result.intent, last=self._last_ack) if result.intent.verb or result.intent.say else ""
-        )
+        return self._first_sentence(result)
+
+    def _first_sentence(self, result: TurnResult) -> str:
+        """The quick road's sentence as its one action starts (running), else the asked-for state's: what Heliox
+        will do, or "" when the plan will need an approval first (pilot.conversation.action_talk)."""
+        assert result.intent is not None
+        if result.quick is not None:
+            return quick_acknowledgement(result.quick, result.intent.words)
+        if not self._has_model():
+            return ""  # no model to plan with: promising "I'll ..." would be followed by why it can't
+        ack = acknowledgement(result.intent, last=self._last_ack) if result.intent.verb or result.intent.say else ""
+        if not ack and needs_approval_first(result.intent.verb):
+            return ""
         return ack or "Working on it."
+
+    def _has_model(self) -> bool:
+        try:
+            return self._model() is not None
+        except Exception:
+            return False
 
     def _start_company(self, result: TurnResult, *, acknowledge: bool = True) -> asyncio.Task[None]:
         assert result.intent is not None
@@ -991,14 +1065,11 @@ class ConversationLayer:
                     carried=self._recent_company_line(),
                 )
             )
-        ack = (quick_acknowledgement(result.quick, result.intent.words) if result.quick is not None else "") or (
-            acknowledgement(result.intent, last=self._last_ack) if result.intent.verb or result.intent.say else ""
-        )
+        ack = self._first_sentence(result)
         if ack == self._last_ack and ack:
-            ack = "Okay, " + ack[:1].lower() + ack[1:]
-        if not ack:
-            ack = "Working on it."
-        self._last_ack = ack
+            ack = said_again(ack)
+        if ack:
+            self._last_ack = ack
 
         def said(sentence: str) -> None:
             result.spoken.append(sentence)
@@ -1023,7 +1094,7 @@ class ConversationLayer:
             if result.withdrawn:
                 return "cancelled"
             outcome = await self._sink(text, channel, key)
-            if outcome in HEARD and channel == "task_narration":
+            if outcome in HEARD and channel in ("task_narration", "approval_risk"):
                 self._company_said = (text, self._clock())
             return outcome
 

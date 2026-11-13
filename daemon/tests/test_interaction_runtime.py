@@ -10,7 +10,7 @@ from pilot.system.interaction import InteractionPhase, InteractionRuntime, ackno
     [
         ("find the latest update", "I’ll look into that."),
         ("show system information", "I’ll check."),
-        ("open GitHub", "Opening it now."),
+        ("open GitHub", "I’ll open it."),
         ("build a release checklist", "I’ll put that together."),
     ],
 )

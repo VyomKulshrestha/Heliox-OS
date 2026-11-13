@@ -43,15 +43,9 @@
      "model": "Nothing is on for tomorrow yet.",
      "expect": {
       "taken": true,
-      "model": true,
-      "has": [
-       "tomorrow|friday"
-      ]
-     },
-     "expect_none": {
       "model": false,
       "has": [
-       "language model|model"
+       "no reminders tomorrow"
       ]
      }
     },
@@ -1484,9 +1478,6 @@
    "never_runs": [
     "file_delete"
    ],
-   "said_once": [
-    "deleting the screenshots"
-   ],
    "runs_count": {
     "open_application": 2
    },
@@ -1501,6 +1492,11 @@
      },
      "expect_none": {
       "approval": false
+     },
+     "expect_model": {
+      "has": [
+       "needs your approval"
+      ]
      }
     },
     {
@@ -1510,7 +1506,11 @@
      "expect": {
       "withdrawal": "withdrawn",
       "runs_nothing": true,
-      "approval": true
+      "approval": true,
+      "not": [
+       "needs your approval",
+       "deleting"
+      ]
      },
      "expect_none": {
       "approval": false
@@ -1569,6 +1569,283 @@
      "expect": {
       "withdrawal": "unknown",
       "runs_nothing": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "what is said about an action follows its state",
+   "plans": {
+    "old logs": [
+     {
+      "action_type": "file_delete",
+      "target": "C:/Users/me/Downloads/logs",
+      "parameters": {
+       "path": "C:/Users/me/Downloads/logs"
+      }
+     }
+    ],
+    "desktop": [
+     {
+      "action_type": "file_move",
+      "target": "C:/Users/me/Desktop/a.txt",
+      "parameters": {
+       "source": "C:/Users/me/Desktop/a.txt",
+       "destination": "C:/Users/me/Documents/a.txt"
+      }
+     },
+     {
+      "action_type": "file_delete",
+      "target": "C:/Users/me/Desktop/a copy.txt",
+      "parameters": {
+       "path": "C:/Users/me/Desktop/a copy.txt"
+      }
+     }
+    ],
+    "launch folder": [
+     {
+      "action_type": "file_list",
+      "target": "C:/Users/me/launch",
+      "parameters": {
+       "path": "C:/Users/me/launch"
+      }
+     }
+    ],
+    "tax folder": [
+     {
+      "action_type": "file_search",
+      "target": "C:/Users/me",
+      "parameters": {
+       "directory": "C:/Users/me",
+       "pattern": "tax"
+      }
+     }
+    ]
+   },
+   "fails": [
+    "file_search"
+   ],
+   "turns": [
+    {
+     "say": "Hey Heliox, delete the old logs in my Downloads folder.",
+     "voiced": 2.5,
+     "expect": {
+      "taken": true,
+      "approval": true,
+      "not": [
+       "deleting"
+      ]
+     },
+     "expect_model": {
+      "has": [
+       "needs your approval",
+       "deleted"
+      ],
+      "runs": [
+       "file_delete"
+      ]
+     },
+     "expect_none": {
+      "approval": false,
+      "runs_nothing": true
+     }
+    },
+    {
+     "event": "approve"
+    },
+    {
+     "say": "Hey Heliox, organize my desktop.",
+     "gap": 4,
+     "expect": {
+      "taken": true,
+      "approval": true,
+      "runs_nothing": true,
+      "not": [
+       "organizing",
+       "done"
+      ]
+     },
+     "expect_model": {
+      "has": [
+       "needs your approval"
+      ]
+     },
+     "expect_none": {
+      "approval": false
+     }
+    },
+    {
+     "say": "No.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true,
+      "not": [
+       "organizing",
+       "done"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, find my launch folder.",
+     "gap": 4,
+     "expect": {
+      "taken": true,
+      "approval": false
+     },
+     "expect_model": {
+      "has": [
+       "I'll look for your launch folder"
+      ],
+      "runs": [
+       "file_list"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, find my tax folder.",
+     "gap": 4,
+     "expect": {
+      "taken": true,
+      "approval": false,
+      "not": [
+       "done",
+       "found"
+      ]
+     },
+     "expect_model": {
+      "runs": [
+       "file_search"
+      ],
+      "has": [
+       "didn't work"
+      ],
+      "not": [
+       "completed",
+       "done",
+       "found"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, open Notepad.",
+     "gap": 4,
+     "expect": {
+      "taken": true,
+      "runs": [
+       "open_application"
+      ],
+      "has": [
+       "notepad"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "a plain thanks is answered on this computer, unless something is open",
+   "plans": {
+    "old logs": [
+     {
+      "action_type": "file_delete",
+      "target": "C:/Users/me/Downloads/logs",
+      "parameters": {
+       "path": "C:/Users/me/Downloads/logs"
+      }
+     }
+    ]
+   },
+   "turns": [
+    {
+     "say": "Hey Heliox, what time is it?",
+     "expect": {
+      "taken": true,
+      "has": [
+       "9|nine"
+      ]
+     }
+    },
+    {
+     "say": "Thanks.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "model": false,
+      "has": [
+       "you're welcome"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, what's two plus two?",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "4|four"
+      ]
+     }
+    },
+    {
+     "say": "Thanks Heliox.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "model": false,
+      "has": [
+       "any time|sure|glad to help"
+      ],
+      "not": [
+       "you're welcome"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, why is my fan loud?",
+     "gap": 3,
+     "model": "Something is using the processor. Want me to check what?",
+     "expect": {
+      "taken": true
+     }
+    },
+    {
+     "say": "Thanks.",
+     "gap": 1.5,
+     "model": "Okay, I'll leave it.",
+     "expect": {
+      "taken": true
+     },
+     "expect_model": {
+      "model": true,
+      "has": [
+       "leave it"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, delete the old logs in my Downloads folder.",
+     "gap": 3,
+     "expect": {
+      "taken": true
+     },
+     "expect_model": {
+      "approval": true
+     }
+    },
+    {
+     "say": "Thanks.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     },
+     "expect_model": {
+      "not": [
+       "you're welcome",
+       "any time",
+       "sure.",
+       "glad to help"
+      ]
      }
     }
    ]

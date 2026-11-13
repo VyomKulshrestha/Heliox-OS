@@ -39,7 +39,8 @@ def server_with_planner():
     server._speech_coordinator.speak = speak
     server._broadcast_notification = nowhere
     server._model_router = object()
-    layer_for(server)._model = lambda: None
+    layer_for(server)._model = lambda: None  # no talk here: every request goes to the planner below
+    layer_for(server)._has_model = lambda: True  # which has a model to plan with, so the request is acknowledged
     calls: list[str] = []
     finish: dict[str, asyncio.Event] = {}
 

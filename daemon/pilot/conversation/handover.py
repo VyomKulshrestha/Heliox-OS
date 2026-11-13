@@ -1,7 +1,8 @@
 """Handing a request to the planner while keeping the person company.
 
-What the person hears: at once, a short sentence about what they asked ("Opening Notepad."), built in code from
-what the router parsed, or the fast model's own sentence when the request needed the model to understand it. If
+What the person hears: at once, a short sentence about what Heliox will do ("I'll open your launch folder."), built
+in code from what the router parsed or the fast model understood, never that it is already doing it; nothing first
+when the plan will need an approval (pilot.conversation.action_talk). If
 planning takes longer than about two seconds, one sentence of progress taken from the interaction state ("I'm
 checking the plan for risks."), and another only when the state moves on. If an approval is needed, it says so
 and points to the dialog; voice cannot approve. The result is spoken by the existing voice path.
@@ -20,7 +21,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from pilot.conversation.router import ACTION_VERBS, Route
+from pilot.conversation.action_talk import asked_sentence, said_again
+from pilot.conversation.router import Route
 
 PROGRESS_AFTER_SECONDS = 2.0
 PROGRESS_SPACING_SECONDS = 9.0  # a new line every 8 to 10 seconds while the work goes on: never a long silence
@@ -91,13 +93,22 @@ def _title_app(name: str) -> str:
 
 
 def acknowledgement(intent: HandoverIntent, *, last: str = "") -> str:
-    """A short sentence about what was asked, never a claim that it is done."""
-    if intent.say and (intent.source == "model" or not intent.object):
-        sentence = intent.say
+    """The first sentence for a request handed to the planner, from the action's asked-for state
+    (pilot.conversation.action_talk): what Heliox will do, never that it is doing or has done it, and "" when the
+    plan will need an approval first (the approval sentence is then the first thing said)."""
+    verb = intent.verb.casefold()
+    target = _speakable_object(intent.object)
+    words = target.split()
+    if verb in {"open", "launch", "start", "close", "quit", "exit", "visit", "browse"} and target:
+        target = _title_app(target)
+    if verb == "set" and words[:1] == ["volume"]:
+        target = f"the {target}"
+    if verb == "media":
+        sentence = "Okay."
     else:
-        sentence = _built(intent)
-    if sentence.casefold() == last.casefold():
-        sentence = "Okay, " + sentence[:1].lower() + sentence[1:]
+        sentence = asked_sentence(verb, target, intent.say)
+    if sentence and sentence.casefold() == last.casefold():
+        sentence = said_again(sentence)
     return sentence
 
 
@@ -108,35 +119,6 @@ MEDIA_ACKS = {
     "volumeup": "Turning it up.",
     "volumedown": "Turning it down.",
 }
-
-
-def _built(intent: HandoverIntent) -> str:
-    verb = intent.verb.casefold()
-    target = _speakable_object(intent.object)
-    words = target.split()
-    if verb == "remind":
-        return "Setting that reminder."
-    if verb == "set" and words[:2] in (["a", "timer"], ["timer"]):
-        return f"Setting {target}."
-    if verb == "check" and intent.source == "router":
-        return "I'll check."
-    if verb == "media":
-        return MEDIA_ACKS.get(intent.object, "Okay.")
-    if verb == "set" and words[:1] == ["volume"]:
-        return f"Setting the {target}."
-    if not target and verb in ACTION_VERBS and " " not in ACTION_VERBS[verb]:
-        return f"{ACTION_VERBS[verb]}."  # "Muting."
-    if not target or len(words) > SIMPLE_OBJECT_WORDS:
-        gerund = ACTION_VERBS.get(verb, "")
-        return f"{gerund} that now." if gerund and " " not in gerund else "I'll get that started."
-    gerund = ACTION_VERBS.get(verb)
-    if gerund is None:
-        return f"I'll {verb} {target}."
-    if verb in {"open", "launch", "start", "close", "quit", "exit", "visit", "browse"}:
-        target = _title_app(target)
-    if verb in {"search", "look"} and words[0] not in {"for", "up", "at", "in", "through"}:
-        return f"{gerund} for {target}."
-    return f"{gerund} {target}."
 
 
 def intent_from_route(route: Route, words: str) -> HandoverIntent:
@@ -234,7 +216,9 @@ async def keep_company(
         # joined request does not say it again and the next line comes on the same cadence.
         last_line, said_at, lines = carried[0], carried[1], 1
     last_state = ("", "")
-    approval_said = False
+    # The first half's approval sentence stands for the joined request: the person was just told to look at the
+    # dialog, and the joined plan's dialog takes its place.
+    approval_said = carried is not None and carried[0] == APPROVAL_SENTENCE
     while True:
         await asyncio.sleep(poll)
         state = status() or {}

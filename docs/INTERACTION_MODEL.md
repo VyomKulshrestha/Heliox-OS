@@ -357,7 +357,20 @@ Two more context sources, added with Heliox Live and the personal layer (`pilot/
 | Speech heard near the microphone but not said to Heliox (Live does not check it: no card) | never | never | never |
 | A note said in passing ("my flight is on Friday"), kept until the day after its date or for a week | yes, as a profile line | yes, as a profile line | yes |
 | What those answers stored (the name, "I mainly use the computer for ...", the answer style, a speak-up or stay-quiet preference) | yes, as profile lines with later turns | the name and the answer style with every turn; the rest only when the words bear on it | the same as `auto` |
-| An answer Heliox gave in code earlier in the conversation (the person's words always go) | the answer, whatever it was | only sums, units, dates, the time and the spoken help; every other code answer (the day, the timeline, to-dos, reminders, notes, the profile, goals, memory, workspaces, suggestions, Live, settings, and any handler added later) is sent as "(answered on this computer)" | the same as `auto` |
+| An answer Heliox gave in code earlier in the conversation, and the person's words that asked for it | both, whatever they were | both in words only for sums, units, dates, the time, the spoken help and the fixed sentences of the spoken-settings table ("Okay, no more suggestions or offers until you ask..."). For every other code answer (the day, the timeline, to-dos, reminders, notes, the profile, goals, memory, workspaces, suggestions, Live, profile settings that can hold a name, and any handler added later), the person's words are sent as "(said to Heliox, about a reminder)" and the answer as "(answered on this computer: a reminder)". The kind comes from a fixed list keyed by the handler (`pilot.conversation.private_answers.KINDS`), never from the answer's words | the same as `auto` |
+
+**The price of that rule, chosen on purpose.** On a cloud model, a short follow-up straight after a private answer
+can be weaker than on a model on this computer. After "what's on today?", "and tomorrow?" reaches a cloud model
+without what was shown, because the reminders it would need never leave the computer. Two things soften this without
+sending any of it. When the follow-up only swaps one day, one time or one number in the question just answered
+("and tomorrow?", "what about Friday?", "and at four?", "and the last five?"), Heliox asks the same handler again in
+code (`private_answers.rewrite`). It does this only within 30 seconds of the answer, only after a question that
+changed nothing, and only when the same handler takes the new words. Anything else ("and why?", a follow-up that
+adds more, a question with no day or with two) goes to the model as before, with the kind of answer as its only
+hint. A cloud model that says it cannot see what was shown is better than a confident wrong rewrite. A model on this
+computer still gets every answer in words. **Fakes only** (`tests/test_conversation_private_followups.py`; the
+personal session "a private answer stays on this computer; its follow-up is answered there", whose reminder is about
+a zebrafish that no request to a cloud model may contain).
 
 "Why did you say that", "thanks", "not now", "don't mention these", "fix it", "remember that ...", "forget ...",
 "what did I tell you about ..." and the answers to an offer are handled in code before the layer and never reach a
@@ -935,6 +948,35 @@ above. What the model did with what it was sent:
   "stay quiet", "from now on ...", "keep it short") reach the model only when Heliox's own code did not take them.
   When they do, the context says "Heliox saved and changed nothing for these words" and how the person can.
   **Fakes only**: it has not run on the real model yet.
+
+### Talking like a person: what an action's state allows, thanks, questions
+
+From the paid runs (12 November main pack, rounds 17 to 19 personal pack) and the stub sessions on 5816eb0:
+
+- **Nothing is said to be under way before it runs** (`pilot.conversation.action_talk`). What Heliox may say about an
+  action comes from its state: asked for, waiting for approval, running, done, refused or failed. "Deleting that
+  now." was said before every approval dialog, and before "Planning that needs a language model" for a person with
+  no model. Now a request whose plan needs approval nearly always (delete, remove, install, send, email, message,
+  close, shut down, pay and the like) says the approval sentence first and nothing before it. Any other request
+  handed to the planner says what Heliox will do ("I'll look for your launch folder."). The quick road's one
+  checked step, which runs at once, says "Opening Notepad." as it starts. A person with no model is promised nothing
+  before the planner answers. The planner's end state is said as it is: "Deleted. I couldn't check that it worked."
+  or "That didn't work: access is denied." Before, the raw result was read out, including "Note: 1 action effect was
+  reported successful but not independently verified". The session check fails any under-way sentence in a turn
+  that ran nothing or before its approval was pressed (the new `approve` event presses it). What is left: a verb not
+  on the list whose plan turns out to need approval hears "I'll organise your desktop." and then the approval
+  sentence. That is a promise, not a claim.
+- **A plain thanks** with nothing open (no approval waiting, no task running, no question or offer of Heliox's
+  unanswered) is answered in code: "You're welcome.", "Any time.", "Sure." or "Glad to help.", never the same twice
+  running, with no model call. A thanks inside a longer sentence, or with something open, goes on as before.
+- **One question per turn.** A spoken reply ends at its first question, and the prompt asks for at most one, short,
+  at the end. A fact told with no request ("the invoice for Acme is two thousand four hundred") is acknowledged in a
+  few words with its key detail, like "Okay, Acme, two thousand four hundred." The model does not ask what to do with
+  it or claim to have saved it. The fact stays in the conversation, where Live's "an amount said twice" check uses
+  it, and it is never stored: amounts of money are never kept (`pilot.personal.never_kept`), even when asked.
+
+**Fakes only** (`tests/test_conversation_action_talk.py`; the sessions "what is said about an action follows its
+state" and "a plain thanks is answered on this computer, unless something is open", for all four kinds of person).
 
 ## 4. Not in this pass
 

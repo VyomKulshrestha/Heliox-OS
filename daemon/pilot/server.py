@@ -637,12 +637,46 @@ ANSWERED_ON_THIS_COMPUTER = "(answered on this computer)"
 WARM_FOR = frozenset({"wake", "button", "follow_up", "continuation", "live_reply"})
 
 
-def answered_here(done: list[str] | tuple[str, ...] = ()) -> str:
-    """The line a cloud model sees for a turn answered in code: what Heliox did there, in the change record's own
-    few words ("remembered that", "updated your to-do list"), which hold none of the person's data."""
+def answered_here(done: list[str] | tuple[str, ...] = (), by: str = "") -> str:
+    """The line a cloud model sees for a turn answered in code: what kind of answer it was, from a fixed list keyed
+    by the handler that gave it (pilot.conversation.private_answers.KINDS, never built from the answer), and what
+    Heliox did there, in the change record's own few words ("remembered that", "updated your to-do list"). Neither
+    holds any of the person's data."""
+    from pilot.conversation.private_answers import KINDS
+
+    kind = KINDS.get(by, "")
+    head = f"answered on this computer: {kind}" if kind else "answered on this computer"
     if not done:
-        return ANSWERED_ON_THIS_COMPUTER
-    return f"(answered on this computer; done there: {'; '.join(done)})"
+        return f"({head})"
+    return f"({head}; done there: {'; '.join(done)})"
+
+
+def asked_here(by: str = "") -> str:
+    """The line a cloud model sees for what the person said in a turn answered in code that holds their data."""
+    from pilot.conversation.private_answers import KINDS
+
+    kind = KINDS.get(by, "")
+    return f"(said to Heliox, about {kind})" if kind else "(said to Heliox)"
+
+
+def _shared_in_words(by: str, answer: str) -> bool:
+    """A code answer a cloud model may be sent in words: one that holds none of the person's data (sums, the time,
+    the examples of what to say), or a sentence of the spoken-settings table, which is fixed text."""
+    from pilot.personal import spoken_settings as table
+
+    fixed = {
+        table.SUGGESTIONS_OFF,
+        table.SUGGESTIONS_ON,
+        table.OFFERS_OFF,
+        table.OFFERS_ON,
+        table.LIVE_ON,
+        table.LIVE_OFF,
+        table.LIVE_LESS,
+        table.LIVE_LESS_WHILE_OFF,
+        table.LIVE_MORE,
+        table.LIVE_MORE_WHILE_OFF,
+    }
+    return by in CODE_ANSWERS_ANY_MODEL or answer.strip() in fixed
 
 
 # The handler that answered a turn in code (and, for a local answer, which kind of answer), held in the turn's own
@@ -1162,6 +1196,8 @@ class PilotServer:
         # Recent voice turns and what each has done, so a sentence split at a pause can be withdrawn and joined.
         self._voice_turns = TurnLog()
         self.last_voice_turn_id = ""
+        # The last question answered in code: its words, the handler, whether it changed nothing, and when.
+        self._last_code_answer: tuple[str, str, bool, float] = ("", "", False, float("-inf"))
         self._withdrawn_signature = ""  # what a withdrawn first half led to: its acknowledgement is not said twice
         self._withdrawn_acknowledged = False  # the withdrawn first half had started its acknowledgement
         # What the last voice turn was, from what the server saw happen: "action" (an action ran), "answer" (Heliox
@@ -7198,6 +7234,18 @@ class PilotServer:
         await self._broadcast_notification("shortcuts_changed", {"shortcuts": self._shortcuts.list()})
         return f'Okay. When you say "{entry["phrase"]}", I\'ll run: {entry["command"]}'
 
+    def _code_follow_up(self, text: str, voice_turn: Any) -> str | None:
+        """ "And tomorrow?" straight after a question Heliox answered in code that changed nothing: that question with
+        the day, time or number swapped in (pilot.conversation.private_answers.rewrite), or None to go on as usual."""
+        from pilot.conversation.private_answers import FOLLOW_UP_SECONDS, rewrite
+
+        asked, by, changed_nothing, at = self._last_code_answer
+        if not asked or not by or not changed_nothing or time.monotonic() - at > FOLLOW_UP_SECONDS:
+            return None
+        if voice_turn.kept:
+            return None
+        return rewrite(asked, by, text)
+
     async def _control_reply(self, text: str) -> str | None:
         """Requests Heliox answers in code without planning: history questions, undo, routines, shortcuts."""
         from pilot.workflows.routines import REPEAT_REQUEST, normalize_phrase
@@ -7852,14 +7900,24 @@ class PilotServer:
         """ "Good morning" and "good night": the day's start and end, from what Heliox already keeps."""
         from datetime import datetime
 
-        from pilot.workflows.day_briefing import MORNING_REQUEST, NIGHT_REQUEST, compose_morning, compose_night
+        from pilot.workflows.day_briefing import (
+            MORNING_REQUEST,
+            NIGHT_REQUEST,
+            TOMORROW_REQUEST,
+            compose_morning,
+            compose_night,
+            compose_tomorrow,
+        )
 
         normalized = _normalize_spoken_phrase(text)
         morning, night = MORNING_REQUEST.match(normalized), NIGHT_REQUEST.match(normalized)
-        if not morning and not night:
+        tomorrow = TOMORROW_REQUEST.match(normalized)
+        if not morning and not night and not tomorrow:
             return None
         now = self._wall_clock()
         reminders = await asyncio.to_thread(self._reminders.list) if self._reminders is not None else []
+        if tomorrow:
+            return compose_tomorrow(now, reminders=reminders)
         todos = await asyncio.to_thread(self._todos.open_items) if self._todos is not None else []
         if morning:
             habits = await asyncio.to_thread(self._habits.list) if self._habits is not None else []
@@ -14867,18 +14925,32 @@ def handle_tool(tool_name, params):
             # audibly going on either; in silence it runs at once.
             await self._settle_voice_turn(voice_turn.turn_id, window=False)
             timeline_answer = await self._control_reply(command_text)
+            asked = command_text
+            if timeline_answer is None:
+                rewritten = self._code_follow_up(command_text, voice_turn)
+                if rewritten is not None:
+                    timeline_answer, asked = await self._control_reply(rewritten), rewritten
+                    if timeline_answer is not None and CODE_ANSWER_BY.get() != self._last_code_answer[1]:
+                        # Another handler took the rewritten words: not the same question asked again.
+                        logger.info("A code follow-up was answered by another handler; left to the model")
+                        timeline_answer, asked = None, command_text
+                        CODE_ANSWER_BY.set("")
             if timeline_answer is not None:
+                self._last_code_answer = (asked, CODE_ANSWER_BY.get(), not voice_turn.kept, time.monotonic())
                 self._last_turn_kind = "answer"
                 if voice_turn_addressed.get() != "doubtful_follow_up":
                     # Answered in code, but part of the conversation: "and times ten?" after "what's two plus two?"
                     # needs the model to know the first answer. A turn the listener doubted is never kept. With a
                     # model in the cloud only answers that hold none of the person's data go with it
                     # (CODE_ANSWERS_ANY_MODEL); the others are a neutral line, so the turns still read in order.
-                    conversation.memory.add_user(command_text)
+                    # The person's words go with it only when the answer does: "remind me to feed the zebrafish"
+                    # holds the reminder as much as its answer does.
+                    in_words = _shared_in_words(CODE_ANSWER_BY.get(), timeline_answer) or _conversation_model_local(
+                        conversation
+                    )
+                    conversation.memory.add_user(command_text if in_words else asked_here(CODE_ANSWER_BY.get()))
                     conversation.memory.add_heliox(
-                        timeline_answer
-                        if CODE_ANSWER_BY.get() in CODE_ANSWERS_ANY_MODEL or _conversation_model_local(conversation)
-                        else answered_here(tuple(voice_turn.kept))
+                        timeline_answer if in_words else answered_here(tuple(voice_turn.kept), CODE_ANSWER_BY.get())
                     )
                     conversation.note_code_answer(timeline_answer, tuple(voice_turn.kept))
                 await self._broadcast_notification(

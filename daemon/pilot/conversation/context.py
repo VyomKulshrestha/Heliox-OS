@@ -218,7 +218,7 @@ def assemble(
             sections.append(f"End of the text they are writing there: {screen.excerpt!r}")
     last = memory.last_heliox()
     opening = " ".join(last.split()[:2]) if last else ""
-    if opening and memory.open:
+    if opening and memory.open and not last.startswith("(answered on this computer"):  # a withheld line, not words
         sections.append(f"Your last reply began {opening!r}; begin this one differently.")
     chosen = _call_extra(sources.profile_lines, text) if text else _safe(sources.profile_lines, [])
     profile = [str(line) for line in (chosen or []) if not never_sent(str(line))][:PROFILE_LINES]

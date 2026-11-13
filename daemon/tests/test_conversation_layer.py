@@ -206,18 +206,21 @@ async def test_a_plain_request_is_handed_over_without_a_model_call():
 @pytest.mark.parametrize(
     ("words", "verb", "target", "expected"),
     [
-        ("open notepad", "open", "notepad", "Opening Notepad."),
-        ("open vs code", "open", "vs code", "Opening VS Code."),
-        ("find my launch folder", "find", "my launch folder", "Looking for your launch folder."),
-        ("set a timer for ten minutes", "set", "a timer for ten minutes", "Setting a timer for ten minutes."),
-        ("remind me to call Priya at four", "remind", "me to call priya at four", "Setting that reminder."),
-        ("search flights to Lisbon", "search", "flights to lisbon", "Searching for flights to lisbon."),
-        ("close spotify please", "close", "spotify please", "Closing Spotify."),
+        ("open notepad", "open", "notepad", "I'll open Notepad."),
+        ("open vs code", "open", "vs code", "I'll open VS Code."),
+        ("find my launch folder", "find", "my launch folder", "I'll look for your launch folder."),
+        ("set a timer for ten minutes", "set", "a timer for ten minutes", "I'll set a timer for ten minutes."),
+        ("remind me to call Priya at four", "remind", "me to call priya at four", "I'll set that reminder."),
+        ("search flights to Lisbon", "search", "flights to lisbon", "I'll search for flights to lisbon."),
+        # Closing a window, deleting, sending: the plan needs an approval, which is the first thing said.
+        ("close spotify please", "close", "spotify please", ""),
+        ("delete the screenshots", "delete", "the screenshots", ""),
+        ("message my manager that I'm late", "message", "my manager that i'm late", ""),
         (
             "move every screenshot from last week into a new folder called archive",
             "move",
             "every screenshot from last week into a new folder called archive",
-            "Moving that now.",
+            "I'll get that started.",
         ),
     ],
 )
@@ -229,7 +232,7 @@ def test_the_acknowledgement_is_built_from_what_was_parsed(words, verb, target, 
 
 def test_the_same_acknowledgement_is_not_said_twice_running():
     intent = handover.HandoverIntent(verb="open", object="notepad", words="", request="", source="router")
-    assert handover.acknowledgement(intent, last="Opening Notepad.") != "Opening Notepad."
+    assert handover.acknowledgement(intent, last="I'll open Notepad.") == "Okay, I'll open Notepad."
 
 
 @pytest.mark.asyncio

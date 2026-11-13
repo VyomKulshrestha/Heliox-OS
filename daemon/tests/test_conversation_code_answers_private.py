@@ -74,9 +74,11 @@ async def test_the_days_answer_goes_to_a_local_model_but_never_to_a_cloud_one(pr
     assert day_answer.startswith("Good morning")
     await say(server, "why is the sky blue?")
     body = sent[-1]
-    assert "good morning" in body.casefold()  # the person's own words go with the conversation either way
+    # The person's words go with the answer or not at all: to a cloud model, only the kind of answer it was.
+    assert ("good morning" in body.casefold()) is shared
     assert (day_answer in body) is shared
-    assert (ANSWERED_ON_THIS_COMPUTER in body) is not shared
+    assert ("(answered on this computer: the day's plan)" in body) is not shared
+    assert ("(said to Heliox, about the day's plan)" in body) is not shared
 
 
 async def test_two_turns_at_once_each_keep_their_own_answerer():
@@ -102,7 +104,7 @@ async def test_two_turns_at_once_each_keep_their_own_answerer():
     assert seen["good morning"] not in ("", "_local_answer:QuickAnswers")
     said_by_heliox = [turn.text for turn in layer_for(server).memory.recent() if turn.role == "assistant"]
     assert any("That's 4." in text for text in said_by_heliox)
-    assert ANSWERED_ON_THIS_COMPUTER in said_by_heliox
+    assert "(answered on this computer: the day's plan)" in said_by_heliox
     assert not any(text.startswith("Good morning") for text in said_by_heliox)
     assert CODE_ANSWER_BY.get() == ""  # nothing leaks out of the turns into the caller
 

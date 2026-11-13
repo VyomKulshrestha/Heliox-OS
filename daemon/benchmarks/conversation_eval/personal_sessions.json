@@ -1157,6 +1157,160 @@
           }
         }
       ]
+    },
+    {
+      "name": "a private answer stays on this computer; its follow-up is answered there",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, remind me tomorrow at ten to feed the zebrafish.",
+          "expect": {
+            "taken": true,
+            "has": [
+              "zebrafish"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, what's on today?",
+          "gap": 3,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "no reminders today"
+            ]
+          }
+        },
+        {
+          "say": "And tomorrow?",
+          "gap": 1.5,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "reminders tomorrow",
+              "zebrafish"
+            ]
+          }
+        },
+        {
+          "say": "What about Friday?",
+          "gap": 1.5,
+          "model": "I can't see Friday's plan from here.",
+          "expect": {
+            "taken": true
+          },
+          "expect_model": {
+            "model": true
+          },
+          "expect_cloud": {
+            "sent": [
+              "answered on this computer: the day's plan"
+            ],
+            "not_sent": [
+              "zebrafish",
+              "Your last reply began '(answered"
+            ]
+          }
+        },
+        {
+          "say": "Hey Heliox, what reminders do I have?",
+          "gap": 40,
+          "expect": {
+            "taken": true,
+            "has": [
+              "zebrafish"
+            ]
+          }
+        },
+        {
+          "say": "and tomorrow?",
+          "gap": 1.5,
+          "model": "I can't see that from here.",
+          "expect": {
+            "taken": true
+          },
+          "expect_model": {
+            "model": true
+          },
+          "expect_cloud": {
+            "sent": [
+              "answered on this computer: a reminder"
+            ],
+            "not_sent": [
+              "zebrafish"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what's on tomorrow?",
+          "gap": 5,
+          "expect": {
+            "taken": true,
+            "model": false,
+            "has": [
+              "zebrafish"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "a settings sentence goes in words",
+      "via": "turn",
+      "turns": [
+        {
+          "say": "Hey Heliox, stop suggesting things.",
+          "expect": {
+            "taken": true,
+            "model": false
+          }
+        },
+        {
+          "say": "Hey Heliox, call me Sam.",
+          "gap": 2,
+          "expect": {
+            "taken": true,
+            "model": false
+          }
+        },
+        {
+          "say": "Hey Heliox, why is the sky blue?",
+          "gap": 2,
+          "model": "Air scatters blue light the most.",
+          "expect": {
+            "taken": true
+          },
+          "expect_model": {
+            "model": true
+          },
+          "expect_cloud": {
+            "sent": [
+              "no more suggestions or offers until you ask"
+            ],
+            "not_sent": [
+              "call you that"
+            ]
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what time is it?",
+          "gap": 5,
+          "expect": {
+            "taken": true,
+            "has": [
+              "9|nine"
+            ]
+          }
+        }
+      ]
     }
   ]
 }

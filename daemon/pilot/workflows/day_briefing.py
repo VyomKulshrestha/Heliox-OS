@@ -111,3 +111,25 @@ def compose_night(
             f"Tomorrow your first reminder is at {_clock(datetime.fromtimestamp(first['due']))}: {first['text']}."
         )
     return " ".join(part for part in parts if part)
+
+
+# "What's on tomorrow?", or "and tomorrow?" straight after "what's on today?" (pilot.conversation.private_answers).
+TOMORROW_REQUEST = re.compile(
+    r"^what(?: s| is) (?:on )?(?:for )?tomorrow$|^what do i have (?:on )?tomorrow$"
+    r"|^what(?: s| is| does) (?:my day )?tomorrow look(?:ing)?(?: like)?$"
+)
+
+
+def compose_tomorrow(now: datetime, *, reminders: list[dict[str, Any]]) -> str:
+    """Tomorrow's reminders, from what Heliox keeps; it says reminders, since a calendar it does not read may hold
+    more."""
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    upcoming = sorted(
+        (item for item in reminders if start.timestamp() <= item["due"] < (start + timedelta(days=1)).timestamp()),
+        key=lambda item: item["due"],
+    )
+    if not upcoming:
+        return "No reminders tomorrow."
+    listed = "; ".join(f"{_clock(datetime.fromtimestamp(item['due']))} {item['text']}" for item in upcoming[:4])
+    more = f", and {len(upcoming) - 4} more" if len(upcoming) > 4 else ""
+    return f"Reminders tomorrow: {listed}{more}."
