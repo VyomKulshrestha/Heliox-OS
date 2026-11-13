@@ -108,11 +108,13 @@ async def test_a_keystroke_stops_the_voice_at_the_next_look_and_the_card_stays()
     await live.tick()
     field.text += " Next"  # just after a look: the worst moment, seen only at the next one
     typed_at = time.monotonic()
+    looks_before = len(field.looks)
     await tick_until(live, lambda: bool(player.stopped))
     assert player.stopped, "the voice was never told to stop"
     stopped_at = player.stopped[0][1]
-    looks_between = [t for t in field.looks if typed_at < t <= stopped_at]
-    assert len(looks_between) == 1, looks_between  # told to stop at the first look after the keystroke
+    # Counted, not compared by time: before Python 3.13 the Windows clock moves in 15 ms steps, so the keystroke and
+    # the look that sees it can carry the same stamp.
+    assert len(field.looks) - looks_before == 1, (looks_before, len(field.looks))  # at the first look after it
     assert stopped_at - typed_at <= CEILING_SECONDS, stopped_at - typed_at
     await tick_until(live, lambda: idle(server))
     looks = len(field.looks)
