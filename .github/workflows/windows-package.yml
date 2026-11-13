@@ -18,6 +18,7 @@ on:
       - "tauri-app/ui/package.json"
       - "tauri-app/ui/package-lock.json"
       - "daemon/tests/platform_real/build_inputs_check.sh"
+      - "daemon/tests/platform_real/bundle_facts.sh"
       - "tauri-app/ui/src/lib/firstRun*"
       - "tauri-app/ui/src/lib/components/FirstRunInstall.svelte"
       - "daemon/tests/platform_real/windows_package_check.py"
@@ -83,8 +84,12 @@ jobs:
           projectPath: "tauri-app"
           args: "--bundles nsis"
 
-      - name: The built installer
-        run: ls -l tauri-app/src-tauri/target/release/bundle/nsis
+      # BUNDLE lines: what the bundler produced, to compare runs by (for example before and after a CLI change).
+      - name: The built installer, and what the bundler put in it
+        continue-on-error: true  # a FAIL line here still lets the install checks run
+        run: |
+          ls -l tauri-app/src-tauri/target/release/bundle/nsis
+          bash daemon/tests/platform_real/bundle_facts.sh windows
 
       - name: Install, set up, use and uninstall it
         timeout-minutes: 45

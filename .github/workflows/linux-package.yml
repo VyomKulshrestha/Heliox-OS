@@ -23,6 +23,7 @@ on:
       - "tauri-app/ui/package.json"
       - "tauri-app/ui/package-lock.json"
       - "daemon/tests/platform_real/build_inputs_check.sh"
+      - "daemon/tests/platform_real/bundle_facts.sh"
       - "tauri-app/ui/src/lib/firstRun*"
       - "tauri-app/ui/src/lib/components/FirstRunInstall.svelte"
       - "daemon/tests/platform_real/deb_install_check.*"
@@ -90,10 +91,13 @@ jobs:
           projectPath: "tauri-app"
           args: "--bundles deb,rpm,appimage"
 
-      - name: The built packages
+      # BUNDLE lines: what the bundler produced, to compare runs by (for example before and after a CLI change).
+      - name: The built packages, and what the bundler put in them
+        continue-on-error: true  # a FAIL line here still lets the install checks run
         run: |
           ls -l tauri-app/src-tauri/target/release/bundle/deb tauri-app/src-tauri/target/release/bundle/rpm \
             tauri-app/src-tauri/target/release/bundle/appimage
+          bash daemon/tests/platform_real/bundle_facts.sh linux
 
       - name: Build tauri-driver (the test's own tool, not part of the package)
         id: driver
