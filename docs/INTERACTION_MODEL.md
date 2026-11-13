@@ -446,7 +446,7 @@ goal "launch the podcast". Want me to note it?". "Why?" names the word they shar
 progress; it is offered once a day per goal, under every offer rule, and "don't offer that" ends it
 (`offers.goal_progress`, `wiring.note_task_done`). **Fakes only** (`tests/test_goal_progress_offers.py`).
 
-How many offers a day brings is measured by a simulated working week for three made-up people, through the real
+How many offers a day brings is measured by a simulated working week for made-up people, through the real
 offer rules (`python -m pilot.personal.offer_day`, `tests/test_offer_day.py`). On this commit: an office worker who
 told Heliox their nine-to-six day, a goal, a habit and a to-do list gets 3 offers a day (the daily cap), 12 of 15
 accepted by the script; a student with no fixed hours gets 3, 3, 1, 1, 1; someone who told Heliox nothing gets the
@@ -455,6 +455,15 @@ question is asked at most twice, three days apart (it used to come back every da
 unanswered), and an offer declined on two days within a week rests for a week after the last "no". A declined first
 suggestion no longer hides the next (a habit behind a quiet goal). **Fakes only**: what a real person wants is not
 measured.
+
+If you stop answering Heliox's offers, it goes quiet: when six offers in a row get no reply, it makes none for a
+week, then at most one a day until you answer one, any answer at all ("yes", "no", "not now", "why?"). Say "you can
+suggest things again" to bring them back at once. An offer is a suggestion Heliox makes on its own; reminders you
+set and Live's warnings about something risky are not offers and are never held by this. Each offer left with no
+reply on three days in a row also rests for a week, as one declined on two days does, and those days are kept across
+a restart (`offers.IGNORED_IN_A_ROW_BEFORE_QUIET`, `IGNORES_BEFORE_REST`). On the bench, over three weeks, a fifth
+made-up person with the office worker's day who never answers anything heard 12 offers (45 before these rules); the four who answer
+are unchanged. **Fakes only** (`tests/test_offer_day.py`).
 
 Routines are learned from what the person asks Heliox for (`pilot.personal.routines`, on by default,
 `memory.learn_routines`). Kept for each request addressed to Heliox and taken: the kind and target as the router has

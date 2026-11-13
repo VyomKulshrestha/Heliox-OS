@@ -18,7 +18,9 @@ Manners:
   thing at most once a day, and only at a quiet moment (the server decides: nobody talking, no conversation turn,
   not typing, no focus session).
 * "Why did you offer that?" gets the evidence ("On 4 of your last 5 weekdays you first opened Outlook between 8:50
-  and 9:30, and you haven't opened it today."). "No thanks" drops it for the day. "Don't offer that again" silences
+  and 9:30, and you haven't opened it today."). "No thanks" drops it for the day; on two days, for a week. An offer
+  left with no reply on three days in a row also rests a week. When six offers in a row get no reply, all offers
+  rest a week, then come at most once a day until the person answers one; "you can suggest things again" ends it. "Don't offer that again" silences
   that offer for good (kept in ``offers.json``). "Stop offering things" turns offers off in Settings.
 * "Yes" sends the request down the normal road (the conversation layer and the planner, with every approval rule);
   voice never approves a plan.
@@ -121,6 +123,8 @@ class _Made:
     at: float
     day: str
     answered: bool = False
+    heard: bool = False  # any reply at all, "why?" too: the offer was not ignored
+    ignored_noted: bool = False
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
     seq: int = field(default_factory=next_seq)  # order against Live's cards, never by clock
 
@@ -297,6 +301,12 @@ TIMELINE = Offer(
 )
 # "No" holds an offer for the rest of the day; "no" on two days within a week rests it for a week after the last.
 DECLINES_BEFORE_REST = 2
+# An offer nobody answers is a "no" said quietly: no reply on this many of the days it was made, with no reply in
+# between, rests it for REST_DAYS too. Any reply starts the count again.
+IGNORES_BEFORE_REST = 3
+# And when this many offers in a row, of any kind, got no reply, all offers rest for REST_DAYS; after that, at most
+# one a day until the person answers one (any answer: yes, no, not now, why). "You can suggest things again" ends it.
+IGNORED_IN_A_ROW_BEFORE_QUIET = 6
 ONE_A_DAY_KINDS = frozenset({"learned_routine"})  # at most one offer a day of these kinds, whichever key
 REST_DAYS = 7
 INTRO_EVERY_DAYS = 3
@@ -406,6 +416,9 @@ class Offers:
     used_days: list[str] = field(default_factory=list)  # the first few days a request was taken (dates only)
     timeline_offered: bool = False
     declined_on: dict[str, list[str]] = field(default_factory=dict)  # key -> the days "no" was said to it
+    ignored_on: dict[str, list[str]] = field(default_factory=dict)  # key -> days it went unanswered, in a row
+    ignored_in_a_row: int = 0  # offers of any kind with no reply since the last reply
+    quiet_since: str = ""  # the day offers went quiet after being ignored ("" when they have not)
     matched_on: dict[str, str] = field(default_factory=dict)  # offer_soon key -> the day it last came up (in memory)
 
     def __post_init__(self) -> None:
@@ -415,6 +428,16 @@ class Offers:
                 self.intro_days = [str(day) for day in state.get("intro_days", []) if isinstance(day, str)]
                 self.used_days = [str(day) for day in state.get("used_days", []) if isinstance(day, str)]
                 self.timeline_offered = bool(state.get("timeline_offered", False))
+                for name, kept in (("declined_on", self.declined_on), ("ignored_on", self.ignored_on)):
+                    raw_days = state.get(name, {})
+                    if isinstance(raw_days, dict):
+                        for key, days in raw_days.items():
+                            if isinstance(key, str) and isinstance(days, list):
+                                kept[key] = [str(day) for day in days if isinstance(day, str)]
+                count = state.get("ignored_in_a_row", 0)
+                self.ignored_in_a_row = count if isinstance(count, int) and count >= 0 else 0
+                since = state.get("quiet_since", "")
+                self.quiet_since = since if isinstance(since, str) else ""
                 raw = state.get("silenced", {})
                 if isinstance(raw, list):  # the first version kept keys only
                     raw = {key: key for key in raw}
@@ -471,6 +494,7 @@ class Offers:
     def room(self, *, hourly: bool = True) -> bool:
         """Under the daily cap and the minimum gap, and (``hourly``) the hourly cap."""
         now, today = self.clock(), self._today()
+        self._note_ignored(now)
         self.made = [m for m in self.made if m.day == today or now - m.at < 3600]
         if any(now - m.at < MIN_GAP_SECONDS for m in self.made):
             return False
@@ -534,7 +558,7 @@ class Offers:
         return True
 
     def next_offer(self) -> Offer | None:
-        if not self.room(hourly=False):
+        if not self.room(hourly=False) or self._quiet_after_ignored():
             return None
         others = self.room() and self._leaves_wrap_up_room()  # the wrap-up alone is not held by the hourly cap
         if others and self._intro_due():
@@ -568,6 +592,7 @@ class Offers:
         days = self.declined_on.setdefault(key, [])
         if day not in days:
             days.append(day)
+            self._save(change=False)  # the days only, so a restart keeps a rest
 
     def note_used(self, day: str) -> None:
         """A request was taken on ``day`` (ISO date). Only the first TIMELINE_AFTER_DAYS different days are kept."""
@@ -589,12 +614,68 @@ class Offers:
             return False
 
     def _resting(self, key: str) -> bool:
-        """Declined on two different days within a week: left alone for a week after the last "no"."""
-        days = sorted(date.fromisoformat(d) for d in set(self.declined_on.get(key, [])))
-        if len(days) < DECLINES_BEFORE_REST:
+        """Declined on two different days within a week, or left with no reply on three of the days it was made,
+        with no reply in between: left alone for a week after the last."""
+        today = self.now().date()
+        for kept, need in ((self.declined_on, DECLINES_BEFORE_REST), (self.ignored_on, IGNORES_BEFORE_REST)):
+            days = sorted(date.fromisoformat(d) for d in set(kept.get(key, [])))
+            if len(days) < need:
+                continue
+            first, last = days[-need], days[-1]
+            # "no" twice within a week; ignored three times in a row (the count restarts on any reply)
+            within = REST_DAYS if kept is self.declined_on else REST_DAYS * need
+            if (last - first).days < within and (today - last).days < REST_DAYS:
+                return True
+        return False
+
+    def _note_ignored(self, now: float) -> None:
+        """An offer with no reply once its "why" / "don't offer that" window has passed was ignored that day: it
+        counts towards resting that offer, and towards all offers going quiet (IGNORED_IN_A_ROW_BEFORE_QUIET). Any
+        reply clears both counts (``_heard``)."""
+        changed = False
+        for made in sorted(self.made, key=lambda m: m.at):
+            if made.heard or made.ignored_noted or now - made.at <= EXPLAIN_WINDOW_SECONDS:
+                continue
+            made.ignored_noted = True
+            changed = True
+            days = self.ignored_on.setdefault(made.offer.key, [])
+            if made.day not in days:
+                days.append(made.day)
+                del days[:-IGNORES_BEFORE_REST]
+            self.ignored_in_a_row += 1
+            if self.ignored_in_a_row >= IGNORED_IN_A_ROW_BEFORE_QUIET:
+                self.quiet_since = made.day  # all offers rest from here; the count starts again for the next time
+                self.ignored_in_a_row = 0
+        if changed:
+            self._save(change=False)  # Heliox's own count, not something the person changed
+
+    def _heard(self, made: _Made) -> None:
+        """Any reply to an offer: that offer's ignored days, the run of ignored offers and the quiet all end."""
+        made.heard = True
+        if self.ignored_on.pop(made.offer.key, None) is not None or self.ignored_in_a_row or self.quiet_since:
+            self.ignored_in_a_row, self.quiet_since = 0, ""
+            self._save(change=False)
+
+    def _quiet_after_ignored(self) -> bool:
+        """Offers ignored IGNORED_IN_A_ROW_BEFORE_QUIET times in a row: none for REST_DAYS from that day, then at most
+        one a day until one is answered."""
+        if not self.quiet_since:
             return False
-        first, last = days[-DECLINES_BEFORE_REST], days[-1]
-        return (last - first).days < REST_DAYS and (self.now().date() - last).days < REST_DAYS
+        try:
+            since = date.fromisoformat(self.quiet_since)
+        except ValueError:
+            return False
+        today = self.now().date()
+        if (today - since).days < REST_DAYS:
+            return True
+        return any(m.day == today.isoformat() for m in self.made)
+
+    def welcome_back(self) -> None:
+        """ "You can suggest things again": the quiet after ignored offers ends, and the counts start again."""
+        if self.quiet_since or self.ignored_in_a_row or self.ignored_on:
+            self.quiet_since, self.ignored_in_a_row = "", 0
+            self.ignored_on.clear()
+            self._save(change=False)
 
     def goals_matched_today(self) -> set[str]:
         """The ids of goals a finished request matched today (goal-progress offers made or still waiting), for the
@@ -635,7 +716,9 @@ class Offers:
         return made if self.clock() - made.at <= within else None
 
     def _answered(self, made: _Made | None = None) -> None:
-        (made or self.made[-1]).answered = True
+        made = made or self.made[-1]
+        made.answered = True
+        self._heard(made)
 
     def silence(self, offer: Offer) -> None:
         self.silenced[offer.key] = _label(offer)
@@ -658,6 +741,7 @@ class Offers:
             return None
         offer = made.offer
         if answer == "why":
+            self._heard(made)
             return OfferReply(offer.why)
         if answer == "silence":
             self.silence(offer)
@@ -690,6 +774,8 @@ class Offers:
             "intro": INTRO.key not in self.silenced,
             "per_hour": MAX_PER_HOUR,
             "per_day": MAX_PER_DAY,
+            # Offers went quiet because the last several had no reply ("you can suggest things again" ends it).
+            "quiet_after_ignored": bool(self.quiet_since),
         }
 
     def last_offered_seq(self) -> int | None:
@@ -702,6 +788,7 @@ class Offers:
             return None
         offer = made.offer
         if _WHY.match(normalized):
+            self._heard(made)
             return OfferReply(offer.why)
         if _SILENCE.match(normalized):
             self.silence(offer)
@@ -726,6 +813,9 @@ class Offers:
         """Your data: drop what was silenced and declined."""
         self.silenced.clear()
         self.declined.clear()
+        self.declined_on.clear()
+        self.ignored_on.clear()
+        self.ignored_in_a_row, self.quiet_since = 0, ""
         self.intro_days.clear()
         self.used_days.clear()
         self._save()
@@ -742,6 +832,11 @@ class Offers:
                 "intro_days": self.intro_days[-INTRO_MAX_ASKS:],
                 "used_days": self.used_days[:TIMELINE_AFTER_DAYS],
                 "timeline_offered": self.timeline_offered,
+                # dates only, per offer, so a restart does not reset a rest
+                "declined_on": {key: days[-DECLINES_BEFORE_REST:] for key, days in sorted(self.declined_on.items())},
+                "ignored_on": {key: days[-IGNORES_BEFORE_REST:] for key, days in sorted(self.ignored_on.items())},
+                "ignored_in_a_row": self.ignored_in_a_row,
+                "quiet_since": self.quiet_since,
             }
             self.state_path.write_text(json.dumps(state), encoding="utf-8")
         except OSError:

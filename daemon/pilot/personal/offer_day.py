@@ -67,6 +67,14 @@ PEOPLE = (
         answers={"habit": "yes", "stale_goal": "no", "todos": "no"},
         answers_by_day={(1, "todos"): "don't offer that again"},
     ),
+    Person(
+        "office, never answers",
+        told=["call me Sam", "I start work at nine", "I stop work at six", "I prefer short answers"],
+        goals=[_stale("launch the podcast", "book a guest", "g1")],
+        habits=[{"name": "water", "streak": 4}],
+        todos=3,
+        requests={"10:30": "open the podcast folder", "14:00": "find the quarterly report"},
+    ),
     Person("told Heliox nothing"),
     Person(
         "a week of use, nothing told",
@@ -83,8 +91,8 @@ class Day:
     accepted: int = 0
 
 
-async def run_week(person: Person, folder: Path) -> list[Day]:
-    """Five weekdays for ``person``; one ``Day`` each."""
+async def run_week(person: Person, folder: Path, weeks: int = 1) -> list[Day]:
+    """Five weekdays a week for ``person``, ``weeks`` weeks; one ``Day`` each (the weekends are skipped)."""
     clock_at = [MONDAY.replace(hour=7)]
     tick = lambda: clock_at[0].timestamp()  # noqa: E731
     profile = UserProfile(folder / "profile.json", clock=tick)
@@ -117,9 +125,9 @@ async def run_week(person: Person, folder: Path) -> list[Day]:
 
     server._broadcast_notification = broadcast
     week: list[Day] = []
-    for index in range(5):
+    for index in range(5 * weeks):
         day = Day()
-        clock_at[0] = (MONDAY + timedelta(days=index)).replace(hour=7)
+        clock_at[0] = (MONDAY + timedelta(days=index + 2 * (index // 5))).replace(hour=7)
         for habit in habits.values():
             habit["today"] = False
         while clock_at[0].hour < 23:
@@ -150,18 +158,18 @@ async def run_week(person: Person, folder: Path) -> list[Day]:
     return week
 
 
-async def run_all() -> dict[str, list[Day]]:
+async def run_all(weeks: int = 1) -> dict[str, list[Day]]:
     results: dict[str, list[Day]] = {}
     with tempfile.TemporaryDirectory() as tmp:
         for number, person in enumerate(PEOPLE):
             folder = Path(tmp) / str(number)
             folder.mkdir()
-            results[person.name] = await run_week(person, folder)
+            results[person.name] = await run_week(person, folder, weeks)
     return results
 
 
 def table(results: dict[str, list[Day]]) -> str:
-    lines = ["person | offers per day (Mon-Fri) | total | accepted | declined | kinds"]
+    lines = ["person | offers per weekday | total | accepted | declined | kinds"]
     for name, week in results.items():
         per_day = [len(day.offers) for day in week]
         kinds: dict[str, int] = {}
@@ -176,10 +184,13 @@ def table(results: dict[str, list[Day]]) -> str:
 
 
 def main() -> int:
+    import sys
+
     from pilot.real_folders import use_scratch_folders
 
     use_scratch_folders()  # nothing here writes Heliox's folders, but a script outside pytest always starts so
-    print(table(asyncio.run(run_all())))
+    weeks = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 1  # "python -m ... 3": three weeks
+    print(table(asyncio.run(run_all(weeks))))
     return 0
 
 

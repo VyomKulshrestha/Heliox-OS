@@ -57,7 +57,8 @@ def test_the_moments_themselves():
 
 async def _week(tmp_path, answers: dict[tuple[int, str], str]) -> list[tuple[int, str, str]]:
     """Five weekdays, looking every five minutes from 7:00 to 20:00 as the offer loop does at quiet moments.
-    ``answers``: (day, offer key) -> what the person said to it. Returns (day, time, key) for every offer made."""
+    ``answers``: (day, offer key) -> what the person said to it ("yes" otherwise). Returns (day, time, key) for every
+    offer made."""
     clock = Clock(MONDAY.replace(hour=7))
     profile = UserProfile(tmp_path / "p.json", clock=clock)
     await profile.answer_async("I start work at nine")
@@ -85,7 +86,7 @@ async def _week(tmp_path, answers: dict[tuple[int, str], str]) -> list[tuple[int
                 if offer is not None:
                     offers.mark_offered(offer)
                     made.append((day, clock.at.strftime("%H:%M"), offer.key))
-                    said = answers.get((day, offer.key))
+                    said = answers.get((day, offer.key), "yes")  # a person who answers (an unanswered offer rests)
                     if said:
                         offers.reply(said)
             clock.at += timedelta(minutes=5)

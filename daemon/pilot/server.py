@@ -8713,6 +8713,8 @@ class PilotServer:
             # Suggestions, offers and Live: one table, where a request to stop is answered by a sentence that
             # says it stopped (pilot.personal.spoken_settings).
             change = (spoken.section, spoken.values, spoken.reply)
+            if spoken.values.get("offers") == "on" and getattr(self, "_offers", None) is not None:
+                self._offers.welcome_back()  # "you can suggest things again" also ends the quiet after ignored offers
         if change is None:
             return None
         section, values, reply = change
