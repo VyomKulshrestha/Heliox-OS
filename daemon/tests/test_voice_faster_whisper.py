@@ -10,6 +10,7 @@ import pilot.system.voice as voice
 
 @pytest.fixture(autouse=True)
 def _clear_model_cache(monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)  # made-up cards: unhide what the suite hides
     voice._faster_whisper_model_cache.clear()
     # These tests are about devices and decoding: the model counts as on this computer (presence has its own tests).
     monkeypatch.setattr("pilot.system.model_presence.faster_whisper_source", lambda name: name)

@@ -364,7 +364,8 @@ def test_cpu_device_is_passed_to_kokoro(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_too_little_free_memory_speaks_with_the_system_voice_and_starts_no_worker() -> None:
+async def test_too_little_free_memory_speaks_with_the_system_voice_and_starts_no_worker(monkeypatch) -> None:
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)  # the card visible: the suite hides it (conftest)
     clock = FakeClock()
     spawner = Spawner(FakeWorker())
     manager = _manager(spawner, clock)
