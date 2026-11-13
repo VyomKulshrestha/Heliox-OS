@@ -102,9 +102,15 @@ def test_the_latency_summary_keeps_loaded_numbers_apart():
     ]
     got = voice_latency.summary(rows, 50.0)
 
-    assert got["local answer"] == {"n": 2, "quiet_n": 1, "quiet_median_s": 1.0, "under_load_n": 1,
-                                   "under_load_median_s": 3.0}  # fmt: skip
-    assert got["model answer"]["quiet_n"] == 0 and got["model answer"]["under_load_n"] == 1
+    local = got["local answer, own recordings"]
+    assert (local["n"], local["quiet_n"], local["quiet_median_s"], local["under_load_n"],
+            local["under_load_median_s"]) == (2, 1, 1.0, 1, 3.0)  # fmt: skip
+    model = got["model answer, own recordings"]
+    assert model["quiet_n"] == 0 and model["under_load_n"] == 1
+    rows.append({"route": "model answer", "seconds": 4.0, "cpu_percent": 10.0, "voice": "synthetic",
+                 "first sound": {"audio": 4.0, "wall": 4.0}})  # fmt: skip
+    synthetic = voice_latency.summary(rows, 50.0)["model answer, synthetic"]
+    assert synthetic["quiet_n"] == 1 and synthetic["stages_quiet_median"]["first sound"] == 4.0
 
 
 def test_a_paid_run_states_its_bound():
@@ -143,3 +149,137 @@ def test_times_are_also_given_from_the_recorders_last_voiced_frame():
     assert got == {"candidate_after_last_voiced_s": 0.15, "end_after_last_voiced_s": 0.35,
                    "last_voiced_minus_last_word_s": 0.05}  # fmt: skip
     assert early_words._from_last_voiced(None, 4.2, 4.4, 4.0) == {}
+
+
+def test_the_layers_stamps_and_the_warm_up_are_read_into_the_turn():
+    vl = voice_latency
+    events = [
+        _event(5.0, vl.MODEL_WARM, opened=True, audio_t=-3.0),
+        _event(20.0, tl.LAST_WORD, audio_t=12.0),
+        _event(20.5, tl.DISPATCH, audio_t=12.5),
+        _event(20.6, vl.TRACE + "route decided", audio_t=12.6),
+        _event(21.4, vl.TRACE + "model first text", audio_t=13.4),
+        _event(21.5, vl.MODEL_FIRST, audio_t=13.5),
+        _event(21.9, tl.AUDIO_STARTS, audio_t=13.9),
+        _event(22.5, vl.TRACE + "after the sound", audio_t=14.5),
+    ]
+    got = vl.stages(events)
+
+    assert [t["name"] for t in got["trace"]] == ["route decided", "model first text"]
+    assert got["warm_before_handover"] is True
+    assert "route decided 0.60" in vl.stage_line(got, 10.0, 50.0)
+    assert vl.stages([e for e in events if e.event != vl.MODEL_WARM])["warm_before_handover"] is False
+
+
+def test_the_holding_phrase_is_its_own_stamp_and_not_the_first_sentence():
+    vl = voice_latency
+    events = [
+        _event(20.0, tl.LAST_WORD, audio_t=12.0),
+        _event(20.5, tl.DISPATCH, audio_t=12.5),
+        tl.Event(t=22.5, event=tl.SPEAKS, detail="One moment.", data={"setup": False, "audio_t": 14.5}),
+        _event(23.6, tl.AUDIO_STARTS, audio_t=15.6),
+        tl.Event(t=24.0, event=tl.SPEAKS, detail="Sure.", data={"setup": False, "audio_t": 16.0}),
+        _event(25.0, tl.AUDIO_STARTS, audio_t=17.0),
+    ]
+    got = vl.stages(events)
+
+    assert got["holding phrase"]["audio"] == 2.5
+    assert got["first sentence"]["audio"] == 4.0
+    assert got["first sound"]["audio"] == 3.6 and got["answer sound"]["audio"] == 5.0
+
+
+def test_a_silent_turn_says_why_as_a_code():
+    vl = voice_latency
+    heard = tl.Event(t=3.0, event=tl.TRANSCRIPT, detail="Hey Heliox, open the deck.",
+                     data={"wake_text": "Hey Heliox, open the deck."})  # fmt: skip
+    no_wake = tl.Event(t=3.0, event=tl.TRANSCRIPT, detail="open the deck", data={"wake_text": "open the deck"})
+
+    assert vl.drop_reason([_event(1.0, tl.AUDIO_STARTS)], False) is None
+    assert vl.drop_reason([], True).startswith("expected")
+    assert vl.drop_reason([], False) == "no words in the waiting time"
+    assert vl.drop_reason([no_wake], False) == "no wake phrase in the wake pass"
+    assert vl.drop_reason([heard], False) == "wake phrase heard, not taken as addressed"
+    assert vl.drop_reason([heard, _event(3.5, tl.DISPATCH)], False) == "handed to the turn, no sound"
+
+
+def test_words_that_came_between_scenarios_are_named_late():
+    rows = [{"case": "a", "dropped": "no words in the waiting time", "closed_at": 10.0},
+            {"case": "b", "dropped": "no words in the waiting time", "closed_at": 30.0}]  # fmt: skip
+    session = [_event(1.0, tl.SCENARIO), _event(14.0, tl.TRANSCRIPT), _event(20.0, tl.SCENARIO),
+               _event(40.0, tl.SCENARIO), _event(41.0, tl.TRANSCRIPT)]  # fmt: skip
+
+    voice_latency.late_words(rows, session)
+
+    assert rows[0]["dropped"] == "words arrived after the waiting time"
+    assert rows[1]["dropped"] == "no words in the waiting time"
+
+
+def test_first_calls_are_set_against_the_later_ones():
+    vl = voice_latency
+    events = [tl.Event(t=float(n), event=vl.RECOGNISER, detail="parakeet", data={"seconds": s})
+              for n, s in enumerate((4.0, 0.3, 0.5))]  # fmt: skip
+    speech = [_event(1.0, tl.SPEAKS), _event(3.0, tl.AUDIO_STARTS), _event(5.0, tl.SPEAKS),
+              _event(6.0, tl.AUDIO_STARTS), _event(7.0, tl.SPEAKS), _event(8.2, tl.AUDIO_STARTS)]  # fmt: skip
+
+    assert vl.recogniser_summary(events) == {"parakeet": {"calls": 3, "first_s": 4.0, "later_median_s": 0.4}}
+    assert vl.synthesis_summary(speech) == {"calls": 3, "first_s": 2.0, "later_median_s": 1.1}
+
+
+def test_the_synthetic_model_turns_go_to_the_talk_model():
+    from pilot.conversation.router import route
+
+    scenarios = voice_latency.model_turn_scenarios(14)
+
+    assert len(scenarios) == 14 and len({s.id for s in scenarios}) == 14
+    assert all(s.voice == "synthetic" and s.steps[0].say.startswith(voice_latency.MODEL_TURN_FOLDER) for s in scenarios)
+    assert all(str(route(text).kind) == "conversation" for text in voice_latency.MODEL_TURNS)
+
+
+def test_a_paid_run_needs_a_quiet_stub_run_first(tmp_path):
+    import json
+
+    quiet = tmp_path / "quiet.json"
+    quiet.write_text(json.dumps({"model": "stub", "rows": [{"cpu_percent": 20.0}]}), encoding="utf-8")
+    loaded = tmp_path / "loaded.json"
+    loaded.write_text(json.dumps({"model": "stub", "rows": [{"cpu_percent": 70.0}]}), encoding="utf-8")
+    paid = tmp_path / "paid.json"
+    paid.write_text(json.dumps({"model": "configured", "rows": []}), encoding="utf-8")
+
+    assert voice_latency.refusal_after_stub(str(quiet), 50.0) is None
+    assert "under load" in voice_latency.refusal_after_stub(str(loaded), 50.0)
+    assert "not a stub" in voice_latency.refusal_after_stub(str(paid), 50.0)
+    assert "no stub run" in voice_latency.refusal_after_stub(None, 50.0)
+
+
+STUCK = """
+import threading
+from benchmarks.conversation_bench.voice_latency import run_and_leave
+threading.Thread(target=threading.Event().wait, name="stuck-worker").start()
+async def main():
+    return 7
+raise SystemExit(run_and_leave(main(), grace_s=0.5))
+"""
+
+
+def test_a_run_with_a_stuck_thread_still_ends_and_names_it():
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    ran = subprocess.run([sys.executable, "-c", STUCK], cwd=Path(__file__).resolve().parents[1],
+                         capture_output=True, text=True, timeout=60)  # fmt: skip
+
+    assert ran.returncode == 7
+    assert "stuck-worker" in ran.stderr
+
+
+def test_a_warm_up_still_running_at_the_request_is_neither_cold_nor_warm():
+    vl = voice_latency
+    start = _event(19.0, vl.MODEL_WARM_STARTED)
+    done = _event(20.8, vl.MODEL_WARM, opened=True)
+    request = _event(20.6, vl.TRACE + "request sent")
+
+    assert vl.warm_state([start, request, done], request) == "in progress"
+    assert vl.warm_state([start, done, request], _event(21.0, vl.TRACE + "request sent")) == "finished"
+    assert vl.warm_state([request], request) == "none"
+    assert vl.warm_state([], None) == "none"

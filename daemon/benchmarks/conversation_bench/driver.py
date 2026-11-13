@@ -557,6 +557,7 @@ class Harness:
                     engine=str(getattr(listener, "last_transcription_engine", "")),
                     asr_ms=getattr(listener, "last_transcription_ms", None),
                     kind=seg.get("kind", ""),
+                    wake_text=str(getattr(listener, "_last_wake_text", "") or ""),  # what the wake check read
                 )
             now_speaking = bool(recorder.user_is_speaking)
             if now_speaking != state["speaking"]:
