@@ -547,8 +547,14 @@ class _OutputLine:
         # The system default output when the line opened ("" when it cannot be read), and whether the next open
         # must refresh PortAudio's device list first (it is read once, so a new default is otherwise not seen).
         self.device_name = ""
+        self.device_index: int | None = None  # the PortAudio device the line opened on (None: the host's default)
         self._stale_devices = False
         self.notice = ""
+        # A new default output the line could not open while listening (not in PortAudio's device list): said once.
+        self._unreachable_default = ""
+        # macOS while listening through PortAudio: the microphone's device index, so each open of the line decides
+        # pinned and latency from where it really opens (None: no listener on macOS).
+        self.microphone_index: int | None = None
         # macOS, with the microphone on the default output's Core Audio device (_same_core_audio_device): the line
         # stays open while the listener runs (no idle close), and after every new open the microphone is reopened
         # (``on_opened``), since opening an output stream in this process stops that device's input stream.
@@ -601,15 +607,27 @@ class _OutputLine:
             if self._stale_devices:
                 self._stale_devices = False
                 _refresh_portaudio_devices(sd)
-            from pilot.system.audio_health import default_speaker_name
-
-            self.device_name = default_speaker_name()
+            index, name, found = _current_default_output(sd)
+            if not found:
+                # The new default cannot be opened (not in PortAudio's list): stay where the line was, or on
+                # PortAudio's own default, and name that device, never the one it did not reach.
+                if self.device_index is not None:
+                    index, name = self.device_index, self.device_name
+                else:
+                    index = _portaudio_default_output_index(sd)
+                    name = _portaudio_device_name(sd, index)
+            self._decide_pin_locked(sd, index)
             latency = self.wanted_latency
+            options: dict[str, Any] = {"device": index} if index is not None else {}
             stream = sd.OutputStream(
-                samplerate=rate, channels=channels, dtype="float32", callback=self.callback, latency=latency
+                samplerate=rate, channels=channels, dtype="float32", callback=self.callback, latency=latency, **options
             )
             self.running.clear()
             stream.start()
+            self.device_name = name
+            self.device_index = index
+            if found:
+                self._unreachable_default = ""
             self.stream, self.rate, self.channels = stream, rate, channels
             self._opened_latency = latency
             self._log_latency(stream, latency)
@@ -630,6 +648,18 @@ class _OutputLine:
         logger.info(
             "Output line opened at latency %r: latency %d ms at %d Hz", latency, round(seconds * 1000), self.rate
         )
+
+    def _decide_pin_locked(self, sd: Any, index: int | None) -> None:
+        """macOS while listening: pinned and at the default latency when this open lands on the microphone's device,
+        unpinned at "low" when it does not (nothing to protect there). Elsewhere nothing changes."""
+        if CURRENT_PLATFORM != Platform.MACOS or self.microphone_index is None or self.on_opened is None:
+            return
+        target = index if index is not None else _portaudio_default_output_index(sd)
+        same = target is not None and int(target) == int(self.microphone_index)
+        if same != self.pinned:
+            logger.info("Output line opens %s the microphone's device", "on" if same else "away from")
+        self.pinned = same
+        self.wanted_latency = MAC_SAME_DEVICE_LATENCY if same else "low"
 
     def rate_for(self, rate: int) -> int:
         """The rate a sentence at ``rate`` plays at. While the line is pinned (macOS, the microphone on its device) it
@@ -699,7 +729,8 @@ class _OutputLine:
 
     def check_device(self, default_name: str) -> bool:
         """Follow the system default output (headphones unplugged, another device chosen) while idle. Returns True
-        when the line was closed to be reopened on the new device."""
+        when the line moved (or was reopened after it stopped), with ``notice`` saying where it now speaks; False when
+        nothing changed, or when the new default cannot be opened while listening (``notice`` then says so)."""
         with self._lock:
             if self.stream is None or self.current is not None:
                 return False
@@ -707,12 +738,40 @@ class _OutputLine:
             stopped = getattr(self.stream, "active", True) is False
             if not (moved or stopped):
                 return False
-            self.notice = f"Speaking on {default_name} now." if moved else "The speaker output stopped; reopening it."
-            logger.info("Output line: %s", self.notice)
+            if moved and not stopped:
+                try:
+                    import sounddevice as sd
+                except ImportError:
+                    return False
+                _index, _name, found = _current_default_output(sd, default_name)
+                if not found and _portaudio_inputs_open:
+                    # PortAudio's device list is from before this device appeared, and re-reading it would close the
+                    # microphone: keep speaking where the line is, and say so once (not a switch that did not happen).
+                    if default_name != self._unreachable_default:
+                        self._unreachable_default = default_name
+                        self.notice = (
+                            f"{default_name} is not in the device list Heliox can open while it listens; still "
+                            f"speaking on {self.device_name}."
+                        )
+                        logger.warning("Output line: %s", self.notice)
+                        return True
+                    return False
             self._stale_devices = True
             self._close_locked()
-        rate = LOCAL_VOICE_RATE if self.pinned else (self.rate or LOCAL_VOICE_RATE)
-        warm_output_line(rate)
+            rate = LOCAL_VOICE_RATE if self.pinned else (self.rate or LOCAL_VOICE_RATE)
+        try:
+            self.ensure(self.rate_for(rate), self.channels_for(1))
+        except Exception as error:
+            self.notice = f"The speaker output could not be reopened ({error})."
+            logger.warning("Output line: %s", self.notice)
+            return True
+        if moved and self.device_name != default_name:
+            self.notice = f"Could not switch to {default_name}; still speaking on {self.device_name}."
+        elif moved:
+            self.notice = f"Speaking on {self.device_name} now."
+        else:
+            self.notice = "The speaker output stopped; reopened it."
+        logger.info("Output line: %s", self.notice)
         return True
 
 
@@ -761,6 +820,74 @@ OUTPUT_RUNNING_WITHIN_SECONDS = 0.5  # how long to wait for the line's first cal
 MAC_SAME_DEVICE_ORDER = "output_first"
 
 
+def _current_default_output(sd: Any, name: str | None = None) -> tuple[int | None, str, bool]:
+    """The system default output as PortAudio can open it: (device index or None, its name, found).
+
+    PortAudio reads its device list and default devices once, when it initialises, and Heliox does not re-read them
+    while a PortAudio input is open (re-initialising closes the microphone). On macOS PortAudio's default output is
+    then a fixed Core Audio device, the one that was default at the last read, so the line looks the current default
+    (read live through soundcard, whose name is the Core Audio name PortAudio shows too) up by name: its index, found.
+    Not in the list (plugged in after the last read): None, not found. On Windows and Linux, and when the name cannot
+    be read: None and found, so the stream opens on the host's default, which follows the system default by itself
+    (MME's Sound Mapper on Windows, ALSA's "default" through PulseAudio or PipeWire on Linux)."""
+    if name is None:
+        from pilot.system.audio_health import default_speaker_name
+
+        name = default_speaker_name()
+    if CURRENT_PLATFORM != Platform.MACOS or not name:
+        return None, name, True
+    wanted = name.strip().casefold()
+    try:
+        for position, info in enumerate(sd.query_devices()):
+            if int(info.get("max_output_channels", 0) or 0) <= 0:
+                continue
+            if str(info.get("name", "")).strip().casefold() == wanted:
+                return int(info.get("index", position)), name, True
+    except Exception:
+        logger.debug("Could not read the output device list", exc_info=True)
+        return None, name, True
+    return None, name, False
+
+
+def _portaudio_default_output_index(sd: Any) -> int | None:
+    """PortAudio's own default output index (as of its last device-list read), or None."""
+    try:
+        default_out = (list(sd.default.device) + [None, None])[1]
+        if default_out is not None and int(default_out) >= 0:
+            return int(default_out)
+        return int(sd.query_devices(kind="output")["index"])
+    except Exception:
+        return None
+
+
+def _portaudio_device_name(sd: Any, index: int | None) -> str:
+    try:
+        return str(sd.query_devices(index)["name"]) if index is not None else ""
+    except Exception:
+        return ""
+
+
+def _line_output_index(sd: Any) -> int | None:
+    """Where the output line is, or will open: its own device when open, else the current default by name, else
+    PortAudio's default."""
+    if _output_line.stream is not None and _output_line.device_index is not None:
+        return _output_line.device_index
+    index, _name, _found = _current_default_output(sd)
+    return index if index is not None else _portaudio_default_output_index(sd)
+
+
+def _microphone_index(sd: Any, input_device: Any) -> int | None:
+    try:
+        if input_device is not None:
+            return int(input_device)
+        default_in = (list(sd.default.device) + [None, None])[0]
+        if default_in is not None and int(default_in) >= 0:
+            return int(default_in)
+        return int(sd.query_devices(kind="input")["index"])
+    except Exception:
+        return None
+
+
 def _same_core_audio_device(sd: Any, input_device: Any) -> bool:
     """macOS only: the microphone and the default output are one Core Audio device (a USB headset, an audio
     interface, an aggregate device). Compared by PortAudio device index, which on Core Audio is one index per device
@@ -772,16 +899,9 @@ def _same_core_audio_device(sd: Any, input_device: Any) -> bool:
     if CURRENT_PLATFORM != Platform.MACOS:
         return False
     try:
-        default_in, default_out = (list(sd.default.device) + [None, None])[:2]
-        out_index = default_out if default_out is not None and int(default_out) >= 0 else None
-        if out_index is None:
-            out_index = sd.query_devices(kind="output")["index"]
-        in_index = input_device
-        if in_index is None:
-            in_index = default_in if default_in is not None and int(default_in) >= 0 else None
-        if in_index is None:
-            in_index = sd.query_devices(kind="input")["index"]
-        return int(in_index) == int(out_index)
+        out_index = _line_output_index(sd)
+        in_index = _microphone_index(sd, input_device)
+        return out_index is not None and in_index is not None and int(in_index) == int(out_index)
     except Exception:
         return False
 
@@ -2266,6 +2386,7 @@ class _ContinuousRecorder:
         # On macOS the hook stays while the listener runs, so a default output moved onto the microphone's device
         # later is caught too; it acts only when the two are one device.
         line.on_opened = self._input_after_output
+        line.microphone_index = _microphone_index(sd, self.input_device)
         if not _same_core_audio_device(sd, self.input_device):
             line.pinned = False
             line.wanted_latency = "low"
@@ -2357,6 +2478,7 @@ class _ContinuousRecorder:
         line = _output_line
         line.pinned = False
         line.wanted_latency = "low"
+        line.microphone_index = None
         if getattr(self, "_opened_output_line", False):
             self._opened_output_line = False
             logger.info("Output line closed: it was opened for the microphone, which is no longer beside it")

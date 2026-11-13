@@ -171,9 +171,12 @@ def test_the_line_follows_a_new_default_output_while_idle(monkeypatch):
     assert line.device_name == "Headphones (Rockerz)"
     assert not line.check_device("Headphones (Rockerz)")
     assert not line.check_device("")  # unknown: stay
+    monkeypatch.setattr("pilot.system.audio_health.default_speaker_name", lambda: "Speakers (Realtek(R) Audio)")
     assert line.check_device("Speakers (Realtek(R) Audio)")  # headphones unplugged
-    assert stream.aborted_at is not None and line.stream is None and line._stale_devices
-    assert "Speakers (Realtek(R) Audio)" in line.notice
+    # Reopened at once on the new default, and the notice names the device the line really opened on.
+    assert stream.aborted_at is not None and line.stream is not None and line.stream is not stream
+    assert line.device_name == "Speakers (Realtek(R) Audio)"
+    assert line.notice == "Speaking on Speakers (Realtek(R) Audio) now."
 
 
 @pytest.mark.skipif(not __import__("os").environ.get("HELIOX_REAL_AUDIO"), reason="real output device; opt-in")

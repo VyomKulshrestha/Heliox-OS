@@ -31,6 +31,15 @@ class FakeSD:
         self.default = types.SimpleNamespace(device=(default_in, default_out))
         self.input_plan: list[str] = []
         self.output_latencies: list[str] = []  # the latency each output stream was opened with, in order
+        # PortAudio's device list as of its last read; _initialize() (a refresh) adds ``plugged_in``.
+        self.devices = [
+            {"index": 0, "name": "MacBook Pro Microphone", "max_input_channels": 1, "max_output_channels": 0},
+            {"index": SPEAKERS, "name": "MacBook Pro Speakers", "max_input_channels": 0, "max_output_channels": 2},
+            {"index": 2, "name": "Apple Virtual Sound Device", "max_input_channels": 0, "max_output_channels": 2},
+            {"index": IN_AND_OUT, "name": "BlackHole 2ch", "max_input_channels": 2, "max_output_channels": 2},
+        ]
+        self.plugged_in: list[dict] = []
+        self.refreshes = 0
         sd = self
 
         class Stream:
@@ -86,6 +95,8 @@ class FakeSD:
         self.OutputStream = OutputStream
 
     def query_devices(self, index=None, kind=None):
+        if index is None and kind is None:
+            return list(self.devices)  # PortAudio's list as of its last read
         if kind == "output":
             return {"index": self.default.device[1], "name": "out"}
         if kind == "input":
@@ -99,7 +110,9 @@ class FakeSD:
         pass
 
     def _initialize(self):
-        pass
+        self.refreshes += 1
+        self.devices = self.devices + self.plugged_in
+        self.plugged_in = []
 
 
 def setup(
@@ -115,6 +128,7 @@ def setup(
     monkeypatch.setattr(voice, "MIC_RETRY_PAUSES", (0.0, 0.0, 0.0))
     monkeypatch.setattr(voice, "MIC_FRAMES_WITHIN_SECONDS", 0.05)
     monkeypatch.setattr(voice, "MIC_SUSTAIN_SECONDS", 0.1)
+    monkeypatch.setattr(voice, "_portaudio_inputs_open", 0)
     recorder = voice._ContinuousRecorder()
     monkeypatch.setattr(recorder, "_start_windows_wasapi", lambda: False)  # the PortAudio path on every system
     return sd, recorder
@@ -128,11 +142,12 @@ def wait_for(condition, limit: int = 300) -> None:
 
 
 def finish(recorder: voice._ContinuousRecorder) -> None:
-    recorder._close_capture()
-    voice._output_line.close()
+    # The hook's reopen first: closing while it is still under its sustained test would leave its stream behind.
     for thread in threading.enumerate():
         if thread.name == "heliox-input-after-output":
-            thread.join(2)
+            thread.join(5)
+    recorder._close_capture()
+    voice._output_line.close()
 
 
 def test_macos_with_one_device_opens_the_output_line_before_the_microphone_and_keeps_it(monkeypatch):
@@ -422,10 +437,10 @@ def test_a_default_output_moved_off_the_microphone_s_device_opens_at_low_latency
     recorder._open_capture()
     sd.default.device = (IN_AND_OUT, SPEAKERS)
     voice._output_line.close()
-    voice._output_line.ensure(24000, 1)  # opens at the setting of the moment; the hook then sees separate devices
+    voice._output_line.ensure(24000, 1)  # the open itself sees it lands away from the microphone
     wait_for(lambda: not voice._output_line.pinned)
     voice._output_line.ensure(22050, 1)
-    assert sd.output_latencies == ["high", "high", "low"]
+    assert sd.output_latencies == ["high", "low", "low"]  # the open away from the microphone is already "low"
     finish(recorder)
 
 
@@ -532,3 +547,103 @@ def test_a_listener_stopped_during_a_reopen_leaves_no_input_open(monkeypatch):
     assert sd.events.count(f"close input {IN_AND_OUT}") == sd.events.count(f"open input {IN_AND_OUT} 16000") + 1
     assert not recorder.is_active
     voice._output_line.close()
+
+
+APPLE_VIRTUAL = 2
+
+
+def speaker(monkeypatch, name: str) -> None:
+    """The system default output, as soundcard reads it live."""
+    monkeypatch.setattr("pilot.system.audio_health.default_speaker_name", lambda: name)
+
+
+def test_a_default_output_moved_away_and_back_on_a_same_device_mac(monkeypatch):
+    """Run 43439172983: "Speaking on Apple Virtual Sound Device now", then the line reopened on BlackHole, because
+    PortAudio's default is only re-read with no microphone open. PortAudio's default stays BlackHole here throughout."""
+    sd, recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, IN_AND_OUT)
+    speaker(monkeypatch, "BlackHole 2ch")
+    assert recorder._open_capture()
+    line = voice._output_line
+    assert line.pinned and line.device_index == IN_AND_OUT
+    sd.events.clear()
+    sd.output_latencies.clear()
+
+    speaker(monkeypatch, "Apple Virtual Sound Device")
+    assert line.check_device("Apple Virtual Sound Device")
+    time.sleep(0.05)  # room for the hook's thread, had it reopened the microphone
+    assert sd.events == [f"close output {IN_AND_OUT}", f"open output {APPLE_VIRTUAL} 24000"]  # the microphone kept
+    assert sd.output_latencies == ["low"]
+    assert not line.pinned and line.wanted_latency == "low"
+    assert line.notice == "Speaking on Apple Virtual Sound Device now."
+    sd.events.clear()
+
+    speaker(monkeypatch, "BlackHole 2ch")
+    assert line.check_device("BlackHole 2ch")
+    wait_for(lambda: f"open input {IN_AND_OUT} 16000" in sd.events)
+    assert sd.events == [
+        f"close output {APPLE_VIRTUAL}",
+        f"open output {IN_AND_OUT} 24000",
+        f"close input {IN_AND_OUT}",
+        f"open input {IN_AND_OUT} 16000",
+    ]  # output first at the default latency, then the sustained reopen
+    assert sd.output_latencies[-1] == "high" and line.pinned
+    assert line.notice == "Speaking on BlackHole 2ch now."
+    finish(recorder)
+
+
+def test_a_new_default_missing_from_the_device_list_while_listening_keeps_the_line_and_says_so(monkeypatch):
+    sd, recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, IN_AND_OUT)
+    speaker(monkeypatch, "BlackHole 2ch")
+    assert recorder._open_capture()
+    sd.events.clear()
+    speaker(monkeypatch, "USB Headset")  # plugged in after PortAudio read its list
+    sd.plugged_in = [{"index": 4, "name": "USB Headset", "max_input_channels": 1, "max_output_channels": 2}]
+    line = voice._output_line
+    assert line.check_device("USB Headset")
+    assert line.notice == (
+        "USB Headset is not in the device list Heliox can open while it listens; still speaking on BlackHole 2ch."
+    )
+    assert not line.check_device("USB Headset")  # said once
+    assert sd.events == [] and sd.refreshes == 0  # nothing closed, the microphone untouched
+    assert line.device_name == "BlackHole 2ch" and line.pinned
+    finish(recorder)
+
+
+def test_with_no_microphone_open_a_new_device_is_found_after_a_refresh(monkeypatch):
+    sd, _recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, IN_AND_OUT)
+    speaker(monkeypatch, "MacBook Pro Speakers")
+    line = voice._output_line
+    line.ensure(24000, 1)
+    speaker(monkeypatch, "USB Headset")
+    sd.plugged_in = [{"index": 4, "name": "USB Headset", "max_input_channels": 1, "max_output_channels": 2}]
+    assert line.check_device("USB Headset")
+    assert sd.refreshes == 1 and sd.events[-1] == "open output 4 24000"
+    assert line.notice == "Speaking on USB Headset now."
+    line.close()
+
+
+def test_a_default_missing_at_the_first_open_is_not_named(monkeypatch):
+    sd, _recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, SPEAKERS)
+    speaker(monkeypatch, "Gone Headphones")
+    line = voice._output_line
+    line.ensure(24000, 1)
+    assert sd.events == [f"open output {SPEAKERS} 24000"]
+    assert line.device_name == f"device {SPEAKERS}"  # PortAudio's own default, named as PortAudio names it
+    line.close()
+
+
+@pytest.mark.parametrize("platform", [Platform.WINDOWS, Platform.LINUX])
+def test_windows_and_linux_open_the_host_default_which_follows_the_system(monkeypatch, platform):
+    """No device index is passed: MME's Sound Mapper and ALSA's default (PulseAudio, PipeWire) follow the system
+    default themselves, and their device names do not match soundcard's, so there is no lookup by name."""
+    sd, recorder = setup(monkeypatch, platform, IN_AND_OUT, IN_AND_OUT)
+    speaker(monkeypatch, "Speakers (Realtek(R) Audio)")
+    assert recorder._open_capture()
+    line = voice._output_line
+    line.ensure(24000, 1)
+    sd.events.clear()
+    speaker(monkeypatch, "Headphones (Rockerz)")
+    assert line.check_device("Headphones (Rockerz)")
+    assert sd.events == [f"close output {IN_AND_OUT}", f"open output {IN_AND_OUT} 24000"]  # device=None: the default
+    assert line.device_index is None and line.notice == "Speaking on Headphones (Rockerz) now."
+    finish(recorder)
