@@ -27,6 +27,7 @@ from . import audio as audio_refs
 from . import conditions as conds
 from . import quality, report, scoring
 from . import timeline as tl
+from .bench_root import chosen_root
 from .platform_scan import scan, unavailable_messages
 from .scenarios import MODEL_KINDS, SETS, Scenario, load_all, load_local
 from .scoring import Row
@@ -110,7 +111,8 @@ def external_benches() -> list[Row]:
 async def run_jobs(args: argparse.Namespace, todo: list[tuple[Scenario, str, str]], results: Path) -> list:
     from .driver import Harness, model_kind
 
-    harness = Harness(audio_root=args.audio, data_dir=results / "data", model=model_kind("cloud"), pace=args.pace)
+    harness = Harness(audio_root=args.audio, data_dir=chosen_root(args.root, results), model=model_kind("cloud"),
+                      pace=args.pace, owner_settings=True)  # fmt: skip
     await harness.build()
     outcomes = []
     cpu: list[float] = []
@@ -130,7 +132,7 @@ async def run_jobs(args: argparse.Namespace, todo: list[tuple[Scenario, str, str
                   f"reply={'-' if reply is None else f'{reply:.2f}s'} heard={outcome.heard[:60]!r} "
                   f"{'; '.join(outcome.failures)[:120]}", flush=True)  # fmt: skip
     finally:
-        await harness.close()
+        await harness.close(session_to=results)
         (results / "run.json").write_text(
             json.dumps(
                 {
@@ -187,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--audio", default=None)
         p.add_argument("--results", default=None)
         p.add_argument("--pace", type=float, default=1.0)
+        p.add_argument("--root", default=None, help="the bench's own Heliox folders, kept between runs")
     run_p = sub.choices["run"]
     run_p.add_argument("--profile", choices=("baseline", "full", "quick"), default="baseline")
     run_p.add_argument("--sets", default=",".join(SETS))
@@ -239,14 +242,13 @@ def main(argv: list[str] | None = None) -> int:
         ]
 
         async def go() -> None:
-            harness = Harness(
-                audio_root=args.audio, data_dir=results / "data", model=model_kind("cloud"), pace=args.pace
-            )
+            harness = Harness(audio_root=args.audio, data_dir=chosen_root(args.root, results),
+                              model=model_kind("cloud"), pace=args.pace, owner_settings=True)  # fmt: skip
             await harness.build()
             try:
                 result = await soak.run(harness, pool, args.minutes)
             finally:
-                await harness.close()
+                await harness.close(session_to=results)
             text = soak.summary(result)
             print(text)
             (results / "soak.txt").write_text(text + "\n", encoding="utf-8")

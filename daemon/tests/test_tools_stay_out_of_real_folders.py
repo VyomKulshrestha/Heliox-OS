@@ -36,20 +36,31 @@ def _files() -> list[Path]:
     return sorted(path for folder in FOLDERS for path in folder.rglob("*.py") if "pilot" in path.read_text("utf-8"))
 
 
-def _moves(path: Path, text: str) -> bool:
+def _imported(path: Path, text: str) -> list[Path]:
+    """The benchmark modules ``text`` imports: ``from .x import``, ``from . import x, y``, ``from benchmarks...``."""
+    bench = path.parent
+    names = [
+        a or b for a, b in re.findall(r"from \.(\w+) import|from benchmarks\.conversation_bench\.(\w+) import", text)
+    ]
+    for group in re.findall(r"from \. import \(?([\w, \n]+?)\)?$", text, flags=re.MULTILINE):
+        names += [part.split(" as ")[0].strip() for part in group.split(",") if part.strip()]
+    found = [bench / f"{name}.py" for name in names]
+    found += [DAEMON / "benchmarks" / f"{name}.py" for name in re.findall(r"from benchmarks\.(\w+) import", text)]
+    return [module for module in found if module.exists() and module != path]
+
+
+def _moves(path: Path, text: str, seen: set[Path] | None = None) -> bool:
+    """It calls use_scratch_folders itself, or imports a benchmark module that does (directly or through another)."""
     if "use_scratch_folders(" in text:
         return True
-    bench = path.parent
-    for name in re.findall(r"from \.(\w+) import|from benchmarks\.conversation_bench\.(\w+) import", text):
-        module = bench / f"{name[0] or name[1]}.py"
-        if module.exists() and "use_scratch_folders(" in module.read_text("utf-8"):
+    seen = seen if seen is not None else {path}
+    for module in _imported(path, text):
+        if module in seen:
+            continue
+        seen.add(module)
+        if _moves(module, module.read_text("utf-8"), seen):
             return True
-    imported = re.findall(r"from benchmarks\.(\w+) import", text)
-    return any(
-        (DAEMON / "benchmarks" / f"{name}.py").exists()
-        and "use_scratch_folders(" in (DAEMON / "benchmarks" / f"{name}.py").read_text("utf-8")
-        for name in imported
-    )
+    return False
 
 
 def test_every_reaching_tool_moves_its_folders_or_is_an_owner_tool_that_asks_for_the_flag():

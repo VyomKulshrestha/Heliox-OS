@@ -281,8 +281,14 @@ class Harness:
         model: ModelKind,
         pace: float = 1.0,
         configure: Callable[[Any], None] | None = None,
+        owner_settings: bool = False,
     ) -> None:
         self.configure = configure  # adjusts the loaded settings before the server is built (CI: models it fetched)
+        # A local run: the person's [model] and named [voice] settings copied, the speech models read in place
+        # (bench_root). Off on a runner, which has neither.
+        self.owner_settings = owner_settings
+        self.copied_settings: list[str] = []
+        self.models_found: dict[str, str] = {}
         self.audio_root = audio_root
         self.data_dir = data_dir
         self.model = model
@@ -300,11 +306,12 @@ class Harness:
     # Building -------------------------------------------------------------------------------------------
 
     async def build(self) -> None:
-        from pilot.real_folders import use_scratch_folders
+        from .bench_root import check_inside, copy_owner_settings, enter, read_models_in_place
 
-        # Every Heliox folder (settings, data, state, runtime, ~/.cache/heliox, setup's folder) under data_dir,
-        # before pilot.config loads: never the person's. Raises if something imported pilot.config first.
-        use_scratch_folders(self.data_dir)
+        # Every Heliox folder (settings, data, state, runtime, ~/.cache/heliox, setup's folder) and the temporary
+        # files under data_dir, before pilot.config loads: never the person's. Raises if something imported
+        # pilot.config first, or if any folder resolves outside data_dir.
+        root = enter(self.data_dir)
         os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")  # CPU only, for this process and the voice worker
         os.environ.setdefault("HF_HUB_OFFLINE", "1")  # never download: every model must already be on disk
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -320,6 +327,9 @@ class Harness:
         log = self.log
         config = PilotConfig.load()
         config.save = MagicMock()
+        if self.owner_settings:
+            # The person's provider and voice settings, copied by name onto the bench root's own config.
+            self.copied_settings = copy_owner_settings(config)
         config.live.enabled = True
         config.live.grounded_checks = False  # the local model takes minutes on a CPU
         # CPU only, said in the setting itself: the voice worker's GPU choice does not read CUDA_VISIBLE_DEVICES=""
@@ -327,6 +337,10 @@ class Harness:
         config.voice.tts_device = "cpu"
         if self.configure is not None:
             self.configure(config)
+        if self.owner_settings:
+            # The speech models where they already are, read-only; a missing one stops the run with its name.
+            self.models_found = read_models_in_place(config)
+        check_inside(root)  # once more, right before anything that can save is built
         server = PilotServer(config)
         self.server = server
 
@@ -570,7 +584,21 @@ class Harness:
         if babble.exists():
             self.babble = wavio.read(babble)
 
-    async def close(self) -> None:
+    def save_session(self, folder: Path) -> Path:
+        """Every event of the run, between scenarios included (a transcript that came after its scenario had
+        closed, the drain before the next one), one per line: ``<folder>/session.jsonl``."""
+        import json
+
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / "session.jsonl"
+        with self.log.lock:
+            events = list(self.log.events)
+        path.write_text("".join(json.dumps(row) + "\n" for row in tl.to_json(events)), encoding="utf-8")
+        return path
+
+    async def close(self, session_to: Path | None = None) -> None:
+        if session_to is not None:
+            self.save_session(session_to)
         if getattr(self, "_vad_watch", None) is not None:
             self._vad_watch.cancel()
         if self.pump:

@@ -180,7 +180,7 @@ async def run(
                     print(f"[{i}/{total}] {scenario.id} ({model}){shown} load {load}% "
                           f"reply={outcome.measures.reply_start} stop={outcome.measures.stop_time}", flush=True)  # fmt: skip
     finally:
-        await harness.close()
+        await harness.close(session_to=results)
     return outcomes, groups, owed, (compared if name else {}), calibration
 
 

@@ -29,8 +29,18 @@ Replaced:
 - The microphone: a file pump feeds 16 kHz blocks at real-time pace. The real microphone is never opened.
 - The planner: a stub that waits as long as the chosen kind of model would and returns "All set." (or, with no
   model, the "no provider" error). No cloud model is called. Plans are not executed.
-- The data folder: a fresh, empty one per run under the results folder. A copy of a person's data would carry
-  undo history and scheduled runs that act on real files.
+- Every Heliox folder: the bench's own root (`--root`, or `HELIOX_BENCH_ROOT`, kept between runs; without either,
+  a fresh folder in the results). Settings, data, state, runtime, `~/.cache/heliox` (the wake calibration, the
+  persona) and setup's folder all resolve inside it, and so do the temporary files; the bench checks that before it
+  builds a listener or a server and refuses otherwise (`bench_root.py`). A copy of a person's data would carry undo
+  history and scheduled runs that act on real files.
+- The settings: a local run copies the person's `[model]` section and the `[voice]` fields named in
+  `bench_root.OWNER_VOICE` onto its own config through `pilot.real_folders.apply_owner_settings`, never a device
+  field or a path into their folders, and prints the names copied, never a value.
+- The speech models are not copied and not fetched: Parakeet is read from the folder the person's settings name (or
+  the default one in their data folder), the streaming recogniser and Smart Turn from their data folder or the
+  Hugging Face cache, Whisper and Kokoro from the Hugging Face cache, all read-only with the hub offline. A model
+  the run needs that is not on the computer stops it with its name.
 - The speaker: silent. Output-device latency and the device's own cut-off time on barge-in are therefore not in
   the numbers, and neither is echo of Heliox's voice into an open microphone.
 
@@ -396,6 +406,23 @@ Scorecard 1.3 now counts what the product did with the words, not how many trans
 sentence counts as split when more turns went on than sentences were said (withdrawn turns do not count, turns the
 server joined do), when more plans ran to the end than sentences were said, or when Heliox took a "Stop" the person
 did not say.
+
+## Two measurements that need the bench root
+
+`python -m benchmarks.conversation_bench.early_words --root <root> --sets synthetic` asks whether the streaming
+recogniser's words are already the final pass's words at the candidate end of turn, the moment the listener starts
+its speculative final pass. The recorder is fed on the audio clock as in `turn_split`; for each utterance it prints
+equal, one word apart or more (after the scorecard's normalising), how long after the last word the candidate came
+and the turn ended (audio clock), and the final pass's running time with the CPU load beside it. For the person's
+own recordings (`--sets owner`) it prints and saves counts and times only.
+
+`python -m benchmarks.conversation_bench.voice_latency --root <root>` times the last word to Heliox's first sound
+through the real listener, server, conversation layer and voice with silent output, split into local answers and
+model answers. It checks the CPU before the run (`--wait-quiet` minutes) and refuses a busy machine unless
+`--allow-busy`, samples it before every turn, and prints it beside each number; a number taken at 50 % or more is
+marked under load. `--model configured` uses the person's own provider, prints the run's bound in calls, tokens and
+dollars before any call, and runs only with `--paid`; its spend goes to the person's budget, the one write outside
+the root.
 
 ## Recording your own voice
 

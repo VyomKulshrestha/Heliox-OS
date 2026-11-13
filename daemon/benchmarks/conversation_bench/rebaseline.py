@@ -22,6 +22,7 @@ from . import audio as audio_refs
 from . import machine, report, scoring, stack
 from . import timeline as tl
 from .__main__ import jobs
+from .bench_root import chosen_root
 from .models import KINDS
 from .scenarios import load_all
 from .scoring import Row
@@ -51,7 +52,8 @@ def owe_timings(rows: list[Row], busy: dict[tuple[str, str, str], bool]) -> list
 async def run(args: argparse.Namespace, results: Path) -> list[scoring.Outcome]:
     from .driver import Harness
 
-    harness = Harness(audio_root=args.audio, data_dir=results / "data", model=KINDS["cloud"])
+    harness = Harness(audio_root=args.audio, data_dir=chosen_root(args.root, results), model=KINDS["cloud"],
+                      owner_settings=True)  # fmt: skip
     await harness.build()
     fast_models = stack.enable(harness)
     scenarios = load_all()
@@ -76,7 +78,7 @@ async def run(args: argparse.Namespace, results: Path) -> list[scoring.Outcome]:
                   f"cpu={load} route={outcome.measures.route} heard={outcome.heard[:50]!r} "
                   f"{'; '.join(outcome.failures)[:100]}", flush=True)  # fmt: skip
     finally:
-        await harness.close()
+        await harness.close(session_to=results)
         calls = {name: len(m.calls) for name, m in fast_models.items()}
         (results / "fast_model_calls.json").write_text(json.dumps(calls), encoding="utf-8")
         print("fast-model calls by kind:", calls, flush=True)
@@ -87,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m benchmarks.conversation_bench.rebaseline")
     parser.add_argument("--audio", default=None)
     parser.add_argument("--results", default=None)
+    parser.add_argument("--root", default=None, help="the bench's own Heliox folders, kept between runs")
     parser.add_argument("--conditions", default="as-recorded,bt-call,voice-10db,fan-10db")
     parser.add_argument(
         "--blocks", type=int, default=0, help="five-minute not-addressed blocks (the replay covers 2.2)"
