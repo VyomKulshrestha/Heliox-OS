@@ -529,7 +529,15 @@ class ReminderStore:
         return len(items) - len(kept)
 
     async def tick(self) -> int:
-        """Deliver every reminder that is due. Returns how many went out."""
+        """Deliver every reminder that is due. Returns how many went out.
+
+        Under the held lock: a window that connects while a delivery is under way (saying it takes seconds)
+        asks for the held reminders after this delivery has held what nobody saw, not before, so it gets them
+        rather than the window after it."""
+        async with self._held_lock:
+            return await self._tick()
+
+    async def _tick(self) -> int:
         now = self._clock()
         items, held = self.list(), self.held()
         due = [item for item in items if item["due"] <= now]

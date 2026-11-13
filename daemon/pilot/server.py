@@ -602,6 +602,9 @@ CODE_ANSWERS_ANY_MODEL = frozenset(
     }
 )
 ANSWERED_ON_THIS_COMPUTER = "(answered on this computer)"
+# The longest a reminder's spoken line may hold the reminder store's lock: the listener's floor wait (8 s at most),
+# the queue ahead of it and its own words.
+REMINDER_SAY_SECONDS = 30.0
 REQUEST_TAKEN_BACK = "Okay, I've left it."  # "open Spotify, no": taken back as it was said
 # The words of a turn that answered Heliox's own question, "" otherwise (pilot.conversation.say_back).
 ANSWERED_HELIOX_QUESTION: contextvars.ContextVar[str] = contextvars.ContextVar("heliox_answered_question", default="")
@@ -2476,7 +2479,7 @@ class PilotServer:
                     self._mesh_error = str(exc)
                 logger.warning("HelioxMesh init failed (non-critical)", exc_info=True)
 
-    async def _broadcast_notification(self, method: str, params: Any, *, exclude: Any = None) -> None:
+    async def _broadcast_notification(self, method: str, params: Any, *, exclude: Any = None) -> int:
         """Broadcast a notification to all connected clients.
 
         Args:
@@ -2484,6 +2487,10 @@ class PilotServer:
             params: The notification parameters.
             exclude: A connection that must not receive this notification
                 (a caller that already has the result in its reply).
+
+        Returns:
+            How many windows it was handed to. A window that closed, but whose connection the daemon has not let go
+            of yet, refuses it and is not counted (0 too when the notification was buffered for later).
         """
         # ── Feature 5: Attention-Optimized Notification Timing ──
         # Only explicitly passive telemetry may be delayed. Unknown and
@@ -2512,7 +2519,7 @@ class PilotServer:
                     overflow = len(self._notification_buffer) - MAX_ATTENTION_NOTIFICATION_BUFFER
                     if overflow > 0:
                         del self._notification_buffer[:overflow]
-                    return
+                    return 0
 
                 if scored.attention_score < 0.4 and getattr(self, "_notification_buffer", []):
                     logger.info(
@@ -2545,13 +2552,16 @@ class PilotServer:
         # after a different handler's return statements, so this notification
         # was silently never delivered outside that one buffered-flush edge case.
         msg = _notification(method, params)
+        handed = 0
         for client in list(self._clients):
             if exclude is not None and client is exclude:
                 continue
             try:
                 await client.send(msg)
+                handed += 1
             except Exception:
                 pass
+        return handed
 
     @staticmethod
     def _attention_notification_identity(method: str, params: Any) -> tuple[str, str]:
@@ -9004,11 +9014,31 @@ class PilotServer:
         """Say a reminder line when the voice is in use; the speech outcome's status, or "" when not said."""
         if not self._voice_in_use():
             return ""
-        outcome = await self._speak_companion_text(text, channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=key)
+        from pilot.timeouts import bounded
+
+        try:
+            # Bounded: reminders are delivered under the store's held lock (ReminderStore.tick), and a window that
+            # connects meanwhile waits on it for what was held. A voice that never finishes (a stuck device, a long
+            # queue) is "not said", and the reminder is held for that window instead.
+            outcome = await bounded(
+                self._speak_companion_text(text, channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=key),
+                REMINDER_SAY_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "A reminder was not said within %.0f s; it is held for the next window", REMINDER_SAY_SECONDS
+            )
+            return "timeout"
         status = str(getattr(outcome, "status", ""))
         if status == "spoken":
             self._reminder_said_at = time.time()
         return status
+
+    def _shown(self, handed: Any) -> bool:
+        """A reminder notification reached a window: the broadcast handed it to at least one. A window closed a
+        moment before (the daemon not yet done with its connection, as when a laptop sleeps right after) does not
+        count: the reminder is then held for the next window instead of lost."""
+        return handed > 0 if isinstance(handed, int) else bool(self._clients)
 
     def _reached(self, seen: bool, said: str) -> bool | str:
         """True: a window showed it. "unheard": said aloud with no window open, not yet answered (a desktop that
@@ -9038,12 +9068,12 @@ class PilotServer:
 
         if self._focus is not None and self._focus.hold("reminder", reminder):
             return True
-        seen = bool(self._clients)
         late = bool(reminder.get("late"))  # the store's own clock decided it (LATE_AFTER_SECONDS)
         message = describe_held([reminder], now=time.time()) if late else f"Reminder: {reminder['text']}"
-        await self._broadcast_notification("reminder", {**reminder, "late": late, "message": message})
+        handed = await self._broadcast_notification("reminder", {**reminder, "late": late, "message": message})
         said = await self._say_reminder(message, f"reminder:{reminder['id']}")
-        return self._reached(seen, said)
+        logger.info("Reminder %s came due: shown in %s window(s), said: %s", reminder["id"], handed, said or "no")
+        return self._reached(self._shown(handed), said)
 
     async def _deliver_held_reminders(self, items: list[dict[str, Any]]) -> bool:
         """Reminders that came due while nobody could see or hear them, or that were only said to a room with no
@@ -9055,11 +9085,10 @@ class PilotServer:
         if not self._someone_can_receive():
             return False
         message = describe_held(items, now=time.time())
-        seen = bool(self._clients)
         if len(items) == 1:
-            await self._broadcast_notification("reminder", {**items[0], "late": True, "message": message})
+            handed = await self._broadcast_notification("reminder", {**items[0], "late": True, "message": message})
         else:
-            await self._broadcast_notification(
+            handed = await self._broadcast_notification(
                 "reminders_missed",
                 {
                     "message": message,
@@ -9074,7 +9103,9 @@ class PilotServer:
             said = await self._say_reminder(
                 describe_held(unsaid, now=time.time()), "reminders-held:" + ",".join(i["id"] for i in unsaid)
             )
-        return seen or said == "spoken"
+        ids = ",".join(item["id"] for item in items)
+        logger.info("Held reminders %s: shown in %s window(s), said: %s", ids, handed, said or "no")
+        return self._shown(handed) or said == "spoken"
 
     async def _deliver_missed_reminders(self, items: list[dict[str, Any]], first_tick: bool) -> bool | str:
         """Reminders that came due while the computer slept or Heliox was off: one card, at most one sentence, each
@@ -9083,7 +9114,7 @@ class PilotServer:
         from pilot.workflows.reminders import describe_held
 
         message = describe_held(items, now=time.time())
-        await self._broadcast_notification(
+        handed = await self._broadcast_notification(
             "reminders_missed",
             {
                 "message": message,
@@ -9103,9 +9134,10 @@ class PilotServer:
                             f"Reminder: {item['text']}",
                             f"Came due on {due} while this computer was asleep or Heliox was off; shown when it was back.",
                         )
-        seen = bool(self._clients)
         said = await self._say_reminder(message, "reminders-missed:" + ",".join(item["id"] for item in items))
-        return self._reached(seen, said)
+        ids = ",".join(item["id"] for item in items)
+        logger.info("Missed reminders %s: shown in %s window(s), said: %s", ids, handed, said or "no")
+        return self._reached(self._shown(handed), said)
 
     async def _handle_reminder_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         from pilot.workflows.reminders import describe_repeat
