@@ -104,14 +104,33 @@ def into_the_appimage(env: dict[str, str], appdir: str) -> dict[str, str]:
     }
 
 
-APPDIR: list[str] = [""]  # the mount the app saw, read from its own environment at its first start
+APPDIR: list[str] = [""]  # where the AppImage's files are for the app, read at its first start
+
+
+def image_folder(pid: int, env: dict[str, str]) -> str:
+    """Where the app's AppImage files are: APPDIR when its start-up set it, else the folder its program runs from
+    (…/usr/bin/heliox-os). Extracted to run (APPIMAGE_EXTRACT_AND_RUN, no FUSE in the container), the runtime sets
+    APPIMAGE and not always APPDIR: on 0fb22f4 this check found no APPDIR and could not judge the daemon."""
+    if env.get("APPDIR"):
+        return env["APPDIR"]
+    try:
+        program = os.readlink(f"/proc/{pid}/exe")
+    except OSError:
+        return ""
+    head, marker, _ = program.partition("/usr/bin/")
+    return head if marker else str(Path(program).parent)
 
 
 def the_app_environment() -> None:
     """Print what the AppImage's start-up gave the app: the entries that point into the AppImage."""
     for pid in base.app_pids():
         env = environ(pid)
-        APPDIR[0] = env.get("APPDIR", APPDIR[0])
+        APPDIR[0] = image_folder(pid, env) or APPDIR[0]
+        print(
+            f"DIAG the app's environment: {len(env)} entries; APPIMAGE {env.get('APPIMAGE', '(not set)')!r}, "
+            f"APPDIR {env.get('APPDIR', '(not set)')!r}; the AppImage's files: {APPDIR[0] or '(not found)'}",
+            flush=True,
+        )
         print(
             f"DIAG the app's own environment, pointing into the AppImage: {into_the_appimage(env, APPDIR[0])}",
             flush=True,
