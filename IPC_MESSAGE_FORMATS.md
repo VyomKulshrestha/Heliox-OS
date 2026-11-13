@@ -658,6 +658,10 @@ Every 200 ms it decides, per correction it has noticed, whether to wait, show a 
   path, ok, problems, admitted, held_back: [{id, problems}]}], rules, held_back}`. `blind_spots` lists the apps
   Live has found it cannot see into, `[{app, sentence}]`, one plain sentence each naming what would let it
   (`pilot.live.blind_spots`), and `blind_note` is that sentence for the app in front the first time it is found.
+  `answers` counts, per kind and with no text, what Live raised among its last `answers_of_last` cards and how the
+  person answered them, plus what is kept across runs: `[{kind, label, raised, spoken, thanks, not_now,
+  muted_from_card, not_now_days, quiet, muted}]` (`not_now_days`: days "not now" was said to it this week; `quiet`:
+  shown, not spoken, after "not now" on two days).
 - `live_set` takes any of `enabled`, `paused` (this session only), `level` (`quiet`, `balanced`, `proactive`),
   `read_focused_text`, `ocr_fallback`, `listen_to_speech`, `personal_timing`, `grounded_checks`, `grounded_model`
   (an Ollama model name), `muted_kinds`, `reset_timing: true` (forget the learned pauses) and `unsnooze: <kind>`

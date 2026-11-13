@@ -147,4 +147,81 @@ describe("LiveCompanionPanel, apps Live cannot see into", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.queryByTestId("live-blind-spots")).toBeNull();
   });
+
+  it("counts what it raised lately and how each kind was answered, with no text", async () => {
+    mocks.call.mockResolvedValue({
+      status: "ok",
+      kinds: [],
+      answers_of_last: 20,
+      answers: [
+        {
+          kind: "weekday_date",
+          label: "A weekday that doesn't match its date",
+          raised: 2,
+          spoken: 1,
+          thanks: 1,
+          not_now: 1,
+          muted_from_card: 0,
+          not_now_days: 2,
+          quiet: true,
+          muted: false,
+        },
+        {
+          kind: "arithmetic",
+          label: "A sum that doesn't add up",
+          raised: 1,
+          spoken: 0,
+          thanks: 0,
+          not_now: 0,
+          muted_from_card: 1,
+          not_now_days: 0,
+          quiet: false,
+          muted: true,
+        },
+        {
+          kind: "repeated_word",
+          label: "Doubled words",
+          raised: 0,
+          spoken: 0,
+          thanks: 0,
+          not_now: 0,
+          muted_from_card: 0,
+          not_now_days: 0,
+          quiet: false,
+          muted: true,
+        },
+      ],
+    });
+    render(LiveCompanionPanel);
+    const block = await screen.findByTestId("live-answers");
+    expect(block.textContent).toContain("Of its last 20 cards, by kind.");
+    expect(block.textContent).toContain(
+      '2 raised (1 said aloud): 1 thanks, 1 not now. "Not now" on 2 days this week: shown, not spoken.',
+    );
+    expect(block.textContent).toContain("1 raised: 1 don't mention these. Muted.");
+    expect(block.textContent).toContain("Doubled words");
+  });
+
+  it.each([
+    ["a bare ok", { status: "ok" }],
+    ["a refusal", { status: "error", message: "The live companion is not ready yet." }],
+    ["an empty list", { status: "ok", kinds: [], answers: [] }],
+    ["not a list", { status: "ok", kinds: [], answers: "weekday_date" }],
+  ])("shows no answers block with %s", async (_label, answer) => {
+    mocks.call.mockResolvedValue(answer);
+    render(LiveCompanionPanel);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByTestId("live-answers")).toBeNull();
+  });
+
+  it("shows no answers block when the daemon does not answer", async () => {
+    mocks.call.mockImplementation(async (method: string) => {
+      if (method === "live_status") throw new Error("not connected");
+      return { status: "ok" };
+    });
+    render(LiveCompanionPanel);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByTestId("live-answers")).toBeNull();
+    expect(screen.getByTestId("live-panel")).toBeTruthy();
+  });
 });

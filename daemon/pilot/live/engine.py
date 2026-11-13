@@ -1282,6 +1282,8 @@ class LiveCompanion:
         if entry is None:
             return {"status": "error", "message": "That correction is no longer available."}
         held = from_person and verdict == "dismissed" and entry.get("urgency") != URGENT
+        if from_person and "answer" not in entry:
+            entry["answer"] = verdict  # the first answer the person gave this card, for answers() (no text)
         if held:
             self.snooze(entry["kind"])
         if verdict == "mute":
@@ -1316,6 +1318,47 @@ class LiveCompanion:
             return False
         self._save_snoozes()
         return True
+
+    def answers(self) -> list[dict[str, Any]]:
+        """For Settings: per kind, counts only. Of the cards Live raised lately (its last RECENT_LIMIT, in this run):
+        how many, how many said aloud, and how the person answered them (thanks or used the fix, not now, don't
+        mention these). Kept across runs: the days "not now" was said to the kind within QUIET_DAYS, whether that
+        made it quiet (shown, not spoken), and whether it is muted. No card text, no evidence."""
+        if not self._snooze_loaded:
+            self._load_snoozes()
+        muted = set(getattr(self._config(), "muted_kinds", []) or [])
+        quiet = self.quiet_kinds()
+        today = self._wallclock().date()
+        rows: dict[str, dict[str, Any]] = {}
+
+        def row(kind: str) -> dict[str, Any]:
+            return rows.setdefault(
+                kind,
+                {"kind": kind, "label": KIND_LABELS.get(kind, kind), "raised": 0, "spoken": 0, "thanks": 0,
+                 "not_now": 0, "muted_from_card": 0, "not_now_days": 0, "quiet": False, "muted": False},
+            )  # fmt: skip
+
+        for entry in self._recent:
+            item = row(str(entry.get("kind", "")))
+            item["raised"] += 1
+            item["spoken"] += int(bool(entry.get("spoken")))
+            answer = entry.get("answer")
+            if answer in ("helpful", "used_fix"):
+                item["thanks"] += 1
+            elif answer == "dismissed":
+                item["not_now"] += 1
+            elif answer == "mute":
+                item["muted_from_card"] += 1
+        for kind, days in self._not_now_days.items():
+            within = [d for d in days if (today - date.fromisoformat(d)).days < QUIET_DAYS]
+            if within:
+                row(kind)["not_now_days"] = len(set(within))
+        for kind in quiet:
+            row(kind)["quiet"] = True
+        for kind in muted:
+            row(kind)["muted"] = True
+        order = {kind: i for i, kind in enumerate(KINDS)}
+        return sorted(rows.values(), key=lambda r: order.get(r["kind"], len(order)))
 
     def held_back(self) -> list[dict[str, Any]]:
         """The kinds "not now" holds back now, with the time left, for Settings."""
@@ -1358,10 +1401,10 @@ class LiveCompanion:
         if _WHY.match(normalized):
             return LiveReply(because(entry))
         if _THANKS.match(normalized):
-            await self.feedback(entry["id"], "helpful")
+            await self.feedback(entry["id"], "helpful", from_person=True)
             return LiveReply("Glad it helped.")
         if _MUTE.match(normalized):
-            await self.feedback(entry["id"], "mute")
+            await self.feedback(entry["id"], "mute", from_person=True)
             label = KIND_LABELS.get(entry["kind"], "that kind of thing").lower()
             return LiveReply(
                 f"Okay, I won't mention these again: {label}. You can turn them back on in Settings, under Live."
@@ -1373,10 +1416,10 @@ class LiveCompanion:
             return LiveReply("Okay, leaving it.")
         if _FIX.match(normalized):
             if entry.get("fix_kind") == "ask" and entry.get("fix"):
-                await self.feedback(entry["id"], "used_fix")
+                await self.feedback(entry["id"], "used_fix", from_person=True)
                 return LiveReply("On it.", delegate=entry["fix"])
             if entry.get("fix"):
-                await self.feedback(entry["id"], "used_fix")
+                await self.feedback(entry["id"], "used_fix", from_person=True)
                 return LiveReply(f"I can't edit your text for you, so here's the fix to use: {entry['fix']}.")
             return LiveReply("There's no automatic fix for that one.")
         return None
@@ -1416,6 +1459,8 @@ class LiveCompanion:
             "muted_kinds": list(getattr(cfg, "muted_kinds", []) or []),
             "personal_timing": self._personal_timing(),
             "held_back": self.held_back(),
+            "answers": self.answers(),
+            "answers_of_last": RECENT_LIMIT,
             "blind_spots": self.blind.notices(),
             "blind_note": self.blind.current,
             "grounded": {"enabled": self._grounding(), **(self.grounded.stats() if self.grounded else {})},

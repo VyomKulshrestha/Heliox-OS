@@ -33,6 +33,21 @@
     catches?: Catches;
     held_back?: HeldKind[];
     blind_spots?: BlindSpot[];
+    answers?: Answer[];
+    answers_of_last?: number;
+  };
+  /** Per kind, counts only (pilot.live.engine.LiveCompanion.answers): no card text, no evidence. */
+  type Answer = {
+    kind: string;
+    label: string;
+    raised: number;
+    spoken: number;
+    thanks: number;
+    not_now: number;
+    muted_from_card: number;
+    not_now_days: number;
+    quiet: boolean;
+    muted: boolean;
   };
   /** An app Live cannot see into, with the one sentence that says what would let it (pilot.live.blind_spots). */
   type BlindSpot = { app: string; sentence: string };
@@ -43,6 +58,32 @@
   let catches = $state<Catches | null>(null);
   let notNowHolds = $state<HeldKind[]>([]);
   let blindSpots = $state<BlindSpot[]>([]);
+  let answers = $state<Answer[]>([]);
+  let answersOfLast = $state(20);
+
+  function plural(count: number, one: string, many: string): string {
+    return `${count} ${count === 1 ? one : many}`;
+  }
+
+  /** "2 raised (1 said aloud): 1 thanks, 1 not now. "Not now" on 2 days this week: shown, not spoken." */
+  function answerLine(item: Answer): string {
+    const parts: string[] = [];
+    if (item.raised) {
+      const said = item.spoken ? ` (${item.spoken} said aloud)` : "";
+      const replies = [
+        item.thanks ? `${item.thanks} thanks` : "",
+        item.not_now ? `${item.not_now} not now` : "",
+        item.muted_from_card ? `${item.muted_from_card} don't mention these` : "",
+      ].filter(Boolean);
+      parts.push(`${item.raised} raised${said}: ${replies.length ? replies.join(", ") : "no answer"}.`);
+    }
+    if (item.not_now_days) {
+      const quiet = item.quiet ? ": shown, not spoken" : "";
+      parts.push(`"Not now" on ${plural(item.not_now_days, "day", "days")} this week${quiet}.`);
+    }
+    if (item.muted) parts.push("Muted.");
+    return parts.join(" ");
+  }
 
   function timeLeft(seconds: number): string {
     const minutes = Math.max(1, Math.round(seconds / 60));
@@ -171,6 +212,8 @@
         catches = status.catches ?? null;
         notNowHolds = status.held_back ?? [];
         blindSpots = Array.isArray(status.blind_spots) ? status.blind_spots : [];
+        answers = Array.isArray(status.answers) ? status.answers : [];
+        answersOfLast = typeof status.answers_of_last === "number" ? status.answers_of_last : 20;
       }
     } catch {
       /* shown without the per-kind list until the daemon answers */
@@ -323,6 +366,19 @@
     </div>
   {/if}
 
+  {#if answers.length}
+    <div class="block" data-testid="live-answers">
+      <span class="block-label">What it raised lately, and your answers</span>
+      <p class="answers-note">Of its last {answersOfLast} cards, by kind. Counts only; no text is kept.</p>
+      {#each answers as item (item.kind)}
+        <div class="answer-row">
+          <span class="answer-kind">{item.label}</span>
+          <span>{answerLine(item)}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if kinds.length}
     <div class="block">
       <span class="block-label">What it points out</span>
@@ -384,6 +440,23 @@
     color: var(--text-secondary);
     font-size: var(--text-sm);
     line-height: 1.5;
+  }
+
+  .answers-note {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  .answer-row {
+    display: grid;
+    gap: 2px;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+
+  .answer-kind {
+    font-weight: 600;
+    color: var(--text-primary);
   }
 
   .held-row {
