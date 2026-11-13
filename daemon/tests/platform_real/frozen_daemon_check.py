@@ -145,12 +145,22 @@ async def run() -> int:
         still = [item for item in (waiting.get("reminders") or []) if REMINDER_TEXT in json.dumps(item)]
         late = [item for item in mine if item.get("late")]
         said_when = all(str(item.get("message", "")).startswith("This was due ") for item in late)
+        # A reminder also reaches someone when it is said aloud (server._deliver_reminder: a window or the voice).
+        # Where the runner has a working voice (macOS "say", Windows System.Speech) the tick right after the wake
+        # says it before any window connects, so no window gets it (CI on 2d24504); on Ubuntu there is no voice,
+        # so it is held for the first window. "Say that again" is what Heliox said last.
+        aloud = ""
+        if not mine:
+            aloud = await session.ask("say that again", timeout=60)
+        said_aloud = REMINDER_TEXT in aloud
         check(
             "reminder-went-out",
-            len(mine) == 1 and not still and said_when,
-            f"given {len(mine)} time(s): first window {len([i for i in first if REMINDER_TEXT in json.dumps(i)])}, "
-            f"a later one {len([i for i in second if REMINDER_TEXT in json.dumps(i)])}; held and said late: "
-            f"{bool(late)} ({late[0].get('message') if late else 'on time'}); still waiting: {still}",
+            not still and said_when and (len(mine) == 1 or (not mine and said_aloud)),
+            f"given {len(mine)} time(s) to a window: first window "
+            f"{len([i for i in first if REMINDER_TEXT in json.dumps(i)])}, a later one "
+            f"{len([i for i in second if REMINDER_TEXT in json.dumps(i)])}; held and said late: {bool(late)} "
+            f"({late[0].get('message') if late else 'on time'}); said aloud instead: {said_aloud} ({aloud[:80]!r}); "
+            f"still waiting: {still}",
         )
     finally:
         for process in frozen:
