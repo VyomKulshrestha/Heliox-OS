@@ -180,8 +180,13 @@ def _plugin_digest(plugin_dir: Path) -> bytes:
     return digest.digest()
 
 
-def verify_plugin_signature(plugin_dir: Path, trusted_public_keys: tuple[Ed25519PublicKey, ...] = ()) -> None:
-    """Verify a plugin directory's Ed25519 signature before loading code."""
+def verify_plugin_signature(plugin_dir: Path, trusted_public_keys: tuple[Ed25519PublicKey, ...] = ()) -> bool:
+    """Verify a plugin directory's Ed25519 signature before loading code.
+
+    True when a trusted key vouched for it; False when the signature is good but made with the key beside the plugin
+    (the plugin vouches for itself: plugin_create signs every plugin it writes with a new key of its own, so such a
+    signature says the files are unchanged since signing, not that anyone checked their code). Raises when missing,
+    malformed or wrong."""
 
     public_key_path = plugin_dir / PLUGIN_PUBLIC_KEY_FILE
     signature_path = plugin_dir / PLUGIN_SIGNATURE_FILE
@@ -202,7 +207,7 @@ def verify_plugin_signature(plugin_dir: Path, trusted_public_keys: tuple[Ed25519
     for public_key in public_keys:
         try:
             public_key.verify(signature, payload)
-            return
+            return bool(trusted_public_keys)
         except InvalidSignature:
             continue
     raise PluginSignatureError(f"Plugin signature verification failed: {plugin_dir}")
@@ -266,6 +271,8 @@ class PluginManifest:
     runtime_type: str = "python"  # "python" | "wasm"
     wasm_module: str = ""  # relative path to .wasm file, e.g. "plugin.wasm"
     capabilities: PluginCapabilities = field(default_factory=PluginCapabilities)
+    # A trusted key vouched for its code (False: signed only by its own key, see verify_plugin_signature).
+    verified: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -277,6 +284,7 @@ class PluginManifest:
             "agent_type": self.agent_type,
             "entry_point": self.entry_point,
             "dependencies": self.dependencies,
+            "verified": self.verified,
             "enabled": self.enabled,
             "runtime_type": self.runtime_type,
             "wasm_module": self.wasm_module,
@@ -334,10 +342,12 @@ class PluginRegistry:
                 if child.is_dir():
                     manifest_path = child / "manifest.json"
                     if manifest_path.exists():
-                        if self._require_signatures and not self._verify_plugin(child):
+                        verified = self._verify_plugin(child) if self._require_signatures else None
+                        if verified is None and self._require_signatures:
                             continue
                         manifest = self._load_manifest(manifest_path)
                         if manifest:
+                            manifest.verified = bool(verified)
                             collisions = sorted(tool.name for tool in manifest.tools if tool.name in self._tool_index)
                             if collisions:
                                 logger.error(
@@ -364,15 +374,19 @@ class PluginRegistry:
         logger.info("Plugin discovery complete: %d plugins loaded", loaded)
         return loaded
 
-    def _verify_plugin(self, plugin_dir: Path) -> bool:
-        """Return True when a plugin directory passes signature verification."""
+    def find_tool_plugin(self, tool_name: str) -> PluginManifest | None:
+        """The loaded plugin that provides ``tool_name``, or None."""
+        return self._tool_index.get(tool_name)
+
+    def _verify_plugin(self, plugin_dir: Path) -> bool | None:
+        """Whether a trusted key vouched for the plugin (True), only its own key (False), or the signature is missing
+        or wrong (None: not loaded)."""
 
         try:
-            verify_plugin_signature(plugin_dir, self._trusted_public_keys)
-            return True
+            return verify_plugin_signature(plugin_dir, self._trusted_public_keys)
         except PluginSignatureError as exc:
             logger.error("Rejected unsigned or tampered plugin %s: %s", plugin_dir, exc)
-            return False
+            return None
 
     def _load_manifest(self, path: Path) -> PluginManifest | None:
         """Parse a plugin manifest.json file."""

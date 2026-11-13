@@ -1804,10 +1804,14 @@ reviewed marketplace pull request is merged.
 **Params:** `{ "name": "my-plugin", "version": "1.0.0", "description": "...", "author": "...", "tools": [...], "code": "..." }`
 
 #### `plugin_run_tool`
-Run an installed tool through the plugin registry's capability broker.
+Run an installed tool as one step of a plan: the daemon asks in the approval dialog first (plan id
+`plugin-<id>`, the `plugin_call` action shown, and whether a trusted key vouched for the plugin or only its own
+key did), then runs it through the executor (validator, receipts, undo) and the plugin registry's capability broker.
 
 **Params:** `{ "tool_name": "get_weather", "args": { "city": "Delhi" } }`
-**Result:** `{ "result": ... }` or a clear registry/tool error.
+**Result:** `{ "result": ... }`, `{ "status": "cancelled", "error": "Not run: ..." }` when not approved, or a clear
+registry/tool error. `plugin_list` gives each plugin's `verified`: false when it is signed only by its own key
+(every plugin `plugin_create` writes), true when a trusted key vouched for it.
 
 See [Plugin Marketplace](docs/PLUGIN_MARKETPLACE.md) for moderation,
 capabilities, package hashes, and runtime isolation.

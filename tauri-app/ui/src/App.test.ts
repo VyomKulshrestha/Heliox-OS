@@ -496,6 +496,20 @@ describe("App setting-change approvals", () => {
     expect(activeTabName()).toBe("Settings");
   });
 
+  it("shows the approval of a plugin tool run from the Plugins tab over that tab", async () => {
+    render(App);
+    await fireEvent.click(tab("Plugins"));
+    await settle();
+    const pluginCall = { index: 0, action_type: "plugin_call", target: "greet", parameters: {} };
+
+    setSession({ confirmRequired: true, confirmPlanId: "plugin-1a2b", confirmActions: [pluginCall] });
+    await settle();
+
+    const dialog = screen.getByRole("dialog", { name: "Confirmation Required" });
+    expect(dialog.closest(".setting-approval-layer")).not.toBeNull();
+    expect(activeTabName()).toBe("Plugins");
+  });
+
   it("shows a setting approval over the setup wizard", async () => {
     localStorage.removeItem("heliox_first_run_complete");
     harness.settings.set({ first_run_complete: false });

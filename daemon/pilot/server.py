@@ -13662,23 +13662,54 @@ def handle_tool(tool_name, params):
         }
 
     async def _handle_plugin_run_tool(self, params: dict, ws: ServerConnection) -> dict:
-        """Execute a tool provided by any installed plugin."""
+        """Run a plugin's tool from the Plugins tab, as a step of a plan: the person approves it in the approval
+        dialog first (plugin_call asks every time), then it runs through the executor, with the validator, the
+        receipts and the undo journal, as when a plan uses the tool. Until 13 November 2026 this ran the plugin's code
+        at once, with none of those."""
         tool_name = params.get("tool_name", "")
-        if not tool_name:
+        if not tool_name or not isinstance(tool_name, str):
             return {"error": "tool_name is required"}
         args = params.get("args", {})
         if not isinstance(args, dict):
             args = {}
-
         if not self._plugin_registry:
             return {"error": "Plugin registry not initialized"}
+        manifest = self._plugin_registry.find_tool_plugin(tool_name)
+        if manifest is None:
+            return {"error": f"No installed plugin provides {tool_name}"}
 
-        result = await asyncio.to_thread(
-            self._plugin_registry.call_tool,
-            tool_name,
-            args,
+        from pilot.actions import Action, ActionPlan, ActionType, WasmCallParams
+
+        plan = ActionPlan(
+            actions=[
+                Action(
+                    action_type=ActionType.PLUGIN_CALL,
+                    target=tool_name,
+                    parameters=WasmCallParams(tool=tool_name, args=args),
+                )
+            ],
+            explanation=f"Run {tool_name} from the plugin {manifest.name}",
+            raw_input=f"run {tool_name}",
         )
-        return {"result": result}
+        plan_id = f"plugin-{uuid.uuid4().hex[:8]}"
+        reason = (
+            f"{manifest.name} is signed by a key Heliox trusts."
+            if manifest.verified
+            else f"{manifest.name} is signed only by its own key: nobody has checked its code."
+        )
+        confirmed, approved, required = await self._wait_for_confirmation(
+            plan_id, plan, ws, reason=reason, force_all_actions=True
+        )
+        if not confirmed or required - approved:
+            return {"status": "cancelled", "error": "Not run: the plugin's tool was not approved."}
+        results = await self._executor.execute(plan, plan_id=plan_id, user_confirmed=True)
+        outcome = results[0] if results else None
+        if outcome is None or not outcome.success:
+            return {"error": (outcome.error if outcome is not None else "") or "The plugin's tool did not run."}
+        try:
+            return {"result": json.loads(outcome.output or "{}")}
+        except ValueError:
+            return {"result": outcome.output}
 
     async def _handle_skills_list(self, params: dict, ws: ServerConnection) -> dict:
         if self._skill_registry:

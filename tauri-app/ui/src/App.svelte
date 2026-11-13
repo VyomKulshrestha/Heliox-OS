@@ -87,12 +87,13 @@
   let blockingSafetyDecision = $derived(
     activeModal === "confirmation" || activeModal === "undo" || activeModal === "interrupt",
   );
-  // A change of setting that takes a protection away is asked about from Settings or the setup wizard, so its
-  // approval shows over whatever is open (any tab, the wizard) instead of only on the Command tab.
+  // Approvals asked for from outside the Command tab show over whatever is open (any tab, the wizard): a change of
+  // setting that takes a protection away (Settings, the setup wizard), and a plugin's tool run from the Plugins tab.
   let settingApproval = $derived(
     activeModal === "confirmation" &&
       $session.confirmActions.length > 0 &&
-      $session.confirmActions.every((action) => action.action_type === "setting_change"),
+      ($session.confirmActions.every((action) => action.action_type === "setting_change") ||
+        String($session.confirmPlanId ?? "").startsWith("plugin-")),
   );
   let documentVisible = $state(typeof document === "undefined" || document.visibilityState === "visible");
   let previousStudyActive = false;
