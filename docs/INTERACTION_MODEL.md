@@ -475,6 +475,15 @@ there too; turning it off is free. Whatever the answer, it is not offered again;
 the day bench a fourth made-up person, who uses Heliox all week and tells it nothing, gets it on Wednesday and never
 again. **Fakes only** (`tests/test_timeline_offer.py`, `tests/test_offer_day.py`).
 
+What a model's history keeps of an offer follows the same switch as the prompt's personal lines
+(`conversation.share_profile`, decided in one place, `pilot.conversation.adapters.personal_in_prompt`): an offer
+built from what Heliox knows about the person (a habit, a goal, the to-do list, the working day, an app usually
+opened) keeps its words for a model on this computer, or for a cloud model under "auto"; under "off" a cloud model's
+history gets a marker naming the kind and nothing else, such as "(made an offer on this computer, about one of your
+goals)". An offer built from the routine record keeps its words for a model on this computer only, under every value.
+Offers that hold nothing about the person (getting to know them, the timeline) keep their words. **Fakes only**
+(`tests/test_offer_history.py`, every kind with a cloud and a local model, the switch on "auto" and "off").
+
 Suggestions, offers and Live are turned off, back on, down or up by voice from one table
 (`pilot.personal.spoken_settings`), each phrase family with the value it saves and the sentence said, and a request to
 stop something is answered by a sentence that says it stopped. "Stop suggesting things" (also "quit", "don't",

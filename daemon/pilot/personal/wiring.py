@@ -428,21 +428,45 @@ def offer_in_reply(server: Any, kind: str, text: str, request: str, why: str) ->
     return offers.mark_offered(offer)
 
 
-# Offers built from the routine record (pilot.personal.routines): what they say never goes to a cloud model.
+# What an offer's words say about the person, by kind, for the marker that stands in for them in a model's history
+# when personal lines may not go to that model (conversation.share_profile). The words name the kind and nothing else.
+PROFILE_OFFER_MARKERS = {
+    "habit": "(made an offer on this computer, about one of your habits)",
+    "stale_goal": "(made an offer on this computer, about one of your goals)",
+    "goal_step": "(made an offer on this computer, about one of your goals)",
+    "goal_progress": "(made an offer on this computer, about one of your goals)",
+    "todos": "(made an offer on this computer, about your to-do list)",
+    "routine": "(made an offer on this computer, about your working day)",
+    "usual_app": "(made an offer on this computer, about an app you usually open)",
+}
+# Offers built from the routine record (pilot.personal.routines) go to a model on this computer only, under every
+# value of the switch.
 PRIVATE_OFFER_KINDS = frozenset({"learned_routine"})
 OFFERED_HERE = "(made an offer on this computer, from your routines)"
 
 
-def offer_in_history(offer: Any, layer: Any) -> str:
-    """What the conversation's history keeps of an offer, the history a model is later sent: the offer's words, except
-    for one built from the routine record when the conversation's model is not on this computer."""
-    if getattr(offer, "kind", "") not in PRIVATE_OFFER_KINDS:
-        return str(offer.text)
+def offer_in_history(offer: Any, layer: Any, server: Any = None) -> str:
+    """What the conversation's history keeps of an offer, the history a model is later sent. An offer built from
+    what Heliox knows about the person keeps its words only when personal lines may go to that model
+    (pilot.conversation.adapters.personal_in_prompt, the one place that decides it); otherwise the marker naming its
+    kind. One built from the routine record keeps its words only for a model on this computer. Offers that hold
+    nothing about the person (getting to know them, the timeline) keep their words."""
+    kind = str(getattr(offer, "kind", ""))
     try:
-        local = bool(getattr(layer._model(), "local", False))
+        model = layer._model() if layer is not None else None
     except Exception:
-        local = False
-    return str(offer.text) if local else OFFERED_HERE
+        model = None
+    if kind in PRIVATE_OFFER_KINDS:
+        return str(offer.text) if bool(getattr(model, "local", False)) else OFFERED_HERE
+    if kind not in PROFILE_OFFER_MARKERS:
+        return str(offer.text)
+    from pilot.conversation.adapters import personal_in_prompt
+
+    try:
+        allowed = personal_in_prompt(server, model)
+    except Exception:
+        allowed = False  # when in doubt, nothing about the person
+    return str(offer.text) if allowed else PROFILE_OFFER_MARKERS[kind]
 
 
 async def deliver_offer(server: Any, offer: Any, offer_id: str = "") -> None:
@@ -462,7 +486,7 @@ async def deliver_offer(server: Any, offer: Any, offer_id: str = "") -> None:
     )
     layer = _layer(server)
     if layer is not None:
-        layer.memory.add_heliox(offer_in_history(offer, layer))
+        layer.memory.add_heliox(offer_in_history(offer, layer, server))
     listener = getattr(server, "_voice_listener", None)
     if listener is not None and getattr(listener, "is_running", False):
         await server._speak_companion_text(

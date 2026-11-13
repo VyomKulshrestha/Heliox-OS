@@ -195,7 +195,9 @@ async def test_seen_by_voice_and_in_about_me(server):
     )
     await server._control_reply("call me Sam")
     about = await server._control_reply("what do you know about me")
-    assert about.endswith("From what you ask me: you ask me to open outlook around nine.")
+    assert (
+        "From what you ask me: you ask me to open outlook around nine." in about
+    )  # then where it goes (share_profile)
 
 
 @pytest.mark.asyncio
