@@ -59,3 +59,10 @@
     {/each}
   </datalist>
 </div>
+
+<style>
+  /* Model ids run to 21 characters (gemini-3.5-flash-lite); Settings' 160 px input cut their last letters on Linux. */
+  .input-md {
+    width: 200px;
+  }
+</style>
