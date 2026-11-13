@@ -8965,31 +8965,63 @@ class PilotServer:
 
     def _someone_can_receive(self) -> bool:
         """A window is open, or the voice is in use: something said now can reach the person."""
-        listener = self._voice_listener
-        return bool(self._clients) or bool(listener is not None and getattr(listener, "is_running", False))
+        return bool(self._clients) or self._voice_in_use()
 
-    async def _deliver_reminder(self, reminder: dict[str, Any]) -> bool:
-        """Show and say a reminder that is due. False when it reached nobody (no window open and nothing said
-        aloud): the store then holds it for the next window or wake (ReminderStore.deliver_held)."""
+    def _voice_in_use(self) -> bool:
+        """Heliox's voice is on (the listener runs). A reminder is always shown; it is said aloud only then."""
+        listener = self._voice_listener
+        return bool(listener is not None and getattr(listener, "is_running", False))
+
+    async def _say_reminder(self, text: str, key: str) -> str:
+        """Say a reminder line when the voice is in use; the speech outcome's status, or "" when not said."""
+        if not self._voice_in_use():
+            return ""
+        outcome = await self._speak_companion_text(text, channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=key)
+        status = str(getattr(outcome, "status", ""))
+        if status == "spoken":
+            self._reminder_said_at = time.time()
+        return status
+
+    def _reached(self, seen: bool, said: str) -> bool | str:
+        """True: a window showed it. "unheard": said aloud with no window open, not yet answered (a desktop that
+        woke by itself speaks to an empty room); the store keeps it for the next window. False: nobody."""
+        if seen:
+            return True
+        return "unheard" if said == "spoken" else False
+
+    async def _reminder_heard(self) -> None:
+        """Something addressed to Heliox right after a reminder was said: it was heard. Never raises."""
+        said_at = getattr(self, "_reminder_said_at", None)
+        if said_at is None or self._reminders is None:
+            return
+        from pilot.workflows.reminders import ACK_SECONDS
+
+        if time.time() - said_at <= ACK_SECONDS:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(self._reminders.acknowledge_said, ACK_SECONDS + 5.0)
+        self._reminder_said_at = None
+
+    async def _deliver_reminder(self, reminder: dict[str, Any]) -> bool | str:
+        """Show a reminder that is due, and say it when the voice is in use. More than a couple of minutes late
+        (the computer slept, the daemon was frozen), it says when it was due: "This was due at 2:31 AM: ...".
+        False when it reached nobody, "unheard" when it was only said to a room with no window: the store keeps
+        both for the next window (ReminderStore.deliver_held)."""
+        from pilot.workflows.reminders import describe_held
+
         if self._focus is not None and self._focus.hold("reminder", reminder):
             return True
         seen = bool(self._clients)
-        await self._broadcast_notification("reminder", reminder)
-        spoken = (
-            f"Reminder: {reminder['text']}"
-            if not reminder.get("late")
-            else f"A reminder you missed: {reminder['text']}"
-        )
-        outcome = await self._speak_companion_text(
-            spoken, channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=f"reminder:{reminder['id']}"
-        )
-        return seen or getattr(outcome, "status", "") == "spoken"
+        late = bool(reminder.get("late"))  # the store's own clock decided it (LATE_AFTER_SECONDS)
+        message = describe_held([reminder], now=time.time()) if late else f"Reminder: {reminder['text']}"
+        await self._broadcast_notification("reminder", {**reminder, "late": late, "message": message})
+        said = await self._say_reminder(message, f"reminder:{reminder['id']}")
+        return self._reached(seen, said)
 
     async def _deliver_held_reminders(self, items: list[dict[str, Any]]) -> bool:
-        """Reminders that came due while nobody could see or hear them, given the next time someone can: the window
-        shows them at once, in one card ("This was due at 9:00 AM: send the report."); the voice says the same
-        sentence only when the person is using it (the listener runs), by the same gate as any proactive line (not
-        in a focus session or a call). False when there is still nobody: they stay held."""
+        """Reminders that came due while nobody could see or hear them, or that were only said to a room with no
+        window, given the next time someone can: the window shows them at once, in one card ("This was due at 9:00
+        AM: send the report.", "I said this at 2:31 AM: ..."); the voice says the ones not said before, only when it
+        is in use. False when there is still nobody: they stay held."""
         from pilot.workflows.reminders import describe_held
 
         if not self._someone_can_receive():
@@ -9008,23 +9040,21 @@ class PilotServer:
                     ],
                 },
             )
-        listener = self._voice_listener
-        heard = False
-        if listener is not None and getattr(listener, "is_running", False):
-            outcome = await self._speak_companion_text(
-                message,
-                channel=SpeechChannel.PROACTIVE_SUGGESTION,
-                dedupe_key="reminders-held:" + ",".join(item["id"] for item in items),
+        unsaid = [item for item in items if not item.get("said_at")]
+        said = ""
+        if unsaid:  # what was said once is shown, never said again
+            said = await self._say_reminder(
+                describe_held(unsaid, now=time.time()), "reminders-held:" + ",".join(i["id"] for i in unsaid)
             )
-            heard = getattr(outcome, "status", "") == "spoken"
-        return seen or heard
+        return seen or said == "spoken"
 
-    async def _deliver_missed_reminders(self, items: list[dict[str, Any]], first_tick: bool) -> bool:
+    async def _deliver_missed_reminders(self, items: list[dict[str, Any]], first_tick: bool) -> bool | str:
         """Reminders that came due while the computer slept or Heliox was off: one card, at most one sentence, each
-        with when it was due; any older than a week also goes into the activity log. Never dropped, never twice."""
-        from pilot.workflows.reminders import describe_missed
+        with when it was due, the same words as any late reminder ("This was due at 2:31 AM: ..."); any older than
+        a week also goes into the activity log. Never dropped, never twice."""
+        from pilot.workflows.reminders import describe_held
 
-        message, spoken = describe_missed(items, first_tick, now=time.time())
+        message = describe_held(items, now=time.time())
         await self._broadcast_notification(
             "reminders_missed",
             {
@@ -9046,12 +9076,8 @@ class PilotServer:
                             f"Came due on {due} while this computer was asleep or Heliox was off; shown when it was back.",
                         )
         seen = bool(self._clients)
-        outcome = await self._speak_companion_text(
-            spoken,
-            channel=SpeechChannel.PROACTIVE_SUGGESTION,
-            dedupe_key="reminders-missed:" + ",".join(item["id"] for item in items),
-        )
-        return seen or getattr(outcome, "status", "") == "spoken"
+        said = await self._say_reminder(message, "reminders-missed:" + ",".join(item["id"] for item in items))
+        return self._reached(seen, said)
 
     async def _handle_reminder_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         from pilot.workflows.reminders import describe_repeat
@@ -15431,6 +15457,7 @@ def handle_tool(tool_name, params):
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Run voice through the same safe interaction path as typed input."""
         logger.info("Voice command received: '%s'", command_text)
+        await self._reminder_heard()  # anything said to Heliox right after a reminder: it was heard
         from pilot.conversation import layer_for
 
         command_text = self._voice_turns.rest_of_split(command_text)  # "and Spotify" after "open Notepad"

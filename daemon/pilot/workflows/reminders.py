@@ -35,6 +35,12 @@ MAX_TEXT = 300
 # A reminder more than this late came due while the computer was asleep or Heliox was off. Missed reminders are
 # never dropped, whatever their age: they go out once, together (``deliver_missed``).
 MISSED_AFTER_SECONDS = 120.0
+# A reminder this late says when it was due, whichever way it goes out (a tick runs every 15 s, so on time is
+# under that; the computer asleep or the daemon frozen is minutes).
+LATE_AFTER_SECONDS = MISSED_AFTER_SECONDS
+# Something said to Heliox within this long of a reminder being said aloud means it was heard (the reminder's own
+# words, then the follow-up window).
+ACK_SECONDS = 20.0
 MIN_REPEAT_MINUTES = 15
 NIGHT_START, NIGHT_END = 22, 7  # repeating-by-interval reminders stay quiet in between
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -370,6 +376,8 @@ def describe_held(items: list[dict[str, Any]], *, now: float) -> str:
     ordered = sorted(items, key=lambda item: item["due"])
     if len(ordered) == 1:
         item = ordered[0]
+        if item.get("said_at"):  # said aloud to a room with no window, and nobody answered
+            return f"I said this {_when_it_was(item['said_at'], when_now)}: {str(item['text']).rstrip('.')}."
         return f"This was due {_when_it_was(item['due'], when_now)}: {str(item['text']).rstrip('.')}."
     named = [f"{_when_it_was(item['due'], when_now)}, {str(item['text']).rstrip('.')}" for item in ordered[:3]]
     rest = len(ordered) - len(named)
@@ -541,36 +549,58 @@ class ReminderStore:
         first_tick, self._ticked = not self._ticked, True
         sent = 0
         unseen: list[dict[str, Any]] = []
+        said: list[dict[str, Any]] = []
         missed = [{**item, "late": True, "late_seconds": now - item["due"]} for item in due
                   if now - item["due"] > MISSED_AFTER_SECONDS]  # fmt: skip
         for item in due:
             if now - item["due"] > MISSED_AFTER_SECONDS and self._deliver_missed is not None:
                 continue
             if self._deliver is not None:
-                reached = await self._deliver({**item, "late": now - item["due"] > MISSED_AFTER_SECONDS})
+                reached = await self._deliver({**item, "late": now - item["due"] > LATE_AFTER_SECONDS})
                 if reached is False:
                     unseen.append(item)
                     continue
+                if reached == "unheard":
+                    said.append(item)
+                    continue
             sent += 1
         if missed and self._deliver_missed is not None:
-            if await self._deliver_missed(missed, first_tick) is False:
+            reached = await self._deliver_missed(missed, first_tick)
+            if reached is False:
                 unseen += missed
+            elif reached == "unheard":
+                said += missed
             else:
                 sent += len(missed)
         if unseen and self._deliver_held is not None:
             self._hold(unseen)
+        if said and self._deliver_held is not None:
+            self._hold(said, said_at=now)
         return sent
 
-    def _hold(self, items: list[dict[str, Any]]) -> None:
-        """Keep reminders nobody saw or heard, once each (a repeating one by the time it was due)."""
+    def _hold(self, items: list[dict[str, Any]], *, said_at: float | None = None) -> None:
+        """Keep reminders nobody saw or heard, once each (a repeating one by the time it was due). ``said_at``: they
+        were said aloud then with no window open; shown to the next window as said, never said again."""
         everything = self._all()
         known = {item["id"] for item in everything}
         for item in items:
-            entry = {k: v for k, v in item.items() if k not in ("late", "late_seconds", "repeat")}
+            entry = {k: v for k, v in item.items() if k not in ("late", "late_seconds", "repeat", "message")}
             entry["id"] = f"{item['id']}@{int(item['due'])}" if item.get("repeat") else item["id"]
+            if said_at is not None:
+                entry["said_at"] = said_at
             if entry["id"] not in known:
                 everything.append({**entry, "pending": True})
         self._save(everything)
+
+    def acknowledge_said(self, within: float) -> int:
+        """The person answered after a reminder was said aloud: what was said in the last ``within`` seconds was
+        heard and goes. Returns how many."""
+        since = self._clock() - within
+        held = self.held()
+        heard = {item["id"] for item in held if float(item.get("said_at") or 0) >= since}
+        if heard:
+            self._save([item for item in self._all() if item["id"] not in heard])
+        return len(heard)
 
     async def deliver_held(self) -> int:
         """Give every held reminder now, together, if someone can see or hear it. Returns how many went out."""

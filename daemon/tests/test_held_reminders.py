@@ -171,13 +171,53 @@ async def test_on_wake_with_a_window_open_it_is_shown_at_once(server):
 
 
 @pytest.mark.asyncio
-async def test_said_aloud_when_the_voice_is_in_use(server):
+async def test_said_aloud_with_no_window_and_no_answer_is_shown_to_the_next_window_as_said(server):
+    """A desktop that woke by itself speaks to an empty room: said is not heard."""
     server._voice_listener = SimpleNamespace(is_running=True)
     server._speak_companion_text.return_value = SpeechOutcome("spoken", SpeechChannel.PROACTIVE_SUGGESTION, "")
     server._reminders.add(NINE.timestamp(), "send the report")
     server._reminder_clock.t = NINE.timestamp() + 40
-    await server._reminders.tick()  # no window, but it was said: done
+    await server._reminders.tick()
+    held = server._reminders.held()
+    assert [i["text"] for i in held] == ["send the report"] and held[0]["said_at"]
+    spoken_before = server._speak_companion_text.await_count
+    server._clients.add(object())
+    server._on_window_connected()
+    await _settle(server)
+    method, params = server._sent[-1]
+    assert method == "reminder" and params["message"].startswith("I said this ")
+    assert server._speak_companion_text.await_count == spoken_before  # shown, not said again
     assert server._reminders.held() == []
+
+
+@pytest.mark.asyncio
+async def test_answered_after_it_was_said_it_is_done(server):
+    server._voice_listener = SimpleNamespace(is_running=True)
+    server._speak_companion_text.return_value = SpeechOutcome("spoken", SpeechChannel.PROACTIVE_SUGGESTION, "")
+    server._reminders.add(NINE.timestamp(), "send the report")
+    server._reminder_clock.t = NINE.timestamp() + 40
+    await server._reminders.tick()
+    assert len(server._reminders.held()) == 1
+    await server._reminder_heard()  # "thanks", or anything addressed to Heliox, within the follow-up window
+    assert server._reminders.held() == []
+
+
+@pytest.mark.asyncio
+async def test_late_says_when_it_was_due_and_the_voice_only_when_in_use(server):
+    server._clients.add(object())
+    server._reminders.add(NINE.timestamp(), "send the report")
+    server._reminder_clock.t = NINE.timestamp() + 600  # ten minutes late, delivered on its own (no missed path)
+    server._reminders._deliver_missed = None
+    await server._reminders.tick()
+    method, params = server._sent[-1]
+    assert params["late"] is True and params["message"].startswith("This was due ")
+    server._speak_companion_text.assert_not_awaited()  # the voice is off: shown, not said
+    server._voice_listener = SimpleNamespace(is_running=True)
+    server._reminders.add(NINE.timestamp() + 700, "stretch")
+    server._reminder_clock.t = NINE.timestamp() + 705  # on time
+    await server._reminders.tick()
+    assert server._sent[-1][1]["message"] == "Reminder: stretch"
+    assert server._speak_companion_text.await_args.args[0] == "Reminder: stretch"
 
 
 # ── the morning brief ──
