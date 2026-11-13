@@ -42,6 +42,33 @@ def light_voice_reason(total_bytes: int | None, enabled: bool) -> str:
     )
 
 
+# An idle local voice is released only when the computer needs the memory back: less than this free (the voice
+# itself holds 1.6-1.9 GB, so other programs are then short), or a computer under SMALL_MEMORY_BYTES in all. Otherwise
+# it stays loaded: reloading it takes 20 to 25 s on a laptop CPU, and a person who talks to Heliox every ten minutes
+# would meet that every time.
+RELEASE_BELOW_FREE_BYTES = 1024**3
+RELEASE_RULES = ("memory", "time")  # voice.tts_release: by memory (the default), or by the clock alone
+
+
+def keep_voice_loaded(free_bytes: int | None, total_bytes: int | None) -> bool:
+    """Whether an idle local voice stays loaded on this computer now (voice.tts_release = "memory"): yes unless free
+    memory is under RELEASE_BELOW_FREE_BYTES or the computer has under SMALL_MEMORY_BYTES in all. Unknown counts as
+    enough."""
+    if total_bytes is not None and total_bytes < SMALL_MEMORY_BYTES:
+        return False
+    return free_bytes is None or free_bytes >= RELEASE_BELOW_FREE_BYTES
+
+
+def free_memory() -> int | None:
+    """Memory available to programs now, in bytes (psutil, the same on Windows, macOS and Linux); None when unknown."""
+    try:
+        import psutil
+
+        return int(psutil.virtual_memory().available)
+    except Exception:
+        return None
+
+
 def unavailable_sentence(reason: str) -> str:
     """What the person is told when the local voice could not be used, from the manager's reason."""
     if reason.startswith("This computer has"):

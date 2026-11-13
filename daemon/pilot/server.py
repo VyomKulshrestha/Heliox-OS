@@ -10745,7 +10745,7 @@ class PilotServer:
                 }
 
         if section == "voice" and (
-            {"tts_engine", "tts_voice", "tts_keep_loaded_seconds", "tts_device", "light_on_small_memory"}
+            {"tts_engine", "tts_voice", "tts_keep_loaded_seconds", "tts_release", "tts_device", "light_on_small_memory"}
             & values.keys()
         ):
             self._start_tts_warmup()

@@ -267,9 +267,14 @@ class VoiceConfig:
     # language when Kokoro has none (pilot.system.voice_by_language).
     system_voice: str = ""
     # The local voice runs in its own process: about 1.6-1.9 GB of RAM (plus about 840 MB of GPU memory on CUDA)
-    # while loaded, and 20-25 s to load from cold. It stays loaded until this many seconds pass with nobody
-    # talking to Heliox and Heliox saying nothing, and loads again as soon as the person is heard.
+    # while loaded, and 20-25 s to load from cold. It stays loaded at least this many seconds after the last
+    # conversation, then as long as the computer has the memory to spare (tts_release), and loads again at the first
+    # sign of use; a reply never waits for the load (the system voice speaks it meanwhile).
     tts_keep_loaded_seconds: float = 300.0
+    # When an idle local voice is released: "memory" (the default) keeps it loaded until the computer needs the memory
+    # back, never sooner than tts_keep_loaded_seconds after the last conversation (pilot.system.speech_budget,
+    # keep_voice_loaded); "time" releases it after tts_keep_loaded_seconds whatever the memory.
+    tts_release: str = "memory"
     # On a computer with less than 10 GB of memory in all, speak with the system voice instead of loading the local
     # one (about 1.6-1.9 GB), and say so once (pilot.system.speech_budget). Off: the local voice on every computer,
     # still only when 2 GB are free at load time.
@@ -1316,6 +1321,7 @@ def _validate_config_types(raw: dict) -> None:
             "tts_voice": str,
             "system_voice": str,
             "tts_keep_loaded_seconds": (int, float),
+            "tts_release": str,
             "light_on_small_memory": bool,
             "headset_input_choices": dict,
             "tts_device": str,

@@ -48,6 +48,7 @@ PREPARED_LIMIT = 6  # sentences synthesised ahead and not yet spoken
 DEVICES = ("auto", "cpu", "cuda")
 MAX_TEXT_CHARACTERS = 20_000
 DEFAULT_KEEP_LOADED_SECONDS = 300.0
+MEMORY_RECHECK_SECONDS = 60.0  # an idle voice kept by memory: how often the memory is read again
 MAX_KEEP_LOADED_SECONDS = 4 * 3600.0
 RETRY_AFTER_SECONDS = 120.0
 LOAD_TIMEOUT_SECONDS = 180.0
@@ -683,6 +684,9 @@ class LocalTTSWorkerManager:
         self._load_task: asyncio.Future[None] | None = None
         self._idle_task: asyncio.Task[None] | None = None
         self._busy = 0
+        # Whether an idle voice may stay loaded past keep_loaded_seconds (voice.tts_release = "memory": the computer
+        # has the memory to spare); None: released after keep_loaded_seconds, by the clock alone.
+        self.keep_while: Callable[[], bool] | None = None
         self._announcing: asyncio.Future[None] | None = None  # a load started for a reply (_ready_within_grace)
         self._last_activity = clock()
         self._failed_until: float | None = None
@@ -832,6 +836,9 @@ class LocalTTSWorkerManager:
     async def _idle_watch(self) -> None:
         while self.process is not None:
             remaining = self._last_activity + self.keep_loaded_seconds - self._clock()
+            if remaining <= 0 and self.keep_while is not None and self._kept_by_memory():
+                await self._sleep(MEMORY_RECHECK_SECONDS)  # idle, and the computer has the memory: stays loaded
+                continue
             if remaining <= 0 and self._busy == 0 and not self._io_lock.locked():
                 process = self.process
                 logger.info(
@@ -842,6 +849,19 @@ class LocalTTSWorkerManager:
                 await self._close(process)
                 return
             await self._sleep(max(remaining, 1.0))
+
+    def _kept_by_memory(self) -> bool:
+        """Whether the idle voice stays loaded past keep_loaded_seconds. Never while it holds Heliox's GPU lease: the
+        lease is one process at a time and is not taken from its holder, so a voice kept on the card would keep a
+        local model or the reference model's worker off it for as long as it stayed. On the card it is released by the
+        clock, as before; on the CPU (or on a Mac, where it takes no lease) the memory decides."""
+        if self.gpu_lease:
+            return False
+        try:
+            return bool(self.keep_while())  # type: ignore[misc]
+        except Exception:
+            logger.debug("Could not read the memory for keeping the voice; releasing by the clock", exc_info=True)
+            return False
 
     async def _close(self, process: Any) -> None:
         if process is self.process:
@@ -1255,7 +1275,15 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
     _manager.choose_device = gpu_arbiter.voice_device
     _manager.on_gpu_fault = gpu_arbiter.arbiter().record_fault
     _manager.free_memory = lambda: gpu_arbiter.probe_host_memory()[0]
+    # Released when idle only when the computer needs the memory, unless the person chose the clock (voice.tts_release).
     from pilot.system import speech_budget
+
+    if str(getattr(voice_config, "tts_release", "memory")) == "time":
+        _manager.keep_while = None
+    else:
+        _manager.keep_while = lambda: speech_budget.keep_voice_loaded(
+            speech_budget.free_memory(), speech_budget.total_memory()
+        )
 
     light = bool(getattr(voice_config, "light_on_small_memory", True))
     _manager.light_reason = lambda: speech_budget.light_voice_reason(speech_budget.total_memory(), light)
