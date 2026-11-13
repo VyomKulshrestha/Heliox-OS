@@ -1,5 +1,5 @@
 {
- "how_to_read": "Each session is one person's exchange with Heliox on Thursday 12 November 2026 at 9:00. A turn is what they say ('say'), how long after Heliox stopped talking ('gap', seconds, default 1), and what must happen ('expect'): 'taken' (whether Heliox took the words as meant for it), 'has' (facts that must be in what is said; 'a|b' means either), 'not' (things that must not be said), 'silent', 'runs' (action types that must run in that turn), 'runs_nothing', 'approval' (whether the visible approval dialog is asked for), 'model' (whether the fast model is called). 'expect_none' overrides for a person with no model; 'expect_model' for one with a model. 'model' at turn level is what the fast model replies when it is asked (the same words for every provider, sent in each provider's own format). 'repeat' allows the same words twice running; 'detail' allows a long reply; 'still_talking' means the person is still finishing their sentence when Heliox would start. Events: 'call' (a call starts), 'call_end'. 'never_runs' at session level: action types that must never run. Phrasing follows the owner's recorded takes where there is one (the launch-call line, 'what can I say?', 'Wait, stop.', notes said in passing). 'expect_stub' holds only for a stub model (a person with a model, not a paid run), whose replies are the turn's 'model' text: it checks what code does with those words, and is left out of a paid run, where the model writes its own. 'barge_in' (session): barge-in is on. 'interrupts' (turn): the person talks over the reply before it, that many words in; the voice stops there, the words up to the cut are what was said and heard, and the rest is not said unless asked. 'remembers' and 'not_remembered' (turn): what Heliox remembers having said, after the turn. 'barge_in' (session): barge-in is on. 'interrupts' (turn): the person talks over the reply before it, that many words in; the voice stops there, the words up to the cut are what was said and heard, and the rest is not said unless asked. 'remembers' and 'not_remembered' (turn): what Heliox remembers having said, after the turn. 'barge_in' (session): barge-in is on. 'interrupts' (turn): the person talks over the reply before it, that many words in; the voice stops there, the words up to the cut are what was said and heard, and the rest is not said unless asked. 'remembers' and 'not_remembered' (turn): what Heliox remembers having said, after the turn.",
+ "how_to_read": "Each session is one person's exchange with Heliox on Thursday 12 November 2026 at 9:00. A turn is what they say ('say'), how long after Heliox stopped talking ('gap', seconds, default 1), and what must happen ('expect'): 'taken' (whether Heliox took the words as meant for it), 'has' (facts that must be in what is said; 'a|b' means either), 'not' (things that must not be said), 'silent', 'runs' (action types that must run in that turn), 'runs_nothing', 'approval' (whether the visible approval dialog is asked for), 'model' (whether the fast model is called). 'expect_none' overrides for a person with no model; 'expect_model' for one with a model. 'model' at turn level is what the fast model replies when it is asked (the same words for every provider, sent in each provider's own format). 'repeat' allows the same words twice running; 'detail' allows a long reply; 'still_talking' means the person is still finishing their sentence when Heliox would start. Events: 'call' (a call starts), 'call_end'. 'never_runs' at session level: action types that must never run. Phrasing follows the owner's recorded takes where there is one (the launch-call line, 'what can I say?', 'Wait, stop.', notes said in passing). 'expect_stub' holds only for a stub model (a person with a model, not a paid run), whose replies are the turn's 'model' text: it checks what code does with those words, and is left out of a paid run, where the model writes its own. 'barge_in' (session): barge-in is on. 'interrupts' (turn): the person talks over the reply before it, that many words in; the voice stops there, the words up to the cut are what was said and heard, and the rest is not said unless asked. 'remembers' and 'not_remembered' (turn): what Heliox remembers having said, after the turn. 'barge_in' (session): barge-in is on. 'interrupts' (turn): the person talks over the reply before it, that many words in; the voice stops there, the words up to the cut are what was said and heard, and the rest is not said unless asked. 'remembers' and 'not_remembered' (turn): what Heliox remembers having said, after the turn. 'barge_in' (session): barge-in is on. 'interrupts' (turn): the person talks over the reply before it, that many words in; the voice stops there, the words up to the cut are what was said and heard, and the rest is not said unless asked. 'remembers' and 'not_remembered' (turn): what Heliox remembers having said, after the turn. 'files' (session): files the person has, in the session's own folder; '{session}' in a plan's paths is that folder. 'undo_journal' (session): the undo journal is kept, as the daemon keeps it, around every action run.",
  "sessions": [
   {
    "name": "morning start",
@@ -1230,7 +1230,7 @@
    ]
   },
   {
-   "name": "a correction, then undo",
+   "name": "a correction, then undo: the request still waits, so undo drops it",
    "plans": {
     "screenshots": [
      {
@@ -1272,10 +1272,19 @@
       "taken": true,
       "runs_nothing": true,
       "has": [
-       "dropped|undo"
+       "dropped"
       ],
       "not": [
-       "stopped before planning"
+       "stopped before planning",
+       "nothing i can undo"
+      ]
+     },
+     "expect_none": {
+      "has": [
+       "undo"
+      ],
+      "not": [
+       "dropped"
       ]
      }
     },
@@ -1302,10 +1311,13 @@
      "gap": 3,
      "expect": {
       "taken": true,
+      "runs_nothing": true,
       "has": [
-       "undo"
+       "nothing i can undo"
       ],
-      "runs_nothing": true
+      "not": [
+       "dropped"
+      ]
      }
     }
    ]
@@ -2353,6 +2365,101 @@
       "not": [
        "nine a m"
       ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "undo after the delete ran: undo offers it back",
+   "undo_journal": true,
+   "files": {
+    "notes/old-report.txt": "The old report."
+   },
+   "plans": {
+    "old report": [
+     {
+      "action_type": "file_delete",
+      "target": "{session}/notes/old-report.txt",
+      "parameters": {
+       "path": "{session}/notes/old-report.txt"
+      }
+     }
+    ]
+   },
+   "turns": [
+    {
+     "say": "Hey Heliox, delete the old report in my notes.",
+     "expect": {
+      "taken": true
+     },
+     "expect_model": {
+      "approval": true,
+      "runs": [
+       "file_delete"
+      ]
+     },
+     "expect_none": {
+      "approval": false,
+      "runs_nothing": true
+     }
+    },
+    {
+     "event": "approve"
+    },
+    {
+     "say": "Hey Heliox, undo that.",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true,
+      "not": [
+       "dropped"
+      ]
+     },
+     "expect_model": {
+      "has": [
+       "here is what i can undo"
+      ]
+     },
+     "expect_none": {
+      "has": [
+       "nothing i can undo"
+      ]
+     }
+    },
+    {
+     "say": "Thanks.",
+     "gap": 1.0,
+     "expect": {
+      "taken": true
+     }
+    },
+    {
+     "say": "Hey Heliox, what time is it?",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "9|nine"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, delete the old report in my notes.",
+     "gap": 3,
+     "expect": {
+      "taken": true
+     },
+     "expect_model": {
+      "approval": true
+     }
+    },
+    {
+     "say": "No.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
      }
     }
    ]

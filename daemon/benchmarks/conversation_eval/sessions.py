@@ -376,6 +376,21 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     outputs = {**DEFAULT_OUTPUTS, **session.get("outputs", {})}
     last_request: list[str] = []
 
+    for name, content in session.get("files", {}).items():  # files the person has, in the session's folder
+        target = (folder / name).resolve()
+        if not target.is_relative_to(folder.resolve()):
+            raise RuntimeError(f"a session file outside its folder: {name}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    if session.get("undo_journal"):
+        # Kept as the daemon keeps it (PilotServer.start): before and after every action the executor runs.
+        from pilot.workflows.undo_journal import UndoJournal
+
+        server._undo_journal = UndoJournal(folder / "undo", config=lambda: config.undo)
+
+    def _in_folder(raw: dict[str, Any]) -> dict[str, Any]:
+        return json.loads(json.dumps(raw).replace("{session}", folder.as_posix()))
+
     async def plan(user_input: str, **kwargs: Any) -> Any:
         from pilot.actions import Action
 
@@ -386,10 +401,12 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
         lowered = user_input.casefold()
         for key, actions in plans.items():
             if key.casefold() in lowered:
-                return ActionPlan(actions=[Action.model_validate(a) for a in actions], explanation=key)
+                return ActionPlan(actions=[Action.model_validate(_in_folder(a)) for a in actions], explanation=key)
         return ActionPlan(actions=[], explanation=session.get("planner_says", "I'm not sure what to do there."))
 
     async def execute(run_plan: Any, **kwargs: Any) -> list[Any]:
+        from pilot.intelligence.experience import get_experience_context
+
         results = []
         for action in run_plan.actions:
             kind_of = action.action_type.value
@@ -397,7 +414,18 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
             if kind_of in session.get("fails", []):  # the action itself goes wrong
                 results.append(ActionResult(action=action, success=False, output="", error="Access is denied."))
                 continue
-            results.append(ActionResult(action=action, success=True, output=outputs.get(kind_of, "Done")))
+            journal = server._undo_journal
+            token = None
+            if journal is not None:  # as pilot.agents.executor does, around the action
+                context = get_experience_context()
+                token = await journal.before(action, task_key=context.task_id or context.plan_id or "session")
+            path = Path(str(getattr(action.parameters, "path", "") or ""))
+            if kind_of == "file_delete" and path.is_relative_to(folder) and path.is_file():
+                path.unlink()  # a file in the session's own folder really goes, so undo has something to bring back
+            result = ActionResult(action=action, success=True, output=outputs.get(kind_of, "Done"))
+            if token is not None:
+                await journal.after(token, result, plan_id=str(getattr(run_plan, "plan_id", "") or ""))
+            results.append(result)
         return results
 
     class Companion:
@@ -529,8 +557,14 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
             pending: list[asyncio.Task[Any]] = []
 
             def winding_down() -> bool:
-                """A task is ending (stopped or denied by this turn) and has not yet given the floor back."""
-                return bool(server._interactive_request_active and not server._pending_confirms)
+                """A task is ending (stopped or denied by this turn) and has not yet given the floor back, or a change
+                said to it is being applied (its old dialog closing, the plan made again): the next turn waits for its
+                new dialog or its end, so the same turns give the same replies on any machine."""
+                if not server._interactive_request_active:
+                    return False
+                if server._live_correction or server._interaction_runtime.status().get("phase") == "correcting":
+                    return True
+                return not server._pending_confirms
 
             for index, turn in enumerate(session["turns"]):
                 record.turn = index
