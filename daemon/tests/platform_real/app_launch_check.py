@@ -197,7 +197,12 @@ class WebViewWatch:
                             for parent in process.parents()
                         )  # the system's own WebView2 users (the shell, widgets) run their own
                         if ours and not any(arg.startswith("--type=") for arg in cmdline):  # the browser process
-                            wanted = ("--user-data-dir", "--remote-debugging", "--embedded-browser-webview")
+                            wanted = (
+                                "--user-data-dir",
+                                "--remote-debugging",
+                                "--embedded-browser-webview",
+                                "--disable-features",
+                            )
                             self.seen["webview2-browser"] = [a for a in cmdline if a.startswith(wanted)]
                 files = set(self.seen.get("devtools-files", []))
                 for root, pattern in patterns:

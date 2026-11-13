@@ -1375,6 +1375,12 @@ jobs:
         timeout-minutes: 25
         run: |
           (cd tauri-app/ui && (npm ci || npm install) && npx vite build)
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            # This test build only: WebView2 did not take msedgedriver's debugging port from the environment
+            # (CI on 2d24504), so the window passes it itself (webdriver_build_config.py). Never in a release.
+            export TAURI_CONFIG="$(python daemon/tests/platform_real/webdriver_build_config.py)"
+            echo "TAURI_CONFIG: $TAURI_CONFIG"
+          fi
           (cd tauri-app/src-tauri && cargo build)
 
       - name: Install tauri-driver (and on Windows the msedgedriver that matches WebView2)
