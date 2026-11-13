@@ -1270,6 +1270,18 @@ numbers each part was tuned on, listed here so they can be revisited:
   "heliox". Of the 5,868 opening phrases (one to three words) of the 981 utterances not addressed to Heliox, as
   either recogniser wrote them (transcript replay, synthetic voice), the guard refuses every one, so none could
   ever be taught. Only the spellings are stored, on this computer. No one but the owner has tried the step.
+- *What learning cannot do, measured 13 November* (the owner's own recordings, scratch folders, counts only): with
+  an empty calibration store, 7 of the 9 utterances said with "Hey Heliox" woke Heliox and none of the 10 said
+  without it did; with learning on from empty, six passes over the same utterances learned nothing and still woke 7.
+  Learning promotes a spelling only after five near misses that were each followed within two utterances by a real
+  hit, so it cannot help on the first day, and it cannot help a miss that is not a near miss (the two misses here:
+  one where the wake pass came back empty for a sixteen-word sentence, one misheard beyond the loose name rule). The
+  step that can help a voice like that on the first day is the teach step above, saying the phrase a few times on
+  purpose; today it is only in Settings, Voice, and nothing offers it at first run or after wake attempts fail. The
+  empty pass: Whisper base looped on that sentence at temperature 0 (compression ratio 2.82, 25 words) and Heliox's
+  own repeated-phrase guard dropped the whole of it; a temperature fallback brings words back (13) but not the
+  name, so it woke nothing more on the owner's 9, the bench's 40 synthetic wake clips or 159 unaddressed lines, and
+  the wake pass is unchanged.
 - *Whisper size.* The settings default is what the recommended download brings for the computer's language: "base"
   for English (with Parakeet), "small" otherwise. If the configured size is not on the computer, the listener uses
   one that is, and downloading Whisper base switches the setting when the configured size is absent (before, a new
