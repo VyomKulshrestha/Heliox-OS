@@ -293,6 +293,10 @@ class Addressing:
     )
     _hint_given: bool = False
     history: list[str] = field(default_factory=list)
+    # How many utterances were not taken since Heliox last finished speaking (any reason, over its voice too): a
+    # count only, no words. The conversation layer reads it when a follow-up is taken, as a sign that someone else,
+    # a television or the person's own muttering was heard in between (its second-voice rule).
+    overheard_since_heliox: int = 0
 
     def _now(self) -> float:
         return self._at if self._at is not None else self.clock()
@@ -328,6 +332,7 @@ class Addressing:
 
     def heliox_finished(self, *, asked: bool = False) -> None:
         """Heliox's voice stopped. Only within an open conversation does this start a follow-up window."""
+        self.overheard_since_heliox = 0
         if self.conversation_open:
             self.heliox_ended_at = self.clock()
             self.question_open = asked
@@ -337,9 +342,12 @@ class Addressing:
         recognition backlog of seconds must not close the window or the conversation under it."""
         self._at = heard.started
         try:
-            return self._decide(heard)
+            decision = self._decide(heard)
         finally:
             self._at = None
+        if not decision.act:
+            self.overheard_since_heliox += 1  # counted, never kept: nothing of what was said stays here
+        return decision
 
     def _decide(self, heard: Heard) -> Decision:
         if heard.in_call:

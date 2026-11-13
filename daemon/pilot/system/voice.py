@@ -2965,6 +2965,11 @@ class ContinuousVoiceListener:
         self._addressing.close("cleared")
 
     @property
+    def addressing(self) -> Any:
+        """The addressing rule this listener decides with (read-only use: its overheard_since_heliox count)."""
+        return self._addressing
+
+    @property
     def question_open(self) -> bool:
         """Heliox asked the person something and is still waiting for the answer."""
         return time.monotonic() < self._question_until
