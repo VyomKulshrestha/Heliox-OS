@@ -41,7 +41,12 @@ output, the control. The default output is read first and put back in a finally 
 gives the samples per half second before, during and for 5 s after the sentence, and three CHECK lines say whether
 frames kept arriving while Heliox spoke (what barge-in needs), whether they arrived again within 3 s after it
 stopped, and, after a stall, whether the microphone watchdog said so and the microphone worked again (its own log
-lines, with the time). A measurement in round 3: it always exits 0.
+lines, with the time). Round 4 adds, on the local voice: a second sentence 2 s after the first on the line as it
+is, and a third at another rate (22050 Hz), which makes the output line reopen, each with its own lines and a DIAG
+of the line's state; and, with Heliox silent and its line open, the tone from another process, which must keep the
+input arriving and be heard (an open line must not shut other programs out). The control (``default``) plays a
+quiet tone into BlackHole from another process throughout, so its input is never exact zeros and the watchdog's
+silent-input rule does not fire. A measurement: it always exits 0.
 
 Every wait is bounded; the exit code is the number of failed checks (a SKIP is not one). CI-only
 (``ci_only.require_runner``): the workflow installs an audio driver and restarts coreaudiod, and this check plays
@@ -584,7 +589,12 @@ async def speak_through(target: str, folder: Path) -> None:
         if not listener._running:
             check(f"voice-macos-speaking/{target}/listener", False, f"the listener did not start: {said}")
             return
+        background = None
         try:
+            if target == "default":
+                # Nothing Heliox says reaches BlackHole here, so without this its input is exact zeros and the
+                # watchdog's silent-input rule (30 s) reopens it mid-measurement (round 3's control did).
+                background = quiet_tone_elsewhere(folder)
             recorder = listener._recorder
             await recorder.wait_until_receiving(timeout=5.0)
             path, maker = make_clip(SENTENCE, folder / "heliox-sentence.wav")
@@ -597,17 +607,93 @@ async def speak_through(target: str, folder: Path) -> None:
                 resample(samples, rate, voice.LOCAL_VOICE_RATE),
                 voice.LOCAL_VOICE_RATE,
             )
+            other_rate = write_wav(folder / "heliox-sentence-22k.wav", resample(samples, rate, 22050), 22050)
             print(f"DIAG the sentence: {maker}, {len(samples) / rate:.1f} s", flush=True)
+            line = voice._output_line
             # The local voice's own playback: the shared output stream inside Heliox's process (voice._output_line).
             await measure("local-voice", target, recorder, log, lambda: voice._play_local_tts_file(local))
+            print(f"DIAG {target}: the output line after the first sentence: {line_state(line)}", flush=True)
+            await asyncio.sleep(2.0)
+            # A second sentence on the line as it is: nothing new opens if the line stayed open.
+            stream_before = line.stream
+            await measure("local-voice-again", target, recorder, log, lambda: voice._play_local_tts_file(local))
+            print(
+                f"DIAG {target}: the output line after the second sentence: {line_state(line)}; "
+                f"the same stream as before: {line.stream is stream_before}",
+                flush=True,
+            )
+            await asyncio.sleep(2.0)
+            # Another rate (22050 Hz; Kokoro's is 24000, Pocket's is its model's) makes _OutputLine.ensure reopen.
+            stream_before = line.stream
+            await measure(
+                "local-voice-other-rate", target, recorder, log, lambda: voice._play_local_tts_file(other_rate)
+            )
+            print(
+                f"DIAG {target}: the output line after the other rate: {line_state(line)}; "
+                f"reopened: {line.stream is not stream_before}",
+                flush=True,
+            )
+            await asyncio.sleep(2.0)
+            # Heliox silent with its line still open, another program plays to BlackHole: is it heard?
+            await other_program_while_line_open(target, recorder, line, folder, sd)
             await asyncio.sleep(2.0)
             # The system voice: speak() runs say, a process of its own.
             await measure("system-voice", target, recorder, log, lambda: voice.speak(SENTENCE))
         finally:
+            if background is not None:
+                background.kill()
+                background.wait(timeout=10)
             await listener.stop()
     finally:
         if target == "blackhole" and original:
             print(f"DIAG the default output put back: {switch_output(original)}", flush=True)
+
+
+def line_state(line) -> str:
+    stream = line.stream
+    return f"open {stream is not None}, rate {line.rate}, device {line.device_name!r}"
+
+
+def quiet_tone_elsewhere(folder: Path) -> subprocess.Popen:
+    """A quiet 220 Hz tone (level 0.02) played to BlackHole for two minutes from another process: the control's
+    input is then never exact zeros, and the level stays far below the tone the other-program case listens for."""
+    import numpy as np
+
+    out_rate = 48000
+    tone = (0.02 * np.sin(2 * math.pi * 220 * np.arange(out_rate * 120) / out_rate)).astype(np.float32)
+    path = write_wav(folder / "heliox-quiet-tone.wav", tone, out_rate)
+    return subprocess.Popen(
+        [sys.executable, "-c", PLAYER, str(path), "blackhole"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+
+
+async def other_program_while_line_open(target: str, recorder, line, folder: Path, sd) -> None:
+    """With Heliox silent and its output line open, the tone from another process (as in the capture check) must
+    keep the input arriving and be heard: an open line must not shut other programs out."""
+    import numpy as np
+
+    blackhole = blackhole_output(sd)
+    out_rate = device_rate(sd, blackhole) if blackhole is not None else 48000
+    tone = (0.4 * np.sin(2 * math.pi * 440 * np.arange(out_rate * 2) / out_rate)).astype(np.float32)
+    print(f"DIAG {target}: the output line while another program plays: {line_state(line)}", flush=True)
+    recorder.peak_frame_rms = 0.0  # the check's own reading of the level, from here on
+    marks, problem = await timeline(
+        lambda: recorder.frames_received * recorder.frame_size,
+        lambda: asyncio.to_thread(play_elsewhere, tone, out_rate, out_rate, folder / "heliox-other-program.wav"),
+        after=2,
+    )
+    heard = recorder.peak_frame_rms
+    print(f"DIAG {target}, another program: samples received per 0.5 s: {shown(marks)}", flush=True)
+    if problem:
+        print(f"DIAG the player: {problem}", flush=True)
+    during = [samples for phase, _, samples in marks if phase == "during"]
+    prefix = f"voice-macos-speaking/{target}/other-program-with-line-open"
+    check(f"{prefix}/frames-arriving", bool(during) and all(during), f"samples per half second: {during}")
+    check(
+        f"{prefix}/tone-heard",
+        heard > 0.1 and not problem,
+        f"peak level {heard:.3f} (the tone is about 0.28; the control's quiet tone about 0.014)",
+    )
 
 
 if __name__ == "__main__":
@@ -621,7 +707,7 @@ if __name__ == "__main__":
             asyncio.run(speak_through(where, folder_arg))
         except Exception as error:  # every exit path prints a CHECK line
             check(f"voice-macos-speaking/{where}/check-itself", False, f"{type(error).__name__}: {error}")
-        print("DIAG a measurement in round 3: these lines do not fail the job", flush=True)
+        print("DIAG a measurement (round 4): these lines do not fail the job", flush=True)
         sys.exit(0)
     try:
         sys.exit(asyncio.run(main()))

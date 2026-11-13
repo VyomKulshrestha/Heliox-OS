@@ -109,7 +109,7 @@ jobs:
       # through its own voice paths, first with BlackHole as the system default output (microphone and speaker one
       # device, as with a USB headset), then with the runner's own output as the control. The check reads the
       # default output first and puts it back; it always exits 0, so these lines never fail the job.
-      - name: "Measurement: Heliox speaking on the device it listens on (never fails the job)"
+      - name: "Measurement: Heliox speaking on the device it listens on (round 4, never fails the job)"
         if: always()
         timeout-minutes: 6
         working-directory: daemon
