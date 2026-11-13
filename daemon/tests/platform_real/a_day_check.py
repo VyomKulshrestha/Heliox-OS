@@ -26,7 +26,6 @@ import asyncio
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 from ci_only import require_runner
@@ -38,7 +37,6 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1]))
 os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 
-import psutil  # noqa: E402
 import real_daemon  # noqa: E402
 
 real_daemon.time_limit("a-day", 1200)
@@ -52,23 +50,6 @@ results: list[bool] = []
 def check(name: str, ok: bool, detail: str) -> None:
     results.append(ok)
     print(f"CHECK {name}: {'PASS' if ok else 'FAIL'} - {detail}", flush=True)
-
-
-def freeze(pid: int, seconds: float) -> None:
-    """The lid closed: the daemon and what it started stop running for ``seconds``. The frozen-daemon check's own
-    freeze cannot be imported (its module sets a time limit of its own when imported); this is the same psutil call."""
-    root = psutil.Process(pid)
-    frozen = [root, *root.children(recursive=True)]
-    for process in frozen:
-        process.suspend()
-    try:
-        time.sleep(seconds)
-    finally:
-        for process in reversed(frozen):
-            try:
-                process.resume()
-            except psutil.Error:
-                pass
 
 
 def cards(session) -> list[dict]:
@@ -107,8 +88,7 @@ async def lid(daemon) -> None:
     if added.get("status") != "ok":
         check("a-day/lid", False, f"the reminder was not set: {added}")
         return
-    served = real_daemon.serving_process(daemon)
-    freeze(served.pid if served is not None else daemon.pid, FROZEN)
+    await real_daemon.freeze(daemon, FROZEN)  # the lid closed: the daemon and all it started stop running
     await asyncio.sleep(5.0)  # the wake is noticed and the overdue tick runs
     window = await real_daemon.connect(60)
     await window.collect(10.0)
