@@ -62,7 +62,7 @@ jobs:
             echo "CHECK job-inputs/pip: FAIL - $(tail -3 "$RUNNER_TEMP/pip-dry-run.log" | tr '\n' ' ')"
             failed=$((failed + 1))
           fi
-          for package in "--cask blackhole-2ch" "espeak-ng"; do
+          for package in "--cask blackhole-2ch" "espeak-ng" "switchaudio-osx"; do
             # shellcheck disable=SC2086 # "--cask blackhole-2ch" is two arguments on purpose
             if brew info $package > /dev/null 2>&1; then
               echo "CHECK job-inputs/brew: PASS - Homebrew knows $package"
@@ -88,12 +88,12 @@ jobs:
 
       # BlackHole 2ch (Existential Audio, GPL-3.0): a Core Audio plug-in in /Library/Audio/Plug-Ins/HAL, loaded when
       # coreaudiod starts, so coreaudiod is restarted after the install. espeak-ng (GPL-3.0) is the voice when this
-      # runner's say writes silence.
+      # runner's say writes silence. switchaudio-osx (MIT) sets the system default output for the measurement below.
       - name: Install the virtual audio device and restart Core Audio (this runner only)
         timeout-minutes: 5
         run: |
           brew install --cask blackhole-2ch
-          brew install espeak-ng
+          brew install espeak-ng switchaudio-osx
           sudo killall coreaudiod || true
           sleep 5
           ls -l /Library/Audio/Plug-Ins/HAL/ || true
@@ -104,3 +104,16 @@ jobs:
         run: |
           export HOME="$RUNNER_TEMP/home"
           python tests/platform_real/mac_voice_check.py "$RUNNER_TEMP"
+
+      # A measurement, not a pass mark (round 3): Heliox's listener on BlackHole while Heliox speaks one sentence
+      # through its own voice paths, first with BlackHole as the system default output (microphone and speaker one
+      # device, as with a USB headset), then with the runner's own output as the control. The check reads the
+      # default output first and puts it back; it always exits 0, so these lines never fail the job.
+      - name: "Measurement: Heliox speaking on the device it listens on (never fails the job)"
+        if: always()
+        timeout-minutes: 6
+        working-directory: daemon
+        run: |
+          export HOME="$RUNNER_TEMP/home"
+          python tests/platform_real/mac_voice_check.py "$RUNNER_TEMP" --speak-through blackhole || true
+          python tests/platform_real/mac_voice_check.py "$RUNNER_TEMP" --speak-through default || true
