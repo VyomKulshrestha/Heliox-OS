@@ -27,7 +27,6 @@ jobs:
   soak:
     name: Two hours that hear and speak (ubuntu-24.04)
     runs-on: ubuntu-24.04
-    continue-on-error: true
     timeout-minutes: 175
     defaults:
       run:
@@ -99,7 +98,10 @@ jobs:
           '
 
       - name: Two hours that hear and speak
-        # Below the job's limit, so a stopped run still leaves its SAMPLE lines and the daemon's log tail.
+        id: soak
+        # Below the job's limit, so a stopped run still leaves its SAMPLE lines and the daemon's log tail. It goes on
+        # to the verdict below whatever happens; the verdict decides the run.
+        continue-on-error: true
         timeout-minutes: 160
         env:
           HF_HUB_OFFLINE: "1"
@@ -112,3 +114,16 @@ jobs:
             sleep 2
             python tests/platform_real/hearing_soak_check.py --minutes "$MINUTES"
           '
+
+      # The first run (43390694632) showed green with a FAIL line as its only result: a green run with a FAIL line is
+      # read by nobody. This step fails the run when the soak printed a FAIL line, ran out of time or did not finish.
+      - name: The soak passed (a FAIL line fails this run)
+        if: always()
+        env:
+          SOAK: ${{ steps.soak.outcome }}
+        run: |
+          if [ "$SOAK" != "success" ]; then
+            echo "The soak printed a FAIL line or did not finish (outcome: $SOAK); its CHECK lines are in its step."
+            exit 1
+          fi
+          echo "Every check of the soak passed."
