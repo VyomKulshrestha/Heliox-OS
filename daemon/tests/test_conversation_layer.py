@@ -603,9 +603,10 @@ async def test_the_next_sentence_is_synthesised_while_this_one_plays():
 
 @pytest.mark.asyncio
 async def test_the_time_since_the_last_word_is_recorded():
-    layer = make_layer(FakeModel(["Hi. "]), FakeSink(), turn_ended=lambda: time.monotonic() - 0.4)
+    # On the layer's own clock, which the test holds still: exactly the 400 ms between the two.
+    layer = make_layer(FakeModel(["Hi. "]), FakeSink(), turn_ended=lambda: 99.6, clock=lambda: 100.0)
     result = await layer.take("Hello there")
-    assert 350 <= result.timings["last_word_to_take_ms"] < 2000
+    assert result.timings["last_word_to_take_ms"] == pytest.approx(400.0)
 
 
 def test_extra_context_may_read_the_words_being_answered():

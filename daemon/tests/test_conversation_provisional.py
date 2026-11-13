@@ -2,7 +2,11 @@
 confirmed, and nothing from it is said, kept or acted on unless the final words are the same.
 
 On the real server with the real streaming client over a stubbed transport, driven by a fake listener that calls the
-interface as the speech agent's listener will. The request log is what reached the model."""
+interface as the speech agent's listener will. The request log is what reached the model.
+
+No assertion compares wall-clock time: the timing test runs on a clock the test moves (Rig(gated=True)), so "the first
+sound comes earlier by the overlap" is arithmetic, and waits for a result are conditions with a generous ceiling that
+only a hang reaches (14 November: a 0.15 s margin on wall time failed on a loaded CI runner)."""
 
 from __future__ import annotations
 
@@ -37,18 +41,36 @@ def _reply(body: dict) -> str:
     return "Okay."
 
 
-class Rig:
-    """The server, what reached the model, and what was said (with when)."""
+async def until(condition, ceiling: float = 10.0) -> None:
+    """Wait for ``condition``; the ceiling only catches a hang, it is never what a test measures."""
+    async with asyncio.timeout(ceiling):
+        while not condition():
+            await asyncio.sleep(0.005)
 
-    def __init__(self, setting: str = "on") -> None:
+
+class Rig:
+    """The server, what reached the model, and what was said (with when).
+
+    ``gated``: time is the test's own clock (``now``), the stub's first word comes only when the test has moved that
+    clock FIRST_WORD past the request's arrival (``advance``), and "when" is read on that clock."""
+
+    def __init__(self, setting: str = "on", *, gated: bool = False) -> None:
         config = PilotConfig()
         config.conversation.provisional_answers = setting
         self.server = server = PilotServer(config)
         self.requests: list[dict] = []
         self.heard: list[tuple[float, str]] = []
+        self.gated = gated
+        self.now = 0.0
+        self.arrivals: list[tuple[float, asyncio.Event]] = []  # each request's arrival on the test's clock
+
+        def clock() -> float:
+            return self.now if gated else time.monotonic()
+
+        self.clock = clock
 
         async def speak(text, channel, dedupe_key="", recorder=None):
-            self.heard.append((time.monotonic(), text))
+            self.heard.append((clock(), text))
             return SpeechOutcome("spoken", SpeechChannel(str(channel)), "")
 
         async def nowhere(*_args, **_kwargs):
@@ -63,7 +85,12 @@ class Rig:
         async def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content.decode("utf-8"))
             self.requests.append(body)
-            await asyncio.sleep(FIRST_WORD)
+            if gated:
+                ready = asyncio.Event()
+                self.arrivals.append((clock(), ready))
+                await ready.wait()
+            else:
+                await asyncio.sleep(FIRST_WORD)
             event = {"type": "content_block_delta", "delta": {"type": "text_delta", "text": _reply(body)}}
             return httpx.Response(
                 200, content=f"data: {json.dumps(event)}\n\n".encode(), headers={"content-type": "text/event-stream"}
@@ -88,17 +115,29 @@ class Rig:
     def provisional(self, turn_id: str, words: str, addressed: str = "wake") -> bool:
         return self.server.provisional_voice_turn(turn_id, words, addressed)
 
-    async def dispatch(self, turn_id: str, words: str, addressed: str = "wake") -> float:
-        """The final words, dispatched as the listener does; returns when the dispatch started."""
+    def start_dispatch(self, turn_id: str, words: str, addressed: str = "wake") -> asyncio.Task:
+        """The final words, dispatched as the listener does, running; its start is ``clock()`` now."""
 
         async def run() -> None:
             voice_turn_addressed.set(addressed)
             voice_turn_id.set(turn_id)
             await self.server._voice_turn(words)
 
-        started = time.monotonic()
-        await asyncio.create_task(run())
+        return asyncio.ensure_future(run())
+
+    async def dispatch(self, turn_id: str, words: str, addressed: str = "wake") -> float:
+        """The final words, dispatched as the listener does; returns when the dispatch started."""
+        started = self.clock()
+        await self.start_dispatch(turn_id, words, addressed)
         return started
+
+    async def advance(self, to: float) -> None:
+        """Move the test's clock to ``to``; every request whose first word is due by then gets it."""
+        self.now = to
+        for arrived, ready in self.arrivals:
+            if arrived + FIRST_WORD <= to + 1e-9:
+                ready.set()
+        await asyncio.sleep(0)
 
     def first_sound_after(self, started: float) -> float:
         return min(at for at, _text in self.heard if at >= started) - started
@@ -108,22 +147,35 @@ class Rig:
 
 
 async def test_adopted_the_first_sound_comes_earlier_by_the_overlap():
-    plain = Rig()
-    started = await plain.dispatch("v1", "What's the capital of Peru?")
-    without = plain.first_sound_after(started)
+    """On the test's own clock: the model answers FIRST_WORD after a request arrives. Without a provisional answer
+    the request goes at the final words; with one it went OVERLAP before them, so the first sound comes exactly
+    OVERLAP sooner after the final words. The order of events is checked as well as the arithmetic."""
+    plain = Rig(gated=True)
+    turn = plain.start_dispatch("v1", "What's the capital of Peru?")  # the final words, at 0.0
+    await until(lambda: plain.arrivals)
+    assert plain.arrivals[0][0] == 0.0  # asked at the final words
+    await plain.advance(FIRST_WORD)
+    await turn
+    without = plain.first_sound_after(0.0)
 
-    rig = Rig()
-    assert rig.provisional("v1", "what's the capital of peru")
-    await asyncio.sleep(OVERLAP)
+    rig = Rig(gated=True)
+    assert rig.provisional("v1", "what's the capital of peru")  # the probable end, at 0.0
+    await until(lambda: rig.arrivals)
+    await rig.advance(OVERLAP)
     assert rig.said == []  # nothing is said before the final words
-    started = await rig.dispatch("v1", "What's the capital of Peru?")
-    with_provisional = rig.first_sound_after(started)
+    turn = rig.start_dispatch("v1", "What's the capital of Peru?")  # the final words, at OVERLAP
+    await until(lambda: rig.layer.provisional.adopted == 1)  # the running answer is taken over...
+    assert len(rig.requests) == 1 and rig.said == []  # ...not asked again, and nothing said before its first word
+    await rig.advance(FIRST_WORD)
+    await turn
+    with_provisional = rig.first_sound_after(OVERLAP)
 
     assert rig.said == ["Lima is the capital of Peru."] == plain.said
     assert len(rig.requests) == 1  # the running answer was taken over, not asked again
     assert rig.layer.provisional.adopted == 1 and rig.layer.provisional.dropped == 0
-    assert without >= FIRST_WORD - 0.02
-    assert with_provisional <= without - OVERLAP + 0.15, (without, with_provisional)
+    assert rig.arrivals[0][0] == 0.0 < OVERLAP  # the request went before the final words arrived
+    assert without == pytest.approx(FIRST_WORD)
+    assert with_provisional == pytest.approx(without - OVERLAP)
     # Kept as the turn's own: the question and the answer, once each.
     kept = [(turn.role, turn.text) for turn in rig.layer.memory.recent()]
     assert kept == [("user", "What's the capital of Peru?"), ("assistant", "Lima is the capital of Peru.")]
@@ -216,6 +268,7 @@ async def test_no_final_words_in_time_drops_it(monkeypatch):
     monkeypatch.setattr(prov, "FINAL_WITHIN_SECONDS", 0.1)
     rig = Rig()
     assert rig.provisional("v1", "what's the capital of peru")
+    await until(lambda: rig.layer.provisional.dropped == 1)
     await rig.settle()
     assert rig.said == [] and rig.layer.provisional.dropped == 1
 

@@ -67,21 +67,26 @@ async def test_the_screen_read_started_at_the_wake_phrase_is_used_by_the_turn():
     assert "the shopping list" in json.dumps(seen[0])
 
 
-async def test_a_slow_screen_never_holds_the_request_beyond_the_bound(monkeypatch):
+async def test_a_slow_screen_never_holds_the_request_beyond_the_bound():
+    """A read that never finishes: the request still goes, without it, and the read is still running when it does.
+    Order of events only; the ceiling catches a hang."""
+    finished = asyncio.Event()  # never set: the read does not end during the turn
+    read_done: list[bool] = []
+
     async def read(local: bool):
-        await asyncio.sleep(5)
+        await finished.wait()
+        read_done.append(True)
         return Screen("Notepad", "never in time")
 
-    stamps: list[tuple[str, dict]] = []
-    monkeypatch.setattr(trace, "listener", lambda name, at, **data: stamps.append((name, data)))
-    trace.begin()
     seen: list = []
-    started = time.monotonic()
-    await _layer(_model(seen), read).take(QUESTION)
-    assert time.monotonic() - started < layer_module.SCREEN_WAIT_SECONDS + 0.5
-    assert "never in time" not in json.dumps(seen[0])  # sent without it
-    context = dict(stamps)["context ready"]
-    assert context["screen_ms"] <= layer_module.SCREEN_WAIT_SECONDS * 1000 + 100
+    layer = _layer(_model(seen), read)
+    async with asyncio.timeout(5.0):
+        await layer.take(QUESTION)
+    assert seen and "never in time" not in json.dumps(seen[0])  # sent, without the screen
+    assert read_done == []  # the read had not finished when the request went
+    finished.set()  # let the read end, so no task is left pending when the test's loop closes
+    async with asyncio.timeout(5.0):
+        await asyncio.gather(*layer._background, return_exceptions=True)
 
 
 async def test_a_read_from_long_before_the_turn_is_not_used(monkeypatch):

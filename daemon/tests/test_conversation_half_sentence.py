@@ -218,33 +218,48 @@ async def test_speech_that_is_not_a_continuation_lets_the_first_half_run():
 # ── in silence a change runs at once; a destructive one waits out the window ──
 
 
+def window_stays_open(rig: Rig) -> None:
+    """The listener's capture clock held just inside the continuation window, so the window never closes: anything
+    that waited for it would wait out the whole settle bound (10 s), far past the ceiling below. No wall time is
+    compared."""
+    ended = rig.listener._last_turn[0]
+    rig.listener._recorder._frame_captured_at = ended + 0.1
+
+
 @pytest.mark.parametrize("kind", [ActionType.FILE_MOVE, ActionType.VOLUME_SET, ActionType.OPEN_APPLICATION])
 async def test_in_silence_a_change_runs_at_once(kind):
     rig = Rig()
     rig.plans(kind)
-    started = time.monotonic()
-    await rig.dispatch("Rename the report.")
+    window_stays_open(rig)
+    async with asyncio.timeout(5.0):  # a hang ceiling, half the settle bound
+        await rig.dispatch("Rename the report.")
     assert rig.ran == [[kind.value]]
-    assert time.monotonic() - started < 1.0  # the window (3 s) is still open; it does not wait for it
 
 
 async def test_in_silence_a_change_made_in_code_runs_at_once(tmp_path):
     rig = Rig()
     rig.server._todos = TodoStore(tmp_path / "todos.json")
-    started = time.monotonic()
-    await rig.dispatch("add milk to my list")
+    window_stays_open(rig)
+    async with asyncio.timeout(5.0):
+        await rig.dispatch("add milk to my list")
     assert [item["text"] for item in rig.server._todos.list()] == ["milk"]
-    assert time.monotonic() - started < 1.0
 
 
-async def test_in_silence_a_destructive_plan_waits_out_the_window(monkeypatch):
-    monkeypatch.setattr(turns_module, "CONTINUATION_SECONDS", 0.4)
+async def test_in_silence_a_destructive_plan_waits_out_the_window():
+    """On the listener's capture clock: while it is inside the window nothing runs; once it passes, the plan runs."""
     rig = Rig()
     rig.plans(ActionType.FILE_DELETE)
-    started = time.monotonic()
-    await rig.dispatch("Delete the draft.")
+    window_stays_open(rig)
+    turn = rig.dispatch("Delete the draft.")
+    await wait_until(lambda: rig.planned)
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert rig.ran == []  # planned, and waiting out the window
+    ended = rig.listener._last_turn[0]
+    rig.listener._recorder._frame_captured_at = ended + turns_module.CONTINUATION_SECONDS + 0.01  # the window closes
+    async with asyncio.timeout(5.0):
+        await turn
     assert rig.ran == [["file_delete"]]
-    assert time.monotonic() - started >= 0.35
 
 
 async def test_a_destructive_plan_continued_in_the_window_never_runs():
@@ -277,9 +292,10 @@ async def test_a_turn_not_from_the_listener_does_not_wait():
     rig = Rig()
     rig.listener._last_turn = (time.monotonic(), "", "v7")  # the listener's last turn is another one
     rig.plans(ActionType.FILE_DELETE)
-    started = time.monotonic()
-    await rig.dispatch("Delete the draft.")
-    assert rig.ran == [["file_delete"]] and time.monotonic() - started < 1.0
+    window_stays_open(rig)
+    async with asyncio.timeout(5.0):
+        await rig.dispatch("Delete the draft.")
+    assert rig.ran == [["file_delete"]]
 
 
 # ── too late: Heliox says what it did, with the undo where one exists ──
