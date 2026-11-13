@@ -52,7 +52,7 @@ def _model(provider: str, sent: list, *, fail: bool = False, clock=None):
         if fail:
             raise httpx.ConnectError("no network")
         sent.append((request.method, str(request.url), dict(request.headers)))
-        return httpx.Response(200, json={})
+        return httpx.Response(404)  # what an API's bare address answers: any status opens the connection
 
     async def key() -> str:
         return "test-key"
@@ -72,23 +72,109 @@ import pytest  # noqa: E402
 
 
 @pytest.mark.parametrize(
-    ("provider", "method", "url"),
+    ("provider", "url"),
     [
-        ("claude", "POST", "https://api.anthropic.com/v1/messages/count_tokens"),
-        ("openai", "GET", "https://api.openai.com/v1/models"),
-        ("openrouter", "GET", "https://openrouter.ai/api/v1/models"),
-        ("gemini", "GET", "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1"),
+        ("claude", "https://api.anthropic.com/"),
+        ("openai", "https://api.openai.com/"),
+        ("openrouter", "https://openrouter.ai/"),
+        ("gemini", "https://generativelanguage.googleapis.com/"),
+        ("meta", "https://api.meta.ai/"),
     ],
 )
-async def test_every_cloud_provider_is_warmed_with_a_free_request(provider, method, url):
+async def test_every_cloud_provider_is_warmed_with_the_connection_only(provider, url):
+    """A HEAD to the API's own address: the connection opened and secured, no key, no model, no work asked of the
+    provider."""
     sent: list = []
-    await _model(provider, sent).warm()
-    assert [(m, u) for m, u, _h in sent] == [(method, url)]
+    model = _model(provider, sent)
+    await model.warm()
+    assert [(m, u) for m, u, _h in sent] == [("HEAD", url)]
     headers = sent[0][2]
-    assert "test-key" in (
-        headers.get("x-api-key", "") + headers.get("authorization", "") + headers.get("x-goog-api-key", "")
+    assert "test-key" not in str(headers) and "test-key" not in sent[0][1]
+    assert model.connection_warm()
+
+
+async def test_no_warm_up_without_a_key():
+    import httpx
+
+    from pilot.conversation.fast_model import HttpFastModel
+
+    sent: list = []
+
+    async def no_key() -> str:
+        return ""
+
+    model = HttpFastModel(
+        provider="claude",
+        name="m",
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(lambda r: sent.append(r))),
+        api_key=no_key,
     )
-    assert "test-key" not in sent[0][1]  # never in the URL
+    await model.warm()
+    assert sent == []
+
+
+async def test_a_request_during_the_warm_up_waits_for_its_connection_briefly(monkeypatch):
+    """The request joins the warm-up under way instead of opening a second connection beside it, for at most
+    WARM_JOIN_SECONDS."""
+    import httpx
+
+    from pilot.conversation import fast_model
+    from pilot.conversation.fast_model import HttpFastModel
+
+    order: list[str] = []
+    release = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            await release.wait()
+            order.append("warm-up done")
+            return httpx.Response(404)
+        order.append("request")
+        event = 'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi."}}\n\n'
+        return httpx.Response(200, content=event.encode(), headers={"content-type": "text/event-stream"})
+
+    async def key() -> str:
+        return "test-key"
+
+    model = HttpFastModel(
+        provider="claude",
+        name="m",
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        api_key=key,
+    )
+    warming = asyncio.ensure_future(model.warm())
+    await asyncio.sleep(0.01)
+    asyncio.get_running_loop().call_later(0.05, release.set)
+    text = [piece async for piece in model.stream("s", [{"role": "user", "content": "hi"}])]
+    await warming
+    assert text == ["Hi."] and order == ["warm-up done", "request"]
+
+    # A warm-up that never finishes holds the request no longer than the bound.
+    monkeypatch.setattr(fast_model, "WARM_JOIN_SECONDS", 0.05)
+    stuck = HttpFastModel(
+        provider="claude",
+        name="m",
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        api_key=key,
+    )
+    release.clear()
+    order.clear()
+    pending = asyncio.ensure_future(stuck.warm())
+    await asyncio.sleep(0.01)
+    text = [piece async for piece in stuck.stream("s", [{"role": "user", "content": "hi"}])]
+    assert text == ["Hi."] and order == ["request"]
+    release.set()
+    await pending
+
+
+async def test_the_warm_up_is_stamped_on_the_trace(monkeypatch):
+    from pilot.conversation import trace
+
+    heard: list[tuple[str, dict]] = []
+    monkeypatch.setattr(trace, "listener", lambda name, at, **data: heard.append((name, data)))
+    await _model("claude", []).warm()
+    assert [name for name, _data in heard] == ["warm-up done"]
+    assert heard[0][1]["opened"] is True and heard[0][1]["ms"] >= 0
 
 
 async def test_a_local_model_is_never_warmed():

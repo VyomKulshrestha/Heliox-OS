@@ -118,7 +118,8 @@ async def test_a_spoken_model_question_is_traced_from_the_dispatch(heard):
     session = {"name": "trace", "turns": [{"say": "Hey Heliox, how long does pasta take to cook?"}]}
     _record, failures = await run_session(session, "claude")
     assert not failures, failures
-    names = [name for name, _data in heard]
+    # The warm-up started at the wake phrase finishes in its own time, so its stamp is checked apart from the turn's.
+    names = [name for name, _data in heard if name != "warm-up done"]
     assert names[:3] == ["words received", "settled", "code handlers done"]
     assert names[3:] == MODEL_ROAD
     handlers = dict(heard)["code handlers done"]

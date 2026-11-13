@@ -100,6 +100,9 @@ class FakeHttp:
     async def post(self, url, json=None, headers=None, timeout=None):
         self.posted = getattr(self, "posted", []) + [(url, json, headers)]
 
+    async def request(self, method, url, timeout=None):
+        self.requested = getattr(self, "requested", []) + [(method, url)]
+
 
 def http_model(provider, lines, name="m", budget=None, status=200, error=None, **kwargs):
     client = FakeHttp(lines, status=status, error=error)
@@ -456,17 +459,17 @@ def test_a_local_model_held_after_a_failure_still_says_it_is_the_local_one():
         assert caught.value.reason == "local_down"
 
 
-def test_warming_opens_the_connection_with_the_free_token_count_at_most_every_few_seconds():
+def test_warming_opens_the_connection_only_at_most_every_few_seconds():
     now = [100.0]
     model, client = http_model("claude", CLAUDE_SSE, name="claude-haiku-5-5")
     model.clock = lambda: now[0]
     asyncio.run(model.warm())
     asyncio.run(model.warm())
-    assert len(client.posted) == 1 and client.posted[0][0].endswith("/v1/messages/count_tokens")
-    assert client.posted[0][2]["x-api-key"] == "test-key"
+    assert client.requested == [("HEAD", "https://api.anthropic.com/")]
+    assert not hasattr(client, "posted")  # no token count, no billed or keyed call
     now[0] += 5
     asyncio.run(model.warm())
-    assert len(client.posted) == 2
+    assert len(client.requested) == 2
 
 
 def test_the_model_is_asked_to_answer_in_the_persons_language():

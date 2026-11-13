@@ -122,9 +122,9 @@ def _replay_transport(provider: str, replies: dict[str, str]) -> Any:
         return [text[i : i + 7] for i in range(0, len(text), 7)]
 
     def handler(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        if request.url.path.endswith("/count_tokens"):
+        if request.method == "HEAD" or request.url.path.endswith("/count_tokens"):  # a warm-up, not a reply
             return httpx.Response(200, json={"input_tokens": 1})
+        body = json.loads(request.content)
         reply = replies.get(last_words(body), "I don't know that one.")
         lines: list[str] = []
         if provider == "gemini":

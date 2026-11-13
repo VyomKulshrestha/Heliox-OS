@@ -26,6 +26,7 @@ usage arrived records the existing abandoned-call estimate (``pilot.models.cloud
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -50,6 +51,9 @@ BUSY_HOLD_SECONDS = 20.0  # a rate limit without a Retry-After header
 # A warm-up opens the connection while the person is still talking; it is sent again at most this often (the
 # listener asks at the wake word and again at the end of the sentence).
 WARM_EVERY_SECONDS = 3.0
+# A request that finds a warm-up still opening the connection waits this long for it before opening another: the
+# warm-up is the connection only (a HEAD to the API's address), so its rest is shorter than a second handshake.
+WARM_JOIN_SECONDS = 0.3
 # How long an idle connection to a provider is kept for the next turn. httpx's default is 5 s, which made every
 # sentence longer than a few seconds, and every first question after a pause, start on a new connection (the
 # provider keeps an idle one at least 120 s: measured 13 November). Only connections a request opened are kept;
@@ -342,6 +346,8 @@ class HttpFastModel(_StreamingBase):
     _offline_until: float = 0.0
     _hold_reason: str = ""
     _warmed_at: float = float("-inf")
+    _warm_done_at: float = float("-inf")
+    _warming: Any = None  # the warm-up under way (an asyncio task), joined by a request that starts during it
 
     @property
     def local(self) -> bool:
@@ -352,7 +358,7 @@ class HttpFastModel(_StreamingBase):
         used it within KEEPALIVE_SECONDS (for the turn trace; nothing depends on it)."""
         if self.local or self._client is None:
             return False
-        last = self._warmed_at
+        last = self._warm_done_at
         if self.calls:
             last = max(last, self.calls[-1].ended_at or self.calls[-1].started)
         return self.clock() - last < KEEPALIVE_SECONDS
@@ -486,43 +492,55 @@ class HttpFastModel(_StreamingBase):
             return ""
         return str((choices[0].get("delta") or {}).get("content") or "")
 
-    def warm_request(self, key: str) -> tuple[str, str, dict[str, str], dict[str, Any] | None]:
-        """The free request that opens the connection to this provider: (method, URL, headers, JSON body).
+    def warm_request(self) -> tuple[str, str]:
+        """(method, URL) of the warm-up: a HEAD to the provider API's own address. It opens and secures the
+        connection the reply will use (the same host, so httpx keeps it for the next request) and asks the provider
+        for no work: no key, no model, nothing the person said, and any status will do. Until 13 November it was a
+        token count (Claude) or the model list, a full authenticated call that was still running when the request
+        went out on 12 of 12 measured turns, so every request opened a second connection beside it."""
+        from urllib.parse import urlsplit
 
-        Claude: the token-counting call. Gemini and the OpenAI-compatible providers: the model list. None of them is
-        billed, none carries anything the person said."""
         from pilot.models.cloud import PROVIDER_ENDPOINTS
 
-        if self.provider == "claude":
-            body = {"model": self.name, "messages": [{"role": "user", "content": "hi"}]}
-            return "POST", PROVIDER_ENDPOINTS["claude"] + "/count_tokens", _claude_headers(key), body
-        if self.provider == "gemini":
-            return "GET", f"{PROVIDER_ENDPOINTS['gemini']}/models?pageSize=1", {"x-goog-api-key": key}, None
-        base = PROVIDER_ENDPOINTS.get(self.provider, PROVIDER_ENDPOINTS["openai"]).rsplit("/chat/completions", 1)[0]
-        return "GET", f"{base}/models", {"Authorization": f"Bearer {key}"}, None
+        parts = urlsplit(PROVIDER_ENDPOINTS.get(self.provider, PROVIDER_ENDPOINTS["openai"]))
+        return "HEAD", f"{parts.scheme}://{parts.netloc}/"
 
     async def warm(self) -> None:
         """Open the connection to a cloud provider before the turn ends, at most every WARM_EVERY_SECONDS.
 
-        Never for a model on this computer (no connection to open, nothing to gain). In the background: it never holds
-        the turn, and a warm-up that fails (no network, a slow provider) is silent and is not a provider fault."""
+        Never for a model on this computer (no connection to open, nothing to gain), nor with no key stored (no
+        request will follow). In the background: it never holds the turn, and a warm-up that fails (no network, a
+        slow provider) is silent and is not a provider fault. A request that starts while it runs joins it for at
+        most WARM_JOIN_SECONDS (stream)."""
         now = self.clock()
         if self.local or now - self._warmed_at < WARM_EVERY_SECONDS or now < self._offline_until:
             return
         self._warmed_at = now
         try:
-            key = await self.api_key() if self.api_key is not None else ""
-            if not key:
+            if self.api_key is not None and not await self.api_key():
                 return
+        except Exception:
+            logger.debug("No key could be read to warm the %s connection", self.provider, exc_info=True)
+            return
+        self._warming = asyncio.ensure_future(self._open_connection())
+        await asyncio.shield(self._warming)
+
+    async def _open_connection(self) -> None:
+        from pilot.conversation import trace
+
+        started = self.clock()
+        opened = False
+        try:
             if self._client is None:
                 self._client = await asyncio.to_thread(self.client_factory)
-            method, url, headers, body = self.warm_request(key)
-            if method == "POST":
-                await self._client.post(url, json=body, headers=headers, timeout=5.0)
-            else:
-                await self._client.get(url, headers=headers, timeout=5.0)
+            method, url = self.warm_request()
+            await self._client.request(method, url, timeout=5.0)
+            opened = True
+            self._warm_done_at = self.clock()
         except Exception:
             logger.debug("Warming the %s connection failed", self.provider, exc_info=True)
+        finally:
+            trace.mark("warm-up done", ms=round((self.clock() - started) * 1000), opened=opened)
 
     async def stream(self, system: str, messages: list[dict[str, str]]) -> AsyncIterator[str]:
         self._gate()
@@ -535,6 +553,13 @@ class HttpFastModel(_StreamingBase):
             # Building the client loads certificates and a TLS context: about 0.1 s of blocking work, done off the
             # event loop so nothing else (hearing the person, stopping a reply) waits for it.
             self._client = await asyncio.to_thread(self.client_factory)
+        warming = self._warming
+        if warming is not None and not warming.done():
+            # The warm-up is opening the connection this request would use: finishing it is quicker than opening a
+            # second one beside it, but never worth more than WARM_JOIN_SECONDS.
+            with contextlib.suppress(Exception):
+                async with asyncio.timeout(WARM_JOIN_SECONDS):  # not wait_for: it can lose a cancellation before 3.12
+                    await asyncio.shield(warming)
         url, headers, body = self.request(system, messages, key)
         record = CallRecord(model=self.name, started=self.clock())
         self.calls.append(record)

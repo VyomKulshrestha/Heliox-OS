@@ -11,6 +11,9 @@ The points, in order (agreed with the conversation bench, benchmarks/conversatio
     code handlers done        the handlers Heliox answers in code were all asked (handlers_ms, slowest, slowest_ms)
     route decided             the conversation layer has routed the turn (route=answer|action|control|...)
     context ready             the screen was read and the messages built (screen_ms)
+    warm-up done              the connection to a cloud provider was opened ahead of the request (ms, opened);
+                              it comes from the warm-up at the wake phrase, so it may land before or after
+                              "words received"
     request sent              the model call is made (warm=True when a connection was likely open)
     model first text          the first streamed piece arrived
     first sentence complete   the splitter gave the first whole sentence
