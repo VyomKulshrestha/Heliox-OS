@@ -227,7 +227,7 @@ Read [SECURITY.md](SECURITY.md) for the threat model, rollback boundaries, super
 
 1. Open the [latest GitHub release](https://github.com/VyomKulshrestha/Heliox-OS/releases).
 2. Download the package for your system:
-   - Windows: `Heliox-OS_<version>_x64-setup.exe` or `.msi`
+   - Windows: `Heliox-OS_<version>_x64-setup.exe` (recommended), or `.msi`. The `.exe`'s uninstaller stops Heliox's background service and says what it leaves in your home folder. The `.msi`'s uninstall does neither: before uninstalling it, use Settings > "Remove Heliox's files", or sign out of Windows so the service stops ([FIRST_RUN.md](docs/FIRST_RUN.md#removing-helioxs-files)).
    - macOS Apple Silicon: `Heliox-OS_<version>_aarch64.dmg`
    - macOS Intel: `Heliox-OS_<version>_x64.dmg`
    - Linux: `.AppImage`, `.deb`, or `.rpm`
