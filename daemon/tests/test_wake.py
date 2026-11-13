@@ -87,7 +87,7 @@ async def test_waking_closes_the_no_wake_phrase_windows_and_checks_reminders_now
     listener = MagicMock()
     server._voice_listener = listener
     server._conversation = MagicMock()
-    server._reminders = MagicMock(tick=AsyncMock(return_value=2))
+    server._reminders = MagicMock(tick=AsyncMock(return_value=2), deliver_held=AsyncMock(return_value=0))
 
     await server._on_wake(ClockEvent("wake", 3600))
 
@@ -95,6 +95,7 @@ async def test_waking_closes_the_no_wake_phrase_windows_and_checks_reminders_now
     listener.end_interruption.assert_called_once()
     server._conversation.interrupt.assert_called_once()
     server._reminders.tick.assert_awaited_once()
+    server._reminders.deliver_held.assert_awaited_once()  # a window already open gets what was held
 
 
 async def test_a_clock_set_back_changes_nothing():

@@ -351,6 +351,32 @@ def describe_missed(items: list[dict[str, Any]], first_tick: bool, *, now: float
     return sentence, sentence
 
 
+def _when_it_was(due: float, now: datetime) -> str:
+    moment = datetime.fromtimestamp(due)
+    if moment.date() == now.date():
+        return f"at {_clock(moment)}"
+    if moment.date() == (now - timedelta(days=1)).date():
+        return f"yesterday at {_clock(moment)}"
+    days = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    return f"on {days[moment.weekday()]} {moment.day:02d} {months[moment.month - 1]} at {_clock(moment)}"
+
+
+def describe_held(items: list[dict[str, Any]], *, now: float) -> str:
+    """The one sentence for reminders that came due while nobody could see or hear them, each with when it was
+    due: "This was due at 9:00 AM: send the report." or "These came due while you were away: at 9:00 AM, send the
+    report; at 9:30 AM, call mum." (at most three named, then how many more)."""
+    when_now = datetime.fromtimestamp(now)
+    ordered = sorted(items, key=lambda item: item["due"])
+    if len(ordered) == 1:
+        item = ordered[0]
+        return f"This was due {_when_it_was(item['due'], when_now)}: {str(item['text']).rstrip('.')}."
+    named = [f"{_when_it_was(item['due'], when_now)}, {str(item['text']).rstrip('.')}" for item in ordered[:3]]
+    rest = len(ordered) - len(named)
+    more = f"; and {_COUNT_WORDS.get(rest, str(rest))} more" if rest else ""
+    return f"These came due while you were away: {'; '.join(named)}{more}."
+
+
 def describe_repeat(repeat: dict[str, Any]) -> str:
     if "minutes" in repeat:
         minutes = int(repeat["minutes"])
@@ -421,8 +447,9 @@ class ReminderStore:
         self,
         path: Path,
         *,
-        deliver: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
-        deliver_missed: Callable[[list[dict[str, Any]], bool], Awaitable[None]] | None = None,
+        deliver: Callable[[dict[str, Any]], Awaitable[bool | None]] | None = None,
+        deliver_missed: Callable[[list[dict[str, Any]], bool], Awaitable[bool | None]] | None = None,
+        deliver_held: Callable[[list[dict[str, Any]]], Awaitable[bool | None]] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._path = Path(path)
@@ -430,17 +457,31 @@ class ReminderStore:
         # Every reminder that came due while the computer slept or Heliox was off, in one call:
         # (items with "due" and "late_seconds", first_tick). ``first_tick``: the first check since Heliox started.
         self._deliver_missed = deliver_missed
+        # A reminder is not done until it reached the person: ``deliver`` and ``deliver_missed`` return False when
+        # nobody could see or hear it (no window open, nothing said aloud). It is then kept as held ("pending") and
+        # ``deliver_held`` gives every held one together, saying when each was due, the next time someone can
+        # (a window connects, the computer wakes).
+        self._deliver_held = deliver_held
+        self._held_lock = asyncio.Lock()
         self._clock = clock
         self._ticked = False
         self._task: asyncio.Task[None] | None = None
 
-    def list(self) -> list[dict[str, Any]]:
+    def _all(self) -> list[dict[str, Any]]:
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return []
         items = [item for item in data if isinstance(item, dict) and "due" in item] if isinstance(data, list) else []
         return sorted(items, key=lambda item: item["due"])
+
+    def list(self) -> list[dict[str, Any]]:
+        """The reminders still waiting for their time."""
+        return [item for item in self._all() if not item.get("pending")]
+
+    def held(self) -> list[dict[str, Any]]:
+        """Reminders that came due while nobody could see or hear them, waiting for the next window or wake."""
+        return [item for item in self._all() if item.get("pending")]
 
     def _save(self, items: list[dict[str, Any]]) -> None:
         note_change("updated your reminders")  # a voice turn that did this cannot be withdrawn
@@ -462,7 +503,7 @@ class ReminderStore:
         if repeat:
             entry["repeat"] = repeat
         items.append(entry)
-        self._save(items)
+        self._save(items + self.held())
         return entry
 
     def cancel(self, reminder_id: str | None = None, *, about: str | None = None) -> int:
@@ -476,13 +517,13 @@ class ReminderStore:
         else:
             kept = []
         if len(kept) != len(items):
-            self._save(kept)
+            self._save(kept + self.held())
         return len(items) - len(kept)
 
     async def tick(self) -> int:
         """Deliver every reminder that is due. Returns how many went out."""
         now = self._clock()
-        items = self.list()
+        items, held = self.list(), self.held()
         due = [item for item in items if item["due"] <= now]
         if not due:
             self._ticked = True
@@ -496,21 +537,54 @@ class ReminderStore:
                     if upcoming.timestamp() > now:
                         break
                 kept.append({**item, "due": upcoming.timestamp()})
-        self._save(kept)  # saved before anything goes out, so no reminder ever fires twice
+        self._save(kept + held)  # saved before anything goes out, so no reminder ever fires twice
         first_tick, self._ticked = not self._ticked, True
         sent = 0
+        unseen: list[dict[str, Any]] = []
         missed = [{**item, "late": True, "late_seconds": now - item["due"]} for item in due
                   if now - item["due"] > MISSED_AFTER_SECONDS]  # fmt: skip
         for item in due:
             if now - item["due"] > MISSED_AFTER_SECONDS and self._deliver_missed is not None:
                 continue
             if self._deliver is not None:
-                await self._deliver({**item, "late": now - item["due"] > MISSED_AFTER_SECONDS})
+                reached = await self._deliver({**item, "late": now - item["due"] > MISSED_AFTER_SECONDS})
+                if reached is False:
+                    unseen.append(item)
+                    continue
             sent += 1
         if missed and self._deliver_missed is not None:
-            await self._deliver_missed(missed, first_tick)
-            sent += len(missed)
+            if await self._deliver_missed(missed, first_tick) is False:
+                unseen += missed
+            else:
+                sent += len(missed)
+        if unseen and self._deliver_held is not None:
+            self._hold(unseen)
         return sent
+
+    def _hold(self, items: list[dict[str, Any]]) -> None:
+        """Keep reminders nobody saw or heard, once each (a repeating one by the time it was due)."""
+        everything = self._all()
+        known = {item["id"] for item in everything}
+        for item in items:
+            entry = {k: v for k, v in item.items() if k not in ("late", "late_seconds", "repeat")}
+            entry["id"] = f"{item['id']}@{int(item['due'])}" if item.get("repeat") else item["id"]
+            if entry["id"] not in known:
+                everything.append({**entry, "pending": True})
+        self._save(everything)
+
+    async def deliver_held(self) -> int:
+        """Give every held reminder now, together, if someone can see or hear it. Returns how many went out."""
+        if self._deliver_held is None:
+            return 0
+        async with self._held_lock:  # a window connecting while the computer wakes gets them once
+            held = self.held()
+            if not held:
+                return 0
+            if await self._deliver_held(held) is False:
+                return 0
+            gone = {item["id"] for item in held}
+            self._save([item for item in self._all() if item["id"] not in gone])
+            return len(held)
 
     async def _loop(self) -> None:
         while True:

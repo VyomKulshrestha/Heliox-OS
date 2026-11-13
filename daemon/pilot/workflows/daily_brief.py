@@ -161,13 +161,17 @@ class DailyBriefScheduler:
         *,
         config: Callable[[], Any],
         build: Callable[[], Awaitable[dict[str, Any]]],
-        deliver: Callable[[dict[str, Any]], Awaitable[None]],
+        deliver: Callable[[dict[str, Any]], Awaitable[bool | None]],
         state_file: Path,
         now: Callable[[], datetime] = datetime.now,
+        reachable: Callable[[], bool] = lambda: True,
     ) -> None:
         self._config = config
         self._build = build
         self._deliver = deliver
+        # Whether anyone can receive the brief now (a window open, or the voice in use). While nobody can, it waits,
+        # the same day, for the first window (pilot.server._on_window_connected ticks it then).
+        self._reachable = reachable
         self._state_file = Path(state_file)
         self._now = now
         self._task: asyncio.Task[None] | None = None
@@ -199,12 +203,21 @@ class DailyBriefScheduler:
 
     async def tick(self) -> bool:
         """Send today's brief if it is due. Returns whether one was sent."""
-        if not self.due():
+        if not self.due() or not self._reachable():
             return False
-        self._mark_sent(self._now().date())  # before sending, so a failure never repeats it every 30 s
+        day, before = self._now().date(), self._last_sent()
+        self._mark_sent(day)  # before sending, so a failure never repeats it every 30 s
         overview = await self._build()
-        await self._deliver(overview)
+        if await self._deliver(overview) is False:
+            self._unmark(before)  # it reached nobody after all: the next window gets it
+            return False
         return True
+
+    def _unmark(self, before: str) -> None:
+        self._state_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._state_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"last_sent": before}), encoding="utf-8")
+        os.replace(tmp, self._state_file)
 
     async def _loop(self) -> None:
         while True:

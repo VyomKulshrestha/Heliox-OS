@@ -1601,6 +1601,7 @@ class PilotServer:
             DATA_DIR / "reminders.json",
             deliver=self._deliver_reminder,
             deliver_missed=self._deliver_missed_reminders,
+            deliver_held=self._deliver_held_reminders,
         )
         self._reminders.start()
         from pilot.workflows.daily_brief import DailyBriefScheduler
@@ -1610,6 +1611,7 @@ class PilotServer:
             build=self._today_overview,
             deliver=self._deliver_scheduled_brief,
             state_file=DATA_DIR / "daily_brief.json",
+            reachable=self._someone_can_receive,
         )
         self._daily_brief.start()
         # Import and warm the local system probe stack before readiness so the
@@ -2628,6 +2630,7 @@ class PilotServer:
             await websocket.send(_notification("startup_status", startup.snapshot()))
         if role == RpcClientRole.UI:
             self._clients.add(websocket)
+            self._on_window_connected()
         self._authenticated_clients.add(websocket)
         self._client_roles[websocket] = role
         if role == RpcClientRole.NEURAL_SIDECAR:
@@ -7395,10 +7398,13 @@ class PilotServer:
             return "There is no earlier task for me to repeat yet."
         return None
 
-    async def _deliver_scheduled_brief(self, overview: dict[str, Any]) -> None:
+    async def _deliver_scheduled_brief(self, overview: dict[str, Any]) -> bool:
+        """False when it reached nobody: the scheduler sends it again when a window connects, the same day."""
         if self._focus is not None and self._focus.hold("daily_brief", overview):
-            return
+            return True
+        seen = bool(self._clients)
         await self._deliver_daily_brief(overview)
+        return seen or bool(self.config.brief.speak and self._someone_can_receive())
 
     async def _on_focus_end(self, summary: dict[str, Any]) -> None:
         """Deliver what a focus session held, with one summary."""
@@ -8651,20 +8657,63 @@ class PilotServer:
             return {"status": "error", "message": f"Export failed: {exc}"}
         return {"status": "ok", "path": str(out_path)}
 
-    async def _deliver_reminder(self, reminder: dict[str, Any]) -> None:
+    def _someone_can_receive(self) -> bool:
+        """A window is open, or the voice is in use: something said now can reach the person."""
+        listener = self._voice_listener
+        return bool(self._clients) or bool(listener is not None and getattr(listener, "is_running", False))
+
+    async def _deliver_reminder(self, reminder: dict[str, Any]) -> bool:
+        """Show and say a reminder that is due. False when it reached nobody (no window open and nothing said
+        aloud): the store then holds it for the next window or wake (ReminderStore.deliver_held)."""
         if self._focus is not None and self._focus.hold("reminder", reminder):
-            return
+            return True
+        seen = bool(self._clients)
         await self._broadcast_notification("reminder", reminder)
         spoken = (
             f"Reminder: {reminder['text']}"
             if not reminder.get("late")
             else f"A reminder you missed: {reminder['text']}"
         )
-        await self._speak_companion_text(
+        outcome = await self._speak_companion_text(
             spoken, channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=f"reminder:{reminder['id']}"
         )
+        return seen or getattr(outcome, "status", "") == "spoken"
 
-    async def _deliver_missed_reminders(self, items: list[dict[str, Any]], first_tick: bool) -> None:
+    async def _deliver_held_reminders(self, items: list[dict[str, Any]]) -> bool:
+        """Reminders that came due while nobody could see or hear them, given the next time someone can: the window
+        shows them at once, in one card ("This was due at 9:00 AM: send the report."); the voice says the same
+        sentence only when the person is using it (the listener runs), by the same gate as any proactive line (not
+        in a focus session or a call). False when there is still nobody: they stay held."""
+        from pilot.workflows.reminders import describe_held
+
+        if not self._someone_can_receive():
+            return False
+        message = describe_held(items, now=time.time())
+        seen = bool(self._clients)
+        if len(items) == 1:
+            await self._broadcast_notification("reminder", {**items[0], "late": True, "message": message})
+        else:
+            await self._broadcast_notification(
+                "reminders_missed",
+                {
+                    "message": message,
+                    "reminders": [
+                        {"id": item["id"], "text": item["text"], "due": item["due"], "repeat": False} for item in items
+                    ],
+                },
+            )
+        listener = self._voice_listener
+        heard = False
+        if listener is not None and getattr(listener, "is_running", False):
+            outcome = await self._speak_companion_text(
+                message,
+                channel=SpeechChannel.PROACTIVE_SUGGESTION,
+                dedupe_key="reminders-held:" + ",".join(item["id"] for item in items),
+            )
+            heard = getattr(outcome, "status", "") == "spoken"
+        return seen or heard
+
+    async def _deliver_missed_reminders(self, items: list[dict[str, Any]], first_tick: bool) -> bool:
         """Reminders that came due while the computer slept or Heliox was off: one card, at most one sentence, each
         with when it was due; any older than a week also goes into the activity log. Never dropped, never twice."""
         from pilot.workflows.reminders import describe_missed
@@ -8690,11 +8739,13 @@ class PilotServer:
                             f"Reminder: {item['text']}",
                             f"Came due on {due} while this computer was asleep or Heliox was off; shown when it was back.",
                         )
-        await self._speak_companion_text(
+        seen = bool(self._clients)
+        outcome = await self._speak_companion_text(
             spoken,
             channel=SpeechChannel.PROACTIVE_SUGGESTION,
             dedupe_key="reminders-missed:" + ",".join(item["id"] for item in items),
         )
+        return seen or getattr(outcome, "status", "") == "spoken"
 
     async def _handle_reminder_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         from pilot.workflows.reminders import describe_repeat
@@ -11497,6 +11548,29 @@ class PilotServer:
                 conversation.interrupt()
         if self._reminders is not None:
             await self._reminders.tick()
+            await self._reminders.deliver_held()  # a window already open shows what came due while nobody could
+
+    def _on_window_connected(self) -> None:
+        """A window connected: what came due while nobody could see or hear it goes to it now (held reminders, and
+        today's brief if its time passed with no window open)."""
+        tasks: set[asyncio.Task[Any]] = self.__dict__.setdefault("_notice_tasks", set())
+
+        async def give() -> None:
+            try:
+                if self._reminders is not None:
+                    await self._reminders.deliver_held()
+                brief = getattr(self, "_daily_brief", None)
+                if brief is not None:
+                    await brief.tick()
+            except Exception:
+                logger.warning("Could not give what was held for the window", exc_info=True)
+
+        try:
+            task = asyncio.get_running_loop().create_task(give())
+        except RuntimeError:
+            return
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
     def _startup_stage(self, words: str) -> None:
         """Tell the window which stage start-up is in (only while start() runs; tests that call initialize() alone
