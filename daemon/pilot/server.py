@@ -9712,7 +9712,7 @@ class PilotServer:
             )
             window = float(getattr(self.config.voice, "follow_up_window_seconds", 8.0) or 8.0)
             try:
-                answer = await asyncio.wait_for(asyncio.shield(self._say_back_waiting), timeout=window + 2.0)
+                answer = await bounded(asyncio.shield(self._say_back_waiting), timeout=window + 2.0)
             except TimeoutError:
                 answer = ""
         finally:
