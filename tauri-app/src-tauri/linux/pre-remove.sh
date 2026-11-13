@@ -28,7 +28,8 @@ for dir in /proc/[0-9]*; do
     pid="${dir#/proc/}"
     command_line="$(tr '\000' ' ' < "$dir/cmdline" 2>/dev/null)"
     case "$command_line" in
-        */heliox-os/env/bin/python*" -m pilot.server"*) end "$pid" ;;
+        # Only Heliox's own environment: a developer's daemon from a source checkout is not the package's.
+        */.config/heliox-os/env/bin/python*" -m pilot.server"*) end "$pid" ;;
     esac
 done
 exit 0

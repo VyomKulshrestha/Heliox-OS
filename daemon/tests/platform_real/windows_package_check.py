@@ -88,7 +88,10 @@ def daemon_processes() -> list:
     found = []
     for process in psutil.process_iter(["pid", "cmdline", "exe"]):
         command = " ".join(process.info.get("cmdline") or [])
-        if "-m pilot.server" in command and ("\\heliox-os\\" in command or "\\heliox-os\\" in str(process.info["exe"])):
+        where = (command + " " + str(process.info["exe"])).lower()
+        if "-m pilot.server" in command and (
+            "\\.config\\heliox-os\\env\\" in where or "\\.config\\heliox-os\\python\\" in where
+        ):
             found.append(process)
     return found
 

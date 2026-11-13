@@ -1278,6 +1278,13 @@ jobs:
           PYTHON_KEYRING_BACKEND: keyring.backends.macOS.Keyring
         run: python daemon/tests/platform_real/keychain_locked_check.py
 
+      - name: The uninstaller's end-heliox.ps1 against stand-in process trees (a developer's daemon survives)
+        id: end-heliox
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        timeout-minutes: 8
+        run: python daemon/tests/platform_real/end_heliox_check.py
+
   # ── The real desktop app, launched and driven (experimental, non-blocking) ──
   # A debug build of the app with its page bundled, started by tauri-driver (WebKitWebDriver under Xvfb on Linux,
   # msedgedriver on Windows; macOS has no WebDriver for its web view) next to a daemon in a complete fake home.
@@ -1304,6 +1311,7 @@ jobs:
             run-record=${{ steps.run-record.outcome }}
             storage=${{ steps.storage.outcome }}
             keychain=${{ steps.keychain.outcome }}
+            end-heliox=${{ steps.end-heliox.outcome }}
           REPORT_ONLY: ""
         run: |
           failed=""

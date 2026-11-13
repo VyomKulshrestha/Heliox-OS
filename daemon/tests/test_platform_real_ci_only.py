@@ -33,6 +33,7 @@ GUARDED = (
     "run_record_check.py",
     "deb_install_check.py",  # installs a package and creates a user, in a container
     "windows_package_check.py",  # installs and uninstalls the app in the real profile
+    "end_heliox_check.py",  # runs the uninstaller's script, which ends processes
     # the desktop drivers: they open windows and type, click or show notifications
     "app_launch_check.py",
     "apps_check.py",
@@ -97,7 +98,8 @@ def test_github_actions_alone_is_not_a_runner(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "script", ("real_removal.sh", "with_keyring.sh", "deb_install_check.sh", "rpm_install_check.sh")
+    "script",
+    ("real_removal.sh", "with_keyring.sh", "deb_install_check.sh", "rpm_install_check.sh"),
 )
 def test_the_shell_scripts_refuse_too(script):
     text = (PLATFORM_REAL / script).read_text(encoding="utf-8")

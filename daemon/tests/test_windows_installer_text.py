@@ -72,6 +72,8 @@ def test_the_hooks_end_heliox_first_and_speak_only_in_an_interactive_uninstall()
 def test_the_end_script_ends_the_app_then_the_daemon_and_deletes_nothing():
     script = (WINDOWS / "end-heliox.ps1").read_text(encoding="utf-8")
     assert script.index("$env:HELIOX_APP") < script.index("-m pilot.server")
+    # Only Heliox's own environment folder: a checkout cloned as "Heliox-OS" must not match.
+    assert "'*\\.config\\heliox-os\\env\\*'" in script and "'*\\heliox-os\\*'" not in script
     assert "taskkill.exe /F /T /PID" in script
     assert not re.search(r"Remove-Item|\bdel\b|\brd\b|rmdir", script, flags=re.IGNORECASE)
 

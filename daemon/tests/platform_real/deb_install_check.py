@@ -112,7 +112,11 @@ def app_pids() -> list[int]:
 
 
 def daemon_pids() -> list[int]:
-    return [pid for pid, _, command, _ in processes() if "/heliox-os/env/" in command and "-m pilot.server" in command]
+    return [
+        pid
+        for pid, _, command, _ in processes()
+        if "/.config/heliox-os/env/" in command and "-m pilot.server" in command
+    ]
 
 
 def end(pids: list[int], wait: float = 10) -> list[int]:

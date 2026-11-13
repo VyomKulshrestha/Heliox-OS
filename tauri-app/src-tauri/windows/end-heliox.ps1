@@ -17,11 +17,16 @@ if ($app) {
     Start-Sleep -Milliseconds 500
 }
 # The daemon: "<home>\.config\heliox-os\env\Scripts\python.exe -m pilot.server", or the private Python under
-# "<home>\.config\heliox-os\python" that the environment's launcher started.
+# "<home>\.config\heliox-os\python" that the environment's launcher started. Only Heliox's own environment folder
+# counts: a developer's daemon from a source checkout (often cloned as "Heliox-OS") is not the installed app's
+# (end_heliox_check.py runs this script against both).
+$environment = '*\.config\heliox-os\env\*'
+$private = '*\.config\heliox-os\python\*'
 Get-CimInstance Win32_Process |
     Where-Object {
-        $_.CommandLine -like '*-m pilot.server*' -and
-        ($_.CommandLine -like '*\heliox-os\*' -or $_.ExecutablePath -like '*\heliox-os\*')
+        $_.CommandLine -like '*-m pilot.server*' -and (
+            $_.CommandLine -like $environment -or $_.CommandLine -like $private -or $_.ExecutablePath -like $private
+        )
     } |
     ForEach-Object { Stop-Tree $_.ProcessId }
 exit 0
