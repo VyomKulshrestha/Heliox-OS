@@ -120,6 +120,24 @@ Recall is 55 of 56 in every row, before and after (the one miss is the known rec
 fast typist who stops mid-sentence in their first days: the card comes after 3.0 s instead of 1.2 s, then 1.38 s after
 20 such pauses and 1.23 s after 60 (the quick persona's own rhythm). At a sentence's end nothing changes.
 
+## Update, 13 November 2026: does Monday change Wednesday?
+
+`python -m pilot.live.learning_week` runs three made-up people through three days with one Live engine kept across
+them (relevance, snoozes and the muted kinds carry over, a day apart on the clock), typing the same four slips each
+day: two weekdays that do not match their dates, a wrong sum, a doubled word. On Monday each says "not now" to the
+first weekday card; on Tuesday "don't mention these" to the doubled word. With every other card one says "thanks",
+one uses the fix, one ignores it. The same for all three:
+
+| Day | Weekday slips | Wrong sum | Doubled word |
+|---|---|---|---|
+| Monday | 1 of 2, spoken (the second, minutes after "not now", held back) | shown | shown |
+| Tuesday | 2 of 2 (spoken, then shown) | shown | shown, then "don't mention these" |
+| Wednesday | 2 of 2 (spoken, then shown) | shown | none |
+
+"Not now" holds a kind for the moment, not the next day; "don't mention these" ends it. One "not now" lowers the
+kind's relevance from 0.67 to 0.50, which is still enough to be spoken, so Wednesday's first weekday card is still
+said aloud. `tests/test_live_learning_week.py` asserts the table.
+
 ## What it does not show
 
 These are scripted sessions and simulated people, not recordings of real ones. The personas are three points on
