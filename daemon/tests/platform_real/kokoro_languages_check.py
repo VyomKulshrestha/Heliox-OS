@@ -74,6 +74,13 @@ def failure(error: BaseException) -> str:
     return " <- ".join(chain) + "\n" + "".join(traceback.format_exception(error)).strip()
 
 
+def resident_mb() -> float:
+    """This process's resident memory, in MB."""
+    import psutil
+
+    return psutil.Process().memory_info().rss / 1_048_576
+
+
 def timed(what: str, call):
     started = time.perf_counter()
     result = call()
@@ -89,7 +96,13 @@ def main() -> int:
     # What a person waits the first time they hear their language, apart from the model itself: the model's weights
     # and the English reader are loaded first (a person who speaks English already has them), then for each
     # language the voice file is fetched, its reader started, and the sentence made, each timed on its own.
+    before_model = resident_mb()
     _, model_seconds = timed("model", lambda: kokoro_tts._generate("Okay.", "af_heart"))
+    after_english = resident_mb()
+    print(
+        f"INFO memory/model-and-english-reader: {after_english - before_model:.0f} MB (resident {after_english:.0f} MB)",
+        flush=True,
+    )
     print(f"INFO model-and-english-reader: {model_seconds:.1f} s (fetching and loading the weights, once)", flush=True)
     for language, sentence in SENTENCES.items():
         voice = KOKORO_VOICES[language]
@@ -117,6 +130,26 @@ def main() -> int:
                   f"(similarity {similar(sentence, text):.2f})", flush=True)  # fmt: skip
         except Exception as error:
             print(f"INFO voice-{language}/through-the-english-reader: {failure(error)}", flush=True)
+    # Every language read with the one model the English pipeline loaded; what each language's reader added on top,
+    # against what a pipeline with its own model costs (how it was before: one copy per language).
+    after_languages = resident_mb()
+    models = {id(pipeline.model) for pipeline in kokoro_tts._pipeline_cache.values() if pipeline.model is not None}
+    check(
+        "voice/one-model-for-every-language",
+        len(models) == 1,
+        f"{len(kokoro_tts._pipeline_cache)} readers, {len(models)} model(s); {after_languages - after_english:.0f} MB "
+        f"for all the other languages' readers together (resident {after_languages:.0f} MB)",
+    )
+    try:
+        from kokoro import KPipeline
+
+        own = resident_mb()
+        extra = KPipeline(lang_code="e", repo_id=kokoro_tts.REPO_ID, device="cpu")  # its own copy, as before
+        print(f"INFO memory/a-second-copy-of-the-model: {resident_mb() - own:.0f} MB, what each language cost before",
+              flush=True)  # fmt: skip
+        del extra
+    except Exception as error:
+        print(f"INFO memory/a-second-copy-of-the-model: {failure(error)}", flush=True)
     audio, rate = kokoro_tts._generate(GERMAN, "af_heart")
     text = heard(whisper, audio, "de")
     print(f"INFO voice-de/no-kokoro-voice: through the English voice, Whisper heard {text!r} "

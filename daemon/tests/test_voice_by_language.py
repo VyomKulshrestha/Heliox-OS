@@ -166,3 +166,29 @@ def test_a_japanese_speaker_is_told_the_download_and_heliox_never_starts_it():
         system_voices=[("Microsoft Haruka", "ja")],
     )
     assert system.change and system.engine == "os_native" and "770" not in system.say
+
+
+def test_a_second_language_uses_the_same_model_not_a_second_copy(monkeypatch):
+    import sys
+    from types import ModuleType
+
+    loaded = []
+
+    class Pipeline:
+        def __init__(self, lang_code, repo_id=None, model=True, device=None):
+            if model is True:
+                loaded.append(lang_code)  # a pipeline made without a model loads its own copy
+                self.model = object()
+            else:
+                self.model = model
+            self.lang_code = lang_code
+
+    fake = ModuleType("kokoro")
+    fake.KPipeline = Pipeline
+    monkeypatch.setitem(sys.modules, "kokoro", fake)
+    monkeypatch.setattr(kokoro_tts, "_pipeline_cache", {})
+    english = kokoro_tts._get_pipeline("a")
+    spanish = kokoro_tts._get_pipeline("e")
+    mandarin = kokoro_tts._get_pipeline("z")
+    assert loaded == ["a"]  # one model loaded, for the first language only
+    assert spanish.model is english.model and mandarin.model is english.model

@@ -69,11 +69,17 @@ def _allow_fetching_missing_voice(voice: str) -> None:
 
 
 def _get_pipeline(language: str = "a") -> Any:
+    """The pipeline that reads ``language`` (a voice's first letter). Every language's pipeline uses the one model the
+    first pipeline loaded: a pipeline per language is only its reader, so a person who hears Heliox in Spanish after
+    English does not hold a second copy of the model (about 330 MB each)."""
     with _pipeline_lock:
         if language not in _pipeline_cache:
             from kokoro import KPipeline
 
-            if _device == "auto":
+            shared = next((p.model for p in _pipeline_cache.values() if getattr(p, "model", None) is not None), None)
+            if shared is not None:
+                _pipeline_cache[language] = KPipeline(lang_code=language, repo_id=REPO_ID, model=shared)
+            elif _device == "auto":
                 try:
                     _pipeline_cache[language] = KPipeline(lang_code=language, repo_id=REPO_ID)
                 except RuntimeError as exc:
