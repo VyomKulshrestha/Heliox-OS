@@ -1,0 +1,84 @@
+name: "Live's running cost (memory and CPU, idle and typing)"
+
+# A real daemon with Live on (reading typed text; no OCR, no listening): five minutes idle, then five minutes of
+# typing into the readers' fixture, on each system. INFO lines with resident memory and CPU time per phase, and the
+# Live cards the typing raised; one CHECK that fails only on memory still climbing through the end of the idle
+# phase. Never blocks anything. About 13 runner minutes per system, so it runs when what it measures changes, nightly
+# and by hand, not on every push.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "daemon/pilot/live/**"
+      - "daemon/pilot/agents/screen_vision.py"
+      - "daemon/tests/platform_real/live_cost_check.py"
+      - "daemon/tests/platform_real/real_daemon.py"
+      - "daemon/tests/platform_real/linux_atspi_check.py"
+      - "daemon/tests/platform_real/gtk_fixture.py"
+      - "daemon/tests/platform_real/live_fixture_macos.py"
+      - "daemon/tests/platform_real/mac_front.py"
+      - "daemon/tests/platform_real/windows_fields_check.py"
+      - "daemon/tests/platform_real/field_fixture.html"
+      - ".github/workflows/live-cost.yml"
+  schedule:
+    - cron: "23 3 * * *" # nightly, 03:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-cost-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-cost:
+    name: Live's running cost (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: daemon
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the daemon with its platform extra
+        run: |
+          case "$RUNNER_OS" in
+            Linux) pip install -e ".[linux]" ;;
+            macOS) pip install -e ".[macos]" ;;
+            *) pip install -e . pyautogui ;;
+          esac
+
+      - name: Install the Linux accessibility stack (AT-SPI, GTK 3, Xvfb, xdotool)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            xvfb xdotool dbus dbus-x11 at-spi2-core libatk-adaptor python3-gi gir1.2-gtk-3.0
+
+      - name: Live idle for five minutes, then typing for five
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            dbus-run-session -- bash -c '
+              Xvfb :99 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
+              export DISPLAY=:99 GTK_A11Y=atspi
+              sleep 2
+              python tests/platform_real/live_cost_check.py --python /usr/bin/python3
+            '
+          else
+            python tests/platform_real/live_cost_check.py
+          fi

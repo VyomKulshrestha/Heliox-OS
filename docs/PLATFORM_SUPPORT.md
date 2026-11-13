@@ -195,6 +195,23 @@ reaches Live only as text and is not checked: no card, nothing kept, never store
 model. Outside an open conversation Live does not hear it at all. **Fakes only**: unit tests with recognised text;
 no recorded conversation has shown it.
 
+## What Live costs to keep running
+
+A person on an 8 GB machine needs to know what keeping Live on costs. The Live cost workflow (`.github/workflows/live-cost.yml`: on a push
+that changes Live or the readers it uses, nightly, and by hand) measures it on each runner
+(`tests/platform_real/live_cost_check.py`): a real daemon with Live on, reading typed text, no screen
+reading and no listening; five minutes idle, then five minutes of typing into the readers' fixture. It reports
+resident memory at the start, after the idle phase and after the typing phase, for the daemon and for the daemon
+with the helpers it started, and the CPU time each phase used; it fails only when memory is still climbing through
+the end of the idle phase. No absolute figure is a pass or a fail yet.
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Resident memory, CPU time | first run pending | first run pending | first run pending |
+
+A hosted CI runner is not a person's laptop: other load, other memory, a virtual display. These numbers say what
+this daemon costs there.
+
 ## Reading the focused field
 
 Every platform reader satisfies `FocusedTextSource` (`daemon/pilot/live/focused_text.py`): `read()`, `status()`, `close()` and `available`. `create_reader()` picks the one for the system. Each reader turns what its accessibility interface says about the focused element into `ElementFacts`, and `focused_text_policy.admit` makes the one decision for all three: text passes only from a writable field or a terminal, never from a secure field, and only the last 6,000 characters. The window-level rule, `never_read`, refuses Heliox's own window, password managers, the system credential stores (Keychain Access, Passwords, Seahorse, KDE Wallet) and apps the person excluded from the timeline before any reader runs. The decision itself: Fakes only, on all three systems; the secure field refused: Run for real (CI on 3793a0d, `macos/secure-field-refused`, `x11/password-refused`, `wayland/password-refused`).
