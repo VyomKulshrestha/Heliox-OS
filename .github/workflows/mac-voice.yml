@@ -1,0 +1,64 @@
+name: "A spoken turn on macOS (virtual microphone)"
+
+# A synthetic voice says the wake phrase and a request into BlackHole 2ch, a loopback audio driver, and Heliox's own
+# listener hears it through its real macOS capture path (PortAudio on Core Audio), decides the wake and recognises
+# the request with Faster-Whisper tiny.en on the CPU; a second sentence without the wake phrase must not be taken
+# (daemon/tests/platform_real/mac_voice_check.py). The driver is installed and coreaudiod restarted on this runner
+# only. Manual and nightly, never on every push.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "11 3 * * *" # nightly, 03:11 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-voice-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac-voice:
+    name: A spoken turn on macOS
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the daemon and the recogniser (core, Faster-Whisper, PortAudio)
+        timeout-minutes: 8
+        run: |
+          python -m pip install --disable-pip-version-check --progress-bar off -e ./daemon faster-whisper sounddevice
+          export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
+          python -c "from huggingface_hub import snapshot_download; from pilot.system.model_presence import FASTER_WHISPER_REPOS as R; print(snapshot_download(R['tiny.en']))"
+        working-directory: daemon
+
+      # BlackHole 2ch (Existential Audio, GPL-3.0): a Core Audio plug-in in /Library/Audio/Plug-Ins/HAL, loaded when
+      # coreaudiod starts, so coreaudiod is restarted after the install. espeak-ng (GPL-3.0) is the voice when this
+      # runner's say writes silence.
+      - name: Install the virtual audio device and restart Core Audio (this runner only)
+        timeout-minutes: 5
+        run: |
+          brew install --cask blackhole-2ch
+          brew install espeak-ng
+          sudo killall coreaudiod || true
+          sleep 5
+          ls -l /Library/Audio/Plug-Ins/HAL/ || true
+
+      - name: A spoken turn through Heliox's listener
+        timeout-minutes: 5
+        working-directory: daemon
+        run: |
+          export HOME="$RUNNER_TEMP/home"
+          python tests/platform_real/mac_voice_check.py "$RUNNER_TEMP"

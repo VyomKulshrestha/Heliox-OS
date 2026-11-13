@@ -31,6 +31,7 @@ GUARDED = (
     "network_drop_check.py",
     "frozen_daemon_check.py",
     "run_record_check.py",
+    "mac_voice_check.py",  # plays into and records from an audio driver the workflow installs
     "deb_install_check.py",  # installs a package and creates a user, in a container
     "windows_package_check.py",  # installs and uninstalls the app in the real profile
     "end_heliox_check.py",  # runs the uninstaller's script, which ends processes
