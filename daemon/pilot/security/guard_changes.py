@@ -236,6 +236,12 @@ def section_widenings(
                     )
                 )
     elif section == "air_handoff":
+        turned_on(
+            "enabled",
+            "Let phones on your network reach Heliox",
+            f"Heliox will listen on port {now.get('port', 8787)} of this computer's local network for phones. Nothing is "
+            "accepted from a phone until you pair it in this window.",
+        )
         # What a paired phone may do: send a request that waits for Run, and start read-only ones at once.
         accept_was, accept = (
             bool(now.get("accept_requests")),
@@ -260,6 +266,51 @@ def section_widenings(
                     "A request from a phone you paired starts at once, without you pressing Run, when it only needs "
                     "system status, file names and sizes, calendar events or git status; its answer goes back to the "
                     "phone.",
+                )
+            )
+    elif section == "network":
+        # The peer mesh: other Heliox computers holding the shared secret.
+        mesh_was, mesh = bool(now.get("enabled")), _bool(values, "enabled", now.get("enabled"))
+        if mesh and not mesh_was:
+            found.append(
+                Widening(
+                    "network.enabled",
+                    "Let other Heliox computers on your network connect",
+                    f"Heliox will accept connections on port {now.get('port', 8786)} from computers that hold the "
+                    "shared secret.",
+                )
+            )
+        elif mesh and str(values.get("shared_secret") or ""):
+            found.append(
+                Widening(
+                    "network.shared_secret",
+                    "Let computers that know the new shared secret connect",
+                    "Heliox will accept connections from computers that hold the new secret.",
+                )
+            )
+        if (
+            mesh
+            and _bool(values, "skill_sync_enabled", now.get("skill_sync_enabled"))
+            and not (mesh_was and now.get("skill_sync_enabled"))
+        ):
+            found.append(
+                Widening(
+                    "network.skill_sync_enabled",
+                    "Let connected computers send Heliox plugins",
+                    "Plugins they send are kept in a folder of their own on this computer. Heliox does not load them.",
+                )
+            )
+        if (
+            mesh
+            and _bool(values, "collab_exec_enabled", now.get("collab_exec_enabled"))
+            and not (mesh_was and now.get("collab_exec_enabled"))
+        ):
+            found.append(
+                Widening(
+                    "network.collab_exec_enabled",
+                    "Let connected computers run steps on this one",
+                    "Steps a connected computer sends run here without asking you, limited to what Heliox lets "
+                    "another computer do without approval.",
                 )
             )
     elif section == "ssh":

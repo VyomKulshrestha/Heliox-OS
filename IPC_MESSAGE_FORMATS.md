@@ -1357,8 +1357,8 @@ A request never runs on the phone's say-so: see `phone_request_run`.
 | Method | Contract |
 |---|---|
 | `air_handoff_status` | Return receiver state, paired devices, and the current draft metadata. |
-| `air_handoff_set_enabled` | Atomically persist the switch and start/stop the local receiver. |
-| `air_handoff_start_pairing` | Create a short-lived QR pairing payload. |
+| `air_handoff_set_enabled` | Atomically persist the switch and start/stop the local receiver. Turning it on asks first in the daemon's approval dialog ("Let phones on your network reach Heliox"); a no returns `{ "status": "cancelled" }` and starts nothing. Turning it off is free. |
+| `air_handoff_start_pairing` | Create a short-lived QR pairing payload, after the person approves it in the daemon's dialog, every time ("Pair a new phone with Heliox"); a no returns `{ "status": "cancelled", "message": "No phone was paired." }` and no code is made. |
 | `air_handoff_cancel_pairing` | Expire the current pairing offer. |
 | `air_handoff_revoke_device` | Revoke one paired receiver by daemon-issued device ID. |
 | `air_handoff_grab` | Stage a screenshot or a bounded text value (`kind`: `screenshot` or `text`). |
@@ -3357,7 +3357,11 @@ Return LAN mesh configuration, node identity, connection count, and readiness.
 #### `mesh_configure`
 Persist and apply Peer Mesh settings in one step. A supplied `shared_secret`
 must be 32-512 bytes with no leading or trailing whitespace and is stored in the
-OS vault; enabling the mesh requires a saved secret.
+OS vault; enabling the mesh requires a saved secret. Letting other computers in, or
+giving them more, asks first in the daemon's approval dialog: turning the mesh on, a new
+secret while it is on, plugins from connected computers, and their steps running here.
+A no returns `{ "status": "cancelled" }` and changes nothing; turning any of them off is
+free.
 
 **Params:** `{ "enabled": true, "skill_sync_enabled": false, "collab_exec_enabled": false, "shared_secret": "<optional>" }`
 

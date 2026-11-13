@@ -72,6 +72,12 @@
           : {}),
         ...(secretInput ? { shared_secret: secretInput } : {}),
       });
+      if (result.status === "cancelled") {
+        // The person kept things as they were in Heliox's approval dialog: not an error; the switches go back.
+        notice = "Not changed: you did not approve it in Heliox's dialog.";
+        await refresh();
+        return;
+      }
       if (result.status !== "ok") throw new Error(result.message || "The daemon rejected Peer Mesh settings.");
       secretInput = "";
       notice = enabled ? "Authenticated Peer Mesh is running with the confirmed settings." : "Peer Mesh is disabled.";

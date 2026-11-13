@@ -762,3 +762,68 @@ async def test_phone_switches_turned_off_are_free_and_a_malformed_request_asks_n
 
     assert bad["status"] == "error" and off["status"] == "ok" and person.asked == []
     assert server.config.air_handoff.accept_requests is False
+
+
+@pytest.mark.asyncio
+async def test_turning_the_phone_receiver_on_asks_and_off_is_free(monkeypatch):
+    from types import SimpleNamespace
+
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    server._vault = SimpleNamespace(available=True)
+    server._air_handoff_manager = MagicMock(clear_ephemeral=AsyncMock())
+    server._air_handoff_server = SimpleNamespace(running=False, start=AsyncMock(), stop=AsyncMock())
+    server._publish_air_handoff_state = AsyncMock(return_value={})
+
+    on = await server._handle_air_handoff_set_enabled({"enabled": True}, _ws())
+    assert on["status"] == "cancelled" and server.config.air_handoff.enabled is False
+    server._air_handoff_server.start.assert_not_awaited()
+    assert _lines(person) == ["Let phones on your network reach Heliox"]
+
+    person.asked.clear()
+    server.config.air_handoff.enabled = True
+    off = await server._handle_air_handoff_set_enabled({"enabled": False}, _ws())
+    assert off["status"] == "ok" and person.asked == []
+
+
+@pytest.mark.asyncio
+async def test_pairing_a_phone_asks_every_time_and_a_no_makes_no_code(monkeypatch):
+    from types import SimpleNamespace
+
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    server.config.air_handoff.enabled = True
+    server._air_handoff_server = SimpleNamespace(running=True, base_url="http://192.0.2.1:8787")
+    server._air_handoff_manager = MagicMock()
+
+    reply = await server._handle_air_handoff_start_pairing({}, _ws())
+
+    assert reply == {"status": "cancelled", "message": "No phone was paired."}
+    server._air_handoff_manager.start_pairing.assert_not_called()
+    (line,) = person.asked[0]["shown"]
+    assert line["target"] == "Pair a new phone with Heliox" and person.asked[0]["plan_id"].startswith("data-")
+
+
+@pytest.mark.asyncio
+async def test_letting_other_computers_in_or_giving_them_more_asks(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    secret = "x" * 40
+
+    found = server._widenings_for(
+        "mesh_configure",
+        {"enabled": True, "shared_secret": secret, "skill_sync_enabled": True, "collab_exec_enabled": True},
+    )
+    assert [w.says for w in found] == [
+        "Let other Heliox computers on your network connect",
+        "Let connected computers send Heliox plugins",
+        "Let connected computers run steps on this one",
+    ]
+    assert "does not load them" in found[1].stops and "without asking you" in found[2].stops
+
+    server.config.network.enabled = True
+    assert [w.key for w in server._widenings_for("mesh_configure", {"enabled": True, "shared_secret": secret})] == [
+        "network.shared_secret"
+    ]
+    assert server._widenings_for("mesh_configure", {"enabled": False}) == []  # turning it off is free
+    assert server._widenings_for("mesh_configure", {"enabled": True, "skill_sync_enabled": False}) == []

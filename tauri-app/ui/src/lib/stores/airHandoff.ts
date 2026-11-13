@@ -168,12 +168,32 @@ function createAirHandoffStore() {
     }
   }
 
-  async function setEnabled(enabled: boolean): Promise<void> {
-    const result = await invoke<AirHandoffState>("air_handoff_set_enabled", { enabled });
+  /** A daemon call the person may decline in Heliox's approval dialog: null when they did (nothing changed, and
+   * that is not an error), the result otherwise. */
+  async function callOrCancelled<T>(method: string, params: Record<string, unknown> = {}): Promise<T | null> {
+    update((state) => ({ ...state, busy: true, error: "" }));
+    try {
+      const result = await call<T & DaemonStatusResult>(method, params);
+      if (result.status === "cancelled") return null;
+      return requireOkResult(result, `Air Handoff operation '${method}' was not acknowledged.`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Air Handoff failed";
+      update((state) => ({ ...state, error: message }));
+      throw cause;
+    } finally {
+      update((state) => ({ ...state, busy: false }));
+    }
+  }
+
+  /** Turn the receiver on or off. "cancelled" when the person kept it off in Heliox's approval dialog. */
+  async function setEnabled(enabled: boolean): Promise<"ok" | "cancelled"> {
+    const result = await callOrCancelled<AirHandoffState>("air_handoff_set_enabled", { enabled });
+    if (result === null) return "cancelled";
     if (result.enabled !== enabled || result.running !== enabled) {
       throw new Error("Air Handoff receiver did not reach the requested state.");
     }
     mergeRemote(result);
+    return "ok";
   }
 
   /** Change what paired phones may do. "cancelled" when the person kept it as it was in Heliox's approval dialog:
@@ -216,8 +236,10 @@ function createAirHandoffStore() {
     if (result.request) upsertRequest(result.request);
   }
 
-  async function startPairing(): Promise<AirHandoffPairing> {
-    const result = await invoke<AirHandoffPairing>("air_handoff_start_pairing");
+  /** Start pairing a phone; null when the person did not approve it in Heliox's dialog. */
+  async function startPairing(): Promise<AirHandoffPairing | null> {
+    const result = await callOrCancelled<AirHandoffPairing>("air_handoff_start_pairing");
+    if (result === null) return null;
     if (
       typeof result.session_id !== "string" ||
       !result.session_id ||

@@ -100,3 +100,19 @@ describe("Phone requests", () => {
     expect(get(airHandoff).busy).toBe(false);
   });
 });
+
+describe("Air Handoff and Heliox's approval dialog", () => {
+  beforeEach(() => {
+    daemonMocks.call.mockReset();
+    vi.resetModules();
+  });
+
+  it("a receiver or a pairing the person did not approve is not an error", async () => {
+    daemonMocks.call.mockResolvedValue({ status: "cancelled", message: "Not approved." });
+    const { airHandoff } = await import("./airHandoff");
+
+    expect(await airHandoff.setEnabled(true)).toBe("cancelled");
+    expect(await airHandoff.startPairing()).toBeNull();
+    expect(get(airHandoff).error).toBe("");
+  });
+});

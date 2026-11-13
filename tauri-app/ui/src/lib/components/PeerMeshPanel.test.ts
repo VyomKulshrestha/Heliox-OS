@@ -96,3 +96,22 @@ describe("PeerMeshPanel", () => {
     );
   });
 });
+
+describe("PeerMeshPanel and Heliox's approval dialog", () => {
+  it("a no in Heliox's dialog is not an error and the switch goes back", async () => {
+    daemonMocks.call.mockReset();
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "mesh_status") return Promise.resolve(offlineStatus);
+      if (method === "mesh_configure") return Promise.resolve({ status: "cancelled", message: "Not approved." });
+      throw new Error(`unexpected method: ${method}`);
+    });
+    render(PeerMeshPanel);
+    const toggle = await screen.findByRole("switch", { name: "Toggle Peer Mesh" });
+
+    await fireEvent.click(toggle);
+
+    expect(await screen.findByText("Not changed: you did not approve it in Heliox's dialog.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+  });
+});

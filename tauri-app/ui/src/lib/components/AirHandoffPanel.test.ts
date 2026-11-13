@@ -7,6 +7,7 @@ const handoffMocks = vi.hoisted(() => ({
   refresh: vi.fn().mockResolvedValue(undefined),
   revokeDevice: vi.fn().mockResolvedValue(undefined),
   configureRequests: vi.fn().mockResolvedValue("cancelled"),
+  startPairing: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../stores/airHandoff", () => ({
@@ -40,7 +41,6 @@ vi.mock("../stores/airHandoff", () => ({
     {
       ...handoffMocks,
       setEnabled: vi.fn(),
-      startPairing: vi.fn(),
       cancelPairing: vi.fn(),
       selectDevice: vi.fn(),
     },
@@ -72,5 +72,16 @@ describe("AirHandoffPanel phone request switches", () => {
     expect(await screen.findByText("Not changed: you did not approve it in Heliox's dialog.")).toBeTruthy();
     expect(accept.checked).toBe(false);
     expect(screen.queryByText(/Air Handoff failed/)).toBeNull();
+  });
+});
+
+describe("AirHandoffPanel pairing", () => {
+  it("a pairing the person did not approve in Heliox's dialog says so, without an error", async () => {
+    render(AirHandoffPanel);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Pair a phone" }));
+
+    expect(handoffMocks.startPairing).toHaveBeenCalled();
+    expect(await screen.findByText("No phone was paired: you did not approve it in Heliox's dialog.")).toBeTruthy();
   });
 });

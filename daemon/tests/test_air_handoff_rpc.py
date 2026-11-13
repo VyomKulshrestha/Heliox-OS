@@ -8,6 +8,21 @@ import pytest
 from pilot.server import PilotServer
 
 
+@pytest.fixture(autouse=True)
+def _the_person_approves(monkeypatch):
+    """The person says yes in the daemon's dialog; test_guard_changes.py drives that dialog. This file is about the
+    work that follows."""
+
+    async def approve(self, ws, found):
+        return None
+
+    async def yes(self, ws, lines):
+        return True
+
+    monkeypatch.setattr(PilotServer, "_approve_widenings", approve)
+    monkeypatch.setattr(PilotServer, "_ask_about_data", yes)
+
+
 class FakeConfig:
     def __init__(self, enabled: bool, *, fail_saves: int = 0) -> None:
         self.air_handoff = SimpleNamespace(enabled=enabled)

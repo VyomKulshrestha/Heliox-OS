@@ -54,17 +54,26 @@
     if (refreshTimer) clearInterval(refreshTimer);
   });
 
+  /** Said when the person declined in Heliox's approval dialog (turning the receiver on, pairing): not an error. */
+  let approvalNote = $state("");
+
   async function toggleEnabled() {
+    approvalNote = "";
     try {
-      await airHandoff.setEnabled(!$airHandoff.enabled);
+      if ((await airHandoff.setEnabled(!$airHandoff.enabled)) === "cancelled") {
+        approvalNote = "Not changed: you did not approve it in Heliox's dialog.";
+      }
     } catch {
       // The store surfaces the daemon error in the panel.
     }
   }
 
   async function startPairing() {
+    approvalNote = "";
     try {
-      await airHandoff.startPairing();
+      if ((await airHandoff.startPairing()) === null) {
+        approvalNote = "No phone was paired: you did not approve it in Heliox's dialog.";
+      }
     } catch {
       // The store surfaces the daemon error in the panel.
     }
@@ -141,6 +150,7 @@
     <div class="error">Secure OS credential storage is unavailable. Pairing is blocked.</div>
   {/if}
   {#if $airHandoff.error}<div class="error">{$airHandoff.error}</div>{/if}
+  {#if approvalNote}<p class="request-note" role="status">{approvalNote}</p>{/if}
 
   {#if $airHandoff.enabled}
     <div class="receiver-row">

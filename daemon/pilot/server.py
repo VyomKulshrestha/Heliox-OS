@@ -6956,6 +6956,12 @@ class PilotServer:
             found = guards.section_widenings("gateway", self.config.gateway, {"risk_gate_enabled": enabled})
         elif method == "supervision_config_update":
             found = guards.section_widenings("supervision", self.config.supervision, params)
+        elif method == "air_handoff_set_enabled":
+            enabled = params.get("enabled")
+            if isinstance(enabled, bool):
+                found = guards.section_widenings("air_handoff", self.config.air_handoff, {"enabled": enabled})
+        elif method == "mesh_configure":
+            found = guards.section_widenings("network", self.config.network, params)
         elif method == "air_handoff_requests_configure":
             accept, run_read_only = params.get("accept_requests"), params.get("run_read_only_requests")
             if isinstance(accept, bool) and isinstance(run_read_only, bool) and (accept or not run_read_only):
@@ -14869,6 +14875,8 @@ def handle_tool(tool_name, params):
                 "status": "error",
                 "message": "Secure OS credential storage is required for Air Handoff",
             }
+        if (refusal := await self._widening_refusal("air_handoff_set_enabled", params, ws)) is not None:
+            return refusal  # a listener on the local network, and the person did not approve it
         previous_enabled = bool(self.config.air_handoff.enabled)
         previous_running = bool(self._air_handoff_server.running)
         try:
@@ -14897,6 +14905,17 @@ def handle_tool(tool_name, params):
     async def _handle_air_handoff_start_pairing(self, params: dict, ws: ServerConnection) -> dict[str, Any]:
         if not self.config.air_handoff.enabled or not self._air_handoff_server.running:
             return {"status": "error", "message": "Enable Air Handoff before pairing"}
+        # A new phone that can reach this computer: the daemon asks, every time, before the pairing code exists.
+        line = {
+            "action_type": "send_off",
+            "target": "Pair a new phone with Heliox",
+            "description": "For five minutes, a phone that scans the code shown in Heliox's window can pair. A paired "
+            "phone can send this computer files and text and receive yours, and send requests only if that is on.",
+            "irreversible": False,
+            "undo": {"kind": "undoable", "reason": "You can remove a paired phone in Settings, Air Handoff."},
+        }
+        if not await self._ask_about_data(ws, [line]):
+            return {"status": "cancelled", "message": "No phone was paired."}
         try:
             pairing = self._air_handoff_manager.start_pairing(self._air_handoff_server.base_url)
         except Exception as exc:
@@ -15075,6 +15094,8 @@ def handle_tool(tool_name, params):
                 return {"status": "error", "message": "shared_secret cannot start or end with whitespace"}
             if not 32 <= len(supplied_secret.encode("utf-8")) <= 512:
                 return {"status": "error", "message": "shared_secret must contain from 32 to 512 bytes"}
+        if (refusal := await self._widening_refusal("mesh_configure", params, ws)) is not None:
+            return refusal  # another computer let in, or given more, and the person did not approve it
 
         from pilot.security.vault import VaultUnavailableError
 
