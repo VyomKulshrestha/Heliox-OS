@@ -47,6 +47,11 @@ class SpeechOutcome:
     heard_text: str | None = None
     played_seconds: float | None = None
     duration_seconds: float | None = None
+    # Which voice spoke it ("local", "store" or "system"), by which branch of the voice rule, and for the system voice
+    # why (pilot.system.local_tts_worker.record_reply_voice). None when no voice was chosen for it. Data only.
+    voice: str | None = None
+    voice_branch: str | None = None
+    voice_reason: str | None = None
 
 
 def heard_part(text: str, spoken_words: int, spoken_total: int) -> str:
@@ -234,6 +239,7 @@ class CompanionSpeechCoordinator:
                 continue
             self._current = request
             sequence_before = self._local_sequence()
+            reply_before = self._reply_sequence()
             self._current_speech = asyncio.create_task(self._speaker(request.text, request.recorder))
             outcome = SpeechOutcome(
                 "cancelled",
@@ -273,6 +279,7 @@ class CompanionSpeechCoordinator:
             finally:
                 if outcome.status in {"interrupted", "stopped", "superseded", "cancelled"}:
                     outcome = self._with_heard(outcome, request.text, sequence_before)
+                outcome = self._with_voice(outcome, reply_before)
                 self._pending_keys.discard(request.key)
                 if not request.future.done():
                     request.future.set_result(outcome)
@@ -290,6 +297,31 @@ class CompanionSpeechCoordinator:
 
         progress = manager().last_progress
         return progress.sequence if progress is not None else 0
+
+    @staticmethod
+    def _reply_sequence() -> int:
+        try:
+            from pilot.system.local_tts_worker import reply_sequence
+
+            return reply_sequence()
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _with_voice(outcome: SpeechOutcome, reply_before: int) -> SpeechOutcome:
+        """``outcome`` with the voice that spoke it, when one was chosen for this request (the last recorded after it
+        was taken)."""
+        from dataclasses import replace
+
+        from pilot.system.local_tts_worker import manager
+
+        try:
+            record = getattr(manager(), "last_reply", None)
+        except Exception:
+            return outcome  # data only: never in the way of the outcome
+        if record is None or record.sequence <= reply_before:
+            return outcome
+        return replace(outcome, voice=record.voice, voice_branch=record.branch, voice_reason=record.reason or None)
 
     def _with_heard(self, outcome: SpeechOutcome, text: str, sequence_before: int) -> SpeechOutcome:
         """``outcome`` with what the person heard, when the local voice spoke this request (a speak() began after

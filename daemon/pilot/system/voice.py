@@ -889,6 +889,7 @@ async def _speak_impl(
     from pilot.system.local_tts_worker import LocalVoiceNotReady
 
     loading = ""  # the local voice that was still loading when this reply was ready ("" when none)
+    local_unavailable = ""  # why the local voice did not speak it, when it did not
     if config.voice.tts_engine == "kokoro_tts":
         try:
             await _run_local_tts_worker("kokoro_tts", spoken_text, config.voice.tts_voice, output_file)
@@ -902,6 +903,7 @@ async def _speak_impl(
                 loading = "kokoro_tts"  # the system voice speaks this reply while Heliox's own voice loads
             elif not getattr(e, "already_logged", False):
                 logger.warning("Kokoro TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
+            local_unavailable = str(e) or type(e).__name__
 
     if config.voice.tts_engine == "pocket_tts":
         try:
@@ -921,10 +923,19 @@ async def _speak_impl(
                 loading = "pocket_tts"  # the system voice speaks this reply while Heliox's own voice loads
             elif not getattr(e, "already_logged", False):
                 logger.warning("Pocket TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
+            local_unavailable = str(e) or type(e).__name__
             # falls through to the platform dispatch below
 
     # The system voice the person chose for their language (voice_by_language), unless the caller named one.
     system_voice = voice or str(getattr(config.voice, "system_voice", "") or "") or None
+    from pilot.system.local_tts_worker import record_reply_voice
+
+    if loading:
+        record_reply_voice("system", "system_still_loading", "Heliox's own voice was still loading")
+    elif local_unavailable:
+        record_reply_voice("system", "system_local_unavailable", local_unavailable[:200])
+    else:
+        record_reply_voice("system", "system_chosen", "the system voice is the chosen voice")
     if CURRENT_PLATFORM == Platform.WINDOWS:
         result = await _tts_windows(spoken_text, system_voice, rate, volume, output_file)
     elif CURRENT_PLATFORM == Platform.MACOS:

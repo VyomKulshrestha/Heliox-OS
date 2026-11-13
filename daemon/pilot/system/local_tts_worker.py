@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -204,6 +205,34 @@ class LocalTTSUnavailable(RuntimeError):
     """The local voice cannot speak right now; the failure has already been logged once."""
 
     already_logged = True
+
+
+# Which voice spoke a reply, and by which branch of the rule (data for the bench and the speech result; nothing is
+# shown for it). Voices: "local" (Heliox's own voice, synthesised), "store" (made audio played from SpeechStore),
+# "system" (the system voice). Branches: "ready" (the local voice was loaded), "loaded_within_grace",
+# "store" (every piece kept), "waited_no_system_voice", "file" (written to a file), "system_still_loading" (the local
+# voice was loading past the grace), "system_local_unavailable" (it cannot load or failed), "system_chosen" (the
+# person's engine is the system voice).
+REPLY_VOICES = ("local", "store", "system")
+REPLY_BRANCHES = (
+    "ready",
+    "loaded_within_grace",
+    "store",
+    "waited_no_system_voice",
+    "file",
+    "system_still_loading",
+    "system_local_unavailable",
+    "system_chosen",
+)
+
+
+@dataclass(frozen=True)
+class ReplyVoice:
+    sequence: int  # increases with every reply recorded (record_reply_voice)
+    voice: str  # one of REPLY_VOICES
+    branch: str  # one of REPLY_BRANCHES
+    reason: str = ""  # for the system voice: why, in plain words
+    at: float = 0.0  # time.monotonic() when the voice was chosen
 
 
 class LocalVoiceNotReady(LocalTTSUnavailable):
@@ -676,6 +705,7 @@ class LocalTTSWorkerManager:
         self.head_cache: SpeechStore | None = None
         # The last speak()'s pieces and playback, for what was heard of it when it is cut off (SpeechProgress).
         self.last_progress: SpeechProgress | None = None
+        self.last_reply: ReplyVoice | None = None  # which voice spoke the last reply (record_reply_voice)
         self._spoken_sequence = 0
         self.gpu_lease = False  # the running worker holds Heliox's GPU lease (the arbiter said the card is usable)
         # Free system memory now, or None: the worker is not started when less than VOICE_HOST_RAM_BYTES is free
@@ -693,6 +723,15 @@ class LocalTTSWorkerManager:
         self._load_task: asyncio.Future[None] | None = None
         self._idle_task: asyncio.Task[None] | None = None
         self._busy = 0
+        # The voice's loads and releases with their time.monotonic(): ("load_started" | "load_ended" | "load_failed" |
+        # "released", detail, time). Data for the bench; nothing reads it to decide.
+        self.reload_log: deque[tuple[str, str, float]] = deque(maxlen=50)
+        # Every synthesis request with time.monotonic() stamps: (kind, words, requested, started, done). kind is
+        # "reply" or "ahead" (made ahead for the store); started is when the worker took it (after any request
+        # before it). Data for the bench: it shows a reply waiting behind a piece made ahead.
+        self.synth_log: deque[tuple[str, int, float, float, float]] = deque(maxlen=200)
+        self._making_ahead = False
+        self._request_started_at = 0.0
         # Whether an idle voice may stay loaded past keep_loaded_seconds (voice.tts_release = "memory": the computer
         # has the memory to spare); None: released after keep_loaded_seconds, by the clock alone.
         self.keep_while: Callable[[], bool] | None = None
@@ -819,6 +858,7 @@ class LocalTTSWorkerManager:
             self.note_activity()
             self._start_idle_watch()
             if preload:
+                self.reload_log.append(("load_started", engine, time.monotonic()))
                 self._load_task = asyncio.ensure_future(self._load(process, engine, voice))
                 self._background.add(self._load_task)
                 self._load_task.add_done_callback(self._background.discard)
@@ -827,10 +867,15 @@ class LocalTTSWorkerManager:
     async def _load(self, process: Any, engine: str, voice: str) -> None:
         started = self._clock()
         try:
-            await self._request(process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS)
-        except _MovedToCpu:
-            process = await self._ensure_process(engine, voice, preload=False)
-            await self._request(process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS)
+            try:
+                await self._request(process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS)
+            except _MovedToCpu:
+                process = await self._ensure_process(engine, voice, preload=False)
+                await self._request(process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS)
+        except BaseException as error:
+            self.reload_log.append(("load_failed", type(error).__name__, time.monotonic()))
+            raise
+        self.reload_log.append(("load_ended", engine, time.monotonic()))
         logger.info("Local voice %s loaded in %.1f s", engine, self._clock() - started)
 
     def _start_idle_watch(self) -> None:
@@ -849,15 +894,39 @@ class LocalTTSWorkerManager:
                 await self._sleep(MEMORY_RECHECK_SECONDS)  # idle, and the computer has the memory: stays loaded
                 continue
             if remaining <= 0 and self._busy == 0 and not self._io_lock.locked():
-                process = self.process
                 logger.info(
                     "Released the local voice after %.0f s without conversation; it reloads when the person speaks",
                     self.keep_loaded_seconds,
                 )
                 self._idle_task = None
-                await self._close(process)
+                await self._release_now("idle")
                 return
             await self._sleep(max(remaining, 1.0))
+
+    async def _release_now(self, reason: str) -> None:
+        """What every release runs: the worker closed, and the release logged (reload_log)."""
+        process = self.process
+        if process is None:
+            return
+        await self._close(process)
+        self.reload_log.append(("released", reason, time.monotonic()))
+
+    async def release(self, reason: str = "asked", *, force: bool = False) -> bool:
+        """Release the local voice now, as the idle release does. Never while a reply is being spoken or made.
+        Without ``force``, only when the idle release would (idle for keep_loaded_seconds, and not kept by memory);
+        with it, whatever the keep rule says. True when it was released."""
+        if self.process is None or self._busy or self._io_lock.locked():
+            return False
+        if not force:
+            idle = self._clock() - self._last_activity >= self.keep_loaded_seconds
+            if not idle or (self.keep_while is not None and self._kept_by_memory()):
+                return False
+        if self._idle_task is not None and not self._idle_task.done():
+            self._idle_task.cancel()
+        self._idle_task = None
+        logger.info("Released the local voice (%s)", reason)
+        await self._release_now(reason)
+        return True
 
     def _kept_by_memory(self) -> bool:
         """Whether the idle voice stays loaded past keep_loaded_seconds. Never while it holds Heliox's GPU lease: the
@@ -952,6 +1021,7 @@ class LocalTTSWorkerManager:
     async def _request(self, process: Any, engine: str, request: dict[str, str], *, timeout: float) -> None:
         """One request/response on the pipe. Cancelling the caller lets the worker finish it unheard."""
         await self._io_lock.acquire()
+        self._request_started_at = time.monotonic()
         exchange = asyncio.ensure_future(asyncio.to_thread(_exchange, process, request))
         exchange.add_done_callback(lambda _done: self._io_lock.release())
         self._background.add(exchange)
@@ -986,6 +1056,8 @@ class LocalTTSWorkerManager:
             raise ValueError(f"Unsupported local TTS engine: {engine}")
         if not text or len(text) > MAX_TEXT_CHARACTERS:
             raise ValueError("Speech text must contain between 1 and 20,000 characters")
+        requested = time.monotonic()
+        kind = "ahead" if self._making_ahead else "reply"
         process = await self._usable_process(engine, voice)
         request_path = request_dir / f"{output_file.stem}-{id(output_file):x}.txt"
         request_path.write_text(text, encoding="utf-8")
@@ -1000,6 +1072,7 @@ class LocalTTSWorkerManager:
             await self._request(process, engine, request, timeout=LOAD_TIMEOUT_SECONDS)
         if not output_file.is_file() or output_file.stat().st_size == 0:
             raise await self._fail(process, engine, "the worker produced no audio")
+        self.synth_log.append((kind, len(text.split()), requested, self._request_started_at, time.monotonic()))
 
     async def _usable_process(self, engine: str, voice: str) -> Any:
         if self._failed_until is not None:
@@ -1041,10 +1114,16 @@ class LocalTTSWorkerManager:
         self.note_activity()
         try:
             sentences = [] if output_file else split_for_speech(text)
+            was_ready = self.loaded and self.running and self.engine == engine
             if output_file or wait_for_load:
                 await self._announce_loading(engine, voice)  # a file, or no other voice: waited for
+                branch = "file" if output_file else "waited_no_system_voice"
+                record_reply_voice("local", branch)
             elif not self._all_kept(engine, voice, sentences):
                 await self._ready_within_grace(engine, voice)
+                record_reply_voice("local", "ready" if was_ready else "loaded_within_grace")
+            else:
+                record_reply_voice("store", "store")
             with tempfile.TemporaryDirectory(prefix="heliox-tts-", ignore_cleanup_errors=True) as temp_dir:
                 folder = Path(temp_dir)
                 if output_file:
@@ -1231,10 +1310,13 @@ class LocalTTSWorkerManager:
                         return made
                     await self._sleep(poll_seconds)
                 started = self._clock()
+                self._making_ahead = True
                 try:
                     path = await self._make(engine, text, voice, folder / f"fixed-{index}.wav", folder)
                 except LocalTTSUnavailable:
                     return made
+                finally:
+                    self._making_ahead = False
                 if not store.add_fixed(text, signature, path):
                     return made  # full
                 made += 1
@@ -1268,6 +1350,23 @@ _manager = LocalTTSWorkerManager()
 
 def manager() -> LocalTTSWorkerManager:
     return _manager
+
+
+_reply_sequence = 0
+
+
+def record_reply_voice(voice: str, branch: str, reason: str = "") -> ReplyVoice:
+    """Note which voice speaks the reply being started, and by which branch (REPLY_VOICES, REPLY_BRANCHES): kept as
+    manager().last_reply, read by the speech coordinator for the reply's SpeechOutcome. Data only."""
+    global _reply_sequence
+    _reply_sequence += 1
+    record = ReplyVoice(_reply_sequence, voice, branch, reason, time.monotonic())
+    _manager.last_reply = record
+    return record
+
+
+def reply_sequence() -> int:
+    return _reply_sequence
 
 
 def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = None) -> None:
