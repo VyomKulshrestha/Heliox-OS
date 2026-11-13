@@ -235,6 +235,33 @@ def section_widenings(
                         "index on this computer.",
                     )
                 )
+    elif section == "air_handoff":
+        # What a paired phone may do: send a request that waits for Run, and start read-only ones at once.
+        accept_was, accept = (
+            bool(now.get("accept_requests")),
+            _bool(values, "accept_requests", now.get("accept_requests")),
+        )
+        if accept and not accept_was:
+            found.append(
+                Widening(
+                    "air_handoff.accept_requests",
+                    "Let your paired phones send Heliox requests",
+                    "A phone you paired can send a request of up to 500 characters. It waits on this computer until "
+                    "you press Run, and every action in it still asks here.",
+                )
+            )
+        auto_was = accept_was and bool(now.get("run_read_only_requests"))
+        auto = accept and _bool(values, "run_read_only_requests", now.get("run_read_only_requests"))
+        if auto and not auto_was:
+            found.append(
+                Widening(
+                    "air_handoff.run_read_only_requests",
+                    "Let your paired phones start status checks without you",
+                    "A request from a phone you paired starts at once, without you pressing Run, when it only needs "
+                    "system status, file names and sizes, calendar events or git status; its answer goes back to the "
+                    "phone.",
+                )
+            )
     elif section == "ssh":
         turned_on(
             "enabled",

@@ -1,12 +1,34 @@
 <script lang="ts">
   import QRCode from "qrcode";
   import { onDestroy, onMount } from "svelte";
+  import { get } from "svelte/store";
   import { airHandoff } from "../stores/airHandoff";
   import ConfirmPrompt from "./ConfirmPrompt.svelte";
 
   let qrDataUrl = $state("");
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let pendingRevoke = $state<{ deviceId: string; name: string } | null>(null);
+  /** Said when the person kept a phone switch as it was in Heliox's approval dialog: not an error. */
+  let requestsNote = $state("");
+
+  /** Change what paired phones may do; the box always ends showing what the daemon has, also after a no or an
+   * error (the error itself is shown above). */
+  async function setRequestOption(
+    box: HTMLInputElement,
+    key: "accept_requests" | "run_read_only_requests",
+    accept: boolean,
+    runReadOnly: boolean,
+  ) {
+    requestsNote = "";
+    try {
+      if ((await airHandoff.configureRequests(accept, runReadOnly)) === "cancelled") {
+        requestsNote = "Not changed: you did not approve it in Heliox's dialog.";
+      }
+    } catch {
+      // airHandoff shows the error.
+    }
+    box.checked = Boolean(get(airHandoff)[key]);
+  }
 
   $effect(() => {
     const pairingUrl = $airHandoff.pairing?.pairing_url || "";
@@ -170,7 +192,12 @@
           checked={$airHandoff.accept_requests}
           disabled={$airHandoff.busy}
           onchange={(event) =>
-            void airHandoff.configureRequests(event.currentTarget.checked, $airHandoff.run_read_only_requests)}
+            void setRequestOption(
+              event.currentTarget,
+              "accept_requests",
+              event.currentTarget.checked,
+              $airHandoff.run_read_only_requests,
+            )}
         />
         <span>
           <strong>Accept requests from paired phones</strong>
@@ -182,7 +209,8 @@
           type="checkbox"
           checked={$airHandoff.run_read_only_requests}
           disabled={$airHandoff.busy || !$airHandoff.accept_requests}
-          onchange={(event) => void airHandoff.configureRequests(true, event.currentTarget.checked)}
+          onchange={(event) =>
+            void setRequestOption(event.currentTarget, "run_read_only_requests", true, event.currentTarget.checked)}
         />
         <span>
           <strong>Start status checks right away</strong>
@@ -192,6 +220,7 @@
           >
         </span>
       </label>
+      {#if requestsNote}<p class="request-note" role="status">{requestsNote}</p>{/if}
       {#each ($airHandoff.requests ?? []).filter((item) => item.status === "waiting") as request (request.request_id)}
         <div class="request">
           <span><strong>{request.device_name}</strong> asks: {request.text}</span>
@@ -244,6 +273,11 @@
 </section>
 
 <style>
+  .request-note {
+    margin: 0;
+    color: var(--text-secondary);
+  }
+
   .requests {
     display: grid;
     gap: 10px;

@@ -89,4 +89,14 @@ describe("Phone requests", () => {
       run_read_only_requests: false,
     });
   });
+
+  it("a switch the person did not approve in Heliox's dialog is not an error", async () => {
+    daemonMocks.call.mockResolvedValue({ status: "cancelled", message: "Not approved." });
+    const { airHandoff } = await import("./airHandoff");
+
+    expect(await airHandoff.configureRequests(true, false)).toBe("cancelled");
+
+    expect(get(airHandoff).error).toBe("");
+    expect(get(airHandoff).busy).toBe(false);
+  });
 });

@@ -917,6 +917,10 @@ Drop a `waiting` request without running it. **Params:** `{ "request_id": "..." 
 `run_read_only_requests` needs `accept_requests`). Persists the choice and broadcasts
 `air_handoff_state`, which now also carries `accept_requests`, `run_read_only_requests`,
 `accepting_requests` and the ten newest `requests`.
+Turning either on asks first in the daemon's approval dialog ("Let your paired phones send
+Heliox requests", "Let your paired phones start status checks without you"); a no returns
+`{ "status": "cancelled" }` and changes nothing. Turning them off is free. It is a
+config-mutating method: it runs under the settings lock and is announced with `config_updated`.
 
 #### `list_permission_events`
 List recent tamper-evident permission-escalation audit events.

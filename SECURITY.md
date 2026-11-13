@@ -1028,6 +1028,9 @@ five waiting requests per phone.
   status. File contents, the clipboard, email, the screen, environment variables, the
   registry, and anything that opens or changes something are refused.
 - The phone receives only the job's short result, as an encrypted text handoff.
+- Turning either switch on waits for your yes in the daemon's own approval dialog, which
+  says what the phone may then do; a client cannot turn them on by itself. Turning them
+  off is free.
 
 ## 🔐 Heliox's own configuration is off-limits to actions
 

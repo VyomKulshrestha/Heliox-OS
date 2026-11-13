@@ -176,12 +176,27 @@ function createAirHandoffStore() {
     mergeRemote(result);
   }
 
-  async function configureRequests(accept: boolean, runReadOnly: boolean): Promise<void> {
-    const result = await invoke<AirHandoffState>("air_handoff_requests_configure", {
-      accept_requests: accept,
-      run_read_only_requests: accept && runReadOnly,
-    });
-    mergeRemote(result);
+  /** Change what paired phones may do. "cancelled" when the person kept it as it was in Heliox's approval dialog:
+   * nothing changed, and that is not an error. */
+  async function configureRequests(accept: boolean, runReadOnly: boolean): Promise<"ok" | "cancelled"> {
+    update((state) => ({ ...state, busy: true, error: "" }));
+    try {
+      const result = await call<AirHandoffState & DaemonStatusResult>("air_handoff_requests_configure", {
+        accept_requests: accept,
+        run_read_only_requests: accept && runReadOnly,
+      });
+      if (result.status === "cancelled") return "cancelled";
+      mergeRemote(
+        requireOkResult(result, "Air Handoff operation 'air_handoff_requests_configure' was not acknowledged."),
+      );
+      return "ok";
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Air Handoff failed";
+      update((state) => ({ ...state, error: message }));
+      throw cause;
+    } finally {
+      update((state) => ({ ...state, busy: false }));
+    }
   }
 
   function upsertRequest(request: PhoneRequest): void {

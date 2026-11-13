@@ -726,3 +726,39 @@ async def test_turning_ssh_on_asks_and_off_is_free(monkeypatch):
     server.config.ssh.enabled = True
     off = await server._handle_ssh_set_enabled({"enabled": False}, _ws())
     assert off["status"] == "ok" and person.asked == [] and server.config.ssh.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_letting_phones_send_requests_and_start_them_asks_and_a_no_changes_nothing(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+
+    reply = await server._handle_air_handoff_requests_configure(
+        {"accept_requests": True, "run_read_only_requests": True}, _ws()
+    )
+
+    assert reply["status"] == "cancelled"
+    assert server.config.air_handoff.accept_requests is False
+    assert server.config.air_handoff.run_read_only_requests is False
+    lines = {line["target"]: line["description"] for line in person.asked[0]["shown"]}
+    assert "waits on this computer until you press Run" in lines["Let your paired phones send Heliox requests"]
+    assert "without you pressing Run" in lines["Let your paired phones start status checks without you"]
+
+
+@pytest.mark.asyncio
+async def test_phone_switches_turned_off_are_free_and_a_malformed_request_asks_nothing(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    server.config.air_handoff.accept_requests = True
+    server.config.air_handoff.run_read_only_requests = True
+    server._publish_air_handoff_state = AsyncMock(return_value={})
+
+    bad = await server._handle_air_handoff_requests_configure(
+        {"accept_requests": False, "run_read_only_requests": True}, _ws()
+    )
+    off = await server._handle_air_handoff_requests_configure(
+        {"accept_requests": False, "run_read_only_requests": False}, _ws()
+    )
+
+    assert bad["status"] == "error" and off["status"] == "ok" and person.asked == []
+    assert server.config.air_handoff.accept_requests is False

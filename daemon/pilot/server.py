@@ -300,6 +300,7 @@ CONFIG_MUTATING_RPC_METHODS = frozenset(
         "ssh_save_host",
         "ssh_delete_host",
         "air_handoff_set_enabled",
+        "air_handoff_requests_configure",
         "mesh_configure",
         "store_api_key",
         "delete_api_key",
@@ -6950,6 +6951,14 @@ class PilotServer:
             found = guards.section_widenings("gateway", self.config.gateway, {"risk_gate_enabled": enabled})
         elif method == "supervision_config_update":
             found = guards.section_widenings("supervision", self.config.supervision, params)
+        elif method == "air_handoff_requests_configure":
+            accept, run_read_only = params.get("accept_requests"), params.get("run_read_only_requests")
+            if isinstance(accept, bool) and isinstance(run_read_only, bool) and (accept or not run_read_only):
+                found = guards.section_widenings(
+                    "air_handoff",
+                    self.config.air_handoff,
+                    {"accept_requests": accept, "run_read_only_requests": run_read_only},
+                )
         elif method == "ssh_set_enabled":
             enabled = params.get("enabled")
             if isinstance(enabled, bool):
@@ -7311,6 +7320,8 @@ class PilotServer:
             return {"status": "error", "message": "accept_requests and run_read_only_requests must be booleans"}
         if run_read_only and not accept:
             return {"status": "error", "message": "Read-only requests can only start at once when requests are on"}
+        if (refusal := await self._widening_refusal("air_handoff_requests_configure", params, ws)) is not None:
+            return refusal  # what a phone may do grows only with the person's yes in the daemon's dialog
         previous = (self.config.air_handoff.accept_requests, self.config.air_handoff.run_read_only_requests)
         self.config.air_handoff.accept_requests = accept
         self.config.air_handoff.run_read_only_requests = run_read_only

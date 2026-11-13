@@ -6,6 +6,7 @@ import AirHandoffPanel from "./AirHandoffPanel.svelte";
 const handoffMocks = vi.hoisted(() => ({
   refresh: vi.fn().mockResolvedValue(undefined),
   revokeDevice: vi.fn().mockResolvedValue(undefined),
+  configureRequests: vi.fn().mockResolvedValue("cancelled"),
 }));
 
 vi.mock("../stores/airHandoff", () => ({
@@ -57,5 +58,19 @@ describe("AirHandoffPanel device revocation", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Revoke phone" }));
     expect(handoffMocks.revokeDevice).toHaveBeenCalledWith("phone-1");
+  });
+});
+
+describe("AirHandoffPanel phone request switches", () => {
+  it("a switch the person kept off in Heliox's dialog goes back off, with a note and no error", async () => {
+    render(AirHandoffPanel);
+    const accept = screen.getByRole("checkbox", { name: /Accept requests from paired phones/ }) as HTMLInputElement;
+
+    await fireEvent.click(accept);
+
+    expect(handoffMocks.configureRequests).toHaveBeenCalledWith(true, undefined);
+    expect(await screen.findByText("Not changed: you did not approve it in Heliox's dialog.")).toBeTruthy();
+    expect(accept.checked).toBe(false);
+    expect(screen.queryByText(/Air Handoff failed/)).toBeNull();
   });
 });
