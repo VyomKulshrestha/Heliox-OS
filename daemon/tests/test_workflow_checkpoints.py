@@ -57,6 +57,7 @@ async def test_resume_plan_skips_completed_actions_and_verifies_full_plan(tmp_pa
     )
     first_result = ActionResult(action=plan.actions[0], success=True, output="first output")
     await store.start_plan("plan-1", "send notifications", plan)
+    await store.mark_approval("plan-1", "approved")  # resuming as such needs an approved plan
     await store.record_result("plan-1", first_result)
 
     server = PilotServer(PilotConfig())
@@ -114,6 +115,7 @@ async def test_resume_plan_returns_success_when_checkpoint_already_complete(tmp_
     plan = ActionPlan(actions=[_notify_action("one")], explanation="done")
     checkpoint_result = ActionResult(action=plan.actions[0], success=True, output="done")
     await store.start_plan("plan-1", "send notification", plan)
+    await store.mark_approval("plan-1", "approved")  # resuming as such needs an approved plan
     await store.record_result("plan-1", checkpoint_result)
     await store.mark_status("plan-1", "complete")
 
@@ -149,6 +151,7 @@ async def test_complete_checkpoint_fails_closed_when_postcondition_is_not_verifi
     plan = ActionPlan(actions=[_notify_action("one")], explanation="done")
     checkpoint_result = ActionResult(action=plan.actions[0], success=True, output="done")
     await store.start_plan("plan-1", "send notification", plan)
+    await store.mark_approval("plan-1", "approved")  # resuming as such needs an approved plan
     await store.record_result("plan-1", checkpoint_result)
     await store.mark_status("plan-1", "complete")
 
@@ -187,6 +190,7 @@ async def test_failed_resume_reports_actual_failure_instead_of_plan_intent(tmp_p
         raw_input="send notification",
     )
     await store.start_plan("plan-1", "send notification", plan)
+    await store.mark_approval("plan-1", "approved")  # resuming as such needs an approved plan
 
     server = PilotServer(PilotConfig())
     server._checkpoint_store = store

@@ -498,6 +498,16 @@ class JsonRpcRequest:
 
     @classmethod
     def parse(cls, raw: str) -> JsonRpcRequest:
+        """Parse one request from a client. Parameters whose names start with "_" are Heliox's own (set by the
+        daemon when it calls a handler itself) and are dropped here, for every method and every role: until 13
+        November 2026 a client could send "_authorized_task_id" and resume a durable plan without its token."""
+        request = cls._parse(raw)
+        if isinstance(request.params, dict):
+            request.params = {key: value for key, value in request.params.items() if not str(key).startswith("_")}
+        return request
+
+    @classmethod
+    def _parse(cls, raw: str) -> JsonRpcRequest:
         """Parse a raw JSON-RPC request string.
 
         Args:
@@ -4565,6 +4575,8 @@ class PilotServer:
                         if revised is not None:
                             return revised
                     message = "Cancelled before execution: the plan was denied."
+                    if self._checkpoint_store:
+                        await self._checkpoint_store.mark_approval(plan_id, "denied")
                     await self._record_permission_escalations(
                         plan_id=plan_id,
                         plan=plan,
@@ -4625,6 +4637,9 @@ class PilotServer:
                     )
 
             approved_decision = "partially_approved" if partially_approved else "approved"
+            if self._checkpoint_store:
+                # A dry run is a preview: resuming its checkpoint asks first.
+                await self._checkpoint_store.mark_approval(plan_id, "preview" if dry_run else "approved")
             if self._durable_tasks is not None and self._active_task_id:
                 await self._durable_tasks.transition(
                     self._active_task_id,
@@ -5904,12 +5919,10 @@ class PilotServer:
                             plan_id=task.plan_id,
                         )
                     response = await self._handle_resume_plan(
-                        {
-                            "plan_id": task.plan_id,
-                            "_authorized_task_id": task.task_id,
-                        },
+                        {"plan_id": task.plan_id},
                         ws,
                         denied_indices=denied_indices,
+                        authorized_task_id=task.task_id,
                     )
                 else:
                     if task.status != TaskStatus.PLANNING:
@@ -5945,12 +5958,20 @@ class PilotServer:
         ws: ServerConnection,
         *,
         denied_indices: frozenset[int] = frozenset(),
+        authorized_task_id: str = "",
     ) -> dict:
         """Resume a previously checkpointed plan from its last completed action.
 
         ``denied_indices`` are the checkpoint's action indices the durable approval left unchecked (passed only by
         ``resume_task``). They are dropped before anything runs, so the resumed plan is the approved plan: the
         checkpoint's completed count and the action indices then refer to it, as they did when it first ran.
+        ``authorized_task_id`` is passed only by ``resume_task``, after it checked the task's resume token and its
+        approved approval row; no client can send it.
+
+        A plan the person denied is never resumed. One that was never approved (saved before its approval step, a
+        dry run, or saved before approvals were recorded) runs only after the person approves what is left, every
+        remaining action shown. Until 13 November 2026 any client could resume any checkpoint for real with no
+        approval, a denied plan included.
         """
         plan_id = str(params.get("plan_id", "")).strip()
         if not plan_id:
@@ -5959,7 +5980,6 @@ class PilotServer:
             return {"status": "error", "message": "Workflow checkpoint store is not initialized"}
         if self._durable_tasks is not None:
             durable = await self._durable_tasks.get_by_plan_id(plan_id)
-            authorized_task_id = str(params.get("_authorized_task_id") or "")
             if durable is not None and authorized_task_id != durable.task_id:
                 return {
                     "status": "error",
@@ -5970,6 +5990,13 @@ class PilotServer:
         checkpoint = await self._checkpoint_store.get(plan_id)
         if checkpoint is None:
             return {"status": "error", "message": f"No checkpoint found for plan_id: {plan_id}"}
+        if checkpoint.approval == "denied":
+            return {
+                "status": "error",
+                "message": "You turned this plan down, so it is not resumed.",
+                "plan_id": plan_id,
+            }
+        needs_approval = not authorized_task_id and checkpoint.approval != "approved"
 
         approved_plan = checkpoint.plan
         if denied_indices:
@@ -6038,6 +6065,34 @@ class PilotServer:
             raw_input=approved_plan.raw_input,
         )
 
+        if needs_approval:
+            confirmed, approved_now, required_now = await self._wait_for_confirmation(
+                plan_id,
+                remaining_plan,
+                ws,
+                reason="This plan was never approved. Approve what is left before Heliox runs it.",
+                force_all_actions=True,
+            )
+            if not confirmed:
+                await self._checkpoint_store.mark_approval(plan_id, "denied")
+                return {
+                    "status": "cancelled",
+                    "plan_id": plan_id,
+                    "message": "Cancelled before execution: the plan was denied.",
+                }
+            unchecked = required_now - approved_now
+            if unchecked:
+                remaining_plan = remaining_plan.model_copy(
+                    update={"actions": [a for i, a in enumerate(remaining_plan.actions) if i not in unchecked]}
+                )
+                approved_plan = approved_plan.model_copy(
+                    update={"actions": [*approved_plan.actions[:completed_count], *remaining_plan.actions]}
+                )
+                await self._checkpoint_store.replace_plan(plan_id, approved_plan)
+            await self._checkpoint_store.mark_approval(plan_id, "approved")
+            if not remaining_plan.actions:
+                return {"status": "cancelled", "plan_id": plan_id, "message": "Nothing left was approved."}
+
         async def _on_action_start(action: Any) -> None:
             await ws.send(_notification("action_start", {"action": action.model_dump(), "resumed": True}))
 
@@ -6054,7 +6109,7 @@ class PilotServer:
             "plan_id": plan_id,
             "initial_last_output": checkpoint.last_output,
         }
-        if params.get("_authorized_task_id"):
+        if authorized_task_id:
             execute_kwargs["action_index_offset"] = completed_count
         try:
             results = await self._execute_tracked(remaining_plan, **execute_kwargs)

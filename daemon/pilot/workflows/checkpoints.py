@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,11 @@ from pilot import config as pilot_config
 from pilot.actions import ActionPlan, ActionResult
 
 WORKFLOW_DB_FILENAME = "workflow_checkpoints.db"
+
+# What the person decided about a checkpoint's plan. Only "approved" resumes as it is; "denied" never resumes;
+# "pending" (saved before the approval step), "preview" (a dry run) and "unknown" (saved before 13 November 2026,
+# when this was not recorded) resume only through the approval they needed the first time.
+APPROVALS = frozenset({"pending", "approved", "denied", "preview", "unknown"})
 
 
 @dataclass(frozen=True)
@@ -30,6 +35,7 @@ class PlanCheckpoint:
     snapshot_ids: list[str]
     status: str
     updated_at: str
+    approval: str = "unknown"
 
     @property
     def is_complete(self) -> bool:
@@ -91,6 +97,13 @@ class WorkflowCheckpointStore:
                     )
                     """
                 )
+                cursor = await db.execute("PRAGMA table_info(workflow_checkpoints)")
+                columns = {row[1] for row in await cursor.fetchall()}
+                await cursor.close()
+                if "approval" not in columns:  # a store from before 13 November 2026
+                    await db.execute(
+                        "ALTER TABLE workflow_checkpoints ADD COLUMN approval TEXT NOT NULL DEFAULT 'unknown'"
+                    )
                 await db.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_workflow_checkpoints_status
@@ -111,9 +124,30 @@ class WorkflowCheckpointStore:
             snapshot_ids=[],
             status="running",
             updated_at=self._now(),
+            approval="pending",
         )
         await self._upsert(checkpoint)
         return checkpoint
+
+    async def mark_approval(self, plan_id: str, approval: str) -> PlanCheckpoint | None:
+        """Record what the person decided about the plan (APPROVALS)."""
+        if approval not in APPROVALS:
+            raise ValueError(f"unknown approval: {approval}")
+        checkpoint = await self.get(plan_id)
+        if checkpoint is None:
+            return None
+        updated = replace(checkpoint, approval=approval, updated_at=self._now())
+        await self._upsert(updated)
+        return updated
+
+    async def replace_plan(self, plan_id: str, plan: ActionPlan) -> PlanCheckpoint | None:
+        """Keep the results so far and put ``plan`` in place: a resume approved only some of what was left."""
+        checkpoint = await self.get(plan_id)
+        if checkpoint is None:
+            return None
+        updated = replace(checkpoint, plan=plan, updated_at=self._now())
+        await self._upsert(updated)
+        return updated
 
     async def record_result(
         self,
@@ -131,10 +165,8 @@ class WorkflowCheckpointStore:
         snapshot_ids = list(checkpoint.snapshot_ids)
         if result.snapshot_id and result.snapshot_id not in snapshot_ids:
             snapshot_ids.append(result.snapshot_id)
-        updated = PlanCheckpoint(
-            plan_id=checkpoint.plan_id,
-            user_input=checkpoint.user_input,
-            plan=checkpoint.plan,
+        updated = replace(
+            checkpoint,
             results=results,
             completed_count=completed_count,
             last_output=result.output or checkpoint.last_output,
@@ -149,17 +181,7 @@ class WorkflowCheckpointStore:
         checkpoint = await self.get(plan_id)
         if checkpoint is None:
             return None
-        updated = PlanCheckpoint(
-            plan_id=checkpoint.plan_id,
-            user_input=checkpoint.user_input,
-            plan=checkpoint.plan,
-            results=checkpoint.results,
-            completed_count=checkpoint.completed_count,
-            last_output=checkpoint.last_output,
-            snapshot_ids=checkpoint.snapshot_ids,
-            status=status,
-            updated_at=self._now(),
-        )
+        updated = replace(checkpoint, status=status, updated_at=self._now())
         await self._upsert(updated)
         return updated
 
@@ -176,7 +198,8 @@ class WorkflowCheckpointStore:
                     last_output,
                     snapshot_ids_json,
                     status,
-                    updated_at
+                    updated_at,
+                    approval
                 FROM workflow_checkpoints
                 WHERE plan_id = ?
                 """,
@@ -201,9 +224,10 @@ class WorkflowCheckpointStore:
                     last_output,
                     snapshot_ids_json,
                     status,
-                    updated_at
+                    updated_at,
+                    approval
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(plan_id) DO UPDATE SET
                     user_input = excluded.user_input,
                     plan_json = excluded.plan_json,
@@ -212,7 +236,8 @@ class WorkflowCheckpointStore:
                     last_output = excluded.last_output,
                     snapshot_ids_json = excluded.snapshot_ids_json,
                     status = excluded.status,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    approval = excluded.approval
                 """,
                 self._to_row(checkpoint),
             )
@@ -230,6 +255,7 @@ class WorkflowCheckpointStore:
             json.dumps(checkpoint.snapshot_ids),
             checkpoint.status,
             checkpoint.updated_at,
+            checkpoint.approval,
         )
 
     @staticmethod
@@ -245,6 +271,7 @@ class WorkflowCheckpointStore:
             snapshot_ids=list(json.loads(row[6])),
             status=row[7],
             updated_at=row[8],
+            approval=row[9],
         )
 
     @staticmethod

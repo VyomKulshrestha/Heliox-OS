@@ -203,14 +203,22 @@ is missing from the plan's checkpoint, the approval does not match the
 checkpoint: the reply is `{ "status": "error", ... }` and nothing runs.
 
 #### `resume_plan`
-Resume a legacy/non-durable checkpoint from its first incomplete action.
+Resume a non-durable checkpoint from its first incomplete action. The window
+does not call it; it resumes through `resume_task`.
 
 **Params:** `{ "plan_id": "a3b2c1f5" }`
 
 **Result:** an execution result with `resumed`, `skipped_actions`,
 `executed_actions`, and combined results. If the checkpoint belongs to a
 durable task, the daemon rejects this method and requires `resume_task` plus
-the resume token.
+the resume token. A plan the person denied is refused (`{ "status": "error" }`).
+A plan that was never approved (saved before its approval step, a dry run, or
+saved before approvals were recorded) runs only after the person approves what
+is left in the approval dialog, every remaining action shown; a denial returns
+`{ "status": "cancelled" }` and marks the plan denied.
+
+Parameters whose names start with `_` are dropped from every request, for
+every method, before any handler sees them: they are the daemon's own.
 
 #### `export_session_chat`
 Export the messages supplied by the active UI chat to the user's Downloads
