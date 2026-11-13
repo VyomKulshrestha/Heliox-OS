@@ -55,9 +55,9 @@ jobs:
               failed=$((failed + 1))
             fi
           done
-          if python -m pip install --disable-pip-version-check --dry-run -q -e ./daemon faster-whisper sounddevice \
+          if python -m pip install --disable-pip-version-check --dry-run -q -e ./daemon faster-whisper sounddevice soundfile \
             > "$RUNNER_TEMP/pip-dry-run.log" 2>&1; then
-            echo "CHECK job-inputs/pip: PASS - the daemon, faster-whisper and sounddevice would install"
+            echo "CHECK job-inputs/pip: PASS - the daemon, faster-whisper, sounddevice and soundfile would install"
           else
             echo "CHECK job-inputs/pip: FAIL - $(tail -3 "$RUNNER_TEMP/pip-dry-run.log" | tr '\n' ' ')"
             failed=$((failed + 1))
@@ -82,7 +82,7 @@ jobs:
       - name: Install the daemon and the recogniser (core, Faster-Whisper, PortAudio)
         timeout-minutes: 8
         run: |
-          python -m pip install --disable-pip-version-check --progress-bar off -e ./daemon faster-whisper sounddevice
+          python -m pip install --disable-pip-version-check --progress-bar off -e ./daemon faster-whisper sounddevice soundfile
           export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
           python -c "from huggingface_hub import snapshot_download; from pilot.system.model_presence import FASTER_WHISPER_REPOS as R; print(snapshot_download(R['tiny.en']))"
 
