@@ -827,9 +827,12 @@ that one change. A finished task can then be undone from its preview.
 - **Later edits win.** Each entry stores a hash of what Heliox left behind. Undo
   re-checks it right before acting and leaves anything that changed since alone,
   reporting it as a conflict. Undo never overwrites the person's own work.
-- **The person confirms what they saw.** `undo_task` needs `confirmed: true` and the
-  token of the preview shown; if the disk changed after the preview, nothing is undone
-  and a fresh preview is returned. Saying "undo that" only opens the preview. Undo is
+- **The person approves what undo will do, in Heliox's own dialog.** `undo_task` asks in
+  the daemon's approval dialog, one line per change it puts back or removes ("Put back the
+  earlier version of notes.txt") and one for what it leaves as it is; a `confirmed` a
+  client sends is not the approval. The preview's token stays a freshness check: if the
+  disk changed after the preview, nothing is asked or undone and a fresh preview is
+  returned. Saying "undo that" brings the same dialog; voice cannot approve it. Undo is
   refused while any task runs.
 - **Undo does not act.** It restores recorded copies to recorded paths. It does not
   plan, call a model or pass through the executor, and it refuses any path inside

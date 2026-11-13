@@ -2121,6 +2121,9 @@ function createSession() {
     }
   }
 
+  /** Undo a task: fetch its current preview and send the undo at once. The window does not ask first: the daemon
+   * asks in its own approval dialog, listing in words what undo puts back and what it leaves as it is. The preview
+   * dialog opens only when something changed since and the person should look again. */
   async function openUndoPreview(taskKey?: string) {
     const key = taskKey ?? get({ subscribe }).undoOffer?.taskKey ?? "";
     if (!key) return;
@@ -2134,7 +2137,7 @@ function createSession() {
         addSystemMessage(`Undo is not available: ${res.message ?? "unknown error"}`);
         return;
       }
-      update((s) => ({ ...s, undoPreview: res.preview ?? null, undoSubmitting: false, undoError: "" }));
+      await sendUndo(res.preview);
     } catch (err) {
       addSystemMessage(`Undo is not available: ${String(err instanceof Error ? err.message : err)}`);
     }
@@ -2231,15 +2234,20 @@ function createSession() {
     update((s) => ({ ...s, undoOffer: null }));
   }
 
+  /** Undo again from the preview dialog, after something changed since the first preview. */
   async function confirmUndo() {
     const preview = get({ subscribe }).undoPreview;
     if (!preview || get({ subscribe }).undoSubmitting) return;
+    await sendUndo(preview);
+  }
+
+  async function sendUndo(preview: UndoPreview) {
+    if (get({ subscribe }).undoSubmitting) return;
     update((s) => ({ ...s, undoSubmitting: true, undoError: "" }));
     try {
       const res = (await call("undo_task", {
         task_key: preview.task_key,
         preview_token: preview.preview_token,
-        confirmed: true,
       })) as {
         status: string;
         message?: string;
@@ -2248,6 +2256,12 @@ function createSession() {
         skipped?: number;
         failed?: number;
       };
+      if (res.status === "cancelled") {
+        // The person said no in Heliox's dialog: nothing was undone, and the tasks still queued are not asked about.
+        update((s) => ({ ...s, undoPreview: null, undoSubmitting: false, undoError: "", undoQueue: [] }));
+        addSystemMessage(res.message ?? "Nothing was undone.");
+        return;
+      }
       if (res.status === "changed" && res.preview) {
         update((s) => ({
           ...s,
@@ -2258,7 +2272,9 @@ function createSession() {
         return;
       }
       if (res.status !== "ok" && res.status !== "partial") {
+        const shown = Boolean(get({ subscribe }).undoPreview);
         update((s) => ({ ...s, undoSubmitting: false, undoError: res.message ?? "Undo failed." }));
+        if (!shown) addSystemMessage(`Undo failed: ${res.message ?? "unknown error"}`);
         return;
       }
       update((s) => ({
@@ -2277,11 +2293,13 @@ function createSession() {
       addSystemMessage(parts.join(" "));
       openNextQueuedUndo();
     } catch (err) {
+      const shown = Boolean(get({ subscribe }).undoPreview);
       update((s) => ({
         ...s,
         undoSubmitting: false,
         undoError: String(err instanceof Error ? err.message : err),
       }));
+      if (!shown) addSystemMessage(`Undo failed: ${String(err instanceof Error ? err.message : err)}`);
     }
   }
 

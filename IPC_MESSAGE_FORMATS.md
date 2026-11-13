@@ -387,14 +387,18 @@ the reason.
 ```
 
 #### `undo_task`
-Undo a finished task. `confirmed` must be exactly `true` and `preview_token` must match
-the preview the person saw; if anything changed since, the daemon returns
-`{"status": "changed", "message": ..., "preview": <fresh preview>}` and undoes nothing.
-Refused while an interactive task or an autonomous job is running. Entries are reversed
+Undo a finished task. `preview_token` must match the current preview; if anything changed
+since, the daemon returns `{"status": "changed", "message": ..., "preview": <fresh preview>}`,
+asks nothing and undoes nothing. Otherwise the daemon asks in its own approval dialog, one
+line per change it puts back or removes in the preview's words ("Put back the earlier
+version of notes.txt"), then one line for what it leaves as it is. A no returns
+`{"status": "cancelled", "message": "Nothing was undone."}`. A `confirmed` the client sends
+is a request, never the approval; it may be left out.
+Refused while an interactive task or an autonomous job is running, before anything is asked. Entries are reversed
 newest first and each is re-checked just before it is applied. Undo restores recorded
 state on recorded paths only; it does not plan, call a model or go through the executor.
 
-**Params:** `{ "task_key": "4f0c2a9e", "preview_token": "9c1d…", "confirmed": true }`
+**Params:** `{ "task_key": "4f0c2a9e", "preview_token": "9c1d…" }`
 
 **Result:**
 ```json
@@ -4344,7 +4348,8 @@ UI                                          Daemon
 │  ... later, if the user wants to undo the task │
 │── undo_preview {task_key} ───────────────────►│
 │◄── response: {preview: items, preview_token}  │
-│── undo_task {task_key, preview_token, confirmed: true} ►│
+│── undo_task {task_key, preview_token} ───────►│
+│◄── confirm_required (the daemon's own dialog) │
 │◄── notification: undo_complete {task_key, undone, skipped, failed}
 │                                               │
 │  ... or revert the whole disk snapshot ...    │

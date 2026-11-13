@@ -7027,17 +7027,16 @@ class PilotServer:
         return {"status": "ok", "preview": preview}
 
     async def _handle_undo_task(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Undo a finished task after the person confirmed the preview they saw.
+        """Undo a finished task once the person approved it in the daemon's own dialog, which lists in words what it
+        puts back, removes and leaves as it is. A ``confirmed`` the client sends is a request, never the approval.
 
-        Needs ``confirmed`` to be exactly true and the ``preview_token`` of that preview.
-        Undo restores only what the journal recorded, refuses anything changed since,
-        and never runs a plan, so it does not go through the planner or the executor.
+        ``preview_token`` stays a freshness check: if what undo would do changed since the client's preview, nothing
+        is asked or undone and the fresh preview is returned. Undo restores only what the journal recorded, refuses
+        anything changed since, and never runs a plan, so it does not go through the planner or the executor.
         """
         task_key = self._undo_task_key(params)
         if task_key is None:
             return {"status": "error", "message": "task_key is required"}
-        if params.get("confirmed") is not True:
-            return {"status": "error", "message": "Undo needs your confirmation in the preview."}
         preview_token = params.get("preview_token")
         if not isinstance(preview_token, str) or not preview_token:
             return {"status": "error", "message": "preview_token is required"}
@@ -7046,6 +7045,19 @@ class PilotServer:
         busy = self._undo_busy_message()
         if busy:
             return {"status": "error", "message": busy}
+        preview = await self._undo_journal.preview(task_key)
+        if preview is None:
+            return {"status": "error", "message": "Nothing is recorded to undo for this task."}
+        if preview["preview_token"] != preview_token:
+            return {
+                "status": "changed",
+                "message": "Something changed since the preview. Check the new preview before undoing.",
+                "preview": preview,
+            }
+        lines = self._undo_lines(preview)
+        if lines and not await self._ask_about_data(ws, lines):
+            return {"status": "cancelled", "message": "Nothing was undone."}
+        # The journal checks the token again: a change while the dialog was open undoes nothing.
         result = await self._undo_journal.undo(task_key, preview_token)
         if result.get("status") in ("ok", "partial"):
             logger.info(
@@ -7066,6 +7078,45 @@ class PilotServer:
                 },
             )
         return result
+
+    @staticmethod
+    def _undo_lines(preview: dict[str, Any]) -> list[dict[str, Any]]:
+        """The approval lines for undoing a task: one per change it puts back or removes, in the preview's own words,
+        then one for what it leaves as it is. None when nothing would be undone."""
+        ready = [item for item in preview.get("items", []) if item.get("state") == "ready"]
+        if not ready:
+            return []
+        not_kept = {"kind": "not_undoable", "reason": "Heliox does not record an undo, so it cannot undo it in turn."}
+        lines = [
+            {
+                "action_type": "replace_data",
+                "target": str(item.get("description") or item.get("target") or "A change Heliox made").rstrip("."),
+                "description": "Part of undoing this task. Heliox checks it again just before and leaves it as it "
+                "is if it changed since.",
+                "irreversible": False,
+                "undo": dict(not_kept),
+            }
+            for item in ready
+        ]
+        left = [
+            str(item.get("description") or "")
+            for item in preview.get("items", [])
+            if item.get("state") not in ("ready", "done")
+        ]
+        left += [str(item.get("reason") or item.get("target") or "") for item in preview.get("not_undoable", [])]
+        left = [words for words in left if words]
+        if left:
+            others = "1 other change as it is" if len(left) == 1 else f"{len(left)} other changes as they are"
+            lines.append(
+                {
+                    "action_type": "replace_data",
+                    "target": f"Leave {others}",
+                    "description": " ".join(left),
+                    "irreversible": False,
+                    "undo": dict(not_kept),
+                }
+            )
+        return lines
 
     async def _handle_undo_clear(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Delete all undo history and the copies it keeps, after the person approves it in the daemon's dialog (a

@@ -64,7 +64,7 @@ describe("per-task undo", () => {
     expect(get(session).undoOffer).toEqual({ taskKey: "task-7", undoable: 2, notUndoable: 1 });
   });
 
-  it("undoes only after the preview is confirmed, sending its token", async () => {
+  it("sends the undo at once with the preview's token: the daemon's own dialog asks, not the window", async () => {
     daemonMocks.call.mockImplementation(async (method: string) => {
       if (method === "undo_preview") return { status: "ok", preview };
       if (method === "undo_task") return { status: "ok", undone: 1, skipped: 0, failed: 0 };
@@ -77,47 +77,66 @@ describe("per-task undo", () => {
     });
 
     await session.openUndoPreview();
-    expect(get(session).undoPreview?.preview_token).toBe("token-1");
-    expect(daemonMocks.call).not.toHaveBeenCalledWith("undo_task", expect.anything());
 
-    await session.confirmUndo();
-
-    expect(daemonMocks.call).toHaveBeenCalledWith("undo_task", {
-      task_key: "task-7",
-      preview_token: "token-1",
-      confirmed: true,
-    });
+    expect(daemonMocks.call).toHaveBeenCalledWith("undo_task", { task_key: "task-7", preview_token: "token-1" });
     const state = get(session);
     expect(state.undoPreview).toBeNull();
     expect(state.undoOffer).toBeNull();
     expect(state.messages.at(-1)?.text).toBe("Undid 1 change.");
   });
 
-  it("shows the fresh preview when the files changed after the first one", async () => {
-    const fresh = { ...preview, ready: 0, preview_token: "token-2" };
+  it("a no in Heliox's dialog undoes nothing and is not an error", async () => {
     daemonMocks.call.mockImplementation(async (method: string) => {
       if (method === "undo_preview") return { status: "ok", preview };
-      return { status: "changed", message: "Something changed since the preview.", preview: fresh };
+      if (method === "undo_task") return { status: "cancelled", message: "Nothing was undone." };
+      return { status: "ok" };
     });
     const { session } = await import("./session");
 
     await session.openUndoPreview("task-7");
-    await session.confirmUndo();
 
+    const state = get(session);
+    expect(state.undoPreview).toBeNull();
+    expect(state.undoError).toBe("");
+    expect(state.undoSubmitting).toBe(false);
+    expect(state.messages.at(-1)?.text).toBe("Nothing was undone.");
+  });
+
+  it("shows the fresh preview when the files changed, and Undo there sends its new token", async () => {
+    const fresh = { ...preview, preview_token: "token-2" };
+    let first = true;
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "undo_preview") return { status: "ok", preview };
+      if (first) {
+        first = false;
+        return { status: "changed", message: "Something changed since the preview.", preview: fresh };
+      }
+      return { status: "ok", undone: 1, skipped: 0, failed: 0 };
+    });
+    const { session } = await import("./session");
+
+    await session.openUndoPreview("task-7");
     const state = get(session);
     expect(state.undoPreview?.preview_token).toBe("token-2");
     expect(state.undoError).toBe("Something changed since the preview.");
+
+    await session.confirmUndo();
+    expect(daemonMocks.call).toHaveBeenLastCalledWith("undo_task", { task_key: "task-7", preview_token: "token-2" });
+    expect(get(session).undoPreview).toBeNull();
   });
 
-  it("opens the preview when the daemon offers undo after a spoken request", async () => {
-    daemonMocks.call.mockResolvedValue({ status: "ok", preview });
+  it("an undo the daemon offers after a spoken request goes to its dialog", async () => {
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "undo_preview") return { status: "ok", preview };
+      return { status: "cancelled", message: "Nothing was undone." };
+    });
     const { session } = await import("./session");
 
     notificationHandler!("undo_offer", { task_key: "task-7" });
-    await vi.waitFor(() => expect(get(session).undoPreview).not.toBeNull());
-
+    await vi.waitFor(() =>
+      expect(daemonMocks.call).toHaveBeenCalledWith("undo_task", { task_key: "task-7", preview_token: "token-1" }),
+    );
     expect(daemonMocks.call).toHaveBeenCalledWith("undo_preview", { task_key: "task-7" });
-    expect(daemonMocks.call).not.toHaveBeenCalledWith("undo_task", expect.anything());
   });
 
   it("clears the offer when another window finished the undo", async () => {
@@ -181,24 +200,25 @@ describe("undo for several tasks", () => {
     vi.resetModules();
   });
 
-  it("previews each task in turn, newest first, and Cancel stops the rest", async () => {
+  it("asks about each task in turn, newest first, and a no stops the rest", async () => {
+    const sent: string[] = [];
     daemonMocks.call.mockImplementation(async (method: string, params: { task_key?: string }) => {
       if (method === "undo_preview") return { status: "ok", preview: { ...preview, task_key: params.task_key } };
-      if (method === "undo_task") return { status: "ok", undone: 1, skipped: 0, failed: 0 };
+      if (method === "undo_task") {
+        sent.push(params.task_key ?? "");
+        return params.task_key === "old"
+          ? { status: "cancelled", message: "Nothing was undone." }
+          : { status: "ok", undone: 1, skipped: 0, failed: 0 };
+      }
       return { status: "ok" };
     });
     const { session } = await import("./session");
 
     notificationHandler!("undo_offer", { task_key: "new", task_keys: ["new", "old", "older"] });
-    await vi.waitFor(() => expect(get(session).undoPreview?.task_key).toBe("new"));
-    expect(get(session).undoQueue).toEqual(["old", "older"]);
-
-    await session.confirmUndo();
-    await vi.waitFor(() => expect(get(session).undoPreview?.task_key).toBe("old"));
-
-    session.cancelUndo();
-    expect(get(session).undoPreview).toBeNull();
-    expect(get(session).undoQueue).toEqual([]);
+    await vi.waitFor(() => expect(sent).toEqual(["new", "old"]));
+    await vi.waitFor(() => expect(get(session).undoQueue).toEqual([]));
+    expect(sent).toEqual(["new", "old"]);
+    expect(get(session).messages.at(-1)?.text).toBe("Nothing was undone.");
   });
 
   it("shows a daily brief in chat", async () => {

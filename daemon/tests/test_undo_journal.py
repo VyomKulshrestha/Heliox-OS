@@ -408,40 +408,87 @@ async def test_dry_run_journals_nothing(tmp_path):
     assert await journal.preview("plan-d") is None
 
 
-@pytest.mark.asyncio
-async def test_undo_rpc_needs_confirmation_and_an_idle_daemon(tmp_path):
+class _Person:
+    """The person at Heliox's approval dialog: says yes or no, and keeps what each dialog showed."""
+
+    def __init__(self, yes: bool) -> None:
+        self.yes = yes
+        self.shown: list[list[dict]] = []
+
+    async def __call__(self, plan_id, plan, ws, **kwargs):
+        self.shown.append(kwargs.get("shown") or [])
+        everything = set(range(len(plan.actions)))
+        return self.yes, (everything if self.yes else set()), everything
+
+
+async def _undo_server(tmp_path, person: _Person):
     from pilot.server import PilotServer
 
     server = PilotServer(PilotConfig())
     server._undo_journal = UndoJournal(tmp_path / "undo-store", config=server.config.undo)
+    server._wait_for_confirmation = person
+    server._broadcast_notification = MagicMock(side_effect=lambda *a, **k: _noop())
     path = tmp_path / "x.txt"
     path.write_text("a", encoding="utf-8")
     await _run(
         server._undo_journal, _file_action(ActionType.FILE_WRITE, path, content="b"), lambda: path.write_text("b")
     )
     preview = (await server._handle_undo_preview({"task_key": "task-1"}, MagicMock()))["preview"]
-    server._broadcast_notification = MagicMock(side_effect=lambda *a, **k: _noop())
+    return server, path, preview
 
-    for confirmed in (None, "true", 1):
+
+@pytest.mark.asyncio
+async def test_undo_asks_in_the_daemons_dialog_naming_what_it_puts_back_and_a_no_undoes_nothing(tmp_path):
+    person = _Person(yes=False)
+    server, path, preview = await _undo_server(tmp_path, person)
+
+    # "confirmed" from the client is a request: with or without it, the daemon asks.
+    for confirmed in (True, None):
         refused = await server._handle_undo_task(
             {"task_key": "task-1", "preview_token": preview["preview_token"], "confirmed": confirmed}, MagicMock()
         )
-        assert refused["status"] == "error"
+        assert refused == {"status": "cancelled", "message": "Nothing was undone."}
+    assert path.read_text(encoding="utf-8") == "b"
+    (line,) = person.shown[0]
+    assert line["target"] == "Put back the earlier version of x.txt"
+    assert line["action_type"] == "replace_data" and "checks it again just before" in line["description"]
+    server._broadcast_notification.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_an_approved_undo_needs_an_idle_daemon_and_then_puts_it_back(tmp_path):
+    person = _Person(yes=True)
+    server, path, preview = await _undo_server(tmp_path, person)
 
     server._interactive_request_active = True
     busy = await server._handle_undo_task(
-        {"task_key": "task-1", "preview_token": preview["preview_token"], "confirmed": True}, MagicMock()
+        {"task_key": "task-1", "preview_token": preview["preview_token"]}, MagicMock()
     )
-    assert "running tasks" in busy["message"]
+    assert "running tasks" in busy["message"] and person.shown == []  # refused before anything is asked
     assert path.read_text(encoding="utf-8") == "b"
 
     server._interactive_request_active = False
     done = await server._handle_undo_task(
-        {"task_key": "task-1", "preview_token": preview["preview_token"], "confirmed": True}, MagicMock()
+        {"task_key": "task-1", "preview_token": preview["preview_token"]}, MagicMock()
     )
-    assert done["status"] == "ok"
+    assert done["status"] == "ok" and len(person.shown) == 1
     assert path.read_text(encoding="utf-8") == "a"
     assert server._broadcast_notification.call_args.args[0] == "undo_complete"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_preview_asks_nothing_and_returns_the_fresh_one(tmp_path):
+    person = _Person(yes=True)
+    server, path, preview = await _undo_server(tmp_path, person)
+    path.write_text("the person's own edit", encoding="utf-8")
+
+    changed = await server._handle_undo_task(
+        {"task_key": "task-1", "preview_token": preview["preview_token"]}, MagicMock()
+    )
+
+    assert changed["status"] == "changed" and changed["preview"]["preview_token"] != preview["preview_token"]
+    assert person.shown == [] and path.read_text(encoding="utf-8") == "the person's own edit"
+    assert (await server._handle_undo_task({"task_key": "task-1"}, MagicMock()))["status"] == "error"
 
 
 def test_approval_badge_reflects_the_setting():
