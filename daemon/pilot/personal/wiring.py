@@ -227,6 +227,22 @@ def offers_for(server: Any, data_dir: Any = None) -> Any:
     return offers
 
 
+def note_task_done(server: Any, request: str) -> None:
+    """A request finished well: when it matches one of the person's active goals, offer to note it as progress at
+    the next quiet moment (pilot.personal.offers.goal_progress). Never raises."""
+    goals = getattr(server, "_goals", None)
+    if goals is None or not str(request or "").strip():
+        return
+    try:
+        from pilot.personal.offers import goal_progress
+
+        offer = goal_progress(str(request), goals.active())
+        if offer is not None:
+            offers_for(server).offer_soon(offer)
+    except Exception:
+        logger.debug("Could not check the request against the goals", exc_info=True)
+
+
 def _day_moments(server: Any, now: datetime) -> list[Any]:
     """The start and end of the working day the person told Heliox, as offers (pilot.personal.offers.day_moments)."""
     from pilot.personal.offers import day_moments

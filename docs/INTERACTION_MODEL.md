@@ -416,6 +416,12 @@ to stay quiet, "why?" answered from what the person said, "not today" holding it
 ending it. A simulated week checks that the next day follows the answer. **Fakes only**
 (`tests/test_working_day_offers.py`).
 
+A request that finishes well and shares a topic word with exactly one active goal ("open the podcast folder" and
+"launch the podcast") brings one offer at the next quiet moment within 15 minutes: "That sounds like progress on your
+goal "launch the podcast". Want me to note it?". "Why?" names the word they share; yes adds the request to the goal's
+progress; it is offered once a day per goal, under every offer rule, and "don't offer that" ends it
+(`offers.goal_progress`, `wiring.note_task_done`). **Fakes only** (`tests/test_goal_progress_offers.py`).
+
 Suggestions, offers and Live are turned off, back on, down or up by voice from one table
 (`pilot.personal.spoken_settings`), each phrase family with the value it saves and the sentence said, and a request to
 stop something is answered by a sentence that says it stopped. "Stop suggesting things" (also "quit", "don't",

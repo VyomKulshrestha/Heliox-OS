@@ -3743,6 +3743,10 @@ class PilotServer:
                     privacy_class=PrivacyClass.SENSITIVE,
                 )
                 await self._broadcast_notification("task_complete", payload)
+                if status == "success" and last_plan_id and not dry_run:
+                    from pilot.personal.wiring import note_task_done
+
+                    note_task_done(self, request_text)  # progress on a goal: offered at the next quiet moment
                 # The execute reply carries these too, so the window that ran the task can show
                 # Undo and the receipt on the task's own message.
                 footer = {key: payload[key] for key in ("undo", "receipt_id") if key in payload}

@@ -205,6 +205,7 @@ _KIND_WORDS = {
     "stale_goal": "reminders for quiet goals",
     "get_to_know": "questions to get to know you",
     "routine": "offers at the start and end of your working day",
+    "goal_progress": "noting progress on your goals",
 }
 
 
@@ -262,6 +263,47 @@ def day_moments(now: datetime, *, start: int | None, end: int | None) -> list[Of
     return found
 
 
+GOAL_OFFER_WITHIN_SECONDS = 15 * 60  # after the task: later it is no longer about what was just done
+# Words that say what to do, not what about: they never tie a request to a goal.
+_DOING_WORDS = frozenset(
+    {"open", "close", "find", "search", "show", "play", "start", "stop", "make", "create", "write", "send", "read",
+     "check", "please", "file", "files", "folder", "window", "page", "app", "the", "my", "for", "with", "about", "into",
+     "from", "this", "that", "some", "new", "list", "note", "notes", "add", "set", "get", "look", "up"}
+)  # fmt: skip
+
+
+def _topic_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", text.casefold()) if len(w) >= 4 and w not in _DOING_WORDS}
+
+
+def goal_progress(request: str, goals: list[dict[str, Any]]) -> Offer | None:
+    """A finished request that shares a topic word with one active goal ("open the podcast folder" and "launch the
+    podcast"): one offer to note it as progress, with the shared word as the reason. None for a request that is
+    itself about goals, or that matches no goal or more than one."""
+    said = " ".join(str(request).split())
+    if not said or re.search(r"\b(?:goal|goals|project|projects)\b", said, re.IGNORECASE):
+        return None
+    asked = _topic_words(said)
+    matched = []
+    for goal in goals:
+        if goal.get("status", "active") != "active" or not goal.get("id") or not goal.get("title"):
+            continue
+        shared = sorted(asked & _topic_words(str(goal["title"])))
+        if shared:
+            matched.append((goal, shared[0]))
+    if len(matched) != 1:
+        return None
+    goal, word = matched[0]
+    title = str(goal["title"])
+    return Offer(
+        key=f"goal_progress:{goal['id']}",
+        kind="goal_progress",
+        text=f'That sounds like progress on your goal "{title}". Want me to note it?',
+        request=f"add to my {title} goal {said}",
+        why=f'You asked me to "{said}", and "{word}" is in your goal "{title}".',
+    )
+
+
 def from_suggestion(pick: dict[str, Any] | None) -> Offer | None:
     """An offer from a ``Suggester`` pick that can be acted on, with the reason it was picked."""
     if not pick or not pick.get("say"):
@@ -307,6 +349,8 @@ class Offers:
     spans: Callable[[float, float], list[dict[str, Any]]] | None = None
     # Offers tied to what the person told Heliox about their day (``day_moments``), given the current time.
     moments: Callable[[datetime], list[Offer]] = lambda now: []
+    # Offers about what was just done (``goal_progress``), each with the clock time it stops being timely.
+    soon: list[tuple[Offer, float]] = field(default_factory=list)
     label: Callable[[str], str] = lambda app: app
     now: Callable[[], datetime] = datetime.now
     clock: Callable[[], float] = time.monotonic
@@ -344,6 +388,9 @@ class Offers:
     def candidates(self) -> list[Offer]:
         now = self.now()
         found: list[Offer] = []
+        tick = self.clock()
+        self.soon = [(offer, until) for offer, until in self.soon if until > tick]
+        found += [offer for offer, _until in self.soon]  # about what was just done: first while it is timely
         try:
             found += self.moments(now)  # first: the person said when their day starts and ends
         except Exception:
@@ -409,6 +456,11 @@ class Offers:
                 continue
             return offer
         return None
+
+    def offer_soon(self, offer: Offer, within: float = GOAL_OFFER_WITHIN_SECONDS) -> None:
+        """Offer this at the next quiet moment, if one comes within ``within`` seconds (the ordinary rules apply)."""
+        self.soon = [(o, until) for o, until in self.soon if o.key != offer.key]
+        self.soon.append((offer, self.clock() + within))
 
     def mark_offered(self, offer: Offer) -> str:
         made = _Made(offer, self.clock(), self._today())
