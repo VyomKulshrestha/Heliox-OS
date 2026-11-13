@@ -1,0 +1,119 @@
+name: "Linux package on a clean system"
+
+# The Linux packages a person installs, on systems that have never seen Heliox. The .deb and .rpm are built as the
+# release job builds them (release build, ubuntu-22.04), then each goes into a fresh container where the system's
+# own package manager installs it with its declared dependencies and nothing else:
+# - ubuntu:24.04: first-run setup through the app's own window, the daemon it starts, then apt-get remove: what it
+#   ends, what it leaves and what it says (daemon/tests/platform_real/deb_install_check.sh, "full");
+# - ubuntu:22.04, whose Python 3.10 Heliox cannot use: the app starts and its setup screen offers the private Python
+#   with its size and sources, nothing fetched ("offer"); the download itself is the first-run job's "private" leg;
+# - fedora: the .rpm installs, its libraries resolve and the app starts (rpm_install_check.sh).
+# A release build is slow (about 35 to 45 runner minutes with a warm cache, 60 without), so this runs when the app,
+# its bundle settings, the first-run setup or this check change on main, nightly, and by hand; never on every push.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tauri-app/src-tauri/**"
+      - "tauri-app/package.json"
+      - "tauri-app/package-lock.json"
+      - "tauri-app/ui/src/lib/firstRun*"
+      - "tauri-app/ui/src/lib/components/FirstRunInstall.svelte"
+      - "daemon/tests/platform_real/deb_install_check.*"
+      - "daemon/tests/platform_real/rpm_install_check.sh"
+      - "daemon/tests/platform_real/app_launch_check.py"
+      - "daemon/tests/platform_real/first_run_rpc_check.py"
+      - ".github/workflows/linux-package.yml"
+  schedule:
+    - cron: "23 2 * * *" # nightly, 02:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-package:
+    name: Linux package on a clean system
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the build dependencies (as the release job does)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev librsvg2-dev patchelf libgtk-3-dev \
+            libayatana-appindicator3-dev
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "tauri-app/src-tauri -> target"
+          key: linux-package-release
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tauri-app/ui/package-lock.json
+
+      - name: Build the .deb and the .rpm (release build)
+        id: build
+        timeout-minutes: 45
+        run: |
+          (cd tauri-app/ui && npm ci)
+          (cd tauri-app && npm ci && npx tauri build --bundles deb,rpm)
+          ls -l tauri-app/src-tauri/target/release/bundle/deb tauri-app/src-tauri/target/release/bundle/rpm
+
+      - name: Build tauri-driver (the test's own tool, not part of the package)
+        id: driver
+        timeout-minutes: 15
+        run: cargo install tauri-driver --locked --root "$RUNNER_TEMP/tools"
+
+      - name: The .deb on a clean Ubuntu 24.04 (set up, use, remove)
+        timeout-minutes: 45
+        run: |
+          deb="$(ls tauri-app/src-tauri/target/release/bundle/deb/*.deb | head -1)"
+          mkdir -p "$RUNNER_TEMP/out-24.04"
+          set +e
+          docker run --rm -e GITHUB_ACTIONS -e RUNNER_TEMP=/out -v "$PWD:/src:ro" \
+            -v "$RUNNER_TEMP/tools/bin:/tools:ro" -v "$RUNNER_TEMP/out-24.04:/out" ubuntu:24.04 \
+            timeout 2400 bash /src/daemon/tests/platform_real/deb_install_check.sh "/src/$deb" /tools deb full
+          status=$?
+          for log in "$RUNNER_TEMP"/out-24.04/*.log; do
+            [ -f "$log" ] && { echo "--- $(basename "$log")"; tail -40 "$log"; }
+          done
+          exit $status
+
+      - name: The .deb on a clean Ubuntu 22.04 (installs, starts, offers the private Python)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.driver.outcome == 'success' }}
+        timeout-minutes: 20
+        run: |
+          deb="$(ls tauri-app/src-tauri/target/release/bundle/deb/*.deb | head -1)"
+          mkdir -p "$RUNNER_TEMP/out-22.04"
+          set +e
+          docker run --rm -e GITHUB_ACTIONS -e RUNNER_TEMP=/out -v "$PWD:/src:ro" \
+            -v "$RUNNER_TEMP/tools/bin:/tools:ro" -v "$RUNNER_TEMP/out-22.04:/out" ubuntu:22.04 \
+            timeout 1100 bash /src/daemon/tests/platform_real/deb_install_check.sh "/src/$deb" /tools deb-22.04 offer
+          status=$?
+          for log in "$RUNNER_TEMP"/out-22.04/*.log; do
+            [ -f "$log" ] && { echo "--- $(basename "$log")"; tail -40 "$log"; }
+          done
+          exit $status
+
+      - name: The same build's .rpm on a clean Fedora (installs, starts)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.driver.outcome == 'success' }}
+        timeout-minutes: 20
+        run: |
+          rpm="$(ls tauri-app/src-tauri/target/release/bundle/rpm/*.rpm | head -1)"
+          docker run --rm -e GITHUB_ACTIONS -e RUNNER_TEMP=/tmp -v "$PWD:/src:ro" fedora:latest \
+            sh -c "cat /etc/fedora-release; timeout 1100 bash /src/daemon/tests/platform_real/rpm_install_check.sh /src/$rpm"

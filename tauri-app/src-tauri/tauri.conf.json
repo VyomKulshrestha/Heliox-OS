@@ -55,10 +55,16 @@
     },
     "linux": {
       "deb": {
-        "depends": ["python3 (>= 3.11)", "python3-pip", "python3-venv", "libportaudio2", "at-spi2-core"]
+        "depends": ["libportaudio2", "at-spi2-core"],
+        "recommends": ["python3 (>= 3.11)", "python3-venv", "python3-pip"],
+        "preRemoveScript": "linux/pre-remove.sh",
+        "postRemoveScript": "linux/post-remove.sh"
       },
       "rpm": {
-        "depends": ["python3 >= 3.11", "python3-pip", "portaudio", "at-spi2-core"]
+        "depends": ["portaudio", "at-spi2-core"],
+        "recommends": ["python3 >= 3.11", "python3-pip"],
+        "preRemoveScript": "linux/pre-remove.sh",
+        "postRemoveScript": "linux/post-remove.sh"
       }
     }
   }

@@ -278,13 +278,14 @@ macOS:
 
 Linux:
 
-1. Fixed for the .deb: `python3 -m venv` fails on Debian and Ubuntu without `python3-venv`, and microphone capture fails without `libportaudio2`; both are now package dependencies, with `at-spi2-core` (the .rpm gets `portaudio` and `at-spi2-core`). Not tested against a built package. The AppImage cannot declare dependencies, but setup now shows its failures in the app (Fakes only: vitest).
+1. Fixed for the .deb: `python3 -m venv` fails on Debian and Ubuntu without `python3-venv`, and microphone capture fails without `libportaudio2`. `libportaudio2` and `at-spi2-core` are package dependencies (the .rpm's are `portaudio` and `at-spi2-core`). A system Python is only recommended (`python3 (>= 3.11)`, `python3-venv`, `python3-pip`; the .rpm recommends `python3 >= 3.11` and `python3-pip`), because first-run setup downloads a private Python when the system's cannot be used; as a dependency, `python3 (>= 3.11)` cannot be met on Ubuntu 22.04, whose Python is 3.10, though the release builds the package on 22.04. Not tested against a built package. The AppImage cannot declare dependencies, but setup now shows its failures in the app (Fakes only: vitest).
 2. Fixed: the same chosen, visible setup as on macOS ([FIRST_RUN.md](FIRST_RUN.md)); a Python without `venv` is skipped in favour of a private one (Not tested: the runner's Python has `venv`).
 3. Fixed: Live says when the accessibility bus is missing or toolkit accessibility is off. Fakes only.
 4. Fixed: without espeak, speech logs one "no voice available" message and answers in text; whether the app shows that sentence is up to the audio workstream. Fakes only.
 5. Fixed: the `notify` action says when `notify-send` is missing instead of claiming success. Fakes only.
 6. Partly fixed: on Wayland, screenshots and the global shortcut go through the desktop's portals (where the desktop has them, and the desktop asks the person): the screenshot Run for real under sway (CI on 0a8edad), the shortcut Run for real only against a fake portal. The window tools (`wmctrl`, `xdotool`) are still X11-only and fail with an X11 hint.
 7. Not offered: a headless install (the daemon as a service on a machine with no desktop session). The app starts and supervises the daemon, and almost everything the daemon does needs a person's session: the screen, windows, the microphone, the accessibility bus. The old Debian scripts and system unit in `packaging/`, which nothing built, were removed.
+8. Not tested on Fedora: first-run setup and removal. The linux-package workflow installs the .rpm in a fresh Fedora container and checks only that it installs with its declared dependencies, that its libraries resolve and that the app starts.
 
 ## Languages other than English
 
