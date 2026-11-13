@@ -1,0 +1,114 @@
+name: "Hearing soak — two hours that hear and speak (Linux)"
+
+# A real daemon with the listener, the local voice and Live on, for two hours on a real PulseAudio server: synthetic
+# speech in, Heliox's voice out, typed slips for Live, reminders. Prints a SAMPLE line every five minutes as it
+# happens; at the end the first spoken request must be heard and answered aloud again, and nothing said in the room
+# that was not for Heliox may have run (daemon/tests/platform_real/hearing_soak_check.py). The speech models are the
+# conversation-timing workflow's, fetched the same way and checked by their SHA-256. Never blocks anything.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes of the soak (120: the full run)"
+        required: false
+        default: "120"
+  schedule:
+    - cron: "23 2 * * 0" # Sundays 02:23 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hearing-soak-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  soak:
+    name: Two hours that hear and speak (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 175
+    defaults:
+      run:
+        working-directory: daemon
+        shell: bash
+    env:
+      # Every Heliox folder of the prefetch and the soak (pilot.real_folders.use_scratch_folders); its models part is
+      # cached with the same key as conversation-timing's. Never the runner's own folders.
+      HELIOX_BENCH_ROOT: ${{ github.workspace }}/.heliox-bench
+      CUDA_VISIBLE_DEVICES: ""
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: System libraries (PulseAudio, espeak-ng, the Linux accessibility stack, Xvfb, xdotool)
+        working-directory: .
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            libportaudio2 libsndfile1 espeak-ng pulseaudio pulseaudio-utils libasound2-plugins \
+            xvfb xdotool dbus dbus-x11 at-spi2-core libatk-adaptor python3-gi gir1.2-gtk-3.0
+
+      - name: Install the daemon with the voice and Linux extras (CPU-only PyTorch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[voice,linux]" psutil
+
+      - name: Restore speech models
+        id: models-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.heliox-bench/.local/share/heliox-os/models
+            ~/.cache/huggingface
+          key: speech-${{ runner.os }}-${{ hashFiles('daemon/pilot/system/speech_models.json', 'daemon/benchmarks/conversation_bench/ci_prefetch.py') }}
+
+      - name: Fetch the speech set through Heliox's own download path (checked by SHA-256)
+        env:
+          HF_HUB_OFFLINE: "0"
+        run: python -m benchmarks.conversation_bench.ci_prefetch --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Save speech models
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.heliox-bench/.local/share/heliox-os/models
+            ~/.cache/huggingface
+          key: ${{ steps.models-cache.outputs.cache-primary-key }}
+
+      - name: The soak's own inputs, before the long run
+        timeout-minutes: 5
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          dbus-run-session -- bash -c '
+            Xvfb :99 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
+            export DISPLAY=:99 GTK_A11Y=atspi
+            sleep 2
+            python tests/platform_real/hearing_soak_check.py --inputs
+          '
+
+      - name: Two hours that hear and speak
+        # Below the job's limit, so a stopped run still leaves its SAMPLE lines and the daemon's log tail.
+        timeout-minutes: 160
+        env:
+          HF_HUB_OFFLINE: "1"
+          MINUTES: ${{ github.event.inputs.minutes || '120' }}
+        run: |
+          pulseaudio --check || pulseaudio --start --exit-idle-time=-1
+          dbus-run-session -- bash -c '
+            Xvfb :99 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
+            export DISPLAY=:99 GTK_A11Y=atspi
+            sleep 2
+            python tests/platform_real/hearing_soak_check.py --minutes "$MINUTES"
+          '
