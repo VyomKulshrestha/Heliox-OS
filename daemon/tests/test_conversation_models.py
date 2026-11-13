@@ -289,8 +289,8 @@ def test_claude_error_and_refusal_events_become_reasons():
 @pytest.mark.parametrize(
     ("cloud", "planner", "expected"),
     [
-        ("gemini", "", "gemini-2.5-flash-lite"),
-        ("gemini", "gemini-4-carbon", "gemini-2.5-flash-lite"),
+        ("gemini", "", "gemini-3.5-flash-lite"),
+        ("gemini", "gemini-4-carbon", "gemini-3.5-flash-lite"),
         ("openai", "gpt-6.1-sol", "gpt-6-luna"),
         ("openai", "gpt-5.5-pro", "gpt-6-luna"),
         ("openrouter", "", "openai/gpt-6-luna"),

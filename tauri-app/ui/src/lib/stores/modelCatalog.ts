@@ -3,7 +3,12 @@
 import { writable } from "svelte/store";
 import { call } from "../api/daemon";
 
-export type Withdrawn = { state: "deprecated" | "retired" | "unlisted"; successor: string; date: string; says: string };
+export type Withdrawn = {
+  state: "deprecated" | "retired" | "unlisted" | "closed";
+  successor: string;
+  date: string;
+  says: string;
+};
 export type ProviderModels = {
   planner_default: string;
   talk_default: string;
@@ -66,6 +71,7 @@ export function withdrawnLine(provider: string, model: string, found: Withdrawn)
   const who = MAKERS[provider] ?? provider;
   const on = found.date ? ` on ${found.date}` : "";
   if (found.state === "unlisted") return `${model} is no longer on ${who}'s list of models.`;
+  if (found.state === "closed") return `${model} is no longer offered to new ${who} accounts.`;
   if (found.state === "deprecated") return `${model} is deprecated by ${who} and stops working${on}.`;
   return `${model} was retired by ${who}${on}.`;
 }

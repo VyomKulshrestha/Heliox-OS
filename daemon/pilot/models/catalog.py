@@ -59,7 +59,9 @@ PLANNER_DEFAULTS: dict[str, str] = {
 TALK_DEFAULTS: dict[str, str] = {
     "claude": "claude-haiku-5-5",  # active, not sooner than 7 October 2027
     "openai": "gpt-6-luna",  # successor to gpt-4o-mini; sent with reasoning effort "none" (REASONING_OFF)
-    "gemini": "gemini-2.5-flash-lite",  # "not deprecated", thinking off by default
+    # Google's named successor to gemini-2.5-flash-lite, which Google refuses to accounts that had not used it (its
+    # own 404 to a key new to that model on 14 November); sent with thinkingLevel "minimal" (Gemini 3 takes no thinkingBudget).
+    "gemini": "gemini-3.5-flash-lite",
     "openrouter": "openai/gpt-6-luna",  # on OpenRouter; sent with reasoning effort "none"
     "meta": "muse-spark-1.3",  # latency unmeasured
 }
@@ -124,7 +126,6 @@ OFFERED: dict[str, list[str]] = {
         "gemini-3.6-flash",
         "gemini-3.5-flash-lite",
         "gemini-3.1-flash-lite",
-        "gemini-2.5-flash-lite",
     ],
     "openrouter": ["openrouter/auto", "openai/gpt-6-luna"],
     "meta": ["muse-spark-1.3", "muse-spark-1.2", "muse-spark-1.1", "muse-ember-1.0"],
@@ -135,7 +136,8 @@ OFFERED: dict[str, list[str]] = {
 class Withdrawn:
     """A model the provider has deprecated (still answers until ``date``) or retired (requests fail)."""
 
-    state: str  # "deprecated" | "retired" | "unlisted" (no longer on the provider's pages)
+    # "deprecated" | "retired" | "unlisted" (no longer on the provider's pages) | "closed" (refused to new accounts)
+    state: str
     successor: str  # the provider's named replacement, or the planner default when it names none
     date: str = ""  # shutdown or retirement date, ISO; "" when the page gives none
 
@@ -166,6 +168,9 @@ WITHDRAWN: dict[str, dict[str, Withdrawn]] = {
     },
     "gemini": {
         "gemini-2.5-flash": Withdrawn("deprecated", "gemini-3.5-flash-lite", "2026-12-01"),
+        # Listed, but refused with 404 "no longer available to new users" (Google's answer to a key new to it, 15
+        # November): an account that used it before may still call it.
+        "gemini-2.5-flash-lite": Withdrawn("closed", "gemini-3.5-flash-lite", "2026-11-14"),
         "gemini-2.5-pro": Withdrawn("deprecated", "gemini-3.8-flash", "2026-12-01"),
         "gemini-2.0-flash": Withdrawn("retired", "gemini-3.6-flash", "2026-06-01"),
         "gemini-1.5-pro": Withdrawn("unlisted", PLANNER_DEFAULTS["gemini"]),
@@ -209,6 +214,8 @@ def describe(provider: str, model: str) -> str:
     who = PROVIDER_NAMES.get(provider, provider)
     if found.state == "unlisted":
         return f"{model} is no longer on {who}'s list of models. The current default is {found.successor}."
+    if found.state == "closed":
+        return f"{model} is no longer offered to new {who} accounts. {who} suggests {found.successor}."
     when = f" on {found.date}" if found.date else ""
     if found.state == "deprecated":
         return f"{model} is deprecated by {who} and stops working{when}. {who} suggests {found.successor}."

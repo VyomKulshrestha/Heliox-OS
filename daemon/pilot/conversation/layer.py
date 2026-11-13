@@ -89,6 +89,9 @@ FALLBACK = {
     "refused": "I can't help with that one.",
     "unknown_model": "Your {provider} account doesn't offer the model named in Settings. Pick another under Model, or "
     "leave it blank for the default.",
+    # The provider refused the model Heliox talks with by default: "leave it blank" would name the same one.
+    "unknown_default": "{provider} no longer offers the model Heliox talks with by default. Choose one in Settings, under "
+    "Model.",
     "error": "Something went wrong reaching the language model. I can still do what I handle myself.",
     "not_api": "I'm getting a web page instead of the language model. The network may want you to sign in first.",
     "empty": "The language model sent back nothing that time. Ask me again?",
@@ -104,6 +107,7 @@ FALLBACK_AGAIN = {
     "busy": "The model is still busy. Try again in a moment.",
     "credit": "The model account is still out of credit.",
     "unknown_model": "The model named in Settings still isn't available to your account.",
+    "unknown_default": "The default model still isn't available to your account.",
     "slow": "The language model is still slow. Ask me again in a moment.",
     "refused": "I can't help with that one.",
 }
@@ -1068,7 +1072,10 @@ class ConversationLayer:
                 self.memory.add_heliox(" ".join(said))
             return self._hand_over(result, intent)
         if failure and not said:
-            await self._fallback(result, failure[0], decided, started, provider=getattr(model, "provider", ""))
+            reason = failure[0]
+            if reason == "unknown_model" and getattr(model, "chosen", True) is False:
+                reason = "unknown_default"
+            await self._fallback(result, reason, decided, started, provider=getattr(model, "provider", ""))
             return result
         if failure and said:
             # The reply stopped part-way: say so rather than trailing off.

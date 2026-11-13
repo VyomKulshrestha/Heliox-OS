@@ -30,6 +30,7 @@ import contextlib
 import json
 import logging
 import math
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -227,6 +228,20 @@ class _StreamingBase:
             logger.warning("Could not record the fast model's usage", exc_info=True)
 
 
+def gemini_thinking_off(name: str) -> dict[str, Any] | None:
+    """How to ask a Gemini flash model not to think before a spoken reply, or None for a model that cannot be asked.
+
+    Gemini 2.x flash takes thinkingBudget 0. Gemini 3 and later reject it ("Request contains an invalid argument",
+    gemini-3.5-flash-lite, 14 November) and take thinkingLevel instead; "minimal" is the lowest, and no thought tokens
+    were reported with it. An alias without a version ("gemini-flash-latest") points at a current model."""
+    if "flash" not in name:
+        return None  # a Pro model cannot turn thinking off
+    version = re.match(r"gemini-(\d+)", name)
+    if version is not None and int(version.group(1)) < 3:
+        return {"thinkingBudget": 0}
+    return {"thinkingLevel": "minimal"}
+
+
 def claude_payload(
     model: str, max_tokens: int, system: str, messages: list[dict[str, str]], effort: str, thinking_off: bool
 ) -> dict[str, Any]:
@@ -347,6 +362,7 @@ class HttpFastModel(_StreamingBase):
     _hold_reason: str = ""
     _warmed_at: float = float("-inf")
     _warm_done_at: float = float("-inf")
+    chosen: bool = True  # the person named this model; False for the provider's default (catalog.TALK_DEFAULTS)
     _warming: Any = None  # the warm-up under way (an asyncio task), joined by a request that starts during it
 
     @property
@@ -394,9 +410,10 @@ class HttpFastModel(_StreamingBase):
                 "systemInstruction": {"parts": [{"text": system}]},
                 "generationConfig": {"maxOutputTokens": self.max_tokens},
             }
-            if "flash" in self.name:
+            thinking = gemini_thinking_off(self.name)
+            if thinking is not None:
                 # Flash models think by default; a spoken reply does not need it, and it delays the first word.
-                body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+                body["generationConfig"]["thinkingConfig"] = thinking
             # The key goes in Google's header, as the warm-up sends it, never in the address: an address ends up in
             # exception text and request logs.
             url = f"{PROVIDER_ENDPOINTS['gemini']}/models/{self.name}:streamGenerateContent?alt=sse"
@@ -735,6 +752,7 @@ def build_fast_model(config: Any, *, vault: Any, router: Any, budget: Any, http_
             return HttpFastModel(
                 provider=cloud,
                 name=name,
+                chosen=bool(str(getattr(conv, f"{cloud}_model", "") or "").strip()),
                 client_factory=client_factory,
                 api_key=key,
                 budget=budget,
