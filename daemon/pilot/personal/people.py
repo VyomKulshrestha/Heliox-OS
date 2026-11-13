@@ -6,8 +6,10 @@ at the moment it speaks, from the profile's people (UserProfile.people_by_relati
 name). It keeps the person's words when the profile has two people for that relation (people_by_relation leaves it
 out), or when that person was told within the last FRESH_SECONDS (the same exchange, possibly misheard).
 
-Where it is used: the reminder's confirmation and the reminder when it comes due (pilot.server). Other places that
-read the person's words back (to-dos, notes, recall, goals) do not use it yet.
+Where it is used: everything Heliox says about things to do (pilot.server): a reminder's confirmation and the
+reminder when it comes due, the to-do list's confirmations and read-back, and the reminders and to-dos the morning,
+night and tomorrow summaries read out. Never where the person's own words are given back to them: notes, "what did
+I tell you about ...", goal titles and updates, and the lists in Settings show and say what they said.
 """
 
 from __future__ import annotations

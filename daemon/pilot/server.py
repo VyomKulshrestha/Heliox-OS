@@ -8470,7 +8470,7 @@ class PilotServer:
         now = self._wall_clock()
         reminders = await asyncio.to_thread(self._reminders.list) if self._reminders is not None else []
         if tomorrow:
-            return compose_tomorrow(now, reminders=reminders)
+            return self._said_and_kept(lambda named: compose_tomorrow(now, reminders=named(reminders)))
         todos = await asyncio.to_thread(self._todos.open_items) if self._todos is not None else []
         if morning:
             habits = await asyncio.to_thread(self._habits.list) if self._habits is not None else []
@@ -8482,8 +8482,16 @@ class PilotServer:
                     logger.debug("Health reading for the morning briefing failed", exc_info=True)
             name = self._user_profile.name() if self._user_profile is not None else ""
             goal_steps = await asyncio.to_thread(self._goals.next_steps) if self._goals is not None else []
-            return compose_morning(
-                now, reminders=reminders, todos=todos, habits=habits, health=health, name=name, goals=goal_steps
+            return self._said_and_kept(
+                lambda named: compose_morning(
+                    now,
+                    reminders=named(reminders),
+                    todos=named(todos),
+                    habits=habits,
+                    health=health,
+                    name=name,
+                    goals=goal_steps,
+                )
             )
         overview = await self._today_overview("today")
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
@@ -8492,15 +8500,28 @@ class PilotServer:
             focus_seconds = (await asyncio.to_thread(self._focus_log.totals, midnight, now.timestamp() + 1))["seconds"]
         everything = await asyncio.to_thread(self._todos.list) if self._todos is not None else []
         finished = sum(1 for item in everything if item.get("done") and (item.get("done_at") or 0) >= midnight)
-        return compose_night(
-            now,
-            brief=overview["brief"],
-            focus_seconds=focus_seconds,
-            finished_todos=finished,
-            open_todos=len(todos),
-            reminders=reminders,
-            goals_moved=await self._goals_moved_today(midnight),
+        goals_moved = await self._goals_moved_today(midnight)
+        return self._said_and_kept(
+            lambda named: compose_night(
+                now,
+                brief=overview["brief"],
+                focus_seconds=focus_seconds,
+                finished_todos=finished,
+                open_todos=len(todos),
+                reminders=named(reminders),
+                goals_moved=goals_moved,
+            )
         )
+
+    def _said_and_kept(self, compose: Any) -> str:
+        """``compose(named)``, where ``named`` maps a list of reminders or to-dos to what is read out. A day summary
+        composed twice: with each known person named in the reminders and to-dos it reads out
+        (what is said), and with the person's own words (what conversation history keeps unless personal lines may
+        go to the model, PEOPLE_NAMED). Goal titles and the rest are never changed."""
+        said = compose(self._reminders_as_said)
+        kept = compose(lambda items: items)
+        PEOPLE_NAMED.set((said, kept) if said != kept else None)
+        return said
 
     async def _goals_moved_today(self, since: float) -> list[str]:
         """The goals the day moved, for the night summary: progress noted, or a request that matched one. Empty when
@@ -9205,7 +9226,7 @@ class PilotServer:
         self._reminder_said_at = None
 
     def _reminders_as_said(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Copies of due reminders with each person the profile knows now named in the text; the store's own
+        """Copies of reminders (or to-dos) with each person the profile knows now named in the text; the stores' own
         entries keep the person's words."""
         return [{**item, "text": self._said_with_people(str(item.get("text") or ""))} for item in items]
 
@@ -9427,8 +9448,9 @@ class PilotServer:
                 continue
             if answer is not None:
                 LOCAL_ANSWER_SOURCE.set(type(source).__name__)  # which kind of answer (CODE_ANSWERS_ANY_MODEL)
-                if source is self._reminders or source is self._app_reminders:
-                    # "to your manager, Priya": the person's words are kept as they said them, named when said.
+                if source is self._reminders or source is self._app_reminders or source is self._todos:
+                    # "to your manager, Priya": the person's words are kept as they said them, named when said. Only
+                    # things to do: notes, recall, goals and the lists in Settings give the person's words back as said.
                     said = self._said_with_people(answer)
                     PEOPLE_NAMED.set((said, answer) if said != answer else None)
                     return said

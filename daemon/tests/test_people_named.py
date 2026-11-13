@@ -108,3 +108,47 @@ def test_the_reminder_follows_the_profile_as_it_is_when_due(tmp_path):
     asyncio.run(server._deliver_reminder({**server._reminders.list()[0], "late": False}))
     messages = [params.get("message", "") for method, params in shown if method == "reminder"]
     assert messages == ["Reminder: send the deck to your manager, Dana"], messages
+
+
+def _named_server(tmp_path):
+    from pilot.workflows.notes import NoteStore
+    from pilot.workflows.todos import TodoStore
+
+    clock = Clock()
+    profile = profile_with(tmp_path, ("Priya", "manager"), clock=clock)
+    clock.t += 60
+    server, _shown = _server(tmp_path, clock, profile)
+    server._todos = TodoStore(tmp_path / "todos.json")
+    server._notes = NoteStore(tmp_path / "notes.json")
+    return server, clock
+
+
+def test_things_to_do_are_read_out_with_the_name(tmp_path):
+    """The to-do list's confirmation and read-back, and the reminders and to-dos the day summaries read out."""
+    from datetime import datetime
+
+    server, clock = _named_server(tmp_path)
+    added = asyncio.run(server._local_answer("add email my manager to my to-do list"))
+    assert added is not None and "your manager, Priya" in added, added
+    assert all("my manager" in item["text"] for item in server._todos.list())  # kept as said
+    listed = asyncio.run(server._local_answer("what's on my to-do list"))
+    assert listed is not None and "your manager, Priya" in listed, listed
+    now = datetime(2026, 11, 12, 8, 0)
+    server._wall_clock = lambda: now
+    server._reminders.add(now.replace(hour=15).timestamp(), "call my manager")
+    server._reminders.add(now.replace(day=13, hour=9).timestamp(), "thank my manager")
+    morning = asyncio.run(server._day_request("good morning"))
+    assert "call your manager, Priya" in morning and "email your manager, Priya" in morning, morning
+    tomorrow = asyncio.run(server._day_request("what's on tomorrow"))
+    assert "thank your manager, Priya" in tomorrow, tomorrow
+
+
+def test_the_person_s_own_words_given_back_stay_as_said(tmp_path):
+    """Notes and the lists in Settings give back what the person said."""
+    server, _clock = _named_server(tmp_path)
+    server._notes.add("my manager likes short decks")
+    recalled = asyncio.run(server._local_answer("read my notes"))
+    assert recalled is None or "Priya" not in recalled, recalled
+    server._reminders.add(server._reminders._clock() + 3600, "send the deck to my manager")
+    shown = asyncio.run(server._handle_reminder_list({}, None))
+    assert [item["text"] for item in shown["reminders"]] == ["send the deck to my manager"], shown
