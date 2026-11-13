@@ -556,6 +556,13 @@ export default defineConfig({
       allow: [CONFIG_DIR, join(CONFIG_DIR, "..", "..", "daemon", "pilot", "system", "speech_models.json")],
     },
   },
+  // The dev server finds the packages to pre-bundle by reading <script> blocks from index.html down. Settings loads
+  // its later panels with import() calls in the markup (LazyPanel), which that reading does not follow, so a package
+  // only those panels use (qrcode, in Air Handoff) was found when the panel loaded, and Vite reloaded the page in the
+  // middle of a visual test (CI on f6a1f8e, macOS and Ubuntu). Reading every component up front finds them all.
+  optimizeDeps: {
+    entries: ["index.html", "src/**/*.svelte"],
+  },
   envPrefix: ["VITE_", "TAURI_"],
   build: {
     target: "esnext",
