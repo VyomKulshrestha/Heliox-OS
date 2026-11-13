@@ -75,7 +75,7 @@ async def test_in_a_call_live_holds_its_voice_and_says_what_still_applies_afterw
     await run_for(live, clock, AFTER_CALL_SECONDS - 1)
     assert spoken == []  # a moment after the call first
     await run_for(live, clock, 3)
-    assert spoken == ["While you were on the call: 12 × 15 is 180. You wrote 170."]
+    assert spoken == ["While you were on the call: 12 × 15 is 180."]  # the short form; the card says the rest
 
 
 @pytest.mark.asyncio

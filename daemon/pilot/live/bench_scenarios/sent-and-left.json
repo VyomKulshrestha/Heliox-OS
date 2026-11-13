@@ -1,0 +1,39 @@
+[
+  {
+    "name": "chat: a weekday slip sent inside the pause",
+    "app": "slack.exe",
+    "title": "#team - Slack",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"type": "Then we meet on Thursday 25 November"},
+      {"pause": 2.0},
+      {"send": true},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "chat: a wrong sum sent at once",
+    "app": "slack.exe",
+    "title": "#budget - Slack",
+    "expect": ["arithmetic"],
+    "steps": [
+      {"type": "Hotel and travel come to 120 + 340 = 470"},
+      {"pause": 0.4},
+      {"send": true},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "email: a slip, then on to another window before the catch",
+    "app": "OUTLOOK.EXE",
+    "title": "Review - Message (HTML)",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"type": "The review is on Monday 1 December."},
+      {"pause": 0.5},
+      {"switch": "chrome.exe|Planning - Google Docs", "text": ""},
+      {"type": "Notes for the review and the agenda for the week"},
+      {"pause": "done"}
+    ]
+  }
+]

@@ -9,7 +9,7 @@ import pytest
 
 from pilot.live.detectors import TextContext, detect
 from pilot.live.engine import TICK_SECONDS, LiveCompanion, Observation
-from pilot.live.policy import LEVELS, SHOW, SPEAK, WAIT, Activity, Pending, Relevance, decide
+from pilot.live.policy import LEVELS, SHOW, SHOW_FIRST, SPEAK, WAIT, Activity, Pending, Relevance, decide
 
 MONDAY = date(2026, 11, 9)
 
@@ -239,7 +239,7 @@ async def test_engine_waits_for_the_pause_speaks_once_and_withdraws_when_fixed(t
     await settle()
     cards = [p for e, p in events if e == "live_interjection"]
     assert len(cards) == 1 and cards[0]["kind"] == "arithmetic" and cards[0]["spoken"]
-    assert spoken == [("12 × 15 is 180. You wrote 170.", False)]
+    assert spoken == [("12 × 15 is 180.", False)]  # the short form: the card holds "You wrote 170."
 
     await run_for(live, clock, 5)  # the mistake is still there: never repeated
     assert len([e for e, _ in events if e == "live_interjection"]) == 1
@@ -327,10 +327,28 @@ def test_a_trailing_slip_waits_longer_but_not_a_multiple_of_a_long_learned_pause
     item = pending("Invoice due 31 November")  # the slip is the last thing typed
     assert item.correction.trailing
     level = LEVELS["balanced"]
-    # The level's own pause: 1.2 s stretched to the 3 s floor, as before.
-    assert decide(item, Activity(now=10.0, last_text_change=7.1), level, 0.67, frozenset()) == WAIT
-    assert decide(item, Activity(now=10.0, last_text_change=6.9), level, 0.67, frozenset()) != WAIT
-    # A learned 4.9 s pause gets 3 s more (7.9 s), not 2.5 times (12.3 s).
+    # The card at the level's own pause (1.2 s), silently; the voice only after 1.2 s stretched to the 3 s floor.
+    assert decide(item, Activity(now=10.0, last_text_change=8.9), level, 0.67, frozenset()) == WAIT
+    assert decide(item, Activity(now=10.0, last_text_change=8.7), level, 0.67, frozenset()) == SHOW_FIRST
+    assert item.voice_after == 3.0
+    assert decide(item, Activity(now=10.0, last_text_change=6.9), level, 0.67, frozenset()) == SPEAK
+    # A learned 4.9 s pause gets 3 s more (7.9 s) for the voice, not 2.5 times (12.3 s).
     slow = {"personal_pause": 4.9}
-    assert decide(item, Activity(now=20.0, last_text_change=12.2, **slow), level, 0.67, frozenset()) == WAIT
-    assert decide(item, Activity(now=20.0, last_text_change=12.0, **slow), level, 0.67, frozenset()) != WAIT
+    assert decide(item, Activity(now=20.0, last_text_change=12.2, **slow), level, 0.67, frozenset()) == SHOW_FIRST
+    assert decide(item, Activity(now=20.0, last_text_change=12.0, **slow), level, 0.67, frozenset()) == SPEAK
+
+
+def test_a_slip_ending_in_a_number_keeps_the_card_waiting_too():
+    item = pending("12 x 15 = 17")  # they may be typing 170 still
+    level = LEVELS["balanced"]
+    assert decide(item, Activity(now=10.0, last_text_change=8.0), level, 0.67, frozenset()) == WAIT
+
+
+def test_sent_or_elsewhere_is_a_card_never_the_voice():
+    level = LEVELS["balanced"]
+    item = pending("Then we meet on Thursday 25 November")
+    paused = Activity(now=10.0, last_text_change=5.0)
+    assert decide(item, paused, level, 0.67, frozenset()) == SPEAK
+    assert decide(item, Activity(now=10.0, last_text_change=5.0, elsewhere=True), level, 0.67, frozenset()) == SHOW
+    item.sent = True
+    assert decide(item, paused, level, 0.67, frozenset()) == SHOW

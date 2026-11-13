@@ -673,7 +673,8 @@ Every 200 ms it decides, per correction it has noticed, whether to wait, show a 
 Notifications: `live_interjection {id, kind, title, message, detail, evidence, fix, fix_kind, urgency, spoken,
 source, app}`, where `fix_kind` is `replace` (corrected text), `command` (a safer command) or `ask` (a request to
 hand to the planner); `live_interjection_withdrawn {id, reason}` with `fixed` (the evidence left the window it
-was found in), `expired`, `off` or a feedback verdict; and `live_state {enabled, paused, watching, user_state, blind_note}`
+was found in), `expired`, `off` or a feedback verdict; `live_interjection_spoken {id}` when a card shown first is
+said after the longer pause (a slip that was the last thing typed, still unanswered); and `live_state {enabled, paused, watching, user_state, blind_note}`
 on change (`blind_note`: the first time Live finds it cannot see into the app in front, the sentence for the Live
 pill's tooltip; otherwise ""). The text Heliox reads never appears in a notification: only the short evidence span a card quotes,
 with keys redacted to their first and last four characters.

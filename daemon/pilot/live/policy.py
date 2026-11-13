@@ -18,6 +18,10 @@ from pilot.live.detectors import LOW, NORMAL, URGENT, Correction
 logger = logging.getLogger("pilot.live.policy")
 
 WAIT, SHOW, SPEAK, DROP = "wait", "show", "speak", "drop"
+# The card now, silently; the voice may follow at the longer pause, if the card is still unanswered and the person
+# has not gone on (LiveCompanion._voice_later). A slip that is the last thing typed: the card and the voice have
+# separate clocks, so a message sent inside the voice's longer wait still got its card.
+SHOW_FIRST = "show_first"
 
 
 @dataclass(frozen=True)
@@ -75,6 +79,8 @@ class Activity:
     floor_held: bool = False
     # In a call (pilot.live.calls), or one ended a moment ago: nothing is said, only urgent cards are shown.
     in_call: bool = False
+    # The person has moved to another field or window since the slip: a card only, never the voice.
+    elsewhere: bool = False
 
 
 @dataclass
@@ -99,6 +105,12 @@ class Pending:
     # How long the person had stopped when it was delivered, and the wait Live required (pilot.live.timing).
     paused_for: float | None = None
     needed_pause: float | None = None
+    # Shown silently first (SHOW_FIRST): the pause after which the voice may follow, and whether it did.
+    voice_after: float | None = None
+    voiced: bool = False
+    # The message holding the slip was sent (its field emptied or replaced) before the catch: a card only, saying
+    # what was sent (LiveCompanion._note_sent).
+    sent: bool = False
 
 
 def decide(
@@ -135,21 +147,18 @@ def decide(
             correction.urgency in level.speak and relevance >= MIN_RELEVANCE_TO_SPEAK and correction.kind not in quiet
         )
         return SPEAK if speak else SHOW
-    needed_pause = URGENT_PAUSE_SECONDS if urgent else level.pause_seconds
-    if not urgent and act.personal_pause is not None:
-        needed_pause = act.personal_pause
-    if correction.trailing and not urgent:
-        base = act.trailing_pause if act.trailing_pause is not None else needed_pause
-        stretched = min(base * TRAILING_PAUSE_FACTOR, base + TRAILING_MAX_EXTRA_SECONDS)
-        needed_pause = max(stretched, TRAILING_MIN_PAUSE_SECONDS)
+    needed_pause, voice_pause = pauses(item, act, level)
     if act.now - act.last_text_change < needed_pause:
         return WAIT
     if act.now - item.first_seen < MIN_DWELL_SECONDS.get(correction.kind, 0.0):
         return WAIT
     if urgent:
-        return SHOW if act.heliox_speaking else SPEAK
+        return SHOW if act.heliox_speaking or item.sent else SPEAK
     if act.floor_held:
         return WAIT
+    if item.sent or act.elsewhere:
+        # Sent before the catch, or the person has moved on: a card that says so, never the voice.
+        return SHOW if act.visible_cards < MAX_VISIBLE_CARDS and not act.focus_active else WAIT
     if act.focus_active or act.visible_cards >= MAX_VISIBLE_CARDS:
         return WAIT
     speakable = (
@@ -160,10 +169,34 @@ def decide(
         and act.now - act.last_spoken_at >= level.spoken_gap_seconds
     )
     if speakable:
+        # The last thing typed: the card at the ordinary pause, the voice only after the longer one.
+        if act.now - act.last_text_change < voice_pause:
+            item.voice_after = voice_pause
+            return SHOW_FIRST
         return SPEAK
     if act.now - act.last_shown_at >= level.shown_gap_seconds:
         return SHOW
     return WAIT
+
+
+def pauses(item: Pending, act: Activity, level: Level) -> tuple[float, float]:
+    """(the pause before the card, the pause before the voice). The same for most catches; for a slip that is the
+    last thing typed (they may be mid-number or mid-word) the voice waits longer: TRAILING_PAUSE_FACTOR times the
+    person's pause, at most TRAILING_MAX_EXTRA_SECONDS more, never under TRAILING_MIN_PAUSE_SECONDS. The card keeps
+    the ordinary pause without week one's patience (``trailing_pause``), silently, unless the slip ends in a digit
+    (a number may still be being typed): then the card waits as long as the voice."""
+    correction = item.correction
+    urgent = correction.urgency == URGENT
+    needed = URGENT_PAUSE_SECONDS if urgent else level.pause_seconds
+    if not urgent and act.personal_pause is not None:
+        needed = act.personal_pause
+    if not correction.trailing or urgent:
+        return needed, needed
+    base = act.trailing_pause if act.trailing_pause is not None else needed
+    stretched = max(min(base * TRAILING_PAUSE_FACTOR, base + TRAILING_MAX_EXTRA_SECONDS), TRAILING_MIN_PAUSE_SECONDS)
+    if correction.evidence.rstrip()[-1:].isdigit():
+        return stretched, stretched  # "12 x 15 = 17": they may be typing 170 still, so the card waits too
+    return base, stretched
 
 
 @dataclass

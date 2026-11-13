@@ -109,7 +109,7 @@ async def test_a_typed_slip_waits_for_the_turn_and_the_grace_then_is_said(tmp_pa
     await run_for(live, clock, GRACE_SECONDS - 1)
     assert spoken == []
     await run_for(live, clock, 2)
-    assert spoken == ["12 × 15 is 180. You wrote 170."] and len(cards(events)) == 1
+    assert spoken == ["12 × 15 is 180."] and len(cards(events)) == 1  # the short form; the card says the rest
 
 
 @pytest.mark.asyncio

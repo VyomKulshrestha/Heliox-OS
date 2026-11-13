@@ -21,7 +21,7 @@ import time
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -49,7 +49,9 @@ from pilot.live.policy import (
     DEFAULT_LEVEL,
     DROP,
     LEVELS,
+    MIN_RELEVANCE_TO_SPEAK,
     SHOW,
+    SHOW_FIRST,
     SPEAK,
     Activity,
     Pending,
@@ -78,6 +80,9 @@ REPLY_WINDOW_SECONDS = 90.0  # how long "why?", "thanks" or "fix it" refer to th
 OCR_KINDS = ("error_on_screen",)  # a whole-screen OCR is too noisy for anything finer
 # Offers that stay up when their text leaves the field: a promise matters most once the message is sent.
 STICKY_KINDS = frozenset({STUCK, COMMITMENT})
+# Kinds that still matter once the message is sent: a slip that was whole on the page before it was sent is raised
+# once as a card that says what was sent, never spoken. Never a typo or a doubled word. (A promise is sticky anyway.)
+SENT_KINDS = frozenset({"weekday_date", "arithmetic"})
 GROUNDED_PAUSE_SECONDS = 1.0  # typing stopped this long: worth asking the local model about the last sentence
 GROUNDED_EVERY_SECONDS = 5.0  # and at most this often, so a laptop CPU is not kept busy
 # Kinds about the person's own words. Text that was already in a field when it got focus (a quoted email, a
@@ -398,6 +403,10 @@ class LiveCompanion:
         self._last_detect = float("-inf")
         self._last_window_check = float("-inf")
         self._last_spoken_at = float("-inf")
+        # The voice saying a remark about typed text, and when it was asked for: the first keystroke after that cuts
+        # it, as talking over Heliox does (the card stays up, and a cut remark is not said again by itself).
+        self._voice: asyncio.Future[None] | None = None
+        self._voice_asked_at = float("-inf")
         self._last_remark = 0  # which spoken remark was last (a sequence number, never a clock stamp)
         self._last_shown_at = float("-inf")
         self._state: dict[str, Any] = {}
@@ -500,12 +509,17 @@ class LiveCompanion:
             return
         self._was_on = True
 
-        if now - self._last_perceive >= PERCEIVE_EVERY_SECONDS:
+        voicing = self._voice is not None and not self._voice.done()
+        if voicing or now - self._last_perceive >= PERCEIVE_EVERY_SECONDS:
+            # While a remark about typed text is being said, every tick: the first keystroke has to cut it at once.
             self._last_perceive = now
             await self._perceive(now)
+            if voicing and self._last_text_change > self._voice_asked_at:
+                self._cut_voice()
             self._maybe_ground(now)
 
         self._watch_call(now)
+        await self._voice_later(now)
         self._expire(now)
         await self._deliver_due(now)
         await self._publish_state(now)
@@ -538,6 +552,8 @@ class LiveCompanion:
             self._last_text_change = now
             self._last_text = obs.text
         self._last_obs = obs
+        if changed and same_field and obs.source == "focused_field":
+            self._note_sent(obs)
         self._remember_baseline(obs)
         if changed and same_field and obs.source == "focused_field":
             self._typed_log[obs.field_key] = (
@@ -575,14 +591,46 @@ class LiveCompanion:
                     if not self._pre_existing(promise, obs):
                         self._note(promise, obs.source, obs.field_key, now)
             for item in [*self._pending.values(), *self._visible.values()]:
-                if item.source == "speech" or item.window != obs.field_key or item.correction.kind in STICKY_KINDS:
-                    continue  # an offer is not about text that can be fixed away
+                if (
+                    item.source == "speech"
+                    or item.window != obs.field_key
+                    or item.correction.kind in STICKY_KINDS
+                    or item.sent
+                ):
+                    continue  # an offer, or a slip already sent, is not about text that can be fixed away
                 if item.correction.kind in MODEL_KINDS and item.correction.evidence in obs.text:
                     found.add(item.correction.key)
                 if item.correction.key in found:
                     item.missing_since = None
                 elif item.missing_since is None:
                     item.missing_since = now
+
+    def _note_sent(self, obs: Observation) -> None:
+        """The field's text went (emptied, or swapped for other text: a sent message). A slip of a kind that still
+        matters once sent (SENT_KINDS) that was whole in the text before is kept as a card saying what was sent;
+        a card already up for it stays up. Uses only what Live already holds: the field's text at the last look
+        (``_field_text``) and the catch's own evidence; nothing more is kept, and for no longer."""
+        before = self._field_text.get(obs.field_key)
+        if not before or not before.strip() or (obs.text.strip() and not replaced(before, obs.text)):
+            return
+        for item in [*self._pending.values(), *self._visible.values()]:
+            correction = item.correction
+            if (
+                item.sent
+                or item.source == "speech"
+                or item.window != obs.field_key
+                or correction.kind not in SENT_KINDS
+                or not correction.evidence
+                or correction.evidence not in before
+                or item.missing_since is not None  # a half-typed reading the finished text no longer holds
+            ):
+                continue
+            item.sent = True
+            if not item.delivered:
+                title = correction.title.strip()
+                item.correction = replace(
+                    correction, title=f"You sent {correction.evidence}; {title}", fix="", fix_kind="", trailing=False
+                )
 
     def _remember_baseline(self, obs: Observation) -> None:
         """Keep the text a field held when focus moved into it. A field that was emptied, or whose text was
@@ -946,6 +994,9 @@ class LiveCompanion:
                 last_shown_at=shown_at,
                 personal_pause=personal_pause,
                 trailing_pause=trailing_pause if learning else level.pause_seconds,
+                elsewhere=item.source not in ("speech", "notice")
+                and self._last_obs is not None
+                and item.window != self._last_obs.field_key,
             )
             score = self.relevance.score(item.correction.kind)
             verdicts.append((key, item, decide(item, act, level, score, muted, quiet)))
@@ -967,12 +1018,12 @@ class LiveCompanion:
         for key, item, verdict in verdicts:
             if verdict == DROP:
                 del self._pending[key]
-            elif verdict in (SHOW, SPEAK):
+            elif verdict in (SHOW, SPEAK, SHOW_FIRST):
                 del self._pending[key]
                 await self._deliver(item, spoken=verdict == SPEAK, now=now, remark=remark)
                 if verdict == SPEAK:
                     after_call = after_call or item.held_in_call
-                    said.append(say(item.correction.title, item.correction.message, item.source))
+                    said.append(self._said_form(item))
                     # An answer to what the person just said is part of the conversation: it goes out on the
                     # correction channel, so Heliox's own "Opening it now." cannot talk over it.
                     urgent_said = urgent_said or item.correction.urgency == URGENT or item.source == "speech"
@@ -983,7 +1034,69 @@ class LiveCompanion:
             text = " ".join(said)
             if after_call:
                 text = "While you were on the call: " + _lower_first(text)
-            asyncio.ensure_future(self._say_aloud(text, urgent_said, remark, spoken_at))
+            task = asyncio.ensure_future(self._say_aloud(text, urgent_said, remark, spoken_at))
+            if all(item.source != "speech" for _, item, verdict in verdicts if verdict == SPEAK):
+                self._voice, self._voice_asked_at = task, now
+
+    @staticmethod
+    def _said_form(item: Pending) -> str:
+        """What the voice says. About something said to Heliox: the whole card, as a reply. About typed text: the
+        short form, the title alone ("25 November is a Wednesday."), about two seconds; the rest stays on the card."""
+        correction = item.correction
+        if item.source == "speech" or not correction.title.strip():
+            return say(correction.title, correction.message, item.source)
+        title = correction.title.strip()
+        return title if title[-1] in ".?!" else f"{title}."
+
+    def _cut_voice(self) -> None:
+        """The person typed while a remark about typed text was being said: stop the voice (the speech coordinator
+        stops a cancelled request's audio), keep the card, and never say that remark again by itself."""
+        voice, self._voice = self._voice, None
+        if voice is None or voice.done():
+            return
+        voice.cancel()
+        for entry in self._recent:
+            if entry.get("remark") == self._last_remark:
+                entry["voice_cut"] = True
+        logger.info("Live: the voice stopped, the person typed again")
+
+    async def _voice_later(self, now: float) -> None:
+        """A card shown first (SHOW_FIRST) is said after the longer pause, only if it is still unanswered, the person
+        has not typed since it came, is still in its field, and nothing else holds the voice."""
+        waiting = [i for i in self._visible.values() if i.voice_after is not None and not i.voiced]
+        if not waiting:
+            return
+        cfg = self._config()
+        level = LEVELS.get(getattr(cfg, "level", DEFAULT_LEVEL), LEVELS[DEFAULT_LEVEL])
+        here = self._last_obs.field_key if self._last_obs is not None else ""
+        for item in waiting:
+            if self._last_text_change > item.delivered_at or item.window != here or self._gone(item, now):
+                item.voiced = True  # they went on, moved away, or fixed it: the card alone was enough
+                continue
+            if now - self._last_text_change < (item.voice_after or 0.0):
+                continue
+            if (
+                self._user_speaking()
+                or self._heliox_speaking()
+                or not self.may_speak(item)
+                or self.in_call(now)
+                or self._focus_active()
+                or item.correction.kind in self.quiet_kinds()
+                or self.relevance.score(item.correction.kind) < MIN_RELEVANCE_TO_SPEAK
+                or now - self._last_spoken_at < level.spoken_gap_seconds
+            ):
+                continue
+            item.voiced = True
+            remark = next_seq()
+            for entry in self._recent:
+                if entry.get("id") == item.id:
+                    entry["spoken"], entry["remark"] = True, remark
+            spoken_at = self._last_spoken_at
+            self._last_spoken_at, self._last_remark = now, remark
+            await self._emit("live_interjection_spoken", {"id": item.id})
+            self._voice = asyncio.ensure_future(self._say_aloud(self._said_form(item), False, remark, spoken_at))
+            self._voice_asked_at = now
+            return  # one remark at a time
 
     async def _say_aloud(self, text: str, urgent: bool, remark: int, before: float) -> None:
         """Speak, and when the remark was not heard (a call, a focus session, held by the floor) give the spoken

@@ -514,6 +514,32 @@ def moment_of(session: Session, payload: dict[str, Any], at: float) -> dict[str,
     }
 
 
+# How long a voice takes to start after it is asked: synthesising the first sentence on a CPU (about a second).
+VOICE_START_SECONDS = 1.0
+
+
+def _voice_over_typing(session: Session, voices: list[dict[str, Any]], details: list[dict[str, Any]]) -> None:
+    """For each spoken delivery about typed text: how long its voice ran (``voice_seconds``), whether Live cut it
+    (``voice_cut``), and for how long it was still going after the person started typing or talking again
+    (``voice_over_person``, 0.0 when it had ended)."""
+    for detail in details:
+        if not detail.get("spoken") or detail.get("source") == "speech":
+            continue
+        at = session.start + detail.get("voiced_at", detail["at"])
+        voice = next((v for v in voices if abs(v["at"] - at) < 1e-6), None)
+        if voice is None:
+            continue
+        busy = [
+            session.start + step.at for step in session.script if step.label in BUSY and session.start + step.at > at
+        ]
+        resumed = min(busy) if busy else None
+        detail["voice_seconds"] = round(max(0.0, voice["end"] - voice["start"]), 2)
+        detail["voice_cut"] = bool(voice["cut"])
+        detail["voice_over_person"] = (
+            round(max(0.0, voice["end"] - max(resumed, voice["start"])), 2) if resumed is not None else 0.0
+        )
+
+
 def _spread(values: list[float]) -> str:
     if not values:
         return "none"
@@ -560,6 +586,14 @@ def when_table(details: list[dict[str, Any]]) -> str:
             lines.append(
                 f"  spoken over or into the person's speech: {sum(d['overlaps_person'] for d in spoken)} of {len(spoken)}"
             )
+            voiced = [d for d in spoken if "voice_over_person" in d]
+            if voiced:
+                over = [d["voice_over_person"] for d in voiced if d["voice_over_person"] > 0]
+                lines.append(
+                    f"  voice still going when the person typed or talked again: {len(over)} of {len(voiced)} "
+                    f"(by {_spread(over)}); cut by Live: {sum(d['voice_cut'] for d in voiced)}"
+                )
+                lines.append("  voice length: " + _spread([d["voice_seconds"] for d in voiced]))
     return "\n".join(lines)
 
 
@@ -599,12 +633,40 @@ async def run(
         source = "screen_ocr" if session.scenario.get("screen") else "focused_field"
         return Observation(text=session.doc, app=app, title=title, source=source, editable=session.editable)
 
+    by_id: dict[str, dict[str, Any]] = {}  # each scored delivery's detail, by card id
+
     async def emit(event: str, payload: dict[str, Any]) -> None:
         if event == "live_interjection":
             deliveries.append((payload, clock["t"]))
+        elif event == "live_interjection_spoken" and payload.get("id") in by_id:
+            # A card shown first and said after the longer pause (pilot.live.policy.SHOW_FIRST).
+            session = state["session"]
+            detail = by_id[payload["id"]]
+            detail["spoken"] = True
+            detail["voiced_at"] = round(clock["t"] - (session.start if session else 0.0), 2)
 
-    async def speak(message: str, urgent: bool) -> None:
-        return None
+    voices: list[dict[str, Any]] = []
+
+    async def speak(message: str, urgent: bool) -> str:
+        """A voice on the simulated clock: it starts VOICE_START_SECONDS after it is asked (synthesis) and lasts
+        its words at SPOKEN_WORDS_PER_SECOND. Live may cut it (cancel); it then stops at the next word."""
+        voice = {
+            "at": clock["t"],
+            "start": round(clock["t"] + VOICE_START_SECONDS, 3),
+            "end": round(clock["t"] + VOICE_START_SECONDS + len(message.split()) / SPOKEN_WORDS_PER_SECOND, 3),
+            "cut": False,
+        }
+        voices.append(voice)
+        try:
+            while clock["t"] < voice["end"]:
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            # Cut before it started: nothing is heard. Cut while playing: it stops at the end of the word.
+            stop = voice["start"] if clock["t"] < voice["start"] else clock["t"] + 1 / SPOKEN_WORDS_PER_SECOND
+            voice["end"] = min(voice["end"], stop)
+            voice["cut"] = True
+            raise
+        return "spoken"
 
     def people() -> dict[str, str]:
         session = state["session"]
@@ -635,6 +697,7 @@ async def run(
 
     async def play(scenario: dict[str, Any], scored: bool) -> None:
         rng = random.Random(f"{seed}:{persona.name}:{scenario['name']}")
+        first_detail = len(score.details)
         session = Session(scenario, expand(scenario, persona, rng), clock["t"])
         state["session"] = session
         seen = len(deliveries)
@@ -701,8 +764,10 @@ async def run(
                             **moment_of(session, payload, at),
                         ).__dict__
                     )
+                    by_id[payload["id"]] = score.details[-1]
             clock["t"] = round(clock["t"] + TICK_SECONDS, 3)
         if scored:
+            _voice_over_typing(session, voices, [d for d in score.details[first_detail:] if "doing" in d])
             score.expected += len(scenario.get("expect", []))
             score.where(where_of(scenario))[0] += len(scenario.get("expect", []))
             score.missed += len(expected)

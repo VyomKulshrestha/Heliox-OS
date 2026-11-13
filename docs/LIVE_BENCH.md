@@ -159,6 +159,40 @@ land as the person goes on; `--keep-typing` adds, to every typed scenario, a sho
 with no slip in it. The measurement covers Live's own waits only: the time a voice takes to start speaking
 (synthesis, about a second on a CPU) is not in the simulated clock.
 
+## Update, 13 November 2026: the voice yields, the card comes first, and a sent slip is still told
+
+The bench now plays each spoken remark on its own clock (`speak` in `bench.run`): it starts a second after it is
+asked (synthesis), lasts its words at 2.5 a second, and stops at the end of a word when Live cuts it. It measures how
+long the voice was still going once the person typed or talked again. Three changes, measured with `--when` and
+`--keep-typing`, each before and after:
+
+1. **The voice yields to typing as it yields to speech.** A spoken remark about typed text says the card's title
+   alone ("25 November is a Wednesday.", at most 2 s in the bench); the rest stays on the card. The first keystroke
+   after it is asked cuts it (cancelled, the speech coordinator stops it), the card stays up, and it is not said
+   again. With the person typing on after each scenario: the voice was still going when they typed again in 56 of
+   104 spoken remarks before (median 2.4 s, p90 4.6 s, up to 6.4 s), and in 2 of 104 after, both ending as they
+   started (0.0 s). Voice length: median 3.2 s before, 0.6 s after (98 of 104 cut by the person going on, or
+   fixing the slip after reading the card).
+2. **The card and the voice have separate clocks.** A slip that is the last thing typed gets its card at the
+   ordinary pause without week one's patience, silently (`policy.SHOW_FIRST`); the voice waits the longer pause
+   (×2.5, at least 3 s) and speaks only if the card is still unanswered, the person has not typed since and is
+   still in that field (`LiveCompanion._voice_later`, which emits `live_interjection_spoken`). A slip ending in a
+   digit keeps the card waiting too: a number may still be being typed.
+3. **After the text has gone.** A weekday that does not match its date or a wrong sum (`engine.SENT_KINDS`) that
+   was whole in a message when it was sent is raised once as a card saying so ("You sent Thursday 25 November; 25
+   November is a Wednesday"), never spoken, never for a typo or a doubled word, and a card already up for it stays
+   up. A catch about a field the person has left is a card only, dropped at 90 s as before.
+
+New scenarios (`bench_scenarios/sent-and-left.json`, 3 × 6 policy and persona runs): a weekday slip sent 2 s after
+it was typed, a wrong sum sent at once, and a slip left behind in another window. Before: the first two missed in
+all 12 runs, the third caught and spoken in all 6. After: all 18 caught, none spoken; the first as a card before
+the send in 4 of 6 runs (the personal steady and thinker, whose own pause is longer than 2 s, get the "You sent"
+card after it), the second as the "You sent" card 1.8 to 2.2 s after the slip, the third as a card only.
+
+The 105 earlier scenarios: catches, misses, false alarms and cut-offs unchanged in every policy and persona, with
+and without `--keep-typing`; nothing lands mid-word. The whole bench (108 scenarios): 58/59 caught in each run, no
+false alarms.
+
 ## What it does not show
 
 These are scripted sessions and simulated people, not recordings of real ones. The personas are three points on
