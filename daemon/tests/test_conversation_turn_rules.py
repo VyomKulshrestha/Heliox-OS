@@ -152,3 +152,58 @@ def test_a_planner_result_is_kept_in_the_words_the_person_heard():
     layer._finished(result, "success", "=== Battery ===\nCharge: 80%", "The battery is at 80 percent, charging.")
     assert layer.memory.last_heliox() == "I'll check. The battery is at 80 percent, charging."
     assert "===" in layer.last_result  # the task's own record keeps the raw result
+
+
+class CutSink(Sink):
+    """Stops the voice in the sentence that holds ``words`` (heard: the words before it), as a barge-in does."""
+
+    def __init__(self, sentence: str, heard: str) -> None:
+        super().__init__()
+        self.sentence, self.heard = sentence, heard
+
+    async def __call__(self, text: str, channel: str = "", key: str = "") -> str:
+        if text == self.sentence:
+            self.sentence = ""  # one cut; said again later, it plays in full
+            self.said.append(self.heard)
+            return "interrupted"
+        self.said.append(text)
+        return "spoken"
+
+
+@pytest.mark.asyncio
+async def test_talked_over_heliox_remembers_only_what_was_heard_and_says_the_rest_when_asked():
+    model = Model("DNS turns names into addresses. |Your computer asks a resolver. |The answer is cached.")
+    sink = CutSink("Your computer asks a resolver.", "Your computer")
+    layer = ConversationLayer(
+        sink=sink,
+        model=lambda: model,
+        hold_after=5.0,
+        sources=ContextSources(heard_of=lambda text: "Your computer" if text.startswith("Your computer") else text),
+    )
+    await layer.take("explain DNS")
+    assert layer.memory.last_heliox() == "DNS turns names into addresses. Your computer"
+    assert sink.said == ["DNS turns names into addresses.", "Your computer"]  # the rest is not said unasked
+    await layer.take("what were you saying?")
+    assert sink.said[-2:] == ["Your computer asks a resolver.", "The answer is cached."]
+    assert model.calls == 1  # the rest came from what was written, not a new answer
+
+
+@pytest.mark.asyncio
+async def test_a_voice_that_cannot_tell_keeps_the_whole_cut_sentence():
+    sink = CutSink("Your computer asks a resolver.", "Your computer")
+    layer = ConversationLayer(sink=sink, model=lambda: Model("Your computer asks a resolver."), hold_after=5.0)
+    await layer.take("explain DNS")
+    assert layer.memory.last_heliox() == "Your computer asks a resolver."  # heard_of defaults to the whole sentence
+    assert layer.memory.recent()[-1].cut_off
+
+
+@pytest.mark.asyncio
+async def test_a_correction_marks_the_wrong_answer_and_a_check_in_gets_one_line():
+    model = Model("Sydney.", "Sorry, it's Canberra.", "Canberra again.")
+    layer, sink = layer_with(model)
+    await layer.take("what's the capital of Australia?")
+    await layer.take("No, that's wrong.")
+    wrong = [turn for turn in layer.memory.recent() if turn.role == "assistant" and turn.wrong]
+    assert [turn.text for turn in wrong] == ["Sydney."]
+    await layer.take("are you there?")
+    assert sink.said[-1] == "I'm here." and model.calls == 2

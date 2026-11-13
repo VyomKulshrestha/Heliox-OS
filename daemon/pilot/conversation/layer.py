@@ -169,6 +169,35 @@ def ends_with_question(sentence: str) -> bool:
     return sentence.rstrip().rstrip("\"')]").endswith("?")
 
 
+# The rest of a reply the person talked over, asked for: said from what was written, for two minutes.
+WHAT_WERE_YOU_SAYING = re.compile(
+    r"^(?:sorry,? )?(?:what were you saying|you were saying|go on|carry on|keep going|continue|"
+    r"finish what you were saying|what were you going to say|sorry,? go on|go ahead,? finish)$"
+)
+UNSAID_SECONDS = 120.0
+# "Are you there?": the person checks Heliox is listening.
+ARE_YOU_THERE = re.compile(
+    r"^(?:are you (?:still )?there|you there|are you (?:still )?listening|can you hear me|are you awake|"
+    r"hello,? are you there|you still there)$"
+)
+HERE = "I'm here."
+# The person says Heliox's last reply was wrong.
+CORRECTED = re.compile(
+    r"^(?:no,? )?(?:that'?s|that is|you'?re|you are) (?:wrong|not right|incorrect|not true|not it)\b"
+    r"|^(?:no,? )?(?:wrong|that'?s wrong|not quite)\b|^no,? it'?s not\b|^no,? it isn'?t\b"
+)
+
+
+def _waiting(queue: asyncio.Queue[str | None]) -> list[str]:
+    """The sentences already written and not yet said when the person talked over the reply."""
+    waiting: list[str] = []
+    while not queue.empty():
+        item = queue.get_nowait()
+        if item:
+            waiting.append(item.strip())
+    return waiting
+
+
 # "Okay." on its own: the person acknowledges. YES (an offer's yes) is checked before this, with an offer open.
 BARE_ACK = re.compile(
     r"^(?:ok(?:ay)?|okay then|alright|all right|right|got it|gotcha|cool|fine|good|great|nice|perfect|"
@@ -336,6 +365,7 @@ class ConversationLayer:
         self._said_local_slow = False  # "the model on this computer is slow the first time" said once
         self._company_said: tuple[str, float] | None = None  # the last company line said, and when
         self._last_thanks = ""  # the last reply to a plain thanks: the next one is different
+        self._unsaid: tuple[str, float] | None = None  # the rest of a reply the person talked over, and when
         self._thanks_said = 0
         self._search_url = search_url
         # Whether the planner's model may be given screen text (conversation.share_screen_text), and whether the
@@ -559,6 +589,26 @@ class ConversationLayer:
             await self._say_one(result, settled, started)  # remembered there, as said
             if done is None:
                 self._last_done = (settled, (), self._clock())  # "did you get that?" next: no
+            result.done = True
+            return result
+        if ARE_YOU_THERE.match(normalize(text)):
+            # A check-in, often after a long quiet: one short line from code, and nothing about the old topic.
+            self.memory.add_user(text)
+            await self._say_one(result, HERE, started)
+            result.done = True
+            return result
+        if CORRECTED.match(normalize(text)) and self.memory.last_heliox():
+            # "No, that's wrong": the last reply is marked wrong for the model (it gives the right answer, and the
+            # wrong one is not given again later); the turn itself goes on to the model.
+            self.memory.mark_last_wrong()
+        rest = self._the_rest(text)
+        if rest:
+            # The rest of the reply the person talked over, said now that they asked for it; no model call.
+            self.memory.add_user(text)
+            for sentence in SENTENCE.split(rest):
+                outcome = await self._say_one(result, clean_for_speech(sentence), started)
+                if outcome in STOPPED:
+                    break
             result.done = True
             return result
         thanked = self._thanks_reply(text, offer)
@@ -811,7 +861,7 @@ class ConversationLayer:
                 outcome = await sink(clean, "final_answer", f"conv:{id(result)}:{len(said)}")
                 current = ""
                 if outcome in STOPPED:
-                    self._remember_said(said, clean)
+                    self._remember_said(said, clean, _waiting(queue))
                     result.done = True
                     return result
                 if outcome in HEARD or outcome == "duplicate":
@@ -824,8 +874,8 @@ class ConversationLayer:
             if not capped:
                 await producer  # (when capped, the finally below closes the stream, so it stops costing tokens)
         except asyncio.CancelledError:
-            # A new utterance arrived: what was said is remembered, the sentence being spoken as cut off.
-            self._remember_said(said, current or None)
+            # A new utterance arrived: what was heard is remembered, the sentence being spoken as cut off.
+            self._remember_said(said, current or None, _waiting(queue))
             result.done = True
             raise
         finally:
@@ -906,6 +956,17 @@ class ConversationLayer:
         self._thanks_said += 1
         self._last_thanks = reply
         return reply
+
+    def _the_rest(self, text: str) -> str:
+        """ "What were you saying?" right after the person talked over a reply: the rest of it, as it was written.
+        "" when there is no cut-off reply from the last two minutes (the turn then goes on as usual)."""
+        if self._unsaid is None or not WHAT_WERE_YOU_SAYING.match(normalize(text)):
+            return ""
+        rest, at = self._unsaid
+        if self._clock() - at > UNSAID_SECONDS:
+            return ""
+        self._unsaid = None
+        return rest
 
     def _nothing_open(self, offer: Any) -> bool:
         """No offer of Heliox's, approval, running task or question of Heliox's waiting for the person."""
@@ -1024,19 +1085,31 @@ class ConversationLayer:
         self._offer = (self._clock(), intent, quick)
         result.done = True
 
-    def _remember_said(self, said: list[str], cut: str | None) -> None:
+    def _remember_said(self, said: list[str], cut: str | None, unsaid: list[str] | None = None) -> None:
+        """The reply up to where the person talked over it: the sentences said, and of the one being spoken only
+        what they heard (the voice's report). The rest is kept a while, for "what were you saying?", and never said
+        unasked."""
+        heard = ""
         if cut:
-            self.memory.add_heliox(" ".join([*said, cut]), cut_off=True)
-        elif said:
-            self.memory.add_heliox(" ".join(said), cut_off=True)
+            heard = str(_safe_call(lambda: self.sources.heard_of(cut), cut) or "").strip()
+            if not cut.startswith(heard):
+                heard = cut  # an answer that is not a prefix of the sentence is not trusted
+        rest = [cut] if cut and len(heard) < len(cut) else []  # resumed from the start of the cut sentence
+        rest += [part for part in (unsaid or []) if part]
+        self._unsaid = (" ".join(part for part in rest if part), self._clock()) if any(rest) else None
+        if said or heard:
+            self.memory.add_heliox(" ".join([*said, heard] if heard else said), cut_off=True)
 
     async def _say_one(
         self, result: TurnResult, sentence: str, started: float, *, channel: str = "final_answer"
     ) -> str:
         result.timings.setdefault("first_sentence_ms", (self._clock() - started) * 1000)
         outcome = await (result._sink or self._sink)(sentence, channel, f"conv-one:{id(result)}")
-        if outcome in HEARD or outcome in STOPPED:
-            self.memory.add_heliox(sentence, cut_off=outcome in STOPPED)
+        if outcome in STOPPED:
+            self._remember_said([], sentence)  # what was heard of it; the rest kept for "what were you saying?"
+            result.spoken.append(sentence)
+        elif outcome in HEARD:
+            self.memory.add_heliox(sentence)
             result.spoken.append(sentence)
         return outcome
 

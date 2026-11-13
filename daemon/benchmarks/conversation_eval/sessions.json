@@ -1,5 +1,5 @@
 {
- "how_to_read": "Each session is one person's exchange with Heliox on Thursday 12 November 2026 at 9:00. A turn is what they say ('say'), how long after Heliox stopped talking ('gap', seconds, default 1), and what must happen ('expect'): 'taken' (whether Heliox took the words as meant for it), 'has' (facts that must be in what is said; 'a|b' means either), 'not' (things that must not be said), 'silent', 'runs' (action types that must run in that turn), 'runs_nothing', 'approval' (whether the visible approval dialog is asked for), 'model' (whether the fast model is called). 'expect_none' overrides for a person with no model; 'expect_model' for one with a model. 'model' at turn level is what the fast model replies when it is asked (the same words for every provider, sent in each provider's own format). 'repeat' allows the same words twice running; 'detail' allows a long reply; 'still_talking' means the person is still finishing their sentence when Heliox would start. Events: 'call' (a call starts), 'call_end'. 'never_runs' at session level: action types that must never run. Phrasing follows the owner's recorded takes where there is one (the launch-call line, 'what can I say?', 'Wait, stop.', notes said in passing). 'expect_stub' holds only for a stub model (a person with a model, not a paid run), whose replies are the turn's 'model' text: it checks what code does with those words, and is left out of a paid run, where the model writes its own.",
+ "how_to_read": "Each session is one person's exchange with Heliox on Thursday 12 November 2026 at 9:00. A turn is what they say ('say'), how long after Heliox stopped talking ('gap', seconds, default 1), and what must happen ('expect'): 'taken' (whether Heliox took the words as meant for it), 'has' (facts that must be in what is said; 'a|b' means either), 'not' (things that must not be said), 'silent', 'runs' (action types that must run in that turn), 'runs_nothing', 'approval' (whether the visible approval dialog is asked for), 'model' (whether the fast model is called). 'expect_none' overrides for a person with no model; 'expect_model' for one with a model. 'model' at turn level is what the fast model replies when it is asked (the same words for every provider, sent in each provider's own format). 'repeat' allows the same words twice running; 'detail' allows a long reply; 'still_talking' means the person is still finishing their sentence when Heliox would start. Events: 'call' (a call starts), 'call_end'. 'never_runs' at session level: action types that must never run. Phrasing follows the owner's recorded takes where there is one (the launch-call line, 'what can I say?', 'Wait, stop.', notes said in passing). 'expect_stub' holds only for a stub model (a person with a model, not a paid run), whose replies are the turn's 'model' text: it checks what code does with those words, and is left out of a paid run, where the model writes its own. 'barge_in' (session): barge-in is on. 'interrupts' (turn): the person talks over the reply before it, that many words in; the voice stops there, the words up to the cut are what was said and heard, and the rest is not said unless asked. 'remembers' and 'not_remembered' (turn): what Heliox remembers having said, after the turn. 'barge_in' (session): barge-in is on. 'interrupts' (turn): the person talks over the reply before it, that many words in; the voice stops there, the words up to the cut are what was said and heard, and the rest is not said unless asked. 'remembers' and 'not_remembered' (turn): what Heliox remembers having said, after the turn. 'barge_in' (session): barge-in is on. 'interrupts' (turn): the person talks over the reply before it, that many words in; the voice stops there, the words up to the cut are what was said and heard, and the rest is not said unless asked. 'remembers' and 'not_remembered' (turn): what Heliox remembers having said, after the turn.",
  "sessions": [
   {
    "name": "morning start",
@@ -2053,6 +2053,186 @@
        "would you like me",
        "should i",
        "shall i"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "talked over mid-reply: the voice stops, the rest waits until asked",
+   "barge_in": true,
+   "turns": [
+    {
+     "say": "Hey Heliox, explain how DNS works, in detail.",
+     "detail": true,
+     "model": "DNS turns a name like example dot com into an address. Your computer first asks a resolver, usually at your provider. The resolver asks the root servers, then the servers for dot com. The answer is kept for a while, so the next lookup is quick.",
+     "expect": {
+      "taken": true
+     },
+     "expect_stub": {
+      "has": [
+       "DNS turns a name",
+       "your computer first asks"
+      ],
+      "not": [
+       "root servers"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, what time is it?",
+     "interrupts": 15,
+     "gap": 0.3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "9|nine"
+      ],
+      "not": [
+       "resolver",
+       "root servers"
+      ]
+     },
+     "expect_stub": {
+      "remembers": [
+       "your computer first asks"
+      ],
+      "not_remembered": [
+       "a resolver",
+       "root servers"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, what were you saying?",
+     "gap": 1.5,
+     "detail": true,
+     "expect": {
+      "taken": true,
+      "model": false
+     },
+     "expect_stub": {
+      "has": [
+       "your computer first asks a resolver",
+       "root servers",
+       "next lookup"
+      ]
+     }
+    },
+    {
+     "say": "Okay.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "silent": true,
+      "model": false
+     }
+    },
+    {
+     "say": "Hey Heliox, what's two plus two?",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "4|four"
+      ],
+      "not": [
+       "resolver",
+       "root servers"
+      ]
+     }
+    },
+    {
+     "say": "Thanks.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "model": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "corrected: Heliox's answer was wrong; later, after a long quiet, are you there",
+   "turns": [
+    {
+     "say": "Hey Heliox, what's the capital of Australia?",
+     "model": "Sydney.",
+     "expect": {
+      "taken": true
+     }
+    },
+    {
+     "say": "No, that's wrong.",
+     "gap": 1.5,
+     "model": "Sorry, it's Canberra.",
+     "expect": {
+      "taken": true
+     },
+     "expect_model": {
+      "model": true
+     },
+     "expect_stub": {
+      "has": [
+       "canberra"
+      ]
+     },
+     "expect_cloud": {
+      "sent": [
+       "[the person said this was wrong]"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, what's the capital of Australia?",
+     "gap": 3,
+     "model": "Sorry, it's Canberra.",
+     "expect": {
+      "taken": true,
+      "not": [
+       "sydney"
+      ]
+     },
+     "expect_stub": {
+      "has": [
+       "canberra"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, how many people live there?",
+     "gap": 3,
+     "model": "About four hundred and sixty thousand.",
+     "expect": {
+      "taken": true,
+      "not": [
+       "sydney"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, are you there?",
+     "gap": 900,
+     "model": "Yes. Australia's capital is Canberra, as I said.",
+     "expect": {
+      "taken": true,
+      "model": false,
+      "has": [
+       "i'm here"
+      ],
+      "not": [
+       "canberra",
+       "australia"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, what time is it?",
+     "gap": 2,
+     "expect": {
+      "taken": true,
+      "has": [
+       "9|nine"
       ]
      }
     }

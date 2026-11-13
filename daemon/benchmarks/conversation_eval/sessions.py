@@ -113,6 +113,8 @@ class Record:
     config_saves: dict[int, list[str]] = field(default_factory=dict)  # where each config save went, by turn
     config_after: dict[int, dict[str, Any]] = field(default_factory=dict)  # the scratch config.toml after the turn
     real: bool = False  # the replies came from a real model: expectations on a stub's own words do not apply
+    remembered: dict[int, str] = field(default_factory=dict)  # what Heliox remembers having said, after the turn
+    cut_waiting: bool = False  # a reply is stopped at its planned cut, waiting for the person who talks over it
     approved: dict[int, int] = field(default_factory=dict)  # a turn whose plan was approved on the dialog -> when
     folder: str = ""  # the session's own folder
     real_config_before: dict[str, tuple[int, int]] = field(default_factory=dict)  # the person's, by name
@@ -192,15 +194,50 @@ class Listener:
 
 
 class Speaker:
-    """The speech coordinator: records what would be said and moves the clock on by how long it takes to say."""
+    """The speech coordinator: records what would be said and moves the clock on by how long it takes to say.
+
+    A turn marked ``interrupts`` (N words) talks over the reply before it: that reply's voice stops N words in, the
+    words up to there are what was said (and heard), and it waits there, playing, until the person's turn stops it
+    (``stop_all``, or the reply cancelled), as a barge-in does."""
 
     def __init__(self, record: Record, clock: Clock, listener: Listener) -> None:
         self.record, self.clock, self.listener = record, clock, listener
+        self.cut: tuple[int, int] | None = None  # (turn, words into its reply) where the person will talk over it
+        self.words: dict[int, int] = {}
+        self.release: asyncio.Event | None = None
+        self.last_cut = ("", "")  # the sentence that was cut, and the part of it that was heard
+
+    def plan_cut(self, turn: int, words: int) -> None:
+        self.cut = (turn, words)
+
+    def heard_of(self, text: str) -> str:
+        """What the voice reports of a sentence it was stopped in: the words played before the stop."""
+        sentence, heard = self.last_cut
+        return heard if text.strip() == sentence else text
 
     async def speak(self, text: str, channel: Any = "final_answer", dedupe_key: str = "", recorder: Any = None):
         from pilot.system.companion_speech import SpeechChannel, SpeechOutcome
 
         resolved = SpeechChannel(str(channel))
+        turn = _turn_of(self.record)
+        words = text.split()
+        before = self.words.get(turn, 0)
+        if self.cut is not None and self.cut[0] == turn and before + len(words) > self.cut[1]:
+            heard = " ".join(words[: max(0, self.cut[1] - before)])
+            self.cut, self.last_cut = None, (text.strip(), heard)
+            if heard:
+                self.record.said.append(
+                    Said(self.record.next(), turn, heard, resolved.value, self.listener.user_is_speaking)
+                )
+            self.clock.t += len(heard.split()) / WORDS_PER_SECOND
+            self.release = asyncio.Event()
+            self.record.cut_waiting = True
+            try:
+                await self.release.wait()  # still playing: the person's turn stops it
+            finally:
+                self.record.cut_waiting, self.release = False, None
+            return SpeechOutcome("interrupted", resolved, "talked over")
+        self.words[turn] = before + len(words)
         self.record.said.append(
             Said(
                 self.record.next(),
@@ -214,10 +251,11 @@ class Speaker:
         return SpeechOutcome("spoken", resolved, "")
 
     def status(self) -> dict[str, Any]:
-        return {"active": False}
+        return {"active": self.release is not None}
 
     async def stop_all(self) -> None:
-        return None
+        if self.release is not None:
+            self.release.set()
 
     async def close(self) -> None:
         return None
@@ -430,6 +468,9 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     layer._model = lambda: model
     layer._prepare = lambda text: None  # no speech synthesis is prepared: there is no voice here, and no audio
     layer.sources.now = lambda: NOW  # the model is told the session's Thursday 9:00, as every code answer is
+    layer.sources.heard_of = server._speech_coordinator.heard_of  # how far the voice got when it was talked over
+    if session.get("barge_in"):
+        config.voice.barge_in_enabled = True
     server._voice_turns._clock = clock  # the withdraw window runs on the session's clock
     return server
 
@@ -519,6 +560,15 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                 if event == "call_end":
                     listener.in_call = ""
                     continue
+                if turn.get("interrupts") is not None and index > 0:
+                    # The person starts talking over the reply: the barge-in watcher stops the voice at once (inside
+                    # its speak call, pilot.server._speak_companion_text), then their words are heard and dispatched.
+                    await server._speech_coordinator.stop_all()
+                    for _ in range(2000):  # the stopped speak call returns "interrupted" to the reply
+                        if not record.cut_waiting:
+                            break
+                        await asyncio.sleep(0.001)
+                    await _settle(record, index - 1, None, lambda: set(), winding_down)
                 gap = float(turn.get("gap", DEFAULT_GAP))
                 clock.t += gap
                 if server._last_spoken_at != float("-inf"):
@@ -603,6 +653,9 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                 )
                 command = decision.command if decision.act else text.strip(" \t,.:;!?-")
                 listener.user_is_speaking = bool(turn.get("still_talking"))
+                following = session["turns"][index + 1] if index + 1 < len(session["turns"]) else {}
+                if following.get("interrupts") is not None:
+                    server._speech_coordinator.plan_cut(index, int(following["interrupts"]))
 
                 async def dispatch(
                     words: str = command, how: str = addressed, turn_index: int = index, on: Any = server
@@ -640,6 +693,7 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                     pending.append(task)  # waiting on the visible approval dialog, which nobody presses here
                 record.stored[index] = _on_disk(folder)
                 record.config_after[index] = _scratch_config()
+                record.remembered[index] = _remembered(server)
             record.turn = len(session["turns"])
             for task in pending:
                 task.cancel()
@@ -696,6 +750,8 @@ async def _settle(
         running = {task for task in record.tasks.get(index, set()) if not task.done() and not _is_timer(task)}
         if not running and not winding_down():
             return
+        if record.cut_waiting:
+            return  # the reply is playing at its cut; the next turn talks over it
         if asked() and any(s.turn in (index, joins) and "approv" in s.text.casefold() for s in record.said):
             return  # the plan waits for the person's click; the rest of this turn waits with it
         await asyncio.sleep(0.005)
@@ -769,6 +825,14 @@ def _scratch_config() -> dict[str, Any]:
     if not target.exists():
         return {}
     return tomllib.loads(target.read_text(encoding="utf-8"))
+
+
+def _remembered(server: Any) -> str:
+    """What Heliox remembers having said in the conversation so far (the layer's memory), one line."""
+    from pilot.conversation import layer_for
+
+    turns = layer_for(server).memory.recent()
+    return " ".join(turn.text for turn in turns if turn.role == "assistant")
 
 
 def _setting(config: dict[str, Any], dotted: str) -> Any:
@@ -935,6 +999,13 @@ def check_session(session: dict[str, Any], kind: str, record: Record) -> list[st
             for target in saves:
                 if not Path(target).resolve().is_relative_to(TEST_ROOT.resolve()):
                     failures.append(f"{where}: a config save went outside the scratch root: {target}")
+        memory = record.remembered.get(index, "")
+        for option in expect.get("remembers", []):
+            if not _has(memory, option):
+                failures.append(f"{where}: expected Heliox to remember saying {option!r}; it remembers {memory!r}")
+        for option in expect.get("not_remembered", []):
+            if _has(memory, option):
+                failures.append(f"{where}: Heliox remembers saying {option!r}, which was not heard: {memory!r}")
         saved = record.config_after.get(index, {})
         for dotted, value in expect.get("config", {}).items():
             if _setting(saved, dotted) != value:

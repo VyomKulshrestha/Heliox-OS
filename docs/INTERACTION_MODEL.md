@@ -1009,6 +1009,32 @@ like a person. Each is now a rule in code, with a prompt line only for what code
 **Fakes only** (the sessions "nothing said twice: an acknowledgement is not answered, a sentence not repeated
 unless asked" and "a statement gets a few words, and a complaint one offer at most, by the offers' own rules").
 
+**Talked over, corrected, checked on.** These three situations of a spoken day were not in the pack at all. Each now
+has a session for all four kinds of person:
+
+- **Interrupting Heliox mid-reply.** The session voice now takes time, and a turn can talk over the reply before
+  it, a number of words in (`interrupts`), with barge-in on.
+  - The voice stops at the cut. The words before it are what was said and heard; the rest is never said unasked.
+  - What Heliox remembers saying stops at what was heard. Of the sentence being spoken, that is the part the voice
+    reports as played: `heard_of`, read from the speech coordinator. Agreed with the speech work: for Heliox's own
+    voices (Kokoro, Pocket) the report is the pieces played in full, plus the cut piece's words in proportion to its
+    played seconds, and a word counts only if it ended 0.65 s before the stop. On synthetic speech (93 cuts) that
+    falls 1 to 5 words short and never runs ahead. The system voices cannot tell, so the whole sentence is kept,
+    marked as talked over, as before.
+  - The next turn answers the new thing.
+  - "What were you saying?" within two minutes says the rest from the start of the cut sentence, from what was
+    already written, with no model call. Before this, a cut reply's whole sentence was remembered as said, and the
+    rest was lost.
+- **Correcting Heliox.** "No, that's wrong" marks the last reply as wrong in what the model is sent ("[the person
+  said this was wrong]"). The prompt asks for "Sorry," and the right answer in a few words. The same question asked
+  again is answered again: the repeat rule lets a sentence through when the person repeats their question.
+- **A long quiet, then "are you there?"** It gets "I'm here." from code, with nothing about the old topic and no
+  model call.
+
+"Sorry, what were you saying?" said as a follow-up is doubted by the addressing rule and gets "Sorry?". This was
+sent to the speech work; the session uses the wake phrase for it. A second person using the wake phrase waits for
+the speech side; there is no speaker identification to build on.
+
 ## 4. Not in this pass
 
 * The quick road covers single actions only; anything with two steps goes to the planner.

@@ -155,6 +155,18 @@ def _app_label(process: str) -> str:
     return app_label(process)
 
 
+def _heard_of(server: Any, text: str) -> str:
+    """Of a sentence the person talked over, what the voice says was heard: the speech coordinator's ``heard_of``
+    (the pieces played in full and the cut piece's words in proportion to its played seconds, for Heliox's own
+    voices). The whole sentence when the voice cannot tell (the system voices) or reports nothing."""
+    coordinator = getattr(server, "_speech_coordinator", None)
+    report = getattr(coordinator, "heard_of", None)
+    if not callable(report):
+        return text
+    heard = report(text)
+    return text if heard is None else str(heard)
+
+
 def _offer_kind(request: str) -> str:
     """A stable name for an offer made in a reply, so "don't offer that" silences it: "list-biggest-folders" (the
     offers keep it as "reply:list-biggest-folders")."""
@@ -401,6 +413,7 @@ def layer_for(server: Any) -> Any:
         answer_length=lambda: _answer_length(server),
         people=lambda: _people(server),
         offer_in_reply=lambda text, request, why: _offer_in_reply(server, text, request, why),
+        heard_of=lambda text: _heard_of(server, text),
         task_state=lambda: _task_state(server, layer),
         screen_async=screen,
     )

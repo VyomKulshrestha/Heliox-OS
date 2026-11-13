@@ -39,6 +39,7 @@ class Turn:
     at: float
     cut_off: bool = False  # Heliox was talked over: ``text`` is what was heard, and no more
     source: str = ""  # "live": Heliox Live spoke up on its own about something the person wrote or said
+    wrong: bool = False  # the person said this reply was wrong: it is never given as the answer again
 
 
 class ConversationMemory:
@@ -88,6 +89,14 @@ class ConversationMemory:
             return []
         return list(self._turns)[-self._max_turns * 2 :]
 
+    def mark_last_wrong(self) -> bool:
+        """The person said Heliox's last reply was wrong: it stays in the conversation, marked so."""
+        for turn in reversed(self._turns):
+            if turn.role == "assistant":
+                turn.wrong = True
+                return True
+        return False
+
     def last_heliox(self) -> str:
         for turn in reversed(self._turns):
             if turn.role == "assistant":
@@ -121,6 +130,9 @@ class ContextSources:
     # Whether a reply to a statement may offer this (text, request, why): the offers' own rules decide, and an
     # offer made counts as one (pilot.conversation.adapters._offer_in_reply). Off by default: no offers.
     offer_in_reply: Callable[[str, str, str], Any] = lambda _text, _request, _why: ""
+    # Of a sentence the person talked over, the part they heard (the voice's own report of how far it got); the
+    # whole sentence when nothing is known.
+    heard_of: Callable[[str], str] = lambda text: text
 
 
 def _safe(call: Callable[[], Any], default: Any) -> Any:
@@ -245,6 +257,8 @@ def assemble(
     messages: list[dict[str, str]] = []
     for turn in memory.recent():
         said = turn.text + (" [the person talked over Heliox here; the rest was not said]" if turn.cut_off else "")
+        if turn.wrong:
+            said += " [the person said this was wrong]"
         if turn.source == "live":
             said = f"[Heliox Live spoke up on its own about something the person wrote or said:] {said}"
         if messages and messages[-1]["role"] == turn.role:

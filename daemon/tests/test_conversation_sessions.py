@@ -28,7 +28,7 @@ def test_a_whole_session(session, kind, request):
 
 
 def test_the_pack_covers_what_the_round_asked_for():
-    assert 15 <= len(SESSIONS) <= 25
+    assert 15 <= len(SESSIONS) <= 30  # 27 on 13 November: interruption, correction and a check-in added
     assert all(6 <= len([t for t in s["turns"] if "say" in t]) <= 15 for s in SESSIONS)
     names = " ".join(s["name"] for s in SESSIONS).casefold()
     for topic in (
