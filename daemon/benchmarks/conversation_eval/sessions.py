@@ -509,6 +509,8 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
         config.voice.barge_in_enabled = True
     if session.get("second_voice_guard"):
         config.conversation.second_voice_guard = True
+    if "second_voice_threshold" in session:
+        config.conversation.second_voice_threshold = int(session["second_voice_threshold"])
     server._voice_turns._clock = clock  # the withdraw window runs on the session's clock
     return server
 

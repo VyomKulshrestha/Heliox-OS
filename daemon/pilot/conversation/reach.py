@@ -92,8 +92,13 @@ def asks_for_data(words: str) -> bool:
     return not keeps_reach(words) and bool(_DATA_WORDS.search(words))
 
 
-def guarded(*, enabled: bool, addressed: str, overheard: int, threshold: int) -> bool:
+def overheard_reason(overheard: int, threshold: int) -> str:
+    """The listener's count as a reason the room is not quiet ("" when it is below the threshold). Other signals (a
+    voice unlike the one that woke Heliox, if one earns its place) give their own reasons the same way."""
+    return f"{overheard} utterance(s) left out since Heliox spoke" if overheard >= max(1, threshold) else ""
+
+
+def guarded(*, enabled: bool, addressed: str, reasons: list[str] | tuple[str, ...]) -> bool:
     """Whether this turn's reach is limited: the rule is on, the turn came through the follow-up window (not the wake
-    phrase, the button or a continuation), and the listener heard at least ``threshold`` utterances it did not take
-    since Heliox last spoke."""
-    return enabled and addressed == "follow_up" and overheard >= max(1, threshold)
+    phrase, the button or a continuation), and some signal says the room is not quiet (``reasons``, from outside)."""
+    return enabled and addressed == "follow_up" and any(reasons)

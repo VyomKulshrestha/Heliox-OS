@@ -629,7 +629,7 @@ class ConversationConfig:
     # utterances it did not take since Heliox last spoke (pilot.conversation.reach). Off until it is measured on
     # recordings of a person alone; the count is logged on every follow-up either way.
     second_voice_guard: bool = False
-    second_voice_threshold: int = 2
+    second_voice_threshold: int = 1  # 2 caught no single second voice; at 1 the cost alone is unmeasured
 
 
 @dataclass

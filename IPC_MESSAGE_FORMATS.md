@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **336 WebSocket RPC methods**. That is the API
+The daemon currently registers **337 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1981,7 +1981,15 @@ the last turn), `streaming_ready`, `streaming_error` and `last_transcription_eng
 only when Heliox can speak now without loading its voice (always true for the system voice; false while a local
 voice failed and the system voice stands in), and `voice_loading` while a load is under way. Both are present
 when the listener is off too. `last_voiced_seconds` is the voice in the last utterance, without pre-roll or
-trailing silence.
+trailing silence. `follow_up_counts` is `{ "since": "YYYY-MM-DD", "taken": n, "at_least_1": n, "at_least_2": n,
+"at_least_3": n }`: follow-ups Heliox took, and how many came after at least 1, 2 or 3 utterances the listener left
+out since Heliox last spoke. Four numbers and a day, kept on this computer only (pilot.conversation.follow_up_counts).
+
+#### `voice_follow_up_counts_reset`
+Start the follow-up counts again from zero, from today.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok", "follow_up_counts": { "since": "...", "taken": 0, ... } }`
 
 #### `voice_listen_now`
 The microphone button while always-listening is on: the next sentence (within `seconds`, default 10) is taken

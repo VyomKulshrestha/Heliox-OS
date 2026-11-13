@@ -1124,10 +1124,39 @@ gets no profile, people or personal lines in what the model is sent.
 
 Every follow-up logs the count, whether the rule is on or off, so real use can show how often it would apply.
 
-**Off by default, on purpose.** A count of 1 is common for one person alone: muttering, and a sentence the recorder
-splits. The threshold (2 to start) is fixed only after the speech work measures, on the turn-split recordings and the
-owner's own, how often a person alone would be told "Say Hey Heliox first for that." If that is more than a few in a
-hundred follow-ups, the signal is not good enough and the rule stays off.
+**Off, and measured as not ready.** The bar for turning it on: a person alone is told "Say Hey Heliox first for
+that." on no more than a few in a hundred follow-ups. The speech work measured the count on 2d24504, with the real
+recorder, Parakeet and the real addressing rule:
+
+| Set | Follow-ups taken (n) | count ≥ 1 | count ≥ 2 | count ≥ 3 |
+|---|---|---|---|---|
+| Turn-split, a person alone (synthetic voices) | 24 | 0 | 0 | 0 |
+| The owner's own recordings, a person alone | 1 | 0 | 0 | 0 |
+| Synthetic, one unaddressed corpus line before each follow-up (a second voice) | 24 | 13 | 0 | 0 |
+
+- **The person-alone side is unmeasured.** n is 24 synthetic voices that never mutter or restart, and 1 real
+  follow-up. That 1 is partly an artefact: the script removed only the literal wake phrase, which the recogniser
+  rarely writes for the owner's voice.
+- **A threshold of 2 does nothing:** a single overheard line never reached it. The default is now 1. At 1, the cost
+  to a person alone is unmeasured.
+- **At 1, the rule caught 13 of 24 single second-voice lines.** In the other 11, the second voice's line was itself
+  taken as the follow-up.
+- **That is the main exposure:** a second voice taken as the follow-up directly. In an open follow-up window, 483 of
+  the 975 unaddressed corpus lines are taken. No count can see this, because nothing was left out before it.
+
+**How real use will measure it.** Every follow-up Heliox takes adds to four numbers in the state folder
+(`pilot.conversation.follow_up_counts`):
+- follow-ups taken;
+- how many came after at least 1, 2 and 3 utterances the listener left out.
+
+They are kept with the day counting began, and hold no words and no time finer than the day. The person sees them in
+the voice diagnostics (`voice_listener_stats`, `follow_up_counts`) and can start them again
+(`voice_follow_up_counts_reset`). They go into nothing that leaves the computer. After a few weeks of real use, those
+four numbers answer what the recordings could not.
+
+`pilot.conversation.reach` takes "the room is not quiet" as reasons from outside (`guarded(..., reasons=...)`). The
+count is one reason; a later signal, such as a voice unlike the one that woke Heliox, would be another, without
+changing the list.
 
 **What it does not cover: a question, then the television.** After Heliox asks a question, the next thing it hears is
 taken as the answer, whoever says it. The listener has not left anything out yet, so the count is 0 and the rule

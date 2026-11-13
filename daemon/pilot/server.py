@@ -2328,6 +2328,7 @@ class PilotServer:
             "voice_listener_start": self._handle_voice_listener_start,
             "voice_listener_stop": self._handle_voice_listener_stop,
             "voice_listener_stats": self._handle_voice_listener_stats,
+            "voice_follow_up_counts_reset": self._handle_voice_follow_up_counts_reset,
             "voice_listen_now": self._handle_voice_listen_now,
             "voice_new_conversation": self._handle_voice_new_conversation,
             "speech_models_list": self._handle_speech_models_list,
@@ -9636,7 +9637,7 @@ class PilotServer:
     def _reach_limited(self, words: str) -> bool:
         """Whether this follow-up's reach is limited (pilot.conversation.reach): logged on every follow-up, with the
         count of utterances the listener did not take since Heliox last spoke, whether or not the rule is on."""
-        from pilot.conversation.reach import guarded, keeps_reach
+        from pilot.conversation.reach import guarded, keeps_reach, overheard_reason
         from pilot.system.voice import voice_turn_addressed
 
         addressed = voice_turn_addressed.get()
@@ -9647,13 +9648,10 @@ class PilotServer:
         addressing = getattr(getattr(self, "_voice_listener", None), "addressing", None)
         overheard = getattr(addressing, "overheard_since_heliox", 0)
         overheard = overheard if isinstance(overheard, int) else 0
+        self._follow_up_counts().record(overheard)  # four numbers, no words: real use measures the rule
         settings = self.config.conversation
-        noisy = guarded(
-            enabled=bool(settings.second_voice_guard),
-            addressed=addressed,
-            overheard=overheard,
-            threshold=int(settings.second_voice_threshold),
-        )
+        reasons = [overheard_reason(overheard, int(settings.second_voice_threshold))]
+        noisy = guarded(enabled=bool(settings.second_voice_guard), addressed=addressed, reasons=reasons)
         # Once the room was not quiet, follow-ups stay limited until someone says the wake phrase: Heliox's own "Say
         # Hey Heliox first" resets the listener's count, not what it heard.
         self._room_not_quiet = noisy or (bool(settings.second_voice_guard) and getattr(self, "_room_not_quiet", False))
@@ -9665,6 +9663,20 @@ class PilotServer:
             ": reach limited" if limited else "",
         )
         return limited
+
+    def _follow_up_counts(self) -> Any:
+        """The follow-up counts in the state folder (pilot.conversation.follow_up_counts)."""
+        counts = getattr(self, "_follow_up_counts_store", None)
+        if counts is None:
+            from pilot.config import STATE_DIR
+            from pilot.conversation.follow_up_counts import FollowUpCounts
+
+            counts = self._follow_up_counts_store = FollowUpCounts(STATE_DIR / "follow_up_counts.json")
+        return counts
+
+    async def _handle_voice_follow_up_counts_reset(self, params: dict, ws: ServerConnection) -> dict:
+        """Start the follow-up counts again from zero, from today."""
+        return {"status": "ok", "follow_up_counts": self._follow_up_counts().reset()}
 
     async def _say_wake_first(self, words: str) -> None:
         """Once, until someone says the wake phrase: say how to go ahead. Later refused follow-ups are silent."""
@@ -16211,6 +16223,7 @@ def handle_tool(tool_name, params):
         from pilot.system.local_tts_worker import local_voice_state
 
         voice_state = local_voice_state(self.config.voice)
+        voice_state["follow_up_counts"] = self._follow_up_counts().read()
         if not self._voice_listener:
             return {"running": False, "message": "Voice listener not initialized", **voice_state}
         return {**self._voice_listener.get_stats(), **voice_state}
