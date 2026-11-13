@@ -190,6 +190,10 @@ def stages(events: list[tl.Event]) -> dict[str, Any] | None:
     answer = picked["first sentence"]
     if answer is not None:
         out["first_sentence_words"] = len(answer.detail.split())
+        out["first_sentence_chars"] = len(answer.detail.strip())
+        head = answer.detail.strip().rstrip(".!?")
+        # Words up to the first comma that comes before the sentence's end (numbers only, never the words).
+        out["first_comma_words"] = len(head.split(",", 1)[0].split()) if "," in head else None
         heard = out.get("answer sound")
         out["synthesis_s"] = None if heard is None else round(heard["audio"] - out["first sentence"]["audio"], 3)
     return out

@@ -373,6 +373,9 @@ def test_a_turn_carries_its_warm_up_stamps_and_its_first_sentences_length():
     assert got["warm_started"]["audio"] == -0.5 and got["warm_done"]["audio"] == 0.9
     assert got["request"]["audio"] == 0.6
     assert got["first_sentence_words"] == 6 and got["synthesis_s"] == 1.1
+    assert got["first_sentence_chars"] == 37 and got["first_comma_words"] is None
+    events[5] = tl.Event(t=21.6, event=tl.SPEAKS, detail="Sure, it is Canberra.", data={"setup": False})
+    assert voice_latency.stages(events)["first_comma_words"] == 1
 
 
 def test_the_warm_up_and_synthesis_tables():
