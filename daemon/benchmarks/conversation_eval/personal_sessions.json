@@ -1113,14 +1113,16 @@
           "expect": {
             "taken": true,
             "model": false,
-            "config_saved_in_scratch": true,
+            "config_saved_in_scratch": false,
             "has": [
-              "Okay, I'm with you."
+              "Open Heliox and approve it there."
             ],
             "config": {
-              "live.enabled": true,
-              "suggestions.enabled": true
-            }
+              "live.enabled": false
+            },
+            "not": [
+              "I'm with you"
+            ]
           }
         },
         {
@@ -1131,11 +1133,14 @@
             "model": false,
             "config_saved_in_scratch": false,
             "has": [
-              "Okay, I'm with you."
+              "Open Heliox and approve it there."
             ],
             "config": {
-              "live.enabled": true
-            }
+              "live.enabled": false
+            },
+            "not": [
+              "I'm with you"
+            ]
           }
         },
         {
@@ -1150,7 +1155,7 @@
               "9|nine"
             ],
             "config": {
-              "live.enabled": true,
+              "live.enabled": false,
               "suggestions.enabled": true,
               "suggestions.offers": "on"
             }

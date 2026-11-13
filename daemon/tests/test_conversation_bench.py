@@ -499,6 +499,9 @@ def test_the_bench_wires_its_listener_exactly_as_the_server_does():
         def warm_for_speech(self, addressed):
             return addressed == "wake"
 
+        def _reply_cut_at(self):
+            return None
+
     class Listener:
         pass
 
