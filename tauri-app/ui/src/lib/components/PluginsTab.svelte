@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { webLink } from "../utils/links";
   import { call } from "../api/daemon";
 
   interface PluginTool {
@@ -320,7 +321,7 @@
         <li>After review and merge to <code>main</code>, users see it when they press Refresh.</li>
       </ol>
       <p class="release-note">A desktop app release is not required for each approved plugin.</p>
-      <a href={submissionUrl} target="_blank" rel="noopener" class="guide-link">
+      <a href={webLink(submissionUrl)} target="_blank" rel="noopener" class="guide-link">
         Open the full submission guide on GitHub →
       </a>
     </div>
@@ -521,7 +522,7 @@
               </button>
             {/if}
             {#if plugin.url}
-              <a href={plugin.url} target="_blank" rel="noopener" class="btn-link">GitHub ↗</a>
+              <a href={webLink(plugin.url)} target="_blank" rel="noopener" class="btn-link">GitHub ↗</a>
             {/if}
           </div>
         </div>

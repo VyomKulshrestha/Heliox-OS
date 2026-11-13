@@ -1,18 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for Heliox OS desktop app",
+  "description": "What the main window's own pages may use, and nothing more. No remote URL is listed, so no page from another origin can call any of it. Each permission is derived from what the UI calls, and the app's commands kept to what it calls (tests/static/window-surface.test.mjs).",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "notification:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
     "notification:allow-notify",
-    "shell:allow-open",
-    "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister"
+    "clipboard-manager:allow-write-text"
   ]
 }

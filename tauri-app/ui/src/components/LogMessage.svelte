@@ -141,6 +141,9 @@
         "data-uid",
         "data-code",
       ],
+      // A form in text the window did not write could post somewhere (the policy's form-action also stops it).
+      FORBID_TAGS: ["form"],
+      FORBID_ATTR: ["action", "formaction"],
     });
   }
 

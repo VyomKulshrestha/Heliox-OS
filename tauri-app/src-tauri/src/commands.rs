@@ -850,9 +850,10 @@ pub async fn extract_file_text(app: AppHandle, path: String) -> Result<String, S
     let canonical = std::fs::canonicalize(&path).map_err(|e| format!("Invalid path: {}", e))?;
 
     // 2. Check the user-consent allowlist
+    // A grant is used once (file_access): the person dropped this file, and it is read now.
     let allowed = app.state::<crate::file_access::AllowedPaths>();
-    if !allowed.contains(&canonical) {
-        return Err("Access denied: file was not selected by user".into());
+    if !allowed.take(&canonical) {
+        return Err("Access denied: file was not dropped on Heliox's window".into());
     }
 
     // 3. Enforce a 50 MB size cap to prevent memory exhaustion

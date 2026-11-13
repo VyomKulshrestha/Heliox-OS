@@ -5,6 +5,7 @@ mod commands;
 mod file_access;
 mod folders;
 mod hotkey;
+mod navigation;
 #[cfg(test)]
 mod real_supervision;
 mod setup;
@@ -514,7 +515,12 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_shell::init())
+        // Every navigation of a window goes through navigation::allow: only the app's own pages load.
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry, ()>::new("navigation-guard")
+                .on_navigation(|_webview, url| navigation::allow(url))
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .manage(DaemonProcess(Mutex::new(None)))
         .manage(setup::Setup(Mutex::new(setup::initial_state(installed))))
@@ -547,11 +553,20 @@ fn main() {
             start_daemon_after_window(app.handle().clone());
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { .. } => {
                 println!("[Heliox OS] Main window close requested");
-                let _ = window;
             }
+            // Files dropped on the window by the person: granted here, from the native event, and only then named
+            // to the page, which asks for their text (file_access).
+            tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
+                let granted =
+                    file_access::grant_dropped(&window.state::<file_access::AllowedPaths>(), paths);
+                if !granted.is_empty() {
+                    let _ = window.emit("heliox://files-dropped", granted);
+                }
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::toggle_window,
@@ -591,8 +606,7 @@ fn main() {
             commands::stop_neural_sidecar,
             commands::export_neural_recording,
             commands::run_neural_benchmark,
-            file_access::register_allowed_path,
-            file_access::revoke_allowed_path,
+            navigation::open_external_link,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Heliox OS")

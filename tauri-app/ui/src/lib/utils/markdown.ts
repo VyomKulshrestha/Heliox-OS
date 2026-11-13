@@ -34,7 +34,8 @@ marked.setOptions({
 export function renderMarkdown(text: string): string {
   if (!text) return "";
   const raw = marked.parse(text);
-  return DOMPurify.sanitize(raw as string);
+  // A form in text the window did not write could post somewhere (the policy's form-action also stops it).
+  return DOMPurify.sanitize(raw as string, { FORBID_TAGS: ["form"], FORBID_ATTR: ["action", "formaction"] });
 }
 
 /**

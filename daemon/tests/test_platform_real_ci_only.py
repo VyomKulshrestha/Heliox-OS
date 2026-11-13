@@ -32,6 +32,7 @@ GUARDED = (
     "frozen_daemon_check.py",
     "run_record_check.py",
     # the desktop drivers: they open windows and type, click or show notifications
+    "app_launch_check.py",
     "apps_check.py",
     "apps_fields_check.py",
     "apps_fields_macos_check.py",

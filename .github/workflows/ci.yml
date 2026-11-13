@@ -1252,3 +1252,112 @@ jobs:
         env:
           PYTHON_KEYRING_BACKEND: keyring.backends.macOS.Keyring
         run: python daemon/tests/platform_real/keychain_locked_check.py
+
+  # ── The real desktop app, launched and driven (experimental, non-blocking) ──
+  # A debug build of the app with its page bundled, started by tauri-driver (WebKitWebDriver under Xvfb on Linux,
+  # msedgedriver on Windows; macOS has no WebDriver for its web view) next to a daemon in a complete fake home.
+  # daemon/tests/platform_real/app_launch_check.py checks that the page loads under the content-security policy
+  # with no error, that a command answers, that a removed permission is refused, that neither script nor a link
+  # click can take the window to another site, and that WebAssembly compiles under 'wasm-unsafe-eval'.
+  app-launch:
+    name: App launch (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the daemon
+        run: pip install -e daemon
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev librsvg2-dev libgtk-3-dev \
+            libayatana-appindicator3-dev webkit2gtk-driver xvfb dbus-x11
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "tauri-app/src-tauri -> target"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tauri-app/ui/package-lock.json
+
+      - name: Build the page and the app (debug, page bundled)
+        timeout-minutes: 25
+        run: |
+          (cd tauri-app/ui && (npm ci || npm install) && npx vite build)
+          (cd tauri-app/src-tauri && cargo build)
+
+      - name: Install tauri-driver (and on Windows the msedgedriver that matches WebView2)
+        timeout-minutes: 10
+        run: |
+          cargo install tauri-driver --locked
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cargo install --git https://github.com/chippers/msedgedriver-tool
+            msedgedriver-tool.exe
+            ls -l msedgedriver.exe
+          fi
+
+      - name: Launch the app and drive it
+        timeout-minutes: 10
+        run: |
+          set +e
+          export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          # The rest of a complete fake home (pilot.real_folders).
+          export LOCALAPPDATA="$HOME/AppData/Local" APPDATA="$HOME/AppData/Roaming"
+          mkdir -p "$LOCALAPPDATA" "$APPDATA"
+          unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME
+          app="$GITHUB_WORKSPACE/tauri-app/src-tauri/target/debug/heliox-os"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            app="$app.exe"
+            ./msedgedriver.exe --version
+            timeout 300 tauri-driver --port 4444 --native-driver "$PWD/msedgedriver.exe" > "$RUNNER_TEMP/driver.log" 2>&1 &
+            sleep 5
+            timeout 280 python daemon/tests/platform_real/app_launch_check.py "$app"
+            status=$?
+          else
+            export XDG_RUNTIME_DIR="$HOME/.runtime" && mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+            # opener::open_browser honours $BROWSER: a script that writes down the address it was handed.
+            printf '#!/bin/sh\necho "$1" >> "%s"\n' "$RUNNER_TEMP/browser.log" > "$RUNNER_TEMP/browser.sh"
+            chmod +x "$RUNNER_TEMP/browser.sh"
+            export BROWSER="$RUNNER_TEMP/browser.sh" HELIOX_BROWSER_LOG="$RUNNER_TEMP/browser.log"
+            Xvfb :97 -screen 0 1280x800x24 > "$RUNNER_TEMP/xvfb.log" 2>&1 &
+            xvfb=$!
+            export DISPLAY=:97
+            sleep 2
+            dbus-run-session -- bash -c "
+              timeout 300 tauri-driver --port 4444 > \"$RUNNER_TEMP/driver.log\" 2>&1 &
+              sleep 5
+              timeout 280 python daemon/tests/platform_real/app_launch_check.py \"$app\"
+            "
+            status=$?
+            kill "$xvfb" 2>/dev/null
+            sleep 1
+            if kill -0 "$xvfb" 2>/dev/null; then echo "Xvfb still running; killed"; kill -9 "$xvfb"; fi
+          fi
+          echo "--- tauri-driver log"; tail -40 "$RUNNER_TEMP/driver.log"
+          echo "--- daemon log"; tail -40 "$RUNNER_TEMP/app-launch-daemon.log"
+          exit $status

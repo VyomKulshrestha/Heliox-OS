@@ -2,6 +2,7 @@
   import { session } from "../stores/session";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { listen } from "@tauri-apps/api/event";
   import { ArrowUp, FileText, Square, X } from "@lucide/svelte";
 
   let input = $state("");
@@ -42,6 +43,7 @@
 
   $effect(() => {
     let unlisten: () => void;
+    let unlistenGranted: (() => void) | undefined;
 
     // Attempt to register Tauri native drag/drop listener (WebView API)
     async function setupTauri() {
@@ -54,21 +56,26 @@
           } else if (payload.type === "leave") {
             isDragging = false;
           } else if (payload.type === "drop") {
-            isDragging = false;
-            const paths = payload.paths || [];
+            isDragging = false; // the files are read when Rust has granted them (the event below)
+          }
+        });
+      } catch (e) {
+        // Not running in Tauri (e.g. browser), ignore gracefully
+      }
+    }
 
-            for (const path of paths) {
-              try {
-                // Register path in the allowlist before reading
-                await invoke("register_allowed_path", { path });
-                // Extract filename
-                const filename = path.split("\\").pop()?.split("/").pop() || "unknown";
-                const content = await invoke("extract_file_text", { path });
-
-                attachments = [...attachments, { name: filename, type: "file", content: content as string }];
-              } catch (err) {
-                console.warn(`Failed to extract text from ${path}:`, err);
-              }
+    // Rust grants each file the person dropped, from the native drop event, and only then names them here; the
+    // page cannot grant a file itself (src-tauri/src/file_access.rs).
+    async function listenForGrantedFiles() {
+      try {
+        unlistenGranted = await listen<string[]>("heliox://files-dropped", async (event) => {
+          for (const path of event.payload || []) {
+            try {
+              const filename = path.split("\\").pop()?.split("/").pop() || "unknown";
+              const content = await invoke("extract_file_text", { path });
+              attachments = [...attachments, { name: filename, type: "file", content: content as string }];
+            } catch (err) {
+              console.warn(`Failed to extract text from ${path}:`, err);
             }
           }
         });
@@ -78,9 +85,11 @@
     }
 
     setupTauri();
+    listenForGrantedFiles();
 
     return () => {
       if (unlisten) unlisten();
+      if (unlistenGranted) unlistenGranted();
     };
   });
 
