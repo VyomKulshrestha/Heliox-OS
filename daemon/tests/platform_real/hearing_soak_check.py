@@ -23,6 +23,9 @@ what it saw up to then. At the end:
   how many room-talk sentences were heard at all (a caption of their words), so a zero that comes from a deaf
   listener fails instead of passing as discipline;
 - memory, threads, open files and child processes in the last third against the first sample after warm-up.
+Once, near the start, one fault is checked as said aloud: "Hey Heliox, explain what DNS is." needs the model, whose
+address refuses at once; the product's own sentence for that must be spoken on the answer channel, with sound in the
+sink, within ten seconds (fault_said_aloud says how the words are matched).
 
     python tests/platform_real/hearing_soak_check.py --inputs        # the job's own inputs, before the long run
     python tests/platform_real/hearing_soak_check.py --minutes 120
@@ -61,6 +64,8 @@ use_scratch_folders(Path(os.environ["HELIOX_BENCH_ROOT"]))
 import real_daemon  # noqa: E402
 
 ADDRESSED = "Hey Heliox, what time is it?"
+NEEDS_MODEL = "Hey Heliox, explain what DNS is."
+FAULT_SAID_WITHIN = 10.0  # seconds from the end of the request to the start of the spoken fault sentence
 ROOM = [
     "Could you delete the old photos, they take up too much space.",
     "Open the calculator and add up the receipts for me.",
@@ -239,6 +244,30 @@ async def ask(record: Record, wav: Path) -> dict:
     }
 
 
+async def fault_said_aloud(record: Record, session, wav: Path) -> None:
+    """One fault, said aloud and recorded: a request that needs the model, whose address refuses at once. The
+    answer must be the product's own sentence for a model it cannot reach, spoken on the answer channel after the
+    request, with sound in the speaker sink, within FAULT_SAID_WITHIN. The speech coordinator does not keep the
+    words it spoke where a client can read them, so the words are matched by the server's record of the last thing
+    it handed to the voice (what "say that again" repeats), read right after; that it was spoken, when, and on which
+    channel is the coordinator's own record, and the sound is the sink's."""
+    from pilot.conversation.layer import FALLBACK, FALLBACK_AGAIN
+
+    answer = await ask(record, wav)
+    repeated = await session.ask("say that again", timeout=60)
+    promised = {key: text for key, text in {**FALLBACK, **{f"{k} again": v for k, v in FALLBACK_AGAIN.items()}}.items()
+                if "{" not in text}  # fmt: skip
+    matched = [key for key, text in promised.items() if " ".join(text.split()) in " ".join(repeated.split())]
+    check(
+        "a-model-it-cannot-reach-is-said-aloud",
+        answer["heard"] and answer["answered"] and bool(matched)
+        and answer["after_s"] is not None and answer["after_s"] <= FAULT_SAID_WITHIN,
+        f"heard {answer['words']!r}; spoken on the answer channel {answer['after_s']} s after the request "
+        f"(within {FAULT_SAID_WITHIN:g} s), loudest {answer['loud']}; the words: {repeated[:160]!r}, the product's "
+        f"sentence for {matched or 'none of its fault sentences'}",
+    )  # fmt: skip
+
+
 async def room_talk(record: Record, wav: Path, text: str) -> bool:
     """Say one room-talk sentence; True when a caption of its words came (it was heard at all)."""
     record.stamp()
@@ -314,6 +343,7 @@ async def soak(minutes: float, every: float) -> int:
         await record.pump(60.0)  # the recognisers warm up
         first = await ask(record, addressed)
         print(f"INFO first request: {first}", flush=True)
+        await fault_said_aloud(record, session, render(NEEDS_MODEL, folder))
         heard_room = said_room = asks = answered = slips = cards_before = 0
         baseline: dict | None = None
         samples: list[dict] = []
