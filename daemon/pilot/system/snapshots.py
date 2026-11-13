@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from pilot.actions import Action
     from pilot.config import PilotConfig
 
 logger = logging.getLogger("pilot.system.snapshots")
@@ -57,8 +58,80 @@ def _snapshot_created_at(snapshot: dict[str, str]) -> datetime | None:
         return None
 
 
+def _as_root(args: list[str], *, root: bool) -> list[str]:
+    """The command as it is run: through pkexec on macOS and Linux when it needs root (the system then asks for an
+    administrator's password, unless a polkit rule allows it), as it is on Windows (where it runs with the daemon's
+    own rights: nothing elevates it)."""
+    return ["pkexec", *args] if root and sys.platform != "win32" else list(args)
+
+
+def windows_restore_command(snapshot_id: str) -> list[str]:
+    sequence = snapshot_id.removeprefix("windows-restore:")
+    if not sequence.isdigit():
+        raise ValueError("Invalid Windows restore point ID")
+    script = f"$ErrorActionPreference='Stop'; Restore-Computer -RestorePoint {sequence} -Confirm:$false"
+    return ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
+
+
+def timeshift_restore_command(snapshot_id: str) -> list[str]:
+    return ["timeshift", "--restore", "--snapshot", snapshot_id, "--yes"]
+
+
+def btrfs_restore_command(snapshot_id: str) -> list[str]:
+    return ["btrfs", "subvolume", "snapshot", snapshot_id, "/rollback-target"]
+
+
+def rollback_request(snapshot_id: str, backend: str, taken_at: datetime | None) -> tuple[Action, str]:
+    """What the approval dialog shows before a rollback: the one thing that will run (the exact command, or the
+    files put back) and, in plain words, what is lost and since when. Pure."""
+    from pilot.actions import Action, ActionType, FileParams, ShellCommandParams
+
+    when = taken_at.astimezone().strftime("%d %B %Y at %H:%M") if taken_at else "just before that task ran"
+    if snapshot_id.startswith("file-snapshot:"):
+        action = Action(
+            action_type=ActionType.FILE_WRITE,
+            target=snapshot_id,
+            parameters=FileParams(path=snapshot_id),
+            destructive=True,
+        )
+        reason = (
+            f"Put back the files that task changed, as they were on {when}. Any change made to those files since "
+            "then is lost."
+        )
+        return action, reason
+    if backend == SnapshotBackend.WINDOWS_RESTORE_POINT:
+        command = windows_restore_command(snapshot_id)
+        reason = (
+            f"Return Windows to the restore point made on {when}. Programs, drivers, updates and system settings "
+            "changed since then are undone; Windows restarts to do it. Your documents are not changed by a restore "
+            "point."
+        )
+    elif backend == SnapshotBackend.TIMESHIFT:
+        command = _as_root(timeshift_restore_command(snapshot_id), root=True)
+        reason = (
+            f"Restore the system with Timeshift to the snapshot made on {when}. Every change to the system's files "
+            "since then is lost (with Timeshift's usual settings your home folder is not part of it). The system "
+            "asks for an administrator's password first."
+        )
+    elif backend == SnapshotBackend.BTRFS:
+        command = _as_root(btrfs_restore_command(snapshot_id), root=True)
+        reason = (
+            f"Make a copy of the system snapshot taken on {when} at /rollback-target. The system asks for an "
+            "administrator's password first."
+        )
+    else:
+        raise RuntimeError("No snapshot backend available for rollback")
+    action = Action(
+        action_type=ActionType.SHELL_COMMAND,
+        target=" ".join(command),
+        parameters=ShellCommandParams(command=command[0], args=command[1:]),
+        destructive=True,
+    )
+    return action, reason
+
+
 async def _run(args: list[str], *, root: bool = False) -> tuple[int, str, str]:
-    cmd = ["pkexec"] + args if root and sys.platform != "win32" else args
+    cmd = _as_root(args, root=root)
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -428,10 +501,7 @@ class SnapshotManager:
         return snapshot_path
 
     async def _btrfs_rollback(self, snapshot_id: str) -> str:
-        code, _, err = await _run(
-            ["btrfs", "subvolume", "snapshot", snapshot_id, "/rollback-target"],
-            root=True,
-        )
+        code, _, err = await _run(btrfs_restore_command(snapshot_id), root=True)
         if code != 0:
             raise RuntimeError(f"Btrfs rollback failed: {err.strip()}")
         return f"Rollback snapshot created from {snapshot_id}. Reboot to apply."
@@ -490,13 +560,7 @@ class SnapshotManager:
 
     async def _windows_restore_rollback(self, snapshot_id: str) -> str:
         sequence = snapshot_id.removeprefix("windows-restore:")
-        if not sequence.isdigit():
-            raise ValueError("Invalid Windows restore point ID")
-        script = f"$ErrorActionPreference='Stop'; Restore-Computer -RestorePoint {sequence} -Confirm:$false"
-        code, out, err = await _run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-            root=True,
-        )
+        code, out, err = await _run(windows_restore_command(snapshot_id), root=True)
         if code != 0:
             raise RuntimeError(f"Windows restore failed: {(err or out).strip()}")
         return f"Windows restore point {sequence} selected. Restart Windows to apply it."
@@ -542,10 +606,7 @@ class SnapshotManager:
         return tag
 
     async def _timeshift_rollback(self, snapshot_id: str) -> str:
-        code, _, err = await _run(
-            ["timeshift", "--restore", "--snapshot", snapshot_id, "--yes"],
-            root=True,
-        )
+        code, _, err = await _run(timeshift_restore_command(snapshot_id), root=True)
         if code != 0:
             raise RuntimeError(f"Timeshift rollback failed: {err.strip()}")
         return f"Timeshift rollback to {snapshot_id} complete. Reboot recommended."

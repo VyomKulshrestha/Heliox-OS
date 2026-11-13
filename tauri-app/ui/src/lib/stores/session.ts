@@ -2068,8 +2068,10 @@ function createSession() {
     }
   }
 
+  /** The daemon asks in its own approval dialog, with what is lost since when; the window does not ask first. */
   function requestRollback() {
     update((s) => ({ ...s, rollbackPending: true }));
+    void confirmRollback();
   }
 
   function cancelRollback() {
@@ -2089,7 +2091,9 @@ function createSession() {
 
     try {
       const res = (await call("rollback_plan", { plan_id: planId })) as { status: string; message?: string };
-      if (res.status !== "ok") {
+      if (res.status === "cancelled") {
+        update((s) => ({ ...s, rollbackPending: false })); // not approved: nothing was restored
+      } else if (res.status !== "ok") {
         update((s) => ({ ...s, rollbackPending: false }));
         addSystemMessage(`Undo failed: ${res.message ?? "unknown error"}`);
       }

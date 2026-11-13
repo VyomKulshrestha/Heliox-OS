@@ -1120,6 +1120,8 @@ class PilotServer:
         self._interrupted_offers: set[str] = set()
         # ── Undo (rollback_plan RPC) ── plan_id -> snapshot_id taken before execution
         self._plan_snapshots: dict[str, str] = {}
+        self._plan_snapshot_times: dict[str, datetime] = {}  # when each was taken: just before its plan ran
+        self._rollbacks_asking: set[str] = set()
         # ── Cancel Token (Issue #92) ──
         self._cancel_event: asyncio.Event | None = None
         # ── Mid-flight cancellation: the currently in-flight interactive
@@ -4637,6 +4639,7 @@ class PilotServer:
                     )
 
             approved_decision = "partially_approved" if partially_approved else "approved"
+            _start_snapshot_time = datetime.now(timezone.utc)  # a snapshot is taken as execution starts
             if self._checkpoint_store:
                 # A dry run is a preview: resuming its checkpoint asks first.
                 await self._checkpoint_store.mark_approval(plan_id, "preview" if dry_run else "approved")
@@ -4764,6 +4767,7 @@ class PilotServer:
                 _snapshot_id = next((r.snapshot_id for r in results if getattr(r, "snapshot_id", None)), None)
                 if _snapshot_id:
                     self._plan_snapshots[plan_id] = _snapshot_id
+                    self._plan_snapshot_times[plan_id] = _start_snapshot_time
             if needs_confirm and not dry_run:
                 await self._record_permission_escalations(
                     plan_id=plan_id,
@@ -6647,12 +6651,13 @@ class PilotServer:
             )
 
     async def _handle_rollback_plan(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Roll back the filesystem snapshot taken before a plan executed.
+        """Roll back the snapshot taken before a plan ran, after the person approves it in the window.
 
-        This is filesystem-wide (btrfs subvolume / timeshift snapshot), NOT
-        per-action — it reverts everything since the snapshot, including any
-        unrelated changes made after it. The frontend must gate this behind
-        its own explicit confirmation step; this handler does not re-confirm.
+        The daemon asks itself, with the one thing that will run (the exact command, or the files put back) and
+        what is lost since when; the approval expires with every approval (CONFIRM_TIMEOUT_SECONDS), and without
+        it nothing is restored. A system snapshot is system-wide, not per action: it reverts everything since it
+        was taken. Until 13 November 2026 one call restored it with no approval asked by the daemon (the window
+        asked first, in a dialog of its own).
 
         Args:
             params: JSON-RPC parameters containing plan_id.
@@ -6661,17 +6666,41 @@ class PilotServer:
         Returns:
             A dict with status and a human-readable message.
         """
-        plan_id = params.get("plan_id", "")
+        plan_id = str(params.get("plan_id", ""))
         snapshot_id = self._plan_snapshots.get(plan_id)
         if not snapshot_id:
             return {
                 "status": "error",
                 "message": f"No snapshot on record for plan_id: {plan_id} (either none was taken, or it was already rolled back)",
             }
+        asking = self.__dict__.setdefault("_rollbacks_asking", set())
+        if plan_id in asking:
+            return {"status": "error", "message": "Heliox is already asking you about this restore."}
 
-        from pilot.system.snapshots import SnapshotManager
+        from pilot.actions import ActionPlan
+        from pilot.system.snapshots import SnapshotManager, rollback_request
 
         snapshot_mgr = SnapshotManager(self.config)
+        try:
+            backend = "" if snapshot_id.startswith("file-snapshot:") else (await snapshot_mgr.detect_backend()).value
+            taken = self.__dict__.get("_plan_snapshot_times", {}).get(plan_id)
+            action, reason = rollback_request(snapshot_id, backend, taken)
+        except Exception as exc:
+            return {"status": "error", "message": f"Rollback failed: {exc}"}
+        asking.add(plan_id)
+        try:
+            confirmed, _approved, _required = await self._wait_for_confirmation(
+                f"rollback-{plan_id}",
+                ActionPlan(actions=[action], explanation=reason, raw_input="undo with the snapshot"),
+                ws,
+                reason=reason,
+                force_all_actions=True,
+            )
+        finally:
+            asking.discard(plan_id)
+        if not confirmed:
+            return {"status": "cancelled", "message": "Nothing was restored."}
+
         try:
             result_message = await snapshot_mgr.rollback(snapshot_id)
         except Exception as exc:

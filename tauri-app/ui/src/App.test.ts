@@ -165,7 +165,6 @@ vi.mock("./lib/stores/coadaptation", () => ({
 
 vi.mock("./lib/components/CommandInput.svelte", () => harness.stubModule("CommandInput"));
 vi.mock("./lib/components/Dashboard.svelte", () => harness.stubModule("Dashboard"));
-vi.mock("./lib/components/RollbackDialog.svelte", () => harness.stubModule("RollbackDialog"));
 vi.mock("./lib/components/BudgetExceededDialog.svelte", () => harness.stubModule("BudgetExceededDialog"));
 vi.mock("./lib/components/InterruptDialog.svelte", () => harness.stubModule("InterruptDialog"));
 vi.mock("./lib/components/SupervisionAlertDialog.svelte", () => harness.stubModule("SupervisionAlertDialog"));

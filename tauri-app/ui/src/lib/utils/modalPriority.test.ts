@@ -3,7 +3,6 @@ import { selectActiveModal, type ModalSignals } from "./modalPriority";
 
 const inactive: ModalSignals = {
   confirmation: false,
-  rollback: false,
   undo: false,
   interrupt: false,
   neural: false,
@@ -16,7 +15,6 @@ describe("Heliox modal priority", () => {
     expect(
       selectActiveModal({
         confirmation: true,
-        rollback: true,
         undo: true,
         interrupt: true,
         neural: true,
@@ -30,8 +28,7 @@ describe("Heliox modal priority", () => {
     expect(selectActiveModal({ ...inactive, neural: true, budget: true, supervision: true })).toBe("neural");
   });
 
-  it("shows an undo preview after a rollback question and before advisories", () => {
-    expect(selectActiveModal({ ...inactive, rollback: true, undo: true })).toBe("rollback");
+  it("shows an undo preview before advisories", () => {
     expect(selectActiveModal({ ...inactive, undo: true, interrupt: true, neural: true })).toBe("undo");
   });
 

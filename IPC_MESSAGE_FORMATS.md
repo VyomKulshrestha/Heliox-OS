@@ -312,8 +312,12 @@ recorded.
 Roll back the filesystem snapshot taken before a plan executed (see
 `ActionResult.snapshot_id` / the `rollback_complete` notification). This is
 **filesystem-wide**, not per-action — it reverts everything since the
-snapshot, including unrelated changes made after it. The UI must gate this
-behind its own explicit confirmation; the daemon does not re-confirm.
+snapshot, including unrelated changes made after it. Before anything runs the
+daemon asks in the approval dialog (`confirm_required` with plan id
+`rollback-<plan_id>`): the one thing that will run (the exact command, or the
+files put back) and what is lost since when. Unanswered, the approval expires
+like every approval; without it nothing is restored and the reply is
+`{ "status": "cancelled" }`. A second call while it asks is refused.
 
 **Params:** `{ "plan_id": "a3b2c1f5" }`
 

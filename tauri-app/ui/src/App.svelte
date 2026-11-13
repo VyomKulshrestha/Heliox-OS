@@ -5,7 +5,6 @@
   import { getJarvisGreeting } from "./lib/utils/greeting";
   import { renderMarkdown } from "./lib/utils/markdown";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
-  import RollbackDialog from "./lib/components/RollbackDialog.svelte";
   import UndoDialog from "./lib/components/UndoDialog.svelte";
   import BudgetExceededDialog from "./lib/components/BudgetExceededDialog.svelte";
   import InterruptDialog from "./lib/components/InterruptDialog.svelte";
@@ -78,7 +77,6 @@
   let activeModal = $derived(
     selectActiveModal({
       confirmation: $session.confirmRequired,
-      rollback: $session.rollbackPending,
       undo: Boolean($session.undoPreview),
       interrupt: $narration.active,
       neural: Boolean($neural.preview),
@@ -87,10 +85,7 @@
     }),
   );
   let blockingSafetyDecision = $derived(
-    activeModal === "confirmation" ||
-      activeModal === "rollback" ||
-      activeModal === "undo" ||
-      activeModal === "interrupt",
+    activeModal === "confirmation" || activeModal === "undo" || activeModal === "interrupt",
   );
   let documentVisible = $state(typeof document === "undefined" || document.visibilityState === "visible");
   let previousStudyActive = false;
@@ -388,8 +383,6 @@
               ondeny={() => session.confirm(false, undefined, { inputChannel: "dialog" })}
             />
           {/key}
-        {:else if activeModal === "rollback"}
-          <RollbackDialog onconfirm={() => session.confirmRollback()} oncancel={() => session.cancelRollback()} />
         {:else if activeModal === "undo" && $session.undoPreview}
           <UndoDialog
             remaining={$session.undoQueue.length}
