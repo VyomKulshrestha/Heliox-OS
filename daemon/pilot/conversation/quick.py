@@ -425,6 +425,87 @@ def quick_acknowledgement(plan: QuickPlan, words: str) -> str:
     return "I'll check."
 
 
+# Which one-step commands may run while a task is running, by how each is carried out on each system (read from
+# pilot/system/volume.py and pilot/system/input_control.py, 13 November). A command that is sent as a key press, or
+# that brings a window to the front, could land in the window the task is typing in, so it waits for the task:
+#   volume up and down, "louder", next and previous track, play and pause: a media key press through pyautogui on
+#     every system (a key event: SendInput on Windows, a system-defined key event on macOS, an X key event on Linux);
+#   mute and setting the volume on Windows: WScript.Shell SendKeys of the volume keys (also key presses);
+#   opening an app or a site, switching to a window: they change which window is in front.
+# A command that is a system call and cannot land in a window runs at once:
+#   mute and setting the volume on macOS (osascript "set volume") and Linux (pactl, else amixer);
+#   the read-only checks on every system (battery, disk, memory, CPU, processes, system information, the volume).
+# No system's media session API (Windows' media transport controls, MPRIS on Linux, MediaRemote on macOS) is used
+# today, so the media keys wait everywhere.
+_READ_ONLY = frozenset(
+    {
+        ActionType.SYSTEM_INFO,
+        ActionType.BATTERY_INFO,
+        ActionType.DISK_USAGE,
+        ActionType.MEMORY_USAGE,
+        ActionType.CPU_USAGE,
+        ActionType.PROCESS_LIST,
+        ActionType.VOLUME_GET,
+    }
+)
+_SYSTEM_CALL_VOLUME = frozenset({ActionType.VOLUME_MUTE, ActionType.VOLUME_SET})
+
+
+def runs_beside_a_task(plan: QuickPlan, platform: str | None = None) -> bool:
+    """Whether this one-step command may run at once while a task runs (a system call that cannot land in a window)."""
+    platform = platform or _platform()
+    kind = plan.plan.actions[0].action_type
+    if kind in _READ_ONLY:
+        return True
+    return kind in _SYSTEM_CALL_VOLUME and platform in {"macos", "linux"}
+
+
+_QUEUED_MEDIA = {
+    "volumeup": "turn the volume up",
+    "volumedown": "turn the volume down",
+    "nexttrack": "skip to the next track",
+    "prevtrack": "go back a track",
+    "volumemute": "mute the sound",
+}
+
+
+def queued_sentence(plan: QuickPlan, words: str) -> str:
+    """What the person hears when a one-step command waits for the task: the thing named ("I'll open Notepad when
+    this is done.")."""
+    action = plan.plan.actions[0]
+    params = action.parameters
+    kind = action.action_type
+    what = ""
+    if kind is ActionType.OPEN_APPLICATION:
+        what = (
+            f"open your {Path(params.args[0]).name or 'home'} folder"
+            if getattr(params, "args", None)
+            else f"open {_title(params.name)}"
+        )
+    elif kind is ActionType.OPEN_URL:
+        url = getattr(params, "url", "")
+        query = re.search(r"[?&]q=([^&]+)", url)
+        if query:
+            from urllib.parse import unquote_plus
+
+            what = f"search the web for {_original_words(words, unquote_plus(query.group(1)))}"
+        else:
+            what = "open " + re.sub(r"^https?://(?:www\.)?", "", url).split("/")[0]
+    elif kind is ActionType.WINDOW_FOCUS:
+        what = f"switch to {_title(getattr(params, 'title', '') or 'it')}"
+    elif kind is ActionType.VOLUME_MUTE:
+        what = "mute the sound" if getattr(params, "mute", True) else "unmute the sound"
+    elif kind is ActionType.VOLUME_SET:
+        what = f"set the volume to {params.level}"
+    elif kind is ActionType.KEYBOARD_PRESS:
+        key = getattr(params, "key", "")
+        if key == "playpause":
+            what = "pause the music" if re.search(r"\bpause\b", words, re.I) else "play the music"
+        else:
+            what = _QUEUED_MEDIA.get(key, "")
+    return f"I'll {what} when this is done." if what else "I'll do that when this task finishes."
+
+
 def quick_result_sentence(plan: QuickPlan, result: str, status: str) -> str:
     """The result in one sentence; a failure says what failed."""
     action = plan.plan.actions[0]

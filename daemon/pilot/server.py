@@ -6923,19 +6923,37 @@ class PilotServer:
             return "en"
 
     @staticmethod
-    def _quick_command(text: str) -> bool:
-        """A one-step command the quick road recognises exactly: a media key, the volume, opening an app or a site."""
+    def _quick_command(text: str) -> Any:
+        """The one-step plan the quick road makes for ``text`` (a media key, the volume, opening an app or a site, a
+        check), or None."""
         try:
             from pilot.conversation.quick import from_words
             from pilot.conversation.router import TurnKind, normalize, route
 
             routed = route(text)
             if routed.kind is not TurnKind.ACTION:
-                return False
-            return from_words(normalize(text), routed.verb, routed.target) is not None
+                return None
+            return from_words(normalize(text), routed.verb, routed.target)
         except Exception:
             logger.debug("Could not read %r as a quick command", text, exc_info=True)
-            return False
+            return None
+
+    async def _run_beside_the_task(self, quick: Any, words: str) -> str:
+        """Run a one-step command that is a system call (quick.runs_beside_a_task) at once, outside the running task:
+        the executor's own handler for that action, without waiting for the desktop the task holds. Returns what to
+        say."""
+        from pilot.conversation.quick import quick_acknowledgement, quick_result_sentence
+
+        action = quick.plan.actions[0]
+        handler = getattr(self._executor, "_dispatch_table", {}).get(action.action_type) if self._executor else None
+        if handler is None:
+            return ""
+        try:
+            result, status = str(await handler(action)), "success"
+        except Exception as error:
+            logger.warning("A one-step command beside the task failed: %s", error)
+            result, status = str(error), "error"
+        return quick_result_sentence(quick, result, status) or quick_acknowledgement(quick, words)
 
     def _short_word_while_busy(self, text: str, normalized: str, language: str) -> str:
         """Why a short utterance said while a task runs or an approval waits is not acted on: "acknowledgement"
@@ -15057,9 +15075,22 @@ def handle_tool(tool_name, params):
         # person said the wake phrase or pressed the button, and nothing when it came as a follow-up.
         busy_with = pending_plan_id or (self._active_plan_id or "task" if self._interactive_request_active else "")
         held_short = self._short_word_while_busy(command_text, normalized_command, language) if busy_with else ""
-        if held_short == "unknown" and self._quick_command(command_text):
+        quick = self._quick_command(command_text) if held_short == "unknown" else None
+        if quick is not None:
+            from pilot.conversation.quick import queued_sentence, runs_beside_a_task
+
             if not self._interactive_request_active:
                 held_short = ""  # only an approval waits: a one-step command runs as any request does
+            elif runs_beside_a_task(quick) and (said := await self._run_beside_the_task(quick, command_text)):
+                # A system call that cannot land in the task's window ("mute" on macOS and Linux, "how's my
+                # battery"): now, not after a task that may run for minutes.
+                await self._broadcast_notification(
+                    "voice_result", {"command": command_text, "status": "answered", "message": said}
+                )
+                await self._speak_voice_response(
+                    said, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-beside-task:{uuid.uuid4()}"
+                )
+                return
             else:
                 active_context = self._active_experience_context
                 result = await self._queue_interactive_request(
@@ -15072,7 +15103,7 @@ def handle_tool(tool_name, params):
                 )
                 queued = result.get("status") == "queued"
                 message = (
-                    "I'll do that when this task finishes."
+                    queued_sentence(quick, command_text)  # "I'll open Notepad when this is done."
                     if queued
                     else "I can't do that until this task finishes. Say it again then."
                 )
