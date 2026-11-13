@@ -3,7 +3,8 @@
 Narrowing a guard is always free. Widening one takes effect only after the person approves it in the daemon's own
 approval dialog: turning a protection off, letting more run without asking, or sending the person's requests and
 the text Heliox reads to a computer that is not this one. Turning a capture on (Live reading the field being typed
-in, Live listening to speech) asks too, once, as a change of setting; using a capability that is on never asks.
+in, Live listening to speech, clipboard history) asks too, once, as a change of setting; using a capability that is
+on never asks.
 
 Every function here is pure: it compares what is set now with what a request would set and names each widening
 in plain words, with what it stops protecting. The handlers in pilot.server call ``widenings_for`` first.
@@ -195,6 +196,12 @@ def section_widenings(section: str, current_section: Any, values: dict[str, Any]
             "enabled",
             "Keep the activity timeline",
             "Heliox will record which app and window title are in front, and when, on this computer.",
+        )
+    elif section == "clipboard":
+        turned_on(
+            "history",
+            "Let Heliox remember what you copy",
+            "Heliox will keep the last 25 pieces of text you copy, for up to eight hours, in memory on this computer.",
         )
     elif section == "live":
         # A capture counts when Live is on with it: turning Live on with captures set, or a capture on while Live is.

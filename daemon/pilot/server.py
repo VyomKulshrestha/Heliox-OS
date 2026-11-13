@@ -357,6 +357,10 @@ _APPROVED_WIDENINGS: contextvars.ContextVar[frozenset[Any] | None] = contextvars
 # How long a widening asked for by voice with no window open is kept for the next window.
 SPOKEN_WIDENING_KEPT_SECONDS = 600
 
+# The captures a person can turn back on by voice without being asked again once they approved them on this computer
+# (PilotServer._approved_before): Live's reading and listening, clipboard history and the activity timeline.
+CAPTURE_SETTINGS = ("live.", "clipboard.", "timeline.")
+
 # What wakes the listener: each phrase holds the name, so ordinary speech is not taken as addressed to Heliox.
 WAKE_WORDS = ("hey heliox", "heliox", "hey pilot")
 
@@ -6847,11 +6851,11 @@ class PilotServer:
         return None
 
     async def _approved_before(self, found: list[Any]) -> bool:
-        """Whether every one of these Live captures was approved before on this computer: turning back on exactly
-        what the person approved does not ask again. Only Live's reading and listening count, and only from a
+        """Whether every one of these captures was approved before on this computer: turning back on exactly what the
+        person approved does not ask again. Only the captures in CAPTURE_SETTINGS count, and only from a
         receipt signed by this installation's key (a client cannot write one: backup_restore can add receipt files,
         but not sign them with this computer's key)."""
-        if not all(w.key.startswith("live.") for w in found):
+        if not all(w.key.startswith(CAPTURE_SETTINGS) for w in found):
             return False
         receipts = getattr(self, "_task_receipts", None)
         if receipts is None:

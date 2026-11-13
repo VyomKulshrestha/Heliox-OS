@@ -96,4 +96,15 @@ describe("YourDataPanel", () => {
     );
     await waitFor(() => expect(screen.getByText("Clipboard history is on.")).toBeTruthy());
   });
+
+  it("says not changed, not an error, when the person keeps clipboard history off in Heliox's dialog", async () => {
+    settingsMocks.updateSectionDetailed.mockResolvedValue({ ok: false, cancelled: true, message: "Not changed." });
+    render(YourDataPanel);
+    await waitFor(() => expect(screen.getByText("Clipboard history")).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Keep" }));
+
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Not changed."));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

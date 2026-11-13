@@ -454,3 +454,42 @@ async def test_a_spoken_widening_kept_for_the_next_window_is_asked_once_and_not_
     server._offer_kept_spoken_widening()
     await _spoken_tasks(server)
     assert len(person.asked) == 1  # expired: not asked
+
+
+@pytest.mark.asyncio
+async def test_clipboard_history_on_asks_in_words_and_off_is_free(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+
+    on = await server._handle_update_config({"section": "clipboard", "values": {"history": True}}, _ws())
+    assert on["status"] == "cancelled" and server.config.clipboard.history is False
+    line = person.asked[0]["shown"][0]
+    assert line["target"] == "Let Heliox remember what you copy" and "in memory on this computer" in line["description"]
+
+    person.asked.clear()
+    server.config.clipboard.history = True
+    await server._handle_update_config({"section": "clipboard", "values": {"history": False}}, _ws())
+    assert person.asked == [] and server.config.clipboard.history is False
+
+
+@pytest.mark.asyncio
+async def test_the_activity_timeline_turned_back_on_by_voice_after_one_approval_in_the_window(tmp_path):
+    from pilot.workflows.task_receipts import TaskReceipts
+    from tests.settings_approval import approve_setting_change
+
+    config = PilotConfig()
+    config.save = MagicMock()
+    server = PilotServer(config)
+    server._broadcast_notification = AsyncMock()
+    server._task_receipts = TaskReceipts(tmp_path / "receipts", key_dir=tmp_path / "key")
+
+    # The first time, voice cannot turn it on: the window asks.
+    assert await server._control_reply("turn on the activity timeline") == "Open Heliox and approve it there."
+    assert server.config.timeline.enabled is False
+    await approve_setting_change(server, "timeline", {"enabled": True})  # the person's yes in the dialog
+    # Turning on exactly what the person approved on this computer does not ask again, nor after it was off.
+    assert await server._control_reply("turn on the activity timeline") == "The activity timeline is on."
+    assert server.config.timeline.enabled is True
+    assert await server._control_reply("turn off the activity timeline") == "The activity timeline is off."
+    assert await server._control_reply("turn on the activity timeline") == "The activity timeline is on."
+    assert server.config.timeline.enabled is True

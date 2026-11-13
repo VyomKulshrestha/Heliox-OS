@@ -9,6 +9,8 @@ import pytest
 from pilot.config import PilotConfig, _merge_config
 from pilot.workflows.clipboard_history import KEEP_SECONDS, MAX_ITEMS, ClipboardHistory, looks_secret
 from pilot.workflows.privacy import STORES, clear_store, inventory
+from pilot.workflows.task_receipts import TaskReceipts
+from tests.settings_approval import approve_setting_change
 
 
 class Clipboard:
@@ -204,11 +206,16 @@ async def test_rpcs_voice_setting_and_your_data(tmp_path, board):
     config.save = MagicMock()
     server = PilotServer(config)
     server._broadcast_notification = AsyncMock()
+    server._task_receipts = TaskReceipts(tmp_path / "receipts", key_dir=tmp_path / "key")
     server._clipboard_history = ClipboardHistory(
         enabled=lambda: server.config.clipboard.history, read=board.read, write=board.write, foreground=lambda: ("", "")
     )
     ws = MagicMock()
 
+    # Turning it on is a capture: the first time it is asked about in the window, and voice cannot approve it.
+    assert await server._control_reply("turn on clipboard history") == "Open Heliox and approve it there."
+    assert server.config.clipboard.history is False
+    await approve_setting_change(server, "clipboard", {"history": True})  # the person's yes in the dialog
     assert await server._control_reply("turn on clipboard history") == (
         "Clipboard history is on. I'll remember what you copy for a few hours, in memory only."
     )

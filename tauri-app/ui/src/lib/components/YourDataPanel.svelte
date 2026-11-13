@@ -55,7 +55,8 @@
 
   async function setClipboardHistory(on: boolean) {
     const result = await settings.updateSectionDetailed("clipboard", { history: on });
-    if (!result.ok) error = result.message;
+    if (!result.ok && result.cancelled) notice = "Not changed.";
+    else if (!result.ok) error = result.message;
     else {
       notice = on ? "Clipboard history is on." : "Clipboard history is off, and what you copied was forgotten.";
       await load();
