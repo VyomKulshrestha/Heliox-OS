@@ -668,6 +668,11 @@ def _shared_in_words(by: str, answer: str) -> bool:
 # context: a typed turn and a voice turn running at once never read each other's.
 CODE_ANSWER_BY: contextvars.ContextVar[str] = contextvars.ContextVar("heliox_code_answer_by", default="")
 LOCAL_ANSWER_SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("heliox_local_answer_source", default="")
+# A local answer that named a known person ("to your manager, Priya"): (what was said, the person's own words). The
+# conversation history gets the person's own words unless personal lines may go to the model (personal_in_prompt).
+PEOPLE_NAMED: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar(
+    "heliox_people_named", default=None
+)
 
 
 def _conversation_model_local(conversation: Any) -> bool:
@@ -8552,6 +8557,7 @@ class PilotServer:
 
     async def _deliver_app_reminder(self, reminder: dict[str, Any]) -> None:
         """An app reminder fires because the person just opened that app, so focus does not hold it."""
+        reminder = self._reminders_as_said([reminder])[0]
         await self._broadcast_notification(
             "reminder", {**reminder, "due": time.time(), "late": False, "trigger": "app"}
         )
@@ -9169,6 +9175,11 @@ class PilotServer:
                 await asyncio.to_thread(self._reminders.acknowledge_said, ACK_SECONDS + 5.0)
         self._reminder_said_at = None
 
+    def _reminders_as_said(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Copies of due reminders with each person the profile knows now named in the text; the store's own
+        entries keep the person's words."""
+        return [{**item, "text": self._said_with_people(str(item.get("text") or ""))} for item in items]
+
     async def _deliver_reminder(self, reminder: dict[str, Any]) -> bool | str:
         """Show a reminder that is due, and say it when the voice is in use. More than a couple of minutes late
         (the computer slept, the daemon was frozen), it says when it was due: "This was due at 2:31 AM: ...".
@@ -9179,6 +9190,7 @@ class PilotServer:
         if self._focus is not None and self._focus.hold("reminder", reminder):
             return True
         late = bool(reminder.get("late"))  # the store's own clock decided it (LATE_AFTER_SECONDS)
+        reminder = self._reminders_as_said([reminder])[0]  # "to your manager, Priya"; the store keeps the words
         message = describe_held([reminder], now=time.time()) if late else f"Reminder: {reminder['text']}"
         handed = await self._broadcast_notification("reminder", {**reminder, "late": late, "message": message})
         said = await self._say_reminder(message, f"reminder:{reminder['id']}")
@@ -9194,6 +9206,7 @@ class PilotServer:
 
         if not self._someone_can_receive():
             return False
+        items = self._reminders_as_said(items)
         message = describe_held(items, now=time.time())
         if len(items) == 1:
             handed = await self._broadcast_notification("reminder", {**items[0], "late": True, "message": message})
@@ -9223,14 +9236,15 @@ class PilotServer:
         a week also goes into the activity log. Never dropped, never twice."""
         from pilot.workflows.reminders import describe_held
 
-        message = describe_held(items, now=time.time())
+        shown = self._reminders_as_said(items)  # the activity log below keeps the person's words
+        message = describe_held(shown, now=time.time())
         handed = await self._broadcast_notification(
             "reminders_missed",
             {
                 "message": message,
                 "reminders": [
                     {"id": item["id"], "text": item["text"], "due": item["due"], "repeat": bool(item.get("repeat"))}
-                    for item in items
+                    for item in shown
                 ],
             },
         )
@@ -9384,8 +9398,23 @@ class PilotServer:
                 continue
             if answer is not None:
                 LOCAL_ANSWER_SOURCE.set(type(source).__name__)  # which kind of answer (CODE_ANSWERS_ANY_MODEL)
+                if source is self._reminders or source is self._app_reminders:
+                    # "to your manager, Priya": the person's words are kept as they said them, named when said.
+                    said = self._said_with_people(answer)
+                    PEOPLE_NAMED.set((said, answer) if said != answer else None)
+                    return said
                 return answer
         return None
+
+    def _said_with_people(self, text: str) -> str:
+        """``text`` with each person the profile knows named, as the profile is now (pilot.personal.people)."""
+        from pilot.personal.people import said_with_people
+
+        try:
+            return said_with_people(text, self._user_profile)
+        except Exception:
+            logger.debug("Naming known people failed; said as written", exc_info=True)
+            return text
 
     async def _handle_timeline_status(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Whether the activity timeline is recording, and how much it holds."""
@@ -15920,9 +15949,17 @@ def handle_tool(tool_name, params):
                     conversation.memory.add_user(command_text if in_words else asked_here(CODE_ANSWER_BY.get()))
                     from pilot.conversation.style import speakable_numbers
 
-                    # In the words the person heard ("Thursday the twelfth"), as the voice said them.
+                    # In the words the person heard ("Thursday the twelfth"), as the voice said them. A person Heliox
+                    # named ("your manager, Priya") goes in only as personal lines do (personal_in_prompt).
+                    kept_answer = timeline_answer
+                    named = PEOPLE_NAMED.get()
+                    if named is not None and named[0] == timeline_answer:
+                        from pilot.conversation.adapters import personal_in_prompt
+
+                        if not personal_in_prompt(self):
+                            kept_answer = named[1]
                     conversation.memory.add_heliox(
-                        speakable_numbers(timeline_answer)
+                        speakable_numbers(kept_answer)
                         if in_words
                         else answered_here(tuple(voice_turn.kept), CODE_ANSWER_BY.get())
                     )

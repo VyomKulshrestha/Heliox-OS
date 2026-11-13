@@ -373,7 +373,10 @@ async def build_server(
     server._notes = NoteStore(folder / "notes.json")
     server._quick_answers = QuickAnswers(now=lambda: NOW)
     server._user_profile = UserProfile(
-        folder / "profile.json", remember=AsyncMock(return_value=None), forget=AsyncMock()
+        folder / "profile.json",
+        remember=AsyncMock(return_value=None),
+        forget=AsyncMock(),
+        clock=lambda: NOW.timestamp() + clock.t,  # the session's gaps: "told a moment ago" is the session's moment
     )
     for line in session.get("profile", []):
         with contextlib.suppress(Exception):

@@ -179,7 +179,8 @@
     "never_sent_when_off": [
       "Sam",
       "podcast launch",
-      "stop work"
+      "stop work",
+      "Priya"
     ]
   },
   "typed": [
@@ -321,10 +322,10 @@
     "message_starts": "This was due at 4:00 PM"
   },
   "personal_moments_baseline": {
-    "note": "delivered moments measured when the count was added; a run may do better, never worse",
-    "no model": 4,
-    "cloud, auto": 4,
-    "cloud, off": 4
+    "note": "delivered moments measured when the count was added, raised with each fix; a run may do better, never worse",
+    "no model": 5,
+    "cloud, auto": 5,
+    "cloud, off": 5
   },
   "wrap_up_moment": {
     "name": "the goal they are working on, at the wrap-up",

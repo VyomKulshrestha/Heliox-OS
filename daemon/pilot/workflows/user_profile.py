@@ -636,6 +636,15 @@ class UserProfile:
                 names.setdefault(relation, set()).add(name)
         return {relation: next(iter(found)) for relation, found in names.items() if len(found) == 1}
 
+    def relations_told_within(self, seconds: float) -> set[str]:
+        """Relations a person was named for in the last ``seconds``, on this profile's clock."""
+        now = self._clock()
+        return {
+            str(item.get("relation") or "")
+            for item in self._load()["people"]
+            if isinstance(item.get("at"), (int, float)) and now - float(item["at"]) < seconds
+        }
+
     def context_lines(self) -> list[str]:
         """Everything the person told Heliox about themselves, one line each, for every planner prompt."""
         profile = self._load()
