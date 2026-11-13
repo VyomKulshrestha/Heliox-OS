@@ -20,6 +20,21 @@ from __future__ import annotations
 import re
 import unicodedata
 
+# Greetings said before the name ("Oye Heliox", "Hallo Heliox"), in Latin letters as Whisper writes them; the name
+# itself must still follow (pilot.system.addressing.vocative_wake), so a greeting alone wakes nothing. All of them
+# count whatever the voice language: people greet in one language and speak in another. A greeting in another
+# script needs no entry ("嘿，Heliox", "हे Heliox"): the wake rule reads Latin words only, so the name comes first.
+# On 13 November, with Whisper small, "Oye Heliox" and "Hallo Heliox" were not wake phrases (synthetic speech).
+GREETINGS: dict[str, tuple[str, ...]] = {
+    "es": ("oye", "hoy", "hola", "ey", "eh"),  # "hoy": how Whisper small wrote "oye" once
+    "de": ("hallo", "hey", "hi"),
+    "hi": ("namaste", "suno", "arre", "hello"),
+    "fr": ("salut", "dis", "allo", "allô", "coucou", "bonjour"),
+    "it": ("ciao", "ehi", "senti", "ascolta"),
+    "pt": ("oi", "ola", "olá", "ei", "escuta"),
+}
+GREETING_WORDS = frozenset(word for words in GREETINGS.values() for word in words if word.isascii())
+
 # English: unchanged from the lists the server used before the table (pilot.server re-exports them).
 ENGLISH_DENIALS = frozenset(
     {

@@ -333,9 +333,10 @@ _ANSWER_REASONS = frozenset({"live reply", "follow-up: reply", "follow-up: contr
 # "Heliocs". Matched on sound at the very start of an utterance: a greeting-like word, then a word that starts
 # like "heli" and is short. "Hello", "Hillary", "Healy" and "helicopter" do not match.
 # "Here Heliox", "Dear Heliox" and "Hello Heliox" are how Whisper wrote the owner's "Hey Heliox" through a headset.
-_WAKE_LEAD = frozenset(
-    {"hey", "hay", "hi", "hei", "heh", "eh", "ay", "a", "oh", "okay", "ok", "here", "hear", "dear", "hello"}
-)
+_WAKE_LEAD = (
+    frozenset({"hey", "hay", "hi", "hei", "heh", "eh", "ay", "a", "oh", "okay", "ok", "here", "hear", "dear", "hello"})
+    | voice_words.GREETING_WORDS
+)  # the greetings of other languages before the name ("Oye Heliox")
 _WAKE_NAME = re.compile(r"^h[ei]l{1,2}[iy][a-z]{0,5}$")
 _WAKE_NAME_ALONE = re.compile(r"^hel{1,2}io[a-z]{0,3}$")
 _WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")

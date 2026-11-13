@@ -26,6 +26,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from pilot.system import voice_words
+
 FOLLOW_UP_SECONDS = 8.0  # people answer within about a second; 8 s leaves room to think, 30 s let a room in
 CLOSE_SECONDS = 20.0  # no confidently addressed utterance for this long: the wake phrase is needed again
 MONOLOGUE_SECONDS = 8.0  # a follow-up with more voice than this is talk, not a reply
@@ -37,7 +39,9 @@ ELLIPTICAL_SECONDS = 4.0  # "and tomorrow?", "again", "shorter": said right afte
 ELLIPTICAL_WORDS = 6  # "what about the second one?" is short; a sentence starting with "and" is narration
 EXACT_NAME = re.compile(r"^heliox(?:'s)?$", re.I)
 LOOSE_NAME = re.compile(r"^h[ei]l{1,2}[iy][a-z]{0,5}$", re.I)  # "Heliocs", "Helios", "Hilliox": recogniser spellings
-LEADS = {"hey", "hay", "hi", "hei", "okay", "ok", "oh", "here", "dear", "hello", "a", "eh", "ay"}
+LEADS = {"hey", "hay", "hi", "hei", "okay", "ok", "oh", "here", "dear", "hello", "a", "eh", "ay"} | set(
+    voice_words.GREETING_WORDS
+)  # and "Oye Heliox", "Hallo Heliox": the greetings of other languages before the name
 WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
 # After the name: words that make it third-person talk about Heliox, not words said to it.
