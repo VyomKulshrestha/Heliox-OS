@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -391,14 +392,14 @@ def paid_bound(config: Any, calls: int) -> dict[str, Any]:
     return bound
 
 
-async def _configured_model(config: Any) -> Any:
-    """The person's talk model; its spend goes to their budget (pilot.real_folders.real_budget_tracker)."""
+async def _configured_model(config: Any, exits: contextlib.AsyncExitStack) -> Any:
+    """The person's talk model; its spend goes to their budget (pilot.real_folders.real_budget_tracker), a block
+    entered on ``exits`` and closed with it when the run ends."""
     from pilot.conversation.fast_model import build_fast_model
     from pilot.real_folders import real_budget_tracker
     from pilot.security.vault import KeyVault
 
-    budget = real_budget_tracker(config.model)
-    await budget.initialize()
+    budget = await exits.enter_async_context(real_budget_tracker(config.model, "the voice latency bench"))
     return build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
 
 
@@ -534,6 +535,7 @@ async def _main(args: argparse.Namespace) -> int:
     if made:
         print(f"rendered {made} synthetic model-turn clips with the local voice")
     await harness.build()
+    exits = contextlib.AsyncExitStack()  # the paid model's budget block, closed in the finally below
     print("voice settings copied:", ", ".join(harness.copied_settings) or "none")
     print("models:", ", ".join(f"{k} ({v})" for k, v in harness.models_found.items()))
     server = harness.server
@@ -546,8 +548,9 @@ async def _main(args: argparse.Namespace) -> int:
             await harness.close()
             print("Not run: add --paid to spend that.")
             return 3
-        model = await _configured_model(server.config)
+        model = await _configured_model(server.config, exits)
         if model is None:
+            await exits.aclose()
             await harness.close()
             raise SystemExit("no talk model is set up in these settings")
         server._model_router = stack._BenchRouter()
@@ -595,6 +598,7 @@ async def _main(args: argparse.Namespace) -> int:
                 print("   " + stage_line(found, worst, args.threshold), flush=True)
         session = harness.log.since(0.0)
     finally:
+        await exits.aclose()  # the person's budget store closed: the spend lands in pilot.db, its threads end
         await harness.close()  # no session log: it would hold the words of the person's recordings
     late_words(rows, session)
     for row in rows:

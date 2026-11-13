@@ -1213,7 +1213,7 @@ async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     """The Claude road against the real fast model, once, with the budget tracker on; scored by the same rules."""
     from pilot.config import PilotConfig
     from pilot.conversation.fast_model import build_fast_model
-    from pilot.real_folders import apply_owner_settings, real_budget_tracker
+    from pilot.real_folders import apply_owner_settings, describe_changes, real_budget_tracker
     from pilot.security.vault import KeyVault
 
     from . import OWNER_CONVERSATION_FIELDS
@@ -1224,69 +1224,68 @@ async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     if config.model.provider != "cloud" or config.model.cloud_provider != "claude":
         raise SystemExit("--real runs the Claude road only; the copied provider is not Claude")
     # The one intended write to the person's own folders: the budget tracker records what the run spent.
-    budget = real_budget_tracker(config.model)
-    await budget.initialize()
-    before = budget._monthly_cost
-    monthly, per_task = float(config.model.budget_monthly_limit_usd), float(config.model.max_usd_per_task)
-    turns = sum(1 for s in sessions for t in s["turns"] if "say" in t)
-    estimate = round(turns * ESTIMATE_USD_PER_TURN, 4)
-    print(
-        f"budget: spent this month ${before:.4f} of ${monthly:.2f}; per task ${per_task:.2f}; this run at most "
-        f"${MAX_RUN_USD:.2f} (estimate ${estimate:.4f} for {turns} turns, {len(sessions)} sessions)",
-        flush=True,
-    )
-    if estimate > MAX_RUN_USD:
-        raise SystemExit(f"the estimate ${estimate:.4f} passes the ${MAX_RUN_USD:.2f} a run may cost: run a subset")
-    if (monthly > 0 and before + MAX_RUN_USD > monthly) or (per_task > 0 and per_task < MAX_RUN_USD):
-        raise SystemExit("a run of this size could pass the person's own limits: not started")
-    config_before, data_before = owner_config_listing(), _owner_data_listing()
-    per_call: list[dict[str, Any]] = []
-    rows: list[dict[str, Any]] = []
-    calls = 0
-    firsts: list[float | None] = []  # seconds to the first text, per call (None: no text came)
-    name = ""
-    for session in sessions:
-        # A fresh model per session, as a person's sessions are minutes apart: a slow answer's rest in one session
-        # must not answer the next session's turns.
-        model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
-        result = await run_all([session], ("claude",), real_model=model, keep_records=True)
-        rows += result["rows"]
-        calls += len(getattr(model, "calls", []))
-        record = result["records"][0]
-        turns_called = [turn for turn in sorted(record.requests) for _ in record.requests[turn]]
-        for call, turn, body in zip(
-            getattr(model, "calls", []),
-            turns_called,
-            [b for t in sorted(record.requests) for b in record.requests[t]],
-            strict=False,
-        ):
-            per_call.append(
-                {
-                    "session": session["name"],
-                    "turn": turn + 1,
-                    "said": session["turns"][turn].get("say", "") if 0 <= turn < len(session["turns"]) else "",
-                    "first_text_s": round(call.first_text_at - call.started, 3) if call.first_text_at else None,
-                    "input_tokens": call.input_tokens,
-                    "output_tokens": call.output_tokens,
-                    "request_chars": len(body),
-                }
-            )
-        firsts += [
-            round(c.first_text_at - c.started, 2) if c.first_text_at is not None else None
-            for c in getattr(model, "calls", [])
-        ]
-        name = getattr(model, "name", "")
-        await asyncio.sleep(0.3)  # the last call's usage is recorded as its stream closes
-    summary = {"table": {"claude": f"{sum(r['passed'] for r in rows)}/{len(sessions)}"}, "rows": rows}
-    summary["spent_usd"] = round(budget._monthly_cost - before, 5)
-    summary["calls"] = calls
-    summary["first_text_seconds"] = firsts
-    summary["model"] = name
-    summary["per_call"] = per_call
-    await budget.close()
+    async with real_budget_tracker(config.model, "the session eval") as budget:
+        before = budget._monthly_cost
+        monthly, per_task = float(config.model.budget_monthly_limit_usd), float(config.model.max_usd_per_task)
+        turns = sum(1 for s in sessions for t in s["turns"] if "say" in t)
+        estimate = round(turns * ESTIMATE_USD_PER_TURN, 4)
+        print(
+            f"budget: spent this month ${before:.4f} of ${monthly:.2f}; per task ${per_task:.2f}; this run at most "
+            f"${MAX_RUN_USD:.2f} (estimate ${estimate:.4f} for {turns} turns, {len(sessions)} sessions)",
+            flush=True,
+        )
+        if estimate > MAX_RUN_USD:
+            raise SystemExit(f"the estimate ${estimate:.4f} passes the ${MAX_RUN_USD:.2f} a run may cost: run a subset")
+        if (monthly > 0 and before + MAX_RUN_USD > monthly) or (per_task > 0 and per_task < MAX_RUN_USD):
+            raise SystemExit("a run of this size could pass the person's own limits: not started")
+        config_before, data_before = owner_config_listing(), _owner_data_listing()
+        per_call: list[dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
+        calls = 0
+        firsts: list[float | None] = []  # seconds to the first text, per call (None: no text came)
+        name = ""
+        for session in sessions:
+            # A fresh model per session, as a person's sessions are minutes apart: a slow answer's rest in one session
+            # must not answer the next session's turns.
+            model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
+            result = await run_all([session], ("claude",), real_model=model, keep_records=True)
+            rows += result["rows"]
+            calls += len(getattr(model, "calls", []))
+            record = result["records"][0]
+            turns_called = [turn for turn in sorted(record.requests) for _ in record.requests[turn]]
+            for call, turn, body in zip(
+                getattr(model, "calls", []),
+                turns_called,
+                [b for t in sorted(record.requests) for b in record.requests[t]],
+                strict=False,
+            ):
+                per_call.append(
+                    {
+                        "session": session["name"],
+                        "turn": turn + 1,
+                        "said": session["turns"][turn].get("say", "") if 0 <= turn < len(session["turns"]) else "",
+                        "first_text_s": round(call.first_text_at - call.started, 3) if call.first_text_at else None,
+                        "input_tokens": call.input_tokens,
+                        "output_tokens": call.output_tokens,
+                        "request_chars": len(body),
+                    }
+                )
+            firsts += [
+                round(c.first_text_at - c.started, 2) if c.first_text_at is not None else None
+                for c in getattr(model, "calls", [])
+            ]
+            name = getattr(model, "name", "")
+            await asyncio.sleep(0.3)  # the last call's usage is recorded as its stream closes
+        summary = {"table": {"claude": f"{sum(r['passed'] for r in rows)}/{len(sessions)}"}, "rows": rows}
+        summary["spent_usd"] = round(budget._monthly_cost - before, 5)
+        summary["calls"] = calls
+        summary["first_text_seconds"] = firsts
+        summary["model"] = name
+        summary["per_call"] = per_call
     config_after, data_after = owner_config_listing(), _owner_data_listing()
     summary["owner_config_changed"] = sorted(set(config_before.items()) ^ set(config_after.items()))
-    summary["owner_data_changed"] = sorted({name for name, _ in set(data_before.items()) ^ set(data_after.items())})
+    # Each changed file with who changed it: this run's own budget write, or something it cannot name.
+    summary["owner_data_changed"] = [f"{path}: {who}" for path, who in describe_changes(data_before, data_after)]
     return summary
 
 

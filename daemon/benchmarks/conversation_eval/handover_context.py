@@ -132,59 +132,57 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
 
     config = PilotConfig()  # the run's own: its files are under the scratch root
     apply_owner_settings(config, ("model", "conversation"), only=OWNER_CONVERSATION_FIELDS)
-    budget = real_budget_tracker(config.model)  # the one intended write to the person's folders
-    await budget.initialize()
-    before = budget._monthly_cost
-    model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
-    rows = []
-    for case in CASES:
+    async with real_budget_tracker(config.model, "the handover check") as budget:  # the one write to their folders
+        before = budget._monthly_cost
+        model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
+        rows = []
+        for case in CASES:
 
-        async def sink(text: str, channel: str, key: str) -> str:
-            return "spoken"
+            async def sink(text: str, channel: str, key: str) -> str:
+                return "spoken"
 
-        layer = ConversationLayer(
-            sink=sink, model=lambda: model, sources=ContextSources(now=lambda: NOW), hold_after=60.0
-        )
-        for words in case["before"]:
-            await layer.take(words)
-        result = await layer.take(case["request"])
-        handed_over = not result.done
-        planner_gets = planner_sees(result) if handed_over else ""
-        found = facts_found(planner_gets, case["needs"])
-        context = getattr(result, "context", None)
-        rows.append(
-            {
-                "case": case["name"],
-                "request": case["request"],
-                "handed_over": handed_over,
-                "by": result.intent.source if result.intent else "",
-                "planner_input": result.planner_input if handed_over else "",
-                "context": context.for_planner() if context is not None and handed_over else "",
-                "reviewers_see": context.for_reviewers() if context is not None and handed_over else "",
-                "spoken": result.spoken,
-                "found": found,
-                "broken": broken_rules(
-                    case,
-                    handed_over=handed_over,
-                    found=found,
-                    promised=any(promised_action(line) for line in result.spoken),
-                ),
-            }
-        )
-        print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
-    await asyncio.sleep(0.3)
-    total = sum(len(r["found"]) for r in rows)
-    carried = sum(sum(r["found"].values()) for r in rows)
-    summary = {
-        "cases": len(rows),
-        "handed_over": sum(r["handed_over"] for r in rows),
-        "facts_carried": f"{carried}/{total}",
-        "complete_requests": sum(bool(r["found"]) and all(r["found"].values()) and r["handed_over"] for r in rows),
-        "must_not_broken": sum(bool(r["broken"]) for r in rows),
-        "spent_usd": round(budget._monthly_cost - before, 5),
-        "rows": rows,
-    }
-    await budget.close()
+            layer = ConversationLayer(
+                sink=sink, model=lambda: model, sources=ContextSources(now=lambda: NOW), hold_after=60.0
+            )
+            for words in case["before"]:
+                await layer.take(words)
+            result = await layer.take(case["request"])
+            handed_over = not result.done
+            planner_gets = planner_sees(result) if handed_over else ""
+            found = facts_found(planner_gets, case["needs"])
+            context = getattr(result, "context", None)
+            rows.append(
+                {
+                    "case": case["name"],
+                    "request": case["request"],
+                    "handed_over": handed_over,
+                    "by": result.intent.source if result.intent else "",
+                    "planner_input": result.planner_input if handed_over else "",
+                    "context": context.for_planner() if context is not None and handed_over else "",
+                    "reviewers_see": context.for_reviewers() if context is not None and handed_over else "",
+                    "spoken": result.spoken,
+                    "found": found,
+                    "broken": broken_rules(
+                        case,
+                        handed_over=handed_over,
+                        found=found,
+                        promised=any(promised_action(line) for line in result.spoken),
+                    ),
+                }
+            )
+            print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
+        await asyncio.sleep(0.3)
+        total = sum(len(r["found"]) for r in rows)
+        carried = sum(sum(r["found"].values()) for r in rows)
+        summary = {
+            "cases": len(rows),
+            "handed_over": sum(r["handed_over"] for r in rows),
+            "facts_carried": f"{carried}/{total}",
+            "complete_requests": sum(bool(r["found"]) and all(r["found"].values()) and r["handed_over"] for r in rows),
+            "must_not_broken": sum(bool(r["broken"]) for r in rows),
+            "spent_usd": round(budget._monthly_cost - before, 5),
+            "rows": rows,
+        }
     return summary
 
 

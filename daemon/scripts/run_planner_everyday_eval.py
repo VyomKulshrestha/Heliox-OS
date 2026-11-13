@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import contextvars
 import json
 import os
@@ -111,9 +112,10 @@ async def build_planner(provider: str, model: str, *, record_usage: bool = True)
     config.model.cloud_model = model
     router = ModelRouter(config, KeyVault(config))
     router._cache = _NoCache()
+    exits = contextlib.AsyncExitStack()
     if record_usage:
-        tracker = real_budget_tracker(config.model)  # the one write to the person's folders: the spend
-        await tracker.initialize()
+        # The one write to the person's folders, the spend: a block closed by close() below.
+        tracker = await exits.enter_async_context(real_budget_tracker(config.model, "the planner eval"))
         router.set_budget_tracker(tracker)
 
     calls: list[dict[str, Any]] = []
@@ -136,8 +138,7 @@ async def build_planner(provider: str, model: str, *, record_usage: bool = True)
 
     async def close() -> None:
         await router.close()
-        if record_usage:
-            await tracker.close()
+        await exits.aclose()
 
     registry = SkillRegistry()
     registry.load_all()

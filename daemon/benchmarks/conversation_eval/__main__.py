@@ -90,87 +90,85 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             config.model.provider, config.model.cloud_provider = "cloud", args.provider
     if args.model:
         setattr(config.conversation, f"{args.provider or config.model.cloud_provider or 'ollama'}_model", args.model)
-    budget = real_budget_tracker(config.model)  # the one intended write to the person's folders
-    await budget.initialize()
-    spent_before = budget._monthly_cost
-    base = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
-    if base is None:
-        raise SystemExit("No fast model is configured; set one under [model] or pass --provider.")
-    busy_before = machine_busy()
+    async with real_budget_tracker(config.model, "the conversation eval") as budget:  # the one write to their folders
+        spent_before = budget._monthly_cost
+        base = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
+        if base is None:
+            raise SystemExit("No fast model is configured; set one under [model] or pass --provider.")
+        busy_before = machine_busy()
 
-    results: list[tuple[str, TurnRecord, list]] = []
-    timings: list[float] = []
-    for conversation in CONVERSATIONS:
-        if args.only and args.only.casefold() not in conversation["name"].casefold():
-            continue
-        model = RecordingModel(base)
-        screen = conversation.get("screen")
-        sources = ContextSources(
-            profile_lines=lambda c=conversation: list(c.get("profile", [])),
-            task_state=lambda c=conversation: dict(c.get("task", {})),
-            screen=lambda s=screen: Screen(app=s["app"], excerpt=s.get("excerpt", "")) if s else None,
-            now=lambda: NOW,
+        results: list[tuple[str, TurnRecord, list]] = []
+        timings: list[float] = []
+        for conversation in CONVERSATIONS:
+            if args.only and args.only.casefold() not in conversation["name"].casefold():
+                continue
+            model = RecordingModel(base)
+            screen = conversation.get("screen")
+            sources = ContextSources(
+                profile_lines=lambda c=conversation: list(c.get("profile", [])),
+                task_state=lambda c=conversation: dict(c.get("task", {})),
+                screen=lambda s=screen: Screen(app=s["app"], excerpt=s.get("excerpt", "")) if s else None,
+                now=lambda: NOW,
+            )
+            spoken: list[str] = []
+
+            async def sink(text: str, channel: str, key: str, spoken: list[str] = spoken) -> str:
+                spoken.append(text)
+                return "spoken"
+
+            layer = ConversationLayer(sink=sink, model=lambda m=model: m, sources=sources, hold_after=60.0)
+            previous: TurnRecord | None = None
+            for text, spec in conversation["turns"]:
+                spoken.clear()
+                calls_before = len(model.raw)
+                result = await layer.take(text)
+                record = TurnRecord(
+                    text=text,
+                    route=result.route.kind.value if result.route else "",
+                    done=result.done,
+                    spoken=[s for s in spoken],
+                    raw=model.raw[-1] if len(model.raw) > calls_before else "",
+                    planner_input="" if result.done else planner_sees(result),
+                    quick_types=[a.action_type.value for a in result.quick.plan.actions] if result.quick else [],
+                    first_sentence_s=(result.timings.get("first_sentence_ms") or 0) / 1000 or None,
+                )
+                if record.first_sentence_s and record.done:
+                    timings.append(record.first_sentence_s)
+                outcomes = check_turn(record, spec, previous)
+                results.append((f"{conversation['name']}: {text}", record, outcomes))
+                print(
+                    f"{'ok ' if all(o.passed for o in outcomes) else 'BAD'} {text!r} -> {record.route} "
+                    f"{'talk' if record.done else 'act'} {' '.join(spoken)[:110]!r}",
+                    flush=True,
+                )
+                previous = record
+                await asyncio.sleep(0.2)
+        await asyncio.sleep(0.5)
+        summary = summarise(results)
+        busy_after = machine_busy()
+        busy = busy_before or busy_after
+        summary["model"] = f"{getattr(base, 'provider', '')}:{getattr(base, 'name', '')}"
+        summary["turns"] = len(results)
+        summary["spent_usd"] = round(budget._monthly_cost - spent_before, 5)
+        summary["first_sentence_s"] = (
+            {"owed": f"not quoted: the machine was busy ({busy})"}
+            if busy
+            else {"median": round(statistics.median(timings), 3), "worst": round(max(timings), 3), "n": len(timings)}
+            if timings
+            else {}
         )
-        spoken: list[str] = []
-
-        async def sink(text: str, channel: str, key: str, spoken: list[str] = spoken) -> str:
-            spoken.append(text)
-            return "spoken"
-
-        layer = ConversationLayer(sink=sink, model=lambda m=model: m, sources=sources, hold_after=60.0)
-        previous: TurnRecord | None = None
-        for text, spec in conversation["turns"]:
-            spoken.clear()
-            calls_before = len(model.raw)
-            result = await layer.take(text)
-            record = TurnRecord(
-                text=text,
-                route=result.route.kind.value if result.route else "",
-                done=result.done,
-                spoken=[s for s in spoken],
-                raw=model.raw[-1] if len(model.raw) > calls_before else "",
-                planner_input="" if result.done else planner_sees(result),
-                quick_types=[a.action_type.value for a in result.quick.plan.actions] if result.quick else [],
-                first_sentence_s=(result.timings.get("first_sentence_ms") or 0) / 1000 or None,
-            )
-            if record.first_sentence_s and record.done:
-                timings.append(record.first_sentence_s)
-            outcomes = check_turn(record, spec, previous)
-            results.append((f"{conversation['name']}: {text}", record, outcomes))
-            print(
-                f"{'ok ' if all(o.passed for o in outcomes) else 'BAD'} {text!r} -> {record.route} "
-                f"{'talk' if record.done else 'act'} {' '.join(spoken)[:110]!r}",
-                flush=True,
-            )
-            previous = record
-            await asyncio.sleep(0.2)
-    await asyncio.sleep(0.5)
-    summary = summarise(results)
-    busy_after = machine_busy()
-    busy = busy_before or busy_after
-    summary["model"] = f"{getattr(base, 'provider', '')}:{getattr(base, 'name', '')}"
-    summary["turns"] = len(results)
-    summary["spent_usd"] = round(budget._monthly_cost - spent_before, 5)
-    summary["first_sentence_s"] = (
-        {"owed": f"not quoted: the machine was busy ({busy})"}
-        if busy
-        else {"median": round(statistics.median(timings), 3), "worst": round(max(timings), 3), "n": len(timings)}
-        if timings
-        else {}
-    )
-    summary["records"] = [
-        {
-            "turn": name,
-            "route": r.route,
-            "talk": r.done,
-            "spoken": r.spoken,
-            "raw": r.raw,
-            "planner_input": r.planner_input,
-            "quick": r.quick_types,
-        }
-        for name, r, _ in results
-    ]
-    await budget.close()
+        summary["records"] = [
+            {
+                "turn": name,
+                "route": r.route,
+                "talk": r.done,
+                "spoken": r.spoken,
+                "raw": r.raw,
+                "planner_input": r.planner_input,
+                "quick": r.quick_types,
+            }
+            for name, r, _ in results
+        ]
     return summary
 
 

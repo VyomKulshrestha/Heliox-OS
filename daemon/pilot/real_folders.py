@@ -15,8 +15,9 @@ The settings are covered too: PilotConfig.save refuses outside the daemon on the
 
 A paid run, under a scratch root, reads the person's provider settings with ``apply_owner_model_settings(config)``
 (copied onto its own config, whose save writes its own folder) and records what it spent with
-``real_budget_tracker(config.model)``, the one intended write to the real folders. Each of its writes leaves a
-one-line note (in the run's own folder, PAID_RUN_NOTES) and remembers the stamp it left on the store, so a check
+``async with real_budget_tracker(config.model) as budget:``, the one intended write to the real folders; the block
+closes the store when the run ends, so the spend lands in pilot.db. Its close leaves a one-line note (in the run's
+own folder, PAID_RUN_NOTES) and remembers the stamp it left on the store, so a check
 that lists the person's data folder before and after the run (``who_changed``, ``describe_changes``) can say
 "changed by this approved paid run" for those files and "changed by something this run cannot name" for any other.
 """
@@ -220,8 +221,9 @@ def _stamp(path: Path) -> tuple[int, int] | None:
 
 
 def _note_paid_write(db: Path, purpose: str, step: str) -> None:
-    """After the budget tracker wrote the person's store: remember the stamps it left (the store and SQLite's own
-    journal files beside it) and add one line to the run's notes. Never raises: the note is for the check."""
+    """After the budget tracker closed the person's store: remember the stamps the store and SQLite's own journal
+    files beside it have now (a file that is gone is forgotten), and add one line to the run's notes. Never raises:
+    the note is for the check."""
     for file in (
         db,
         db.with_name(db.name + "-wal"),
@@ -229,7 +231,9 @@ def _note_paid_write(db: Path, purpose: str, step: str) -> None:
         db.with_name(db.name + "-journal"),
     ):
         stamp = _stamp(file)
-        if stamp is not None:
+        if stamp is None:
+            _paid_stamps.pop(_key(file), None)
+        else:
             _paid_stamps[_key(file)] = stamp
     try:
         from datetime import datetime
@@ -238,7 +242,7 @@ def _note_paid_write(db: Path, purpose: str, step: str) -> None:
 
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         with open(STATE_DIR / PAID_RUN_NOTES, "a", encoding="utf-8") as notes:
-            notes.write(f"{datetime.now().isoformat(timespec='seconds')} {purpose}: {step} wrote {db}\n")
+            notes.write(f"{datetime.now().isoformat(timespec='seconds')} {purpose}: {step} {db}\n")
     except OSError:
         pass
 
@@ -256,34 +260,61 @@ def describe_changes(before: dict[str, tuple[int, int]], after: dict[str, tuple[
     return [(path, who_changed(path, after.get(path))) for path in sorted(changed)]
 
 
-def real_budget_tracker(model_config: Any, purpose: str = "a paid run") -> Any:
+class PaidRunBudget:
+    """What ``real_budget_tracker`` hands out: a block, never a bare tracker.
+
+        async with real_budget_tracker(config.model, "the session eval") as budget:
+            ...  # budget is the BudgetTracker; its spend goes to the person's pilot.db
+
+    On entry the tracker opens the person's store; on exit, also when the block raises, it closes it, so what the run
+    spent is checkpointed into pilot.db (not left in pilot.db-wal) and its SQLite worker threads end with it. The
+    note for ``who_changed`` is taken after that close, so it describes the store as the run left it. Used without
+    ``async with``, any use fails at once: a tracker nobody closes leaves the spend half-landed and the process
+    unable to exit."""
+
+    def __init__(self, model_config: Any, purpose: str) -> None:
+        self._model_config = model_config
+        self._purpose = purpose
+        self._tracker: Any = None
+        self._entered = False
+
+    async def __aenter__(self) -> Any:
+        if self._entered:
+            raise RuntimeError("a paid run's budget block can be entered once")
+        from pilot.models.budget_tracker import BudgetTracker
+
+        self._entered = True
+        tracker = BudgetTracker(self._model_config, str(real_budget_db()))
+        try:
+            await tracker.initialize()
+        except BaseException:
+            await tracker.close()
+            _note_paid_write(real_budget_db(), self._purpose, "could not open, and closed")
+            raise
+        self._tracker = tracker
+        return tracker
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        tracker, self._tracker = self._tracker, None
+        if tracker is None:
+            return
+        try:
+            await tracker.close()
+        finally:
+            _note_paid_write(real_budget_db(), self._purpose, "recorded its spend and closed")
+
+    def __getattr__(self, name: str) -> Any:
+        raise RuntimeError(
+            f"real_budget_tracker(...).{name}: use it as `async with real_budget_tracker(config.model) as budget:` so "
+            "the person's store is closed when the run ends, also when it fails"
+        )
+
+
+def real_budget_tracker(model_config: Any, purpose: str = "a paid run") -> PaidRunBudget:
     """The one write a paid run makes to the real folders: its spend, through the budget tracker, into the person's
-    own store. Nothing else of the real data folder is opened; the run's server and stores stay in its own folder.
-    Each write (setting the store up, recording a call's spend, closing) is noted for ``who_changed``."""
-    from pilot.models.budget_tracker import BudgetTracker
-
-    db = real_budget_db()
-
-    class NotedBudgetTracker(BudgetTracker):
-        async def initialize(self) -> None:
-            try:
-                await super().initialize()
-            finally:
-                _note_paid_write(db, purpose, "setting up the budget store")
-
-        async def record_usage(self, *args: Any, **kwargs: Any) -> Any:
-            try:
-                return await super().record_usage(*args, **kwargs)
-            finally:
-                _note_paid_write(db, purpose, "recording a call's spend")
-
-        async def close(self) -> None:
-            try:
-                await super().close()
-            finally:
-                _note_paid_write(db, purpose, "closing the budget store")
-
-    return NotedBudgetTracker(model_config, str(db))
+    own store, as an ``async with`` block (PaidRunBudget). Nothing else of the real data folder is opened; the run's
+    server and stores stay in its own folder."""
+    return PaidRunBudget(model_config, purpose)
 
 
 # The sections a run outside the daemon may copy from the person's settings: the provider and model ([model]), how

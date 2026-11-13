@@ -34,7 +34,9 @@ class _StubModel:
             yield piece
 
 
-async def _configured_model() -> Any:
+async def _configured_model() -> tuple[Any, Any]:
+    """The person's configured talk model and the budget tracker counting its calls; the caller closes the tracker
+    (bench_reply, in a finally), so its SQLite threads end and the spend is written to the store."""
     from pilot.config import DB_FILE, PilotConfig
     from pilot.conversation.fast_model import build_fast_model
     from pilot.models.budget_tracker import BudgetTracker
@@ -43,7 +45,7 @@ async def _configured_model() -> Any:
     config = PilotConfig.load()
     budget = BudgetTracker(config.model, str(DB_FILE))
     await budget.initialize()
-    return build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
+    return build_fast_model(config, vault=KeyVault(config), router=None, budget=budget), budget
 
 
 async def bench_reply(
@@ -54,12 +56,21 @@ async def bench_reply(
     stream: Callable[[str], AsyncIterator[str]] | str | None,
 ) -> dict[str, Any]:
     """{"route": "answer"|"action"|"control", "spoken": [sentences], "first_sentence_s": seconds or None}."""
+    budget: Any = None
     if stream == "configured":
-        model: Any = await _configured_model()
+        model, budget = await _configured_model()
     elif callable(stream):
         model = _StubModel(stream)
     else:
         model = None
+    try:
+        return await _reply(utterance, turns, context, model)
+    finally:
+        if budget is not None:
+            await budget.close()  # a tracker left open keeps its threads, and the process, alive
+
+
+async def _reply(utterance: str, turns: list[dict[str, str]], context: dict[str, Any], model: Any) -> dict[str, Any]:
     spoken: list[str] = []
     first: list[float] = []
     started = time.monotonic()

@@ -269,24 +269,23 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
         config.model.provider, config.model.cloud_provider = "cloud", args.provider
     if args.model:
         setattr(config.conversation, f"{args.provider or config.model.cloud_provider or 'ollama'}_model", args.model)
-    budget = real_budget_tracker(config.model)  # the one intended write to the person's folders
-    await budget.initialize()
-    before = budget._monthly_cost
-    model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
-    if model is None:
-        raise SystemExit("No fast model is configured.")
-    results = await run_conversations(MORE_CONVERSATIONS, model, extra_checks=True)
-    # The extra checks over the first eval's conversations too: one question, length and numbers.
-    results += await run_conversations(CONVERSATIONS, model, extra_checks=True)
-    await asyncio.sleep(0.5)
-    summary = summarise(results)
-    summary["turns"] = len(results)
-    summary["model"] = f"{getattr(model, 'provider', '')}:{getattr(model, 'name', '')}"
-    summary["spent_usd"] = round(budget._monthly_cost - before, 5)
-    summary["records"] = [
-        {"turn": name, "talk": r.done, "spoken": r.spoken, "planner_input": r.planner_input} for name, r, _ in results
-    ]
-    await budget.close()
+    async with real_budget_tracker(config.model, "the more-turns eval") as budget:  # the one write to their folders
+        before = budget._monthly_cost
+        model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
+        if model is None:
+            raise SystemExit("No fast model is configured.")
+        results = await run_conversations(MORE_CONVERSATIONS, model, extra_checks=True)
+        # The extra checks over the first eval's conversations too: one question, length and numbers.
+        results += await run_conversations(CONVERSATIONS, model, extra_checks=True)
+        await asyncio.sleep(0.5)
+        summary = summarise(results)
+        summary["turns"] = len(results)
+        summary["model"] = f"{getattr(model, 'provider', '')}:{getattr(model, 'name', '')}"
+        summary["spent_usd"] = round(budget._monthly_cost - before, 5)
+        summary["records"] = [
+            {"turn": name, "talk": r.done, "spoken": r.spoken, "planner_input": r.planner_input}
+            for name, r, _ in results
+        ]
     return summary
 
 

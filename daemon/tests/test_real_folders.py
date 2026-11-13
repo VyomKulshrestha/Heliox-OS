@@ -331,29 +331,89 @@ def _stamps(folder: Path) -> dict[str, tuple[int, int]]:
     return found
 
 
-@pytest.mark.asyncio
-async def test_a_paid_runs_budget_write_is_named_as_its_own_and_any_other_change_is_not(monkeypatch, tmp_path):
+def _threads_left(before: set) -> list:
+    """SQLite worker threads (aiosqlite's, the ones that kept a paid run's process alive) started since ``before`` and
+    still alive after up to 2 s: a closed connection's thread ends a moment after its close returns, one that was
+    never closed does not end at all."""
+    import threading
+    import time
+
+    deadline = time.monotonic() + 2.0
+    while True:
+        left = [
+            t for t in set(threading.enumerate()) - before if t.is_alive() and "_connection_worker_thread" in t.name
+        ]
+        if not left or time.monotonic() > deadline:
+            return left
+        time.sleep(0.05)
+
+
+def _stand_in_home(monkeypatch, tmp_path) -> Path:
+    """The person's data folder under a stand-in home (the account's home as the system names it)."""
     own = tmp_path / "own"
     data = own / ".local" / "share" / "heliox-os"
     data.mkdir(parents=True)
-    notes = data / "notes.json"
-    notes.write_text("[]", encoding="utf-8")
     monkeypatch.setattr(real_folders, "account_home", lambda: own)
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     monkeypatch.setattr(real_folders, "_paid_stamps", {})
+    return data
+
+
+@pytest.mark.asyncio
+async def test_a_paid_runs_budget_block_lands_the_spend_in_the_store_and_ends_its_threads(monkeypatch, tmp_path):
+    import sqlite3
+    import threading
+
+    data = _stand_in_home(monkeypatch, tmp_path)
+    notes = data / "notes.json"
+    notes.write_text("[]", encoding="utf-8")
+    threads_before = set(threading.enumerate())
     before = _stamps(data)
 
-    tracker = real_folders.real_budget_tracker(config.PilotConfig().model, "the test run")
-    await tracker.initialize()
-    await tracker.record_usage("claude", "claude-haiku", 100, 20)
-    await tracker.close()
+    async with real_folders.real_budget_tracker(config.PilotConfig().model, "the test run") as budget:
+        await budget.record_usage("claude", "claude-haiku", 100, 20)
     notes.write_text('[{"text": "not the run"}]', encoding="utf-8")  # something else changed a file meanwhile
+
+    # The spend is in pilot.db itself, read the only way a check may read the person's store.
+    store = sqlite3.connect(f"file:{(data / 'pilot.db').as_posix()}?immutable=1", uri=True)
+    try:
+        assert store.execute("SELECT COUNT(*) FROM token_usage").fetchone()[0] == 1
+    finally:
+        store.close()
+    wal = data / "pilot.db-wal"
+    assert not wal.exists() or wal.stat().st_size == 0
+    assert _threads_left(threads_before) == []
 
     said = dict(real_folders.describe_changes(before, _stamps(data)))
     assert said[str(data / "pilot.db")] == real_folders.PAID_RUN
     assert said[str(notes)] == real_folders.UNKNOWN
     lines = (config.STATE_DIR / real_folders.PAID_RUN_NOTES).read_text(encoding="utf-8").splitlines()
-    assert any(line.endswith(f"the test run: recording a call's spend wrote {data / 'pilot.db'}") for line in lines)
+    assert any(line.endswith(f"the test run: recorded its spend and closed {data / 'pilot.db'}") for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_a_paid_runs_budget_block_closes_the_store_when_the_run_fails(monkeypatch, tmp_path):
+    import threading
+
+    data = _stand_in_home(monkeypatch, tmp_path)
+    threads_before = set(threading.enumerate())
+
+    with pytest.raises(RuntimeError, match="the run failed"):
+        async with real_folders.real_budget_tracker(config.PilotConfig().model, "the test run") as budget:
+            await budget.record_usage("claude", "claude-haiku", 10, 2)
+            raise RuntimeError("the run failed")
+
+    assert _threads_left(threads_before) == []
+    wal = data / "pilot.db-wal"
+    assert not wal.exists() or wal.stat().st_size == 0
+
+
+def test_a_paid_runs_budget_used_without_a_block_fails_at_once():
+    budget = real_folders.real_budget_tracker(config.PilotConfig().model)
+    with pytest.raises(RuntimeError, match="async with real_budget_tracker"):
+        budget.initialize  # noqa: B018 - the attribute alone must refuse
+    with pytest.raises(RuntimeError, match="async with real_budget_tracker"):
+        budget.record_usage  # noqa: B018
 
 
 def test_a_store_changed_after_the_runs_own_write_is_not_called_the_runs():
