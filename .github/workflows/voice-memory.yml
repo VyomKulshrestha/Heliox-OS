@@ -46,11 +46,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: System libraries (Linux: PortAudio, libsndfile, espeak-ng)
+      - name: "System libraries (Linux: PortAudio, libsndfile, espeak-ng)"
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libportaudio2 libsndfile1 espeak-ng
 
-      - name: System libraries (macOS: espeak-ng)
+      - name: "System libraries (macOS: espeak-ng)"
         if: runner.os == 'macOS'
         run: brew install espeak-ng
 
