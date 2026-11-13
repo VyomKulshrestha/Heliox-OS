@@ -10745,7 +10745,8 @@ class PilotServer:
                 }
 
         if section == "voice" and (
-            {"tts_engine", "tts_voice", "tts_keep_loaded_seconds", "tts_device"} & values.keys()
+            {"tts_engine", "tts_voice", "tts_keep_loaded_seconds", "tts_device", "light_on_small_memory"}
+            & values.keys()
         ):
             self._start_tts_warmup()
 
@@ -11520,11 +11521,11 @@ class PilotServer:
         elif voice["voice_loading"]:
             speaks = {"ok": False, "state": "loading", "reason": "Getting my voice ready…"}
         elif getattr(manager, "_failed_until", None) is not None:
-            speaks = {
-                "ok": True,
-                "state": "system_voice",
-                "reason": "Heliox's own voice is not working, so the system voice speaks.",
-            }
+            from pilot.system.speech_budget import unavailable_sentence
+
+            # The small-machine rule, too little free memory, or a voice that failed: the system voice speaks.
+            reason = unavailable_sentence(str(getattr(manager, "unavailable_reason", "") or ""))
+            speaks = {"ok": True, "state": "system_voice", "reason": reason}
         else:
             speaks = {"ok": False, "state": "not_loaded", "reason": "Heliox's voice loads when it first speaks."}
         return {"answers": answers, "hears": hears, "speaks": speaks}

@@ -139,6 +139,7 @@ export interface PilotSettings {
     language: string;
     tts_engine: string;
     tts_voice: string;
+    light_on_small_memory?: boolean;
   };
   restrictions: {
     protected_folders: string[];

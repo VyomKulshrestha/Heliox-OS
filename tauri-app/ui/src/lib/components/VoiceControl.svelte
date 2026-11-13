@@ -479,6 +479,8 @@
     }
     if (status === "voice_ready" || status === "voice_unavailable") {
       preparingVoice = "";
+      // Why the system voice speaks instead of Heliox's own (little memory, a failed load), said once by the daemon.
+      if (status === "voice_unavailable" && payload.message) showDeviceNotice(String(payload.message), 10000);
       return;
     }
     if (status === "holding") {

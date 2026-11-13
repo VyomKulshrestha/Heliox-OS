@@ -270,6 +270,10 @@ class VoiceConfig:
     # while loaded, and 20-25 s to load from cold. It stays loaded until this many seconds pass with nobody
     # talking to Heliox and Heliox saying nothing, and loads again as soon as the person is heard.
     tts_keep_loaded_seconds: float = 300.0
+    # On a computer with less than 10 GB of memory in all, speak with the system voice instead of loading the local
+    # one (about 1.6-1.9 GB), and say so once (pilot.system.speech_budget). Off: the local voice on every computer,
+    # still only when 2 GB are free at load time.
+    light_on_small_memory: bool = True
     # Where the local voice runs: "auto" (the GPU when CUDA works, else the CPU), "cpu" or "cuda". On the CPU a
     # long sentence takes about 3.5 s instead of 0.25 s, but no GPU memory is used.
     tts_device: str = "auto"
@@ -1312,6 +1316,7 @@ def _validate_config_types(raw: dict) -> None:
             "tts_voice": str,
             "system_voice": str,
             "tts_keep_loaded_seconds": (int, float),
+            "light_on_small_memory": bool,
             "headset_input_choices": dict,
             "tts_device": str,
         },

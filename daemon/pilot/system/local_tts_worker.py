@@ -662,6 +662,12 @@ class LocalTTSWorkerManager:
         # Free system memory now, or None: the worker is not started when less than VOICE_HOST_RAM_BYTES is free
         # (on an 8 GB machine the model's 1.6-1.9 GB can push everything into swap); the system voice speaks.
         self.free_memory: Callable[[], int | None] | None = None
+        # The small-machine rule (pilot.system.speech_budget): a sentence when this computer should speak with the
+        # system voice by itself, "" otherwise. Checked before every start.
+        self.light_reason: Callable[[], str] | None = None
+        # Why the local voice is not in use now ("" while it is, or before it was ever tried): the reason in the
+        # manager's words, for ready.speaks and the voice bar (speech_budget.unavailable_sentence).
+        self.unavailable_reason = ""
         self.loaded = False
         self._spawn_lock = asyncio.Lock()
         self._io_lock = asyncio.Lock()
@@ -744,6 +750,10 @@ class LocalTTSWorkerManager:
                 return self.process
             if self.process is not None:
                 await self._close(self.process)
+            light = self.light_reason() if self.light_reason is not None else ""
+            if light:
+                self._mark_failed(engine, light)
+                raise LocalTTSUnavailable(f"{engine}: {light}")
             free = self.free_memory() if self.free_memory is not None else None
             if free is not None and free < VOICE_HOST_RAM_BYTES:
                 reason = (
@@ -840,6 +850,7 @@ class LocalTTSWorkerManager:
             await self._close(self.process)
 
     def _mark_failed(self, engine: str, reason: str) -> None:
+        self.unavailable_reason = reason
         if self._failed_until is None:
             logger.warning(
                 "Local voice %s is unavailable (%s); speaking with the system voice until it recovers",
@@ -926,6 +937,7 @@ class LocalTTSWorkerManager:
             if self._failed_until is not None:
                 logger.info("Local voice %s recovered", engine)
             self._failed_until = None
+            self.unavailable_reason = ""
             self.loaded = True
 
     # Speaking ----------------------------------------------------------------
@@ -1019,7 +1031,10 @@ class LocalTTSWorkerManager:
             if self._load_task is not None:
                 await asyncio.shield(self._load_task)
         except LocalTTSUnavailable:
-            await self._notify("voice_unavailable", {"message": "Speaking with the system voice"})
+            from pilot.system.speech_budget import unavailable_sentence
+
+            # Said once per failure (a failed voice is not announced again until it recovers): why, in plain words.
+            await self._notify("voice_unavailable", {"message": unavailable_sentence(self.unavailable_reason)})
             raise
         logger.info("Waited %.1f s for the local voice to load before speaking", self._clock() - started)
         await self._notify("voice_ready", {})
@@ -1193,6 +1208,10 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
     _manager.choose_device = gpu_arbiter.voice_device
     _manager.on_gpu_fault = gpu_arbiter.arbiter().record_fault
     _manager.free_memory = lambda: gpu_arbiter.probe_host_memory()[0]
+    from pilot.system import speech_budget
+
+    light = bool(getattr(voice_config, "light_on_small_memory", True))
+    _manager.light_reason = lambda: speech_budget.light_voice_reason(speech_budget.total_memory(), light)
     engine = str(getattr(voice_config, "tts_engine", ""))
     if engine in LOCAL_ENGINES:
         # The heads this voice says most, ready to play; entries made with another voice or settings are dropped.

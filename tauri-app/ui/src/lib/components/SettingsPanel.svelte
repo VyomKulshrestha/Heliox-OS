@@ -558,6 +558,19 @@
     setTimeout(() => (speechToast = ""), 5000);
   }
 
+  async function toggleLightOnSmallMemory(e: Event) {
+    const next = !($settings.voice?.light_on_small_memory ?? true);
+    speechSaving = true;
+    const synced = await saveSetting("voice", { light_on_small_memory: next }, { quiet: true, event: e });
+    speechSaving = false;
+    speechToast = synced
+      ? next
+        ? "On a computer with little memory, Heliox speaks with the system voice."
+        : "Heliox uses its own voice on every computer, when enough memory is free."
+      : notChanged("Voice on computers with little memory");
+    setTimeout(() => (speechToast = ""), 5000);
+  }
+
   async function updateTtsEngine(e: Event) {
     const val = (e.target as HTMLInputElement).value;
     const ttsVoice =
@@ -2013,6 +2026,27 @@
           <option value={voiceOption}>{voiceOption}</option>
         {/each}
       </select>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Use the system voice on computers with little memory</span>
+        <span class="setting-desc"
+          >Heliox's own voice needs about 2 GB of memory. On a computer with less than 10 GB in all, Heliox speaks with
+          the system voice instead, so your other programs keep their room.</span
+        >
+      </div>
+      <button
+        class="toggle"
+        class:active={$settings.voice?.light_on_small_memory ?? true}
+        onclick={toggleLightOnSmallMemory}
+        disabled={speechSaving || speechTesting}
+        role="switch"
+        aria-checked={$settings.voice?.light_on_small_memory ?? true}
+        aria-label="Use the system voice on computers with little memory"
+      >
+        <span class="toggle-knob"></span>
+      </button>
     </div>
 
     <div class="setting-row">
