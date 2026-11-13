@@ -246,6 +246,18 @@ What was weighed and left out:
 - **A reply that stops mid-sentence at send.** Too often meant (a quick "ok", "and you?"), and it can only be told
   after it is sent.
 
+## In CI
+
+`tests/test_live_timing.py` runs a fixed sample of the bench (the shortest scenario for each kind, the three
+shortest quiet ones, one of each place and of the floor and call groups), so the suite stays fast. The whole bench
+runs nightly and by hand in the `live-bench` job of `.github/workflows/a-day-linux.yml`:
+`python -m pilot.live.bench --check` over every pack, both policies and all three personas. It prints a CHECK line
+for each limit and fails on any false alarm, any miss that is not marked `known_miss`, a personal timing slower than
+the rules, or a cut-off over its limit (`bench.CUT_OFF_LIMITS`: quick 0, steady 1, thinker 2 with the personal
+timing; at most 4 for the thinker on the rules, 3 and 4 in all). The whole result is kept as the `live-bench`
+artifact. No model, no desktop, no sound; about a minute on this laptop (207 scenarios, 13 November 2026: every
+limit held, 91/92 caught in each run, the one miss a known one).
+
 ## What it does not show
 
 These are scripted sessions and simulated people, not recordings of real ones. The personas are three points on

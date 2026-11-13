@@ -820,6 +820,54 @@ def table(scores: list[Score]) -> str:
     return "\n".join(lines)
 
 
+# What the whole bench must hold (``--check``; CI runs it nightly): the limits the unit test held before it ran a
+# sample (tests/test_live_timing.py). Cut-offs per persona with the personal timing, and in all.
+CUT_OFF_LIMITS = {"quick": 0, "steady": 1, "thinker": 2}
+RULES_THINKER_CUT_OFFS = 4
+TOTAL_CUT_OFFS = {"personal": 3, "rules": 4}
+
+
+def check(scores: list[Score], scenarios: list[dict[str, Any]]) -> list[tuple[str, bool, str]]:
+    """(check, passed, detail) for the whole bench: no false alarm anywhere, no miss but the known ones, the personal
+    timing no slower than the rules, and the cut-off limits."""
+    known = {s["name"] for s in scenarios if s.get("known_miss")}
+    by = {(s.policy, s.persona): s for s in scores}
+    results: list[tuple[str, bool, str]] = []
+    for score in scores:
+        name = f"{score.policy}/{score.persona}"
+        false = [(d["scenario"], d["kind"]) for d in score.details if not d.get("missed") and not d.get("expected")]
+        results.append((f"{name}/no-false-alarms", not false, f"{len(false)} false alarm(s) {false[:5]}"))
+        missed = sorted({d["scenario"] for d in score.details if d.get("missed")} - known)
+        results.append(
+            (f"{name}/only-known-misses", not missed, f"{score.catches}/{score.expected} caught; {missed[:5]}")
+        )
+    for persona in sorted({s.persona for s in scores}):
+        personal, rules = by.get(("personal", persona)), by.get(("rules", persona))
+        if personal is not None:
+            limit = CUT_OFF_LIMITS.get(persona, 2)
+            results.append(
+                (f"personal/{persona}/cut-offs", personal.cut_offs <= limit, f"{personal.cut_offs} (limit {limit})")
+            )
+        if personal is not None and rules is not None:
+            results.append(
+                (
+                    f"{persona}/personal-no-slower",
+                    personal.median_wait <= rules.median_wait,
+                    f"median wait {personal.median_wait} s personal, {rules.median_wait} s rules",
+                )
+            )
+    if ("rules", "thinker") in by:
+        cut = by["rules", "thinker"].cut_offs
+        results.append(
+            ("rules/thinker/cut-offs", cut <= RULES_THINKER_CUT_OFFS, f"{cut} (limit {RULES_THINKER_CUT_OFFS})")
+        )
+    for policy, limit in TOTAL_CUT_OFFS.items():
+        total = sum(s.cut_offs for s in scores if s.policy == policy)
+        if any(s.policy == policy for s in scores):
+            results.append((f"{policy}/cut-offs-in-all", total <= limit, f"{total} (limit {limit})"))
+    return results
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m pilot.live.bench", description=__doc__.split("\n\n")[0])
     parser.add_argument("--scenarios", type=Path, action="append", default=[], help="an extra scenario pack (JSON)")
@@ -833,7 +881,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--keep-typing", action="store_true", help="the person types on after each typed scenario (timing only)"
     )
+    parser.add_argument(
+        "--check", action="store_true", help="print CHECK lines and exit 1 when a limit fails (what CI runs nightly)"
+    )
     args = parser.parse_args(argv)
+    from pilot.real_folders import use_scratch_folders
+
+    use_scratch_folders()  # nothing here writes Heliox's folders, but a script outside pytest always starts so
     scenarios = load_scenarios(args.scenarios)
     if args.keep_typing:
         scenarios = [keep_typing(scenario) for scenario in scenarios]
@@ -856,6 +910,12 @@ def main(argv: list[str] | None = None) -> int:
         print(when_table([d for s in scores for d in s.details]))
     if args.json:
         args.json.write_text(json.dumps([s.as_dict() for s in scores], indent=2), encoding="utf-8")
+    if args.check:
+        results = check(scores, scenarios)
+        print()
+        for name, passed, detail in results:
+            print(f"CHECK live-bench/{name}: {'PASS' if passed else 'FAIL'} - {detail}")
+        return 0 if all(passed for _, passed, _ in results) else 1
     return 0
 
 

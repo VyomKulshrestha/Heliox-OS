@@ -3,7 +3,8 @@ name: "A day in the life (Linux desktop)"
 # The parts of the made-up day (tests/data/a_day_in_the_life.json) only a real desktop shows: slips typed into a real
 # GTK field read by the real AT-SPI reader in a real daemon with Live on, and the lid closed over a reminder (the
 # daemon frozen past it, then a window). The rest of the day runs in the ordinary suite on fake clocks
-# (tests/test_a_day_in_the_life.py). Never blocks anything. About 10 runner minutes; nightly and by hand.
+# (tests/test_a_day_in_the_life.py). Never blocks anything. About 10 runner minutes; nightly and by hand. A second
+# job runs the whole Live Bench, which the unit test only samples.
 
 on:
   schedule:
@@ -52,3 +53,67 @@ jobs:
             sleep 2
             python tests/platform_real/a_day_check.py --python /usr/bin/python3
           '
+
+  # The whole Live Bench (every pack, both policies, all three personas): the unit test runs a fixed sample
+  # (tests/test_live_timing.py), so this is where the limits it used to hold are checked. No model, no desktop, no
+  # sound: about two minutes. It fails on any false alarm, any miss that is not a known one, a personal timing
+  # slower than the rules, or a cut-off over its limit (pilot.live.bench.check).
+  live-bench:
+    name: The whole Live Bench
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: daemon
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: The job's inputs are there (a minute, before anything is installed)
+        timeout-minutes: 4
+        run: |
+          # The same fake home as the steps after it: pip's dry run writes its cache under HOME, and nothing here
+          # may touch the runner's own (test_ci_fake_home.py reads every step that names the check).
+          export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
+          failed=0
+          for path in pyproject.toml pilot/live/bench.py pilot/live/bench_scenarios; do
+            if [ -e "$path" ]; then
+              echo "CHECK job-inputs/path: PASS - $path"
+            else
+              echo "CHECK job-inputs/path: FAIL - $path is missing"
+              failed=$((failed + 1))
+            fi
+          done
+          if python -m pip install --disable-pip-version-check --dry-run -q -e . > "$RUNNER_TEMP/pip-dry-run.log" 2>&1; then
+            echo "CHECK job-inputs/pip: PASS - the daemon would install"
+          else
+            echo "CHECK job-inputs/pip: FAIL - $(tail -3 "$RUNNER_TEMP/pip-dry-run.log" | tr '\n' ' ')"
+            failed=$((failed + 1))
+          fi
+          exit "$failed"
+
+      - name: Install the daemon
+        run: |
+          export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
+          pip install -e .
+
+      - name: Every pack, every policy and persona, checked
+        run: |
+          # The bench moves every Heliox folder into a scratch folder itself (use_scratch_folders); the fake home is
+          # for anything else that looks at HOME.
+          export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home" && mkdir -p "$HOME"
+          python -m pilot.live.bench --check --json live-bench.json
+
+      - name: Keep the whole result
+        if: ${{ !cancelled() && hashFiles('daemon/live-bench.json') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-bench
+          path: daemon/live-bench.json
+          if-no-files-found: ignore

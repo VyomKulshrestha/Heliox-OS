@@ -301,3 +301,25 @@ def test_the_cli_prints_a_table_and_writes_json(tmp_path, capsys, monkeypatch):
     assert "personal  quick" in capsys.readouterr().out
     [row] = json.loads(out.read_text(encoding="utf-8"))
     assert row["details"] and {d["scenario"] for d in row["details"] if d.get("missed")} <= KNOWN_MISSES
+
+
+def test_the_whole_bench_check_fails_on_a_false_alarm_a_new_miss_or_a_cut_off_over_its_limit():
+    """What CI's nightly ``python -m pilot.live.bench --check`` holds, on made-up scores (the run itself is CI's)."""
+
+    def score(policy, persona, *, cut_offs=0, waits=(1.0,), details=()):
+        s = bench.Score(policy, persona, cut_offs=cut_offs, waits=list(waits), details=list(details))
+        return s
+
+    scenarios = [{"name": "kept", "known_miss": "why"}, {"name": "a"}]
+    good = [score(p, persona) for p in bench.POLICIES for persona in bench.PERSONAS]
+    assert all(passed for _, passed, _ in bench.check(good, scenarios))
+    false = [score("rules", "quick", details=[{"scenario": "a", "kind": "x", "expected": False}])]
+    assert not dict((n, ok) for n, ok, _ in bench.check(false, scenarios))["rules/quick/no-false-alarms"]
+    missed = [
+        score("rules", "quick", details=[{"scenario": "a", "missed": True}, {"scenario": "kept", "missed": True}])
+    ]
+    assert not dict((n, ok) for n, ok, _ in bench.check(missed, scenarios))["rules/quick/only-known-misses"]
+    cut = [score("personal", "quick", cut_offs=1)]
+    assert not dict((n, ok) for n, ok, _ in bench.check(cut, scenarios))["personal/quick/cut-offs"]
+    slower = [score("personal", "steady", waits=(2.0,)), score("rules", "steady", waits=(1.0,))]
+    assert not dict((n, ok) for n, ok, _ in bench.check(slower, scenarios))["steady/personal-no-slower"]
