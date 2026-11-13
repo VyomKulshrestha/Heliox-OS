@@ -7,8 +7,10 @@ only, nothing passes or fails on a number).
 Stages, each printed as a MEMORY line as soon as it is measured (resident memory, MB; "peak" while the stage ran,
 sampled twice a second over the whole process tree, and "settled" five seconds after it):
 1. started: a real daemon (python -m pilot.server), ready, voice off: its process tree;
-2. recognisers loaded and warm: Whisper base (faster-whisper) and Parakeet, each loaded through the product's own
-   loaders and given one second of silence, in this process (the listener loads them in the daemon's);
+2. the recognisers, one stage each so each one's share shows: Whisper base (faster-whisper; the default final pass
+   and the wake check), then Parakeet (the final pass once its download is chosen), then the streaming decoder and
+   Smart Turn (turn-taking); each loaded through the product's own loaders and given one second of silence, in this
+   process (the listener loads them in the daemon's);
 3. voice loaded: the local voice (Kokoro) through the product's own worker manager (its own process, counted);
 4. after one spoken reply: one sentence made by that worker;
 5. after ten idle minutes: the worker is released after tts_keep_loaded_seconds (300 s by default), so this is what
@@ -47,7 +49,7 @@ use_scratch_folders(Path(os.environ["HELIOX_BENCH_ROOT"]))
 import psutil  # noqa: E402
 import real_daemon  # noqa: E402
 
-CATALOGUE_IDS = ("parakeet-tdt-0.6b-v2-int8", "whisper-base")
+CATALOGUE_IDS = ("parakeet-tdt-0.6b-v2-int8", "whisper-base", "streaming-zipformer-en", "smart-turn-v3")
 MB = 1024**2
 
 
@@ -167,17 +169,45 @@ async def voice_stages(idle_minutes: float) -> None:
     try:
         line("this process before loading", sampler.peak, tree_rss(me), process="report")
 
+        # Each recogniser in its own stage, so its share is its own: Whisper base (the default final pass and the
+        # wake check), then Parakeet (the final pass once its download is chosen), then the streaming decoder and
+        # Smart Turn (turn-taking), each loaded through the product's own loaders and given one second of silence.
+        silence_samples = np.zeros(16000, dtype=np.float32)
         sampler.reset()
         whisper = voice._get_faster_whisper_model("base")
         # Samples, as the listener hands them (voice._transcribe_faster_whisper): given a path, faster-whisper 1.2
         # decodes through PyAV, and PyAV 19 refuses its metadata_errors argument (run 43394164459, all three systems).
-        list(whisper.transcribe(np.zeros(16000, dtype=np.float32))[0])
+        list(whisper.transcribe(silence_samples)[0])
+        await asyncio.sleep(5)
+        line("Whisper base loaded and warm", sampler.peak, tree_rss(me), process="report")
+
+        sampler.reset()
         parakeet = ParakeetTranscriber(model_dir("", DATA_DIR))
         parakeet_ok = parakeet.load()
         if parakeet_ok:
-            parakeet.transcribe(np.zeros(16000, dtype=np.float32))
+            parakeet.transcribe(silence_samples)
         await asyncio.sleep(5)
-        line("recognisers loaded and warm", sampler.peak, tree_rss(me), parakeet=parakeet_ok, process="report")
+        line("Parakeet loaded and warm", sampler.peak, tree_rss(me), parakeet=parakeet_ok, process="report")
+
+        from pilot.system.streaming_asr import StreamingTranscriber
+        from pilot.system.turn_detector import SmartTurnDetector
+
+        sampler.reset()
+        streaming = StreamingTranscriber()
+        streaming_ok = streaming.load() and streaming.warm()
+        turn = SmartTurnDetector()
+        turn_ok = turn.load()
+        if turn_ok:
+            turn.probability(silence_samples)
+        await asyncio.sleep(5)
+        line(
+            "streaming decoder and Smart Turn loaded and warm",
+            sampler.peak,
+            tree_rss(me),
+            streaming=bool(streaming_ok),
+            smart_turn=bool(turn_ok),
+            process="report",
+        )
 
         config = PilotConfig()
         local_tts_worker.configure_local_voice(config.voice)
