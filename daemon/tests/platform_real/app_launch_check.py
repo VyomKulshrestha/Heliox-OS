@@ -17,9 +17,12 @@ WebDriver for its web view, so the check does not run there). Checks:
 - ``removed-permission-refused``: a plugin command the window no longer has (clipboard read) is refused, started by
   one script and read by later ones, so no async script waits in the driver;
 - ``async-route-survives-refused-command``: the same refusal through the async script route;
-- ``script-cannot-navigate``: the page's script setting location to another site leaves the window on the app;
+- ``script-cannot-navigate``: the page's script setting location to another site leaves the window on the app, and
+  on Linux nothing is handed to the system's browser ($BROWSER, a script that writes down each address);
 - ``link-click-not-followed``: a click on a link to another site leaves the window on the app; on Linux the address
-  reaches the system's browser ($BROWSER, a script that writes it down), proving it was handed over;
+  reaches the system's browser, proving a click the person made is handed over;
+- ``script-click-opens-nothing``: a click a script dispatches on a link (not trusted) leaves the window on the app,
+  and on Linux nothing is handed to the browser;
 - ``webassembly-compiles``: WebAssembly compiles under the policy ('wasm-unsafe-eval'), and MediaPipe's own wasm
   file is served by the app;
 - ``driver-loopback-only``: the WebDriver ports (which can run script in the app's window) listen on the loopback
@@ -402,14 +405,29 @@ def removed_permission_async(driver: Driver) -> None:
     check("async-route-survives-refused-command", str(answer).startswith("refused"), str(answer)[:300])
 
 
+def handed_to_browser() -> tuple[bool, str]:
+    """Whether the system's browser can be watched here ($BROWSER is a script that writes down each address, on
+    Linux), and what it was handed so far, one address per line in the log, joined on one line."""
+    browser_log = os.environ.get("HELIOX_BROWSER_LOG", "")
+    if not browser_log:
+        return False, ""
+    handed = Path(browser_log).read_text(encoding="utf-8", errors="replace") if Path(browser_log).exists() else ""
+    return True, ", ".join(handed.split())
+
+
 def script_cannot_navigate(driver: Driver) -> None:
+    """A navigation the page's script starts is refused and opens nothing: neither the window nor the browser goes."""
     driver.run("location.href = 'https://example.com/heliox-navigate'; return 1;")
     time.sleep(3)
     url = driver.url()
-    check("script-cannot-navigate", on_app(url), url)
+    watched, handed = handed_to_browser()
+    ok = on_app(url) and "example.com/heliox-navigate" not in handed
+    check("script-cannot-navigate", ok, f"{url}; handed to the browser: {handed or 'nothing'}" if watched else url)
 
 
 def link_click_not_followed(driver: Driver) -> None:
+    """A link the person clicks (WebDriver's click is input the browser marks trusted) stays out of the window and
+    opens in the system's browser."""
     driver.run(
         "const a = document.createElement('a'); a.id = 'heliox-link-test';"
         "a.href = 'https://example.org/heliox-link'; a.textContent = 'link';"
@@ -419,13 +437,24 @@ def link_click_not_followed(driver: Driver) -> None:
     driver.click("#heliox-link-test")
     time.sleep(3)
     url = driver.url()
-    handed = ""
-    browser_log = os.environ.get("HELIOX_BROWSER_LOG", "")
-    if browser_log and Path(browser_log).exists():
-        handed = Path(browser_log).read_text(encoding="utf-8", errors="replace")
-    detail = f"{url}; handed to the browser: {handed.strip() or 'not observable here'}"
-    ok = on_app(url) and (not browser_log or "example.org/heliox-link" in handed)
-    check("link-click-not-followed", ok, detail)
+    watched, handed = handed_to_browser()
+    detail = f"{url}; handed to the browser: {handed or 'nothing' if watched else 'not observable here'}"
+    check("link-click-not-followed", on_app(url) and (not watched or "example.org/heliox-link" in handed), detail)
+
+
+def script_click_opens_nothing(driver: Driver) -> None:
+    """A click a script dispatches on a link (not trusted, as a stray auto-clicking piece of markup would be) leaves
+    the window on the app and hands nothing to the browser."""
+    driver.run(
+        "const a = document.createElement('a'); a.href = 'https://example.net/heliox-synthetic?q=secret';"
+        "a.textContent = 'synthetic'; document.body.append(a); a.click();"
+        "a.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); a.remove(); return 1;"
+    )
+    time.sleep(3)
+    url = driver.url()
+    watched, handed = handed_to_browser()
+    ok = on_app(url) and "example.net/heliox-synthetic" not in handed
+    check("script-click-opens-nothing", ok, f"{url}; handed to the browser: {handed or 'nothing'}" if watched else url)
 
 
 def webassembly_compiles(driver: Driver) -> None:
@@ -446,6 +475,7 @@ STEPS = (
     ("async-route-survives-refused-command", removed_permission_async),
     ("script-cannot-navigate", script_cannot_navigate),
     ("link-click-not-followed", link_click_not_followed),
+    ("script-click-opens-nothing", script_click_opens_nothing),
     ("webassembly-compiles", webassembly_compiles),
 )
 APPS_BEFORE: set[int] = set()  # app processes already running when the check began: never ended by it

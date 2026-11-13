@@ -2,7 +2,8 @@ import { render } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { describe, expect, it, vi } from "vitest";
 import LogMessage from "../../components/LogMessage.svelte";
-import { leavesApp, handleLinkClick, webLink } from "./links";
+import { invoke } from "../api/invoke";
+import { byThePerson, installLinkGuard, leavesApp, handleLinkClick, webLink } from "./links";
 import { renderMarkdown, renderStreamingMarkdown } from "./markdown";
 
 // Text the window did not write (a model's reply, a page, a file, a plugin) trying each way HTML can run or leave.
@@ -54,18 +55,51 @@ describe("text the window did not write stays inert", () => {
 });
 
 describe("a link never takes the window away from the app", () => {
-  function click(href: string, target = ""): { prevented: boolean; opened: string[] } {
+  // A test cannot make a trusted event, so "the person clicked" is passed in; the last two tests use the real check.
+  function click(href: string, target = "", byPerson = true): { prevented: boolean; opened: string[] } {
     const anchor = document.createElement("a");
     anchor.setAttribute("href", href);
     if (target) anchor.target = target;
     document.body.append(anchor);
     const opened: string[] = [];
     const event = new MouseEvent("click", { bubbles: true, cancelable: true });
-    anchor.addEventListener("click", (e) => handleLinkClick(e, (url) => opened.push(url)));
+    anchor.addEventListener("click", (e) =>
+      handleLinkClick(
+        e,
+        (url) => opened.push(url),
+        () => byPerson,
+      ),
+    );
     anchor.dispatchEvent(event);
     anchor.remove();
     return { prevented: event.defaultPrevented, opened };
   }
+
+  it("opens nothing for a click a script dispatched, and still keeps the window", () => {
+    expect(click("https://example.com/?q=secret", "", false)).toEqual({ prevented: true, opened: [] });
+    expect(click("https://example.com/", "_blank", false)).toEqual({ prevented: true, opened: [] });
+  });
+
+  it("asks the browser whether the person clicked (isTrusted), through the one guard on the document", () => {
+    const opened: string[] = [];
+    const host = document.createElement("div");
+    host.innerHTML = '<a href="https://example.com/auto">x</a>';
+    document.body.append(host);
+    const remove = installLinkGuard(document);
+    const anchor = host.querySelector("a") as HTMLAnchorElement;
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    expect(byThePerson(event)).toBe(false); // dispatched by this test, like any script's click
+    anchor.addEventListener("click", (e) => {
+      if (!e.defaultPrevented) opened.push("followed");
+    });
+    anchor.dispatchEvent(event);
+    anchor.click(); // what a stray auto-clicking script would do
+    remove();
+    host.remove();
+    expect(event.defaultPrevented).toBe(true);
+    expect(opened).toEqual([]);
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("open_external_link", expect.anything());
+  });
 
   it("opens a web or mail link outside, in the system's browser", () => {
     expect(click("https://example.com/a?b=c")).toEqual({ prevented: true, opened: ["https://example.com/a?b=c"] });

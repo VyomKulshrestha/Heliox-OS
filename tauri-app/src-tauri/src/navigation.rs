@@ -3,9 +3,9 @@
 //! A link in text the window renders (a model's reply, a page's text, a file's contents, a plugin's description) must
 //! never take the window to another page: there, a page Heliox does not control would look like Heliox. Every
 //! navigation is checked here (`on_navigation`, a plugin hook that runs for each one). Only the app's own pages load;
-//! a web or mail address opens in the system's browser or mail app instead, and anything else (javascript:, data:,
-//! file:, blob:) goes nowhere. The page's own click handler does the same first (ui/src/lib/utils/links.ts); this is
-//! the floor under it. Commands are only reachable from the app's own origin: the capabilities file names no remote
+//! every other navigation is refused and opens nothing. A web or mail address opens in the system's browser or mail
+//! app only when the person clicked a link: the page's one click guard (ui/src/lib/utils/links.ts) stops the click
+//! and calls `open_external_link`, which checks the scheme again. This hook is the floor under that guard. Commands are only reachable from the app's own origin: the capabilities file names no remote
 //! URL, so a page from anywhere else could not call them even if it loaded.
 
 use tauri::Url;
@@ -31,22 +31,23 @@ pub fn opens_outside(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "mailto") && !is_app_page(url)
 }
 
-/// The navigation hook: true lets the window load ``url``. Anything else is refused, and a web or mail address is
-/// opened by the system instead.
+/// The navigation hook: true lets the window load ``url``; anything else is refused, and nothing is opened for it.
+/// A navigation the page did not ask for by a person's click (a script setting `location`, a refresh tag, a form
+/// that submits itself, an anchor followed by script) must not become the person's browser opening an address they
+/// never chose, with whatever its query carries. A clicked link reaches the browser only through
+/// `open_external_link`, which the page's one click guard calls for a click the person made (ui/src/lib/utils/links.ts).
+/// Only the scheme and host are logged: the rest of a refused address can carry data.
 pub fn allow(url: &Url) -> bool {
     if is_app_page(url) {
         return true;
     }
-    if opens_outside(url) {
-        if let Err(error) = opener::open_browser(url.as_str()) {
-            eprintln!("[Heliox OS] Could not open {url} in the browser: {error}");
-        }
-    } else {
-        eprintln!(
-            "[Heliox OS] The window was not allowed to go to a {} address",
-            url.scheme()
-        );
-    }
+    eprintln!(
+        "[Heliox OS] The window was not allowed to go to {}:{}; nothing was opened",
+        url.scheme(),
+        url.host_str()
+            .map(|host| format!("//{host}"))
+            .unwrap_or_default()
+    );
     false
 }
 
@@ -108,5 +109,27 @@ mod tests {
         assert!(open_external_link("file:///etc/passwd".into()).is_err());
         assert!(open_external_link("javascript:alert(1)".into()).is_err());
         assert!(open_external_link("not a url".into()).is_err());
+        assert!(open_external_link("tauri://localhost/settings".into()).is_err());
+    }
+
+    #[test]
+    fn a_refused_navigation_opens_nothing() {
+        for page in [
+            "https://example.com/?token=secret",
+            "mailto:sam@example.com",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+        ] {
+            assert!(!allow(&url(page)), "{page}");
+        }
+        assert!(allow(&url("tauri://localhost/")));
+        // The hook itself never hands an address to the system: only open_external_link does, for a person's click.
+        let source = include_str!("navigation.rs");
+        let hook = &source[source.find("pub fn allow").unwrap()
+            ..source.find("/// For the page's link handler").unwrap()];
+        assert!(
+            !hook.contains("opener::"),
+            "the navigation hook must not open anything"
+        );
     }
 }

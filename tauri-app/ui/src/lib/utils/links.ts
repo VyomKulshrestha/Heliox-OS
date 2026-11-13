@@ -3,9 +3,12 @@ import { invoke } from "../api/invoke";
 /**
  * A link in text the window shows (a model's reply, a page's text, a file's contents, a plugin's description) never
  * takes the window to another page: a page Heliox does not control would then look like Heliox. A click on any link
- * that leaves the app is stopped here; a web or mail address opens in the system's browser or mail app (the Rust
- * command checks the scheme again), and anything else (javascript:, data:, file:) goes nowhere. The Rust side refuses
- * any navigation away from the app's own pages as well (src-tauri/src/navigation.rs).
+ * that leaves the app is stopped here. Only a click the person made (the browser marks it trusted; Enter on a focused
+ * link and a middle click are the person's too) opens a web or mail address in the system's browser or mail app, and
+ * the Rust command checks the scheme again; anything else (javascript:, data:, file:) goes nowhere. A click a script
+ * dispatched opens nothing: the browser opening an address the person never clicked is what a stray piece of
+ * rendered markup could otherwise cause. This is the only place in the page that opens an address. The Rust side
+ * refuses any navigation away from the app's own pages and opens nothing for it (src-tauri/src/navigation.rs).
  */
 export function leavesApp(anchor: HTMLAnchorElement, here: Location = window.location): boolean {
   const href = anchor.getAttribute("href");
@@ -27,11 +30,21 @@ export function opensOutside(url: string): boolean {
   }
 }
 
-export function handleLinkClick(event: MouseEvent, open: (url: string) => unknown = openOutside): void {
+/** Whether the person made this click (the browser sets isTrusted only for real input); tests pass their own. */
+export function byThePerson(event: Event): boolean {
+  return event.isTrusted;
+}
+
+export function handleLinkClick(
+  event: MouseEvent,
+  open: (url: string) => unknown = openOutside,
+  trusted: (event: Event) => boolean = byThePerson,
+): void {
   const element = event.target instanceof Element ? event.target.closest("a") : null;
   if (!(element instanceof HTMLAnchorElement) || !leavesApp(element)) return;
   event.preventDefault();
   event.stopPropagation();
+  if (!trusted(event)) return;
   const url = new URL(element.getAttribute("href") ?? "", window.location.href).href;
   if (opensOutside(url)) open(url);
 }
