@@ -293,7 +293,8 @@ def stamp_hooks(harness: Any) -> None:
 
     listener._transcribe_whisper_text = whisper_timed
     _time_method(log, listener._parakeet(), "transcribe", "parakeet")
-    _time_method(log, listener._recorder.turn_detector, "probability", "smart turn")
+    # The listener's own Smart Turn object: the recorder is handed it again for every utterance.
+    _time_method(log, getattr(listener, "_turn_detector", None), "probability", "smart turn")
     _time_method(log, getattr(listener._streaming, "_recognizer", None), "decode_stream", "streaming decode")
 
     try:

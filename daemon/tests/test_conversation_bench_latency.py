@@ -283,3 +283,69 @@ def test_a_warm_up_still_running_at_the_request_is_neither_cold_nor_warm():
     assert vl.warm_state([start, done, request], _event(21.0, vl.TRACE + "request sent")) == "finished"
     assert vl.warm_state([request], request) == "none"
     assert vl.warm_state([], None) == "none"
+
+
+def test_a_paid_run_that_fails_still_closes_the_budget_block(monkeypatch):
+    import asyncio
+    import contextlib
+    import threading
+    from types import SimpleNamespace
+
+    from pilot import real_folders
+    from pilot.conversation import fast_model
+    from pilot.security import vault
+
+    events = []
+
+    class Block:
+        """The shape of real_budget_tracker's block: opened on entry, closed on exit."""
+
+        def __init__(self, model_config, purpose):
+            self.purpose = purpose
+
+        async def __aenter__(self):
+            events.append("opened")
+            return self
+
+        async def __aexit__(self, *exc):
+            events.append("closed")
+
+    monkeypatch.setattr(real_folders, "real_budget_tracker", Block)
+    monkeypatch.setattr(fast_model, "build_fast_model", lambda config, **kw: "the model")
+    monkeypatch.setattr(vault, "KeyVault", lambda config: None)
+    before = set(threading.enumerate())
+
+    async def run() -> None:
+        exits = contextlib.AsyncExitStack()
+        try:
+            assert await voice_latency._configured_model(SimpleNamespace(model=None), exits) == "the model"
+            raise RuntimeError("the run failed")
+        finally:
+            await exits.aclose()
+
+    try:
+        asyncio.run(run())
+    except RuntimeError:
+        pass
+    assert events == ["opened", "closed"]
+    assert {t for t in threading.enumerate() if t.is_alive()} <= before | {threading.main_thread()}
+
+
+def test_a_timed_method_logs_each_call_and_is_wrapped_once():
+    calls = []
+
+    class Detector:
+        def probability(self, audio):
+            return 0.9
+
+    detector = Detector()
+
+    def log(kind, detail="", **data):
+        calls.append((kind, detail))
+
+    voice_latency._time_method(log, detector, "probability", "smart turn")
+    voice_latency._time_method(log, detector, "probability", "smart turn")
+    assert detector.probability(b"") == 0.9
+
+    assert calls == [(voice_latency.RECOGNISER, "smart turn")]
+    voice_latency._time_method(log, None, "probability", "smart turn")  # no detector: nothing to time
