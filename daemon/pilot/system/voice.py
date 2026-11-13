@@ -620,11 +620,13 @@ class _OutputLine:
             self._decide_pin_locked(sd, index)
             latency = self.wanted_latency
             options: dict[str, Any] = {"device": index} if index is not None else {}
+            opening = time.monotonic()
             stream = sd.OutputStream(
                 samplerate=rate, channels=channels, dtype="float32", callback=self.callback, latency=latency, **options
             )
             self.running.clear()
             stream.start()
+            _trace_line_open(stream, opening, latency, rate, name or index)
             self.device_name = name
             self.device_index = index
             if found:
@@ -1011,6 +1013,26 @@ def warm_output_line(rate: int = LOCAL_VOICE_RATE) -> None:
     threading.Thread(target=open_line, name="heliox-output-line", daemon=True).start()
 
 
+def _trace_line_open(stream: Any, opening: float, latency: Any, rate: int, device: Any) -> None:
+    from pilot.system import speech_trace
+
+    if speech_trace.sink is None:
+        return
+    try:
+        seconds = float(stream.latency)
+    except (AttributeError, TypeError, ValueError):
+        seconds = None
+    speech_trace.emit(
+        "output line open",
+        started=opening,
+        opened=time.monotonic(),
+        latency_setting=str(latency),
+        latency_s=seconds,
+        rate=rate,
+        device=str(device if device is not None else ""),
+    )
+
+
 class _Playback:
     """Plays one buffer on the shared output line, so a cut-off can fade out at once instead of draining.
 
@@ -1031,8 +1053,18 @@ class _Playback:
         self.finished = threading.Event()
         self.faded = threading.Event()
         self.stream: Any = None
+        # For the trace (speech_trace "first sample"): when the first block went to the device, and PortAudio's own
+        # estimate of how long it takes from there to the speaker.
+        self.first_block_at: float | None = None
+        self.first_dac_delay: float | None = None
 
-    def callback(self, outdata: Any, frames: int, _time: Any, _status: Any) -> None:
+    def callback(self, outdata: Any, frames: int, time_info: Any, _status: Any) -> None:
+        if self.first_block_at is None:
+            self.first_block_at = time.monotonic()
+            try:
+                self.first_dac_delay = float(time_info.outputBufferDacTime) - float(time_info.currentTime)
+            except (AttributeError, TypeError, ValueError):
+                self.first_dac_delay = None
         chunk = self.audio[self.position : self.position + frames]
         self.position += len(chunk)
         outdata[: len(chunk)] = chunk
@@ -1059,6 +1091,20 @@ class _Playback:
         self.audio, self.sample_rate = audio, rate
 
     def play(self) -> None:
+        from pilot.system import speech_trace
+
+        handed = time.monotonic()
+        speech_trace.emit(
+            "playback start", at=handed, rate=self.sample_rate, seconds=len(self.audio) / max(1, self.sample_rate)
+        )
+        try:
+            self._play()
+        finally:
+            speech_trace.emit(
+                "first sample", handed=handed, first_block_at=self.first_block_at, dac_delay_s=self.first_dac_delay
+            )
+
+    def _play(self) -> None:
         self.fit_to_line()
         self.stream = _output_line.ensure(self.sample_rate, self.audio.shape[1])
         _output_line.attach(self)
@@ -3170,23 +3216,44 @@ class _Speculation:
     def __init__(self, listener: ContinuousVoiceListener) -> None:
         self.listener = listener
         self.task: asyncio.Task[str] | None = None
+        self.pass_id = 0  # the running pass's number in the trace (speech_trace)
 
     def start(self, frames: list[Any]) -> None:
+        from pilot.system import speech_trace
+
         self.cancel()
-        if _recognisers_running():
+        running = _recognisers_running()
+        if running:
             # Recognisers run in threads that cannot be stopped: a pass dropped because the person carried on
             # keeps the CPU busy until it finishes. No second one starts beside it (on 4 cores two at once made
             # both several times slower); the pass then runs at the end of the turn, as without speculation.
+            speech_trace.emit("speculation held back", at=time.monotonic(), recognisers=running)
             return
         rate = self.listener._recorder.sample_rate
         path = _write_wav(frames, rate)
         audio_seconds = sum(len(frame) for frame in frames) / max(1, rate)
 
         speculative = self.listener._transcribe_path(path, speculative=True)  # a pass that cannot start raises here
+        pass_id = self.pass_id = speech_trace.next_id()
 
         async def timed() -> str:
             started = time.perf_counter()
-            text = await speculative
+            began = time.monotonic()
+            speech_trace.emit("final pass started", id=pass_id, speculative=True, at=began, audio_s=audio_seconds)
+            failed = True
+            try:
+                text = await speculative
+                failed = False
+            finally:
+                speech_trace.emit(
+                    "final pass done",
+                    id=pass_id,
+                    speculative=True,
+                    started=began,
+                    done=time.monotonic(),
+                    audio_s=audio_seconds,
+                    failed=failed,
+                )
             self.listener.note_pass(time.perf_counter() - started, audio_seconds)
             return text
 
@@ -3194,12 +3261,21 @@ class _Speculation:
         self.task.add_done_callback(lambda task: task.cancelled() or task.exception())
 
     def cancel(self) -> None:
-        if self.task is not None and not self.task.done():
-            self.task.cancel()
+        from pilot.system import speech_trace
+
+        if self.task is not None:
+            running = not self.task.done()
+            speech_trace.emit("speculative pass dropped", id=self.pass_id, at=time.monotonic(), running=running)
+            if running:
+                self.task.cancel()
         self.task = None
 
     def take(self) -> asyncio.Task[str] | None:
+        from pilot.system import speech_trace
+
         task, self.task = self.task, None
+        if task is not None:
+            speech_trace.emit("speculative pass kept", id=self.pass_id, at=time.monotonic())
         return task
 
 
@@ -4734,7 +4810,7 @@ class ContinuousVoiceListener:
                 self.last_transcription_engine = "whisper"  # _transcribe_path says "parakeet" when it used it
                 # Started at the candidate end, 200 ms into the quiet, when the turn ended there: most of the pass
                 # has already run by the time the end of turn is decided.
-                transcript = await early if early is not None else await self._transcribe_path(audio_path)
+                transcript = await early if early is not None else await self._traced_final_pass(audio_path)
                 if not transcript and heard and not self._final_pass_available():
                     transcript = heard
                     self.last_transcription_engine = "streaming"
@@ -4760,6 +4836,36 @@ class ContinuousVoiceListener:
                 e,
             )
             return ""
+
+    async def _traced_final_pass(self, audio_path: str) -> str:
+        """The final pass run after the end of the turn (no early pass to use), with its stamps (speech_trace)."""
+        from pilot.system import speech_trace
+
+        if speech_trace.sink is None:
+            return await self._transcribe_path(audio_path)
+        pass_id = speech_trace.next_id()
+        began = time.monotonic()
+        try:
+            with wave.open(audio_path, "rb") as clip:
+                audio_seconds = clip.getnframes() / max(1, clip.getframerate())
+        except Exception:
+            audio_seconds = None
+        speech_trace.emit("final pass started", id=pass_id, speculative=False, at=began, audio_s=audio_seconds)
+        failed = True
+        try:
+            text = await self._transcribe_path(audio_path)
+            failed = False
+            return text
+        finally:
+            speech_trace.emit(
+                "final pass done",
+                id=pass_id,
+                speculative=False,
+                started=began,
+                done=time.monotonic(),
+                audio_s=audio_seconds,
+                failed=failed,
+            )
 
     def recogniser_presence(self) -> dict[str, bool]:
         """Which recognisers can run now (nothing is downloaded to find out)."""
@@ -4859,12 +4965,25 @@ class ContinuousVoiceListener:
         """Arm the recorder to start the final pass at each candidate end of turn (see _Speculation)."""
         speculation = _Speculation(self)
 
+        from pilot.system import speech_trace
+
         def candidate_end(frames: list[Any]) -> None:
+            rate = max(1, self._recorder.sample_rate)
+            speech_trace.emit(
+                "candidate end",
+                at=time.monotonic(),
+                captured_at=getattr(self._recorder, "_frame_captured_at", None),
+                audio_s=sum(len(frame) for frame in frames) / rate,
+            )
             speculation.start(frames)
             self._warm_if_for_heliox()
 
+        def candidate_cancel() -> None:
+            speech_trace.emit("candidate cancel", at=time.monotonic())
+            speculation.cancel()
+
         self._recorder.on_candidate_end = candidate_end
-        self._recorder.on_candidate_cancel = speculation.cancel
+        self._recorder.on_candidate_cancel = candidate_cancel
         return speculation
 
     def _early_wake_heard(self) -> bool:

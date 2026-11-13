@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pilot.system import speech_trace
 from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.system.local_tts_worker")
@@ -1072,7 +1073,16 @@ class LocalTTSWorkerManager:
             await self._request(process, engine, request, timeout=LOAD_TIMEOUT_SECONDS)
         if not output_file.is_file() or output_file.stat().st_size == 0:
             raise await self._fail(process, engine, "the worker produced no audio")
-        self.synth_log.append((kind, len(text.split()), requested, self._request_started_at, time.monotonic()))
+        done = time.monotonic()
+        self.synth_log.append((kind, len(text.split()), requested, self._request_started_at, done))
+        speech_trace.emit(
+            "piece synthesized",
+            words=len(text.split()),
+            kind=kind,
+            requested=requested,
+            worker_started=self._request_started_at,
+            done=done,
+        )
 
     async def _usable_process(self, engine: str, voice: str) -> Any:
         if self._failed_until is not None:
@@ -1206,15 +1216,20 @@ class LocalTTSWorkerManager:
         signature = SpeechStore.signature(engine, voice)
         cached_head = heads.lookup(sentences[0], signature) if heads is not None and sentences else None
 
+        sources: dict[int, str] = {}
+
         def make(index: int) -> asyncio.Future[Path]:
             kept = cached_head if index == 0 else (heads.lookup(sentences[index], signature) if heads else None)
             if kept is not None:
+                sources[index] = "store"
                 done: asyncio.Future[Path] = asyncio.get_running_loop().create_future()
                 done.set_result(kept)  # exactly this text, made this way: played as kept
                 return done
             ahead = self._prepared.pop((engine, voice, sentences[index]), None)
             if ahead is not None and not ahead.cancelled():
+                sources[index] = "ahead"
                 return ahead  # synthesised while the sentence before it played
+            sources[index] = "made"
             target = folder / f"sentence-{index}.wav"
             return asyncio.ensure_future(self._make(engine, sentences[index], voice, target, folder))
 
@@ -1223,7 +1238,12 @@ class LocalTTSWorkerManager:
             for index in range(len(sentences)):
                 assert upcoming is not None
                 path = await upcoming
+                words = len(sentences[index].split())
+                speech_trace.emit(
+                    "piece ready", index=index, words=words, source=sources.get(index, ""), at=time.monotonic()
+                )
                 upcoming = make(index + 1) if index + 1 < len(sentences) else None
+                speech_trace.emit("piece plays", index=index, words=words, at=time.monotonic())
                 await play(path)
                 progress = speech_progress.get()
                 if progress is not None and progress.playing is not None:
@@ -1333,6 +1353,7 @@ class LocalTTSWorkerManager:
             await asyncio.to_thread(trim_silence, target, KEEP_LEAD_SECONDS, keep_tail)
         except Exception:
             logger.debug("Could not trim the silence around a synthesised piece; playing it as made", exc_info=True)
+        speech_trace.emit("piece trimmed", words=len(text.split()), done=time.monotonic())
         return target
 
     async def _notify(self, status: str, data: dict[str, Any]) -> None:
