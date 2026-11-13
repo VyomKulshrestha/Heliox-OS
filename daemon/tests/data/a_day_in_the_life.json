@@ -1,0 +1,63 @@
+{
+  "about": "One made-up person's working day, Thursday 12 November 2026, and the next morning. Read by tests/test_a_day_in_the_life.py. 'spoken' runs through the conversation sessions' own runner (benchmarks/conversation_eval/sessions.run_session) with no model and with a stub cloud model; 'typed', 'offers' and 'lid' run through the real Live engine, offer rules and reminder delivery on the same day's clock. Every thing Heliox may raise without being asked is marked here: welcome, or not expected at all (then it is unwelcome).",
+  "person": {
+    "told": ["call me Sam", "I start work at nine", "I stop work at six"],
+    "habits": [{"name": "water", "streak": 4}],
+    "goals": [{"id": "g1", "title": "launch the podcast", "status": "active", "next_step": "book a guest", "updated_at": 0.0}],
+    "todos": 3
+  },
+  "spoken": {
+    "plans": {
+      "podcast folder": [{"action_type": "file_list", "target": "C:/Users/me/podcast", "parameters": {"path": "C:/Users/me/podcast"}}],
+      "notes folder": [{"action_type": "file_list", "target": "C:/Users/me/notes", "parameters": {"path": "C:/Users/me/notes"}}],
+      "screenshots": [{"action_type": "file_delete", "target": "C:/Users/me/Downloads/screenshots", "parameters": {"path": "C:/Users/me/Downloads/screenshots"}}]
+    },
+    "morning": [
+      {"say": "Hey Heliox, good morning.", "at": "08:55"},
+      {"say": "Call me Sam.", "gap": 2},
+      {"say": "Hey Heliox, I start work at nine.", "gap": 30},
+      {"say": "Hey Heliox, I stop work at six.", "gap": 30},
+      {"say": "Hey Heliox, remember that I'm working on the podcast launch.", "gap": 30},
+      {"say": "Hey Heliox, remind me at four to call Ana.", "gap": 600},
+      {"say": "Hey Heliox, my salary is 90k now.", "gap": 600, "never_kept": "90k"},
+      {"say": "Hey Heliox, open the notes folder, no, the podcast folder.", "gap": 600, "corrected": {"ran": "podcast", "never_ran": "notes"}},
+      {"say": "Hey Heliox, delete the screenshots in my Downloads folder.", "gap": 600},
+      {"say": "Actually, only the ones from last year.", "gap": 1.5, "correction": true},
+      {"say": "Wait, stop.", "gap": 1.0, "stopped": "file_delete"},
+      {"say": "Hey Heliox, remind me on Tuesday the nineteenth to send the report.", "gap": 600, "held_slip": "Thursday"},
+      {"say": "Thursday.", "gap": 1.5}
+    ],
+    "talk_not_addressed": {"lines": 60, "gap": 55, "note": "an hour of a meeting on speaker, tutorials and reading aloud: benchmarks/conversation_bench/corpus.lines"},
+    "evening": [
+      {"say": "Hey Heliox, what time is it?", "gap": 600}
+    ],
+    "next_morning": [
+      {"say": "Hey Heliox, what do you know about me?", "remembers": ["Sam", "podcast"], "forgot": ["90k", "salary"]},
+      {"say": "What did I tell you about the podcast?", "gap": 2, "remembers": ["podcast"]},
+      {"say": "Hey Heliox, when is my flight?", "gap": 5, "not_from_memory": "You told me"}
+    ],
+    "profile_off": "Hey Heliox, keep my profile on this computer.",
+    "never_sent_when_off": ["Sam", "podcast launch", "stop work"]
+  },
+  "typed": [
+    {"at": "09:20", "name": "an email with a weekday that does not match its date", "app": "Outlook", "title": "Re: review",
+     "steps": [{"type": "Hi Ana, can we move the review to Monday 18 November please"}, {"pause": "done"}],
+     "welcome": ["weekday_date"], "today": "2026-11-12"},
+    {"at": "09:40", "name": "a budget line with a wrong sum", "app": "Excel", "title": "Budget",
+     "steps": [{"type": "Hotel and travel: 120 + 340 = 470"}, {"pause": "done"}],
+     "welcome": ["arithmetic"], "today": "2026-11-12"},
+    {"at": "10:10", "name": "a correct date (a decoy)", "app": "Outlook", "title": "Lunch",
+     "steps": [{"type": "Lunch on Thursday 19 November works for me."}, {"pause": "done"}],
+     "welcome": [], "today": "2026-11-12"},
+    {"at": "18:30", "name": "a slip typed after the day's end", "app": "Outlook", "title": "Late note",
+     "steps": [{"type": "See you on Monday 20 November then."}, {"pause": "done"}],
+     "welcome": [], "today": "2026-11-12", "after_hours": true}
+  ],
+  "offers": {
+    "answers": {"routine:day_start": "yes", "routine:wrap_up": "yes", "habit": "not today"},
+    "welcome": ["routine", "habit", "stale_goal", "todos", "goal_progress"],
+    "meeting": {"from": "13:00", "to": "14:00", "note": "the hour of talk not addressed to Heliox is a meeting on speaker in a call app"}
+  },
+  "lid": {"reminder": "call Ana", "due": "16:00", "closed": "15:50", "opened": "16:20", "window_at": "16:25",
+          "message_starts": "This was due at 4:00 PM"}
+}
