@@ -118,6 +118,9 @@ class ContextSources:
     answer_length: Callable[[], str] = lambda: ""
     # The people the person named, relation -> name ("manager" -> "Priya"), for a hand-over that says "my manager".
     people: Callable[[], dict[str, str]] = dict
+    # Whether a reply to a statement may offer this (text, request, why): the offers' own rules decide, and an
+    # offer made counts as one (pilot.conversation.adapters._offer_in_reply). Off by default: no offers.
+    offer_in_reply: Callable[[str, str, str], Any] = lambda _text, _request, _why: ""
 
 
 def _safe(call: Callable[[], Any], default: Any) -> Any:

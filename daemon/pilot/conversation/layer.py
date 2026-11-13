@@ -169,6 +169,41 @@ def ends_with_question(sentence: str) -> bool:
     return sentence.rstrip().rstrip("\"')]").endswith("?")
 
 
+# "Okay." on its own: the person acknowledges. YES (an offer's yes) is checked before this, with an offer open.
+BARE_ACK = re.compile(
+    r"^(?:ok(?:ay)?|okay then|alright|all right|right|got it|gotcha|cool|fine|good|great|nice|perfect|"
+    r"i see|makes sense|fair enough|understood|noted|mm+|hmm+|mhm|uh huh)$"
+)
+# After a statement that asks for nothing: Heliox talking about what it can't check ("I can't confirm it's still
+# open, though."), and a sentence offering to do something.
+HEDGE = re.compile(
+    r"^(?:but |though )?i (?:can't|cannot|can not|couldn't|haven't|have not|don't|do not) "
+    r"(?:confirm|check|tell|see|verify|know|be sure)\b"
+)
+OFFER = re.compile(
+    r"^(?:want me to|do you want me to|would you like me to|should i|shall i|i can|i could|if you want i can|"
+    r"if you like i can)(?!'t|n't| not)\b"
+)
+# What a statement hears when every sentence the model wrote was dropped (an offer the rules did not allow): a sign
+# it was heard, never silence after the wake phrase.
+HEARD_YOU = "Right."
+_OFFER_LEAD = re.compile(
+    r"^(?:want me to|do you want me to|would you like me to|should i|shall i|i can|i could|if you want,? i can|"
+    r"if you like,? i can)\s+",
+    re.IGNORECASE,
+)
+
+
+def offered_request(sentence: str) -> str:
+    """ "Want me to list the biggest folders?" -> "List the biggest folders": what a yes would ask for."""
+    rest = _OFFER_LEAD.sub("", sentence.strip()).rstrip(" ?.!")
+    return rest[:1].upper() + rest[1:]
+
+
+RECENT_REPLIES = 3  # a sentence Heliox said in its last three replies is not said again unprompted
+SENTENCE = re.compile(r"(?<=[.!?])\s+")
+
+
 THANKS_REPLIES = ("You're welcome.", "Any time.", "Sure.", "Glad to help.")
 
 
@@ -244,10 +279,11 @@ class TurnResult:
             return result_sentence(status, result)
         return quick_result_sentence(self.quick, result, status)
 
-    def finish(self, status: str, result: str) -> None:
-        """The planner's outcome, for the conversation: the next question can refer to it."""
+    def finish(self, status: str, result: str, said: str = "") -> None:
+        """The planner's outcome, for the conversation: the next question can refer to it. ``said``: the words the
+        person heard for it, which are what the conversation keeps (the raw result is the task's own record)."""
         if self._layer is not None:
-            self._layer._finished(self, status, result)
+            self._layer._finished(self, status, result, said)
 
 
 class ConversationLayer:
@@ -520,8 +556,7 @@ class ConversationLayer:
         if settled is not None:
             # Answered in code, true by construction: the model is not asked whether anything was kept.
             self.memory.add_user(text)
-            await self._say_one(result, settled, started)
-            self.memory.add_heliox(settled)
+            await self._say_one(result, settled, started)  # remembered there, as said
             if done is None:
                 self._last_done = (settled, (), self._clock())  # "did you get that?" next: no
             result.done = True
@@ -530,8 +565,13 @@ class ConversationLayer:
         if thanked:
             # A plain thanks with nothing pending: a short reply from code, with no model call and no wait.
             self.memory.add_user(text)
-            await self._say_one(result, thanked, started)
-            self.memory.add_heliox(thanked)
+            await self._say_one(result, thanked, started)  # remembered there, as said
+            result.done = True
+            return result
+        if self._nothing_open(offer) and BARE_ACK.match(normalize(text)):
+            # "Okay." with nothing open: the person heard the answer and is done. Nothing is said, and the model is
+            # not asked: given the conversation, it would answer the last question again.
+            self.memory.add_user(text)
             result.done = True
             return result
         if decided.kind is TurnKind.ACTION:
@@ -701,6 +741,9 @@ class ConversationLayer:
                 await queue.put(None)
 
         producer = asyncio.ensure_future(produce())
+        statement = decided.reason == "statement"
+        repeat_asked = self._asked_again(text)
+        dropped = False
         said: list[str] = []
         current = ""
         try:
@@ -738,6 +781,15 @@ class ConversationLayer:
                 if not clean or claims_an_action(clean):
                     if clean:
                         logger.info("Dropped a sentence claiming an action the fast model cannot take: %r", clean)
+                    continue
+                if not typed and statement and said and not ends_with_question(clean):
+                    # A statement that asks for nothing gets one sentence, and at most one question after it. The
+                    # rest is read (a promise to act still hands the request over) but not said.
+                    continue
+                if not typed and not self._allowed_in_reply(
+                    clean, statement=statement, said=said, repeat_asked=repeat_asked, heard=text
+                ):
+                    dropped = True
                     continue
                 words_so_far = sum(len(part.split()) for part in said)
                 if not typed and said and words_so_far + len(clean.split()) > self._word_cap():
@@ -830,6 +882,9 @@ class ConversationLayer:
         if failure and said:
             # The reply stopped part-way: say so rather than trailing off.
             await self._say_one(result, LOST_MID_REPLY, started)
+        if not failure and not said and dropped and not typed:
+            # Every sentence was held back (an offer the rules did not allow now): a sign it was heard, not silence.
+            await self._say_one(result, HEARD_YOU, started)
         result.done = True
         result.timings["done_ms"] = (self._clock() - started) * 1000
         return result
@@ -844,20 +899,63 @@ class ConversationLayer:
         """ "Thanks" said on its own, with nothing pending: a short reply, not the same as the last one. "" when the
         thanks may be part of something open (an approval waiting, a task running, a question or offer of Heliox's
         not yet answered) or the sentence asks for more ("thanks, now open Notepad"): the turn goes on as usual."""
-        if not THANKS.match(normalize(text)):
-            return ""
-        if offer is not None:
-            return ""
-        state = _safe_call(self.sources.task_state, {})
-        if isinstance(state, dict) and (state.get("approval_waiting") or state.get("running")):
-            return ""
-        if self.memory.last_heliox().rstrip().endswith("?"):
+        if not THANKS.match(normalize(text)) or not self._nothing_open(offer):
             return ""
         options = [reply for reply in THANKS_REPLIES if reply != self._last_thanks]
         reply = options[self._thanks_said % len(options)]
         self._thanks_said += 1
         self._last_thanks = reply
         return reply
+
+    def _nothing_open(self, offer: Any) -> bool:
+        """No offer of Heliox's, approval, running task or question of Heliox's waiting for the person."""
+        if offer is not None:
+            return False
+        state = _safe_call(self.sources.task_state, {})
+        if isinstance(state, dict) and (state.get("approval_waiting") or state.get("running")):
+            return False
+        return not ends_with_question(self.memory.last_heliox())
+
+    def _allowed_in_reply(
+        self, sentence: str, *, statement: bool, said: list[str], repeat_asked: bool, heard: str = ""
+    ) -> bool:
+        """What code decides about a model's sentence before it is said. Never a sentence Heliox said in its last
+        few replies, unless the person asked the same thing again. After a statement that asks for nothing: no
+        hedge about what Heliox can't check, and an offer only when the offers' own rules allow one now
+        (pilot.personal.wiring.offer_in_reply: on, not the first week, not quiet, in a call or over a cap, not
+        declined or silenced); an offer made is then an offer like any other ("yes", "why?", "not today")."""
+        words = normalize(sentence)
+        if not repeat_asked and words and words in self._recent_heliox_sentences():
+            logger.info("Dropped a sentence Heliox said a moment ago: %r", sentence)
+            return False
+        if statement and HEDGE.match(words):
+            logger.info("Dropped a hedge after a statement: %r", sentence)
+            return False
+        if OFFER.match(words) and " or " not in words:
+            # Any reply's offer, not only a statement's: "stop suggesting things" holds for every road. "Do you want
+            # me to open a folder, or find something?" asks what the person meant: a question, not an offer.
+            request = offered_request(sentence)
+            why = f'You said "{" ".join(heard.split())[:120]}".' if heard else ""
+            try:
+                allowed = bool(self.sources.offer_in_reply(sentence, request, why))
+            except Exception:
+                logger.warning("The offer check failed; the offer is not made", exc_info=True)
+                allowed = False
+            if not allowed:
+                logger.info("Dropped an offer after a statement (the offers' rules say not now): %r", sentence)
+                return False
+        return True
+
+    def _recent_heliox_sentences(self) -> set[str]:
+        replies = [turn.text for turn in self.memory.recent() if turn.role == "assistant"][-RECENT_REPLIES:]
+        return {normalize(part) for reply in replies for part in SENTENCE.split(reply) if normalize(part)}
+
+    def _asked_again(self, text: str) -> bool:
+        words = normalize(text)
+        earlier = self.memory.recent()
+        if earlier and earlier[-1].role == "user" and normalize(earlier[-1].text) == words:
+            earlier = earlier[:-1]  # this turn itself, already in the conversation
+        return any(turn.role == "user" and normalize(turn.text) == words for turn in earlier)
 
     def note_code_answer(self, answer: str, changed: tuple[str, ...] | list[str]) -> None:
         """The server answered this turn in code (a handler took the words): what it said, and what it changed."""
@@ -1118,11 +1216,11 @@ class ConversationLayer:
         self._said_local_slow = local
         return local
 
-    def _finished(self, result: TurnResult, status: str, text: str) -> None:
+    def _finished(self, result: TurnResult, status: str, text: str, said: str = "") -> None:
         spoken = " ".join(result.spoken)
         summary = " ".join(str(text).split())[:240]
         self.last_result = f"{status}: {summary}" if summary else status
-        self.memory.add_heliox(f"{spoken} {summary}".strip())
+        self.memory.add_heliox(f"{spoken} {said or summary}".strip())
 
 
 def _current_task_cancelling() -> bool:

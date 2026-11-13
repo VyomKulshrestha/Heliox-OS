@@ -15473,10 +15473,11 @@ def handle_tool(tool_name, params):
                 message=result_text[:160],
                 interaction_id=interaction_id,
             )
-            if turn is not None:
-                turn.finish(status, result_text)  # the next question can refer to what was done
             spoken = result_text[:300] if len(result_text) < 300 else result_text[:297] + "..."
             spoken = (turn.spoken_result(result_text, status) if turn is not None else "") or spoken
+            if turn is not None:
+                # The next question can refer to what was done, in the words the person heard.
+                turn.finish(status, result_text, spoken)
             told, self._voice_end_said = self._voice_end_said and status != "success", False
             if not told:  # the person ended it by voice and has heard what was dropped
                 await self._speak_voice_response(

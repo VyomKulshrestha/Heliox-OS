@@ -155,6 +155,24 @@ def _app_label(process: str) -> str:
     return app_label(process)
 
 
+def _offer_kind(request: str) -> str:
+    """A stable name for an offer made in a reply, so "don't offer that" silences it: "list-biggest-folders" (the
+    offers keep it as "reply:list-biggest-folders")."""
+    words = re.findall(r"[a-z0-9]+", request.casefold())
+    return "-".join(word for word in words if word not in {"the", "a", "an", "your", "my", "for", "you"})[:48]
+
+
+def _offer_in_reply(server: Any, text: str, request: str, why: str) -> str:
+    """The offer's id when a reply may offer this now, else "": the offers' own rules, through
+    pilot.personal.wiring.offer_in_reply, which counts the offer when it is made. Until that function is there, no
+    reply offers anything (the safe side: never an offer the person turned off)."""
+    try:
+        from pilot.personal.wiring import offer_in_reply
+    except ImportError:
+        return ""
+    return str(offer_in_reply(server, _offer_kind(request), text, request, why) or "")
+
+
 def _task_state(server: Any, layer: Any) -> dict[str, Any]:
     state: dict[str, Any] = {}
     runtime = getattr(server, "_interaction_runtime", None)
@@ -382,6 +400,7 @@ def layer_for(server: Any) -> Any:
         profile_lines=lambda text="": _profile_lines(server, text),
         answer_length=lambda: _answer_length(server),
         people=lambda: _people(server),
+        offer_in_reply=lambda text, request, why: _offer_in_reply(server, text, request, why),
         task_state=lambda: _task_state(server, layer),
         screen_async=screen,
     )

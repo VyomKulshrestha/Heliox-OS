@@ -1,5 +1,5 @@
 {
- "how_to_read": "Each session is one person's exchange with Heliox on Thursday 12 November 2026 at 9:00. A turn is what they say ('say'), how long after Heliox stopped talking ('gap', seconds, default 1), and what must happen ('expect'): 'taken' (whether Heliox took the words as meant for it), 'has' (facts that must be in what is said; 'a|b' means either), 'not' (things that must not be said), 'silent', 'runs' (action types that must run in that turn), 'runs_nothing', 'approval' (whether the visible approval dialog is asked for), 'model' (whether the fast model is called). 'expect_none' overrides for a person with no model; 'expect_model' for one with a model. 'model' at turn level is what the fast model replies when it is asked (the same words for every provider, sent in each provider's own format). 'repeat' allows the same words twice running; 'detail' allows a long reply; 'still_talking' means the person is still finishing their sentence when Heliox would start. Events: 'call' (a call starts), 'call_end'. 'never_runs' at session level: action types that must never run. Phrasing follows the owner's recorded takes where there is one (the launch-call line, 'what can I say?', 'Wait, stop.', notes said in passing).",
+ "how_to_read": "Each session is one person's exchange with Heliox on Thursday 12 November 2026 at 9:00. A turn is what they say ('say'), how long after Heliox stopped talking ('gap', seconds, default 1), and what must happen ('expect'): 'taken' (whether Heliox took the words as meant for it), 'has' (facts that must be in what is said; 'a|b' means either), 'not' (things that must not be said), 'silent', 'runs' (action types that must run in that turn), 'runs_nothing', 'approval' (whether the visible approval dialog is asked for), 'model' (whether the fast model is called). 'expect_none' overrides for a person with no model; 'expect_model' for one with a model. 'model' at turn level is what the fast model replies when it is asked (the same words for every provider, sent in each provider's own format). 'repeat' allows the same words twice running; 'detail' allows a long reply; 'still_talking' means the person is still finishing their sentence when Heliox would start. Events: 'call' (a call starts), 'call_end'. 'never_runs' at session level: action types that must never run. Phrasing follows the owner's recorded takes where there is one (the launch-call line, 'what can I say?', 'Wait, stop.', notes said in passing). 'expect_stub' holds only for a stub model (a person with a model, not a paid run), whose replies are the turn's 'model' text: it checks what code does with those words, and is left out of a paid run, where the model writes its own.",
  "sessions": [
   {
    "name": "morning start",
@@ -1839,6 +1839,220 @@
        "any time",
        "sure.",
        "glad to help"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "nothing said twice: an acknowledgement is not answered, a sentence not repeated unless asked",
+   "turns": [
+    {
+     "say": "Hey Heliox, what's the battery level?",
+     "expect": {
+      "taken": true,
+      "runs": [
+       "battery_info"
+      ]
+     }
+    },
+    {
+     "say": "Okay.",
+     "gap": 1.5,
+     "model": "The battery is at 80 percent, charging.",
+     "expect": {
+      "taken": true,
+      "model": false,
+      "silent": true
+     }
+    },
+    {
+     "say": "Hey Heliox, why is my fan loud?",
+     "gap": 3,
+     "model": "Something is using the processor. Is a game or a video running?",
+     "expect": {
+      "taken": true
+     }
+    },
+    {
+     "say": "Okay.",
+     "gap": 1.5,
+     "model": "Then a browser tab is the likely cause.",
+     "expect": {
+      "taken": true
+     },
+     "expect_stub": {
+      "model": true,
+      "has": [
+       "browser tab"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, why is my fan loud?",
+     "model": "A background app is busy.",
+     "expect": {
+      "taken": true
+     },
+     "gap": 3,
+     "expect_stub": {
+      "has": [
+       "background app"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, is it bad for the laptop?",
+     "gap": 3,
+     "model": "A background app is busy. Not usually, fans are made for it.",
+     "expect": {
+      "taken": true
+     },
+     "expect_stub": {
+      "has": [
+       "not usually"
+      ],
+      "not": [
+       "background app"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, why is my fan loud?",
+     "gap": 3,
+     "model": "A background app is busy.",
+     "expect": {
+      "taken": true
+     },
+     "expect_stub": {
+      "has": [
+       "background app"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "a statement gets a few words, and a complaint one offer at most, by the offers' own rules",
+   "turns": [
+    {
+     "say": "Hey Heliox, call me Sam.",
+     "expect": {
+      "taken": true,
+      "model": false
+     }
+    },
+    {
+     "say": "Hey Heliox, I opened Notepad earlier.",
+     "model": "Good, so Notepad should already be up. I can't confirm it's still open, though.",
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     },
+     "expect_model": {
+      "not": [
+       "confirm",
+       "can't"
+      ]
+     },
+     "gap": 3,
+     "expect_stub": {
+      "has": [
+       "good"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, I finished the report.",
+     "gap": 1.5,
+     "model": "I can't see the report from here. Nice work.",
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     },
+     "expect_model": {
+      "not": [
+       "can't see"
+      ]
+     },
+     "expect_stub": {
+      "has": [
+       "nice work"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, why is my fan loud?",
+     "gap": 3,
+     "model": "Something is using the processor. A browser tab is the usual reason.",
+     "expect": {
+      "taken": true
+     }
+    },
+    {
+     "say": "Hey Heliox, I never clean anything up.",
+     "gap": 3,
+     "model": "Want me to list the biggest folders?",
+     "expect": {
+      "taken": true,
+      "runs_nothing": true,
+      "not": [
+       "common"
+      ]
+     },
+     "expect_stub": {
+      "has": [
+       "biggest folders"
+      ]
+     }
+    },
+    {
+     "say": "Not now.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     }
+    },
+    {
+     "say": "Hey Heliox, my downloads folder is a mess.",
+     "gap": 5,
+     "model": "Want me to sort it by date?",
+     "expect": {
+      "taken": true,
+      "runs_nothing": true,
+      "not": [
+       "sort it",
+       "want me to",
+       "do you want me",
+       "would you like me",
+       "should i",
+       "shall i"
+      ]
+     }
+    },
+    {
+     "say": "Hey Heliox, stop suggesting things.",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "model": false
+     }
+    },
+    {
+     "say": "Hey Heliox, I keep forgetting to back up.",
+     "gap": 7200,
+     "model": "Want me to remind you every Friday?",
+     "expect": {
+      "taken": true,
+      "runs_nothing": true,
+      "not": [
+       "remind you every friday",
+       "want me to",
+       "do you want me",
+       "would you like me",
+       "should i",
+       "shall i"
       ]
      }
     }

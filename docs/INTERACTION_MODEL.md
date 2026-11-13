@@ -978,6 +978,37 @@ From the paid runs (12 November main pack, rounds 17 to 19 personal pack) and th
 **Fakes only** (`tests/test_conversation_action_talk.py`; the sessions "what is said about an action follows its
 state" and "a plain thanks is answered on this computer, unless something is open", for all four kinds of person).
 
+The paid run on 49bd35f (21 calls, $0.0010) held all of the above, and showed three more ways a turn did not sound
+like a person. Each is now a rule in code, with a prompt line only for what code cannot judge:
+
+- **A statement that asks for nothing gets a few words.** "I opened Notepad earlier." got "Good, so Notepad should
+  already be up. I can't confirm it's still open, though." A statement (the router's own kind: no question, no
+  request) now gets one sentence, plus at most one question. The later sentences are still read, so a promise to
+  act still hands the request over, but they are not said. A sentence about what Heliox can't confirm, check or
+  see is dropped after a statement. The prompt asks for "a few words like 'Good.'" and no repeating back. That part
+  is the model's, because code cannot tell a recap from an answer.
+- **Never the same sentence twice in a few turns.** "Okay." after the battery answer got "The battery is at eighty
+  percent and charging." again. What the model was sent showed why. The bare "Okay." went to the model with the
+  battery result as Heliox's last task result. The conversation also held the planner's raw output ("I'll check.
+  === Battery === Charge: 80% Status: Charging") instead of what the person heard. Three changes:
+  - A bare acknowledgement ("okay", "got it", "right", "makes sense") with nothing open gets no reply and no model
+    call. Nothing open means no offer, approval, running task, or question of Heliox's.
+  - A planner result is kept in the words the person heard.
+  - A model sentence Heliox said in its last three replies is dropped, unless the person asked the same thing
+    again.
+  This also fixed a reply that was stored twice ("You're welcome. You're welcome.").
+- **A complaint or an admission gets one concrete offer or a few words.** "I never clean anything up." got
+  "That's common, and a laptop fills up fast when nothing gets cleared out." The prompt now asks for one short
+  question offering one concrete thing, or a few words, and no comment on how common it is. Whether the offer may
+  be made is decided by the offers' own rules, through `pilot.personal.wiring.offer_in_reply` (agreed with the Live
+  work). It is never made when offers are off, in the first week, during focus, after "stay quiet unless I ask" or
+  after the person's stated end of work, in a call, over an offer cap, or when that offer was declined or silenced.
+  An offer made this way counts as an offer, so "yes", "why?", "not today" and "don't offer that" work on it. When
+  the rules say no, the offer sentence is dropped and nothing is said about it.
+
+**Fakes only** (the sessions "nothing said twice: an acknowledgement is not answered, a sentence not repeated
+unless asked" and "a statement gets a few words, and a complaint one offer at most, by the offers' own rules").
+
 ## 4. Not in this pass
 
 * The quick road covers single actions only; anything with two steps goes to the planner.

@@ -112,6 +112,7 @@ class Record:
     stored: dict[int, str] = field(default_factory=dict)  # everything on disk after the turn, as text
     config_saves: dict[int, list[str]] = field(default_factory=dict)  # where each config save went, by turn
     config_after: dict[int, dict[str, Any]] = field(default_factory=dict)  # the scratch config.toml after the turn
+    real: bool = False  # the replies came from a real model: expectations on a stub's own words do not apply
     approved: dict[int, int] = field(default_factory=dict)  # a turn whose plan was approved on the dialog -> when
     folder: str = ""  # the session's own folder
     real_config_before: dict[str, tuple[int, int]] = field(default_factory=dict)  # the person's, by name
@@ -470,7 +471,7 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
     from pilot.system.addressing import Heard
     from pilot.system.voice import voice_turn_addressed, voice_turn_id
 
-    record = Record()
+    record = Record(real=real_model is not None)
     clock = Clock()
     with tempfile.TemporaryDirectory(prefix="heliox-session-", dir=TEST_ROOT) as tmp:
         folder = Path(tmp)
@@ -866,6 +867,8 @@ def check_session(session: dict[str, Any], kind: str, record: Record) -> list[st
         if turn.get("event"):
             continue
         expect = _expect(turn, kind)
+        if not record.real and kind != "none":
+            expect.update(turn.get("expect_stub", {}))  # about the stub model's own words ("model" in the turn)
         said = [s for s in record.said if s.turn == index]
         heard = " ".join(s.text for s in said)
         where = f"turn {index + 1} ({turn['say']!r})"
