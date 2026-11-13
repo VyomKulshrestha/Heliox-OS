@@ -34,6 +34,12 @@ MONOLOGUE_SECONDS = 8.0  # a follow-up with more voice than this is talk, not a 
 CUT_OFF_SECONDS = 1.6  # a word or two said over Heliox's voice is "stop", whatever it reads as (voice.is_cut_off_stop)
 QUICK_REPLY_SECONDS = 2.0  # an answer to Heliox's question starts within this, in any language
 QUICK_REPLY_VOICE_SECONDS = 4.0  # and is short: an answer, not a story
+# "Thank you." is also what Whisper writes for silence and noise, so it counts as a reply only with this much voice
+# in it, and only inside the follow-up window after Heliox spoke. Measured 13 November through the listener's own
+# recorder: Whisper small wrote "Thank you." for clicks and room noise with 0.05 to 0.2 s of voice; Kokoro's
+# "Thank you." (four voices, three speeds) had 0.40 to 0.70 s, and "Thanks." 0.35 to 0.55 s. Synthetic voices.
+THANKS_VOICE_SECONDS = 0.3
+THANKS = re.compile(r"^(?:thank you(?: so much| very much)?|thanks(?: a lot| so much)?)$", re.I)
 LIVE_REPLY_SECONDS = 6.0  # after a spoken Live remark: its own replies ("why?", "not now") need no wake phrase
 ELLIPTICAL_SECONDS = 4.0  # "and tomorrow?", "again", "shorter": said right after Heliox's answer, not later
 ELLIPTICAL_WORDS = 6  # "what about the second one?" is short; a sentence starting with "and" is narration
@@ -362,6 +368,8 @@ class Addressing:
             kind = plausibly_addressed(
                 heard.text, question_open=self.question_open, elliptical=False, language=self.language
             )
+        if kind in {"talk", "unclear"} and self._thanks(heard):
+            kind = "control"  # "Thank you." said with voice right after Heliox spoke: an acknowledgement
         if heard.heliox_was_speaking and kind != "control":
             return Decision(False, why="began while Heliox was talking")
         if not self.task_open:
@@ -390,6 +398,16 @@ class Addressing:
             return bool(test(heard.text))
         except Exception:
             return False
+
+    def _thanks(self, heard: Heard) -> bool:
+        """ "Thank you." with real voice in it (THANKS_VOICE_SECONDS) inside the follow-up window after Heliox spoke,
+        not over its voice: the hallucination guard keeps "Thank you." from silence and noise out."""
+        text = " ".join(w.group(0) for w in _words(heard.text))
+        if not THANKS.match(text) or heard.heliox_was_speaking or self.heliox_ended_at is None:
+            return False
+        if not 0 <= heard.started - self.heliox_ended_at <= self.follow_up_seconds:
+            return False
+        return heard.voiced_seconds >= THANKS_VOICE_SECONDS
 
     def _quick_reply(self, heard: Heard) -> bool:
         """A short answer that starts right after Heliox's own question and not over its voice."""
