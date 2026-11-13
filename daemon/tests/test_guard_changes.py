@@ -183,7 +183,9 @@ async def test_a_cloud_model_names_where_requests_go_and_a_local_one_never_asks(
         {"section": "model", "values": {"provider": "cloud", "cloud_provider": "claude"}}, _ws()
     )
     assert person.asked[0]["reason"] == (
-        "Your requests and the text Heliox reads for them will go to api.anthropic.com."
+        "Your requests and the text Heliox reads for them will go to api.anthropic.com, and so will your name, your "
+        "answer style and the parts of your profile that bear on what you ask, unless you turn that off (Settings, "
+        "Your profile and the model)."
     )
     assert server.config.model.provider == "ollama"
 

@@ -207,6 +207,40 @@ _HOME_FACT = re.compile(
 )
 
 
+def personal_in_prompt(server: Any, model: Any = None) -> bool:
+    """Whether anything about the person may go to ``model``: its prompt or its history. The one place this is
+    decided (conversation.share_profile). True for a model on this computer, whatever the setting; for any other
+    model, True under "auto" (today's behaviour: the name, the answer style and the parts of the profile that bear on
+    what is asked), False under "off". ``model`` is the model object the words go to (its ``local``), or None to
+    decide from the configured model. pilot.personal.never_kept/never_sent hold on top, under every value."""
+    if _is_local_model(server, model):
+        return True
+    conv = getattr(getattr(server, "config", None), "conversation", None)
+    return str(getattr(conv, "share_profile", "auto") or "auto").casefold() != "off"
+
+
+def _is_local_model(server: Any, model: Any) -> bool:
+    local = getattr(model, "local", None) if model is not None else None
+    if isinstance(local, bool):
+        return local
+    from pilot.security.guard_changes import model_destination
+
+    try:
+        settings = getattr(getattr(server, "config", None), "model", None)
+        plain = settings.__dict__ if hasattr(settings, "__dict__") else dict(settings or {})
+        return model_destination(dict(plain)) == ""
+    except Exception:
+        return False
+
+
+def _conversation_model(server: Any) -> Any:
+    layer = getattr(server, "_conversation", None)
+    try:
+        return layer._model() if layer is not None else None
+    except Exception:
+        return None
+
+
 def _profile_lines(server: Any, text: str = "", local: bool | None = None) -> list[str]:
     """The person's profile lines for one turn.
 
@@ -215,7 +249,7 @@ def _profile_lines(server: Any, text: str = "", local: bool | None = None) -> li
     fact only when the words bear on it (pilot.personal.context.relevant_lines: a name, "my manager", a shared word;
     the home when the words are about home or nearby). Never the whole profile on every turn."""
     profile = getattr(server, "_user_profile", None)
-    if profile is None:
+    if profile is None or not personal_in_prompt(server, _conversation_model(server)):
         return []
     lines = prioritise_profile(list(profile.context_lines()))
     if local is None:
@@ -246,6 +280,8 @@ def _model_local(server: Any) -> bool:
 
 def _answer_length(server: Any) -> str:
     profile = getattr(server, "_user_profile", None)
+    if not personal_in_prompt(server, _conversation_model(server)):
+        return ""  # the answer-length line is the person's own stated style
     try:
         style = (profile.get() or {}).get("style") or {} if profile is not None else {}
     except Exception:
@@ -254,7 +290,11 @@ def _answer_length(server: Any) -> str:
 
 
 def _people(server: Any) -> dict[str, str]:
+    """The people the person named ("manager" -> "Priya"), for the planner's hand-over: the planner's model is the
+    configured one, so the setting is asked about it."""
     profile = getattr(server, "_user_profile", None)
+    if not personal_in_prompt(server):
+        return {}
     try:
         return dict(profile.people_by_relation()) if profile is not None else {}
     except Exception:
@@ -412,6 +452,7 @@ def layer_for(server: Any) -> Any:
         profile_lines=lambda text="": _profile_lines(server, text),
         answer_length=lambda: _answer_length(server),
         people=lambda: _people(server),
+        personal=lambda: personal_in_prompt(server, _conversation_model(server)),
         offer_in_reply=lambda text, request, why: _offer_in_reply(server, text, request, why),
         heard_of=lambda text: _heard_of(server, text),
         task_state=lambda: _task_state(server, layer),

@@ -3,6 +3,8 @@
   import { settings, settingsLoadErrors, type SettingsSaveResult } from "../stores/settings";
   import SpeechModels from "./SpeechModels.svelte";
   import WakeTeach from "./WakeTeach.svelte";
+  import FollowUpCounts from "./FollowUpCounts.svelte";
+  import ProfileSharing from "./ProfileSharing.svelte";
   import { _, locale } from "svelte-i18n";
   import { session } from "../stores/session";
   import { call, requireOkResult, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
@@ -1859,6 +1861,7 @@
       >
     </div>
     <WakeTeach />
+    <FollowUpCounts />
   </section>
 
   <section class="settings-group">
@@ -2179,6 +2182,7 @@
 
   <section class="settings-group">
     <h3>{$_("settings.cloud_api")}</h3>
+    <ProfileSharing />
 
     <div class="setting-row">
       <div class="setting-info">

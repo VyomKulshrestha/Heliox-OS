@@ -638,6 +638,8 @@ def _shared_in_words(by: str, answer: str) -> bool:
     from pilot.personal import spoken_settings as table
 
     fixed = {
+        table.PROFILE_OFF,
+        table.PROFILE_ON,
         table.SUGGESTIONS_OFF,
         table.SUGGESTIONS_ON,
         table.OFFERS_OFF,
@@ -8245,7 +8247,25 @@ class PilotServer:
         """ "Call me Sam", "remember that I'm a founder", "what do you know about me" — the About you profile."""
         if self._user_profile is None:
             return None
-        return await self._user_profile.answer_async(text)
+        answer = await self._user_profile.answer_async(text)
+        from pilot.workflows.user_profile import READ_REQUEST
+
+        known = bool(self._user_profile.context_lines())  # "Nothing yet." needs no word about where it goes
+        if answer is not None and known and READ_REQUEST.match(_normalize_spoken_phrase(text).replace(" s ", "'s ")):
+            answer = f"{answer} {self._profile_sent_sentence()}"
+        return answer
+
+    def _profile_sent_sentence(self) -> str:
+        """Whether any of the profile goes to the model in use, in one sentence (conversation.share_profile)."""
+        from pilot.conversation.adapters import _is_local_model, personal_in_prompt
+        from pilot.security.guard_changes import model_destination
+
+        if _is_local_model(self, None):
+            return "None of it leaves this computer."
+        where = model_destination(dict(getattr(self.config.model, "__dict__", {}))) or "the cloud model"
+        if personal_in_prompt(self):
+            return f"Your name, style and what bears on a question go to {where}."
+        return f"None of it goes to {where}."
 
     async def _handle_profile_get(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """The About you profile: how to address you, facts, people, preferences and tone, plus a flat list."""

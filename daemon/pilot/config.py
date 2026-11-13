@@ -628,6 +628,10 @@ class ConversationConfig:
     # A follow-up without the wake phrase loses its reach for the person's own data once the listener heard this many
     # utterances it did not take since Heliox last spoke (pilot.conversation.reach). Off until it is measured on
     # recordings of a person alone; the count is logged on every follow-up either way.
+    # What a model that is not on this computer is told about the person (pilot.conversation.adapters.
+    # personal_in_prompt): "auto" sends the name, the answer style and the parts of the profile that bear on what is
+    # asked; "off" sends nothing about them. A model on this computer is not affected. never_sent holds under both.
+    share_profile: str = "auto"  # "auto" | "off"
     second_voice_guard: bool = False
     second_voice_threshold: int = 1  # 2 caught no single second voice; at 1 the cost alone is unmeasured
 
@@ -1418,6 +1422,7 @@ def _validate_config_types(raw: dict) -> None:
             "ollama_model": str,
             "search_url": str,
             "provisional_answers": str,
+            "share_profile": str,
             "second_voice_guard": bool,
             "second_voice_threshold": int,
         },
@@ -1837,6 +1842,9 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         early = c_raw.get("provisional_answers")
         if isinstance(early, str) and early.strip().casefold() in ("auto", "on", "off"):
             config.conversation.provisional_answers = early.strip().casefold()
+        share = c_raw.get("share_profile")
+        if isinstance(share, str) and share.strip().casefold() in ("auto", "off"):
+            config.conversation.share_profile = share.strip().casefold()
         guard = c_raw.get("second_voice_guard")
         if isinstance(guard, bool):
             config.conversation.second_voice_guard = guard

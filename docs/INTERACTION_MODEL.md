@@ -344,6 +344,27 @@ audio-level run is pending).
   is configured; the profile lines go as chosen for the words ("Personal sessions" below). With a local model none of
   it leaves the machine.
 
+**What a cloud model is told about the person (`conversation.share_profile`).** One function decides it,
+`pilot.conversation.adapters.personal_in_prompt(server, model)`. Every personal line asks it: the prompt's profile
+lines, the answer-length line, the personal context line, the people handed to the planner, and an offer entering
+the history. A model on this computer is told everything under either value. `never_sent` (health, money, secrets,
+other people's private details) holds under both.
+
+| Kind of person | `auto` (the default; today's behaviour) | `off` |
+|---|---|---|
+| Model on this computer | everything, up to eight profile lines | the same: nothing leaves the computer |
+| Claude or another cloud model | the name and answer style with every turn; preferences, people, facts and the home only when the words bear on them; goals and habits that share words; the people meant, for the planner | nothing about the person: no name, no style line, no profile, goals, habits or people; offers enter the history as a neutral line |
+| No model | nothing is sent anywhere | the same |
+
+- **In the window:** Settings, Cloud API, "Your profile and the model" says this in words and turns it off.
+- **When choosing a cloud model:** the approval line now says the profile goes too, unless it is turned off.
+- **By voice:** "Don't send my profile to the cloud" turns it off at once, and says what stays on this computer.
+  Turning it back on ("you can send my profile again") is a widening, so the daemon asks in its window.
+- **"What do you know about me"** ends by saying whether any of it is sent to the model in use.
+
+**Fakes only** (`tests/test_conversation_share_profile.py`: one test per line that can carry the person, for each
+value with a cloud and a local model).
+
 Two more context sources, added with Heliox Live and the personal layer (`pilot/live/conversation_link.py`,
 `pilot/personal/context.py`):
 

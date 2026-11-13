@@ -44,6 +44,26 @@ VOICE_LIVE_SETTING = re.compile(
     r"|(?P<off>turn off " + _LIVE_NAMES + r"|(?:stop|quit) (?:correcting me|watching me|watching my screen)"
     r"|(?:don t|do not|never) (?:correct me|watch me|watch my screen)" + _AGAIN + r"|no more corrections))" + _END
 )
+_PROFILE = r"my (?:profile|details|personal details)(?: to (?:the |a )?(?:cloud|model|cloud model|internet))?"
+VOICE_PROFILE_SETTING = re.compile(
+    _PLEASE
+    + r"(?:(?P<off>(?:don t|do not|never) send "
+    + _PROFILE
+    + _AGAIN
+    + r"|(?:stop|quit) sending "
+    + _PROFILE
+    + r"|keep my (?:profile|details) on (?:this|my) computer|turn off sending "
+    + _PROFILE
+    + r")"
+    r"|(?P<on>(?:you can )?send "
+    + _PROFILE
+    + r" again|(?:you can )?start sending "
+    + _PROFILE
+    + r"|turn on sending "
+    + _PROFILE
+    + r"))"
+    + _END
+)
 VOICE_LIVE_LEVEL_SETTING = re.compile(
     _PLEASE + r"(?:(?P<less>(?:correct|interrupt) me less(?: often)?|(?:fewer|less) (?:corrections|interruptions))"
     r"|(?P<more>(?:you can )?correct me more(?: often)?|more corrections))" + _END
@@ -62,6 +82,11 @@ LIVE_OFF = 'Okay, Live is off: no more corrections. Say "be my live companion" t
 LIVE_LESS = "Okay, fewer corrections: I'll only speak up about risky things and show the rest quietly."
 LIVE_LESS_WHILE_OFF = "Okay. Live is off now; when you turn it on, it will only speak up about risky things."
 LIVE_MORE = "Okay, back to the usual: I'll point out slips at your pauses."
+PROFILE_OFF = (
+    "Okay, your name, your answer style and what you told me about yourself stay on this computer now. "
+    'Say "you can send my profile again" to undo it.'
+)
+PROFILE_ON = "Okay, a cloud model gets your name, your answer style and what bears on your question again."
 LIVE_MORE_WHILE_OFF = "Okay. Live is off now; when you turn it on, it will point out slips at your pauses."
 
 
@@ -82,6 +107,8 @@ _TABLE: tuple[tuple[re.Pattern[str], str, str, dict[str, Any], str | Callable[[A
     (VOICE_SUGGESTIONS_SETTING, "on", "suggestions", {"enabled": True, "offers": "on"}, SUGGESTIONS_ON),
     (VOICE_OFFERS_SETTING, "off", "suggestions", {"offers": "off"}, OFFERS_OFF),
     (VOICE_OFFERS_SETTING, "on", "suggestions", {"offers": "on"}, OFFERS_ON),
+    (VOICE_PROFILE_SETTING, "off", "conversation", {"share_profile": "off"}, PROFILE_OFF),
+    (VOICE_PROFILE_SETTING, "on", "conversation", {"share_profile": "auto"}, PROFILE_ON),
     (VOICE_LIVE_SETTING, "on", "live", {"enabled": True}, LIVE_ON),
     (VOICE_LIVE_SETTING, "off", "live", {"enabled": False}, LIVE_OFF),
     (
@@ -99,7 +126,13 @@ _TABLE: tuple[tuple[re.Pattern[str], str, str, dict[str, Any], str | Callable[[A
         lambda config: LIVE_MORE if _live_enabled(config) else LIVE_MORE_WHILE_OFF,
     ),
 )
-PATTERNS = (VOICE_SUGGESTIONS_SETTING, VOICE_OFFERS_SETTING, VOICE_LIVE_SETTING, VOICE_LIVE_LEVEL_SETTING)
+PATTERNS = (
+    VOICE_SUGGESTIONS_SETTING,
+    VOICE_OFFERS_SETTING,
+    VOICE_LIVE_SETTING,
+    VOICE_LIVE_LEVEL_SETTING,
+    VOICE_PROFILE_SETTING,
+)
 
 
 def spoken_setting(normalized: str, config: Any) -> SpokenSetting | None:

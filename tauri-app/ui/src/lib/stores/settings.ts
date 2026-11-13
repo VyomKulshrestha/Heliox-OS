@@ -145,6 +145,10 @@ export interface PilotSettings {
     protected_packages: string[];
     blocked_commands: string[];
   };
+  /** The conversation layer; only what the window shows. share_profile: what a cloud model is told about you. */
+  conversation?: {
+    share_profile?: "auto" | "off";
+  };
   first_run_complete: boolean;
   theme: "light" | "dark";
   hotkey: string; // Added tracking for active UI theme mode
@@ -307,6 +311,7 @@ function mergeSettings(current: PilotSettings, incoming: Partial<PilotSettings>)
     ssh: { ...current.ssh, ...incoming.ssh },
     voice: { ...current.voice, ...incoming.voice },
     restrictions: { ...current.restrictions, ...incoming.restrictions },
+    conversation: { ...current.conversation, ...incoming.conversation },
   };
 }
 

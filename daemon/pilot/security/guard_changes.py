@@ -164,7 +164,9 @@ def section_widenings(section: str, current_section: Any, values: dict[str, Any]
                 Widening(
                     "model.provider",
                     f"Use the language model at {new}",
-                    f"Your requests and the text Heliox reads for them will go to {new}.",
+                    f"Your requests and the text Heliox reads for them will go to {new}, and so will your name, "
+                    "your answer style and the parts of your profile that bear on what you ask, unless you turn "
+                    "that off (Settings, Your profile and the model).",
                 )
             )
     elif section == "proxy":
@@ -172,6 +174,17 @@ def section_widenings(section: str, current_section: Any, values: dict[str, Any]
             goes_to(key, "Send Heliox's web requests through {host}", "Heliox's web requests will pass through {host}.")
     elif section == "conversation":
         goes_to("search_url", "Search the web with {host}", "What you ask Heliox to look up will go to {host}.")
+        old_share = str(now.get("share_profile", "auto") or "auto").casefold()
+        new_share = str(values.get("share_profile", old_share) or old_share).casefold()
+        if old_share == "off" and new_share != "off":
+            found.append(
+                Widening(
+                    "conversation.share_profile",
+                    "Send what Heliox knows about you to a model that is not on this computer",
+                    "With a cloud model, your name, your answer style and the parts of your profile that bear on what"
+                    " you ask will go with your requests.",
+                )
+            )
     elif section == "email":
         goes_to("imap_host", "Read mail from {host}", "Heliox will sign in to {host} with your mail password.")
         goes_to("smtp_host", "Send mail through {host}", "Mail Heliox sends will go through {host}.")

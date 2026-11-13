@@ -133,6 +133,8 @@ class ContextSources:
     # Of a sentence the person talked over, the part they heard (the voice's own report of how far it got); the
     # whole sentence when nothing is known.
     heard_of: Callable[[str], str] = lambda text: text
+    # Whether anything about the person may go with this turn (pilot.conversation.adapters.personal_in_prompt).
+    personal: Callable[[], bool] = lambda: True
 
 
 def _safe(call: Callable[[], Any], default: Any) -> Any:
@@ -201,6 +203,16 @@ LENGTH_LINES = {
 }
 
 
+def _personal_extra(extra: Callable[..., Any]) -> bool:
+    """The personal context line (pilot.personal.context.PersonalContext.extra), as opposed to Live's or the screen's."""
+    owner = getattr(extra, "__self__", None)
+    try:
+        from pilot.personal.context import PersonalContext
+    except Exception:
+        return False
+    return isinstance(owner, PersonalContext)
+
+
 def _call_extra(extra: Callable[..., Any], text: str) -> Any:
     """An extra source may take the words being answered (one argument) or nothing."""
     import inspect
@@ -235,16 +247,21 @@ def assemble(
     opening = " ".join(last.split()[:2]) if last else ""
     if opening and memory.open and not last.startswith("(answered on this computer"):  # a withheld line, not words
         sections.append(f"Your last reply began {opening!r}; begin this one differently.")
-    chosen = _call_extra(sources.profile_lines, text) if text else _safe(sources.profile_lines, [])
+    personal = bool(_safe(sources.personal, True))
+    chosen = (
+        (_call_extra(sources.profile_lines, text) if text else _safe(sources.profile_lines, [])) if personal else []
+    )
     profile = [str(line) for line in (chosen or []) if not never_sent(str(line))][:PROFILE_LINES]
     if profile:
         sections.append("About the person: " + " ".join(profile))
     if text and SAVE_OR_CHANGE.search(text.strip()):
         sections.insert(1, NOTHING_SAVED)  # kept even when the block is tight: it goes right after the time
-    length = LENGTH_LINES.get(str(_safe(sources.answer_length, "")))
+    length = LENGTH_LINES.get(str(_safe(sources.answer_length, ""))) if personal else None
     if length:
         sections.append(length)
     for extra in sources.extra:
+        if not personal and _personal_extra(extra):
+            continue  # goals, habits and profile lines matched to the words: about the person
         line = _without(_call_extra(extra, text), profile)
         if line:
             sections.append(str(line))

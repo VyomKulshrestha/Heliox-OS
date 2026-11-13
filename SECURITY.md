@@ -909,6 +909,20 @@ receipt signing key and undo copies are never included. Restoring reads only tho
 known file names from a `heliox-backup-*.zip` in the Downloads folder, so a crafted zip
 cannot write anywhere else, and it never overwrites a receipt already on this computer.
 
+## What a cloud model is told about you
+
+With a language model on this computer, nothing about you leaves it. With a model that is not on this computer
+(Claude, OpenAI, Gemini, OpenRouter, Meta, or a subscription), Heliox sends by default:
+- your name and your answer style, with every request;
+- the parts of your profile that bear on what you ask (a preference, a person you named, a fact about you, your
+  home when you ask about nearby things), and goals and habits that share words with it;
+- the people you meant ("my manager"), to the planner.
+
+Health, money, secrets and other people's private details are never sent, and never kept. Settings → Cloud API →
+"Your profile and the model" turns all of this off (`conversation.share_profile = "off"`). So does saying "don't send
+my profile to the cloud". Turning it back on asks in Heliox's own approval dialog. The words of reminders, notes,
+to-dos and other answers Heliox gives on this computer never go to a cloud model, whatever this setting says.
+
 ## 📝 Notes, usage nudges and settings by voice
 
 - Notes stay in `DATA_DIR/notes.json`; taking, reading and searching them is handled in
