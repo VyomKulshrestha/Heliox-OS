@@ -425,11 +425,6 @@ def test_the_lid_closed_over_a_reminder(tmp_path):
     assert server._reminders.held() == [] and server._reminders.list() == [], "The reminder was given and still waits"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="with no model, 'what do you know about me' ends 'Your name, style and what bears on a question go to "
-    "none.' (PilotServer._profile_sent_sentence, the conversation agent's): nothing goes anywhere",
-)
 def test_with_no_model_nothing_is_said_to_go_anywhere(days):
     record, marks = days["no model"]
     for turn, mark in marks["turn"].items():
