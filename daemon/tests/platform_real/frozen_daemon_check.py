@@ -8,8 +8,10 @@ connections went quiet, and timers came due meanwhile. The check:
 2. freezes the daemon for FROZEN seconds (past the reminder and past the wake detector's threshold), then lets it go;
 3. measures how long it takes to answer a ping again, on the old connection or a new one;
 4. checks it noticed the gap as a wake ("Clock event: wake" in its log, pilot.system.wake), within a few seconds;
-5. checks the reminder that came due while it was frozen went out at once (it is no longer waiting, and a window
-   that connects gets it), not a minute later.
+5. checks the reminder that came due while it was frozen went out once, to the first window, late and saying when it
+   was due ("This was due at ...", or "I said this at ..." had the voice said it to a room with no window): not
+   still waiting, not held for a window that never got it, not given twice. When this fails it prints the last 60
+   lines of the daemon's log.
 
 What it cannot show: the clocks of a real sleep (on Linux and macOS the monotonic clock stops during sleep; here
 both run on), the wake phrase needed again, the network and audio devices going away and coming back, and the
@@ -79,6 +81,19 @@ async def held_reminders(limit: float) -> list[dict]:
         await session.close()
 
 
+def held_now() -> list[dict]:
+    """This check's reminder if the store still holds it for a window (``pending``; reminder_list does not list it)."""
+    from pilot.config import DATA_DIR
+
+    try:
+        items = json.loads((DATA_DIR / "reminders.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [
+        item for item in items if isinstance(item, dict) and item.get("pending") and REMINDER_TEXT in json.dumps(item)
+    ]
+
+
 async def run() -> int:
     real_daemon.write_config()
     daemon = real_daemon.start()
@@ -132,8 +147,11 @@ async def run() -> int:
             f"'Clock event: wake' logged {woke:.1f} s after the freeze ended" if woke is not None else "no wake logged",
         )
 
-        # The first window after the freeze gets the reminder, on the connection that answered the ping: held and
-        # given on connect ("late", "This was due ..."), or, if that window came first, as an ordinary reminder.
+        # Nobody could see or hear the reminder when it came due (no window open, Heliox's voice not in use on a
+        # runner), so it is held and the first window gets it, once, late, saying when it was due: "This was due at
+        # 2:31 AM: ...". Had the voice said it to a room with no window, the window would get "I said this at ...".
+        # A said-aloud reminder no longer counts as given (server._deliver_reminder, "unheard"), so neither does it
+        # here: exactly one window, never zero.
         first = reminders_in(await session.collect(10)) if session is not None else []
         if session is not None:
             await session.close()
@@ -143,25 +161,20 @@ async def run() -> int:
         session = await real_daemon.connect(30)
         waiting = await session.call("reminder_list")
         still = [item for item in (waiting.get("reminders") or []) if REMINDER_TEXT in json.dumps(item)]
+        held = held_now()  # reminder_list leaves out held ones: a reminder held but given to no window shows here
         late = [item for item in mine if item.get("late")]
-        said_when = all(str(item.get("message", "")).startswith("This was due ") for item in late)
-        # A reminder also reaches someone when it is said aloud (server._deliver_reminder: a window or the voice).
-        # Where the runner has a working voice (macOS "say", Windows System.Speech) the tick right after the wake
-        # says it before any window connects, so no window gets it (CI on 2d24504); on Ubuntu there is no voice,
-        # so it is held for the first window. "Say that again" is what Heliox said last.
-        aloud = ""
-        if not mine:
-            aloud = await session.ask("say that again", timeout=60)
-        said_aloud = REMINDER_TEXT in aloud
-        check(
+        words = [str(item.get("message", "")) for item in mine]
+        said_when = bool(words) and all(word.startswith(("This was due ", "I said this ")) for word in words)
+        if not check(
             "reminder-went-out",
-            not still and said_when and (len(mine) == 1 or (not mine and said_aloud)),
+            len(mine) == 1 and len(late) == 1 and said_when and not still and not held,
             f"given {len(mine)} time(s) to a window: first window "
             f"{len([i for i in first if REMINDER_TEXT in json.dumps(i)])}, a later one "
-            f"{len([i for i in second if REMINDER_TEXT in json.dumps(i)])}; held and said late: {bool(late)} "
-            f"({late[0].get('message') if late else 'on time'}); said aloud instead: {said_aloud} ({aloud[:80]!r}); "
-            f"still waiting: {still}",
-        )
+            f"{len([i for i in second if REMINDER_TEXT in json.dumps(i)])}; late: {bool(late)} "
+            f"({words[0][:80] if words else 'nothing shown'!r}); still waiting: {still}; held for a window: {held}",
+        ):
+            for line in real_daemon.log_tail(60):
+                print(f"DAEMON-LOG {line}", flush=True)
     finally:
         for process in frozen:
             try:

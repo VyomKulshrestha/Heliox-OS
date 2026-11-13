@@ -192,7 +192,11 @@ async def connect(limit: float = 240.0) -> Session:
     while time.monotonic() < deadline:
         if token_file.exists():
             try:
-                ws = await websockets.connect(f"ws://127.0.0.1:{PORT}", open_timeout=5, max_size=None)
+                # max_queue=None: a check that leaves a connection unread for a while (it waits on another one) must
+                # not lose it. With the default 16, websockets stops reading once 16 notifications wait unread, so
+                # the pong to its own keepalive ping is never seen and it closes with "keepalive ping timeout"
+                # (CI on a13a496, keychain/ran on macOS, while the daemon answered another connection in 0.24 s).
+                ws = await websockets.connect(f"ws://127.0.0.1:{PORT}", open_timeout=5, max_size=None, max_queue=None)
                 session = Session(ws)
                 token = token_file.read_text(encoding="utf-8").strip()
                 await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": token}, "id": 1}))
@@ -275,6 +279,17 @@ async def stop(daemon: subprocess.Popen, session: Session | None, limit: float =
         await asyncio.sleep(0.2)
     if daemon.poll() is None:
         end_tree(daemon)
+
+
+def log_tail(last: int = 60) -> list[str]:
+    """The last lines of the daemon's own log, whatever they are (printed when a check fails and cannot say why)."""
+    from pilot.config import LOG_FILE
+
+    try:
+        text = Path(LOG_FILE).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    return [line.rstrip()[-240:] for line in text[-last:]]
 
 
 def log_lines(marks: tuple[str, ...], last: int = 20) -> list[str]:
