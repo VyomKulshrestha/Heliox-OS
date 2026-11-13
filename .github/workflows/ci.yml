@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # By hand, on any branch: a change can be run through every job on the three systems before it reaches main.
+  workflow_dispatch:
 
 permissions:
   contents: read
