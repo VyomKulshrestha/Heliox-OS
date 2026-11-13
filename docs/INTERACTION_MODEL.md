@@ -357,9 +357,12 @@ other people's private details) holds under both.
 | No model | nothing is sent anywhere | the same |
 
 - **In the window:** Settings, Cloud API, "Your profile and the model" says this in words and turns it off.
-- **When choosing a cloud model:** the approval line now says the profile goes too, unless it is turned off.
+- **When choosing a cloud model:** the approval line says, in one sentence, everything that goes with each request:
+  "Your requests will go to <host>, together with the text Heliox reads for them", then the end of what the person
+  types when `share_screen_text` is `on`, then the profile unless it is turned off.
 - **By voice:** "Don't send my profile to the cloud" turns it off at once, and says what stays on this computer.
-  Turning it back on ("you can send my profile again") is a widening, so the daemon asks in its window.
+  Turning it back on ("you can send my profile again") with a cloud model is a widening, so the daemon asks in its
+  window, naming where it goes; with a model on this computer it is free, since nothing leaves it.
 - **"What do you know about me"** ends by saying whether any of it is sent to the model in use.
 
 **Fakes only** (`tests/test_conversation_share_profile.py`: one test per line that can carry the person, for each

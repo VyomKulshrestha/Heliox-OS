@@ -89,8 +89,30 @@ def _number(values: dict[str, Any], key: str, current: Any) -> float:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else float(current)
 
 
-def section_widenings(section: str, current_section: Any, values: dict[str, Any]) -> list[Widening]:
-    """The widenings in one update_config request (``values`` for ``section``)."""
+def cloud_model_sentence(host: str, *, screen_text: bool, profile: bool) -> str:
+    """What goes to ``host`` with each request once it is the model, in one sentence: what is always sent, the end of
+    what the person types when they share screen text, and their profile unless they turned that off."""
+    extra = ["the text Heliox reads for them"]
+    if screen_text:
+        extra.append("the end of the text you are typing")
+    if profile:
+        extra.append(
+            "your name, your answer style and the parts of your profile that bear on what you ask (you can stop that "
+            "part in Settings, Your profile and the model)"
+        )
+    # A comma before the last "and" when the profile closes the list: it has an "and" of its own.
+    last = ", and " if len(extra) > 2 or profile else " and "
+    listed = extra[0] if len(extra) == 1 else ", ".join(extra[:-1]) + last + extra[-1]
+    return f"Your requests will go to {host}, together with {listed}."
+
+
+def section_widenings(
+    section: str, current_section: Any, values: dict[str, Any], *, destination: str = "", sharing: Any = None
+) -> list[Widening]:
+    """The widenings in one update_config request (``values`` for ``section``). ``destination`` is where the model
+    sends requests now ("" for this computer, model_destination): a setting that only matters when text leaves this
+    computer widens nothing with a local model. ``sharing`` is the conversation section (share_screen_text,
+    share_profile), which decides what a move to a cloud model says goes with each request."""
     now = _plain(current_section)
     found: list[Widening] = []
 
@@ -161,13 +183,16 @@ def section_widenings(section: str, current_section: Any, values: dict[str, Any]
         merged = {**now, **values}
         new, old = model_destination(merged), model_destination(now)
         if new and new != old:
+            shares = _plain(sharing) if sharing is not None else {}
             found.append(
                 Widening(
                     "model.provider",
                     f"Use the language model at {new}",
-                    f"Your requests and the text Heliox reads for them will go to {new}, and so will your name, "
-                    "your answer style and the parts of your profile that bear on what you ask, unless you turn "
-                    "that off (Settings, Your profile and the model).",
+                    cloud_model_sentence(
+                        new,
+                        screen_text=str(shares.get("share_screen_text", "auto")).casefold() in ("on", "true"),
+                        profile=str(shares.get("share_profile", "auto") or "auto").casefold() != "off",
+                    ),
                 )
             )
     elif section == "proxy":
@@ -177,15 +202,34 @@ def section_widenings(section: str, current_section: Any, values: dict[str, Any]
         goes_to("search_url", "Search the web with {host}", "What you ask Heliox to look up will go to {host}.")
         old_share = str(now.get("share_profile", "auto") or "auto").casefold()
         new_share = str(values.get("share_profile", old_share) or old_share).casefold()
-        if old_share == "off" and new_share != "off":
+        # Only a model that is not on this computer is told about the person (personal_in_prompt): with a local
+        # one, turning the profile back on sends nothing anywhere.
+        if destination and old_share == "off" and new_share != "off":
             found.append(
                 Widening(
                     "conversation.share_profile",
-                    "Send what Heliox knows about you to a model that is not on this computer",
-                    "With a cloud model, your name, your answer style and the parts of your profile that bear on what"
-                    " you ask will go with your requests.",
+                    f"Send what Heliox knows about you to {destination}",
+                    f"Your name, your answer style and the parts of your profile that bear on what you ask will go "
+                    f"to {destination} with your requests.",
                 )
             )
+        new_screen = str(values.get("share_screen_text", now.get("share_screen_text", "auto")))
+        if destination and new_screen == "on" and str(now.get("share_screen_text", "auto")) != "on":
+            found.append(
+                Widening(
+                    "conversation.share_screen_text",
+                    f"Send the text on your screen to {destination}",
+                    f"The end of the text you are typing, as Heliox Live reads it, will go to {destination} with "
+                    "your requests.",
+                )
+            )
+    elif section == "vision":
+        turned_on(
+            "gaze_tracking_enabled",
+            "Let Heliox use the camera to see where you look",
+            "Heliox will use your camera to estimate which part of the screen you are looking at, on this computer, "
+            "while it is on.",
+        )
     elif section == "email":
         goes_to("imap_host", "Read mail from {host}", "Heliox will sign in to {host} with your mail password.")
         goes_to("smtp_host", "Send mail through {host}", "Mail Heliox sends will go through {host}.")
@@ -231,13 +275,18 @@ def section_widenings(section: str, current_section: Any, values: dict[str, Any]
         captures = {
             "read_focused_text": "Heliox will read the text in the field you are typing in.",
             "listen_to_speech": "Heliox will listen to what you say near the computer, not only to requests.",
+            "ocr_fallback": "Heliox will read the text on your screen when the field you type in cannot be read.",
         }
         live_was_on, live_on = bool(now.get("enabled")), _bool(values, "enabled", now.get("enabled"))
         for key, words in captures.items():
             was = live_was_on and bool(now.get(key))
             will = live_on and _bool(values, key, now.get(key))
             if will and not was:
-                says = "Let Live read what you type" if key == "read_focused_text" else "Let Live listen to your speech"
+                says = {
+                    "read_focused_text": "Let Live read what you type",
+                    "listen_to_speech": "Let Live listen to your speech",
+                    "ocr_fallback": "Let Live read your screen",
+                }[key]
                 found.append(Widening(f"live.{key}", says, words))
     elif section == "gateway" and "risk_gate_enabled" in values:
         turned_off("risk_gate_enabled", "Turn off the risk check", "the world model's check of each plan's risk")

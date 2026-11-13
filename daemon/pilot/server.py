@@ -6934,7 +6934,16 @@ class PilotServer:
             section = params.get("section", "")
             values = params.get("values", {})
             if isinstance(section, str) and isinstance(values, dict) and hasattr(self.config, section):
-                found = guards.section_widenings(section, getattr(self.config, section), values)
+                destination = guards.model_destination(guards._plain(self.config.model))
+                # A move to a model that is not on this computer says, in one sentence, everything that goes with
+                # each request: the screen text and the profile the person chose to share go wherever the model goes.
+                found = guards.section_widenings(
+                    section,
+                    getattr(self.config, section),
+                    values,
+                    destination=destination,
+                    sharing=self.config.conversation,
+                )
         elif method == "risk_gate_config_update":
             enabled = params.get("enabled", self.config.gateway.risk_gate_enabled)
             found = guards.section_widenings("gateway", self.config.gateway, {"risk_gate_enabled": enabled})

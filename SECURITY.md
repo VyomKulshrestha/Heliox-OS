@@ -920,7 +920,8 @@ With a language model on this computer, nothing about you leaves it. With a mode
 
 Health, money, secrets and other people's private details are never sent, and never kept. Settings → Cloud API →
 "Your profile and the model" turns all of this off (`conversation.share_profile = "off"`). So does saying "don't send
-my profile to the cloud". Turning it back on asks in Heliox's own approval dialog. The words of reminders, notes,
+my profile to the cloud". Turning it back on with a cloud model asks in Heliox's own approval dialog, naming where it
+goes; with a model on this computer it is free, since nothing about you leaves it. The words of reminders, notes,
 to-dos and other answers Heliox gives on this computer never go to a cloud model, whatever this setting says.
 
 ## 📝 Notes, usage nudges and settings by voice

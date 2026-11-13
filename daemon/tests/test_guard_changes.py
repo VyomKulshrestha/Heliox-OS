@@ -183,8 +183,8 @@ async def test_a_cloud_model_names_where_requests_go_and_a_local_one_never_asks(
         {"section": "model", "values": {"provider": "cloud", "cloud_provider": "claude"}}, _ws()
     )
     assert person.asked[0]["reason"] == (
-        "Your requests and the text Heliox reads for them will go to api.anthropic.com, and so will your name, your "
-        "answer style and the parts of your profile that bear on what you ask, unless you turn that off (Settings, "
+        "Your requests will go to api.anthropic.com, together with the text Heliox reads for them, and your name, your "
+        "answer style and the parts of your profile that bear on what you ask (you can stop that part in Settings, "
         "Your profile and the model)."
     )
     assert server.config.model.provider == "ollama"
@@ -523,3 +523,94 @@ async def test_turning_supervision_or_its_hook_off_is_free(monkeypatch):
     await server._handle_supervision_config_update({"keyboard_mouse_hook_enabled": False}, _ws())
 
     assert person.asked == [] and server.config.supervision.keyboard_mouse_hook_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_sharing_screen_text_asks_with_a_cloud_model_naming_it_and_is_free_with_a_local_one(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+
+    local = await server._handle_update_config(
+        {"section": "conversation", "values": {"share_screen_text": "on"}}, _ws()
+    )
+    assert person.asked == [] and local["status"] != "cancelled"
+
+    server.config.conversation.share_screen_text = "auto"
+    server.config.model.provider, server.config.model.cloud_provider = "cloud", "claude"
+    cloud = await server._handle_update_config(
+        {"section": "conversation", "values": {"share_screen_text": "on"}}, _ws()
+    )
+    assert cloud["status"] == "cancelled" and server.config.conversation.share_screen_text == "auto"
+    assert _lines(person) == ["Send the text on your screen to api.anthropic.com"]
+
+
+@pytest.mark.asyncio
+async def test_moving_to_a_cloud_model_with_screen_text_shared_says_the_screen_text_goes_too(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    server.config.conversation.share_screen_text = "on"
+
+    await server._handle_update_config(
+        {"section": "model", "values": {"provider": "cloud", "cloud_provider": "openai"}}, _ws()
+    )
+
+    (line,) = person.asked[0]["shown"]
+    assert line["target"] == "Use the language model at api.openai.com"
+    assert line["description"] == (
+        "Your requests will go to api.openai.com, together with the text Heliox reads for them, the end of the text "
+        "you are typing, and your name, your answer style and the parts of your profile that bear on what you ask "
+        "(you can stop that part in Settings, Your profile and the model)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_cloud_model_sentence_leaves_out_what_the_person_does_not_share(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    server.config.conversation.share_profile = "off"
+
+    await server._handle_update_config(
+        {"section": "model", "values": {"provider": "cloud", "cloud_provider": "openai"}}, _ws()
+    )
+
+    assert person.asked[0]["shown"][0]["description"] == (
+        "Your requests will go to api.openai.com, together with the text Heliox reads for them."
+    )
+
+
+@pytest.mark.asyncio
+async def test_turning_the_profile_back_on_is_free_with_a_model_on_this_computer(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    server.config.conversation.share_profile = "off"
+
+    local = await server._handle_update_config({"section": "conversation", "values": {"share_profile": "auto"}}, _ws())
+    assert person.asked == [] and local["status"] != "cancelled"
+
+    server.config.conversation.share_profile = "off"
+    server.config.model.provider, server.config.model.cloud_provider = "cloud", "claude"
+    cloud = await server._handle_update_config({"section": "conversation", "values": {"share_profile": "auto"}}, _ws())
+    assert cloud["status"] == "cancelled" and server.config.conversation.share_profile == "off"
+    assert _lines(person) == ["Send what Heliox knows about you to api.anthropic.com"]
+
+
+@pytest.mark.asyncio
+async def test_lives_screen_reading_asks_and_gaze_tracking_asks(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    server.config.live.enabled = True
+
+    await server._handle_update_config({"section": "live", "values": {"ocr_fallback": True}}, _ws())
+    await server._handle_update_config({"section": "vision", "values": {"gaze_tracking_enabled": True}}, _ws())
+
+    assert _lines(person)[:1] == ["Let Live read your screen"]
+    assert person.asked[1]["shown"][0]["target"] == "Let Heliox use the camera to see where you look"
+    assert server.config.live.ocr_fallback is False and server.config.vision.gaze_tracking_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_gaze_tracking_is_not_turned_back_on_by_an_old_approval(monkeypatch):
+    from pilot.server import CAPTURE_SETTINGS
+
+    assert not any("vision.".startswith(prefix) for prefix in CAPTURE_SETTINGS)  # the camera asks every time
+    assert "live." in CAPTURE_SETTINGS  # Live's screen reading may come back by voice once approved
