@@ -5,6 +5,7 @@
   import LazyPanel from "./LazyPanel.svelte";
   import WakeTeach from "./WakeTeach.svelte";
   import FollowUpCounts from "./FollowUpCounts.svelte";
+  import Acknowledge from "./Acknowledge.svelte";
   import ProfileSharing from "./ProfileSharing.svelte";
   import TalkModel from "./TalkModel.svelte";
   import PlannerModel from "./PlannerModel.svelte";
@@ -1825,6 +1826,7 @@
     </div>
     <WakeTeach />
     <FollowUpCounts />
+    <Acknowledge />
   </section>
 
   <section class="settings-group">

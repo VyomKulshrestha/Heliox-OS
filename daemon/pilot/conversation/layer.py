@@ -30,6 +30,7 @@ from typing import Any
 
 from pilot.conversation import provisional as prov
 from pilot.conversation import trace
+from pilot.conversation.acknowledge import ACK_AFTER_SECONDS, next_acknowledgement, wants_acknowledgement
 from pilot.conversation.action_talk import needs_approval_first, result_sentence, said_again
 from pilot.conversation.context import SAVE_OR_CHANGE, ContextSources, ConversationMemory, build_messages
 from pilot.conversation.fast_model import FastModel, FastModelUnavailable
@@ -377,6 +378,7 @@ class ConversationLayer:
         turn_ended: Callable[[], float | None] = lambda: None,
         screen_text_ok: Callable[[], bool] = lambda: False,
         provisional_setting: Callable[[], str] = lambda: "off",
+        acknowledge: Callable[[], bool] = lambda: False,
     ) -> None:
         self._sink = sink
         self._model = model
@@ -426,6 +428,9 @@ class ConversationLayer:
         self.turns: list[TurnResult] = []  # recent turns, for measurement and the debug log
         # Answers started on the listener's words before the turn was confirmed (pilot.conversation.provisional).
         self._provisional_setting = provisional_setting
+        self._acknowledge = acknowledge  # conversation.acknowledge (pilot.conversation.acknowledge)
+        self._acked_last_turn = False
+        self._last_ack = ""
         self.provisional = prov.ProvisionalAnswers(clock=clock)
 
     # ── the server's hooks ──
@@ -887,6 +892,23 @@ class ConversationLayer:
         hold_allowed = self._may_hold()
         self._held_last_turn = False
         statement = decided.reason == "statement"
+        # "I heard you, I'm thinking" while the answer is on its way (pilot.conversation.acknowledge).
+        content_handed = [False]
+        acked = asyncio.Event()
+        ended = _safe_call(self._turn_ended, None)
+        ack_task: asyncio.Future[Any] | None = None
+        if wants_acknowledgement(
+            text,
+            typed=typed,
+            ended=ended if isinstance(ended, float) else None,
+            statement=statement,
+            acked_last_turn=self._acked_last_turn,
+            enabled=bool(_safe_call(self._acknowledge, False)),
+        ):
+            ack_task = asyncio.ensure_future(
+                self._acknowledge_when_due(result, float(ended), queue, content_handed, acked)
+            )
+        self._acked_last_turn = False
         repeat_asked = self._asked_again(text)
         dropped = False
         said: list[str] = []
@@ -913,7 +935,7 @@ class ConversationLayer:
                             continue  # text arrived meanwhile: wait for its sentence up to HOLD_AFTER_SECONDS
                         held = True
                         local = bool(getattr(model, "local", False))
-                        if hold_allowed or (local and not self._said_loading):
+                        if (hold_allowed and not acked.is_set()) or (local and not self._said_loading):
                             # Said alongside the wait: when the answer is ready it follows (and outranks) it.
                             hold = asyncio.ensure_future(self._hold(result, started, local=local))
                             self._background.add(hold)
@@ -968,7 +990,8 @@ class ConversationLayer:
                     return result
                 if first:
                     result.timings["first_sentence_ms"] = (self._clock() - started) * 1000
-                    trace.mark("sentence to voice", hold=False)
+                    trace.mark("sentence to voice", hold=False, kind="content")
+                    content_handed[0] = True  # an acknowledgement not yet started is never said now
                 first = False
                 current = clean
                 if not typed:
@@ -999,6 +1022,8 @@ class ConversationLayer:
                 producer.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await producer
+            if ack_task is not None and not ack_task.done():
+                ack_task.cancel()  # the turn is over: an acknowledgement not yet said never is
         if said:
             self.memory.add_heliox(" ".join(said))
 
@@ -1285,6 +1310,30 @@ class ConversationLayer:
             return
         await self._hold_phrase(result, started)
 
+    async def _acknowledge_when_due(
+        self,
+        result: TurnResult,
+        ended: float,
+        queue: asyncio.Queue[Any],
+        content_handed: list[bool],
+        acked: asyncio.Event,
+    ) -> None:
+        """At ACK_AFTER_SECONDS after the person's last word, one acknowledgement, unless the answer is ready by then.
+        Said on the task-narration channel, below the answer's: an answer that comes while it plays cuts it."""
+        due = ended + ACK_AFTER_SECONDS - self._clock()
+        if due > 0:
+            await asyncio.sleep(due)
+        if content_handed[0] or not queue.empty():
+            return  # the answer is ready: it goes first, and nothing is said before it
+        phrase = next_acknowledgement(self._last_ack)
+        self._last_ack = phrase
+        trace.mark("sentence to voice", hold=False, kind="acknowledgement")
+        result.timings.setdefault("acknowledged_ms", (self._clock() - ended) * 1000)
+        outcome = await self._sink(phrase, "task_narration", f"conv-ack:{id(result)}")
+        if outcome in HEARD:
+            self._acked_last_turn = True
+            acked.set()
+
     def _may_hold(self) -> bool:
         """Whether this turn may have a holding phrase at all: not when the turn before had one, nor within
         HOLD_GAP_SECONDS of the last one. Decided when the request goes out."""
@@ -1297,7 +1346,7 @@ class ConversationLayer:
         self._held_last_turn = True
         self._last_hold_at = self._clock()
         result.timings.setdefault("hold_ms", (self._clock() - started) * 1000)
-        trace.mark("sentence to voice", hold=True)
+        trace.mark("sentence to voice", hold=True, kind="holding")
         await self._sink(phrase, "task_narration", f"conv-hold:{id(result)}")
 
     # ── handing over ──
