@@ -183,6 +183,35 @@ describe("companion settings result handling", () => {
     expect(screen.queryByText("✓ Saved")).toBeNull();
   });
 
+  it("puts supervision back off with no error when the person says no in Heliox's dialog", async () => {
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "supervision_status") {
+        return Promise.resolve({
+          status: "ok",
+          enabled: false,
+          keyboard_mouse_hook_enabled: false,
+          cognitive_coaching_enabled: true,
+          risk_pattern_detection_enabled: true,
+          hook_healthy: false,
+        });
+      }
+      if (method === "supervision_config_update") {
+        return Promise.resolve({ status: "cancelled", message: "Nothing was changed." });
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    render(SupervisionPanel);
+    const toggle = await screen.findByLabelText("Toggle User Manual Supervision");
+    await fireEvent.click(toggle);
+    await fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    expect((await screen.findByText("Not changed.")).getAttribute("role")).toBe("status");
+    expect(daemonMocks.call).toHaveBeenCalledWith("supervision_config_update", { enabled: true });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByLabelText("Toggle User Manual Supervision").classList.contains("active")).toBe(false);
+  });
+
   it("shows a paused line when supervision cannot read the screen, and nothing otherwise", async () => {
     const status = (screen_reading: unknown) => ({
       status: "ok",

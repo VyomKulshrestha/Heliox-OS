@@ -197,6 +197,29 @@ def section_widenings(section: str, current_section: Any, values: dict[str, Any]
             "Keep the activity timeline",
             "Heliox will record which app and window title are in front, and when, on this computer.",
         )
+    elif section == "supervision":
+        # What it watches counts while supervision is on: turning it on with the hook set, or the hook on while it is.
+        was_on, will_be_on = bool(now.get("enabled")), _bool(values, "enabled", now.get("enabled"))
+        if will_be_on and not was_on:
+            found.append(
+                Widening(
+                    "supervision.enabled",
+                    "Let Heliox watch your screen",
+                    "Heliox will read the text on your screen every few seconds, on this computer, while supervision "
+                    "is on, to coach you and warn you before a risky step.",
+                )
+            )
+        hook_was = was_on and bool(now.get("keyboard_mouse_hook_enabled"))
+        hook_will = will_be_on and _bool(values, "keyboard_mouse_hook_enabled", now.get("keyboard_mouse_hook_enabled"))
+        if hook_will and not hook_was:
+            found.append(
+                Widening(
+                    "supervision.keyboard_mouse_hook_enabled",
+                    "Let Heliox watch your keyboard and mouse",
+                    "Heliox will see every key you press and every mouse click, on this computer, while supervision is "
+                    "on.",
+                )
+            )
     elif section == "clipboard":
         turned_on(
             "history",

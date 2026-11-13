@@ -6938,6 +6938,8 @@ class PilotServer:
         elif method == "risk_gate_config_update":
             enabled = params.get("enabled", self.config.gateway.risk_gate_enabled)
             found = guards.section_widenings("gateway", self.config.gateway, {"risk_gate_enabled": enabled})
+        elif method == "supervision_config_update":
+            found = guards.section_widenings("supervision", self.config.supervision, params)
         elif method in {"self_healing_config_update", "narration_config_update"}:
             section = method.removesuffix("_config_update")
             found = guards.section_widenings(section, getattr(self.config, section), params)
@@ -12614,6 +12616,8 @@ class PilotServer:
         Returns:
             A dict with status and the updated config.
         """
+        if (refusal := await self._widening_refusal("supervision_config_update", params, ws)) is not None:
+            return refusal  # it would start watching the person, and they did not approve it
         cfg = self.config.supervision
         was_enabled = cfg.enabled
         was_hook_enabled = cfg.keyboard_mouse_hook_enabled

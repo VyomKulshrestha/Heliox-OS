@@ -493,3 +493,33 @@ async def test_the_activity_timeline_turned_back_on_by_voice_after_one_approval_
     assert await server._control_reply("turn off the activity timeline") == "The activity timeline is off."
     assert await server._control_reply("turn on the activity timeline") == "The activity timeline is on."
     assert server.config.timeline.enabled is True
+
+
+@pytest.mark.asyncio
+async def test_supervision_watching_the_screen_and_the_keyboard_asks_and_a_no_leaves_it_off(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+
+    reply = await server._handle_supervision_config_update(
+        {"enabled": True, "keyboard_mouse_hook_enabled": True}, _ws()
+    )
+
+    assert reply["status"] == "cancelled"
+    assert server.config.supervision.enabled is False and server.config.supervision.keyboard_mouse_hook_enabled is False
+    lines = {line["target"]: line["description"] for line in person.asked[0]["shown"]}
+    assert "every key you press and every mouse click" in lines["Let Heliox watch your keyboard and mouse"]
+    assert "Let Heliox watch your screen" in lines
+
+
+@pytest.mark.asyncio
+async def test_turning_supervision_or_its_hook_off_is_free(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    server.config.supervision.enabled = True
+    server.config.supervision.keyboard_mouse_hook_enabled = True
+    server._background = None
+    server._supervision_hook = None
+
+    await server._handle_supervision_config_update({"keyboard_mouse_hook_enabled": False}, _ws())
+
+    assert person.asked == [] and server.config.supervision.keyboard_mouse_hook_enabled is False

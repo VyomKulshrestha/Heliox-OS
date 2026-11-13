@@ -12,7 +12,7 @@
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
   import { call, requireOkResult } from "../api/daemon";
-  import { changedFields, onConfigChange } from "../api/configSync";
+  import { NOT_CHANGED, changedFields, isCancelled, onConfigChange } from "../api/configSync";
 
   let enabled = $state(false);
   let keyboardMouseHookEnabled = $state(false);
@@ -31,6 +31,8 @@
   let error = $state("");
   let hookWarningUnderstood = $state(false);
   let restartNotice = $state("");
+  // Turning watching on asks in Heliox's own dialog; a no there leaves everything as it was, without an error.
+  let notChanged = $state(false);
   // What the daemon last reported; a save sends only the toggles changed here.
   let savedValues = $state<Record<string, unknown> | null>(null);
 
@@ -88,17 +90,29 @@
     saved = false;
     error = "";
     restartNotice = "";
+    notChanged = false;
     try {
       const values = formValues();
-      const result = requireOkResult(
-        (await call("supervision_config_update", savedValues ? changedFields(savedValues, values) : values)) as {
-          status?: string;
-          message?: string;
-          hook_healthy?: boolean;
-          restart_required?: boolean;
-        },
-        "Supervision settings were not saved",
-      );
+      const reply = (await call(
+        "supervision_config_update",
+        savedValues ? changedFields(savedValues, values) : values,
+      )) as {
+        status?: string;
+        message?: string;
+        hook_healthy?: boolean;
+        restart_required?: boolean;
+      };
+      if (isCancelled(reply)) {
+        if (savedValues) {
+          enabled = Boolean(savedValues.enabled);
+          keyboardMouseHookEnabled = Boolean(savedValues.keyboard_mouse_hook_enabled);
+          cognitiveCoachingEnabled = Boolean(savedValues.cognitive_coaching_enabled);
+          riskPatternDetectionEnabled = Boolean(savedValues.risk_pattern_detection_enabled);
+        }
+        notChanged = true;
+        return;
+      }
+      const result = requireOkResult(reply, "Supervision settings were not saved");
       hookHealthy = result.hook_healthy ?? false;
       savedValues = values;
       if (result.restart_required) restartNotice = "Saved. Restart Heliox for the new timing to take effect.";
@@ -146,6 +160,9 @@
   {:else}
     {#if restartNotice}
       <p class="panel-notice" role="status">{restartNotice}</p>
+    {/if}
+    {#if notChanged}
+      <p class="panel-notice" role="status">{NOT_CHANGED}</p>
     {/if}
     {#if error}
       <p class="panel-error" role="alert">{error}</p>
