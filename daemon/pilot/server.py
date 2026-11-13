@@ -8487,7 +8487,24 @@ class PilotServer:
             finished_todos=finished,
             open_todos=len(todos),
             reminders=reminders,
+            goals_moved=await self._goals_moved_today(midnight),
         )
+
+    async def _goals_moved_today(self, since: float) -> list[str]:
+        """The goals the day moved, for the night summary: progress noted, or a request that matched one. Empty when
+        there was none, and the summary says nothing about goals."""
+        from pilot.workflows.day_briefing import goals_moved_today
+
+        if self._goals is None:
+            return []
+        try:
+            goals = await asyncio.to_thread(self._goals.list)
+            offers = getattr(self, "_offers", None)
+            matched = offers.goals_matched_today() if offers is not None else set()
+            return goals_moved_today(goals, since=since, matched_ids=matched)
+        except Exception:
+            logger.debug("Could not read the day's goals for the night summary", exc_info=True)
+            return []
 
     async def _handle_focus_history(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Focus time today and this week, and the most recent sessions."""

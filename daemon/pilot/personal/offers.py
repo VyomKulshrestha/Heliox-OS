@@ -406,6 +406,7 @@ class Offers:
     used_days: list[str] = field(default_factory=list)  # the first few days a request was taken (dates only)
     timeline_offered: bool = False
     declined_on: dict[str, list[str]] = field(default_factory=dict)  # key -> the days "no" was said to it
+    matched_on: dict[str, str] = field(default_factory=dict)  # offer_soon key -> the day it last came up (in memory)
 
     def __post_init__(self) -> None:
         if self.state_path and self.state_path.exists():
@@ -595,8 +596,22 @@ class Offers:
         first, last = days[-DECLINES_BEFORE_REST], days[-1]
         return (last - first).days < REST_DAYS and (self.now().date() - last).days < REST_DAYS
 
+    def goals_matched_today(self) -> set[str]:
+        """The ids of goals a finished request matched today (goal-progress offers made or still waiting), for the
+        night summary (pilot.workflows.day_briefing.goals_moved_today). One the person said no to is left out: they
+        did not count it as progress."""
+        today = self._today()
+        keys = [key for key, day in self.matched_on.items() if day == today]
+        return {
+            key.removeprefix("goal_progress:")
+            for key in keys
+            if key.startswith("goal_progress:") and self.declined.get(key) != today
+        }
+
     def offer_soon(self, offer: Offer, within: float = GOAL_OFFER_WITHIN_SECONDS) -> None:
-        """Offer this at the next quiet moment, if one comes within ``within`` seconds (the ordinary rules apply)."""
+        """Offer this at the next quiet moment, if one comes within ``within`` seconds (the ordinary rules apply).
+        The day it came up is kept whether or not the offer is made (goals_matched_today)."""
+        self.matched_on[offer.key] = self._today()
         self.soon = [(o, until) for o, until in self.soon if o.key != offer.key]
         self.soon.append((offer, self.clock() + within))
 

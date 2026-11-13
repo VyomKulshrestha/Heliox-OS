@@ -260,6 +260,9 @@
       "routine:wrap_up": "yes",
       "habit": "not today"
     },
+    "finished": {
+      "10:30": "open the podcast folder"
+    },
     "welcome": [
       "routine",
       "habit",
@@ -323,13 +326,13 @@
   },
   "personal_moments_baseline": {
     "note": "delivered moments measured when the count was added, raised with each fix; a run may do better, never worse",
-    "no model": 6,
-    "cloud, auto": 6,
-    "cloud, off": 6
+    "no model": 7,
+    "cloud, auto": 7,
+    "cloud, off": 7
   },
   "wrap_up_moment": {
     "name": "the goal they are working on, at the wrap-up",
     "expects": "podcast",
-    "note": "the night summary as the server composes it (pilot.workflows.day_briefing.compose_night); the session runner cannot run 'wrap up my day' (its receipts stub has no recap)"
+    "note": "the night summary as the server composes it (pilot.workflows.day_briefing.compose_night, with the goals the offer day's finished requests matched); the session runner cannot run 'wrap up my day' (its receipts stub has no recap)"
   }
 }

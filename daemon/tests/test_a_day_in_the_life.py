@@ -249,10 +249,17 @@ async def _speak_nothing(_text, _urgent):
 
 
 @pytest.fixture(scope="module")
-def offered(person, tmp_path_factory) -> list[tuple[str, str, str]]:
+def offered(offer_day) -> list[tuple[str, str, str]]:
+    return offer_day[0]
+
+
+@pytest.fixture(scope="module")
+def offer_day(person, tmp_path_factory) -> tuple[list[tuple[str, str, str]], Any, list[dict[str, Any]]]:
     """The day's offers, (time, kind, key), through the real offer rules, with the working day the person told, their
-    habits, goals and list, and a routine record holding a request they made at ten on the weekdays before."""
-    from pilot.personal.offers import Offers, day_moments, workday_end
+    habits, goals and list, a routine record holding a request they made at ten on the weekdays before, and the
+    requests they finished that day (a finished request that matches a goal is offered as progress, as
+    wiring.note_task_done does); with the Offers and the goals as they ended the day."""
+    from pilot.personal.offers import Offers, day_moments, goal_progress, workday_end
     from pilot.personal.routines import RoutineRecord
     from pilot.personal.wiring import quiet_now
     from pilot.workflows.suggestions import Suggester
@@ -287,8 +294,13 @@ def offered(person, tmp_path_factory) -> list[tuple[str, str, str]]:
     answers = DAY["offers"]["answers"]
     made: list[tuple[str, str, str]] = []
     clock.now = at("07:00")
+    finished = DAY["offers"]["finished"]
     while clock.now < at("23:00"):
         hhmm = clock.now.strftime("%H:%M")
+        if hhmm in finished:
+            progress = goal_progress(finished[hhmm], goals)
+            if progress is not None:
+                offers.offer_soon(progress)
         in_meeting = meeting["from"] <= hhmm < meeting["to"]  # a call: the offer rules hold everything
         if not in_meeting and not quiet_now(person.server, clock.now):
             offer = offers.next_offer()
@@ -299,7 +311,7 @@ def offered(person, tmp_path_factory) -> list[tuple[str, str, str]]:
                 if said:
                     offers.reply(said)
         clock.now += timedelta(minutes=5)
-    return made
+    return made, offers, goals
 
 
 def test_what_was_offered(offered):
@@ -320,9 +332,10 @@ def test_what_was_offered(offered):
 
 
 def personal_moments(
-    record: Any, marks: dict[str, Any], offered: list[tuple[str, str, str]]
+    record: Any, marks: dict[str, Any], offer_day: tuple[Any, Any, Any]
 ) -> list[tuple[str, bool, str]]:
     """(the moment, delivered, what happened) for every moment the day file marks."""
+    offered, offers, goals = offer_day
     found = []
     for turn, mark in marks["turn"].items():
         moment = mark.get("moment")
@@ -333,9 +346,11 @@ def personal_moments(
         hit = all(word.casefold() in f"{reply} {given}".casefold() for word in moment["expects"])
         found.append((moment["name"], hit, f"said {reply!r}"))
     wrap = DAY["wrap_up_moment"]
-    from pilot.workflows.day_briefing import compose_night
+    from pilot.workflows.day_briefing import compose_night, goals_moved_today
 
-    night = compose_night(at("17:55"), brief="", focus_seconds=0, finished_todos=0, open_todos=0, reminders=[])
+    moved = goals_moved_today(goals, since=at("00:00").timestamp(), matched_ids=offers.goals_matched_today())
+    night = compose_night(at("17:55"), brief="", focus_seconds=0, finished_todos=0, open_todos=0, reminders=[],
+                          goals_moved=moved)  # fmt: skip
     found.append((wrap["name"], wrap["expects"].casefold() in night.casefold(), f"said {night!r}"))
     for moment in DAY["offers"]["moments"]:
         if "quiet" in moment:
@@ -350,7 +365,7 @@ def personal_moments(
     return found
 
 
-def test_personal_moments_delivered_against_expected(days, offered, capsys):
+def test_personal_moments_delivered_against_expected(days, offer_day, capsys):
     """The number first: each run's delivered moments against the expected ones, never fewer than the day file's
     baseline. The misses are printed in a person's words."""
     baseline = DAY["personal_moments_baseline"]
@@ -358,7 +373,7 @@ def test_personal_moments_delivered_against_expected(days, offered, capsys):
     worse = []
     for label in ("no model", "cloud, auto", "cloud, off"):
         record, marks = days[label]
-        found = personal_moments(record, marks, offered)
+        found = personal_moments(record, marks, offer_day)
         delivered = sum(hit for _name, hit, _what in found)
         lines.append(f"{label}: {delivered} of {len(found)}")
         lines += [f"    missed: {name} ({what})" for name, hit, what in found if not hit]

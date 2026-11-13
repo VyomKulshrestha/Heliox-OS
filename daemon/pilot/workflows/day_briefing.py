@@ -87,6 +87,19 @@ def compose_morning(
     return " ".join(parts)
 
 
+def goals_moved_today(
+    goals: list[dict[str, Any]], *, since: float, matched_ids: set[str] | frozenset[str] = frozenset()
+) -> list[str]:
+    """The titles of goals the day moved, oldest goal first: progress noted on them since ``since`` (an update),
+    or a request that matched them (``matched_ids``, from the goal-progress offers made today)."""
+    moved = []
+    for goal in goals:
+        updated = any(float(update.get("at") or 0.0) >= since for update in goal.get("updates") or [])
+        if (updated or str(goal.get("id") or "") in matched_ids) and goal.get("title"):
+            moved.append(str(goal["title"]))
+    return moved
+
+
 def compose_night(
     now: datetime,
     *,
@@ -95,10 +108,19 @@ def compose_night(
     finished_todos: int,
     open_todos: int,
     reminders: list[dict[str, Any]],
+    goals_moved: list[str] | tuple[str, ...] = (),
 ) -> str:
+    """``goals_moved``: the titles of goals the day moved (goals_moved_today); none, and goals go unmentioned."""
     parts = ["Good night.", brief]
     if focus_seconds >= 60:
         parts.append(f"You focused for {_duration(focus_seconds)}.")
+    titles = list(dict.fromkeys(title for title in goals_moved if title))
+    if len(titles) == 1:
+        parts.append(f'You made progress on "{titles[0]}" today.')
+    elif len(titles) == 2:
+        parts.append(f'You made progress on "{titles[0]}" and "{titles[1]}" today.')
+    elif titles:
+        parts.append(f"You made progress on {len(titles)} of your goals today.")
     if finished_todos:  # the brief already counts what is still open
         done = f"You finished {finished_todos} thing{'' if finished_todos == 1 else 's'} on your list"
         parts.append(done + ("." if open_todos else ", and your list is clear."))
