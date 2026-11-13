@@ -16634,6 +16634,15 @@ def handle_tool(tool_name, params):
                 raise ValueError("Explicit recording consent is required")
             if capture_manual and not manual_consent:
                 raise ValueError("Separate consent is required to observe manual desktop input")
+        except (ValueError, RuntimeError) as exc:
+            return {"status": "error", "message": str(exc)}
+        # The flags above are what the client asks for; the consent is the person's answer in the daemon's dialog,
+        # asked each time a recording starts (a recording of everything typed never starts on an old approval).
+        if not await self._ask_about_data(
+            ws, self._recording_lines(str(params.get("name", "")), capture_visual, capture_manual)
+        ):
+            return {"status": "cancelled", "message": "Nothing is being recorded."}
+        try:
             await asyncio.to_thread(self._recorded_workflows.prepare)
             session = self._recorded_workflows.start(
                 name=str(params.get("name", "")),
@@ -16659,6 +16668,43 @@ def handle_tool(tool_name, params):
             return {"status": "error", "message": str(exc)}
         await self._announce_recorded_workflow_status(True, ws)
         return {"status": "ok", **session}
+
+    @staticmethod
+    def _recording_lines(name: str, capture_visual: bool, capture_manual: bool) -> list[dict[str, Any]]:
+        """What a recording keeps, one approval line each, in words."""
+        kept = "kept encrypted on this computer"
+        lines = [
+            {
+                "action_type": "record_data",
+                "target": f"Record a workflow{f': {name.strip()}' if name.strip() else ''}",
+                "description": f"Heliox will record the steps it runs until you stop recording, {kept}.",
+            }
+        ]
+        if capture_manual:
+            lines.append(
+                {
+                    "action_type": "record_data",
+                    "target": "Record your own keyboard and mouse while recording",
+                    "description": f"Heliox will see every key you press and every click until you stop recording, {kept}.",
+                }
+            )
+        if capture_visual:
+            lines.append(
+                {
+                    "action_type": "record_data",
+                    "target": "Take pictures of the screen while recording",
+                    "description": (
+                        "Heliox will capture what is on screen "
+                        + ("several times a second" if capture_manual else "around each step")
+                        + f" until you stop recording, {kept}."
+                    ),
+                }
+            )
+        for line in lines:
+            line.update(
+                {"irreversible": False, "undo": {"kind": "undoable", "reason": "You can delete the recording."}}
+            )
+        return lines
 
     async def _handle_recorded_workflow_stop(self, params: dict, ws: ServerConnection) -> dict:
         try:

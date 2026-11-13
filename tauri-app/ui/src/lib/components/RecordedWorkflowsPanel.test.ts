@@ -50,6 +50,23 @@ describe("recorded workflow consent", () => {
     });
   });
 
+  it("says nothing is being recorded, not an error, when the person says no in Heliox's dialog", async () => {
+    const answer = daemonMocks.call.getMockImplementation()!;
+    daemonMocks.call.mockImplementation((method: string, params?: unknown) =>
+      method === "recorded_workflow_start"
+        ? Promise.resolve({ status: "cancelled", message: "Nothing is being recorded." })
+        : answer(method, params),
+    );
+    render(RecordedWorkflowsPanel);
+    const start = await screen.findByRole("button", { name: "Start recording" });
+    await fireEvent.input(screen.getByLabelText("Workflow name"), { target: { value: "Morning review" } });
+    await fireEvent.click(screen.getByLabelText(/I want Heliox to record actions/));
+    await fireEvent.click(start);
+
+    expect(await screen.findByText("Nothing is being recorded.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("requires a second consent for desktop-wide manual input", async () => {
     render(RecordedWorkflowsPanel);
     const start = await screen.findByRole("button", { name: "Start recording" });

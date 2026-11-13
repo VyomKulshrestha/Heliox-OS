@@ -50,7 +50,7 @@
   // A line the daemon wrote in words (a setting change, or text that would leave this computer): its target and
   // description, not an action type and its target.
   const isPlainLine = (action: PlanAction) =>
-    isSettingChange(action) || ["send_off", "delete_data", "replace_data"].includes(action.action_type);
+    isSettingChange(action) || ["send_off", "delete_data", "replace_data", "record_data"].includes(action.action_type);
   let settingsOnly = $derived(actions.length > 0 && actions.every(isSettingChange));
   // For one setting the reason is that line's own description; it is said once, under the line.
   let reasonShown = $derived(

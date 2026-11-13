@@ -130,3 +130,35 @@ async def test_an_approved_restore_restores(monkeypatch, tmp_path):
 def test_a_file_that_is_not_a_backup_is_refused_before_anything_is_asked(tmp_path):
     with pytest.raises(ValueError):
         privacy.backup_contents(tmp_path, "notes.json")
+
+
+@pytest.mark.asyncio
+async def test_each_recording_asks_naming_what_is_recorded_and_a_no_records_nothing(monkeypatch, tmp_path):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch, tmp_path)
+    server._recorded_workflows = MagicMock()
+
+    reply = await server._handle_recorded_workflow_start(
+        {"name": "Expenses", "consent": True, "capture_manual": True, "manual_consent": True, "capture_visual": True},
+        _ws(),
+    )
+
+    assert reply["status"] == "cancelled"
+    server._recorded_workflows.start.assert_not_called()
+    lines = {line["target"]: line["description"] for line in person.asked[0]["shown"]}
+    assert "Record a workflow: Expenses" in lines
+    assert "every key you press and every click" in lines["Record your own keyboard and mouse while recording"]
+    assert "Take pictures of the screen while recording" in lines
+
+
+@pytest.mark.asyncio
+async def test_a_recording_is_asked_about_every_time(monkeypatch, tmp_path):
+    person = Person(confirmed=True)
+    server = _server(person, monkeypatch, tmp_path)
+    server._recorded_workflows = MagicMock(start=MagicMock(return_value={"active": True}))
+    server._announce_recorded_workflow_status = AsyncMock()
+
+    for _ in range(2):
+        await server._handle_recorded_workflow_start({"name": "Review", "consent": True}, _ws())
+
+    assert len(person.asked) == 2

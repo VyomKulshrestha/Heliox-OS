@@ -275,3 +275,13 @@ async def test_the_announcement_skips_only_the_callers_socket(tmp_path) -> None:
 
     assert caller.sent == []
     assert other.sent == [{"jsonrpc": "2.0", "method": "recorded_workflow_status_changed", "params": {"active": True}}]
+
+
+@pytest.fixture(autouse=True)
+def _the_person_approves_the_recording(monkeypatch):
+    """These tests are about the recorder's work; asking before each recording is test_data_clears_ask.py's."""
+
+    async def approved(self, ws, lines):
+        return True
+
+    monkeypatch.setattr(PilotServer, "_ask_about_data", approved)

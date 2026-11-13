@@ -140,17 +140,20 @@
     error = "";
     notice = "";
     try {
-      requireOkResult(
-        (await call("recorded_workflow_start", {
-          name: name.trim(),
-          goal: goal.trim(),
-          consent: true,
-          capture_visual: captureVisual,
-          capture_manual: captureManual,
-          manual_consent: captureManual && manualConsent,
-        })) as DaemonStatusResult,
-        "Could not start recording",
-      );
+      // What to record; Heliox asks the person in its own dialog before anything is recorded.
+      const reply = (await call("recorded_workflow_start", {
+        name: name.trim(),
+        goal: goal.trim(),
+        consent: true,
+        capture_visual: captureVisual,
+        capture_manual: captureManual,
+        manual_consent: captureManual && manualConsent,
+      })) as DaemonStatusResult;
+      if (reply.status === "cancelled") {
+        notice = "Nothing is being recorded.";
+        return;
+      }
+      requireOkResult(reply, "Could not start recording");
       consent = false;
       captureVisual = false;
       captureManual = false;
