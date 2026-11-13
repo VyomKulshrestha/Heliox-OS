@@ -283,6 +283,7 @@ Linux:
 4. Fixed: without espeak, speech logs one "no voice available" message and answers in text; whether the app shows that sentence is up to the audio workstream. Fakes only.
 5. Fixed: the `notify` action says when `notify-send` is missing instead of claiming success. Fakes only.
 6. Partly fixed: on Wayland, screenshots and the global shortcut go through the desktop's portals (where the desktop has them, and the desktop asks the person): the screenshot Run for real under sway (CI on 0a8edad), the shortcut Run for real only against a fake portal. The window tools (`wmctrl`, `xdotool`) are still X11-only and fail with an X11 hint.
+7. Not offered: a headless install (the daemon as a service on a machine with no desktop session). The app starts and supervises the daemon, and almost everything the daemon does needs a person's session: the screen, windows, the microphone, the accessibility bus. The old Debian scripts and system unit in `packaging/`, which nothing built, were removed.
 
 ## Languages other than English
 
