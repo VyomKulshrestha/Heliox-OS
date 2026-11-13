@@ -66,6 +66,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # A settings spec the bench cannot compare is refused here, in seconds, not after the install and the fetch.
+      # Standard library only; the input reaches the command through the environment.
+      - name: Check the inputs
+        env:
+          COMPARE_SETTINGS: ${{ inputs.settings }}
+        run: python3 -m benchmarks.conversation_bench.compare_settings --check "$COMPARE_SETTINGS"
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:

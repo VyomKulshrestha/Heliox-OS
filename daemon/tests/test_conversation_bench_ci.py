@@ -257,3 +257,96 @@ def test_a_latency_mode_runs_instead_of_the_timing_lines_on_synthetic_voices_onl
     assert "LATENCY_ONLY: ${{ inputs.only || 'u-syn' }}" in latency
     assert "--model configured" not in run and "--paid" not in run
     assert text.index("- name: Voice latency mode") < text.index("- name: The local voice on this runner")
+
+
+def test_the_final_pass_setting_takes_whisper_or_parakeet_and_nothing_else():
+    from benchmarks.conversation_bench import compare_settings
+
+    assert compare_settings.parse("final_pass=whisper,parakeet") == ("final_pass", ["whisper", "parakeet"])
+    with pytest.raises(ValueError, match="takes whisper, parakeet; not vosk"):
+        compare_settings.parse("final_pass=whisper,vosk")
+    with pytest.raises(ValueError, match="unknown setting"):
+        compare_settings.parse("final_pas=whisper")
+    assert compare_settings.SCOPE["final_pass"] == ("u-syn-hey_heliox",)
+    assert compare_settings.CONDITIONS["final_pass"] == ("bt-call",)
+
+
+def test_a_wrong_spec_is_refused_by_the_check_with_the_reason(capsys):
+    from benchmarks.conversation_bench import compare_settings
+
+    assert compare_settings.main(["--check", "final_pass=whisper,parakeet"]) == 0
+    assert compare_settings.main(["--check", ""]) == 0
+    assert compare_settings.main(["--check", "final_pass=parakeet,vosk"]) == 2
+    assert "Refused" in capsys.readouterr().out
+
+
+def test_word_errors_are_counted_per_setting_and_condition_with_the_difference_in_points():
+    from benchmarks.conversation_bench import compare_settings
+
+    assert compare_settings.word_errors("Hey Heliox, open the deck.", "hey heliox open a deck") == (1, 5)
+    tallies = {
+        "whisper": {"as-recorded": [2, 100, 10], "bt-call": [20, 100, 10]},
+        "parakeet": {"as-recorded": [1, 100, 10], "bt-call": [12, 100, 10]},
+    }
+    table = compare_settings.word_error_table("final_pass", tallies)
+
+    assert "| as-recorded | whisper | 10 | 100 | 2.0 % | - |" in table
+    assert "| as-recorded | parakeet | 10 | 100 | 1.0 % | -1.0 points |" in table
+    assert "| bt-call | parakeet | 10 | 100 | 12.0 % | -8.0 points |" in table
+    assert table.index("as-recorded") < table.index("bt-call")
+    assert compare_settings.word_error_table("final_pass", {}) == ""
+
+
+def test_a_sentence_is_tallied_into_its_setting_and_condition():
+    from types import SimpleNamespace
+
+    words = {"whisper": {}, "parakeet": {}}
+    scenario = SimpleNamespace(said="Hey Heliox, open the deck.")
+    ci_timing.tally(words, "parakeet", "bt-call", scenario, SimpleNamespace(heard="hey heliox open the deck"))
+    ci_timing.tally(words, "parakeet", "bt-call", scenario, SimpleNamespace(heard="hey helix open deck"))
+
+    assert words == {"whisper": {}, "parakeet": {"bt-call": [2, 10, 2]}}
+
+
+def test_the_settings_are_checked_before_the_install_and_the_fetch():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    check = _step(text, "Check the inputs")
+    assert "python3 -m benchmarks.conversation_bench.compare_settings --check" in check
+    assert "COMPARE_SETTINGS: ${{ inputs.settings }}" in check
+    assert "${{" not in check[check.index("run:") :]
+    assert text.index("- name: Check the inputs") < text.index("- name: Setup Python")
+    assert text.index("- name: Check the inputs") < text.index("- name: Install the daemon")
+
+
+def test_switching_the_final_pass_sets_the_listeners_setting_and_loads_parakeet_outside_timing():
+    from types import SimpleNamespace
+
+    from benchmarks.conversation_bench import compare_settings
+
+    loads = []
+
+    class Parakeet:
+        def load(self):
+            loads.append(1)
+            return True
+
+    voice = SimpleNamespace(final_pass="whisper", parakeet_model_dir="/models/parakeet")
+    listener = SimpleNamespace(config=SimpleNamespace(voice=voice), _parakeet=lambda: Parakeet())
+    harness = SimpleNamespace(listener=listener)
+
+    compare_settings.SETTINGS["final_pass"](harness, "parakeet")
+    assert voice.final_pass == "parakeet" and loads == [1]
+    compare_settings.SETTINGS["final_pass"](harness, "whisper")
+    assert voice.final_pass == "whisper" and loads == [1]
+
+    listener._parakeet = lambda: None
+    with pytest.raises(RuntimeError, match="Parakeet is not on this machine"):
+        compare_settings.SETTINGS["final_pass"](harness, "parakeet")
+
+
+def test_the_final_pass_comparison_fits_the_steps_limit_with_its_call_mode_copies():
+    name, values, repeats, wanted, todo = ci_timing.plan(args_for("final_pass=whisper,parakeet"))
+    extra = len(ci_timing.compare_settings.CONDITIONS[name])
+
+    assert wanted == ["u-syn-hey_heliox"] and todo and all(s.id.startswith("u-syn-hey_heliox") for s, _m in todo)
+    assert ci_timing.compare_settings.refusal(len(todo), len(values), repeats + extra, 125.0) == ""

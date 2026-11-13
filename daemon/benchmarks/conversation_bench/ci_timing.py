@@ -131,7 +131,7 @@ def bench_root_for(results: Path) -> Path:
 
 async def run(
     args: argparse.Namespace, results: Path, on_repeat: Any = None
-) -> tuple[list[scoring.Outcome], dict[str, list], set[str], dict[str, dict], str]:
+) -> tuple[list[scoring.Outcome], dict[str, list], set[str], dict[str, dict], str, dict[str, dict[str, list[int]]]]:
     """Every chosen scenario once per setting and repeat. ``on_repeat(outcomes, groups, owed, compared,
     calibration, repeats_done)`` runs after every repeat, so a run stopped part way still leaves what it finished."""
     from .driver import Harness
@@ -150,14 +150,16 @@ async def run(
         group: {value: {} for value in values} for group in GROUPS
     }
     owed: set[str] = set()
-    total = len(todo) * len(values) * repeats
+    extra = compare_settings.CONDITIONS.get(name, ())
+    words: dict[str, dict[str, list[int]]] = {value: {} for value in values} if extra else {}
+    total = len(todo) * len(values) * (repeats + len(extra))
     i = 0
     try:
         calibration = calibrate(harness, args.audio)
         print(calibration, flush=True)
         for repeat in range(repeats):
             if repeat and on_repeat is not None:
-                on_repeat(outcomes, groups, owed, compared if name else {}, calibration, repeat)
+                on_repeat(outcomes, groups, owed, compared if name else {}, calibration, repeat, words)
             for scenario, model in todo:
                 for value in compare_settings.order(values, repeat):
                     i += 1
@@ -170,8 +172,15 @@ async def run(
                     if name:
                         compare_settings.SETTINGS[name](harness, value)
                     stack.select(harness, KINDS[model])
+                    if words and repeat == 0:
+                        for condition in extra:  # the call-mode copy: its words only, once
+                            heard = await harness.run(scenario, condition)
+                            tally(words, value, condition, scenario, scoring.score(
+                                scenario, tl.measure(heard), condition=condition, model=model))  # fmt: skip
                     events = await harness.run(scenario, "as-recorded")
                     outcome = scoring.score(scenario, tl.measure(events), condition="as-recorded", model=model)
+                    if words:
+                        tally(words, value, "as-recorded", scenario, outcome)
                     first = value == values[0]
                     if first:
                         report.save_outcome(results, outcome, events)
@@ -187,7 +196,16 @@ async def run(
                           f"reply={outcome.measures.reply_start} stop={outcome.measures.stop_time}", flush=True)  # fmt: skip
     finally:
         await harness.close(session_to=results)
-    return outcomes, groups, owed, (compared if name else {}), calibration
+    return outcomes, groups, owed, (compared if name else {}), calibration, words
+
+
+def tally(words: dict[str, dict[str, list[int]]], value: str, condition: str, scenario: Scenario, outcome: Any) -> None:
+    """Add one sentence's word errors to ``words[value][condition]`` ([errors, words said, sentences])."""
+    errors, said = compare_settings.word_errors(scenario.said, outcome.heard)
+    entry = words[value].setdefault(condition, [0, 0, 0])
+    entry[0] += errors
+    entry[1] += said
+    entry[2] += 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -216,7 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     use_scratch_folders(bench_root_for(results))
     started = time.perf_counter()
     name, values, repeats, wanted, todo = plan(args)
-    refused = compare_settings.refusal(len(todo), len(values), repeats, args.limit_minutes)
+    extra = len(compare_settings.CONDITIONS.get(name, ()))  # call-mode copies, in the first repeat
+    refused = compare_settings.refusal(len(todo), len(values), repeats + extra, args.limit_minutes)
     if refused:
         print(refused)
         publish(results, args.summary, f"### Conversation Bench timing lines\n\n{refused}\n")
@@ -224,16 +243,16 @@ def main(argv: list[str] | None = None) -> int:
     scope = ", ".join(wanted) if wanted else "every timing scenario"
     print(
         f"{len(todo)} scenario passes per setting ({scope}), {len(values)} setting(s), {repeats} repeat(s): about "
-        f"{compare_settings.estimate_minutes(len(todo) * len(values) * repeats):.0f} minutes",
+        f"{compare_settings.estimate_minutes(len(todo) * len(values) * (repeats + extra)):.0f} minutes",
         flush=True,
     )
 
-    def write(outcomes, groups, owed, compared, calibration, done: int) -> str:
+    def write(outcomes, groups, owed, compared, calibration, done: int, words=None) -> str:
         return save(results, args, outcomes, groups, owed, compared, calibration, scope, len(todo), done, repeats,
-                    started)  # fmt: skip
+                    started, words or {})  # fmt: skip
 
-    outcomes, groups, owed, compared, calibration = asyncio.run(run(args, results, on_repeat=write))
-    text = write(outcomes, groups, owed, compared, calibration, repeats)
+    outcomes, groups, owed, compared, calibration, words = asyncio.run(run(args, results, on_repeat=write))
+    text = write(outcomes, groups, owed, compared, calibration, repeats, words)
     publish(results, args.summary, text)
     print(text)
     return 0
@@ -261,6 +280,7 @@ def save(
     done: int,
     repeats: int,
     started: float,
+    words: dict[str, dict[str, list[int]]] | None = None,
 ) -> str:
     """Write the scorecard, stages.json, compared.json and summary.md for the repeats finished so far; the text."""
     where = "GitHub runner" if os.environ.get("GITHUB_ACTIONS") == "true" else "this machine, not a runner"
@@ -283,6 +303,15 @@ def save(
         if compared
         else []
     )
+    if words:
+        (results / "word_errors.json").write_text(json.dumps(words, indent=1), encoding="utf-8")
+        comparison += [
+            f"Word errors per setting ({name}; the same sentences, as recorded and through a Bluetooth headset in call "
+            "mode, normalised as the scorecard normalises them):",
+            "",
+            compare_settings.word_error_table(name, words),
+            "",
+        ]
     progress = (
         f"Finished {done} of {repeats} repeats so far; the run was stopped or is still going."
         if done < repeats

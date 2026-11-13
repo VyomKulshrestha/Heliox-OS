@@ -7,7 +7,15 @@ difference against the first setting is taken within each repeat, and reported a
 the repeats. A calibration line (the CPU's name, a fixed pure-Python loop, one Parakeet pass on a fixed clip) lets
 runs on different runners be put on one scale.
 
-Settings are given as "name=v1,v2,..." (``--settings parakeet_threads=2,3,4``); the names are in SETTINGS.
+Settings are given as "name=v1,v2,..." (``--settings parakeet_threads=2,3,4``); the names are in SETTINGS. A setting
+with a fixed set of values (VALUES) refuses any other. ``python -m benchmarks.conversation_bench.compare_settings
+--check "<spec>"`` checks a spec with nothing but the standard library, so the workflow can refuse a wrong one in
+its first seconds, before the install and the model fetch.
+
+``final_pass=whisper,parakeet`` compares the listener's final pass. Besides the timing (the "recognition" stage is
+the final pass's own time after the end of the turn), it counts word errors per setting on the same sentences as
+recorded and through a Bluetooth headset in call mode (CONDITIONS): the call-mode copies run once, in the first
+repeat, as the words do not depend on the repeat.
 """
 
 from __future__ import annotations
@@ -35,13 +43,41 @@ def _parakeet_threads(harness: Any, value: str) -> None:
         transcriber.load()
 
 
-SETTINGS: dict[str, Callable[[Any, str], None]] = {"parakeet_threads": _parakeet_threads}
+def _final_pass(harness: Any, value: str) -> None:
+    """The listener's final pass: "whisper" or "parakeet" (Parakeet from the models fetched into the bench root),
+    switched on the settings the listener reads on every utterance, and Parakeet loaded outside any timing."""
+    listener = harness.listener
+    if listener is None:
+        raise RuntimeError("final_pass: no listener")
+    voice = listener.config.voice
+    if value == "parakeet" and not getattr(voice, "parakeet_model_dir", ""):
+        from pilot.system.speech_models import local_path
+
+        folder = local_path("parakeet-tdt-0.6b-v2-int8")
+        if folder is not None:
+            voice.parakeet_model_dir = str(folder)
+    voice.final_pass = value
+    if value == "parakeet":
+        transcriber = listener._parakeet()
+        if transcriber is None or not transcriber.load():
+            raise RuntimeError("final_pass=parakeet: Parakeet is not on this machine (nothing is downloaded here)")
+
+
+SETTINGS: dict[str, Callable[[Any, str], None]] = {"parakeet_threads": _parakeet_threads, "final_pass": _final_pass}
+# Settings whose values are a fixed set: anything else is refused when the spec is read.
+VALUES: dict[str, tuple[str, ...]] = {"final_pass": ("whisper", "parakeet")}
+# Conditions run besides "as-recorded" for a setting, in the first repeat only: their word errors are counted per
+# setting, their timings are not compared (conditions.py: "bt-call" is a Bluetooth headset in call mode).
+CONDITIONS: dict[str, tuple[str, ...]] = {"final_pass": ("bt-call",)}
 
 # The scenarios each setting can move, as id prefixes: a comparison runs only these unless --only names others.
 # Parakeet's threads change the final pass, so the reply's start after a request; in run 43290465258 (all 42
 # scenario passes, threads 2, 3 and 4) the barge-in stop times moved 0.001 s between thread counts, so they are left
 # out of this comparison.
-SCOPE: dict[str, tuple[str, ...]] = {"parakeet_threads": ("u-syn-hey_heliox", "tt-syn-reply-model")}
+SCOPE: dict[str, tuple[str, ...]] = {
+    "parakeet_threads": ("u-syn-hey_heliox", "tt-syn-reply-model"),
+    "final_pass": ("u-syn-hey_heliox",),  # sentences with a known text: their words can be counted
+}
 
 # What one scenario pass costs on a 4-core GitHub runner, the load check included: run 43290465258 did 330 passes
 # in 144.5 minutes (26.3 s each), after 1.7 minutes building the harness and calibrating.
@@ -94,6 +130,10 @@ def parse(spec: str) -> tuple[str, list[str]]:
     chosen = [v.strip() for v in values.split(",") if v.strip()]
     if len(chosen) < 1:
         raise ValueError(f"no values for {name}")
+    allowed = VALUES.get(name)
+    wrong = [v for v in chosen if allowed is not None and v not in allowed]
+    if wrong:
+        raise ValueError(f"{name} takes {', '.join(allowed or ())}; not {', '.join(wrong)}")
     return name, chosen
 
 
@@ -198,3 +238,52 @@ def calibration_line(cpu: str, cores: int | None, loop_s: float, pass_s: float |
     """CALIBRATION line printed beside the scorecard (pure)."""
     parakeet = "-" if pass_s is None else f"{pass_s:.3f} s on {threads} threads"
     return f"CALIBRATION cpu={cpu or 'unknown'!r} cores={cores} python_loop={loop_s:.3f} s parakeet_pass={parakeet}"
+
+
+def word_errors(said: str, heard: str) -> tuple[int, int]:
+    """(word errors, words said) after the scorecard's normalising (pure)."""
+    from .scoring import edit_distance, normalise
+
+    reference = normalise(said)
+    return edit_distance(reference, normalise(heard)), len(reference)
+
+
+def word_error_table(name: str, tallies: dict[str, dict[str, list[int]]]) -> str:
+    """Markdown: per condition and setting, n sentences, word error rate (errors over words said), and the difference
+    in points from the first setting (pure). ``tallies[value][condition] = [errors, words, sentences]``."""
+    values = list(tallies)
+    if not values:
+        return ""
+    lines = [f"| condition | {name} | sentences | words | word error | difference from {name}={values[0]} |",
+             "|---|---|---|---|---|---|"]  # fmt: skip
+    conditions = sorted({c for per in tallies.values() for c in per}, key=lambda c: (c != "as-recorded", c))
+    for condition in conditions:
+        first = tallies[values[0]].get(condition)
+        base = 100.0 * first[0] / first[1] if first and first[1] else None
+        for value in values:
+            errors, words, n = tallies[value].get(condition, [0, 0, 0])
+            rate = 100.0 * errors / words if words else None
+            shown = "-" if rate is None else f"{rate:.1f} %"
+            diff = "-" if rate is None or base is None or value == values[0] else f"{rate - base:+.1f} points"
+            lines.append(f"| {condition} | {value} | {n} | {words} | {shown} | {diff} |")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """--check "<spec>": exit 0 when the settings spec is one a run can compare, 2 (with the reason) otherwise."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m benchmarks.conversation_bench.compare_settings")
+    parser.add_argument("--check", required=True, help='a settings spec, e.g. "final_pass=whisper,parakeet"')
+    args = parser.parse_args(argv)
+    try:
+        name, values = parse(args.check)
+    except ValueError as error:
+        print(f"Refused: settings {args.check!r}: {error}")
+        return 2
+    print(f"Settings to compare: {name or '(none: the usual run)'}" + (f" = {', '.join(values)}" if name else ""))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
