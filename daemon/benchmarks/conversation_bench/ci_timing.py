@@ -124,6 +124,11 @@ def plan(args: argparse.Namespace) -> tuple[str, list[str], int, list[str], list
     return name, values, repeats, wanted, todo
 
 
+def bench_root_for(results: Path) -> Path:
+    """The scratch root ci_prefetch filled (HELIOX_BENCH_ROOT, whose models the workflow caches), or a fresh one."""
+    return Path(os.environ.get("HELIOX_BENCH_ROOT") or results / "data")
+
+
 async def run(
     args: argparse.Namespace, results: Path, on_repeat: Any = None
 ) -> tuple[list[scoring.Outcome], dict[str, list], set[str], dict[str, dict], str]:
@@ -131,9 +136,9 @@ async def run(
     calibration, repeats_done)`` runs after every repeat, so a run stopped part way still leaves what it finished."""
     from .driver import Harness
 
-    # The scratch root ci_prefetch filled (HELIOX_BENCH_ROOT, whose models the workflow caches), or a fresh one.
-    data_dir = Path(os.environ.get("HELIOX_BENCH_ROOT") or results / "data")
-    harness = Harness(audio_root=args.audio, data_dir=data_dir, model=KINDS["cloud"], configure=configure)
+    harness = Harness(
+        audio_root=args.audio, data_dir=bench_root_for(results), model=KINDS["cloud"], configure=configure
+    )
     await harness.build()
     stack.enable(harness)
     name, values, repeats, _wanted, todo = plan(args)
@@ -202,6 +207,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     results = Path(args.results)
     results.mkdir(parents=True, exist_ok=True)
+    from pilot.real_folders import use_scratch_folders
+
+    # Every Heliox folder under the run's own root before anything imports pilot.config: the root ci_prefetch
+    # filled (HELIOX_BENCH_ROOT, whose models the workflow caches), or a fresh one in the results. The Harness
+    # enters the same root again and checks every folder is inside it before it builds anything.
+    use_scratch_folders(bench_root_for(results))
     started = time.perf_counter()
     name, values, repeats, wanted, todo = plan(args)
     refused = compare_settings.refusal(len(todo), len(values), repeats, args.limit_minutes)
