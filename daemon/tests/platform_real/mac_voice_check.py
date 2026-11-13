@@ -100,6 +100,11 @@ GATED = tuple(
         ),
         "local-voice-other-rate/no-new-open",
         "other-program-with-line-open/frames-arriving",
+        # The default output moving away and back (the follow-default fix): what the product guarantees there.
+        "default-output-moves-away/other-device-microphone-untouched",
+        "default-output-moves-back/one-reopen-sequence",
+        "default-output-moves-back/latency-high-on-microphone-device",
+        "default-output-moves-back/microphone-back-within-2.5-s",
     )
 )
 # Lines that mean the same-device cases could not run at all; they fail the job too.
@@ -916,6 +921,10 @@ async def speak_through(target: str, folder: Path) -> None:
             return
         STATE[0] = lambda: pin_state(voice, sd, listener._recorder)
         print(f"DIAG {target}: at the listener's start: {STATE[0]()}", flush=True)
+        if target == "blackhole":
+            # Measurement: the attempt-1 pair at the listener's start (output to input open, delivered or not).
+            start_pair = attempt_one(EVENTS[0][0] if EVENTS else 0.0, time.monotonic(), blackhole_output(sd))
+            print(f"DIAG blackhole, attempt 1 at the listener's start: {start_pair}", flush=True)
         background = None
         try:
             if target == "default":
@@ -982,7 +991,7 @@ async def speak_through(target: str, folder: Path) -> None:
             await asyncio.sleep(2.0)
             # The reopen that cannot be avoided: the default output moves away from the microphone's device and back.
             if target == "blackhole":
-                await default_output_moves(recorder, log, original)
+                await default_output_moves(recorder, log, original, blackhole_output(sd))
                 await asyncio.sleep(2.0)
             # The system voice: speak() runs say, a process of its own.
             await measure("system-voice", target, recorder, log, lambda: voice.speak(SENTENCE))
@@ -1091,11 +1100,57 @@ def default_speaker_seen() -> str:
         return f"{type(error).__name__}: {error}"
 
 
-async def default_output_moves(recorder, log: MicrophoneLog, original: str) -> None:
+MIC_BACK_WITHIN = 2.5  # seconds from the line's reopen on the microphone's device to frames again: the product's bound
+
+
+def longest_gap(samples_at: list[tuple[float, int]], start: float) -> float:
+    """The longest stretch, in seconds, after ``start`` in which the frame count did not move."""
+    longest, still_since, last = 0.0, None, None
+    for moment, frames in samples_at:
+        if moment < start:
+            last = frames
+            continue
+        if frames == last:
+            still_since = still_since if still_since is not None else moment
+            longest = max(longest, moment - still_since)
+        else:
+            still_since = None
+        last = frames
+    return longest
+
+
+def attempt_one(start: float, end: float, mic_device: int) -> str:
+    """Measurement: the time from the output line's open on the microphone's device to the input's open for
+    attempt 1, and whether attempt 1 delivered, from the stream log."""
+    window = [(moment, what) for moment, what in EVENTS if start <= moment < end]
+    output = next((t for t, what in window if what.startswith(f"open output: device {mic_device},")), None)
+    if output is None:
+        return "no output open on the microphone's device in this window"
+    opened = next((t for t, what in window if t >= output and what.startswith("open input")), None)
+    if opened is None:
+        return "no input opened after the output"
+    verdict = next(
+        (
+            what
+            for t, what in window
+            if t >= opened and what.startswith(("log: Microphone delivering beside", "log: Microphone attempt 1"))
+        ),
+        "",
+    )
+    delivered = "at attempt 1" in verdict and "delivering" in verdict
+    return (
+        f"input opened {opened - output:.2f} s after the output; attempt 1 delivered: {'yes' if delivered else 'no'} "
+        f"({verdict.removeprefix('log: ') or 'no attempt line'})"
+    )
+
+
+async def default_output_moves(recorder, log: MicrophoneLog, original: str, mic_device: int) -> None:
     """The one reopen that cannot be avoided: the system default output moves from BlackHole (the microphone's
-    device) to the runner's own device, then back, while the listener runs. Non-gating: the order of opens and
-    closes, the samples per half second across it, and whether exactly one reopen sequence ran for each move (the
-    output line's hook or the watchdog, never both)."""
+    device) to the runner's own device, then back, while the listener runs. Gating since the follow-default fix:
+    away, the line opens on another device and the microphone is not touched; back, exactly one reopen sequence
+    (the output line's hook or the watchdog, never both), the line at the default latency on the microphone's
+    device, and frames again within MIC_BACK_WITHIN of that reopen, with the gap printed. Measurements: the empty
+    half seconds and the attempt-1 pair (output to input open, delivered or not)."""
     away = original or "Apple Virtual Sound Device"
     print(
         f"DIAG blackhole, default output moves: what the voice module reads now: {default_speaker_seen()!r}", flush=True
@@ -1113,43 +1168,92 @@ async def default_output_moves(recorder, log: MicrophoneLog, original: str) -> N
         print(f"DIAG blackhole, default output moved back: {back}", flush=True)
         await asyncio.sleep(5.0)
 
-    marks, _ = await timeline(lambda: recorder.frames_received * recorder.frame_size, moves, before=2, after=2)
+    # Frames every 20 ms across the moves, so the microphone's gap is known to that, not to the half second.
+    samples_at: list[tuple[float, int]] = []
+
+    async def sample() -> None:
+        while True:
+            samples_at.append((time.monotonic(), recorder.frames_received))
+            await asyncio.sleep(0.02)
+
+    sampler = asyncio.ensure_future(sample())
+    try:
+        marks, _ = await timeline(lambda: recorder.frames_received * recorder.frame_size, moves, before=2, after=2)
+    finally:
+        sampler.cancel()
     print(f"DIAG blackhole, default output moves: samples received per 0.5 s: {shown(marks)}", flush=True)
     window = [(moment, what) for moment, what in EVENTS if window_start <= moment]
     for moment, what in window:
         print(f"DIAG blackhole, default output moves, in order: {moment - window_start:6.2f} s  {what}", flush=True)
     lines = log.lines[first_line:]
-    for name, start, end in (
-        ("away", moments.get("away", 0.0), moments.get("back", float("inf"))),
-        ("back", moments.get("back", float("inf")), float("inf")),
-    ):
+    away_at, back_at = moments.get("away", float("inf")), moments.get("back", float("inf"))
+    prefix = SAME_DEVICE + "default-output-moves"
+
+    def between(start: float, end: float, kind: str) -> list[tuple[float, str]]:
+        return [(moment, what) for moment, what in window if start <= moment < end and what.startswith(kind)]
+
+    def reopens(start: float, end: float) -> tuple[int, int]:
         hook = sum(1 for moment, message in lines if start <= moment < end and message.startswith(HOOK_REOPEN))
         watchdog = sum(
             1
             for moment, message in lines
             if start <= moment < end and message.startswith("Microphone: ") and "reopening" in message
         )
-        outputs = [what for moment, what in window if start <= moment < end and what.startswith("open output")]
-        if not (hook or watchdog or outputs):
-            # Nothing reopened: the move was not seen (on 09e886c the voice module could not read the default
-            # output, soundcard not installed), which proves nothing either way.
-            skip(
-                f"voice-macos-speaking/blackhole/default-output-moves-{name}/one-reopen-sequence",
-                f"not exercised: no output opened and nothing reopened after the move "
-                f"(the output line's device: {default_speaker_seen()!r})",
-            )
-            continue
-        check(
-            f"voice-macos-speaking/blackhole/default-output-moves-{name}/one-reopen-sequence",
-            not (hook and watchdog),
-            f"the line's hook reopened the microphone {hook} time(s), the watchdog {watchdog} time(s); "
-            f"output opens: {outputs or 'none'}",
-        )
+        return hook, watchdog
+
+    # Away: the line opens on another device and the microphone is left alone. Gating.
+    away_outputs = between(away_at, back_at, "open output")
+    away_inputs = between(away_at, back_at, "open input") + between(away_at, back_at, "close input")
+    elsewhere = [what for _, what in away_outputs if f"device {mic_device}," not in what]
+    hook, watchdog = reopens(away_at, back_at)
+    check(
+        f"{prefix}-away/other-device-microphone-untouched",
+        bool(elsewhere) and not away_inputs and not (hook or watchdog),
+        f"output opens {[what for _, what in away_outputs] or 'none'} (the microphone's device is {mic_device}); "
+        f"input opens and closes {[what for _, what in away_inputs] or 'none'}; reopens: hook {hook}, "
+        f"watchdog {watchdog}",
+    )
+
+    # Back: exactly one reopen sequence, the line at the default latency on the microphone's device, and the
+    # microphone delivering again within MIC_BACK_WITHIN of the line's reopen. Gating.
+    hook, watchdog = reopens(back_at, float("inf"))
+    check(
+        f"{prefix}-back/one-reopen-sequence",
+        bool(hook or watchdog) and not (hook and watchdog),
+        f"the line's hook reopened the microphone {hook} time(s), the watchdog {watchdog} time(s); "
+        f"output opens: {[what for _, what in between(back_at, float('inf'), 'open output')] or 'none'}",
+    )
+    latency_lines = [m for t, m in lines if t >= back_at and m.startswith("Output line opened at latency")]
+    check(
+        f"{prefix}-back/latency-high-on-microphone-device",
+        any("latency 'high'" in m and "BlackHole" in m for m in latency_lines),
+        f"latency lines after the move back: {latency_lines or 'none'}",
+    )
+    back_open = next(
+        (t for t, what in between(back_at, float("inf"), "open output") if f"device {mic_device}," in what), None
+    )
+    last_input = max((t for t, _ in between(back_at, float("inf"), "open input")), default=None)
+    resumed = None
+    if last_input is not None:
+        after_open = [(t, n) for t, n in samples_at if t >= last_input]
+        resumed = next((t for (t, n), (_, before) in zip(after_open[1:], after_open) if n > before), None)
+    gap = longest_gap(samples_at, back_at)
+    back_within = None if back_open is None or resumed is None else resumed - back_open
+    check(
+        f"{prefix}-back/microphone-back-within-{MIC_BACK_WITHIN:g}-s",
+        back_within is not None and back_within <= MIC_BACK_WITHIN,
+        f"frames again {'never' if back_within is None else f'{back_within:.2f} s'} after the line reopened on the "
+        f"microphone's device; the longest stretch without frames after the move back {gap:.2f} s",
+    )
+
+    # Measurements: empty half seconds, and the attempt-1 pair at the move back (the pair at the listener's start is
+    # printed at the end of the run, from the whole stream log).
     during = [samples for phase, _, samples in marks if phase == "during"]
     print(
         f"DIAG blackhole, default output moves: half seconds with no samples: {during.count(0)} of {len(during)}",
         flush=True,
     )
+    print(f"DIAG blackhole, attempt 1 at the move back: {attempt_one(back_at, float('inf'), mic_device)}", flush=True)
 
 
 async def other_program_while_line_open(target: str, recorder, line, folder: Path, sd) -> None:
