@@ -7694,9 +7694,24 @@ class PilotServer:
             self._memory_talk_request,
         )
         CODE_ANSWER_BY.set("")
+        from pilot.conversation import trace
+
+        began = slowest_at = time.perf_counter()  # perf_counter: the monotonic clock moves in 15.6 ms steps on Windows
+        slowest, slowest_ms = "", -1.0
         for handler in handlers:
             reply = await handler(text)
+            now = time.perf_counter()
+            if (now - slowest_at) * 1000 > slowest_ms:
+                slowest, slowest_ms = handler.__name__, (now - slowest_at) * 1000
+            slowest_at = now
             if reply is not None:
+                trace.mark(
+                    "code handlers done",
+                    handlers_ms=round((now - began) * 1000, 1),
+                    slowest=slowest,
+                    slowest_ms=round(slowest_ms, 1),
+                    answered_by=handler.__name__,
+                )
                 from pilot.personal.wiring import note_request
 
                 note_request(self, text, planned=False)  # "good morning" at nine every day is a routine
@@ -7704,6 +7719,12 @@ class PilotServer:
                     handler.__name__ + (f":{LOCAL_ANSWER_SOURCE.get()}" if handler.__name__ == "_local_answer" else "")
                 )
                 return reply
+        trace.mark(
+            "code handlers done",
+            handlers_ms=round((time.perf_counter() - began) * 1000, 1),
+            slowest=slowest,
+            slowest_ms=round(slowest_ms, 1),
+        )
         if REPEAT_REQUEST.match(normalize_phrase(text)):
             return "There is no earlier task for me to repeat yet."
         return None
@@ -15589,6 +15610,10 @@ def handle_tool(tool_name, params):
 
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Run voice through the same safe interaction path as typed input."""
+        from pilot.conversation import trace
+
+        trace.begin()  # where this turn's time goes (pilot.conversation.trace): times only
+        trace.mark("words received")
         logger.info("Voice command received: '%s'", command_text)
         await self._reminder_heard()  # anything said to Heliox right after a reminder: it was heard
         from pilot.conversation import layer_for
@@ -15768,7 +15793,8 @@ def handle_tool(tool_name, params):
             # audibly going on either; in silence it runs at once. During a task too: "what time is it", "stop
             # interrupting me" or "remind me at four" are answered here and never handed to the running task as a
             # change (an undo during a task stops it first, below).
-            await self._settle_voice_turn(voice_turn.turn_id, window=False)
+            waited += await self._settle_voice_turn(voice_turn.turn_id, window=False)
+            trace.mark("settled", waited=round(waited, 3))
             timeline_answer = await self._control_reply(command_text)
             asked = command_text
             if timeline_answer is None:

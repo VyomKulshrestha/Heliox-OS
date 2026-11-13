@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pilot.conversation import provisional as prov
+from pilot.conversation import trace
 from pilot.conversation.action_talk import needs_approval_first, result_sentence, said_again
 from pilot.conversation.context import SAVE_OR_CHANGE, ContextSources, ConversationMemory, build_messages
 from pilot.conversation.fast_model import FastModel, FastModelUnavailable
@@ -301,6 +302,7 @@ class TurnResult:
     quick: QuickPlan | None = None  # the one-action plan for the quick road, when there is one
     route: Route | None = None
     timings: dict[str, float] = field(default_factory=dict)
+    trace: list[tuple[str, float]] = field(default_factory=list)  # (name, monotonic) stamps (pilot.conversation.trace)
     spoken: list[str] = field(default_factory=list)
     _layer: Any = None
     _company: asyncio.Task[None] | None = None
@@ -571,6 +573,8 @@ class ConversationLayer:
             self._saw_screen_text = False
         result._before = self.memory.recent()  # the turns before this one, for the planner's context
         result.timings["routed_ms"] = (self._clock() - started) * 1000
+        result.trace = trace.current() or []
+        trace.mark("route decided", route=decided.kind.value)
         try:
             ended = self._turn_ended()
         except Exception:
@@ -676,6 +680,8 @@ class ConversationLayer:
         finally:
             if self._active is task:
                 self._active = None
+            if result.trace:
+                logger.debug("Turn trace: %s", trace.summary(result.trace))
 
     # ── answering in words ──
 
@@ -692,6 +698,7 @@ class ConversationLayer:
             await self._fallback(result, "none", decided, started)
             return result
         screen = None
+        reading = self._clock()
         if self.sources.screen_async is not None:
             try:
                 async with asyncio.timeout(0.5):  # not wait_for: it can lose a cancellation before 3.12
@@ -707,6 +714,7 @@ class ConversationLayer:
             # A follow-up in a room that is not quiet: no profile, people or personal lines go with it.
             sources = dataclasses.replace(sources, profile_lines=list, extra=[], people=dict)
         messages = build_messages(text, sources, self.memory, budget=self._context_chars, screen=screen)
+        trace.mark("context ready", screen_ms=round((self._clock() - reading) * 1000, 1))
         self.memory.add_user(text)
         return await self._answer_from(text, decided, result, started, model, messages)
 
@@ -747,12 +755,18 @@ class ConversationLayer:
             bool
         ] = []  # an ACT line came after words: never spoken, and it hands over only if nothing held back
 
+        async def put(sentence: str) -> None:
+            trace.mark_once("first sentence complete")
+            await queue.put(sentence)
+
         async def produce() -> None:
             splitter: Any = TextChunker() if typed else SentenceSplitter()
             mode: bool | None = None  # True: an ACT line, False: words to speak, None: too early to tell
             head = ""
             tail = ""  # the end of the words when it could start an ACT line ("AC"), held until the next piece
             count = 0
+            warm = getattr(model, "connection_warm", None)
+            trace.mark("request sent", warm=bool(warm()) if callable(warm) and adopted is None else None)
             stream = (
                 adopted.replay()
                 if adopted is not None
@@ -767,6 +781,7 @@ class ConversationLayer:
                         if limit.when() is not None:
                             limit.reschedule(None)  # text arrived: no deadline for the rest of the reply
                         if "first_token_ms" not in result.timings:
+                            trace.mark("model first text")
                             result.timings["first_token_ms"] = (self._clock() - started) * 1000
                             answered = getattr(model, "note_answered", None)
                             if callable(answered):
@@ -792,7 +807,7 @@ class ConversationLayer:
                             fragment, tail = (tail[:-held], tail[-held:]) if held else (tail, "")
                         for sentence in splitter.feed(fragment):
                             count += 1
-                            await queue.put(sentence)
+                            await put(sentence)
                         if count >= limit_sentences:
                             break
                 if mode is None and head:
@@ -801,10 +816,10 @@ class ConversationLayer:
                         mode = True
                     else:
                         for sentence in splitter.feed(head):
-                            await queue.put(sentence)
+                            await put(sentence)
                 if not mode:
                     for sentence in [*splitter.feed(tail), *splitter.flush()]:
-                        await queue.put(sentence)
+                        await put(sentence)
             except FastModelUnavailable as error:
                 failure.append(error.reason)
             except TimeoutError:
@@ -888,6 +903,7 @@ class ConversationLayer:
                     return result
                 if first:
                     result.timings["first_sentence_ms"] = (self._clock() - started) * 1000
+                    trace.mark("sentence to voice", hold=False)
                 first = False
                 current = clean
                 if not typed:
@@ -1208,6 +1224,7 @@ class ConversationLayer:
         phrase = HOLD_PHRASES[index]
         self._last_hold = phrase
         result.timings.setdefault("hold_ms", (self._clock() - started) * 1000)
+        trace.mark("sentence to voice", hold=True)
         await self._sink(phrase, "task_narration", f"conv-hold:{id(result)}")
 
     # ── handing over ──

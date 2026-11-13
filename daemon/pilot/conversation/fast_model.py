@@ -333,6 +333,16 @@ class HttpFastModel(_StreamingBase):
     def local(self) -> bool:
         return self.provider in LOCAL_PROVIDERS
 
+    def connection_warm(self) -> bool:
+        """A connection to the provider was likely open for the next call: the client exists and a warm-up or a call
+        used it within KEEPALIVE_SECONDS (for the turn trace; nothing depends on it)."""
+        if self.local or self._client is None:
+            return False
+        last = self._warmed_at
+        if self.calls:
+            last = max(last, self.calls[-1].ended_at or self.calls[-1].started)
+        return self.clock() - last < KEEPALIVE_SECONDS
+
     def request(self, system: str, messages: list[dict[str, str]], key: str) -> tuple[str, dict, dict]:
         """URL, headers and JSON body for one streamed call."""
         if self.provider in LOCAL_PROVIDERS:
