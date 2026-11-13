@@ -32,8 +32,11 @@ WebDriver for its web view, so the check does not run there). Checks:
 
 Every wait has a time limit. CI-only (``ci_only.require_runner``): it starts a daemon and the app.
 Each check prints one ``CHECK`` line; the exit code is the number of failed checks. A step whose driver connection
-fails is a FAIL line that says whether the app, its web process, the session and the page survived; the next step
-then gets a new session (and a new app) when the old one no longer answers.
+fails, with the app running, the same session answering, the page's mark kept and no process changed, is tried once
+more on the same session; its line then ends "after one retry; first try: ...", and a DIAG line counts the retries
+in the run. Any other failure, or a second one, is a FAIL line that says whether the app, its web process, the
+session and the page survived; the next step then gets a new session (and a new app) when the old one no longer
+answers.
 """
 
 from __future__ import annotations
@@ -53,9 +56,14 @@ failures = 0
 APP_ORIGINS = ("tauri://localhost", "http://tauri.localhost", "https://tauri.localhost")
 
 
+RETRIED: dict[str, str] = {}  # step name -> why its first try was dropped (at most one retry per step)
+
+
 def check(name: str, ok: bool, detail: str = "") -> bool:
     global failures
     failures += 0 if ok else 1
+    if name in RETRIED:
+        detail = f"{detail}; after one retry; first try: {RETRIED[name]}"
     print(f"CHECK app-launch/{name}: {'PASS' if ok else 'FAIL'}{' - ' + detail if detail else ''}", flush=True)
     return ok
 
@@ -296,8 +304,10 @@ def mark_page(driver: Driver) -> str:
     return mark
 
 
-def aftermath(driver: Driver, mark: str, before: dict[str, list[int]]) -> tuple[bool, str]:
-    """After a step lost its connection: what was still alive, and whether the same session and page still answer."""
+def aftermath(driver: Driver, mark: str, before: dict[str, list[int]]) -> tuple[bool, str, bool]:
+    """After a step lost its connection: what was still alive, and whether the same session and page still answer.
+    The last value says whether only the driver's connection dropped (the app running, the same session answering,
+    the page's mark kept, no process changed), the one case a step is tried again."""
     time.sleep(1)
     after = processes()
     changed = {
@@ -305,16 +315,23 @@ def aftermath(driver: Driver, mark: str, before: dict[str, list[int]]) -> tuple[
         for name in sorted(set(before) | set(after))
         if before.get(name) != after.get(name)
     }
+    kept = False
     try:
         url = driver.url()
-        kept = driver.run("return window.__helioxStepMark || null") == mark if mark else None
+        kept = bool(mark) and driver.run("return window.__helioxStepMark || null") == mark
         session = f"the same session still answers ({url}); the page {'kept' if kept else 'lost'} its mark"
         answers = True
     except Exception as error:
         session = f"the session no longer answers ({type(error).__name__}: {str(error)[:200]})"
         answers = False
-    alive = "the app is running" if after.get("heliox-os") else "the app is gone"
-    return answers, f"{alive}; {session}; processes changed: {json.dumps(changed) if changed else 'none'}"
+    running = bool(after.get("heliox-os"))
+    alive = "the app is running" if running else "the app is gone"
+    only_the_driver = answers and kept and running and not changed
+    return (
+        answers,
+        f"{alive}; {session}; processes changed: {json.dumps(changed) if changed else 'none'}",
+        only_the_driver,
+    )
 
 
 def end_apps_started_here() -> None:
@@ -361,9 +378,28 @@ def guarded(driver: Driver, app: str, name: str, body) -> None:
     mark = mark_page(driver)
     try:
         body(driver)
+        return
     except Exception as error:
-        answers, state = aftermath(driver, mark, before)
-        check(name, False, f"the driver connection failed during this step ({type(error).__name__}: {error}); {state}")
+        answers, state, only_the_driver = aftermath(driver, mark, before)
+        kind = type(error).__name__
+        failed = f"the driver connection failed during this step ({kind}: {error}); {state}"
+    if only_the_driver and STEPS_DEADLINE[0] - time.monotonic() < 40:
+        only_the_driver = False
+        failed += "; not tried again: too little of the check's time left"
+    if not only_the_driver:
+        check(name, False, failed)
+        if not answers:
+            driver.end()
+        return
+    # Only the driver dropped a connection (CI on 5a3a9b3 and e337a01: WebKitWebDriver, with the app, session and
+    # page untouched): the step is tried once more on the same session, and its line says so.
+    RETRIED[name] = f"driver connection dropped ({kind}), app, session and page untouched"
+    before, mark = processes(), mark_page(driver)
+    try:
+        body(driver)
+    except Exception as again:
+        answers, state, _ = aftermath(driver, mark, before)
+        check(name, False, f"the driver connection failed again ({type(again).__name__}: {again}); {state}")
         if not answers:
             driver.end()
 
@@ -533,6 +569,8 @@ def main(argv: list[str]) -> int:
 
         for name, body in STEPS:
             guarded(driver, app, name, body)
+        # Counted every run, so a rising number of driver drops is seen rather than hidden by the retries.
+        print(f"DIAG driver retries in this run: {len(RETRIED)} ({', '.join(RETRIED) or 'none'})", flush=True)
         if driver.session:
             try:
                 errors = driver.run("return window.__helioxErrors ? Array.from(window.__helioxErrors) : null")
