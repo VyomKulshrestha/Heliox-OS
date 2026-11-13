@@ -1615,6 +1615,125 @@
       ],
       "via": "turn",
       "second_voice_threshold": 2
+    },
+    {
+      "name": "a destructive answer to Heliox's question is said back; a spoken yes opens the dialog, never approves",
+      "via": "turn",
+      "plans": {
+        "notes": [
+          {
+            "action_type": "file_delete",
+            "target": "C:/Users/me/notes",
+            "parameters": {
+              "path": "C:/Users/me/notes"
+            }
+          }
+        ],
+        "them all": [
+          {
+            "action_type": "file_delete",
+            "target": "C:/Users/me/notes",
+            "parameters": {
+              "path": "C:/Users/me/notes"
+            }
+          }
+        ]
+      },
+      "runs_count": {
+        "file_delete": 0
+      },
+      "turns": [
+        {
+          "say": "Hey Heliox, tidy up my notes folder.",
+          "model": "Do you want the old notes moved to an archive, or deleted?",
+          "expect": {
+            "taken": true,
+            "runs_nothing": true
+          }
+        },
+        {
+          "say": "Delete them all.",
+          "gap": 0.7,
+          "model": "ACT {\"verb\": \"delete\", \"object\": \"the notes\", \"request\": \"Delete the notes\", \"say\": \"I'll delete them.\"}",
+          "expect": {
+            "runs_nothing": true,
+            "approval": false
+          },
+          "expect_model": {
+            "taken": true,
+            "has": [
+              "delete notes, yes?",
+              "left it"
+            ]
+          }
+        },
+        {
+          "say": "And now, the weather.",
+          "gap": 1.0,
+          "expect": {
+            "runs_nothing": true,
+            "approval": false,
+            "silent": true
+          },
+          "expect_none": {
+            "silent": false
+          }
+        },
+        {
+          "say": "Hey Heliox, tidy up my notes folder.",
+          "gap": 3,
+          "model": "Do you want the old notes moved to an archive, or deleted?",
+          "expect": {
+            "taken": true,
+            "runs_nothing": true
+          }
+        },
+        {
+          "say": "Delete the old notes.",
+          "gap": 0.7,
+          "model": "ACT {\"verb\": \"delete\", \"object\": \"the notes\", \"request\": \"Delete the notes\", \"say\": \"I'll delete them.\"}",
+          "expect": {
+            "runs_nothing": true
+          },
+          "expect_model": {
+            "taken": true,
+            "has": [
+              "delete the old notes, yes?"
+            ],
+            "approval": true
+          }
+        },
+        {
+          "say": "Yes.",
+          "gap": 1.0,
+          "expect": {
+            "runs_nothing": true,
+            "not": [
+              "deleted"
+            ]
+          }
+        },
+        {
+          "say": "No.",
+          "gap": 1.5,
+          "expect": {
+            "runs_nothing": true
+          }
+        },
+        {
+          "event": "restart"
+        },
+        {
+          "say": "Hey Heliox, what time is it?",
+          "gap": 5,
+          "expect": {
+            "taken": true,
+            "has": [
+              "9|nine"
+            ]
+          }
+        }
+      ]
     }
   ]
 }

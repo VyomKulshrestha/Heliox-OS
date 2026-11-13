@@ -115,6 +115,7 @@ class Record:
     real: bool = False  # the replies came from a real model: expectations on a stub's own words do not apply
     remembered: dict[int, str] = field(default_factory=dict)  # what Heliox remembers having said, after the turn
     cut_waiting: bool = False  # a reply is stopped at its planned cut, waiting for the person who talks over it
+    said_back: Any = lambda: False  # a destructive answer was said back and waits for the person's yes
     approved: dict[int, int] = field(default_factory=dict)  # a turn whose plan was approved on the dialog -> when
     folder: str = ""  # the session's own folder
     real_config_before: dict[str, tuple[int, int]] = field(default_factory=dict)  # the person's, by name
@@ -433,6 +434,7 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
         async def review(self, user_input: str, plan: Any, *, screen_context: str = "", others_running: Any = None):
             return CompanionReview(decision="CONTINUE", reason="ok")
 
+    record.said_back = lambda: bool(getattr(server, "_say_back_waiting", None))
     server._planner = SimpleNamespace(plan=plan)
     server._executor = SimpleNamespace(execute=execute)
     server._reflector = AsyncMock()
@@ -809,6 +811,8 @@ async def _settle(
             return
         if record.cut_waiting:
             return  # the reply is playing at its cut; the next turn talks over it
+        if record.said_back() and any(s.turn == index and s.text.endswith(", yes?") for s in record.said):
+            return  # this turn said "..., yes?" back and waits for the person's next words
         if asked() and any(s.turn in (index, joins) and "approv" in s.text.casefold() for s in record.said):
             return  # the plan waits for the person's click; the rest of this turn waits with it
         await asyncio.sleep(0.005)

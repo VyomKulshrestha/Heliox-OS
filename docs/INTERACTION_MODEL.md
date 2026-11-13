@@ -1193,14 +1193,23 @@ taken as the answer, whoever says it. The listener has not left anything out yet
 cannot apply. A destructive step still needs the approval dialog on the screen, and voice never approves. Nothing
 stops a television's answer from being used for something harmless, or for a question about the person's data.
 
-*Proposed, not built:* when the answer to Heliox's own question would start something destructive, Heliox says it
-back before the dialog opens: "Delete the reports folder, yes?" Only a "yes", or the dialog, goes on, so a stray line
-from the room needs a second, matching answer.
+**Said back first** (`pilot.conversation.say_back`). When the answer to Heliox's own question would start a step the
+planner classes as destructive, Heliox says it back before the dialog opens: the person's words, with the target named
+when they only pointed at it ("Delete them all." becomes "Delete reports, yes?"). It applies only to an answer with no
+wake phrase, in the window Heliox's question opened; a request the person starts with the wake phrase is not said
+back.
+- A spoken "yes" opens the dialog and nothing more. It is never an approval; the dialog still needs the click.
+- A "no", silence past the follow-up window, or anything else drops it with "Okay, I've left it."
+- The same answer arriving again unconfirmed is dropped without a word.
+
+So a television's "Delete them all." after Heliox asks "...or deleted?" is said back and dropped, and no dialog opens.
 
 **Fakes only** (`tests/test_conversation_reach.py`). The personal sessions are:
 - "a second voice asks for the person's reminders after talk Heliox did not take";
 - "a television in the room: talk Heliox did not take, then a line that asks to delete";
-- "the person alone restarting a sentence keeps the follow-up's reach".
+- "the person alone restarting a sentence keeps the follow-up's reach";
+- "a destructive answer to Heliox's question is said back; a spoken yes opens the dialog, never approves"
+  (`tests/test_conversation_say_back.py`).
 
 ## 4. Not in this pass
 

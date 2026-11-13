@@ -603,6 +603,8 @@ CODE_ANSWERS_ANY_MODEL = frozenset(
 )
 ANSWERED_ON_THIS_COMPUTER = "(answered on this computer)"
 REQUEST_TAKEN_BACK = "Okay, I've left it."  # "open Spotify, no": taken back as it was said
+# The words of a turn that answered Heliox's own question, "" otherwise (pilot.conversation.say_back).
+ANSWERED_HELIOX_QUESTION: contextvars.ContextVar[str] = contextvars.ContextVar("heliox_answered_question", default="")
 # This turn's reach is limited (pilot.conversation.reach): the layer gives the model no personal lines.
 REACH_LIMITED: contextvars.ContextVar[bool] = contextvars.ContextVar("heliox_reach_limited", default=False)
 # How an utterance must be known to be addressed before the fast model's connection is warmed for it.
@@ -1184,6 +1186,8 @@ class PilotServer:
         # so ("Okay, I've dropped that: ..."): then the task's own ending is not said a second time.
         self._voice_request = ""
         self._voice_request_change = ""  # the last change said to it while it ran or waited ("No, the screenshots.")
+        self._say_back_waiting: asyncio.Future[str] | None = None  # "..., yes?" said, waiting for the next words
+        self._said_back: set[str] = set()  # answers said back and not confirmed: the same again is dropped silently
         self._voice_end_said = False
         # When the person last cut Heliox's voice off: "Wait, stop." right after it is acknowledged aloud.
         self._voice_cut_off_at = float("-inf")  # never: 0.0 would be "just now" in the first seconds after boot
@@ -6307,6 +6311,10 @@ class PilotServer:
             # The person stopped or corrected the task after this plan was made. No approval is requested for
             # it, and nothing here can approve it.
             return False, set(), set(range(len(plan.actions)))
+        if not await self._said_back_and_confirmed(plan):
+            # An answer to Heliox's own question that would start something destructive, and the person did not
+            # say yes to hearing it back: no dialog opens, and nothing here can approve it.
+            return False, set(), set(range(len(plan.actions)))
 
         pending = PendingConfirmation(
             plan_id=plan_id, event=asyncio.Event(), announces_close=True, waiter_task=asyncio.current_task()
@@ -9680,6 +9688,50 @@ class PilotServer:
                 return
             if phase in {"completed", "failed", "interrupted", "idle", "listening"}:
                 return
+
+    async def _said_back_and_confirmed(self, plan: Any) -> bool:
+        """True to open the dialog as usual. For a destructive step that came in as the answer to Heliox's own
+        question (pilot.conversation.say_back): say it back once and wait for the person's next words; only "yes"
+        opens the dialog, which still needs the click."""
+        from pilot.conversation import say_back
+
+        heard = ANSWERED_HELIOX_QUESTION.get()
+        if not heard or not say_back.destructive(list(plan.actions)):
+            return True
+        key = " ".join(heard.casefold().split())
+        if key in self._said_back:
+            logger.info("The same answer came again unconfirmed; dropped without a word: %r", heard[:80])
+            self._voice_end_said = True
+            return False
+        self._said_back.add(key)
+        loop = asyncio.get_running_loop()
+        self._say_back_waiting = loop.create_future()
+        try:
+            await self._speak_voice_response(
+                say_back.sentence(heard, list(plan.actions)), dedupe_key=f"voice-say-back:{uuid.uuid4()}"
+            )
+            window = float(getattr(self.config.voice, "follow_up_window_seconds", 8.0) or 8.0)
+            try:
+                answer = await asyncio.wait_for(asyncio.shield(self._say_back_waiting), timeout=window + 2.0)
+            except TimeoutError:
+                answer = ""
+        finally:
+            self._say_back_waiting = None
+        if say_back.is_yes(answer):
+            self._said_back.discard(key)
+            return True
+        self._voice_end_said = True  # the task's own ending is not said as well
+        await self._speak_voice_response(say_back.DROPPED, dedupe_key=f"voice-say-back-dropped:{uuid.uuid4()}")
+        return False
+
+    def _answer_say_back(self, words: str) -> bool:
+        """The next words after "Delete the reports folder, yes?" go to the step waiting for them, never as a new
+        request. True when they were taken."""
+        waiting = getattr(self, "_say_back_waiting", None)
+        if waiting is None or waiting.done():
+            return False
+        waiting.set_result(words)
+        return True
 
     def _reach_limited(self, words: str) -> bool:
         """Whether this follow-up's reach is limited (pilot.conversation.reach): logged on every follow-up, with the
@@ -15452,6 +15504,8 @@ def handle_tool(tool_name, params):
         from pilot.conversation.turns import voice_turn_id
         from pilot.personal.wiring import begin_turn, end_turn
 
+        if self._answer_say_back(command_text):
+            return  # before the floor: the turn that said it back holds the floor while it waits for this answer
         # A provisional answer for another turn is dropped (a stop, a new request); this turn's waits to be adopted.
         conversation = layer_for(self)
         turn_id = voice_turn_id.get()
@@ -15483,6 +15537,8 @@ def handle_tool(tool_name, params):
         command_text = self._voice_turns.rest_of_split(command_text)  # "and Spotify" after "open Notepad"
         from pilot.conversation.repair import resolve as resolve_repair
 
+        if self._answer_say_back(command_text):
+            return
         repaired = resolve_repair(command_text)  # "open, no, close Spotify": only the repair is acted on, never both
         if repaired == "":
             logger.info("The person took the request back as they said it: %r", command_text)
@@ -15495,6 +15551,13 @@ def handle_tool(tool_name, params):
         voice_turn = self._voice_turns.begin(self._pending_confirms)
         self.last_voice_turn_id = voice_turn.turn_id
         conversation = layer_for(self)
+        from pilot.conversation.layer import ends_with_question
+        from pilot.system.voice import voice_turn_addressed
+
+        # An answer to Heliox's own question (no wake phrase, in the window the question opened): a destructive step
+        # it starts is said back before its dialog opens.
+        asked = voice_turn_addressed.get() == "follow_up" and ends_with_question(conversation.memory.last_heliox())
+        ANSWERED_HELIOX_QUESTION.set(command_text if asked else "")
         # What this turn starts from, so a withdrawal leaves no trace of it (withdraw_voice_turn).
         memory = getattr(conversation, "memory", None)
         voice_turn.memory_before = memory.snapshot() if memory is not None else None
