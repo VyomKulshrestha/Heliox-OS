@@ -15623,7 +15623,7 @@ def handle_tool(tool_name, params):
     def warm_for_speech(self, addressed: str) -> bool:
         """The listener: speech now known to be said to Heliox ("wake" at the early opening read, "button", or
         "follow_up" with the follow-up window open) is under way or has just ended. Open the fast model's connection
-        now, so the reply does not wait for it. Anything else (speech not yet known to be for Heliox, a doubtful
+        and, for the local voice, the output line now, so the reply waits for neither. Anything else (speech not yet known to be for Heliox, a doubtful
         follow-up, overheard words) opens nothing: a connection made because someone spoke near the microphone would
         still tell the provider something. Returns whether a warm-up was asked for (it runs in the background, never
         holds the turn, and is silent when it fails)."""
@@ -15632,6 +15632,15 @@ def handle_tool(tool_name, params):
         from pilot.conversation import layer_for
 
         layer_for(self).prewarm()
+        from pilot.system.local_tts_worker import LOCAL_ENGINES
+
+        if self.config.voice.tts_engine in LOCAL_ENGINES:
+            # The output line closes after OUTPUT_LINE_IDLE_SECONDS; reopening it took 0.5 s and more on the owner's
+            # speakers (541 ms to the first callback, measured 13 November; 1.0 to 3.2 s in _OutputLine's note).
+            # Opened again now, beside recognition, it is ready before any reply exists. Nothing when it is open.
+            from pilot.system.voice import warm_output_line
+
+            warm_output_line()
         return True
 
     async def _voice_partial(self, text: str) -> None:
