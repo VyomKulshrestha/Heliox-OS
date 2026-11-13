@@ -65,6 +65,9 @@ import real_daemon  # noqa: E402
 
 ADDRESSED = "Hey Heliox, what time is it?"
 NEEDS_MODEL = "Hey Heliox, explain what DNS is."
+# The channels an answer to a request is spoken on: a model's answer (final_answer) and what Heliox handles itself,
+# such as the time (task_narration; run 43404785876 heard it there). Reminders, offers and Live speak on others.
+ANSWER_CHANNELS = frozenset({"final_answer", "task_narration"})
 FAULT_SAID_WITHIN = 10.0  # seconds from the end of the request to the start of the spoken fault sentence
 ROOM = [
     "Could you delete the old photos, they take up too much space.",
@@ -266,7 +269,9 @@ async def ask(record: Record, wav: Path) -> dict:
     woke = [(at, p) for at, p in record.notes("voice_status", started) if p.get("status") == "wake_detected"]
     heard_at = woke[0][0] if woke else None
     answers = [
-        e for e in record.episodes if e["channel"] == "final_answer" and heard_at is not None and e["start"] >= heard_at
+        e
+        for e in record.episodes
+        if e["channel"] in ANSWER_CHANNELS and heard_at is not None and e["start"] >= heard_at
     ]
     loud = record.speaker.loud(answers[0]["start"], answers[0]["end"] or time.monotonic()) if answers else 0.0
     others = [e["channel"] for e in record.episodes if e["start"] >= started and e not in answers]
@@ -277,6 +282,7 @@ async def ask(record: Record, wav: Path) -> dict:
         "answered": bool(answers) and loud > 300,
         "loud": round(loud),
         "after_s": round(answers[0]["start"] - ended, 1) if answers else None,
+        "channel": answers[0]["channel"] if answers else "",
         "other_speech": others,  # a reminder or an offer meanwhile: counted apart, never as the answer
     }
 
@@ -385,7 +391,7 @@ async def soak(minutes: float, every: float) -> int:
         first = await ask(record, addressed)
         print(f"INFO first request: {first}", flush=True)
         await fault_said_aloud(record, session, render(NEEDS_MODEL, folder))
-        heard_room = said_room = asks = answered = slips = cards_before = 0
+        heard_room = said_room = asks = asks_heard = answered = slips = cards_before = 0
         baseline: dict | None = None
         samples: list[dict] = []
         began = time.monotonic()
@@ -398,6 +404,7 @@ async def soak(minutes: float, every: float) -> int:
             if tick % 4 == 0:
                 asks += 1
                 answer = await ask(record, addressed)
+                asks_heard += answer["heard"]
                 answered += answer["answered"]
             type_keys(SLIP)
             slips += 1
@@ -413,6 +420,7 @@ async def soak(minutes: float, every: float) -> int:
                 "room_said": said_room,
                 "room_heard": heard_room,
                 "asked": asks,
+                "asked_heard": asks_heard,
                 "answered": answered,
                 "live_cards": cards - cards_before,
                 "spoke": {
@@ -434,11 +442,16 @@ async def soak(minutes: float, every: float) -> int:
             f"first {first}; last {last}",
         )
         acted = acted_on_room_talk()
+        # The daemon shows a client nothing of speech not addressed to it (run 43404785876: no caption for any of
+        # the room talk), so what proves the listener was not deaf is that every addressed request in the same run,
+        # between the room talk, was heard with its words.
+        hearing = first["heard"] and last["heard"] and asks_heard == asks
         check(
             "nothing-not-addressed-ran",
-            not acted and heard_room > 0,
-            f"room talk said {said_room}, heard (captioned) {heard_room}, acted on {len(acted)} {acted}; "
-            f"addressed asked {asks}, answered aloud {answered}",
+            not acted and hearing,
+            f"room talk said {said_room}, acted on {len(acted)} {acted}; the listener heard every addressed request "
+            f"between it: {hearing} (first, last, and {asks_heard} of {asks}); captions of room talk {heard_room} "
+            f"(none are shown for speech not addressed to Heliox); answered aloud {answered}",
         )
         if samples and baseline is not None:
             tail = samples[len(samples) * 2 // 3 :] or samples[-1:]
