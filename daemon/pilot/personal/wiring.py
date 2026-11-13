@@ -219,11 +219,26 @@ def offers_for(server: Any, data_dir: Any = None) -> Any:
         suggestion=(suggester.suggest if suggester is not None else (lambda: None)),
         legacy_suggestions_on=lambda: bool(getattr(config.suggestions, "enabled", False)),
         spans=spans,
+        moments=lambda now: _day_moments(server, now),
         label=app_label,
         state_path=Path(data_dir) / "offers.json" if data_dir is not None else None,
     )
     server._offers = offers
     return offers
+
+
+def _day_moments(server: Any, now: datetime) -> list[Any]:
+    """The start and end of the working day the person told Heliox, as offers (pilot.personal.offers.day_moments)."""
+    from pilot.personal.offers import day_moments
+
+    profile = getattr(server, "_user_profile", None)
+    if profile is None:
+        return []
+    try:
+        return day_moments(now, start=profile.work_start_minute(), end=profile.work_end_minute())
+    except Exception:
+        logger.debug("Could not read the working day", exc_info=True)
+        return []
 
 
 # Until this hour the evening's quiet holds after the end of the working day ("I stop work at six").

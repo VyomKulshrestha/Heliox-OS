@@ -204,6 +204,7 @@ _KIND_WORDS = {
     "todos": "reading your to-do list",
     "stale_goal": "reminders for quiet goals",
     "get_to_know": "questions to get to know you",
+    "routine": "offers at the start and end of your working day",
 }
 
 
@@ -220,6 +221,45 @@ def _label(offer: Offer) -> str:
     if offer.kind == "get_to_know":
         return "Questions to get to know you"
     return offer.text[:80]
+
+
+DAY_START_WINDOW_MINUTES = 45  # from the start the person gave, while the day is beginning
+WRAP_UP_WINDOW_MINUTES = 20  # before the end they gave: after it, the evening is quiet (wiring.quiet_now)
+
+
+def _clock(minute: int) -> str:
+    hour, rest = divmod(minute, 60)
+    return f"{hour % 12 or 12}{f':{rest:02d}' if rest else ''} {'am' if hour < 12 else 'pm'}"
+
+
+def day_moments(now: datetime, *, start: int | None, end: int | None) -> list[Offer]:
+    """Offers tied to the working day the person told Heliox about ("I start work at nine", "I stop work at six"), on
+    weekdays: their day when it starts, and wrapping it up just before it ends. Pure: local time."""
+    if now.weekday() >= 5:
+        return []
+    minute = now.hour * 60 + now.minute
+    found: list[Offer] = []
+    if start is not None and start <= minute < start + DAY_START_WINDOW_MINUTES:
+        found.append(
+            Offer(
+                key="routine:day_start",
+                kind="routine",
+                text="You start work about now. Want to hear your day?",
+                request="what's my day look like",
+                why=f"You told me you start work at {_clock(start)}.",
+            )
+        )
+    if end is not None and end - WRAP_UP_WINDOW_MINUTES <= minute < end:
+        found.append(
+            Offer(
+                key="routine:wrap_up",
+                kind="routine",
+                text=f"It's nearly {_clock(end)}, when you stop work. Want me to wrap up the day?",
+                request="wrap up my day",
+                why=f"You told me you stop work at {_clock(end)}.",
+            )
+        )
+    return found
 
 
 def from_suggestion(pick: dict[str, Any] | None) -> Offer | None:
@@ -265,6 +305,8 @@ class Offers:
     suggestion: Callable[[], dict[str, Any] | None] = lambda: None
     legacy_suggestions_on: Callable[[], bool] = lambda: False
     spans: Callable[[float, float], list[dict[str, Any]]] | None = None
+    # Offers tied to what the person told Heliox about their day (``day_moments``), given the current time.
+    moments: Callable[[datetime], list[Offer]] = lambda now: []
     label: Callable[[str], str] = lambda app: app
     now: Callable[[], datetime] = datetime.now
     clock: Callable[[], float] = time.monotonic
@@ -302,6 +344,10 @@ class Offers:
     def candidates(self) -> list[Offer]:
         now = self.now()
         found: list[Offer] = []
+        try:
+            found += self.moments(now)  # first: the person said when their day starts and ends
+        except Exception:
+            logger.warning("Working-day offers failed; the other offer sources still ran", exc_info=True)
         if self.spans is not None:
             start = (now - timedelta(days=HISTORY_DAYS)).timestamp()
             try:

@@ -408,6 +408,14 @@ at most once a week, with no one's name in it. A reminder's date and time are ta
 sit, so "on Thursday 19 November to send the report" keeps "send the report". **Fakes only**
 (`tests/test_said_back.py`, `tests/test_reminder_when.py`).
 
+The working day the person tells Heliox ("I start work at nine", "I stop work at six") shapes two offers on
+weekdays: in the first 45 minutes of the day, "You start work about now. Want to hear your day?", and in the 20
+minutes before its end, "It's nearly 6 pm, when you stop work. Want me to wrap up the day?" (`offers.day_moments`).
+Each is an ordinary offer: once a day at most, at a quiet moment, never after the day's end or while Heliox was asked
+to stay quiet, "why?" answered from what the person said, "not today" holding it for the day and "don't offer that"
+ending it. A simulated week checks that the next day follows the answer. **Fakes only**
+(`tests/test_working_day_offers.py`).
+
 Suggestions, offers and Live are turned off, back on, down or up by voice from one table
 (`pilot.personal.spoken_settings`), each phrase family with the value it saves and the sentence said, and a request to
 stop something is answered by a sentence that says it stopped. "Stop suggesting things" (also "quit", "don't",

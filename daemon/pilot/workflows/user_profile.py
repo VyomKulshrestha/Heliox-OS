@@ -120,6 +120,16 @@ WORK_END_REQUEST = re.compile(
     r"^(?:i (?:stop|finish|end|leave|knock off) work(?:ing)?|my (?:working day|work ?day) (?:ends|finishes|is over))"
     r" (?:at |by |around )?(?:\d{1,2}(?:[ :.]\d{2})?|[a-z]+)(?: ?(?:am|pm))?(?: (?:every day|on weekdays|most days))?$"
 )
+# The start of the working day: "I start work at nine", "my working day starts at 8:30".
+WORK_START = re.compile(
+    r"\b(?:i (?:start|begin) work(?:ing)?|my (?:working day|work ?day) (?:starts|begins))"
+    r" (?:at |by |around )?(?P<time>[\w:.]+(?: (?:am|pm|p m|a m))?)",
+    re.IGNORECASE,
+)
+WORK_START_REQUEST = re.compile(
+    r"^(?:i (?:start|begin) work(?:ing)?|my (?:working day|work ?day) (?:starts|begins))"
+    r" (?:at |by |around )?(?:\d{1,2}(?:[ :.]\d{2})?|[a-z]+)(?: ?(?:am|pm))?(?: (?:every day|on weekdays|most days))?$"
+)
 QUIET_PREF = "prefer that Heliox stays quiet unless I ask"
 SPEAK_UP_PREF = "prefer that Heliox speaks up when it notices something"
 _HOUR_WORDS = {w: i for i, w in enumerate(
@@ -129,7 +139,16 @@ _HOUR_WORDS = {w: i for i, w in enumerate(
 def parse_work_end(text: str) -> int | None:
     """Minutes after midnight for "I stop work at six" (18:00), "at 5:30 pm", "at 17:30"; None when unclear. A bare
     hour from 1 to 11 is the afternoon or evening: nobody ends work at six in the morning by default."""
-    found = WORK_END.search(text)
+    return _minute_of(WORK_END.search(text), evening=True)
+
+
+def parse_work_start(text: str) -> int | None:
+    """Minutes after midnight for "I start work at nine" (09:00), "at 8:30 am", "at 13:00"; None when unclear. A bare
+    hour is the morning, except 12."""
+    return _minute_of(WORK_START.search(text), evening=False)
+
+
+def _minute_of(found: re.Match[str] | None, *, evening: bool) -> int | None:
     if not found:
         return None
     raw = found.group("time").casefold().replace(" ", "").replace(".", ":")
@@ -140,7 +159,7 @@ def parse_work_end(text: str) -> int | None:
     minute = int(minute_text) if minute_text.isdigit() else 0
     if hour is None or not 0 <= minute <= 59:
         return None
-    if meridiem == "pm" and hour < 12 or not meridiem and 1 <= hour <= 11:
+    if meridiem == "pm" and hour < 12 or not meridiem and evening and 1 <= hour <= 11:
         hour += 12
     return hour * 60 + minute if 0 <= hour <= 23 else None
 
@@ -165,6 +184,7 @@ _SLOTS = (
     ("work", re.compile(r"\b(?:i work (?:at|for|as)|i'm working (?:at|for)|i am working (?:at|for)|my job is|"
                         r"i'm employed (?:at|by))\b", re.IGNORECASE)),
     ("work_end", WORK_END),
+    ("work_start", WORK_START),
 )  # fmt: skip
 
 
@@ -255,6 +275,10 @@ def work_end_sentence(minute: int) -> str:
     return f"Okay, you stop work at {clock_words(minute)}. After that I'll hold offers and suggestions until morning."
 
 
+def work_start_sentence(minute: int) -> str:
+    return f"Okay, you start work at {clock_words(minute)}."
+
+
 def kept_sentence(entry: dict[str, Any]) -> str:
     """What Heliox says once it has kept ``entry``: its own sentence where the rule that kept it knows the shape (the
     end of the working day, anything the person said about themselves), the person's words in quotes where it does
@@ -262,6 +286,8 @@ def kept_sentence(entry: dict[str, Any]) -> str:
     minute = entry.get("minute")
     if entry.get("slot") == "work_end" and isinstance(minute, int):
         return work_end_sentence(minute)
+    if entry.get("slot") == "work_start" and isinstance(minute, int):
+        return work_start_sentence(minute)
     text = str(entry.get("text", ""))
     fact = spoken_fact(text)
     return f"Okay, {fact}." if fact else f'Remembered: "{_SAID_ON.sub("", text)}".'
@@ -492,10 +518,10 @@ class UserProfile:
         entry = {"id": uuid.uuid4().hex[:10], "text": text, "at": max(self._clock(), newest + 1e-6), **extra}
         if slot:
             entry["slot"] = slot
-        if slot == "work_end":
-            minute = parse_work_end(text)
+        if slot in ("work_end", "work_start"):
+            minute = parse_work_end(text) if slot == "work_end" else parse_work_start(text)
             if minute is not None:
-                entry["minute"] = minute  # read by pilot.personal.wiring.quiet_now: no offers after it
+                entry["minute"] = minute  # quiet_now (no offers after the end); the day's offers (offers.day_moments)
         items.append(entry)
         # One memory label per slot, or per entry: a shared label made each new entry supersede every other one.
         await self._mirror_add(profile, entry["id"], f"profile:{kind}:{slot or entry['id']}", text)
@@ -536,8 +562,15 @@ class UserProfile:
 
     def work_end_minute(self) -> int | None:
         """When the person said their working day ends, in minutes after midnight, or None."""
+        return self._slot_minute("work_end")
+
+    def work_start_minute(self) -> int | None:
+        """When the person said their working day starts, in minutes after midnight, or None."""
+        return self._slot_minute("work_start")
+
+    def _slot_minute(self, slot: str) -> int | None:
         for item in self._load()["about"]:
-            if item.get("slot") == "work_end" and isinstance(item.get("minute"), int):
+            if item.get("slot") == slot and isinstance(item.get("minute"), int):
                 return int(item["minute"])
         return None
 
@@ -682,6 +715,15 @@ class UserProfile:
             except ValueError as exc:
                 return str(exc)
             return work_end_sentence(minute)
+        if WORK_START_REQUEST.match(normalized):
+            minute = parse_work_start(raw)
+            if minute is None:
+                return None
+            try:
+                await self.add("about", _clean(_strip_lead(raw).rstrip(".!")))
+            except ValueError as exc:
+                return str(exc)
+            return work_start_sentence(minute)
         if CLEAR_REQUEST.match(normalized):
             removed = await self.clear()
             return "Done, I've forgotten what I knew about you." if removed else "I didn't have anything about you."
