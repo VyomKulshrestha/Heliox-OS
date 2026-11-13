@@ -401,7 +401,7 @@ def test_the_warm_up_and_synthesis_tables():
 
 
 def test_every_mode_is_named():
-    assert voice_latency.MODES == ("full", "first-utterance", "warm-up", "synthesis", "voice-released")
+    assert voice_latency.MODES == ("full", "first-utterance", "warm-up", "synthesis", "voice-released", "text-replay")
 
 
 def test_the_layers_warm_up_done_stamp_counts_as_finished_only_when_the_connection_answered():

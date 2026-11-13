@@ -60,6 +60,8 @@ Modes (``--mode``), so each measurement others depend on is one command and its 
   idle release runs, forced: no five-minute wait). Each row: last word to first sound, which voice spoke the reply
   and by which branch of the voice rule (local, store or system; ready, loaded_within_grace, system_still_loading
   and the rest), and when the local voice was back after the release, from the manager's own load stamps.
+- ``text-replay``: no audio stack at all: the words are given to the server as text, the conversation layer and
+  the provider are real, the voice is a model (text_replay.py, which takes the arguments it knows from here).
 - ``synthesis``: the same turns as ``full``, reported as the time from the first sentence handed to the voice to its
   first sound, by the first sentence's length in words.
 """
@@ -129,7 +131,7 @@ MODEL_TURNS = (
 )
 MODEL_TURN_VOICES = (("af_bella", 1.0), ("am_michael", 1.0), ("bm_lewis", 1.0))
 MODEL_TURN_FOLDER = "model_turns"
-MODES = ("full", "first-utterance", "warm-up", "synthesis", "voice-released")
+MODES = ("full", "first-utterance", "warm-up", "synthesis", "voice-released", "text-replay")
 HEARING = ("hearing_loading", "hearing_ready", "hearing_not_ready")
 LENGTHS = ((1, 4), (5, 8), (9, 12), (13, 10_000))  # words in the first sentence
 
@@ -873,6 +875,12 @@ def run_and_leave(main: Any, grace_s: float = 20.0) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    given = sys.argv[1:] if argv is None else argv
+    if "text-replay" in given and "--mode" in given and given[given.index("--mode") + 1 :][:1] == ["text-replay"]:
+        from . import text_replay
+
+        at = given.index("--mode")
+        return text_replay.main(given[:at] + given[at + 2 :])
     parser = argparse.ArgumentParser(prog="python -m benchmarks.conversation_bench.voice_latency")
     parser.add_argument("--root", default=None, help="the bench root (default HELIOX_BENCH_ROOT)")
     parser.add_argument("--audio", default=None)

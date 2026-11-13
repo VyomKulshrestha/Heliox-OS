@@ -267,6 +267,18 @@ def publish(results: Path, summary: str | None, text: str) -> None:
             fh.write(text + "\n")
 
 
+def comparison_note(name: str, values: list[str]) -> list[str]:
+    """For a comparison run, the summary's first lines say what its CHECK lines describe (pure)."""
+    if not name:
+        return []
+    return [
+        f"**A settings comparison ({name} = {', '.join(values)}).** Its CHECK lines and the stage table below are "
+        f"scored on the first setting only ({name}={values[0]}), not on the recommended set-up; the comparison "
+        "tables give each setting's figures.",
+        "",
+    ]
+
+
 def save(
     results: Path,
     args: argparse.Namespace,
@@ -320,6 +332,7 @@ def save(
     text = "\n".join([
         f"### Conversation Bench timing lines: {note}",
         "",
+        *comparison_note(name, compare_settings.parse(args.settings)[1]),
         "These numbers are for a small CPU-only machine with nothing else running and synthetic voices. They say "
         "how long Heliox's own stages take on such a machine; they do not say how the owner's laptop or voice "
         "behaves (another CPU, other load, a GPU, a real microphone and speaker, a real voice).",
