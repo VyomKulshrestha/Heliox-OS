@@ -27,6 +27,14 @@ from pilot.system.gpu_arbiter import (
     visible_from_env,
 )
 
+
+@pytest.fixture(autouse=True)
+def _cards_visible(monkeypatch):
+    """The suite hides every card (conftest: CUDA_VISIBLE_DEVICES=-1); these tests decide over made-up cards, so the
+    variable is unset here unless a test sets it itself."""
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+
 GNOMON = Needs(gpu_bytes=int(3.5 * GIB), host_bytes=int(2.5 * GIB), requires_cuda=True)
 VOICE = gpu_arbiter.VOICE_NEEDS
 

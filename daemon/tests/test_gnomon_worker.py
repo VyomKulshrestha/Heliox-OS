@@ -168,6 +168,7 @@ async def _until(predicate, timeout: float = 3.0) -> bool:
 
 @pytest.fixture(autouse=True)
 def _fast_restarts(monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)  # made-up cards: unhide what the suite hides
     monkeypatch.setattr(gnomon_worker, "RESTART_BASE_SECONDS", 0.2)
 
 

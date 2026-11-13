@@ -14,7 +14,21 @@ _spec = importlib.util.spec_from_file_location("folder_guard", Path(__file__).wi
 folder_guard = sys.modules.setdefault("folder_guard", importlib.util.module_from_spec(_spec))
 if not hasattr(folder_guard, "install"):
     _spec.loader.exec_module(folder_guard)
-folder_guard.install()
+_session = folder_guard.install()
+
+# The person's graphics card is not the suite's: no test may need it or disturb it. On the owner's laptop a whole
+# suite run fell inside a batch of NVIDIA driver faults (13 November). Before any import, every card is hidden from
+# this process and from every process a test starts (Kokoro, Whisper through CTranslate2, PyTorch and sherpa-onnx all
+# honour it, and the product reads it as "every card hidden"), unless HELIOX_TEST_GPU=1 asks for the card on purpose.
+if os.environ.get("HELIOX_TEST_GPU") != "1":
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # not "": Windows drops an empty variable from a child process
+# The Hugging Face cache is the session folder's, so no test loads a real model (Whisper, Kokoro, an embedding model)
+# from the person's cache by accident, onto any device. The opt-in model tests (HELIOX_REAL_VOICE_MODELS=1) keep it.
+if os.environ.get("HELIOX_REAL_VOICE_MODELS") != "1":
+    for _name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "SENTENCE_TRANSFORMERS_HOME"):
+        os.environ.pop(_name, None)
+    os.environ["HF_HOME"] = str(_session / "huggingface")
+    os.environ["HF_HUB_OFFLINE"] = "1"  # and nothing is fetched into it
 
 from pilot.config import PilotConfig  # noqa: E402
 
