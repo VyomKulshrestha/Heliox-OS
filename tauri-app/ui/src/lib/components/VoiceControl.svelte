@@ -238,6 +238,33 @@
   // The recognisers' first inference after start (hearing_loading .. hearing_ready): a sentence said now is heard once
   // they are warm, so the bar says so instead of looking deaf.
   let warmingEars = $state("");
+  // The microphone fault on the bar now ("" when none): it is cleared only by microphone_recovered.
+  let micFault = $state("");
+
+  /** The daemon's one readiness answer (health's ready.hears), read on connecting: a window opened after the
+   * listener started shows what the events before it said. */
+  async function readHearing() {
+    try {
+      const health = (await call("health")) as { ready?: { hears?: { state?: string; reason?: string } } };
+      const hears = health?.ready?.hears;
+      if (!hears) return;
+      if (hears.state === "loading" && !micFault) warmingEars = hears.reason || "Getting ready to listen…";
+      else if (hears.state === "fault" && hears.reason) {
+        if (micFault !== hears.reason) showDeviceNotice(hears.reason);
+        micFault = hears.reason;
+        warmingEars = "";
+      } else if (hears.state === "on" || hears.state === "off") {
+        // Heard, or not listening at all: nothing is loading. A missed hearing_ready never leaves the bar waiting.
+        warmingEars = "";
+        if (hears.state === "on" && micFault) {
+          micFault = "";
+          showDeviceNotice("");
+        }
+      }
+    } catch {
+      // An older daemon, or not connected yet: the events still say it.
+    }
+  }
   let inCall = $state("");
   // The microphone or speakers failed or changed: what Heliox is doing about it (cleared when sound flows again).
   let deviceNotice = $state("");
@@ -371,7 +398,8 @@
       return;
     }
     if (status === "hearing_loading") {
-      warmingEars = String(payload.message ?? "") || "Getting ready to listen…";
+      // A microphone fault already on the bar says why nothing is heard; "getting ready" would contradict it.
+      if (!micFault) warmingEars = String(payload.message ?? "") || "Getting ready to listen…";
       return;
     }
     if (status === "hearing_ready") {
@@ -379,8 +407,9 @@
       return;
     }
     if (status === "hearing_not_ready") {
-      // A sentence came before Heliox could hear: it was not taken, and the person is asked to say it again.
-      showDeviceNotice(String(payload.message ?? ""), 8000);
+      // A sentence came before Heliox could hear: it was not taken, and the person is asked to say it again. Not
+      // while the microphone has a fault: the fault message stays, since saying it again would not help.
+      if (!micFault) showDeviceNotice(String(payload.message ?? ""), 8000);
       return;
     }
     if (status === "in_call") {
@@ -392,7 +421,10 @@
       return;
     }
     if (status === "microphone_problem") {
-      showDeviceNotice(String(payload.message ?? "") || "The microphone stopped; reopening it.");
+      // The fault wins over "Getting ready to listen…": loading never ends on the bar while the microphone is down.
+      micFault = String(payload.message ?? "") || "The microphone stopped; reopening it.";
+      warmingEars = "";
+      showDeviceNotice(micFault);
       return;
     }
     if (status === "recogniser_missing") {
@@ -440,6 +472,7 @@
       showDeviceNotice(String(payload.message ?? ""), 6000);
       return;
     }
+    if (status === "microphone_recovered") micFault = "";
     if (status === "microphone_recovered" || status === "speaker_changed" || status === "voice_on_cpu") {
       showDeviceNotice(String(payload.message ?? ""), 6000);
       return;
@@ -538,9 +571,14 @@
   onMount(() => {
     window.addEventListener("heliox:voice-command-request", handleVoiceCommandRequest);
     void ensureContinuousListener();
+    void readHearing();
     // Re-arm after a daemon restart or transient disconnect. The persisted
-    // preference remains false when the user explicitly turns listening off.
-    listenerHealthTimer = setInterval(() => void ensureContinuousListener(), 5_000);
+    // preference remains false when the user explicitly turns listening off. The daemon's readiness is read with it,
+    // so the bar never stays on "Getting ready to listen…" after the listener stopped or warmed unseen.
+    listenerHealthTimer = setInterval(() => {
+      void ensureContinuousListener();
+      void readHearing();
+    }, 5_000);
   });
 
   async function submitVoiceCommand(text: string) {

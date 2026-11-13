@@ -1244,9 +1244,28 @@ Return daemon-process health: uptime, RSS memory, active WebSocket connections,
 loaded agent roles, and how many tasks the event loop holds (the weekly soak watches it for leaks).
 
 **Params:** `{}`
-**Result:** `{ "uptime": 42.1, "memory_usage_mb": 180.4, "active_connections": 1, "loaded_agents": [...], "event_loop_tasks": 57, "last_run": null }`
+**Result:** `{ "uptime": 42.1, "memory_usage_mb": 180.4, "active_connections": 1, "loaded_agents": [...], "event_loop_tasks": 57, "last_run": null, "ready": { "answers": {...}, "hears": {...}, "speaks": {...} } }`
 
 `last_run` is `null` when the last run ended cleanly, as in `startup_status`.
+
+`ready` is the one answer to "can Heliox take a request, hear me and speak now": three parts, each
+`{ "ok": bool, "state": "...", "reason": "..." }` with the reason in the words the person sees (`""` when ok).
+The voice bar reads it on opening and every five seconds.
+
+- `answers`: the daemon takes requests and its own handlers answer. `"starting"` (reason
+  `"Starting: <stage>"`) until start-up is done, then `"on"`. A language model is not part of it: with no model
+  configured, `answers` is still `"on"` (Heliox's own handlers answer: reminders, timers, to-dos, undo, the time),
+  and a request that needs a model is told why at that request.
+- `hears`: `"off"` when listening is off or never started (no microphone, or the person turned it off),
+  `"loading"` ("Getting ready to listen…") while the recognisers have their first inference (the listener's
+  own flag, `get_stats()["hears"]`), `"fault"` with the microphone message while the microphone has a fault
+  (it wins over loading), `"on"` otherwise. A recogniser that failed its warm-up still counts as done; its own
+  status says what is missing.
+- `speaks`: `"on"` when the chosen voice can make sound now: the system voice always, a local voice once
+  loaded; `"loading"` ("Getting my voice ready…") while a local voice loads; `"not_loaded"` before a local
+  voice's first sentence; `"system_voice"` (ok) while a failed local voice is replaced by the system voice.
+  Whether a speaker is attached is not known here: with no sound output, `speaks` can be `"on"`; a changed
+  output device is said by `speaker_changed`.
 
 #### `ready`
 Return `{ "ready": true }` only when start-up has finished, the orchestrator has registered agents

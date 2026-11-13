@@ -11477,7 +11477,57 @@ class PilotServer:
             "loaded_agents": loaded_agents,
             "event_loop_tasks": len(asyncio.all_tasks()),  # the weekly soak watches this for leaks
             "last_run": self._last_run_summary(),  # None when the last run ended cleanly
+            "ready": self._readiness(),
         }
+
+    def _readiness(self) -> dict[str, dict[str, Any]]:
+        """Whether Heliox answers, hears and speaks now: each {"ok", "state", "reason"}, the reason in the words the
+        person sees ("" when ok). The one place a client reads it (health, and the voice bar on connecting).
+
+        answers: the daemon takes requests and its own handlers answer ("starting" until start-up is done). A
+          language model is not part of it: whether one can be reached is found per request and said then.
+        hears: the listener runs and every recogniser has had its first inference (the listener's own flag,
+          get_stats()["hears"]) and the microphone has no fault ("off", "loading", "fault", "on").
+        speaks: Heliox's chosen voice can make sound now: the system voice always, a local voice once loaded
+          ("loading" while it loads, "not_loaded" before its first sentence, "system_voice" while a failed local voice
+          is replaced by the system voice). Whether a speaker is attached is not known here; a changed output device
+          is said by its own status."""
+        startup = getattr(self, "_startup", None)
+        if startup is not None and not startup.is_ready:
+            stage = str(startup.snapshot().get("stage") or "")
+            answers = {"ok": False, "state": "starting", "reason": f"Starting: {stage}" if stage else "Starting"}
+        else:
+            answers = {"ok": True, "state": "on", "reason": ""}
+
+        listener = self._voice_listener
+        running = bool(listener is not None and getattr(listener, "is_running", False))
+        notice = str(getattr(listener, "capture_notice", "") or "") if running else ""
+        if not running:
+            hears = {"ok": False, "state": "off", "reason": "Voice listening is off."}
+        elif notice:
+            hears = {"ok": False, "state": "fault", "reason": notice}
+        elif not bool(listener.get_stats().get("hears")):
+            hears = {"ok": False, "state": "loading", "reason": "Getting ready to listen…"}
+        else:
+            hears = {"ok": True, "state": "on", "reason": ""}
+
+        from pilot.system import local_tts_worker
+
+        voice = local_tts_worker.local_voice_state(self.config.voice)
+        manager = local_tts_worker._manager
+        if voice["voice_loaded"]:
+            speaks = {"ok": True, "state": "on", "reason": ""}
+        elif voice["voice_loading"]:
+            speaks = {"ok": False, "state": "loading", "reason": "Getting my voice ready…"}
+        elif getattr(manager, "_failed_until", None) is not None:
+            speaks = {
+                "ok": True,
+                "state": "system_voice",
+                "reason": "Heliox's own voice is not working, so the system voice speaks.",
+            }
+        else:
+            speaks = {"ok": False, "state": "not_loaded", "reason": "Heliox's voice loads when it first speaks."}
+        return {"answers": answers, "hears": hears, "speaks": speaks}
 
     async def _handle_ready(self, params: dict[str, Any], ws: ServerConnection) -> dict[str, Any]:
         """Check if all agents are fully initialized and ready.
