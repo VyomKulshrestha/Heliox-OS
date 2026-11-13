@@ -565,6 +565,7 @@ class HttpFastModel(_StreamingBase):
         self.calls.append(record)
         usage = _Usage()
         finished = False
+        refused = False
         kind = ""
         try:
             import httpx
@@ -574,12 +575,14 @@ class HttpFastModel(_StreamingBase):
             timeout = httpx.Timeout(self.request_timeout, connect=LOCAL_CONNECT_TIMEOUT if self.local else 10.0)
             async with self._client.stream("POST", url, json=body, headers=headers, timeout=timeout) as resp:
                 if resp.status_code != 200:
+                    refused = True  # the provider answered with an error: nothing was generated, nothing billed
                     await resp.aread()
                     resp.raise_for_status()
                 kind = str(getattr(resp, "headers", {}).get("content-type", "") or "").split(";")[0].strip().casefold()
                 if kind in PAGE_CONTENT_TYPES:
                     # A Wi-Fi sign-in page (or any proxy's own page) answers 200 with HTML: not the provider. Said
                     # as such, like a network that is down, instead of being read as an empty reply.
+                    refused = True  # the provider never saw the request
                     self.hold(OFFLINE_HOLD_SECONDS, "not_api")
                     raise FastModelUnavailable("not_api", f"not from the API ({kind})")
                 async for line in resp.aiter_lines():
@@ -612,7 +615,12 @@ class HttpFastModel(_StreamingBase):
             raise FastModelUnavailable(reason, type(error).__name__) from None
         finally:
             record.ended_at = self.clock()
-            if not self.local:
+            if refused:
+                # An error answer (a 4xx or 5xx) or a page that is not the provider: no tokens were generated, so
+                # nothing is booked. Until 14 November it went through the abandoned-call estimate, which charged
+                # about 100 output tokens a second for the time the request was open (a refused Gemini call: 76).
+                record.usage_source = "refused"
+            elif not self.local:
                 await self._record(record, usage, body, finished)
             elif usage.reported or record.chars:
                 # A local model costs nothing, but its calls are counted like any other (at zero).
