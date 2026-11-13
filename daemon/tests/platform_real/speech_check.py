@@ -10,7 +10,14 @@ duration of the AIFF; Linux: the WAV is read with ``wave``).
 ``no-voice`` runs ``voice._tts_linux`` three times on a runner where neither espeak-ng nor espeak is installed:
 each call must return the "no voice available" message, and the log must hold that message exactly once.
 
-Each check prints one ``CHECK`` line; the exit code is the number of failed checks.
+macOS, when Heliox's own call writes no sound: the same text goes through a plain ``say -o`` (no rate, no voice,
+the system's defaults) to tell the two cases apart. If the plain call writes sound, Heliox's call is wrong and the
+check FAILS, as it would on a person's Mac. If the plain call writes none either, this runner cannot make speech
+(the macos-26 images wrote a 4332-byte AIFF header and nothing else on 49bd35f and 5a3a9b3, where the macos-15
+image of e51aead wrote 2.14 s), and the check SKIPS with that reason and the voices ``say -v '?'`` lists.
+
+Each check prints one ``CHECK`` line (PASS, FAIL, or SKIP with its reason); the exit code is the number of failed
+checks, so a FAIL fails the step and a SKIP does not.
 """
 
 from __future__ import annotations
@@ -38,6 +45,22 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
+def skip(name: str, reason: str) -> None:
+    print(f"CHECK {name}: SKIP - {reason}", flush=True)
+
+
+def aiff_seconds(path: Path) -> float:
+    """The duration ``afinfo`` reads from an AIFF file, 0 when it reads none."""
+    if not path.exists():
+        return 0.0
+    info = subprocess.run(["afinfo", str(path)], capture_output=True, text=True, check=False).stdout
+    duration = next((line.split(":", 1)[1].strip() for line in info.splitlines() if "estimated duration" in line), "")
+    try:
+        return float(duration.split()[0]) if duration else 0.0
+    except ValueError:
+        return 0.0
+
+
 def wav_facts(path: Path) -> tuple[float, int]:
     """(seconds, the largest absolute 16-bit sample) of a WAV file."""
     import array
@@ -60,16 +83,30 @@ def speak() -> None:
         out = folder / "heliox-say.aiff"
         out.unlink(missing_ok=True)
         result = one_loop.run(voice._tts_macos(TEXT, None, 180, str(out)))
-        info = subprocess.run(["afinfo", str(out)], capture_output=True, text=True, check=False).stdout
-        duration = next(
-            (line.split(":", 1)[1].strip() for line in info.splitlines() if "estimated duration" in line), ""
-        )
-        seconds = float(duration.split()[0]) if duration else 0.0
-        check(
-            "speech-macos/say-writes-audio",
-            out.exists() and seconds >= 0.5,
-            f"{result}; {seconds:.2f} s, {out.stat().st_size if out.exists() else 0} bytes",
-        )
+        seconds = aiff_seconds(out)
+        detail = f"{result}; {seconds:.2f} s, {out.stat().st_size if out.exists() else 0} bytes"
+        if seconds >= 0.5:
+            check("speech-macos/say-writes-audio", True, detail)
+            return
+        plain = folder / "heliox-say-plain.aiff"
+        plain.unlink(missing_ok=True)
+        subprocess.run(["say", "-o", str(plain), TEXT], capture_output=True, check=False, timeout=60)
+        plain_seconds = aiff_seconds(plain)
+        listed = subprocess.run(["say", "-v", "?"], capture_output=True, text=True, check=False).stdout.splitlines()
+        voices = f"say -v '?' lists {len(listed)} voice(s){': ' + listed[0].split('#')[0].strip() if listed else ''}"
+        if plain_seconds >= 0.5:
+            # The system can speak to a file and Heliox's call did not: a fault a person's Mac would have too.
+            check(
+                "speech-macos/say-writes-audio",
+                False,
+                f"{detail}; a plain say -o wrote {plain_seconds:.2f} s; {voices}",
+            )
+        else:
+            skip(
+                "speech-macos/say-writes-audio",
+                f"this runner writes no speech to a file even for a plain say -o ({plain_seconds:.2f} s, "
+                f"{plain.stat().st_size if plain.exists() else 0} bytes); {voices}; Heliox's call: {detail}",
+            )
         return
     out = folder / "heliox-espeak.wav"
     out.unlink(missing_ok=True)

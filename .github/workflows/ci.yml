@@ -426,19 +426,28 @@ jobs:
       # What a first-day person meets beyond typing: the screen read without a desktop's own OCR, the fallback voice,
       # notifications, a GTK 4 app and Firefox, a control with no accessibility action, an app that hangs, and a
       # protected folder named in another case. "Before" checks run before their package is installed.
+      # The system voice is what a person without Kokoro hears: its checks fail the job when they fail. A runner that
+      # cannot make speech at all says SKIP and why (speech_check.py), which does not fail it.
+      - name: Speech - the system voice to a file (Linux without and with espeak-ng; macOS say)
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            python tests/platform_real/speech_check.py no-voice
+            sudo apt-get install -y -q --no-install-recommends espeak-ng
+          fi
+          python tests/platform_real/speech_check.py speak
+
       - name: Linux, X11 - OCR, speech, notifications, GTK 4 and Firefox, a centre click, a hung app, a protected folder
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         continue-on-error: true
         run: |
           set +e
           failed=0
-          python tests/platform_real/speech_check.py no-voice || failed=$((failed + 1))
           python tests/platform_real/notify_check.py missing || failed=$((failed + 1))
           python tests/platform_real/protected_case_check.py || failed=$((failed + 1))
           sudo apt-get install -y -q --no-install-recommends tesseract-ocr scrot espeak-ng libnotify-bin dunst \
             gir1.2-gtk-4.0 openbox
           pip install -q pyautogui
-          python tests/platform_real/speech_check.py speak || failed=$((failed + 1))
           dbus-run-session -- bash -c '
             Xvfb :97 -screen 0 1280x800x24 >/tmp/xvfb-more.log 2>&1 &
             export DISPLAY=:97 GTK_A11Y=atspi
@@ -647,7 +656,6 @@ jobs:
           brew install tesseract >/dev/null 2>&1 || echo "tesseract could not be installed; its route is not run"
           "$RUNNER_TEMP/no-pyobjc/bin/python" tests/platform_real/ocr_check.py mac-fallback "$RUNNER_TEMP/line.png" \
             || failed=$((failed + 1))
-          python tests/platform_real/speech_check.py speak || failed=$((failed + 1))
           python tests/platform_real/notify_check.py shown || failed=$((failed + 1))
           python tests/platform_real/protected_case_check.py || failed=$((failed + 1))
           python tests/platform_real/click_hang_check.py || failed=$((failed + 1))
