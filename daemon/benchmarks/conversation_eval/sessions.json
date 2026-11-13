@@ -252,7 +252,7 @@
      "expect": {
       "taken": true,
       "runs": [
-       "keyboard_press"
+       "volume_set"
       ],
       "model": false
      }
@@ -263,7 +263,7 @@
      "expect": {
       "taken": true,
       "runs": [
-       "keyboard_press"
+       "volume_set"
       ],
       "model": false
      }
@@ -274,7 +274,7 @@
      "expect": {
       "taken": true,
       "runs": [
-       "keyboard_press"
+       "volume_set"
       ],
       "model": false
      }
