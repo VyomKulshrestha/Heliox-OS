@@ -149,6 +149,8 @@ export interface PilotSettings {
   /** The conversation layer; only what the window shows. share_profile: what a cloud model is told about you. */
   conversation?: {
     share_profile?: "auto" | "off";
+    // A short "Mm." while a spoken answer is on its way (Acknowledge.svelte); on unless turned off.
+    acknowledge?: boolean;
     // The model that talks for each cloud provider ("" = its fast default; TalkModel.svelte).
     claude_model?: string;
     openai_model?: string;

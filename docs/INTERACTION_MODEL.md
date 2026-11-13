@@ -127,6 +127,29 @@ no sentence by 2 s. It is never said on the turn after one that had it, nor with
 turns of the 13 November bench run it would have fired twice, on the two slowest. Their first sound would have come
 1.5 and 1.85 s sooner, and the answer itself no later. A local model's first load always says its loading line once.
 
+**An acknowledgement while the answer is on its way** (`pilot.conversation.acknowledge`, `conversation.acknowledge`,
+in Settings under Voice; off by default until the sounds have been heard in the local voice). 0.45 s after the person's last word, on the model's road, Heliox says one of
+"Mm.", "Mhm.", "Hmm.", "Let me see.", "One sec." when nothing of the answer is ready. Never when the answer is ready:
+content always wins, an acknowledgement not yet started is dropped, and one playing is on a lower channel than the
+answer, which cuts it. The words commit to nothing: "okay", "right" or "sure" before "No, I can't do that" would
+contradict it, and before a request with an effect would sound like a promise.
+
+When it is not said:
+- on a typed turn, or a turn whose last word's time is unknown;
+- on control words, a turn of fewer than three words, a thanks or an acknowledgement;
+- on a statement;
+- on the turn after one that had it.
+
+A turn that had one gets no holding phrase. The set is provisional until the owner has heard the voice say it, and
+the default turns on in a later change with the sounds that survived. The speech store makes their audio ahead even
+while the setting is off (it gathers every fixed literal), so the first use after turning it on plays at once. On the
+11 model turns of the 13 November bench run (every answer at 2.05 to 3.75 s) it would have spoken on six, every other
+turn. Their first sound would have come at about 0.5 s, and the answers no later.
+
+Provisional answers (`pilot.conversation.provisional`) have no caller in the product: the listener never calls
+`provisional_voice_turn`, so they do nothing today. Starting them from the early final pass was measured at about
+0.05 s (0.15 s at most) and dropped.
+
 **The voice's first sound comes from the first clause.** Whatever hands it text, the local voice
 (`local_tts_worker.split_for_speech`) cuts a first sentence of more than 11 words at its first natural pause within
 nine words (after a comma, semicolon, colon or dash; else before "and", "but", "which" and the like from the fourth

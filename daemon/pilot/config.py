@@ -643,6 +643,10 @@ class ConversationConfig:
     share_profile: str = "auto"  # "auto" | "off"
     second_voice_guard: bool = False
     second_voice_threshold: int = 1  # 2 caught no single second voice; at 1 the cost alone is unmeasured
+    # A short "Mm." or "Let me see." about half a second after you stop talking, while a spoken answer from the model
+    # is on its way, and never when the answer is already ready (pilot.conversation.acknowledge). Off until the sounds
+    # have been heard in the local voice; a person can turn it on in Settings, Voice.
+    acknowledge: bool = False
 
 
 @dataclass
@@ -1436,6 +1440,7 @@ def _validate_config_types(raw: dict) -> None:
             "share_profile": str,
             "second_voice_guard": bool,
             "second_voice_threshold": int,
+            "acknowledge": bool,
         },
         "supervision": {
             "enabled": bool,
@@ -1862,6 +1867,9 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         threshold = c_raw.get("second_voice_threshold")
         if isinstance(threshold, int) and not isinstance(threshold, bool) and 1 <= threshold <= 10:
             config.conversation.second_voice_threshold = threshold
+        acknowledge = c_raw.get("acknowledge")
+        if isinstance(acknowledge, bool):
+            config.conversation.acknowledge = acknowledge
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]
