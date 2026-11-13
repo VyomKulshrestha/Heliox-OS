@@ -806,6 +806,11 @@ def main(argv: list[str] | None = None) -> int:
     if not args.root:
         raise SystemExit(f"name the bench root with --root or {bench_root.ROOT_VARIABLE}")
     args.audio = audio_refs.audio_root(args.audio)
+    from pilot.real_folders import use_scratch_folders
+
+    # Every Heliox folder under the bench root before anything imports pilot.config; the Harness enters the same
+    # root again and checks every folder is inside it before it builds anything.
+    use_scratch_folders(Path(args.root))
     return run_and_leave(_main(args))
 
 

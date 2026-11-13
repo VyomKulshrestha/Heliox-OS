@@ -19,6 +19,17 @@ on:
         description: "Scenario id fragments, comma-separated (empty: the ones the compared setting can move, or all)"
         required: false
         default: ""
+      latency_mode:
+        description: "Run voice_latency in this mode instead of the timing lines (empty: the timing lines)"
+        required: false
+        type: choice
+        options: ["", "full", "first-utterance", "warm-up", "synthesis"]
+        default: ""
+      during_loading:
+        description: "With latency_mode first-utterance: speak while the listener is still loading"
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "17 3 * * 1" # Mondays 03:17 UTC
 
@@ -115,6 +126,7 @@ jobs:
           key: ${{ steps.audio-cache.outputs.cache-primary-key }}
 
       - name: Timing lines (load-checked before every scenario)
+        if: inputs.latency_mode == ''
         # Below the job's 150 minutes, so the summary, the timelines and the caches are still handled when it stops.
         # ci_timing refuses a comparison whose estimate does not fit in 90 % of this limit (LIMIT_MINUTES).
         timeout-minutes: 125
@@ -130,6 +142,33 @@ jobs:
           python -m benchmarks.conversation_bench.ci_timing --audio "$BENCH_AUDIO"
           --results "$RUNNER_TEMP/conversation-timing" --limit-minutes "$LIMIT_MINUTES"
           --settings "$COMPARE_SETTINGS" --repeats "${COMPARE_REPEATS:-0}" --only "$COMPARE_ONLY"
+
+      # Instead of the timing lines when latency_mode is chosen: last word to first sound in the named mode, on the
+      # synthetic voices only (u-syn scenarios, and the model-turn questions it renders into HELIOX_BENCH_ROOT with
+      # the local voice), stub talk model, no provider and no key. Its table goes to the job summary.
+      - name: Voice latency mode (synthetic voices, stub model)
+        if: inputs.latency_mode != ''
+        timeout-minutes: 60
+        env:
+          HF_HUB_OFFLINE: "1"
+          PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+          LATENCY_MODE: ${{ inputs.latency_mode }}
+          LATENCY_LOADING: ${{ inputs.during_loading && '--during-loading' || '' }}
+          LATENCY_ONLY: ${{ inputs.only || 'u-syn' }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/conversation-timing"
+          python -m benchmarks.conversation_bench.voice_latency --root "$HELIOX_BENCH_ROOT" --audio "$BENCH_AUDIO" \
+            --mode "$LATENCY_MODE" $LATENCY_LOADING --only "$LATENCY_ONLY" --model-turns 6 --wait-quiet 2 \
+            --out "$RUNNER_TEMP/conversation-timing/voice_latency.json" \
+            | tee "$RUNNER_TEMP/conversation-timing/voice_latency.txt"
+          {
+            echo "### Voice latency, mode $LATENCY_MODE (synthetic voice, GitHub runner, CPU only, stub model)"
+            echo
+            echo '```'
+            tail -n 120 "$RUNNER_TEMP/conversation-timing/voice_latency.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # The summary is written after every repeat, so a stopped run still reports the repeats it finished.
       - name: Summary

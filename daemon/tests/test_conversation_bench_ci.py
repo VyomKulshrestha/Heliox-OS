@@ -236,3 +236,24 @@ def test_the_workflow_saves_its_caches_before_the_long_step_and_always_shows_the
     summary = text[text.index("- name: Summary") :]
     assert "if: always()" in summary.split("- name:")[1] and "summary.md" in summary
     assert '--only "$COMPARE_ONLY"' in text and "COMPARE_ONLY: ${{ inputs.only }}" in text
+
+
+def _step(text: str, name: str) -> str:
+    """One step's text in the workflow, from its "- name:" line to the next step's."""
+    start = text.index(f"      - name: {name}\n")
+    end = text.find("\n      - ", start + 1)
+    return text[start : end if end != -1 else len(text)]
+
+
+def test_a_latency_mode_runs_instead_of_the_timing_lines_on_synthetic_voices_only():
+    # Read as text (PyYAML is not a dependency of the test run); the YAML itself is parsed before every hand-over.
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert 'options: ["", "full", "first-utterance", "warm-up", "synthesis"]' in text
+    timing = _step(text, "Timing lines (load-checked before every scenario)")
+    latency = _step(text, "Voice latency mode (synthetic voices, stub model)")
+    assert "if: inputs.latency_mode == ''" in timing and "if: inputs.latency_mode != ''" in latency
+    run = latency[latency.index("run: |") :]
+    assert "${{" not in run  # the typed inputs reach the command through the environment, never pasted into it
+    assert "LATENCY_ONLY: ${{ inputs.only || 'u-syn' }}" in latency
+    assert "--model configured" not in run and "--paid" not in run
+    assert text.index("- name: Voice latency mode") < text.index("- name: The local voice on this runner")
