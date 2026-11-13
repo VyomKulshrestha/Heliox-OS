@@ -79,11 +79,9 @@ async def test_a_reply_does_not_wait_for_a_cold_load_and_the_next_one_is_in_heli
     worker, statuses = SlowWorker(), []
     manager = manager_for(worker, statuses)
     play = AsyncMock()
-    loop = asyncio.get_running_loop()
-    started = loop.time()
     with pytest.raises(LocalVoiceNotReady):
         await manager.speak("kokoro_tts", "It's 10:42.", "af_heart", None, play)
-    assert loop.time() - started < local_tts_worker.LOAD_GRACE_SECONDS + 0.5  # it did not wait for the load
+    assert not worker.loaded.is_set()  # handed back while the load was still held: it did not wait for it
     play.assert_not_awaited()
     assert not manager.failing
     assert statuses == ["voice_loading"]  # the bar says the voice is getting ready; the system voice speaks
