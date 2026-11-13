@@ -1149,10 +1149,13 @@ the reply is "cancelled":
 - watching or recording the person: Heliox Live's reading, listening and screen reading, clipboard history, the
   activity timeline, supervision of the screen and of every key and click, the camera's gaze tracking, a workflow
   recording (every time it starts), and a folder added to the search index;
-- running somewhere else: a new SSH host or one moved to another address, its host key check off, SSH turned on, and
-  letting paired phones send requests or start status checks without the person;
-- the person's data: emptying a store, clearing undo history, restoring a backup, undoing a task (listing what it
-  puts back), and the co-adaptation study's consent (in the consent sheet's own words);
+- running somewhere else, or letting another device in: a new SSH host or one moved to another address, its host
+  key check off, SSH turned on; the phone receiver turned on, every phone pairing, and letting paired phones send
+  requests or start status checks without the person; the peer mesh turned on, a new shared secret, plugins from
+  connected computers, and their steps running here;
+- the person's data and limits: emptying a store, clearing undo history, restoring a backup, undoing a task
+  (listing what it puts back), the co-adaptation study's consent (in the consent sheet's own words), deleting this
+  month's spending record (which resets the monthly limit), and new planning instructions taking effect;
 - every plan step that needs approval, as before, and a plugin tool, which runs only as an approved plan step.
 Turning any of these back off, or narrowing a protection, is never asked about and never waits behind a dialog.
 Nothing the daemon does by itself at start-up waits on one either.

@@ -1472,7 +1472,7 @@ normal execution or promotion gates.
 | `strategy_propose` / `strategy_reflect` | Create inert strategy candidates |
 | `strategy_record_isolated` / `strategy_start_shadow` / `strategy_record_shadow` | Supply isolated and shadow evidence |
 | `strategy_start_canary` / `strategy_record_canary` | Start and record an explicitly consented canary |
-| `strategy_promote` / `strategy_rollback` | Exact-ID human promotion or reversible rollback |
+| `strategy_promote` / `strategy_rollback` | Exact-ID human promotion or reversible rollback. Promotion asks first in the daemon's approval dialog, showing the new instructions; the client's `actor`, `confirmation` and reported scores are not the approval, and a no returns `{ "status": "cancelled" }`. Rollback is free |
 | `evolution_status` / `evolution_runs` / `evolution_candidates` | Inspect the isolated engineering harness |
 | `evolution_create_run` / `evolution_generate_candidates` / `evolution_evaluate` | Create and evaluate two-to-eight inert patches in detached Docker worktrees |
 | `evolution_request_promotion` | Archive an exact-candidate promotion request for external review; it cannot merge or push |
@@ -3343,8 +3343,9 @@ Return the cloud models Settings offers, per provider, as checked against each p
 **Result:** `{ "status": "ok", "read_on": "2026-11-13", "providers": { "<provider>": { "planner_default": "...", "talk_default": "...", "offered": ["..."], "withdrawn": { "<model>": { "state": "deprecated|retired|unlisted", "successor": "...", "date": "YYYY-MM-DD", "says": "..." } }, "sources": [{ "url": "...", "read_on": "..." }] } } }`
 
 #### `budget_reset`
-Delete current-month token-usage records. This is a destructive settings
-operation in the UI even though it does not affect task memory.
+Delete current-month token-usage records, which resets the monthly spending limit.
+The daemon asks first in its approval dialog, saying how much was spent and the limit
+it resets; a no returns `{ "status": "cancelled", "message": "Nothing was deleted." }`.
 
 #### `mesh_peers`
 Return connected LAN peers with hostname, execution capability, CPU load, and

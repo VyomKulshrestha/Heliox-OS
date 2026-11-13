@@ -13425,6 +13425,22 @@ class PilotServer:
     ) -> dict:
         if self._strategy_evolution is None:
             return {"status": "error", "message": "Strategy evolution is not initialized"}
+        # What the planner is told changes: the daemon asks, showing the new instructions. The client's "actor" and
+        # "confirmation", and the trial scores it reported, are requests, never the approval.
+        candidate = await self._strategy_evolution.get_candidate(str(params.get("candidate_id", "")))
+        if candidate is not None:
+            content = " ".join(str(candidate.content or "").split())
+            line = {
+                "action_type": "replace_data",
+                "target": f"Change how Heliox plans: {candidate.component}",
+                "description": f"New instructions ({len(content)} characters) replace the current ones for "
+                f'{candidate.component}: "{content[:240]}{"..." if len(content) > 240 else ""}". Their trial '
+                "scores were reported by the program that ran the trials, not measured by Heliox.",
+                "irreversible": False,
+                "undo": {"kind": "undoable", "reason": "You can roll it back to the previous instructions."},
+            }
+            if not await self._ask_about_data(ws, [line]):
+                return {"status": "cancelled", "message": "Nothing was changed."}
         assignment = await self._strategy_evolution.promote(
             str(params.get("candidate_id", "")),
             actor=str(params.get("actor", "")),
@@ -14828,6 +14844,19 @@ def handle_tool(tool_name, params):
         """
         if not self._budget_tracker:
             return {"status": "ok"}
+        # Forgetting what was spent resets the monthly limit: the daemon asks, saying how much and what it means.
+        spent = float(getattr(self._budget_tracker, "_monthly_cost", 0.0) or 0.0)
+        limit = float(self.config.model.budget_monthly_limit_usd)
+        line = {
+            "action_type": "delete_data",
+            "target": "Delete this month's spending record",
+            "description": f"Heliox forgets the ${spent:.2f} spent with language models so far this month, so the "
+            f"monthly limit of ${limit:.2f} starts again from nothing. This cannot be undone.",
+            "irreversible": True,
+            "undo": {"kind": "not_undoable", "reason": "Deleted data cannot be brought back by Heliox."},
+        }
+        if not await self._ask_about_data(ws, [line]):
+            return {"status": "cancelled", "message": "Nothing was deleted."}
         await self._budget_tracker.reset_current_month()
         return {"status": "ok"}
 

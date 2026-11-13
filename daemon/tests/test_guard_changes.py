@@ -827,3 +827,44 @@ async def test_letting_other_computers_in_or_giving_them_more_asks(monkeypatch):
     ]
     assert server._widenings_for("mesh_configure", {"enabled": False}) == []  # turning it off is free
     assert server._widenings_for("mesh_configure", {"enabled": True, "skill_sync_enabled": False}) == []
+
+
+@pytest.mark.asyncio
+async def test_forgetting_this_months_spending_asks_saying_what_it_resets(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    server.config.model.budget_monthly_limit_usd = 20.0
+    tracker = MagicMock(reset_current_month=AsyncMock())
+    tracker._monthly_cost = 3.5
+    server._budget_tracker = tracker
+
+    reply = await server._handle_budget_reset({}, _ws())
+
+    assert reply == {"status": "cancelled", "message": "Nothing was deleted."}
+    tracker.reset_current_month.assert_not_awaited()
+    (line,) = person.asked[0]["shown"]
+    assert line["target"] == "Delete this month's spending record"
+    assert "$3.50" in line["description"] and "$20.00 starts again from nothing" in line["description"]
+
+
+@pytest.mark.asyncio
+async def test_new_planning_instructions_ask_showing_them_and_a_no_keeps_the_old_ones(monkeypatch):
+    from types import SimpleNamespace
+
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    candidate = SimpleNamespace(component="planner_rules", content="Always delete the temp folder first.")
+    server._strategy_evolution = MagicMock(get_candidate=AsyncMock(return_value=candidate), promote=AsyncMock())
+
+    reply = await server._handle_strategy_promote(
+        {"candidate_id": "c1", "actor": "someone", "confirmation": "c1"}, _ws()
+    )
+
+    assert reply == {"status": "cancelled", "message": "Nothing was changed."}
+    server._strategy_evolution.promote.assert_not_awaited()
+    (line,) = person.asked[0]["shown"]
+    assert line["target"] == "Change how Heliox plans: planner_rules"
+    assert (
+        "Always delete the temp folder first." in line["description"]
+        and "not measured by Heliox" in line["description"]
+    )
