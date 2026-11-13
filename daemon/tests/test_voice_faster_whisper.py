@@ -107,7 +107,15 @@ def gpu_world(monkeypatch):
     monkeypatch.setattr(voice, "_faster_whisper_cuda_unusable", False)
     # Its CUDA 12 libraries are there (the real machine's are not read: that is test_gpu_paths).
     monkeypatch.setattr("pilot.system.gpu_paths.whisper_gpu_missing", lambda: [])
-    return card, shared
+    # The driver's error log is the test's (the real machine's is not read: that is test_gpu_driver_record).
+    from pilot.system import gpu_driver_record
+
+    gpu_driver_record.reset()
+    record = {"errors": None}
+    monkeypatch.setattr(gpu_driver_record, "read_count", lambda platform=None: record["errors"])
+    card["driver_record"] = record
+    yield card, shared
+    gpu_driver_record.reset()
 
 
 def test_whisper_uses_the_card_only_when_the_arbiter_says_it_is_healthy(gpu_world):
@@ -206,3 +214,44 @@ def test_a_card_without_its_cuda_libraries_is_not_tried_at_all(gpu_world, monkey
 def test_a_healthy_card_with_its_libraries_says_so(gpu_world):
     assert voice._faster_whisper_runtime("base") == ("cuda", "float16")
     assert voice._faster_whisper_device_reason == "On the graphics card."
+
+
+def test_a_card_whose_driver_reported_errors_this_week_does_not_get_whisper_said_once(gpu_world, caplog):
+    from pilot.system import gpu_driver_record
+
+    card, _shared = gpu_world
+    card["driver_record"]["errors"] = 5
+    caplog.set_level("WARNING", logger=voice.logger.name)
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")
+    assert "reported 5 errors this week" in voice._faster_whisper_device_reason
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")
+    said = [r for r in caplog.records if "graphics card reported" in r.getMessage()]
+    assert len(said) == 1  # told once
+    assert gpu_driver_record.errors_this_week() == 5
+
+
+def test_a_clean_or_unreadable_record_leaves_whisper_on_the_card_as_before(gpu_world):
+    from pilot.system import gpu_driver_record
+
+    card, _shared = gpu_world
+    card["driver_record"]["errors"] = 2  # under the limit
+    assert voice._faster_whisper_runtime("base") == ("cuda", "float16")
+    gpu_driver_record.reset()
+    card["driver_record"]["errors"] = None  # the log could not be read: no record, never a fault
+    assert voice._faster_whisper_runtime("base") == ("cuda", "float16")
+
+
+def test_this_session_s_faults_count_with_the_driver_s_errors(gpu_world):
+    card, shared = gpu_world
+    card["driver_record"]["errors"] = 2
+    shared.fault_limit = 99  # the session's own switch-off is not what is tested here
+    shared.record_fault("voice", "CUDA error: an illegal instruction was encountered")
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")
+    assert "reported 3 errors this week" in voice._faster_whisper_device_reason
+
+
+def test_the_setting_uses_the_card_despite_the_driver_s_errors(gpu_world):
+    card, shared = gpu_world
+    card["driver_record"]["errors"] = 40
+    shared.configure(SimpleNamespace(speech_despite_driver_errors=True))
+    assert voice._faster_whisper_runtime("base") == ("cuda", "float16")

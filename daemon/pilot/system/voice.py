@@ -2035,6 +2035,10 @@ def _faster_whisper_runtime(model_name: str = "base") -> tuple[str, str]:
         return "cpu", "int8"
     from pilot.system.gpu_arbiter import MIB, Needs, arbiter
 
+    record = _driver_record_keeps_whisper_off(arbiter())
+    if record:
+        _faster_whisper_device_reason = record
+        return "cpu", "int8"
     needs = Needs(gpu_bytes=WHISPER_GPU_NEEDS_MB.get(model_name.split(".")[0], 1500) * MIB, default_device_only=True)
     decision = arbiter().check("whisper", needs)
     if not decision.use_gpu or decision.device != "cuda":
@@ -2042,6 +2046,33 @@ def _faster_whisper_runtime(model_name: str = "base") -> tuple[str, str]:
         return "cpu", "int8"
     _faster_whisper_device_reason = "On the graphics card."
     return "cuda", "float16"
+
+
+def _driver_record_keeps_whisper_off(gpu: Any) -> str:
+    """Why Whisper stays off this card ("" when it may use it): the driver reported gpu_driver_record.LIMIT or more
+    errors this week, counting this session's GPU faults, and the [gpu] setting does not ask for the card anyway. The
+    record is read in the background; the first load waits for it at most WAIT_SECONDS, and an unreadable log is a
+    clean record."""
+    from pilot.system import gpu_driver_record
+
+    if getattr(gpu, "speech_despite_driver_errors", False):
+        return ""
+    errors = gpu_driver_record.errors_this_week(wait=gpu_driver_record.WAIT_SECONDS) or 0
+    try:
+        errors += int(gpu.recent_fault_count())
+    except Exception:
+        pass
+    if errors < gpu_driver_record.LIMIT:
+        return ""
+    reason = (
+        f"On the processor: this graphics card reported {errors} errors this week, and a driver error during speech "
+        "recognition would stop Heliox. The [gpu] setting speech_despite_driver_errors uses the card anyway."
+    )
+    if gpu_driver_record.first_time_said():
+        logger.warning(
+            "Speech recognition runs on the processor: the graphics card reported %d errors this week", errors
+        )
+    return reason
 
 
 def _whisper_gpu_failed(error: BaseException) -> None:

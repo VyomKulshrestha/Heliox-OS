@@ -848,6 +848,10 @@ class GpuConfig:
     # This many GPU faults (worker crashes, CUDA errors, hangs) within the window switch the GPU off until restart.
     fault_limit: int = 3
     fault_window_seconds: float = 600.0
+    # Speech recognition (Whisper, inside the daemon) stays on the processor when the graphics card's driver reported
+    # 3 or more errors in the last 7 days (pilot.system.gpu_driver_record): a driver that aborts would end the daemon.
+    # True uses the card anyway.
+    speech_despite_driver_errors: bool = False
 
 
 @dataclass
@@ -1555,6 +1559,7 @@ def _validate_config_types(raw: dict) -> None:
             "vram_headroom_mb": int,
             "fault_limit": int,
             "fault_window_seconds": (int, float),
+            "speech_despite_driver_errors": bool,
         },
         "proxy": {
             "http": str,

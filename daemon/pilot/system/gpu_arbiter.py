@@ -484,6 +484,7 @@ class GpuArbiter:
     fault_limit: int = DEFAULT_FAULT_LIMIT
     fault_window_seconds: float = DEFAULT_FAULT_WINDOW_SECONDS
     cache_seconds: float = READING_CACHE_SECONDS
+    speech_despite_driver_errors: bool = False  # [gpu] setting: Whisper on a card whose driver reported errors
     _faults: deque[GpuFault] = field(default_factory=lambda: deque(maxlen=50))
     _disabled_reason: str = ""
     _cached: tuple[float, MachineReading] | None = None
@@ -503,6 +504,13 @@ class GpuArbiter:
         self.headroom_bytes = int(number("vram_headroom_mb", DEFAULT_HEADROOM_MB, 0, 16384) * MIB)
         self.fault_limit = int(number("fault_limit", DEFAULT_FAULT_LIMIT, 1, 100))
         self.fault_window_seconds = number("fault_window_seconds", DEFAULT_FAULT_WINDOW_SECONDS, 10.0, 86400.0)
+        self.speech_despite_driver_errors = getattr(settings, "speech_despite_driver_errors", False) is True
+
+    def recent_fault_count(self) -> int:
+        """GPU faults of this session within the fault window."""
+        now = self.clock()
+        with self._lock:
+            return sum(1 for fault in self._faults if now - fault.monotonic <= self.fault_window_seconds)
 
     def reading(self, *, fresh: bool = False) -> MachineReading:
         now = self.clock()
