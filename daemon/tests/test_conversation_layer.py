@@ -179,8 +179,16 @@ async def test_a_slow_first_sentence_gets_a_short_holding_phrase_once():
     result = await layer.take("What do you think?")
     assert sink.texts[0] in HOLD_PHRASES and sink.texts[1] == "Here it is."
     assert len(sink.texts) == 2 and "hold_ms" in result.timings
+    # Never twice in a row (13 November): the next slow turn waits in silence.
     await layer.take("And now?")
-    assert sink.texts[2] in HOLD_PHRASES and sink.texts[2] != sink.texts[0]  # never the same phrase twice running
+    assert not set(HOLD_PHRASES) & set(sink.texts[2:])
+    # A minute later, after a turn without one, it may come again, and never the same phrase twice running.
+    clock = layer._clock
+    layer._clock = lambda: clock() + 61.0
+    before = len(sink.texts)
+    await layer.take("And later?")
+    held = [text for text in sink.texts[before:] if text in HOLD_PHRASES]
+    assert held and held[0] != sink.texts[0]
 
 
 # ── handing over ──

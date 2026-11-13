@@ -242,17 +242,107 @@ _NARRATION = re.compile(
 _ABBREVIATIONS = frozenset(
     {"mr", "mrs", "ms", "dr", "st", "vs", "etc", "e.g", "i.e", "eg", "ie", "approx", "no", "fig", "inc", "ltd"}
 )
-_SENTENCE_END = re.compile(r"[.!?]+[\"')\]]*(?=\s)")
+# A sentence ends at . ! ? followed by a space, and at the full stops of languages that put no space after them:
+# Japanese and Chinese 。！？ and the Hindi danda । ॥ (without these a reply in those languages was not cut until 240
+# characters or its end, so its first sound waited for most of the answer).
+_SENTENCE_END = re.compile(r"[.!?]+[\"')\]]*(?=\s)|[。！？]+[」』”’)）\]]*|[।॥]+")
 FIRST_CLAUSE_MIN = 70  # a long first sentence is cut at a comma after this many characters, so sound starts sooner
 MAX_SENTENCE = 240
 
+# Off: measured on the 70 first sentences Claude Haiku wrote in the paid runs, handing the first clause over early
+# saved 0.02 s on average (4 replies helped, 2 slower), because the voice already cuts its own head from a long
+# sentence and most first sentences have no early pause. Kept, tested, for a voice or model where it pays.
+EARLY_CLAUSE = False
+# When on, the first clause goes to the voice before its sentence is complete (early_clause): at the first pause a person
+# makes anyway, after at least EARLY_CLAUSE_WORDS words, once EARLY_CLAUSE_AFTER more words have arrived without the
+# sentence ending (so a sentence of fewer than about seven words is never cut, and a list shows itself first).
+EARLY_CLAUSE_WORDS = 4
+EARLY_CLAUSE_AFTER = 3
+# A clause longer than this is left whole: the voice cuts its own head of 2 to 9 words from a sentence of 12 words or
+# more (pilot.system.local_tts_worker.clause_pieces), and a longer clause handed over early would only be slower.
+EARLY_CLAUSE_MAX_WORDS = 9
+# The same for text written without spaces (Japanese, Chinese), counted in characters.
+EARLY_CLAUSE_CHARS = 8
+EARLY_CLAUSE_AFTER_CHARS = 6
+# Where a person pauses: a comma, semicolon or colon with a space after it, a spaced dash, or the CJK pause marks.
+_PAUSE = re.compile(r"[,;:](?=\s)|\s[–—-](?=\s)|[、，；：]")
+# Quotations, and Spanish questions and exclamations: a clause inside one is not cut (its tune belongs to the whole).
+_OPEN_QUOTES = {'"': '"', "“": "”", "「": "」", "『": "』", "«": "»", "¿": "?", "¡": "!"}
+_DIGIT = re.compile(r"\d")
+
+
+class Piece(str):
+    """A piece of a reply for the voice. ``continues``: it carries on the sentence the piece before began (that one
+    was an early first clause or a long sentence cut at a comma); ``ends``: it ends its sentence."""
+
+    continues: bool
+    ends: bool
+
+    def __new__(cls, text: str, *, continues: bool = False, ends: bool = True) -> Piece:
+        piece = super().__new__(cls, text)
+        piece.continues = continues
+        piece.ends = ends
+        return piece
+
+
+def _quotes_open(text: str) -> bool:
+    """A quotation is open at the end of ``text``: a pause inside it is not one to cut at."""
+    if text.count('"') % 2:
+        return True
+    return any(text.count(opening) > text.count(closing) for opening, closing in _OPEN_QUOTES.items() if opening != '"')
+
+
+def early_clause(text: str) -> int:
+    """Where the first clause of ``text`` (the start of a reply, its first sentence not yet complete) may go to the
+    voice: the index just after the pause mark, or 0 when there is no such place yet.
+
+    Only at a pause a person would make (_PAUSE), after EARLY_CLAUSE_WORDS words, and once EARLY_CLAUSE_AFTER more
+    words have arrived after it. Never:
+    - inside a quotation;
+    - in a list: another pause mark within the words after it ("Biscuit, Juniper, or Pepper"; "Control, Shift and
+      Escape"), or a name on each side ("Control, Shift");
+    - before a name said on its own ("..., Sam:");
+    - in a number or date ("June 5, 2026", "1, 2 and 3"), or after an abbreviation ("e.g.,").
+    Times, decimals and thousands ("5:14", "3.5", "1,000") have no space after the mark, so they are no pause."""
+    spaced = " " in text.strip()
+    for match in _PAUSE.finditer(text):
+        before, after = text[: match.start()], text[match.end() :]
+        if spaced:
+            words_before, words_after = before.split(), after.split()
+            if len(words_before) > EARLY_CLAUSE_MAX_WORDS:
+                return 0  # no early pause: the sentence goes whole, and the voice heads it itself
+            if len(words_before) < EARLY_CLAUSE_WORDS or len(words_after) < EARLY_CLAUSE_AFTER:
+                continue
+            ahead = " ".join(words_after[:EARLY_CLAUSE_AFTER])
+            last, following = words_before[-1], words_after[0]
+            if (
+                _PAUSE.search(ahead + " ")  # a list, or a second clause too short to stand alone
+                or _quotes_open(before)
+                or last.endswith(".")  # "e.g.," "etc.,"
+                or (_DIGIT.search(last) and following[:1].isdigit())
+                or (last[:1].isupper() and len(words_before) > 1 and following[:1].isupper())
+                or (following[:1].isupper() and following[-1:] in ",:;.!?")  # "..., Sam:" a name on its own
+            ):
+                continue
+        else:
+            if len(before.strip()) < EARLY_CLAUSE_CHARS or len(after.strip()) < EARLY_CLAUSE_AFTER_CHARS:
+                continue
+            if _quotes_open(before) or _PAUSE.search(after.strip()[:EARLY_CLAUSE_AFTER_CHARS]):
+                continue
+        return match.end()
+    return 0
+
 
 class SentenceSplitter:
-    """Collects streamed text and gives back whole sentences as soon as each one ends."""
+    """Collects streamed text and gives back whole sentences as soon as each one ends; a long first sentence is cut
+    at a comma (FIRST_CLAUSE_MIN), and with ``early`` the reply's first clause goes as soon as it is safe to
+    (early_clause). Each piece says whether it ends its sentence and whether it continues the one before (Piece)."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, early: bool | None = None) -> None:
         self._buffer = ""
         self._emitted = 0
+        self._open = False  # the last piece did not end its sentence
+        self._early = EARLY_CLAUSE if early is None else early
 
     def feed(self, fragment: str) -> list[str]:
         self._buffer += fragment
@@ -266,7 +356,11 @@ class SentenceSplitter:
     def flush(self) -> list[str]:
         rest = " ".join(self._buffer.split())
         self._buffer = ""
-        return [rest] if rest else []
+        if not rest:
+            return []
+        piece = Piece(rest, continues=self._open, ends=True)
+        self._open = False
+        return [piece]
 
     def _take(self) -> str | None:
         start = 0
@@ -278,24 +372,31 @@ class SentenceSplitter:
                 last_word in _ABBREVIATIONS or (last_word[-1:].isdigit() and self._buffer[end:].lstrip()[:1].isdigit())
             ):
                 continue
-            return self._cut(end)
+            return self._cut(end, ends=True)
+        if self._emitted == 0 and self._early:
+            early = early_clause(self._buffer)
+            if early:
+                return self._cut(early, ends=False)
         limit = FIRST_CLAUSE_MIN if self._emitted == 0 else MAX_SENTENCE
         if len(self._buffer) > limit:
             comma = max(self._buffer.rfind(", ", 0, MAX_SENTENCE), self._buffer.rfind("; ", 0, MAX_SENTENCE))
             if comma >= limit // 2:
-                return self._cut(comma + 1)
+                return self._cut(comma + 1, ends=False)
             if len(self._buffer) > MAX_SENTENCE:
                 space = self._buffer.rfind(" ", 0, MAX_SENTENCE)
-                return self._cut(space if space > 0 else MAX_SENTENCE)
+                return self._cut(space if space > 0 else MAX_SENTENCE, ends=False)
         return None
 
-    def _cut(self, end: int) -> str | None:
-        sentence = " ".join(self._buffer[:end].split())
+    def _cut(self, end: int, *, ends: bool) -> str | None:
+        text = self._buffer[:end]
+        sentence = " ".join(text.split()) if " " in text.strip() or not text.strip() else text.strip()
         self._buffer = self._buffer[end:]
         if not sentence:
             return None
         self._emitted += 1
-        return sentence
+        piece = Piece(sentence, continues=self._open, ends=ends)
+        self._open = not ends
+        return piece
 
 
 @dataclass(frozen=True, slots=True)

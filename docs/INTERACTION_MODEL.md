@@ -103,7 +103,17 @@ other voices are misheard is not yet shown.
 The model's text is fed to a sentence splitter as it arrives. Each finished sentence is cleaned and handed to the
 existing speech path (`_speak_companion_text`: the speech coordinator, the barge-in watcher and the Kokoro
 worker) at once, while the model keeps writing. A long first sentence is cut at a comma after 70 characters so
-sound starts sooner. Before each sentence the layer checks that the person is not talking.
+sound starts sooner. Its second half is marked as continuing it (`style.Piece`). Before 13 November a statement turn,
+which gets one sentence, said only the first half, and the word cap could stop there too. A continuation is now never
+dropped or capped as a new sentence, and when a piece is not said the rest of its sentence is not said either. Japanese
+and Chinese 。！？ and the Hindi । ॥ end a sentence without a space after them. Before 13 November a reply in those
+languages reached the voice only at 240 characters or at its end. Before each sentence the layer checks that the person
+is not talking.
+
+An earlier first clause is built and off: `style.early_clause` cuts at the first pause after 4 words, once 3 more have
+come, and never in a list, a number, a quotation or before a name. On the 70 first sentences Claude Haiku wrote in the
+paid runs it saved 0.02 s on average (4 faster, 2 slower). The voice already heads long sentences itself, and most
+first sentences of 7 to 11 words have no early pause.
 
 The turn stops when the sink reports the sentence was interrupted or cancelled, when the person is talking before
 the next sentence, or when a new utterance reaches dispatch (`interrupt()` is the second line of the dispatch).
@@ -111,8 +121,11 @@ Stopping closes the model stream, so generation and its cost stop, and drops sen
 conversation keeps only what was said: finished sentences plus the interrupted one, marked as cut off, and the
 model is told on the next turn that the rest was not heard.
 
-If the first sentence is not ready 2 s after the turn reached the layer, a short holding phrase is said ("One
-moment.", never the same one twice running). A cloud model rarely needs it; a local model loading into memory does.
+A short holding phrase ("One moment.", never the same one twice running; its audio is made ahead by the speech
+store, so it costs no synthesis) is said when no model text at all has come 1.2 s after the request, or text came but
+no sentence by 2 s. It is never said on the turn after one that had it, nor within 60 s of the last. On the 12 model
+turns of the 13 November bench run it would have fired twice, on the two slowest. Their first sound would have come
+1.5 and 1.85 s sooner, and the answer itself no later. A local model's first load always says its loading line once.
 
 **The voice's first sound comes from the first clause.** Whatever hands it text, the local voice
 (`local_tts_worker.split_for_speech`) cuts a first sentence of more than 11 words at its first natural pause within
@@ -674,7 +687,7 @@ conversation with a real model has been recorded.
 | What happens | What the person hears | Then |
 |---|---|---|
 | No network (DNS, refused, reset) | "I can't reach the language model right now..." once, then a short line | 30 s without asking the provider |
-| The provider accepts the connection but sends nothing for 4.5 s | the holding phrase at 2 s, at 4.5 s "The language model is slow right now, so I stopped waiting. Ask me again." | the next turn asks again; only late answers in a row rest it (5 s after two, 15 s after three, then 30 s), and an answer resets the count |
+| The provider accepts the connection but sends nothing for 4.5 s | the holding phrase at 1.2 s (not on the turn after one that had it), at 4.5 s "The language model is slow right now, so I stopped waiting. Ask me again." | the next turn asks again; only late answers in a row rest it (5 s after two, 15 s after three, then 30 s), and an answer resets the count |
 | A local model loading into memory | "Loading the local model, one moment." (once a session) | waits up to 90 s for the first word |
 | The local server is not running, or the model is not pulled | "...the local one isn't running" / "...isn't installed", with where to fix it | 30 s |
 | The provider account is out of credit (Anthropic 400 "credit balance", OpenAI 429 `insufficient_quota`, a 402) | "Your Anthropic account is out of credit. Add credit there, or choose another model in Settings, under Model." | 10 minutes without asking |

@@ -118,7 +118,14 @@ UNCLEAR_OFFLINE = "Sorry, I didn't catch that. Could you say it again?"
 SCREEN_WAIT_SECONDS = 0.15
 SCREEN_FRESH_SECONDS = 8.0
 HOLD_AFTER_SECONDS = 2.0  # no first sentence yet: a short holding phrase, so the wait is not silent
-HOLD_PHRASES = ("One moment.", "Let me think.", "Give me a second.")
+HOLD_PHRASES = ("One moment.", "Let me think.", "Give me a second.", "Just a second.")
+# When the holding phrase is said (_may_hold). With the speech store its audio is ready-made, so it costs no synthesis,
+# but a filler before every answer is worse than silence. So it is said only when the model has sent no text at all
+# HOLD_NO_TEXT_SECONDS after the request (on 13 November, 2 of 12 model turns: the slowest), or no sentence is ready
+# HOLD_AFTER_SECONDS after it (text came, but no sentence yet). Never twice in a row, never within HOLD_GAP_SECONDS
+# of the last one, and never once the answer's first sentence is ready (it would only delay it).
+HOLD_NO_TEXT_SECONDS = 1.2
+HOLD_GAP_SECONDS = 60.0
 LOCAL_LOADING = "Loading the local model, one moment."
 SPOKEN_WORD_CAP = (
     25  # about 10 seconds of speech: a sentence that would go past it is not started (the prompt asks for 20)
@@ -387,6 +394,9 @@ class ConversationLayer:
         self._background: set[asyncio.Task[Any]] = set()
         self._last_hold = ""
         self._hold_after = hold_after
+        self._hold_no_text = min(HOLD_NO_TEXT_SECONDS, hold_after)
+        self._held_last_turn = False  # the turn before had a holding phrase: this one does not
+        self._last_hold_at = float("-inf")
         self._screen_read: tuple[float, Any] | None = None  # (started, task) of the screen read under way
         self._first_text_deadline = first_text_deadline
         self._said_loading = False
@@ -874,35 +884,50 @@ class ConversationLayer:
                 await queue.put(None)
 
         producer = asyncio.ensure_future(produce())
+        hold_allowed = self._may_hold()
+        self._held_last_turn = False
         statement = decided.reason == "statement"
         repeat_asked = self._asked_again(text)
         dropped = False
         said: list[str] = []
         current = ""
+        skipping = False  # a piece was not said: the rest of its sentence is not said either
+        waited_from = self._clock()
         try:
             first = True
             capped = False
             held = False
             while True:
                 if first and not held and not typed:
+                    # No text at all by HOLD_NO_TEXT_SECONDS, or text but no sentence by HOLD_AFTER_SECONDS: the
+                    # holding phrase (when _may_hold allowed it for this turn), said alongside the wait.
+                    no_text = "first_token_ms" not in result.timings
+                    limit = self._hold_no_text if no_text else self._hold_after
                     try:
                         # asyncio.timeout, not wait_for: before Python 3.12 an interrupt arriving as the first
                         # sentence is dequeued could be lost, and Heliox would go on talking after being stopped.
-                        async with asyncio.timeout(self._hold_after):
+                        async with asyncio.timeout(max(0.0, limit - (self._clock() - waited_from))):
                             sentence = await queue.get()
                     except TimeoutError:
+                        if no_text and "first_token_ms" in result.timings and self._hold_after > limit:
+                            continue  # text arrived meanwhile: wait for its sentence up to HOLD_AFTER_SECONDS
                         held = True
-                        # Said alongside the wait: when the answer is ready it follows (and outranks) the phrase.
-                        hold = asyncio.ensure_future(
-                            self._hold(result, started, local=bool(getattr(model, "local", False)))
-                        )
-                        self._background.add(hold)
-                        hold.add_done_callback(self._background.discard)
+                        local = bool(getattr(model, "local", False))
+                        if hold_allowed or (local and not self._said_loading):
+                            # Said alongside the wait: when the answer is ready it follows (and outranks) it.
+                            hold = asyncio.ensure_future(self._hold(result, started, local=local))
+                            self._background.add(hold)
+                            hold.add_done_callback(self._background.discard)
                         continue
                 else:
                     sentence = await queue.get()
                 if sentence is None:
                     break
+                continues = bool(getattr(sentence, "continues", False))
+                if skipping and continues:
+                    skipping = not getattr(sentence, "ends", True)
+                    continue
+                skipping = not getattr(sentence, "ends", True)  # cleared below once this piece is said
                 # Spoken text is cleaned for the ear; typed text keeps its markdown for the chat view.
                 clean = drop_action_claims(sentence) if typed else clean_for_speech(sentence, first=first)
                 if not typed and not self._was_cut_lately():
@@ -918,7 +943,7 @@ class ConversationLayer:
                     if clean:
                         logger.info("Dropped a sentence claiming an action the fast model cannot take: %r", clean)
                     continue
-                if not typed and statement and said and not ends_with_question(clean):
+                if not typed and statement and said and not continues and not ends_with_question(clean):
                     # A statement that asks for nothing gets one sentence, and at most one question after it. The
                     # rest is read (a promise to act still hands the request over) but not said.
                     continue
@@ -928,7 +953,7 @@ class ConversationLayer:
                     dropped = True
                     continue
                 words_so_far = sum(len(part.split()) for part in said)
-                if not typed and said and words_so_far + len(clean.split()) > self._word_cap():
+                if not typed and said and not continues and words_so_far + len(clean.split()) > self._word_cap():
                     # Long enough to listen to: the reply ends at the last whole sentence (never after a clause
                     # cut at a comma: those are joined to their sentence before this point). What was already
                     # written is kept for "go on", as after a cut, and never said unasked.
@@ -950,6 +975,7 @@ class ConversationLayer:
                     self._prepare_next(queue)
                 outcome = await sink(clean, "final_answer", f"conv:{id(result)}:{len(said)}")
                 current = ""
+                skipping = False
                 if outcome in STOPPED:
                     self._remember_said(said, clean, _waiting(queue))
                     result.done = True
@@ -1259,10 +1285,17 @@ class ConversationLayer:
             return
         await self._hold_phrase(result, started)
 
+    def _may_hold(self) -> bool:
+        """Whether this turn may have a holding phrase at all: not when the turn before had one, nor within
+        HOLD_GAP_SECONDS of the last one. Decided when the request goes out."""
+        return not self._held_last_turn and self._clock() - self._last_hold_at >= HOLD_GAP_SECONDS
+
     async def _hold_phrase(self, result: TurnResult, started: float) -> None:
         index = (HOLD_PHRASES.index(self._last_hold) + 1) % len(HOLD_PHRASES) if self._last_hold in HOLD_PHRASES else 0
         phrase = HOLD_PHRASES[index]
         self._last_hold = phrase
+        self._held_last_turn = True
+        self._last_hold_at = self._clock()
         result.timings.setdefault("hold_ms", (self._clock() - started) * 1000)
         trace.mark("sentence to voice", hold=True)
         await self._sink(phrase, "task_narration", f"conv-hold:{id(result)}")
