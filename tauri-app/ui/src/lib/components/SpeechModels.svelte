@@ -16,6 +16,9 @@
     installed: boolean;
     partial_bytes: number;
   };
+  // The voice for the person's voice language (pilot/system/voice_by_language.py): what they will hear, and
+  // whether accepting changes anything.
+  type VoicePlan = { language: string; engine: string; voice: string; change: boolean; say: string };
   type Progress = { id: string; state: string; received: number; total: number; message: string };
   type Recommended = {
     title: string;
@@ -29,6 +32,7 @@
 
   let models = $state<Model[]>([]);
   let recommended = $state<Recommended | null>(null);
+  let voicePlan = $state<VoicePlan | null>(null);
   let progress = $state<Record<string, Progress>>({});
   let loadError = $state("");
 
@@ -38,9 +42,12 @@
 
   async function refresh() {
     try {
-      const result = await call<{ status: string; models?: Model[]; recommended?: Recommended }>("speech_models_list");
+      const result = await call<{ status: string; models?: Model[]; recommended?: Recommended; voice?: VoicePlan }>(
+        "speech_models_list",
+      );
       models = result.models ?? [];
       recommended = result.recommended ?? null;
+      voicePlan = result.voice ?? null;
       loadError = "";
     } catch (error) {
       loadError = error instanceof Error ? error.message : "Heliox is not running.";
@@ -75,6 +82,12 @@
       if (model && !busy(id)) await download(model);
       if (progress[id]?.state === "failed") return; // said under that model; the next one is not asked for
     }
+  }
+
+  // Nothing is fetched here: a Kokoro voice is fetched by Kokoro the first time it speaks.
+  async function useVoiceForLanguage() {
+    const result = await call<VoicePlan & { status: string }>("voice_for_language_apply");
+    if (result) voicePlan = result;
   }
 
   async function cancel(model: Model) {
@@ -126,6 +139,17 @@
         </button>
       {:else}
         <span class="setting-desc">Downloaded</span>
+      {/if}
+    </div>
+  {/if}
+  {#if voicePlan && voicePlan.say}
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Heliox's voice</span>
+        <span class="setting-desc">{voicePlan.say}</span>
+      </div>
+      {#if voicePlan.change}
+        <button type="button" class="btn-secondary" onclick={useVoiceForLanguage}>Use this voice</button>
       {/if}
     </div>
   {/if}

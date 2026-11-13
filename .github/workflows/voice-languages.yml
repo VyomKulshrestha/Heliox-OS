@@ -1,0 +1,45 @@
+name: "Voice in other languages (Kokoro, CPU only)"
+
+# Heliox's voice in the languages Kokoro speaks, for real: the voices voice_by_language offers are fetched from
+# Hugging Face by Kokoro on the runner, read one sentence each through Heliox's own synthesiser, and Whisper small
+# writes back what it heard (tests/platform_real/kokoro_languages_check.py). Nothing is fetched on a person's
+# computer for this. Manual only; never blocks anything.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  voices:
+    name: Kokoro voices by language
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: daemon
+        shell: bash
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: System libraries (espeak-ng for Kokoro's readers, PortAudio for the audio package import)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends espeak-ng libportaudio2 libsndfile1
+
+      - name: Install the daemon with the voice extras and the Mandarin and Japanese readers
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[voice]" "misaki[zh,ja]"
+
+      - name: Each language's voice, heard back by Whisper
+        run: python tests/platform_real/kokoro_languages_check.py

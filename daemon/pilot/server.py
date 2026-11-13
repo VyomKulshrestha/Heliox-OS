@@ -2297,6 +2297,7 @@ class PilotServer:
             "voice_listen_now": self._handle_voice_listen_now,
             "voice_new_conversation": self._handle_voice_new_conversation,
             "speech_models_list": self._handle_speech_models_list,
+            "voice_for_language_apply": self._handle_voice_for_language_apply,
             "speech_model_download": self._handle_speech_model_download,
             "speech_model_cancel": self._handle_speech_model_cancel,
             "speech_model_remove": self._handle_speech_model_remove,
@@ -9697,6 +9698,14 @@ class PilotServer:
                         "alba",
                         "giovanni",
                         "lola",
+                        # the voices of other languages (pilot.system.voice_by_language.KOKORO_VOICES)
+                        "ef_dora",
+                        "ff_siwis",
+                        "hf_alpha",
+                        "if_sara",
+                        "jf_alpha",
+                        "pf_dora",
+                        "zf_xiaobei",
                     }:
                         return {
                             "status": "error",
@@ -14685,7 +14694,44 @@ def handle_tool(tool_name, params):
     async def _handle_speech_models_list(self, params: dict, ws: ServerConnection) -> dict:
         """The downloadable speech models: what each is for, size, licence, source, what is on disk, and the set
         recommended for the voice language setting."""
-        return await asyncio.to_thread(self._speech_models().list, str(self.config.voice.language))
+        listed = await asyncio.to_thread(self._speech_models().list, str(self.config.voice.language))
+        return {**listed, "voice": (await self._voice_for_language()).as_dict()}
+
+    async def _voice_for_language(self) -> Any:
+        """Which voice would speak the person's voice language (pilot.system.voice_by_language.plan_voice)."""
+        from pilot.system import voice_by_language
+        from pilot.system.platform_detect import CURRENT_PLATFORM
+        from pilot.system.voice import system_voices_by_language
+
+        if getattr(self, "_system_voices", None) is None:
+            self._system_voices = await system_voices_by_language()
+        voice = self.config.voice
+        return voice_by_language.plan_voice(
+            self._spoken_language(),
+            str(voice.tts_engine),
+            str(voice.tts_voice),
+            str(getattr(voice, "system_voice", "") or ""),
+            system_voices=self._system_voices,
+            platform=str(CURRENT_PLATFORM),
+        )
+
+    async def _handle_voice_for_language_apply(self, params: dict, ws: ServerConnection) -> dict:
+        """The person accepted the voice offered for their language: use it. A Kokoro voice is fetched by Kokoro the
+        first time it speaks; nothing is fetched here."""
+        plan = await self._voice_for_language()
+        if plan.change:
+            voice = self.config.voice
+            if plan.engine == "kokoro_tts":
+                voice.tts_engine, voice.tts_voice = "kokoro_tts", plan.voice
+            else:
+                voice.tts_engine, voice.system_voice = "os_native", plan.voice
+            self.config.save()
+            await self._broadcast_notification("config_updated", {"method": "voice", "section": "voice"})
+            from pilot.system.local_tts_worker import configure_local_voice
+
+            with contextlib.suppress(Exception):
+                configure_local_voice(voice)
+        return {"status": "ok", **(await self._voice_for_language()).as_dict()}
 
     async def _handle_speech_model_download(self, params: dict, ws: ServerConnection) -> dict:
         """Start (or resume) downloading one speech model; progress arrives as speech_model_progress."""

@@ -93,7 +93,9 @@ def _to_numpy(audio: Any) -> Any:
 def _generate(text: str, voice: str) -> tuple[Any, int]:
     import numpy as np
 
-    pipeline = _get_pipeline()
+    from pilot.system.voice_by_language import kokoro_lang_code
+
+    pipeline = _get_pipeline(kokoro_lang_code(voice))  # the reader of the voice's own language ("ef_dora": Spanish)
     _allow_fetching_missing_voice(voice)
     chunks = [
         _to_numpy(audio)
@@ -111,8 +113,10 @@ def _generate(text: str, voice: str) -> tuple[Any, int]:
 
 def prepare(voice: str) -> None:
     """Load weights and the voice, then make one throwaway sentence so the first real one is warm (worker side)."""
+    from pilot.system.voice_by_language import kokoro_lang_code
+
     use_cached_weights_offline(voice)
-    _get_pipeline()
+    _get_pipeline(kokoro_lang_code(voice))
     if voice:
         _generate("Okay.", voice)
 

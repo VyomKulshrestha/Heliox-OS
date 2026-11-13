@@ -133,4 +133,60 @@ describe("Speech models in Settings", () => {
       );
     });
   });
+
+  it("offers the voice of the person's language and changes it only when pressed", async () => {
+    mocks.call.mockImplementation(async (method: string) => {
+      if (method === "speech_models_list")
+        return {
+          status: "ok",
+          models: [],
+          voice: {
+            language: "es",
+            engine: "kokoro_tts",
+            voice: "ef_dora",
+            change: true,
+            say: "Heliox can speak Spanish with Kokoro's voice ef_dora; about half a megabyte is fetched the first time.",
+          },
+        };
+      if (method === "voice_for_language_apply")
+        return {
+          status: "ok",
+          language: "es",
+          engine: "kokoro_tts",
+          voice: "ef_dora",
+          change: false,
+          say: "Heliox speaks Spanish with the voice ef_dora.",
+        };
+      return { status: "ok" };
+    });
+    render(SpeechModels);
+    const button = await screen.findByRole("button", { name: "Use this voice" });
+    expect(screen.getByText(/speak Spanish with Kokoro's voice ef_dora/)).toBeTruthy();
+    expect(mocks.call).not.toHaveBeenCalledWith("voice_for_language_apply");
+    await fireEvent.click(button);
+    expect(mocks.call).toHaveBeenCalledWith("voice_for_language_apply");
+    await waitFor(() => expect(screen.getByText("Heliox speaks Spanish with the voice ef_dora.")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Use this voice" })).toBeNull();
+  });
+
+  it("says plainly what a German speaker hears when there is no German voice", async () => {
+    mocks.call.mockImplementation(async (method: string) =>
+      method === "speech_models_list"
+        ? {
+            status: "ok",
+            models: [],
+            voice: {
+              language: "de",
+              engine: "kokoro_tts",
+              voice: "af_heart",
+              change: false,
+              say: "Heliox has no German voice on this computer, so it reads German replies with English sounds.",
+            },
+          }
+        : { status: "ok" },
+    );
+    render(SpeechModels);
+    expect(await screen.findByText(/reads German replies with English sounds/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Use this voice" })).toBeNull();
+  });
 });

@@ -345,10 +345,10 @@ def test_a_broken_gpu_falls_back_to_the_cpu(monkeypatch) -> None:
 def test_prepare_loads_and_makes_one_throwaway_sentence(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(kokoro_tts, "use_cached_weights_offline", lambda v: calls.append("offline") or True)
-    monkeypatch.setattr(kokoro_tts, "_get_pipeline", lambda: calls.append("load"))
+    monkeypatch.setattr(kokoro_tts, "_get_pipeline", lambda language="a": calls.append(f"load {language}"))
     monkeypatch.setattr(kokoro_tts, "_generate", lambda text, v: calls.append(f"say {text}"))
     kokoro_tts.prepare("af_heart")
-    assert calls == ["offline", "load", "say Okay."]
+    assert calls == ["offline", "load a", "say Okay."]
 
 
 def test_cpu_device_is_passed_to_kokoro(monkeypatch) -> None:

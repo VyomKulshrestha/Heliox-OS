@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **335 WebSocket RPC methods**. That is the API
+The daemon currently registers **336 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1994,7 +1994,23 @@ first-run screen also bundles), with what is on disk.
 
 **Params:** `{}`
 **Result:** `{ "status": "ok", "active": id | "", "models": [{ "id", "title", "purpose", "languages", "licence",
-"source", "download_bytes", "disk_bytes", "required_for", "part_of_voice", "installed", "partial_bytes", "path" }] }`
+"source", "download_bytes", "disk_bytes", "required_for", "part_of_voice", "installed", "partial_bytes", "path" }],
+"voice": { "language", "engine", "voice", "change", "download_bytes", "say" } }`
+
+`voice` is the voice for the person's voice language (`pilot/system/voice_by_language.py`): `say` is one sentence
+for the person about what they will hear (for German, with no Kokoro voice: the replies read with English sounds,
+and where to add a German system voice), and `change` is true when `voice_for_language_apply` would change their
+voice.
+
+#### `voice_for_language_apply`
+The person accepted the voice offered in `speech_models_list`'s `voice`: Kokoro's voice of their language
+(`voice.tts_engine` and `voice.tts_voice`) or a system voice of it (`voice.tts_engine = "os_native"` and
+`voice.system_voice`). Nothing is downloaded by this call; Kokoro fetches its voice file (about 0.5 MB) the first
+time it speaks. Broadcasts `config_updated`.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok", "language", "engine", "voice", "change", "download_bytes", "say" }` (the plan after
+the change, so `change` is false)
 
 #### `speech_model_download`
 Start or resume downloading one model (HTTP Range into `.part` files; SHA-256 checked before it counts) into

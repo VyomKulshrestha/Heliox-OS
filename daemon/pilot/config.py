@@ -263,6 +263,9 @@ class VoiceConfig:
     # model engines fall back to os_native on import/model/audio failure.
     tts_engine: str = "kokoro_tts"  # "kokoro_tts" | "pocket_tts" | "os_native"
     tts_voice: str = "af_heart"  # model voice preset; ignored when tts_engine == "os_native"
+    # The system voice by name when tts_engine == "os_native" ("" = the system's default): a voice of the person's
+    # language when Kokoro has none (pilot.system.voice_by_language).
+    system_voice: str = ""
     # The local voice runs in its own process: about 1.6-1.9 GB of RAM (plus about 840 MB of GPU memory on CUDA)
     # while loaded, and 20-25 s to load from cold. It stays loaded until this many seconds pass with nobody
     # talking to Heliox and Heliox saying nothing, and loads again as soon as the person is heard.
@@ -1295,6 +1298,7 @@ def _validate_config_types(raw: dict) -> None:
             "follow_up_window_seconds": (int, float),
             "tts_engine": str,
             "tts_voice": str,
+            "system_voice": str,
             "tts_keep_loaded_seconds": (int, float),
             "headset_input_choices": dict,
             "tts_device": str,

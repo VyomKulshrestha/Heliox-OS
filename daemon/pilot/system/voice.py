@@ -909,6 +909,8 @@ async def _speak_impl(
                 logger.warning("Pocket TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
             # falls through to the platform dispatch below
 
+    # The system voice the person chose for their language (voice_by_language), unless the caller named one.
+    voice = voice or str(getattr(config.voice, "system_voice", "") or "") or None
     if CURRENT_PLATFORM == Platform.WINDOWS:
         return await _tts_windows(spoken_text, voice, rate, volume, output_file)
     elif CURRENT_PLATFORM == Platform.MACOS:
@@ -1129,6 +1131,28 @@ def _say_failed(detail: str) -> str:
             detail,
         )
     return f"TTS failed: {detail}"
+
+
+async def system_voices_by_language() -> list[tuple[str, str]]:
+    """The system's speech voices with their languages: [(name, language code)]; [] when they cannot be listed."""
+    from pilot.system import voice_by_language as vbl
+
+    try:
+        if CURRENT_PLATFORM == Platform.WINDOWS:
+            code, out, _err = await run_powershell(
+                "Add-Type -AssemblyName System.Speech; "
+                "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                "$synth.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name + '|' + $_.VoiceInfo.Culture.Name }; "
+                "$synth.Dispose()"
+            )
+            return vbl.windows_voices(out) if code == 0 else []
+        listing = await list_voices()
+        if listing.startswith("Error:"):
+            return []
+        return vbl.macos_voices(listing) if CURRENT_PLATFORM == Platform.MACOS else vbl.espeak_voices(listing)
+    except Exception:
+        logger.debug("Could not list the system voices", exc_info=True)
+        return []
 
 
 async def list_voices() -> str:
