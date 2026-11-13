@@ -326,10 +326,13 @@ def _configure(config: Any, kind: str) -> None:
         config.model.provider = "none"
 
 
-async def build_server(kind: str, session: dict[str, Any], folder: Path, record: Record, clock: Clock) -> Any:
+async def build_server(
+    kind: str, session: dict[str, Any], folder: Path, record: Record, clock: Clock, *, restart: bool = False
+) -> Any:
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, MagicMock
 
+    import pilot.config as config_module
     from pilot.actions import ActionPlan, ActionResult, VerificationResult
     from pilot.agents.execution_companion import CompanionReview
     from pilot.config import PilotConfig
@@ -346,8 +349,16 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     from pilot.workflows.todos import TodoStore
     from pilot.workflows.user_profile import UserProfile
 
-    config = PilotConfig()
-    _configure(config, kind)
+    # A restart starts on what was saved, as the daemon does (PilotConfig.load): a setting changed by voice survives
+    # it. The first start, or a restart with nothing saved, is the session's own setup.
+    restored = restart and config_module.CONFIG_FILE.exists()
+    if restored:
+        config = PilotConfig.load()
+        if config.load_errors:
+            raise RuntimeError(f"the session's saved config could not be read: {config.load_errors}")
+    else:
+        config = PilotConfig()
+        _configure(config, kind)
     server = PilotServer(config)
     listener = Listener(Addressing(clock=clock), config)
     server._voice_listener = listener
@@ -460,6 +471,7 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
         finalize=AsyncMock(return_value=None),
         list=AsyncMock(return_value=[]),
         answer_async=AsyncMock(return_value=None),
+        recap=MagicMock(return_value=[]),  # "wrap up my day" reads the day's receipts (daily_brief): none without them
     )
     if session.get("receipts"):
         # Signed receipts as the daemon keeps them (PilotServer.start), in the session's own folder with its own key:
@@ -508,12 +520,13 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     layer._prepare = lambda text: None  # no speech synthesis is prepared: there is no voice here, and no audio
     layer.sources.now = lambda: NOW  # the model is told the session's Thursday 9:00, as every code answer is
     layer.sources.heard_of = server._speech_coordinator.heard_of  # how far the voice got when it was talked over
-    if session.get("barge_in"):
-        config.voice.barge_in_enabled = True
-    if session.get("second_voice_guard"):
-        config.conversation.second_voice_guard = True
-    if "second_voice_threshold" in session:
-        config.conversation.second_voice_threshold = int(session["second_voice_threshold"])
+    if not restored:  # the session's starting settings; after a restart, what was saved stands
+        if session.get("barge_in"):
+            config.voice.barge_in_enabled = True
+        if session.get("second_voice_guard"):
+            config.conversation.second_voice_guard = True
+        if "second_voice_threshold" in session:
+            config.conversation.second_voice_threshold = int(session["second_voice_threshold"])
     server._voice_turns._clock = clock  # the withdraw window runs on the session's clock
     return server
 
@@ -590,7 +603,7 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                     for task in pending:
                         task.cancel()
                     pending = []
-                    server = await build_server(kind, session, folder, record, clock)
+                    server = await build_server(kind, session, folder, record, clock, restart=True)
                     if real_model is not None:
                         from pilot.conversation import layer_for
 
@@ -689,6 +702,9 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                 clock.t += voiced
                 record.ended[index] = clock.t
                 listener.addressing.task_open = bool(server._interactive_request_active or server._pending_confirms)
+                from pilot.system.addressing import hand_about_me
+
+                hand_about_me(listener.addressing, server.config)  # as the listener does before each decision
                 decision = listener.addressing.decide(
                     Heard(
                         text=text,
@@ -955,9 +971,23 @@ def _isolate(folder: Path) -> list[Any]:
     refuse_real_folders("A conversation session")
     if not folder.resolve().is_relative_to(TEST_ROOT.resolve()):
         raise RuntimeError(f"refusing to start a session: its folder {folder} is not inside {TEST_ROOT}")
+    import pilot.config as config_module
+
     before = server_module.DATA_DIR
     server_module.DATA_DIR = folder
-    return [lambda: setattr(server_module, "DATA_DIR", before)]
+    # The session's settings file is its own too, so a restart reloads this session's saves and no other's.
+    names = ("CONFIG_DIR", "CONFIG_FILE", "RESTRICTIONS_FILE")
+    saved = {name: getattr(config_module, name) for name in names}
+    config_module.CONFIG_DIR = folder / "config"
+    config_module.CONFIG_FILE = config_module.CONFIG_DIR / "config.toml"
+    config_module.RESTRICTIONS_FILE = config_module.CONFIG_DIR / "restrictions.toml"
+
+    def undo() -> None:
+        server_module.DATA_DIR = before
+        for name, value in saved.items():
+            setattr(config_module, name, value)
+
+    return [undo]
 
 
 # ── checks ──

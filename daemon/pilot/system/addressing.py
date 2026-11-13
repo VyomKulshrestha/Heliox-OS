@@ -87,6 +87,15 @@ RESUME = re.compile(  # the same phrases the conversation layer answers from cod
     re.I,
 )
 RESUME_SECONDS = 120.0
+# The person telling Heliox about themselves in an open follow-up window ("I start work at nine." after "Call me
+# Sam."): taken when the personal layer recognises one of the forms it keeps (Addressing.about_me, injected). Each
+# is said back, which restarts the window, so a few in a row need no wake phrase; after ABOUT_ME_IN_ROW the wake
+# phrase is needed again. Three covers telling a name, hours and one more thing in one go (the Live day), and keeps a
+# room's run of "I ..." sentences from being swept in one after another.
+ABOUT_ME_IN_ROW = 3
+# A reply to an addressed turn comes within this: when its voice ends, the conversation's quiet is counted from
+# then, even if the reply (thinking, then a long answer) took longer than CLOSE_SECONDS.
+REPLY_OWED_SECONDS = 60.0
 SHORT_REPLY = re.compile(r"^(?:yes|yeah|yep|sure|okay|ok|thanks|thank you|great|perfect|got it|sorry)\b", re.I)
 # Follow-ups on Heliox's last answer that read as talk out of context. The repeat and shorter phrases are the ones
 # the conversation layer answers in code (pilot/conversation/followups.py, AGAIN and SHORTER; copied, not imported:
@@ -297,6 +306,14 @@ class Addressing:
     # count only, no words. The conversation layer reads it when a follow-up is taken, as a sign that someone else,
     # a television or the person's own muttering was heard in between (its second-voice rule).
     overheard_since_heliox: int = 0
+    # The personal layer's test for a sentence telling Heliox about the person (pilot.workflows.user_profile.
+    # tells_about_self, injected by the listener so the patterns live in one place), and the second-voice rule's
+    # threshold when it is on (0 when off): with that many utterances left out since Heliox spoke, a statement
+    # about the person is not taken without the wake phrase.
+    about_me: Callable[[str], bool] | None = None
+    second_voice_threshold: int = 0
+    _about_me_row: int = 0
+    _reply_owed_since: float | None = None
 
     def _now(self) -> float:
         return self._at if self._at is not None else self.clock()
@@ -320,6 +337,8 @@ class Addressing:
         self.question_open = False
         self._sorry_given = False
         self.live_spoke_at = None
+        self._about_me_row = 0
+        self._reply_owed_since = None
 
     def live_spoke(self) -> None:
         """Heliox Live just finished a spoken remark: for LIVE_REPLY_SECONDS its own replies are taken without the
@@ -333,8 +352,16 @@ class Addressing:
     def heliox_finished(self, *, asked: bool = False) -> None:
         """Heliox's voice stopped. Only within an open conversation does this start a follow-up window."""
         self.overheard_since_heliox = 0
+        now = self.clock()
+        owed = self._reply_owed_since
+        if self.open_since is not None and owed is not None and 0 <= now - owed <= REPLY_OWED_SECONDS:
+            # Part of the reply to what the person said has just ended (a reply spoken sentence by sentence ends
+            # several times): a long one, or a long wait for it, does not use up the conversation. Its quiet runs
+            # from Heliox's last word, as the follow-up window does. A "Sorry?" after speech that was not taken is
+            # no such reply (decide clears the debt), so it keeps nothing open.
+            self.open_since = now
         if self.conversation_open:
-            self.heliox_ended_at = self.clock()
+            self.heliox_ended_at = now
             self.question_open = asked
 
     def decide(self, heard: Heard) -> Decision:
@@ -347,6 +374,7 @@ class Addressing:
             self._at = None
         if not decision.act:
             self.overheard_since_heliox += 1  # counted, never kept: nothing of what was said stays here
+            self._reply_owed_since = None  # what Heliox says next answers nobody's request
         return decision
 
     def _decide(self, heard: Heard) -> Decision:
@@ -355,6 +383,7 @@ class Addressing:
             return Decision(False, why="in a call")
         if heard.by_button:
             self._addressed()
+            self._about_me_row = 0
             return Decision(True, heard.text.strip(), "button")
         if (
             heard.heliox_was_speaking
@@ -372,6 +401,7 @@ class Addressing:
             wake = vocative_wake(heard.text, heard.other_text)
         if wake is not None:
             self._addressed()
+            self._about_me_row = 0
             # The command in the words acted on (Parakeet's), the wake phrase decided by the wake check's.
             spoken = vocative_wake(heard.text) if heard.wake_text else None
             return Decision(True, spoken.command if spoken is not None else wake.command, "wake")
@@ -393,6 +423,8 @@ class Addressing:
             )
         if kind in {"talk", "unclear"} and self._thanks(heard):
             kind = "control"  # "Thank you." said with voice right after Heliox spoke: an acknowledgement
+        if kind not in CONFIDENT and self._tells_about_self(heard):
+            kind = "about me"  # said back at once, so a wrong take is heard and undone with "no"
         if heard.heliox_was_speaking and kind != "control":
             return Decision(False, why="began while Heliox was talking")
         if not self.task_open:
@@ -400,8 +432,10 @@ class Addressing:
                 return self._not_taken(heard, "too long after Heliox spoke")
         if heard.voiced_seconds > MONOLOGUE_SECONDS and kind not in {"control"}:
             return Decision(False, why="talk, not a reply")
-        if kind in CONFIDENT or kind == "elliptical":
+        if kind in CONFIDENT or kind in ("elliptical", "about me"):
             self._addressed()
+            if kind == "about me":
+                self._about_me_row += 1
             return Decision(True, heard.text.strip(" \t,.:;!?-"), f"follow-up: {kind}")
         if kind == "unclear" and not self._sorry_given:
             self._sorry_given = True
@@ -431,6 +465,20 @@ class Addressing:
         if not 0 <= heard.started - self.heliox_ended_at <= self.follow_up_seconds:
             return False
         return heard.voiced_seconds >= THANKS_VOICE_SECONDS
+
+    def _tells_about_self(self, heard: Heard) -> bool:
+        """A sentence telling Heliox about the person, in a form the personal layer keeps: not over Heliox's voice,
+        not more than ABOUT_ME_IN_ROW in a row without the wake phrase, and not when the second-voice rule is on and
+        the room was heard talking since Heliox spoke (it is data about the person)."""
+        test = self.about_me
+        if test is None or heard.heliox_was_speaking or self._about_me_row >= ABOUT_ME_IN_ROW:
+            return False
+        if self.second_voice_threshold and self.overheard_since_heliox >= self.second_voice_threshold:
+            return False
+        try:
+            return bool(test(heard.text))
+        except Exception:
+            return False
 
     def _resume(self, heard: Heard) -> bool:
         """ "What were you saying?", "go on": asked within RESUME_SECONDS of a reply cut short, not over Heliox's voice."""
@@ -466,6 +514,7 @@ class Addressing:
 
     def _addressed(self) -> None:
         self.open_since = self._now()
+        self._reply_owed_since = self.open_since
         self._sorry_given = False
         self._hint_given = False
 
@@ -478,6 +527,24 @@ class Addressing:
             self._hint_given = True
             hint = "Say “Hey Heliox” first."
         return Decision(False, why=why, hint=hint)
+
+
+def hand_about_me(rule: Addressing, config: object) -> None:
+    """Give the rule the personal layer's own test for a statement about the person, and the second-voice rule's
+    threshold from the settings (0 when the rule is off). The listener and the session runner both call this."""
+    if rule.about_me is None:
+        try:
+            from pilot.workflows.user_profile import tells_about_self
+
+            rule.about_me = tells_about_self
+        except Exception:  # pragma: no cover - the profile module is part of the daemon
+            rule.about_me = None
+    conversation = getattr(config, "conversation", None)
+    try:
+        on = bool(getattr(conversation, "second_voice_guard", False))
+        rule.second_voice_threshold = max(1, int(getattr(conversation, "second_voice_threshold", 1))) if on else 0
+    except (TypeError, ValueError):
+        rule.second_voice_threshold = 0
 
 
 # ── the Conversation Bench's transcript replay (benchmarks/conversation_bench/replay.py) ──
@@ -499,6 +566,7 @@ def decide(utterance: dict, context: dict) -> dict[str, str]:
     if stream not in _REPLAY or not context.get("history"):
         now = [0.0]
         _REPLAY[stream] = (now, Addressing(clock=lambda: now[0]))
+        hand_about_me(_REPLAY[stream][1], None)
     now, rule = _REPLAY[stream]
     start = float(utterance.get("t_start", 0.0))
     since = context.get("since_heliox_ended_s")

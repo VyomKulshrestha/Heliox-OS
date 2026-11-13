@@ -8314,7 +8314,12 @@ class PilotServer:
         from pilot.conversation.adapters import _is_local_model, personal_in_prompt
         from pilot.security.guard_changes import model_destination
 
-        if _is_local_model(self, None):
+        model = self.config.model
+        no_model = getattr(model, "provider", "") not in ("cloud", "subscription", "ollama", "local") or (
+            model.provider == "cloud" and not getattr(model, "cloud_provider", "")
+        )
+        if no_model or _is_local_model(self, None):
+            # No model at all sends nothing anywhere, like a model on this computer.
             return "None of it leaves this computer."
         where = model_destination(dict(getattr(self.config.model, "__dict__", {}))) or "the cloud model"
         if personal_in_prompt(self):

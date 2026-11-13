@@ -82,9 +82,9 @@ LIVE_OFF = 'Okay, Live is off: no more corrections. Say "be my live companion" t
 LIVE_LESS = "Okay, fewer corrections: I'll only speak up about risky things and show the rest quietly."
 LIVE_LESS_WHILE_OFF = "Okay. Live is off now; when you turn it on, it will only speak up about risky things."
 LIVE_MORE = "Okay, back to the usual: I'll point out slips at your pauses."
+# Under the spoken word cap (25): "what you told me about yourself" covers the name and answer style too.
 PROFILE_OFF = (
-    "Okay, your name, your answer style and what you told me about yourself stay on this computer now. "
-    'Say "you can send my profile again" to undo it.'
+    'Okay, what you told me about yourself stays on this computer now. Say "you can send my profile again" to undo it.'
 )
 PROFILE_ON = "Okay, a cloud model gets your name, your answer style and what bears on your question again."
 LIVE_MORE_WHILE_OFF = "Okay. Live is off now; when you turn it on, it will point out slips at your pauses."

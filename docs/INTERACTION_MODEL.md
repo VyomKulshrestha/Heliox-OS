@@ -1578,6 +1578,38 @@ microphone, roughly you within half a metre of it and other people three metres 
 talking at the next desk it would miss about half the time; a headset microphone (USB or wired, not a Bluetooth
 headset in call mode) or the microphone button is the advice there.
 
+**Telling Heliox about yourself in one go (13 November).**
+
+What went wrong: after "Call me Sam." was taken, "I start work at nine." and "I stop work at six." were judged "follow-up: talk", and
+"Remember that I'm working on the podcast launch." came "too long after Heliox spoke" (the Live agent's day). Only the first fact was kept.
+
+What happens now:
+- In an open follow-up window, a sentence the personal layer recognises as the person telling Heliox about themselves is taken as
+  "follow-up: about me".
+- The recogniser is the profile handlers' own patterns, handed to the rule (`user_profile.tells_about_self`, `addressing.hand_about_me`).
+- Heliox says back what it kept, so a wrong take is heard at once and "no" undoes it.
+- At most three are taken in a row without the wake phrase.
+- Never over Heliox's voice, and never when the second-voice rule is on and the room was heard.
+- For the window, the looser handler forms are narrowed:
+  - a preference only with "prefer" or "like my";
+  - a person only by a proper name of one or two capitalised words.
+
+What it costs: of the 975 unaddressed corpus lines said in an open window, none is newly taken. The corpus has almost no first-person
+statements, so that proves little. What the forms let in was checked by hand instead (`tests/test_addressing_about_me.py`):
+- Not taken: "I always forget my keys.", "I usually take the bus.", "My boss is annoying today.", "My brother is in Berlin this week.",
+  "He is my brother.", "I'd rather not talk about it."
+- Taken: "I prefer the blue one." Right after Heliox spoke, it is likely an answer to it anyway.
+- A recording of a room where people tell each other about themselves would measure this properly.
+
+**A long answer no longer closes the conversation.** The conversation's 20 s of quiet (CLOSE_SECONDS) used to be counted from the
+person's request, so a 20-second answer closed the conversation before they could reply ("no conversation open"). After a reply to a
+request, it now runs from Heliox's last word, on every road:
+- the voice played the answer;
+- the answer was shown with the voice off;
+- the person cut the answer off.
+
+A "Sorry?" after speech that was not taken still keeps nothing open.
+
 ## 6. Ending the turn early (`early_turn_threshold`): measured and left off
 
 The recorder can ask Smart Turn as soon as 200 ms of quiet follow a word and end the turn there when the model is

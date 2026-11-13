@@ -2778,6 +2778,9 @@ class ContinuousVoiceListener:
             rule.language = voice_words.voice_language(str(self.config.voice.language))
         except Exception:
             rule.language = "en"
+        from pilot.system.addressing import hand_about_me
+
+        hand_about_me(rule, self.config)
         try:
             cut = self.reply_cut_at() if self.reply_cut_at else None
             rule.reply_cut_at = float(cut) if cut is not None else None

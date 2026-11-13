@@ -298,6 +298,47 @@ def forgotten_sentence(text: str) -> str:
     return f"Okay, I've forgotten that {fact}." if fact else f'Okay, I\'ve forgotten "{_SAID_ON.sub("", text)}".'
 
 
+# The forms in which the person tells Heliox about themselves, as the handlers below keep them. The addressing rule
+# (pilot.system.addressing, "follow-up: about me") is handed tells_about_self, so the two never drift apart.
+ABOUT_ME_FORMS = (NAME_REQUEST, WORK_START_REQUEST, WORK_END_REQUEST, ABOUT_REQUEST)
+# Of the preference forms, only these are plainly said to Heliox: "I always forget my keys" and "I usually take the
+# bus" are talk, and are kept only when said with the wake phrase.
+ABOUT_ME_PREF_VERBS = frozenset({"prefer", "like my"})
+
+
+def _proper_name(name: str, raw: str) -> bool:
+    """One or two words, each written with a capital in what was heard and none a pronoun: "my sister is Ana", not
+    "my boss is annoying today" or "he is my brother"."""
+    words = name.split()
+    if not 1 <= len(words) <= 2 or any(word in _PRONOUNS for word in words):
+        return False
+    return all(re.search(rf"\b{re.escape(word[:1].upper() + word[1:])}\b", raw) for word in words)
+
+
+def tells_about_self(text: str) -> bool:
+    """The person telling Heliox something about themselves in a form the profile keeps: a name ("call me Sam"),
+    working hours ("I start work at nine"), a person by name ("my sister is Ana"), a preference ("I prefer short
+    answers"), "remember that I ...", or a goal ("my goal is ..."), also after "actually" or "sorry". Used by the
+    addressing rule for sentences said without the wake phrase, so the looser forms are narrowed here."""
+    normalized = _normalize(text).strip(" .!")
+    corrected = CORRECTION.match(normalized)
+    if corrected:
+        normalized = corrected.group("rest").strip(" .!")
+    if any(form.match(normalized) for form in ABOUT_ME_FORMS):
+        return True
+    pref = PREF_REQUEST.match(normalized)
+    if pref and pref.group("verb") in ABOUT_ME_PREF_VERBS:
+        return True
+    person = PERSON_REQUEST.match(normalized)
+    if person and _proper_name(person.group("name") or person.group("name2") or "", text):
+        return True
+    from pilot.workflows.goals import CREATE_REQUEST
+    from pilot.workflows.goals import _normalize as goal_words
+
+    found = CREATE_REQUEST.match(goal_words(normalized))
+    return bool(found and found.group("title2"))  # "my goal is ...": "start a goal ..." is a request already
+
+
 class UserProfile:
     """The person's own profile in a small JSON file, mirrored into long-term memory."""
 
