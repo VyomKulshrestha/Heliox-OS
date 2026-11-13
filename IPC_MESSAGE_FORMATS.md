@@ -1889,8 +1889,10 @@ Start or stop the screen vision agent.
 **Result:** `{ "status": "ok", "enabled": true }`
 
 #### `take_screenshot`
-The Dashboard's "Take Screenshot": the whole screen, saved as a PNG in Pictures (Windows), on the Desktop (macOS)
-or in the home folder (Linux). On Wayland it goes through the desktop's Screenshot portal, then gnome-screenshot,
+The Dashboard's "Take Screenshot": the whole screen, saved as a PNG in the Pictures known folder on Windows (which
+follows a redirected or OneDrive Pictures), in the folder chosen in macOS's Screenshot app (else the Desktop), and in
+XDG_PICTURES_DIR on Linux (the translated name from user-dirs.dirs, else the home folder). The Dashboard shows the
+returned path. On Wayland it goes through the desktop's Screenshot portal, then gnome-screenshot,
 then grim; on X11 gnome-screenshot, then scrot.
 
 **Params:** `{}`

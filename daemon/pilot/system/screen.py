@@ -83,14 +83,105 @@ async def brightness_set(level: int) -> str:
 
 
 def default_screenshot_path() -> str:
-    """Where a screenshot goes when no path is given: Pictures on Windows, the Desktop on macOS (as the system's own
-    screenshots do), the home folder on Linux."""
+    """Where a screenshot goes when no path is given: where this system keeps the person's pictures, found the way
+    the system names it (screenshot_folder). The action's and the RPC's answer says the full path."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return str(screenshot_folder() / f"screenshot_{timestamp}.png")
+
+
+def screenshot_folder() -> Path:
+    """The folder screenshots go to, as each system names it:
+    - Windows: the Pictures known folder (SHGetKnownFolderPath), which follows a redirected or OneDrive-backed
+      Pictures, whatever its name in the person's language;
+    - macOS: the folder chosen in the Screenshot app's Options (com.apple.screencapture location), else the Desktop
+      (its folder is "Desktop" on disk in every language; Finder only shows a translated name);
+    - Linux: XDG_PICTURES_DIR from the person's user-dirs.dirs (a translated name such as "Bilder" or "Images"),
+      else the home folder.
+    Under a home folder that is not this account's own (HOME and USERPROFILE pointed elsewhere, as in tests and CI),
+    the system's answer would be the real account's folder, so the fake home's own Pictures or Desktop is used."""
+    home = Path(os.path.expanduser("~"))
+    own_home = _is_account_home(home)
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        return os.path.join(os.path.expanduser("~"), "Pictures", f"screenshot_{timestamp}.png")
+        known = _windows_pictures() if own_home else None
+        return known or home / "Pictures"
     if CURRENT_PLATFORM == Platform.MACOS:
-        return os.path.join(os.path.expanduser("~"), "Desktop", f"screenshot_{timestamp}.png")
-    return os.path.join(os.path.expanduser("~"), f"screenshot_{timestamp}.png")
+        chosen = _mac_screencapture_location() if own_home else None
+        return chosen or home / "Desktop"
+    return xdg_pictures_dir(home, os.environ.get("XDG_CONFIG_HOME")) or home
+
+
+def _is_account_home(home: Path) -> bool:
+    from pilot.real_folders import account_home
+
+    real = account_home()
+    try:
+        return real is not None and os.path.samefile(home, real)
+    except OSError:
+        return False
+
+
+def _windows_pictures() -> Path | None:
+    """The Pictures known folder (FOLDERID_Pictures), or None when Windows does not say."""
+    try:
+        import ctypes
+        import uuid
+        from ctypes import wintypes
+
+        folder_id = uuid.UUID("33E28130-4E1E-4676-835A-98395C3BC3BB")  # FOLDERID_Pictures
+        guid = (ctypes.c_byte * 16).from_buffer_copy(folder_id.bytes_le)
+        found = ctypes.c_wchar_p()
+        shell32 = ctypes.windll.shell32  # type: ignore[attr-defined]
+        if shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, wintypes.HANDLE(0), ctypes.byref(found)) != 0:
+            return None
+        try:
+            return Path(found.value) if found.value else None
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(found)  # type: ignore[attr-defined]
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def _mac_screencapture_location() -> Path | None:
+    """The folder chosen for screenshots in the Screenshot app (com.apple.screencapture location), when it exists."""
+    import subprocess
+
+    try:
+        done = subprocess.run(
+            ["defaults", "read", "com.apple.screencapture", "location"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    location = done.stdout.strip()
+    if done.returncode != 0 or not location:
+        return None
+    folder = Path(os.path.expanduser(location))
+    return folder if folder.is_dir() else None
+
+
+def xdg_pictures_dir(home: Path, config_home: str | None = None) -> Path | None:
+    """XDG_PICTURES_DIR from user-dirs.dirs ("$HOME/Bilder"), when it is set to a folder other than the home folder
+    itself (the spec's way of turning it off). Read as text, as xdg-user-dir does; no shell is run."""
+    base = Path(config_home) if config_home and os.path.isabs(config_home) else home / ".config"
+    try:
+        text = (base / "user-dirs.dirs").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("XDG_PICTURES_DIR="):
+            continue
+        value = line.split("=", 1)[1].strip().strip('"')
+        if value.startswith("$HOME"):
+            value = str(home) + value[len("$HOME") :]
+        elif not value.startswith("/"):
+            return None  # the spec allows only $HOME/... or an absolute path
+        folder = Path(value)
+        return None if folder == home else folder
+    return None
 
 
 async def screenshot(

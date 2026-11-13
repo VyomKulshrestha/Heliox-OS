@@ -4,6 +4,7 @@ system, the Screenshot portal first on Wayland, and a path PowerShell cannot mis
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from pilot.system import portal, screen
@@ -88,8 +89,79 @@ def test_the_take_screenshot_rpc_saves_where_the_system_keeps_screenshots(monkey
     }
 
 
-def test_the_default_place_follows_the_system(monkeypatch):
+def _home(monkeypatch, tmp_path, own: bool):
+    home = tmp_path / "home"
+    home.mkdir()
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(screen, "_is_account_home", lambda _home: own)
+    return home
+
+
+def test_windows_uses_the_pictures_known_folder_wherever_it_is(monkeypatch, tmp_path):
+    home = _home(monkeypatch, tmp_path, own=True)
     monkeypatch.setattr(screen, "CURRENT_PLATFORM", Platform.WINDOWS)
-    assert "Pictures" in screen.default_screenshot_path()
+    onedrive = tmp_path / "OneDrive - Work" / "Bilder"
+    monkeypatch.setattr(screen, "_windows_pictures", lambda: onedrive)
+    path = screen.default_screenshot_path()
+    assert path.startswith(str(onedrive)) and path.endswith(".png")
+    monkeypatch.setattr(screen, "_windows_pictures", lambda: None)  # Windows did not say
+    assert screen.screenshot_folder() == home / "Pictures"
+
+
+def test_macos_uses_the_screenshot_apps_chosen_folder_else_the_desktop(monkeypatch, tmp_path):
+    home = _home(monkeypatch, tmp_path, own=True)
     monkeypatch.setattr(screen, "CURRENT_PLATFORM", Platform.MACOS)
-    assert "Desktop" in screen.default_screenshot_path()
+    chosen = tmp_path / "Screenshots"
+    monkeypatch.setattr(screen, "_mac_screencapture_location", lambda: chosen)
+    assert screen.screenshot_folder() == chosen
+    monkeypatch.setattr(screen, "_mac_screencapture_location", lambda: None)
+    assert screen.screenshot_folder() == home / "Desktop"
+
+
+def test_linux_uses_the_persons_pictures_folder_in_their_language(monkeypatch, tmp_path):
+    home = _home(monkeypatch, tmp_path, own=True)
+    monkeypatch.setattr(screen, "CURRENT_PLATFORM", Platform.LINUX)
+    config = home / ".config"
+    config.mkdir()
+    lines = [
+        "# written by xdg-user-dirs-update",
+        'XDG_DESKTOP_DIR="$HOME/Schreibtisch"',
+        'XDG_PICTURES_DIR="$HOME/Bilder"',
+    ]
+    (config / "user-dirs.dirs").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert screen.screenshot_folder() == home / "Bilder"
+    (config / "user-dirs.dirs").write_text('XDG_PICTURES_DIR="$HOME/"\n', encoding="utf-8")  # turned off
+    assert screen.xdg_pictures_dir(home) is None
+    (config / "user-dirs.dirs").write_text('XDG_PICTURES_DIR="/data/pics"\n', encoding="utf-8")
+    assert screen.xdg_pictures_dir(home) == Path("/data/pics")
+    (config / "user-dirs.dirs").unlink()
+    assert screen.screenshot_folder() == home
+
+
+def test_under_a_fake_home_the_real_accounts_folders_are_not_used(monkeypatch, tmp_path):
+    home = _home(monkeypatch, tmp_path, own=False)
+    asked = []
+    monkeypatch.setattr(screen, "_windows_pictures", lambda: asked.append("windows") or tmp_path / "real")
+    monkeypatch.setattr(screen, "_mac_screencapture_location", lambda: asked.append("mac") or tmp_path / "real")
+    monkeypatch.setattr(screen, "CURRENT_PLATFORM", Platform.WINDOWS)
+    assert screen.screenshot_folder() == home / "Pictures"
+    monkeypatch.setattr(screen, "CURRENT_PLATFORM", Platform.MACOS)
+    assert screen.screenshot_folder() == home / "Desktop"
+    assert asked == []
+
+
+def test_the_answer_says_where_the_file_went(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+
+    async def run_command(args, **_kwargs):
+        calls.append(args)
+        Path(args[-1]).write_bytes(b"png")
+        return 0, "", ""
+
+    monkeypatch.setattr(screen, "CURRENT_PLATFORM", Platform.MACOS)
+    monkeypatch.setattr(screen, "run_command", run_command)
+    target = tmp_path / "Bilder" / "shot.png"
+    assert asyncio.run(screen.screenshot(str(target))) == f"Screenshot saved to {target}"
+    assert calls == [["screencapture", str(target)]] and target.parent.is_dir()
