@@ -36,7 +36,6 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 
-import psutil  # noqa: E402
 import real_daemon  # noqa: E402
 
 real_daemon.time_limit("frozen", 600)  # no check may hang: a CHECK line and exit 1 instead
@@ -52,12 +51,6 @@ def check(name: str, ok: bool, detail: str) -> bool:
     print(f"CHECK frozen/{name}: {'PASS' if ok else 'FAIL'} - {detail}", flush=True)
     results.append(ok)
     return ok
-
-
-def interpreter(pid: int) -> list[psutil.Process]:
-    """The daemon and anything it started directly (a Windows venv launcher's interpreter among them)."""
-    root = psutil.Process(pid)
-    return [root, *root.children(recursive=True)]
 
 
 def reminders_in(notifications: list[dict]) -> list[dict]:
@@ -98,7 +91,6 @@ async def run() -> int:
     real_daemon.write_config()
     daemon = real_daemon.start()
     session = None
-    frozen: list[psutil.Process] = []
     try:
         session = await real_daemon.connect(240)
         ready, _status = await session.wait_ready(240)
@@ -108,15 +100,8 @@ async def run() -> int:
         await session.close()
         session = None
 
-        frozen = interpreter(daemon.pid)
-        for process in frozen:
-            process.suspend()
-        print(f"INFO froze {[p.pid for p in frozen]} for {FROZEN:g} s", flush=True)
-        await asyncio.sleep(FROZEN)
-        for process in reversed(frozen):
-            process.resume()
+        await real_daemon.freeze(daemon, FROZEN)  # resumed whatever happens (real_daemon.freeze)
         resumed = time.monotonic()
-        frozen = []
         # No window for a moment, as after a real wake: the reminder that came due is held, not given to nobody.
         await asyncio.sleep(1.0)
 
@@ -176,11 +161,6 @@ async def run() -> int:
             for line in real_daemon.log_tail(60):
                 print(f"DAEMON-LOG {line}", flush=True)
     finally:
-        for process in frozen:
-            try:
-                process.resume()
-            except psutil.Error:
-                pass
         await real_daemon.stop(daemon, session)
     return 0 if results and all(results) else 1
 

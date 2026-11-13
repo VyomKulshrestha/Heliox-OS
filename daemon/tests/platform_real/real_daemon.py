@@ -245,6 +245,39 @@ def kill_serving(popen: subprocess.Popen, mark: str = "pilot.server") -> None:
     popen.wait(30)
 
 
+FREEZE_LONGEST = 900.0  # seconds: a freeze longer than any check's own time limit is a mistake in the check
+
+
+async def freeze(daemon: subprocess.Popen, seconds: float) -> list[int]:
+    """A stand-in for sleep: suspend the daemon's whole process tree (SIGSTOP on Linux and macOS, every thread on
+    Windows, through psutil), wait ``seconds``, then resume it. It is always resumed, in a ``finally``, also when
+    the wait is cancelled or raises; and the time limit's clean-up ends suspended processes too. ``seconds`` is
+    bounded (0 to FREEZE_LONGEST). Returns the pids that were frozen (the daemon and anything it started, a Windows
+    venv launcher's interpreter among them), and prints them."""
+    import psutil
+
+    if not 0 < seconds <= FREEZE_LONGEST:
+        raise ValueError(f"a freeze lasts more than 0 and at most {FREEZE_LONGEST:g} s, not {seconds:g}")
+    root = psutil.Process(daemon.pid)
+    stopped: list[psutil.Process] = []
+    try:
+        for process in [root, *root.children(recursive=True)]:
+            try:
+                process.suspend()
+            except psutil.Error:
+                continue  # gone already: nothing to freeze or to resume
+            stopped.append(process)
+        print(f"INFO froze {[p.pid for p in stopped]} for {seconds:g} s", flush=True)
+        await asyncio.sleep(seconds)
+    finally:
+        for process in reversed(stopped):
+            try:
+                process.resume()
+            except psutil.Error:
+                pass
+    return [process.pid for process in stopped]
+
+
 def end_tree(popen: subprocess.Popen) -> None:
     """Clean-up: the process and everything under it, launcher, interpreter and workers alike."""
     import psutil
