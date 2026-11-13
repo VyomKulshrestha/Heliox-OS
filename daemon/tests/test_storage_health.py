@@ -346,7 +346,7 @@ def test_an_unwritable_data_folder_does_not_stop_the_daemon_before_it_listens(he
     real_write = Path.write_text
 
     def full(self, *args, **kwargs):
-        if self.name == ".write_test":
+        if self.name.startswith(".write_test"):  # the start-up probe (config._probe_writable)
             raise OSError(errno.ENOSPC, "No space left on device")
         return real_write(self, *args, **kwargs)
 

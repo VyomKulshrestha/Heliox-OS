@@ -2009,6 +2009,20 @@ def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
     return strip_none(asdict(config))
 
 
+def _probe_writable(folder: Path) -> None:
+    """Write and remove a file of this process's own in ``folder``; raises if the folder cannot be written.
+
+    The name is unique to the process and the call: two copies of Heliox starting at the same moment (a double-click
+    on the icon) used to share one ".write_test", so one removed the file the other was about to remove, and the
+    loser reported the data folder as not writable and ended with a traceback instead of the sentence about the
+    copy already running. A file someone else removed does not make the folder unwritable."""
+    import uuid
+
+    probe = folder / f".write_test-{os.getpid()}-{uuid.uuid4().hex[:12]}"
+    probe.write_text("test")
+    probe.unlink(missing_ok=True)
+
+
 def ensure_dirs() -> None:
     """Create all required XDG directories and validate write access.
 
@@ -2033,11 +2047,8 @@ def ensure_dirs() -> None:
     if blocked:
         return
 
-    test_file = DATA_DIR / ".write_test"
-
     try:
-        test_file.write_text("test")
-        test_file.unlink()
+        _probe_writable(DATA_DIR)
     except Exception as e:
         if isinstance(e, OSError) and classify(e) is not None:
             logger.warning("The data folder cannot be written (%s); start-up says so and waits for it", e)
