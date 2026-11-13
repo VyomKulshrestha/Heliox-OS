@@ -24,7 +24,7 @@ from typing import Any
 from pilot.live.bench import PERSONAS, Session, expand, load_scenarios, warm_up
 from pilot.live.engine import TICK_SECONDS, LiveCompanion, Observation
 
-DAYS = ("Monday", "Tuesday", "Wednesday")
+DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday")
 SCENARIOS = (
     "email: weekday that doesn't match the date, mid-sentence",
     "notes: wrong product in a budget line",
@@ -94,7 +94,7 @@ async def run_person(person: Person) -> list[Day]:
         clock=lambda: clock["t"],
         today=today,
         mute_kind=mute,
-        wallclock=lambda: datetime.combine(today(), datetime.min.time()) + timedelta(hours=11),
+        wallclock=lambda: datetime(2026, 11, 9, 11) + timedelta(seconds=clock["t"] - 1000.0),  # days pass
     )
 
     async def play(scenario: dict[str, Any], day: Day | None, index: int) -> None:
@@ -141,8 +141,10 @@ async def run_person(person: Person) -> list[Day]:
 
 
 def _answer(person: Person, day: int, kind: str, index: int) -> str:
-    if day == 0 and kind == "weekday_date" and index == 0:
-        return "not now"
+    if day in (0, 1) and kind == "weekday_date" and index == 0:
+        return "not now"  # Monday and Tuesday: from Wednesday that kind is shown, not spoken
+    if day == 2 and kind == "weekday_date" and index == 3 and person.rest == "thanks":
+        return "thanks"  # Wednesday: "thanks" for it, so Thursday speaks it again for this person
     if day == 1 and kind == "repeated_word":
         return "don't mention these"
     return {"thanks": "thanks", "fix": "fix", "ignore": ""}[person.rest]

@@ -120,23 +120,29 @@ Recall is 55 of 56 in every row, before and after (the one miss is the known rec
 fast typist who stops mid-sentence in their first days: the card comes after 3.0 s instead of 1.2 s, then 1.38 s after
 20 such pauses and 1.23 s after 60 (the quick persona's own rhythm). At a sentence's end nothing changes.
 
-## Update, 13 November 2026: does Monday change Wednesday?
+## Update, 13 November 2026: does Monday change Thursday?
 
-`python -m pilot.live.learning_week` runs three made-up people through three days with one Live engine kept across
-them (relevance, snoozes and the muted kinds carry over, a day apart on the clock), typing the same four slips each
-day: two weekdays that do not match their dates, a wrong sum, a doubled word. On Monday each says "not now" to the
-first weekday card; on Tuesday "don't mention these" to the doubled word. With every other card one says "thanks",
-one uses the fix, one ignores it. The same for all three:
+`python -m pilot.live.learning_week` runs three made-up people through four days with one Live engine kept across
+them (relevance, snoozes, "not now" days and the muted kinds carry over; a day apart on the clock), typing the same
+four slips each day: two weekdays that do not match their dates, a wrong sum, a doubled word. On Monday and Tuesday
+each says "not now" to the first weekday card; on Tuesday "don't mention these" to the doubled word. On Wednesday
+one says "thanks" to a weekday card, one uses its fix, one ignores it.
 
 | Day | Weekday slips | Wrong sum | Doubled word |
 |---|---|---|---|
 | Monday | 1 of 2, spoken (the second, minutes after "not now", held back) | shown | shown |
-| Tuesday | 2 of 2 (spoken, then shown) | shown | shown, then "don't mention these" |
-| Wednesday | 2 of 2 (spoken, then shown) | shown | none |
+| Tuesday | 1 of 2, spoken (held back again) | shown | shown, then "don't mention these" |
+| Wednesday | 2 of 2, both shown, not spoken | spoken | none |
+| Thursday | after "thanks" or the fix: spoken again; ignored: shown, not spoken | shown or spoken | none |
 
-"Not now" holds a kind for the moment, not the next day; "don't mention these" ends it. One "not now" lowers the
-kind's relevance from 0.67 to 0.50, which is still enough to be spoken, so Wednesday's first weekday card is still
-said aloud. `tests/test_live_learning_week.py` asserts the table.
+The first version of this bench showed that one "not now" changed nothing the next day, which is right, but also
+that a person who said "not now" on two days still heard the kind spoken. Now a kind told "not now" on two different
+days within a week is shown and not spoken until a week after the last one; "thanks" for it, using its fix, or undoing
+the "not now" speaks it again at once; "don't mention these" is unchanged. This is the one mechanism for "not now":
+its days are kept with its snoozes (`live_snoozed.json`), and "not now" no longer also lowers the kind's relevance,
+which now moves only for thanks, fixes, mutes and cards left alone. Relevance could not carry the rule: it does not
+know days, so two "not now"s a minute apart would count as two days, and nothing would let it lapse after a week.
+`tests/test_live_learning_week.py` asserts the table.
 
 ## What it does not show
 

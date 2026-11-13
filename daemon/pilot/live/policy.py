@@ -101,7 +101,16 @@ class Pending:
     needed_pause: float | None = None
 
 
-def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: frozenset[str]) -> str:
+def decide(
+    item: Pending,
+    act: Activity,
+    level: Level,
+    relevance: float,
+    muted: frozenset[str],
+    quiet: frozenset[str] = frozenset(),
+) -> str:
+    """``quiet``: kinds the person told "not now" on two different days within a week (LiveCompanion.quiet_kinds):
+    shown as a card, never spoken, unless urgent."""
     correction = item.correction
     urgent = correction.urgency == URGENT
     if correction.kind in muted:
@@ -122,7 +131,9 @@ def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: 
             return WAIT
         if act.heliox_speaking:
             return SHOW
-        speak = urgent or (correction.urgency in level.speak and relevance >= MIN_RELEVANCE_TO_SPEAK)
+        speak = urgent or (
+            correction.urgency in level.speak and relevance >= MIN_RELEVANCE_TO_SPEAK and correction.kind not in quiet
+        )
         return SPEAK if speak else SHOW
     needed_pause = URGENT_PAUSE_SECONDS if urgent else level.pause_seconds
     if not urgent and act.personal_pause is not None:
@@ -144,6 +155,7 @@ def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: 
     speakable = (
         correction.urgency in level.speak
         and relevance >= MIN_RELEVANCE_TO_SPEAK
+        and correction.kind not in quiet
         and not act.heliox_speaking
         and act.now - act.last_spoken_at >= level.spoken_gap_seconds
     )

@@ -102,6 +102,10 @@ NOTICE_SOURCES = frozenset({"keystroke"})
 NOTICE_QUIET_SECONDS = 3600.0
 # "Not now" holds that kind of catch back this long (urgent risks still show). "Don't mention these" mutes it.
 SNOOZE_SECONDS = 1800.0
+# "Not now" to the same kind on this many different days within QUIET_DAYS: that kind is shown, not spoken, until
+# QUIET_DAYS after the last one. "Thanks" for that kind, or the person undoing a "not now", speaks it again at once.
+NOT_NOW_DAYS_TO_QUIET = 2
+QUIET_DAYS = 7
 # After a call ends, this long before the held catches are said: people say goodbye and breathe first.
 AFTER_CALL_SECONDS = 5.0
 # A speech outcome that means the remark was not heard; it must not count against the spoken rate limit.
@@ -409,6 +413,7 @@ class LiveCompanion:
         self._call_ended_at = float("-inf")
         self._needed_pause: float | None = None  # the wait the last decision required
         self._snoozed: dict[str, float] = {}
+        self._not_now_days: dict[str, list[str]] = {}  # kind -> the days (ISO) the person said "not now" to it
         self.turns = Turns(clock=clock)  # what the person said to Heliox in this conversation (pilot.live.held)
         self._held: Held | None = None
         self._snooze_loaded = False
@@ -904,6 +909,7 @@ class LiveCompanion:
         cfg = self._config()
         level = LEVELS.get(getattr(cfg, "level", DEFAULT_LEVEL), LEVELS[DEFAULT_LEVEL])
         muted = frozenset(getattr(cfg, "muted_kinds", []) or [])
+        quiet = self.quiet_kinds()
         snoozed = self.snoozed_kinds(now)
         # Patient in the middle of a sentence until the person's rhythm is learned, and for good with learning off.
         learning = self._personal_timing()
@@ -941,7 +947,8 @@ class LiveCompanion:
                 personal_pause=personal_pause,
                 trailing_pause=trailing_pause if learning else level.pause_seconds,
             )
-            verdicts.append((key, item, decide(item, act, level, self.relevance.score(item.correction.kind), muted)))
+            score = self.relevance.score(item.correction.kind)
+            verdicts.append((key, item, decide(item, act, level, score, muted, quiet)))
         return verdicts
 
     async def _deliver_due(self, now: float) -> None:
@@ -1058,7 +1065,32 @@ class LiveCompanion:
         if not self._snooze_loaded:
             self._load_snoozes()
         self._snoozed[kind] = self._clock() + seconds
+        days = self._not_now_days.setdefault(kind, [])
+        today = self._wallclock().date().isoformat()
+        if today not in days:
+            days.append(today)
+            del days[:-NOT_NOW_DAYS_TO_QUIET]
         self._save_snoozes()
+
+    def quiet_kinds(self) -> frozenset[str]:
+        """Kinds told "not now" on two different days within a week: shown, not spoken, for a week after the last."""
+        if not self._snooze_loaded:
+            self._load_snoozes()
+        today = self._wallclock().date()
+        quiet = set()
+        for kind, days in self._not_now_days.items():
+            if len(days) < NOT_NOW_DAYS_TO_QUIET:
+                continue
+            recent = sorted(days)[-NOT_NOW_DAYS_TO_QUIET:]
+            first, last = date.fromisoformat(recent[0]), date.fromisoformat(recent[-1])
+            if (last - first).days < QUIET_DAYS and (today - last).days < QUIET_DAYS:
+                quiet.add(kind)
+        return frozenset(quiet)
+
+    def _speak_again(self, kind: str) -> None:
+        """ "Thanks" for this kind, or the person undoing a "not now": its "not now" days go, it is spoken again."""
+        if self._not_now_days.pop(kind, None) is not None:
+            self._save_snoozes()
 
     def _load_snoozes(self) -> None:
         """Snoozes from the last run, turned from wall-clock expiry back into this run's clock."""
@@ -1067,6 +1099,12 @@ class LiveCompanion:
             return
         try:
             raw = json.loads(self._snooze_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and isinstance(raw.get("snoozed"), dict):
+                days = raw.get("not_now_days") or {}
+                self._not_now_days = {
+                    str(k): [str(d) for d in v if isinstance(d, str)] for k, v in days.items() if isinstance(v, list)
+                }
+                raw = raw["snoozed"]  # the file before "not now" days were kept was the snoozes alone
             left = {str(k): float(v) - self._wallclock().timestamp() for k, v in raw.items()}
         except (OSError, ValueError, TypeError, AttributeError):
             logger.warning("Ignoring an unreadable Live snooze file", exc_info=True)
@@ -1080,7 +1118,10 @@ class LiveCompanion:
         if self._snooze_path is None:
             return
         now, wall = self._clock(), self._wallclock().timestamp()
-        data = {kind: wall + (until - now) for kind, until in self._snoozed.items() if until > now}
+        data = {
+            "snoozed": {kind: wall + (until - now) for kind, until in self._snoozed.items() if until > now},
+            "not_now_days": self._not_now_days,
+        }
         try:
             self._snooze_path.parent.mkdir(parents=True, exist_ok=True)
             self._snooze_path.write_text(json.dumps(data), encoding="utf-8")
@@ -1134,8 +1175,10 @@ class LiveCompanion:
             self.relevance.update(entry["kind"], "dismissed")
             if self._mute_kind:
                 await self._mute_kind(entry["kind"])
-        else:
+        elif not held:  # "not now" from the person counts in its days (quiet_kinds), not in relevance
             self.relevance.update(entry["kind"], verdict)
+        if verdict in ("helpful", "used_fix"):
+            self._speak_again(entry["kind"])
         self._outcome(self._visible.get(correction_id), verdict)
         if correction_id in self._visible:
             self._visible.pop(correction_id, None)
@@ -1155,7 +1198,8 @@ class LiveCompanion:
         """Undo "not now" for a kind (the card's Undo, Settings)."""
         if not self._snooze_loaded:
             self._load_snoozes()
-        if self._snoozed.pop(kind, None) is None:
+        quieted = self._not_now_days.pop(kind, None) is not None  # asked for it: spoken again, too
+        if self._snoozed.pop(kind, None) is None and not quieted:
             return False
         self._save_snoozes()
         return True
