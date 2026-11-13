@@ -40,6 +40,23 @@ class SpeechOutcome:
     status: str
     channel: SpeechChannel
     message: str
+    # When the speech was cut off (interrupted, stopped or superseded) and the local voice spoke it: the words the
+    # person heard (whole words that had finished playing HEARD_MARGIN_SECONDS before the voice stopped, the start
+    # of the text as given), the seconds played, and the seconds of audio made so far. None when unknown: a system
+    # voice (SAPI, say, espeak-ng) is a process killed at the cut and reports nothing.
+    heard_text: str | None = None
+    played_seconds: float | None = None
+    duration_seconds: float | None = None
+
+
+def heard_part(text: str, spoken_words: int, spoken_total: int) -> str:
+    """The start of ``text`` covering ``spoken_words`` of the ``spoken_total`` words the voice was given (the voice
+    gets the text after pronunciation fixes, which can change the word count; then in proportion, rounded down)."""
+    words = text.split()
+    if spoken_total <= 0 or spoken_words <= 0:
+        return ""
+    count = spoken_words if len(words) == spoken_total else (spoken_words * len(words)) // spoken_total
+    return " ".join(words[: min(count, len(words))])
 
 
 @dataclass(slots=True)
@@ -216,6 +233,7 @@ class CompanionSpeechCoordinator:
                         return
                 continue
             self._current = request
+            sequence_before = self._local_sequence()
             self._current_speech = asyncio.create_task(self._speaker(request.text, request.recorder))
             outcome = SpeechOutcome(
                 "cancelled",
@@ -253,6 +271,8 @@ class CompanionSpeechCoordinator:
                     str(error),
                 )
             finally:
+                if outcome.status in {"interrupted", "stopped", "superseded", "cancelled"}:
+                    outcome = self._with_heard(outcome, request.text, sequence_before)
                 self._pending_keys.discard(request.key)
                 if not request.future.done():
                     request.future.set_result(outcome)
@@ -263,6 +283,37 @@ class CompanionSpeechCoordinator:
                 if self._closing or self._queue.empty():
                     self._worker = None
                     return
+
+    @staticmethod
+    def _local_sequence() -> int:
+        from pilot.system.local_tts_worker import manager
+
+        progress = manager().last_progress
+        return progress.sequence if progress is not None else 0
+
+    def _with_heard(self, outcome: SpeechOutcome, text: str, sequence_before: int) -> SpeechOutcome:
+        """``outcome`` with what the person heard, when the local voice spoke this request (a speak() began after
+        it was taken); unchanged when a system voice spoke it."""
+        from dataclasses import replace
+
+        from pilot.system.local_tts_worker import manager
+
+        progress = manager().last_progress
+        if progress is None or progress.sequence <= sequence_before:
+            return outcome
+        spoken_total = sum(len(piece.split()) for piece in progress.pieces)
+        played, total = progress.played()
+        heard = heard_part(text, progress.heard_words(), spoken_total)
+        self._last_heard = (text, heard)
+        return replace(outcome, heard_text=heard, played_seconds=round(played, 2), duration_seconds=round(total, 2))
+
+    def heard_of(self, text: str) -> str | None:
+        """What the person heard of ``text`` when it was last cut off, or None when unknown (a system voice spoke
+        it, or the last cut was another sentence)."""
+        last = getattr(self, "_last_heard", None)
+        if last is None or " ".join(last[0].split()) != " ".join((text or "").split()):
+            return None
+        return last[1]
 
     def _prune_recent(self, now: float) -> None:
         for key, observed_at in tuple(self._recent.items()):

@@ -773,6 +773,11 @@ async def _play_local_tts_file(path: Path) -> None:
     """Play a synthesized WAV without importing the model runtime. Cancelling it (barge-in) cuts it at once."""
     audio, sample_rate = await asyncio.to_thread(_read_audio_file, path)
     playback = _Playback(audio, sample_rate)
+    from pilot.system.local_tts_worker import speech_progress
+
+    progress = speech_progress.get()
+    if progress is not None:
+        progress.playing = playback  # its position says how much of this piece was heard if it is cut
     try:
         await asyncio.to_thread(playback.play)
     except asyncio.CancelledError:

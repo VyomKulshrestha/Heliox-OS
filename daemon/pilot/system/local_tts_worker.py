@@ -34,6 +34,8 @@ import sys
 import tempfile
 import time
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -472,6 +474,69 @@ def _close_process(worker: Any) -> None:
 StatusCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 PlayFile = Callable[[Path], Awaitable[None]]
 
+# What of a sentence the person heard when Heliox was cut off. A word counts only if it had finished playing this
+# long before the voice stopped: from the person's first sound to silence takes 0.45 to 0.65 s (the barge-in
+# decision, then an 8 ms fade and the device's buffered block), and what Heliox believes it said must never be more
+# than the person heard, so the longer end is taken.
+HEARD_MARGIN_SECONDS = 0.65
+
+
+@dataclass
+class SpeechProgress:
+    """One speak() of the local voice: its pieces, how long each finished one played, and the one playing now
+    (its playback object, set by the player through ``speech_progress``)."""
+
+    text: str
+    pieces: list[str]
+    sequence: int = 0
+    durations: list[float] = field(default_factory=list)  # seconds of each piece that played to the end
+    playing: Any = None  # the playback of the piece after them: .position (samples), .sample_rate, .audio
+    finished: bool = False
+
+    def played(self) -> tuple[float, float]:
+        """(seconds played, seconds of audio made so far) across the pieces."""
+        played = total = sum(self.durations)
+        current = self.playing
+        if current is not None and len(self.durations) < len(self.pieces):
+            rate = max(1, int(getattr(current, "sample_rate", 1)))
+            played += min(int(getattr(current, "position", 0)), len(current.audio)) / rate
+            total += len(current.audio) / rate
+        return played, total
+
+    def heard_words(self, margin: float = HEARD_MARGIN_SECONDS) -> int:
+        """How many of the sentence's words had finished playing ``margin`` seconds before the cut. Within a piece a
+        word's end is placed in proportion to the letters before it (the voice's pace is about even inside a
+        clause); a piece that played to the end counts whole."""
+        if self.finished:
+            return sum(len(piece.split()) for piece in self.pieces)
+        played, _total = self.played()
+        left = played - margin
+        words = 0
+        lengths = [*self.durations]
+        current = self.playing
+        if current is not None and len(lengths) < len(self.pieces):
+            lengths.append(len(current.audio) / max(1, int(getattr(current, "sample_rate", 1))))
+        for piece, seconds in zip(self.pieces, lengths, strict=False):
+            piece_words = piece.split()
+            if left >= seconds:
+                words += len(piece_words)
+                left -= seconds
+                continue
+            weights = [len(word) + 1 for word in piece_words]
+            total = sum(weights) or 1
+            reached = 0.0
+            for weight in weights:
+                reached += seconds * weight / total
+                if reached > left:
+                    break
+                words += 1
+            break
+        return max(0, words)
+
+
+# The speak() in progress, for the player to report its playback (set by LocalTTSWorkerManager.speak).
+speech_progress: ContextVar[SpeechProgress | None] = ContextVar("speech_progress", default=None)
+
 
 class LocalTTSWorkerManager:
     """One local-TTS worker process: when it starts, how long it stays, and how requests reach it."""
@@ -505,6 +570,9 @@ class LocalTTSWorkerManager:
         self.device_reason = ""
         # The heads this Heliox says most, kept as audio (HeadCache); None: nothing kept (tests, a written file).
         self.head_cache: HeadCache | None = None
+        # The last speak()'s pieces and playback, for what was heard of it when it is cut off (SpeechProgress).
+        self.last_progress: SpeechProgress | None = None
+        self._spoken_sequence = 0
         self.gpu_lease = False  # the running worker holds Heliox's GPU lease (the arbiter said the card is usable)
         # Free system memory now, or None: the worker is not started when less than VOICE_HOST_RAM_BYTES is free
         # (on an 8 GB machine the model's 1.6-1.9 GB can push everything into swap); the system voice speaks.
@@ -841,7 +909,15 @@ class LocalTTSWorkerManager:
                 sentences = split_for_speech(text)
                 if not sentences:
                     return
-                await self._speak_sentences(engine, sentences, voice, folder, play)
+                self._spoken_sequence += 1
+                progress = SpeechProgress(text, sentences, self._spoken_sequence)
+                self.last_progress = progress  # read when the speech is cut off (heard_words)
+                token = speech_progress.set(progress)
+                try:
+                    await self._speak_sentences(engine, sentences, voice, folder, play)
+                    progress.finished = True
+                finally:
+                    speech_progress.reset(token)
         finally:
             self._busy -= 1
             self.note_activity()
@@ -893,6 +969,11 @@ class LocalTTSWorkerManager:
                 path = await upcoming
                 upcoming = make(index + 1) if index + 1 < len(sentences) else None
                 await play(path)
+                progress = speech_progress.get()
+                if progress is not None and progress.playing is not None:
+                    current = progress.playing
+                    progress.durations.append(len(current.audio) / max(1, int(current.sample_rate)))
+                    progress.playing = None
                 self.note_activity()
                 if index == 0 and heads is not None and cached_head is None:
                     with contextlib.suppress(Exception):
