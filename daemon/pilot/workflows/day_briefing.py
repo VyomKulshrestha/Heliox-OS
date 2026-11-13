@@ -24,7 +24,8 @@ NIGHT_REQUEST = re.compile(
 
 
 def _clock(moment: datetime) -> str:
-    return moment.strftime("%I:%M %p").lstrip("0")
+    """ "9:00 AM", whatever the system's locale."""
+    return f"{moment.hour % 12 or 12}:{moment.minute:02d} {'AM' if moment.hour < 12 else 'PM'}"
 
 
 def _duration(seconds: float) -> str:

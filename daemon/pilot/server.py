@@ -15098,8 +15098,13 @@ def handle_tool(tool_name, params):
                         conversation
                     )
                     conversation.memory.add_user(command_text if in_words else asked_here(CODE_ANSWER_BY.get()))
+                    from pilot.conversation.style import speakable_numbers
+
+                    # In the words the person heard ("Thursday the twelfth"), as the voice said them.
                     conversation.memory.add_heliox(
-                        timeline_answer if in_words else answered_here(tuple(voice_turn.kept), CODE_ANSWER_BY.get())
+                        speakable_numbers(timeline_answer)
+                        if in_words
+                        else answered_here(tuple(voice_turn.kept), CODE_ANSWER_BY.get())
                     )
                     conversation.note_code_answer(timeline_answer, tuple(voice_turn.kept))
                 await self._broadcast_notification(

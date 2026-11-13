@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import date
 
 SYSTEM_PROMPT = """\
 You are Heliox, a voice companion that lives on the person's desktop computer. Everything you write is spoken \
@@ -117,8 +118,9 @@ def _date_words(year: str, month: str, day: str) -> str | None:
     return date_words(d, _MONTHS[m - 1])
 
 
-def speakable_numbers(text: str) -> str:
-    """Units, percentages, dated file names and ISO dates in the words a voice says well."""
+def speakable_numbers(text: str, today: date | None = None) -> str:
+    """Units, percentages, dates, durations, dated file names and ISO dates in the words a voice says well. ``today``
+    decides whether a date's month and year are said (only when they are not this month and year)."""
 
     def dated_file(match: re.Match[str]) -> str:
         words = _date_words(match.group(2), match.group(3), match.group(4))
@@ -128,7 +130,11 @@ def speakable_numbers(text: str) -> str:
     def iso(match: re.Match[str]) -> str:
         return _date_words(*match.groups()) or match.group(0)
 
-    out = _DATED_FILE.sub(dated_file, text)
+    from pilot.live.spoken import say_dates, say_durations
+
+    # "on Thu 19 Nov" -> "on Thursday the nineteenth", "2 h 15 min" -> "2 hours 15 minutes" (pilot.live.spoken)
+    out = say_durations(say_dates(text, today))
+    out = _DATED_FILE.sub(dated_file, out)
     out = _ISO_DATE.sub(iso, out)
     out = _GLUED_UNIT.sub(lambda m: f"{m.group(1)} {_UNITS[m.group(2).casefold()]}", out)
     return say_numbers(out)
@@ -178,6 +184,8 @@ def say_numbers(text: str) -> str:
             return f"{time_words(12, minute)} a m"
         if hour > 12:
             return f"{time_words(hour - 12, minute)} p m"
+        if match.group(1).startswith("0"):
+            return f"{time_words(hour, minute)} a m"  # "07:00" is a 24-hour clock: morning
         return time_words(hour, minute)
 
     def grouped(match: re.Match[str]) -> str:

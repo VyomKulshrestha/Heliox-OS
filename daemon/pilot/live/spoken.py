@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from typing import NamedTuple
 
 # ── words for numbers ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -134,6 +135,92 @@ def year_words(year: int) -> str:
             " " + (f"oh {_ONES[low]}" if low < 10 else cardinal_words(low)) if low else " hundred"
         )
     return cardinal_words(year)
+
+
+# ── written dates and durations, as a person says them (the voice's side) ─────────────────────────────────────────
+
+_DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_MONTH_NAMES = (
+    "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November",
+    "December",
+)  # fmt: skip
+# Abbreviations only with their capital ("Sat" and "Sun" are words too), full names in any case.
+_WD_ABBR = {"Mon": 0, "Tue": 1, "Tues": 1, "Wed": 2, "Thu": 3, "Thur": 3, "Thurs": 3, "Fri": 4, "Sat": 5, "Sun": 6}
+_MON_ABBR = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "Jun": 6, "Jul": 7, "Aug": 8, "Sep": 9, "Sept": 9, "Oct": 10, "Nov": 11,
+    "Dec": 12,
+}  # fmt: skip
+_WD = (
+    r"(?P<wd>(?i:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
+    + "|".join(sorted(_WD_ABBR, key=len, reverse=True))
+    + r")\.?"
+)
+_MON = (
+    r"(?P<mon>(?i:january|february|march|april|may|june|july|august|september|october|november|december)|"
+    + ("|".join(sorted(_MON_ABBR, key=len, reverse=True)))
+    + r")\.?"
+)
+_DAY = r"(?P<day>[0-3]?\d)(?:st|nd|rd|th)?"
+_YEAR = r"(?:,? (?P<year>20\d\d))?"
+_SPOKEN_DATES = (
+    re.compile(r"\b(?:" + _WD + r",? )?(?:the )?" + _DAY + r"(?: of)? " + _MON + r"(?![\w])" + _YEAR + r"\b"),
+    re.compile(r"\b(?:" + _WD + r",? )?" + _MON + r" (?:the )?" + _DAY + r"(?![\w:])" + _YEAR + r"\b"),
+)
+_LONE_WD_ABBR = re.compile(
+    r"\b(?P<prep>on|every|next|this|until|from|by|before|after) (?P<wd>"
+    + "|".join(sorted(_WD_ABBR, key=len, reverse=True))
+    + r")\.?(?![\w])"
+)
+_DURATION = re.compile(r"(?<![\w.:])(?P<n>\d+) ?(?P<unit>h|hr|hrs|min|mins|sec|secs)\b(?!-)")
+_DURATION_WORDS = {"h": "hour", "hr": "hour", "hrs": "hour", "min": "minute", "mins": "minute", "sec": "second",
+                   "secs": "second"}  # fmt: skip
+
+
+def _weekday_index(name: str) -> int:
+    return _WD_ABBR[name] if name in _WD_ABBR else _DAY_NAMES.index(name.capitalize())
+
+
+def _month_index(name: str) -> int:
+    return _MON_ABBR[name] if name in _MON_ABBR else _MONTH_NAMES.index(name.capitalize()) + 1
+
+
+def say_dates(text: str, today: date | None = None) -> str:
+    """Written dates as a person says them: "on Thu 19 Nov" -> "on Thursday the nineteenth", "Friday 13 November
+    2027" -> "Friday the thirteenth of November twenty twenty-seven". The month is said only when it is not this
+    month and the year only when it is not this year; a weekday abbreviation after "on" or "every" is said whole.
+    A date that does not exist is left as written."""
+    today = today or date.today()
+
+    def spoken(found: re.Match[str]) -> str:
+        day, month = int(found["day"]), _month_index(found["mon"])
+        year = int(found["year"]) if found["year"] else today.year
+        try:
+            date(year, month, day)
+        except ValueError:
+            return found.group(0)
+        said = f"the {ordinal_words(day)}"
+        if found["wd"]:
+            said = f"{_DAY_NAMES[_weekday_index(found['wd'])]} {said}"
+        if month != today.month or year != today.year:
+            said += f" of {_MONTH_NAMES[month - 1]}"
+        if year != today.year:
+            said += f" {year_words(year)}"
+        return said
+
+    out = text
+    for pattern in _SPOKEN_DATES:
+        out = pattern.sub(spoken, out)
+    return _LONE_WD_ABBR.sub(lambda m: f"{m['prep']} {_DAY_NAMES[_WD_ABBR[m['wd']]]}", out)
+
+
+def say_durations(text: str) -> str:
+    """ "2 h 15 min" -> "2 hours 15 minutes", "1 min" -> "1 minute": the voice reads the number itself."""
+
+    def spoken(found: re.Match[str]) -> str:
+        n, unit = int(found["n"]), _DURATION_WORDS[found["unit"]]
+        return f"{found['n']} {unit}{'' if n == 1 else 's'}"
+
+    return _DURATION.sub(spoken, text)
 
 
 def time_words(hour: int, minute: int = 0) -> str:

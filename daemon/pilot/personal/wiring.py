@@ -306,6 +306,42 @@ def quiet_moment(server: Any) -> bool:
     return True
 
 
+def offer_in_reply(server: Any, kind: str, text: str, request: str, why: str) -> str:
+    """One concrete offer made in reply to something the person said ("I never clean anything up." -> "Want me to
+    find what's taking up space in Downloads?"), under the same rules as every other offer. Returns the offer's id
+    when it may be made (it is then counted: the hourly and daily caps, "not today", "don't offer that", "why?" and
+    "stop suggesting things" all apply), or "" when it may not, and then nothing is offered and nothing is said about
+    it:
+
+    * offers are off ("stop suggesting things", "no more offers", Settings);
+    * "auto" (the default) and Heliox knows nothing about the person yet: the first week offers nothing but the
+      getting-to-know questions;
+    * quiet: a focus session, "stay quiet unless I ask", after the end of the working day, or a call;
+    * the caps (one an hour, three a day, a minimum gap), this offer or its kind silenced, or declined today, or
+      already offered today.
+
+    ``kind`` names the kind of offer for silencing ("tidy_downloads"); ``request`` is what "yes" sends down the
+    normal road; ``why`` is the answer to "why?"."""
+    from pilot.personal.offers import Offer
+
+    offers = offers_for(server)
+    if not offers.active():
+        return ""
+    if quiet_now(server, offers.now()) or (getattr(server, "config", None) is not None and call_watch_for(server)()):
+        return ""
+    offer = Offer(key=f"reply:{kind}", kind=kind, text=text, request=request, why=why)
+    today = offers.now().date().isoformat()
+    if (
+        offer.key in offers.silenced
+        or f"kind:{kind}" in offers.silenced
+        or offers.declined.get(offer.key) == today
+        or any(m.offer.key == offer.key and m.day == today for m in offers.made)
+        or not offers.room()
+    ):
+        return ""
+    return offers.mark_offered(offer)
+
+
 async def deliver_offer(server: Any, offer: Any, offer_id: str = "") -> None:
     """A card always (the app's offer card: Yes, Not today, Don't offer this, Why); spoken only when the person is
     using voice (the listener runs), so they can answer by voice too."""

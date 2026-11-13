@@ -69,8 +69,14 @@ def _normalize(text: str) -> str:
     return " ".join(re.sub(r"[^\w\s:]", " ", text.casefold()).split())
 
 
+_DAY_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
 def _clock(moment: datetime) -> str:
-    return moment.strftime("%I:%M %p").lstrip("0")
+    """ "9:00 AM", whatever the system's locale (strftime's %p is empty in a 24-hour locale). The voice says it
+    from this written form (pilot.conversation.style.speakable_numbers)."""
+    return f"{moment.hour % 12 or 12}:{moment.minute:02d} {'AM' if moment.hour < 12 else 'PM'}"
 
 
 def describe_time(due: float, now: datetime) -> str:
@@ -79,7 +85,10 @@ def describe_time(due: float, now: datetime) -> str:
         return f"at {_clock(moment)}"
     if moment.date() == (now + timedelta(days=1)).date():
         return f"tomorrow at {_clock(moment)}"
-    return f"on {moment.strftime('%a %d %b')} at {_clock(moment)}"
+    year = f" {moment.year}" if moment.year != now.year else ""  # so the voice can say it, and the weekday is right
+    return (
+        f"on {_DAY_ABBR[moment.weekday()]} {moment.day:02d} {_MONTH_ABBR[moment.month - 1]}{year} at {_clock(moment)}"
+    )
 
 
 def _parse_clock(hour: str, minute: str | None, meridiem: str | None, now: datetime) -> tuple[int, int] | None:
