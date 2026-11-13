@@ -422,6 +422,16 @@ goal "launch the podcast". Want me to note it?". "Why?" names the word they shar
 progress; it is offered once a day per goal, under every offer rule, and "don't offer that" ends it
 (`offers.goal_progress`, `wiring.note_task_done`). **Fakes only** (`tests/test_goal_progress_offers.py`).
 
+How many offers a day brings is measured by a simulated working week for three made-up people, through the real
+offer rules (`python -m pilot.personal.offer_day`, `tests/test_offer_day.py`). On this commit: an office worker who
+told Heliox their nine-to-six day, a goal, a habit and a to-do list gets 3 offers a day (the daily cap), 12 of 15
+accepted by the script; a student with no fixed hours gets 3, 3, 1, 1, 1; someone who told Heliox nothing gets the
+getting-to-know question twice, three days apart, and nothing else. Two rules came from it: the getting-to-know
+question is asked at most twice, three days apart (it used to come back every day an always-on Heliox ran
+unanswered), and an offer declined on two days within a week rests for a week after the last "no". A declined first
+suggestion no longer hides the next (a habit behind a quiet goal). **Fakes only**: what a real person wants is not
+measured.
+
 Suggestions, offers and Live are turned off, back on, down or up by voice from one table
 (`pilot.personal.spoken_settings`), each phrase family with the value it saves and the sentence said, and a request to
 stop something is answered by a sentence that says it stopped. "Stop suggesting things" (also "quit", "don't",

@@ -37,7 +37,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -263,6 +263,13 @@ def day_moments(now: datetime, *, start: int | None, end: int | None) -> list[Of
     return found
 
 
+# The getting-to-know offer to someone who has told Heliox nothing: at most twice, three days apart, then never
+# unless asked ("get to know me"). Before, it came back every day an always-on Heliox ran without an answer.
+INTRO_MAX_ASKS = 2
+# "No" holds an offer for the rest of the day; "no" on two days within a week rests it for a week after the last.
+DECLINES_BEFORE_REST = 2
+REST_DAYS = 7
+INTRO_EVERY_DAYS = 3
 GOAL_OFFER_WITHIN_SECONDS = 15 * 60  # after the task: later it is no longer about what was just done
 # Words that say what to do, not what about: they never tie a request to a goal.
 _DOING_WORDS = frozenset(
@@ -345,6 +352,8 @@ class Offers:
     mode: Callable[[], str]
     profile_empty: Callable[[], bool]
     suggestion: Callable[[], dict[str, Any] | None] = lambda: None
+    # Every suggestion in order (Suggester.picks); when given, used instead of ``suggestion``.
+    suggestions: Callable[[], list[dict[str, Any]]] | None = None
     legacy_suggestions_on: Callable[[], bool] = lambda: False
     spans: Callable[[float, float], list[dict[str, Any]]] | None = None
     # Offers tied to what the person told Heliox about their day (``day_moments``), given the current time.
@@ -359,11 +368,15 @@ class Offers:
     declined: dict[str, str] = field(default_factory=dict)  # key -> day
     # key -> what was offered, in words, so Settings can list it and undo it
     silenced: dict[str, str] = field(default_factory=dict)
+    intro_days: list[str] = field(default_factory=list)  # the days the getting-to-know offer was made
+    declined_on: dict[str, list[str]] = field(default_factory=dict)  # key -> the days "no" was said to it
 
     def __post_init__(self) -> None:
         if self.state_path and self.state_path.exists():
             try:
-                raw = json.loads(self.state_path.read_text(encoding="utf-8")).get("silenced", {})
+                state = json.loads(self.state_path.read_text(encoding="utf-8"))
+                self.intro_days = [str(day) for day in state.get("intro_days", []) if isinstance(day, str)]
+                raw = state.get("silenced", {})
                 if isinstance(raw, list):  # the first version kept keys only
                     raw = {key: key for key in raw}
                 self.silenced = {str(k): str(v) for k, v in raw.items() if isinstance(k, str)}
@@ -403,12 +416,14 @@ class Offers:
                 logger.warning("Usual-app offers failed; the other offer sources still ran", exc_info=True)
         if not self.legacy_suggestions_on():
             try:
-                offer = from_suggestion(self.suggestion())
+                picks = self.suggestions() if self.suggestions is not None else [self.suggestion()]
             except Exception:
                 logger.warning("Suggestion offers failed; the other offer sources still ran", exc_info=True)
-                offer = None
-            if offer is not None:
-                found.append(offer)
+                picks = []
+            for pick in picks:
+                offer = from_suggestion(pick)
+                if offer is not None:
+                    found.append(offer)
         return found
 
     def _today(self) -> str:
@@ -435,7 +450,17 @@ class Offers:
             empty = bool(self.profile_empty())
         except Exception:
             return False
-        return empty and not any(m.offer.key == INTRO.key for m in self.made)
+        if not empty or any(m.offer.key == INTRO.key for m in self.made):
+            return False
+        if len(self.intro_days) >= INTRO_MAX_ASKS:
+            return False
+        if self.intro_days:
+            try:
+                last = date.fromisoformat(self.intro_days[-1])
+            except ValueError:
+                return True
+            return (self.now().date() - last).days >= INTRO_EVERY_DAYS
+        return True
 
     def next_offer(self) -> Offer | None:
         if not self.room():
@@ -452,10 +477,25 @@ class Offers:
                 or f"kind:{offer.kind}" in self.silenced
                 or offer.key in offered_today
                 or self.declined.get(offer.key) == today
+                or self._resting(offer.key)
             ):
                 continue
             return offer
         return None
+
+    def _decline(self, key: str, day: str) -> None:
+        self.declined[key] = day
+        days = self.declined_on.setdefault(key, [])
+        if day not in days:
+            days.append(day)
+
+    def _resting(self, key: str) -> bool:
+        """Declined on two different days within a week: left alone for a week after the last "no"."""
+        days = sorted(date.fromisoformat(d) for d in set(self.declined_on.get(key, [])))
+        if len(days) < DECLINES_BEFORE_REST:
+            return False
+        first, last = days[-DECLINES_BEFORE_REST], days[-1]
+        return (last - first).days < REST_DAYS and (self.now().date() - last).days < REST_DAYS
 
     def offer_soon(self, offer: Offer, within: float = GOAL_OFFER_WITHIN_SECONDS) -> None:
         """Offer this at the next quiet moment, if one comes within ``within`` seconds (the ordinary rules apply)."""
@@ -465,6 +505,9 @@ class Offers:
     def mark_offered(self, offer: Offer) -> str:
         made = _Made(offer, self.clock(), self._today())
         self.made.append(made)
+        if offer.key == INTRO.key:
+            self.intro_days.append(made.day)
+            self._save(change=False)  # Heliox's own count, not something the person changed
         return made.id
 
     # ── the person's answer ──
@@ -510,7 +553,7 @@ class Offers:
         if answer == "yes":
             return OfferReply("Okay.", request=offer.request)
         if answer == "not_today":
-            self.declined[offer.key] = made.day
+            self._decline(offer.key, made.day)
             return OfferReply("Okay, not today.")
         return None
 
@@ -558,7 +601,7 @@ class Offers:
             self._answered()  # a second "yes" is not this offer any more
             return OfferReply("Okay.", request=offer.request)
         if _NO.match(normalized):
-            self.declined[offer.key] = made.day
+            self._decline(offer.key, made.day)
             self._answered()
             return OfferReply("Okay, not today.")
         return None
@@ -567,15 +610,18 @@ class Offers:
         """Your data: drop what was silenced and declined."""
         self.silenced.clear()
         self.declined.clear()
+        self.intro_days.clear()
         self._save()
 
-    def _save(self) -> None:
-        note_change("silenced that offer")  # a voice turn that did this cannot be withdrawn
+    def _save(self, *, change: bool = True) -> None:
+        if change:
+            note_change("silenced that offer")  # a voice turn that did this cannot be withdrawn
         if not self.state_path:
             return
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(json.dumps({"silenced": dict(sorted(self.silenced.items()))}), encoding="utf-8")
+            state = {"silenced": dict(sorted(self.silenced.items())), "intro_days": self.intro_days[-INTRO_MAX_ASKS:]}
+            self.state_path.write_text(json.dumps(state), encoding="utf-8")
         except OSError:
             logger.debug("Could not save offers", exc_info=True)
 

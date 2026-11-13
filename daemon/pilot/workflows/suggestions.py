@@ -68,51 +68,66 @@ class Suggester:
 
     def suggest(self) -> dict[str, Any] | None:
         """The single best suggestion right now, or None when nothing is worth raising."""
+        found = self.picks()
+        return found[0] if found else None
+
+    def picks(self) -> list[dict[str, Any]]:
+        """Every suggestion worth raising right now, best first (offers take the next one when the first was
+        declined today or silenced)."""
         now = self._now()
         part = _part_of_day(now)
+        found: list[dict[str, Any]] = []
 
         # 1. A goal that has gone quiet, with a next step: the clearest "pick this back up".
         for goal in self._stale_goals():
             if goal.get("next_step"):
-                return {
-                    "kind": "stale_goal",
-                    "key": f"stale:{goal['id']}",
-                    "text": f'Your goal "{goal["title"]}" has been quiet for a while. Its next step is {goal["next_step"]}.',
-                    "say": f"remind me to {goal['next_step']}",
-                }
+                found.append(
+                    {
+                        "kind": "stale_goal",
+                        "key": f"stale:{goal['id']}",
+                        "text": f'Your goal "{goal["title"]}" has been quiet for a while. Its next step is {goal["next_step"]}.',
+                        "say": f"remind me to {goal['next_step']}",
+                    }
+                )
 
         # 2. A habit streak not kept today, once the day is underway.
         if part != "morning":
             for habit in self._habits():
                 if habit.get("streak", 0) >= 2 and not habit.get("today"):
-                    return {
-                        "kind": "habit",
-                        "key": f"habit:{habit['name']}",
-                        "text": f"You're on a {habit['streak']}-day streak for {habit['name']} and haven't logged it today.",
-                        "say": f"log {habit['name']}",
-                    }
+                    found.append(
+                        {
+                            "kind": "habit",
+                            "key": f"habit:{habit['name']}",
+                            "text": f"You're on a {habit['streak']}-day streak for {habit['name']} and haven't logged it today.",
+                            "say": f"log {habit['name']}",
+                        }
+                    )
 
         # 3. Open to-dos late in the day.
         todos = self._open_todos()
         if part == "evening" and todos:
             count = len(todos)
-            return {
-                "kind": "todos",
-                "key": f"todos:{now.date().isoformat()}",
-                "text": f'You still have {count} thing{"" if count == 1 else "s"} on your list; the first is "{todos[0]["text"]}".',
-                "say": "what's on my list",
-            }
+            found.append(
+                {
+                    "kind": "todos",
+                    "key": f"todos:{now.date().isoformat()}",
+                    "text": f'You still have {count} thing{"" if count == 1 else "s"} on your list; the first is "{todos[0]["text"]}".',
+                    "say": "what's on my list",
+                }
+            )
 
         # 4. Any active goal's next step, as a gentle default.
         for goal in self._goals():
             if goal.get("status") == "active" and goal.get("next_step"):
-                return {
-                    "kind": "goal_step",
-                    "key": f"step:{goal['id']}:{goal['next_step']}",
-                    "text": f'On "{goal["title"]}", your next step is {goal["next_step"]}.',
-                    "say": None,
-                }
-        return None
+                found.append(
+                    {
+                        "kind": "goal_step",
+                        "key": f"step:{goal['id']}:{goal['next_step']}",
+                        "text": f'On "{goal["title"]}", your next step is {goal["next_step"]}.',
+                        "say": None,
+                    }
+                )
+        return found
 
     def spoken(self) -> str:
         """The on-demand answer: a suggestion, or a calm "nothing pressing"."""

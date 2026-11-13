@@ -217,6 +217,7 @@ def offers_for(server: Any, data_dir: Any = None) -> Any:
         mode=lambda: str(getattr(config.suggestions, "offers", "auto")),
         profile_empty=(profile.is_empty if profile is not None else (lambda: True)),
         suggestion=(suggester.suggest if suggester is not None else (lambda: None)),
+        suggestions=(suggester.picks if suggester is not None else None),
         legacy_suggestions_on=lambda: bool(getattr(config.suggestions, "enabled", False)),
         spans=spans,
         moments=lambda now: _day_moments(server, now),
