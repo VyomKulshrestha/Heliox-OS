@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import re
 import time
@@ -186,6 +187,14 @@ CORRECTED = re.compile(
     r"^(?:no,? )?(?:that'?s|that is|you'?re|you are) (?:wrong|not right|incorrect|not true|not it)\b"
     r"|^(?:no,? )?(?:wrong|that'?s wrong|not quite)\b|^no,? it'?s not\b|^no,? it isn'?t\b"
 )
+
+
+def _reach_limited() -> bool:
+    try:
+        from pilot.server import REACH_LIMITED
+    except Exception:
+        return False
+    return bool(REACH_LIMITED.get())
 
 
 def _waiting(queue: asyncio.Queue[str | None]) -> list[str]:
@@ -678,7 +687,11 @@ class ConversationLayer:
             screen = self.sources.screen()
         if screen is not None and getattr(screen, "excerpt", ""):
             self._saw_screen_text = True
-        messages = build_messages(text, self.sources, self.memory, budget=self._context_chars, screen=screen)
+        sources = self.sources
+        if _reach_limited():
+            # A follow-up in a room that is not quiet: no profile, people or personal lines go with it.
+            sources = dataclasses.replace(sources, profile_lines=list, extra=[], people=dict)
+        messages = build_messages(text, sources, self.memory, budget=self._context_chars, screen=screen)
         self.memory.add_user(text)
         return await self._answer_from(text, decided, result, started, model, messages)
 

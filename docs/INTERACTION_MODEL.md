@@ -1065,6 +1065,55 @@ repair is acted on").
 sent to the speech work; the session uses the wake phrase for it. A second person using the wake phrase waits for
 the speech side; there is no speaker identification to build on.
 
+### A second voice, a television, Heliox's own echo
+
+**Heliox cannot tell who is speaking.** The wake check is words only, and the follow-up window is timing and words
+only. So the wake phrase is not authentication: anyone in the room who says "Hey Heliox" is "the person". Telling
+people apart would need speaker identification, an enrolled voiceprint. That is biometric data and a separate
+decision, and it is not built.
+
+The window's reach is the size of the problem. In an open follow-up window, 483 of the 975 unaddressed corpus lines
+are taken. That was measured on `benchmarks/conversation_bench/corpus.lines()`, each line decided 1.5 s after Heliox
+finished speaking with the conversation open. It is corpus lines, not real rooms.
+
+**The rule** (`pilot.conversation.reach`, `conversation.second_voice_guard`, off by default). The listener counts the
+utterances it did not take since Heliox last spoke (`Addressing.overheard_since_heliox`, a number, no words). When
+that count reaches the threshold, a follow-up said without the wake phrase keeps its reach for talk, but loses it for
+anything that changes or reveals the person's own data:
+- reminders, to-dos, notes and the day summary;
+- the profile and memory;
+- settings, the clipboard, files, messages and mail;
+- anything that sends or deletes.
+
+The full list is in one place, `reach.DATA_HANDLERS` and `reach.asks_for_data`. A request for the planner counts as
+changing something unless the quick road knows it is harmless. Talk, the time, sums and general questions keep their
+reach. Stop, no and wait never need the wake phrase, from anyone.
+
+When a follow-up loses its reach, nothing runs and Heliox says "Say Hey Heliox first for that." It says this once;
+later refused follow-ups are silent. Saying the wake phrase gives full reach again. A follow-up that is still answered
+gets no profile, people or personal lines in what the model is sent.
+
+Every follow-up logs the count, whether the rule is on or off, so real use can show how often it would apply.
+
+**Off by default, on purpose.** A count of 1 is common for one person alone: muttering, and a sentence the recorder
+splits. The threshold (2 to start) is fixed only after the speech work measures, on the turn-split recordings and the
+owner's own, how often a person alone would be told "Say Hey Heliox first for that." If that is more than a few in a
+hundred follow-ups, the signal is not good enough and the rule stays off.
+
+**What it does not cover: a question, then the television.** After Heliox asks a question, the next thing it hears is
+taken as the answer, whoever says it. The listener has not left anything out yet, so the count is 0 and the rule
+cannot apply. A destructive step still needs the approval dialog on the screen, and voice never approves. Nothing
+stops a television's answer from being used for something harmless, or for a question about the person's data.
+
+*Proposed, not built:* when the answer to Heliox's own question would start something destructive, Heliox says it
+back before the dialog opens: "Delete the reports folder, yes?" Only a "yes", or the dialog, goes on, so a stray line
+from the room needs a second, matching answer.
+
+**Fakes only** (`tests/test_conversation_reach.py`). The personal sessions are:
+- "a second voice asks for the person's reminders after talk Heliox did not take";
+- "a television in the room: talk Heliox did not take, then a line that asks to delete";
+- "the person alone restarting a sentence keeps the follow-up's reach".
+
 ## 4. Not in this pass
 
 * The quick road covers single actions only; anything with two steps goes to the planner.

@@ -602,6 +602,8 @@ CODE_ANSWERS_ANY_MODEL = frozenset(
 )
 ANSWERED_ON_THIS_COMPUTER = "(answered on this computer)"
 REQUEST_TAKEN_BACK = "Okay, I've left it."  # "open Spotify, no": taken back as it was said
+# This turn's reach is limited (pilot.conversation.reach): the layer gives the model no personal lines.
+REACH_LIMITED: contextvars.ContextVar[bool] = contextvars.ContextVar("heliox_reach_limited", default=False)
 # How an utterance must be known to be addressed before the fast model's connection is warmed for it.
 # A doubtful follow-up, or anything the addressing rule has not taken, never warms it.
 WARM_FOR = frozenset({"wake", "button", "follow_up", "continuation", "live_reply"})
@@ -9573,6 +9575,49 @@ class PilotServer:
             if phase in {"completed", "failed", "interrupted", "idle", "listening"}:
                 return
 
+    def _reach_limited(self, words: str) -> bool:
+        """Whether this follow-up's reach is limited (pilot.conversation.reach): logged on every follow-up, with the
+        count of utterances the listener did not take since Heliox last spoke, whether or not the rule is on."""
+        from pilot.conversation.reach import guarded, keeps_reach
+        from pilot.system.voice import voice_turn_addressed
+
+        addressed = voice_turn_addressed.get()
+        if addressed in ("wake", "button"):
+            self._room_not_quiet = self._wake_first_said = False  # said to Heliox by name: a new start, full reach
+        if addressed != "follow_up":
+            return False
+        addressing = getattr(getattr(self, "_voice_listener", None), "addressing", None)
+        overheard = getattr(addressing, "overheard_since_heliox", 0)
+        overheard = overheard if isinstance(overheard, int) else 0
+        settings = self.config.conversation
+        noisy = guarded(
+            enabled=bool(settings.second_voice_guard),
+            addressed=addressed,
+            overheard=overheard,
+            threshold=int(settings.second_voice_threshold),
+        )
+        # Once the room was not quiet, follow-ups stay limited until someone says the wake phrase: Heliox's own "Say
+        # Hey Heliox first" resets the listener's count, not what it heard.
+        self._room_not_quiet = noisy or (bool(settings.second_voice_guard) and getattr(self, "_room_not_quiet", False))
+        limited = not keeps_reach(words) and self._room_not_quiet
+        logger.info(
+            "Follow-up after %d utterance(s) not taken since Heliox spoke (second-voice rule %s)%s",
+            overheard,
+            "on" if settings.second_voice_guard else "off",
+            ": reach limited" if limited else "",
+        )
+        return limited
+
+    async def _say_wake_first(self, words: str) -> None:
+        """Once, until someone says the wake phrase: say how to go ahead. Later refused follow-ups are silent."""
+        from pilot.conversation.reach import SAY_WAKE_FIRST
+
+        logger.info("Held back a follow-up asking for the person's data in a room that is not quiet: %r", words[:80])
+        if getattr(self, "_wake_first_said", False) and getattr(self, "_room_not_quiet", False):
+            return
+        self._wake_first_said = True
+        await self._speak_voice_response(SAY_WAKE_FIRST, dedupe_key=f"voice-wake-first:{uuid.uuid4()}")
+
     async def _answer_active_task_question(self, question: str) -> dict[str, Any]:
         """Answer without changing, approving, or cancelling the running task."""
         if len(question) > 2000:
@@ -15438,6 +15483,15 @@ def handle_tool(tool_name, params):
         undo_during_task = self._interactive_request_active and bool(
             UNDO_ONE_REQUEST.match(normalized_command) or UNDO_MANY_REQUEST.match(normalized_command)
         )
+        from pilot.conversation.reach import DATA_HANDLERS, asks_for_data
+
+        limited = self._reach_limited(command_text)
+        if limited and asks_for_data(command_text):
+            # A follow-up without the wake phrase, in a room that is not quiet, asking for or changing the person's
+            # data: nothing runs, and Heliox says how to go ahead, once per follow-up window.
+            await self._say_wake_first(command_text)
+            return
+        reach_token = REACH_LIMITED.set(limited)
         if not again_action and not undo_during_task:
             # A change Heliox makes in its own code (a to-do, a note, a setting) does not start while the person is
             # audibly going on either; in silence it runs at once. During a task too: "what time is it", "stop
@@ -15455,6 +15509,17 @@ def handle_tool(tool_name, params):
                         logger.info("A code follow-up was answered by another handler; left to the model")
                         timeline_answer, asked = None, command_text
                         CODE_ANSWER_BY.set("")
+            if (
+                timeline_answer is not None
+                and limited
+                and CODE_ANSWER_BY.get() in DATA_HANDLERS
+                and not voice_turn.kept
+            ):
+                # The words did not look like a request for the person's data, but the handler that took them holds
+                # it: the answer is not said (nothing was changed; a change would be said, as it happened).
+                REACH_LIMITED.reset(reach_token)
+                await self._say_wake_first(command_text)
+                return
             if timeline_answer is not None:
                 self._last_code_answer = (asked, CODE_ANSWER_BY.get(), not voice_turn.kept, time.monotonic())
                 self._last_turn_kind = "answer"
@@ -15745,6 +15810,11 @@ def handle_tool(tool_name, params):
 
         # The fast layer answers talk itself (streamed) and hands requests to act on to the planner below.
         turn = await conversation.take(command_text) if proactive_decision is None else None
+        REACH_LIMITED.reset(reach_token)
+        if limited and turn is not None and not turn.done and turn.quick is None:
+            # A request for the planner counts as changing something unless the quick road knows it is harmless.
+            await self._say_wake_first(command_text)
+            return
         if turn is not None and turn.done:
             self._last_turn_kind = "answer"
             message = " ".join(turn.spoken)

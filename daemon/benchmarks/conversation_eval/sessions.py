@@ -507,6 +507,8 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
     layer.sources.heard_of = server._speech_coordinator.heard_of  # how far the voice got when it was talked over
     if session.get("barge_in"):
         config.voice.barge_in_enabled = True
+    if session.get("second_voice_guard"):
+        config.conversation.second_voice_guard = True
     server._voice_turns._clock = clock  # the withdraw window runs on the session's clock
     return server
 

@@ -625,6 +625,11 @@ class ConversationConfig:
     # The web search the quick road opens for "search the web for ...": an http(s) address with {query}.
     search_url: str = "https://www.google.com/search?q={query}"
     provisional_answers: str = "auto"  # "auto" | "on" | "off"
+    # A follow-up without the wake phrase loses its reach for the person's own data once the listener heard this many
+    # utterances it did not take since Heliox last spoke (pilot.conversation.reach). Off until it is measured on
+    # recordings of a person alone; the count is logged on every follow-up either way.
+    second_voice_guard: bool = False
+    second_voice_threshold: int = 2
 
 
 @dataclass
@@ -1410,6 +1415,8 @@ def _validate_config_types(raw: dict) -> None:
             "ollama_model": str,
             "search_url": str,
             "provisional_answers": str,
+            "second_voice_guard": bool,
+            "second_voice_threshold": int,
         },
         "supervision": {
             "enabled": bool,
@@ -1826,6 +1833,12 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         early = c_raw.get("provisional_answers")
         if isinstance(early, str) and early.strip().casefold() in ("auto", "on", "off"):
             config.conversation.provisional_answers = early.strip().casefold()
+        guard = c_raw.get("second_voice_guard")
+        if isinstance(guard, bool):
+            config.conversation.second_voice_guard = guard
+        threshold = c_raw.get("second_voice_threshold")
+        if isinstance(threshold, int) and not isinstance(threshold, bool) and 1 <= threshold <= 10:
+            config.conversation.second_voice_threshold = threshold
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]
