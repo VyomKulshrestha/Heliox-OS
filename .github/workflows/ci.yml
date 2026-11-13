@@ -1363,6 +1363,10 @@ jobs:
             sleep 1
             if kill -0 "$xvfb" 2>/dev/null; then echo "Xvfb still running; killed"; kill -9 "$xvfb"; fi
           fi
-          echo "--- tauri-driver log"; tail -40 "$RUNNER_TEMP/driver.log"
+          # The driver log holds the native driver's stderr and, on Linux, the app's (the driver starts the app).
+          echo "--- tauri-driver log ($(wc -c < "$RUNNER_TEMP/driver.log") bytes)"; tail -60 "$RUNNER_TEMP/driver.log"
           echo "--- daemon log"; tail -40 "$RUNNER_TEMP/app-launch-daemon.log"
+          if [ -f "$RUNNER_TEMP/app-launch-app.log" ]; then
+            echo "--- the app started without the driver"; tail -40 "$RUNNER_TEMP/app-launch-app.log"
+          fi
           exit $status
