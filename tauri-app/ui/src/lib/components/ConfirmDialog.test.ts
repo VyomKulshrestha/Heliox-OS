@@ -341,3 +341,68 @@ describe("ConfirmDialog footer", () => {
     expect(buttons.map((button) => button.disabled)).toEqual([true, true]);
   });
 });
+
+describe("ConfirmDialog setting changes", () => {
+  const rootOn = {
+    index: 0,
+    action_type: "setting_change",
+    target: "Let Heliox act as administrator",
+    description: "the refusal of actions that need root",
+    setting: "security.root_enabled",
+    requires_root: false,
+    destructive: false,
+    irreversible: false,
+    parameters: {},
+    undo: { kind: "undoable" as const, reason: "You can change it back in Settings." },
+  };
+  const dryRunOff = {
+    ...rootOn,
+    index: 1,
+    target: "Let Heliox's actions really run",
+    description: "the dry run, which only shows what would happen",
+    setting: "security.dry_run",
+  };
+
+  it("shows what changes and what it stops protecting, under a calm title", () => {
+    const { container } = render(ConfirmDialog, {
+      actions: [rootOn],
+      reason: rootOn.description,
+      onconfirm: vi.fn(),
+      ondeny: vi.fn(),
+    });
+
+    expect(screen.getByRole("dialog", { name: "Change a safety setting" })).toBeTruthy();
+    expect(screen.getByText("Let Heliox act as administrator")).toBeTruthy();
+    // Said once, under the line, though it is also the reason.
+    expect(screen.getAllByText("the refusal of actions that need root")).toHaveLength(1);
+    expect(screen.queryByText("setting_change")).toBeNull();
+    expect(container.querySelector(".warn-icon")).toBeNull();
+    expect(screen.getByText("Can undo")).toBeTruthy();
+  });
+
+  it("keeps per-line selection for several setting changes", async () => {
+    vi.spyOn(performance, "now").mockReturnValue(1_000);
+    const onconfirm = vi.fn();
+    render(ConfirmDialog, {
+      actions: [rootOn, dryRunOff],
+      reason: "Each of these takes a protection away. Approve them to go on.",
+      onconfirm,
+      ondeny: vi.fn(),
+    });
+
+    expect(screen.getByText("Each of these takes a protection away. Approve them to go on.")).toBeTruthy();
+    expect(screen.getByText("the dry run, which only shows what would happen")).toBeTruthy();
+    await fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    await fireEvent.click(screen.getByRole("button", { name: "Approve change" }));
+    expect(onconfirm).toHaveBeenCalledWith([0]);
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the usual title when a setting change comes with other actions", () => {
+    render(ConfirmDialog, { actions: [script, rootOn], onconfirm: vi.fn(), ondeny: vi.fn() });
+
+    expect(screen.getByRole("dialog", { name: "Confirmation Required" })).toBeTruthy();
+    expect(screen.getByText("Let Heliox act as administrator")).toBeTruthy();
+    expect(screen.getByText("shell_script")).toBeTruthy();
+  });
+});

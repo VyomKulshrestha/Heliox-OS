@@ -568,3 +568,14 @@ async def test_failed_voice_device_restart_rolls_back_config_and_listener(monkey
     assert server._voice_listener.input_device == "auto"
     assert server._voice_listener.is_running is True
     assert config.save.call_count == 2
+
+
+@pytest.fixture(autouse=True)
+def _the_person_approves_setting_changes(monkeypatch):
+    """These tests are about checking and saving settings; asking before a widening is test_guard_changes.py's."""
+    from pilot.server import PilotServer
+
+    async def approved(self, ws, found):
+        return None
+
+    monkeypatch.setattr(PilotServer, "_approve_widenings", approved)

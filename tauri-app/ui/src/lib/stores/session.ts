@@ -35,6 +35,10 @@ export interface PlanAction {
   /** Whether Heliox can undo this action afterwards; decided by the daemon from the action type. */
   undo?: UndoSupport;
   index?: number;
+  /** A "setting_change" line: what it stops protecting, or where data will go, in plain words. */
+  description?: string;
+  /** A "setting_change" line: the setting it changes ("security.root_enabled"). */
+  setting?: string;
 }
 
 export interface UndoSupport {

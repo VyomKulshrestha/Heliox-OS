@@ -70,6 +70,33 @@ describe("gateway policy editing", () => {
     daemonMocks.offNotification.mockReset();
   });
 
+  it("puts a wider ceiling back when the person does not approve it, with no error", async () => {
+    serve(
+      { autonomous },
+      { status: "cancelled", message: "Nothing was changed.", settings: ["gateway.autonomous.shell"] },
+    );
+
+    render(GatewayPolicyEditor);
+    await fireEvent.change(await screen.findByLabelText("shell ceiling for autonomous"), { target: { value: "3" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect((await screen.findByRole("status")).textContent).toBe("Not changed.");
+    expect(select("shell ceiling for autonomous").value).toBe("1");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("saves a lower ceiling directly", async () => {
+    serve({ autonomous });
+
+    render(GatewayPolicyEditor);
+    await fireEvent.change(await screen.findByLabelText("shell ceiling for autonomous"), { target: { value: "0" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("button", { name: "✓ Saved" })).toBeTruthy();
+    expect(screen.queryByText("Not changed.")).toBeNull();
+  });
+
   it("shows READ_ONLY (tier 0) for a family the daemon policy leaves unset", async () => {
     serve({ autonomous: { ...autonomous, max_tier: { shell: 1 } } });
     render(GatewayPolicyEditor);

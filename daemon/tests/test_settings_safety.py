@@ -257,3 +257,14 @@ def test_a_config_file_that_cannot_be_opened_starts_on_defaults_and_says_so(conf
     assert "Permission denied" in config.load_errors[0]
     with pytest.raises(ConfigWriteBlocked):
         config.save()
+
+
+@pytest.fixture(autouse=True)
+def _the_person_approves_setting_changes(monkeypatch):
+    """These tests are about checking and saving settings; asking before a widening is test_guard_changes.py's."""
+    from pilot.server import PilotServer
+
+    async def approved(self, ws, found):
+        return None
+
+    monkeypatch.setattr(PilotServer, "_approve_widenings", approved)

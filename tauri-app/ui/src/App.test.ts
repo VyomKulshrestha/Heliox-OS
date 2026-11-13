@@ -460,3 +460,64 @@ describe("App shell and the selection study", () => {
     expect(host?.classList.contains("study-minimized")).toBe(false);
   });
 });
+
+describe("App setting-change approvals", () => {
+  const settingChange = {
+    index: 0,
+    action_type: "setting_change",
+    target: "Use the language model at api.openai.com",
+    description: "Your requests and the text Heliox reads for them will go to api.openai.com.",
+    setting: "model.provider",
+    parameters: {},
+  };
+
+  beforeEach(() => {
+    harness.reset();
+    harness.settings.set({ first_run_complete: true });
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    localStorage.removeItem("heliox_first_run_complete");
+    harness.settings.set({ first_run_complete: true });
+  });
+
+  it("shows a setting approval over the Settings tab without leaving it", async () => {
+    render(App);
+    await fireEvent.click(tab("Settings"));
+    await settle();
+
+    setSession({ confirmRequired: true, confirmPlanId: "setting-1", confirmActions: [settingChange] });
+    await settle();
+
+    const dialog = screen.getByRole("dialog", { name: "Change a safety setting" });
+    expect(dialog.closest(".setting-approval-layer")).not.toBeNull();
+    expect(dialog.closest(".chat-panel")).toBeNull();
+    expect(activeTabName()).toBe("Settings");
+  });
+
+  it("shows a setting approval over the setup wizard", async () => {
+    localStorage.removeItem("heliox_first_run_complete");
+    harness.settings.set({ first_run_complete: false });
+    render(App);
+    await settle();
+    expect(harness.mounts.SetupWizard).toBe(1);
+
+    setSession({ confirmRequired: true, confirmPlanId: "setting-2", confirmActions: [settingChange] });
+    await settle();
+
+    const dialog = screen.getByRole("dialog", { name: "Change a safety setting" });
+    expect(dialog.closest(".window")).toBeNull();
+    expect(dialog.closest(".setting-approval-layer")).not.toBeNull();
+  });
+
+  it("keeps other approvals on the Command tab", async () => {
+    render(App);
+    requireApproval("plan-ordinary");
+    await settle();
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.closest(".chat-panel")).not.toBeNull();
+    expect(document.querySelector(".setting-approval-layer")).toBeNull();
+  });
+});

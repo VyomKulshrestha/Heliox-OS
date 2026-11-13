@@ -84,6 +84,90 @@ export async function mockTauriIpc(page: Page): Promise<void> {
       "voice_listener_stats",
     ]);
 
+    // Setting changes that take a protection away wait for the person's approval in the daemon's own dialog
+    // (pilot.security.guard_changes): the daemon sends `confirm_required` with "setting_change" lines and answers
+    // the setting request only after `confirm`, with "cancelled" (nothing changed) unless every line is approved.
+    // The mock asks about the widenings the visual flows can make; narrowing is saved at once, as on the daemon.
+    const guardState: Record<string, Record<string, unknown>> = {
+      security: { root_enabled: false, dry_run: false, snapshot_on_destructive: true, unrestricted_shell: false },
+      preview: { enabled: false },
+      model: { provider: "ollama", cloud_provider: "gemini", subscription_provider: "codex" },
+      gateway: { risk_gate_enabled: true },
+    };
+    const guardHosts: Record<string, string> = {
+      openai: "api.openai.com",
+      openrouter: "openrouter.ai",
+      claude: "api.anthropic.com",
+      gemini: "generativelanguage.googleapis.com",
+      meta: "api.llama.com",
+    };
+    const guardSubscriptions: Record<string, string> = {
+      codex: "OpenAI, through Codex",
+      claude: "Anthropic, through Claude Code",
+    };
+    type GuardLine = { key: string; says: string; stops: string };
+    const modelDestination = (model: Record<string, unknown>): string => {
+      if (model.provider === "cloud") return guardHosts[String(model.cloud_provider)] ?? String(model.cloud_provider);
+      if (model.provider === "subscription") {
+        return guardSubscriptions[String(model.subscription_provider)] ?? String(model.subscription_provider);
+      }
+      return "";
+    };
+    const guardChanges = (method: string, params: Record<string, any>): { section: string; values: any } | null => {
+      if (method === "update_config") return { section: String(params?.section ?? ""), values: params?.values ?? {} };
+      if (method === "risk_gate_config_update")
+        return { section: "gateway", values: { risk_gate_enabled: params?.enabled } };
+      return null;
+    };
+    const widenings = (section: string, values: Record<string, unknown>): GuardLine[] => {
+      const now = guardState[section];
+      if (!now) return [];
+      const found: GuardLine[] = [];
+      const on = (key: string, says: string, stops: string) => {
+        if (!now[key] && values[key] === true) found.push({ key: `${section}.${key}`, says, stops });
+      };
+      const off = (key: string, says: string, stops: string) => {
+        if (now[key] && values[key] === false) found.push({ key: `${section}.${key}`, says, stops });
+      };
+      if (section === "security") {
+        on(
+          "unrestricted_shell",
+          "Let Heliox run any shell command",
+          "the list of commands Heliox may run and the checks on their arguments",
+        );
+        on("root_enabled", "Let Heliox act as administrator", "the refusal of actions that need root");
+        off("dry_run", "Let Heliox's actions really run", "the dry run, which only shows what would happen");
+        off(
+          "snapshot_on_destructive",
+          "Stop taking a snapshot before destructive actions",
+          "the way back after a destructive action",
+        );
+      } else if (section === "preview") {
+        off("enabled", "Stop previewing plans before they run", "the preview of each plan");
+      } else if (section === "gateway") {
+        off("risk_gate_enabled", "Turn off the risk check", "the world model's check of each plan's risk");
+      } else if (section === "model") {
+        const next = modelDestination({ ...now, ...values });
+        if (next && next !== modelDestination(now)) {
+          found.push({
+            key: "model.provider",
+            says: `Use the language model at ${next}`,
+            stops: `Your requests and the text Heliox reads for them will go to ${next}.`,
+          });
+        }
+      }
+      return found;
+    };
+    const applyGuarded = (section: string, values: Record<string, unknown>) => {
+      if (!guardState[section]) return;
+      for (const key of Object.keys(guardState[section])) {
+        if (key in values) guardState[section][key] = values[key];
+      }
+    };
+    const heldSettings = new Map<string, { request: any; lines: GuardLine[]; section: string; values: any }>();
+    const approvedSettings = new Set<number>();
+    let settingApprovals = 0;
+
     // Mock WebSocket to simulate daemon connection and intercept messages
     (window as any).WebSocket = class {
       static OPEN = 1;
@@ -108,6 +192,63 @@ export async function mockTauriIpc(page: Page): Promise<void> {
         // Intercept sent messages and store them globally for tests to inspect
         const request = JSON.parse(data);
         if (!timerPolledMethods.has(request.method)) (window as any).__last_ws_send__ = request;
+
+        if (request.method === "confirm" && String(request.params?.plan_id ?? "").startsWith("setting-")) {
+          const held = heldSettings.get(request.params.plan_id);
+          heldSettings.delete(request.params.plan_id);
+          const reply = (id: number, result: unknown) =>
+            setTimeout(() => this.onmessage?.({ data: JSON.stringify({ jsonrpc: "2.0", id, result }) }), 0);
+          reply(request.id, { status: "ok", confirmed: Boolean(request.params.confirmed) });
+          if (held) {
+            const approved: number[] | undefined = request.params.approved_indices;
+            const all = held.lines.every((_line, index) => approved === undefined || approved.includes(index));
+            if (request.params.confirmed && all) {
+              approvedSettings.add(held.request.id);
+              this.send(JSON.stringify(held.request));
+            } else {
+              reply(held.request.id, {
+                status: "cancelled",
+                message: "Nothing was changed.",
+                settings: held.lines.map((line) => line.key),
+              });
+            }
+          }
+          return;
+        }
+        const guarded = guardChanges(request.method, request.params);
+        if (guarded) {
+          const lines = approvedSettings.delete(request.id) ? [] : widenings(guarded.section, guarded.values);
+          if (lines.length) {
+            const planId = `setting-${++settingApprovals}`;
+            heldSettings.set(planId, { request, lines, ...guarded });
+            setTimeout(() => {
+              this.onmessage?.({
+                data: JSON.stringify({
+                  jsonrpc: "2.0",
+                  method: "confirm_required",
+                  params: {
+                    plan_id: planId,
+                    reason:
+                      lines.length === 1
+                        ? lines[0].stops
+                        : "Each of these takes a protection away. Approve them to go on.",
+                    actions: lines.map((line, index) => ({
+                      index,
+                      action_type: "setting_change",
+                      target: line.says,
+                      description: line.stops,
+                      setting: line.key,
+                      irreversible: false,
+                      undo: { kind: "undoable", reason: "You can change it back in Settings." },
+                    })),
+                  },
+                }),
+              });
+            }, 0);
+            return;
+          }
+          applyGuarded(guarded.section, guarded.values);
+        }
 
         if (request.method === "risk_gate_status" && (window as any).__mock_risk_gate_status_missing__) {
           setTimeout(() => {

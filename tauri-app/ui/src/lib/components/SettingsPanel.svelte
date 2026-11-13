@@ -55,6 +55,7 @@
   import OptionalParts from "./OptionalParts.svelte";
   import RemoveHelioxFiles from "./RemoveHelioxFiles.svelte";
   import { companion } from "../stores/companion";
+  import { NOT_CHANGED } from "../api/configSync";
 
   let {
     onOpenCommand = () => {},
@@ -76,6 +77,8 @@
   let settingsNotice = $state<{ text: string; kind: "error" | "info" } | null>(null);
   let settingsNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   let lastSaveMessage = "";
+  // The last save took a protection away and the person did not approve it in the daemon's dialog.
+  let lastSaveCancelled = false;
 
   function showSettingsNotice(text: string, kind: "error" | "info") {
     settingsNotice = { text, kind };
@@ -84,12 +87,15 @@
   }
 
   function notChanged(subject: string): string {
+    if (lastSaveCancelled) return NOT_CHANGED;
     return `${subject} was not changed: ${lastSaveMessage || "the daemon could not confirm it."}`;
   }
 
   /**
    * Save daemon-backed settings. When the daemon refuses, the input goes back to the saved
-   * value and the reason is shown (in the caller's own toast when `quiet`).
+   * value and the reason is shown (in the caller's own toast when `quiet`). A change that takes a protection away
+   * waits for the person's approval in the daemon's dialog; when they do not approve it, the input goes back too and
+   * the panel says only "Not changed.", as information.
    */
   async function saveSetting(
     section: string,
@@ -101,13 +107,16 @@
     const previous = key === undefined ? undefined : saved[key];
     const result: SettingsSaveResult = await settings.updateSectionDetailed(section, values);
     lastSaveMessage = result.message;
+    lastSaveCancelled = Boolean(result.cancelled);
     if (!result.ok) {
       const input = options.event?.target;
       if (previous !== undefined && (input instanceof HTMLInputElement || input instanceof HTMLSelectElement)) {
         if (input instanceof HTMLInputElement && input.type === "checkbox") input.checked = Boolean(previous);
         else input.value = String(previous);
       }
-      if (!options.quiet) showSettingsNotice(`Not saved: ${result.message}`, "error");
+      if (options.quiet) return false;
+      if (result.cancelled) showSettingsNotice(NOT_CHANGED, "info");
+      else showSettingsNotice(`Not saved: ${result.message}`, "error");
       return false;
     }
     if (result.restartRequired) showSettingsNotice("Saved. Restart Heliox for this change to take effect.", "info");
@@ -133,7 +142,7 @@
     void refreshStoredApiKeys();
   });
   let rootToast = $state("");
-  let rootToastType = $state<"success" | "warning">("success");
+  let rootToastType = $state<"success" | "warning" | "quiet">("success");
   let rootSaving = $state(false);
   let elevationRequesting = $state(false);
   let elevationMessage = $state("");
@@ -377,7 +386,7 @@
 
     if (!synced) {
       rootToast = notChanged("Root policy");
-      rootToastType = "warning";
+      rootToastType = lastSaveCancelled ? "quiet" : "warning";
       setTimeout(() => (rootToast = ""), 5000);
       return;
     }
@@ -395,26 +404,10 @@
     setTimeout(() => (rootToast = ""), 5000);
   }
 
+  // Turning root on asks once, in the daemon's own approval dialog; the toggle moves only when it is approved.
   function toggleRoot() {
     if (rootSaving) return;
-    const turningOn = !$settings.security.root_enabled;
-    if (turningOn) {
-      askConfirm(
-        "⚠️ ENABLE ROOT ACCESS?\n\n" +
-          "This unlocks Heliox's full power:\n" +
-          "• Admin/sudo shell commands\n" +
-          "• System service management\n" +
-          "• Protected file modifications\n" +
-          "• Registry & disk-level operations\n\n" +
-          "Actions requiring elevated privileges will no longer be blocked by Heliox policy.\n" +
-          "The operating system may still deny them unless the daemon is elevated.\n" +
-          "Only enable this if you trust the AI agent with system-level access.",
-        () => applyRootToggle(true),
-        true,
-      );
-      return;
-    }
-    applyRootToggle(false);
+    void applyRootToggle(!$settings.security.root_enabled);
   }
 
   async function applyAutoSnapshotToggle(turningOn: boolean) {
@@ -437,19 +430,10 @@
     setTimeout(() => (snapshotToast = ""), 5000);
   }
 
+  // Turning it off asks once, in the daemon's own approval dialog.
   function toggleAutoSnapshot() {
     if (snapshotSaving) return;
-    const turningOn = !$settings.security.snapshot_on_destructive;
-    if (!turningOn) {
-      askConfirm(
-        "DISABLE AUTO-SNAPSHOT?\n\n" +
-          "Destructive actions will be able to run after confirmation without first creating a rollback point.",
-        () => applyAutoSnapshotToggle(false),
-        true,
-      );
-      return;
-    }
-    applyAutoSnapshotToggle(true);
+    void applyAutoSnapshotToggle(!$settings.security.snapshot_on_destructive);
   }
 
   function snapshotBackendLabel(backend: string): string {
@@ -476,19 +460,10 @@
     setTimeout(() => (dryRunToast = ""), 5000);
   }
 
+  // Turning it off asks once, in the daemon's own approval dialog.
   function toggleDryRun() {
     if (dryRunSaving) return;
-    const turningOn = !$settings.security.dry_run;
-    if (!turningOn) {
-      askConfirm(
-        "RETURN TO LIVE EXECUTION?\n\n" +
-          "Future approved plans can change the operating system, files, processes, and browser state.",
-        () => applyDryRunToggle(false),
-        true,
-      );
-      return;
-    }
-    applyDryRunToggle(true);
+    void applyDryRunToggle(!$settings.security.dry_run);
   }
 
   function setMode(mode: string) {
@@ -511,12 +486,12 @@
   async function setSubscriptionProvider(subscription_provider: "codex" | "claude") {
     subscriptionStatus = null;
     subscriptionActionMessage = "";
-    await saveSetting("model", {
+    const saved = await saveSetting("model", {
       provider: "subscription",
       subscription_provider,
       subscription_model: "",
     });
-    await refreshSubscriptionStatus(subscription_provider, true);
+    await refreshSubscriptionStatus(saved ? subscription_provider : $settings.model.subscription_provider, true);
   }
 
   function updateSubscriptionModel(e: Event) {
@@ -1045,8 +1020,10 @@
   function handleReset() {
     askConfirm(
       $_("settings.reset_confirm"),
-      () => {
-        void settings.reset();
+      async () => {
+        const outcome = await settings.reset();
+        if (outcome === "cancelled") showSettingsNotice(NOT_CHANGED, "info");
+        else if (outcome === "failed") showSettingsNotice("Not reset: the daemon could not confirm it.", "error");
       },
       true,
     );
@@ -1256,13 +1233,14 @@
         class="root-toast"
         class:root-toast-warning={rootToastType === "warning"}
         class:root-toast-success={rootToastType === "success"}
+        class:root-toast-quiet={rootToastType === "quiet"}
       >
         {rootToast}
       </div>
     {/if}
 
     {#if snapshotToast}
-      <div class="root-toast root-toast-warning">
+      <div class="root-toast root-toast-warning" class:root-toast-quiet={snapshotToast === NOT_CHANGED}>
         {snapshotToast}
       </div>
     {/if}
@@ -1272,6 +1250,7 @@
         class="root-toast"
         class:root-toast-success={$settings.security.dry_run}
         class:root-toast-warning={!$settings.security.dry_run}
+        class:root-toast-quiet={dryRunToast === NOT_CHANGED}
       >
         {dryRunToast}
       </div>
@@ -1590,6 +1569,7 @@
         class="root-toast"
         class:root-toast-success={$settings.preview?.enabled}
         class:root-toast-warning={!$settings.preview?.enabled}
+        class:root-toast-quiet={previewToast === NOT_CHANGED}
       >
         {previewToast}
       </div>
@@ -3187,6 +3167,14 @@
     background: color-mix(in srgb, var(--success) 12%, transparent);
     color: var(--success);
     border-bottom: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+  }
+
+  /* A change the person did not approve: left as it was, said quietly. */
+  .root-toast.root-toast-quiet {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
   }
 
   @keyframes toastSlide {

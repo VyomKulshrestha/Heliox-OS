@@ -98,3 +98,14 @@ async def test_config_update_rejects_coercive_values_atomically(monkeypatch, par
     assert result == {"status": "error", "message": message}
     assert config.narration.narrate_steps is True
     assert config.narration.enabled is False
+
+
+@pytest.fixture(autouse=True)
+def _the_person_approves_setting_changes(monkeypatch):
+    """These tests are about checking and saving settings; asking before a widening is test_guard_changes.py's."""
+    from pilot.server import PilotServer
+
+    async def approved(self, ws, found):
+        return None
+
+    monkeypatch.setattr(PilotServer, "_approve_widenings", approved)

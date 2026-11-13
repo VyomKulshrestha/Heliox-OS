@@ -168,3 +168,45 @@ async def test_a_mute_said_twice_writes_once(tmp_path):
 )  # fmt: skip
 def test_what_is_not_a_setting(phrase):
     assert said_as.spoken_setting(normalize_phrase(phrase), PilotConfig()) is None
+
+
+@pytest.fixture(autouse=True)
+def _the_person_approves_setting_changes(monkeypatch):
+    """These tests are about checking and saving settings; asking before a widening is test_guard_changes.py's."""
+    from pilot.server import PilotServer
+
+    async def approved(self, ws, found):
+        return None
+
+    monkeypatch.setattr(PilotServer, "_approve_widenings", approved)
+
+    async def approved_before(self, found):
+        return True  # as if this person had approved these captures before on this computer
+
+    monkeypatch.setattr(PilotServer, "_approved_before", approved_before)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window_open", [True, False], ids=["window-open", "no-window"])
+async def test_turning_live_on_for_the_first_time_asks_in_the_window(tmp_path, monkeypatch, window_open):
+    """Voice cannot widen a guard: the first time, the question goes to the window and nothing is saved yet."""
+
+    async def never_before(self, found):
+        return False
+
+    async def no_answer_yet(self, ws, found):
+        return {"status": "cancelled", "message": "Nothing was changed."}
+
+    monkeypatch.setattr(PilotServer, "_approved_before", never_before)
+    monkeypatch.setattr(PilotServer, "_approve_widenings", no_answer_yet)
+    server = _server(tmp_path, offers_running=False)
+    if window_open:
+        server._clients.add(object())
+
+    reply = await server._control_reply("be my live companion")
+
+    assert reply == (said_as.APPROVE_IN_WINDOW if window_open else said_as.OPEN_TO_APPROVE)
+    assert server.config.live.enabled is False
+    assert _on_disk("live").get("enabled") in (None, False)
+    for task in list(server.__dict__.get("_spoken_widening_tasks", set())):
+        await task

@@ -112,7 +112,7 @@ describe("settings daemon synchronization", () => {
 
     const reset = await settings.reset();
 
-    expect(reset).toBe(false);
+    expect(reset).toBe("failed");
     expect(get(settings).model.provider).toBe("cloud");
     expect(JSON.parse(localStorage.getItem("heliox_settings") || "{}").model.provider).toBe("cloud");
   });
@@ -141,12 +141,48 @@ describe("settings daemon synchronization", () => {
 
     const reset = await settings.reset();
 
-    expect(reset).toBe(true);
+    expect(reset).toBe("reset");
     expect(get(settings).model.provider).toBe("ollama");
     // Restrictions survive a reset on the daemon, so the UI must not show them as cleared.
     expect(get(settings).restrictions.blocked_commands).toEqual(["format"]);
     expect(get(settings).theme).toBe("dark");
     expect(localStorage.getItem("heliox_theme")).toBeNull();
+  });
+
+  it("leaves the settings as they were when the person does not approve a reset", async () => {
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "get_config") return Promise.resolve({ security: { dry_run: true } });
+      if (method === "reset_config") return Promise.resolve({ status: "cancelled", message: "Nothing was changed." });
+      return Promise.reject(new Error(`unexpected method: ${method}`));
+    });
+
+    const { settings } = await import("./settings");
+    await vi.waitFor(() => expect(get(settings).security.dry_run).toBe(true));
+
+    await expect(settings.reset()).resolves.toBe("cancelled");
+    expect(get(settings).security.dry_run).toBe(true);
+  });
+
+  it("reports a change the person did not approve as not changed, not as an error", async () => {
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "get_config") return Promise.resolve({});
+      return Promise.resolve({
+        status: "cancelled",
+        message: "Nothing was changed.",
+        settings: ["security.root_enabled"],
+      });
+    });
+
+    const { settings } = await import("./settings");
+    await vi.waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("get_config"));
+
+    await expect(settings.updateSectionDetailed("security", { root_enabled: true })).resolves.toEqual({
+      ok: false,
+      cancelled: true,
+      message: "Not changed.",
+      restartRequired: false,
+    });
+    expect(get(settings).security.root_enabled).toBe(false);
   });
 
   it("re-reads the daemon when it announces a config change or reconnects", async () => {

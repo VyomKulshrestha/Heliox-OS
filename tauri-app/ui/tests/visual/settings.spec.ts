@@ -81,6 +81,10 @@ test.describe("Settings Panel", () => {
     const section = page.locator(".subscription-panel");
     await section.scrollIntoViewIfNeeded();
     await section.getByRole("button", { name: "Codex", exact: true }).click();
+    // A model on another computer is asked about in the daemon's approval dialog, naming where requests go.
+    const approval = page.getByRole("dialog", { name: "Change a safety setting" });
+    await expect(approval).toContainText("OpenAI, through Codex");
+    await approval.getByRole("button", { name: "Approve change" }).click();
     await expect(section).toContainText("Subscription connected");
     await expect(section).toContainText("Codex ChatGPT subscription login");
     await expect(section.getByPlaceholder("Default Codex model")).toBeVisible();
@@ -89,6 +93,8 @@ test.describe("Settings Panel", () => {
     await expect(section).toContainText("8960 cached");
 
     await section.getByRole("button", { name: "Claude Code" }).click();
+    await expect(approval).toContainText("Anthropic, through Claude Code");
+    await approval.getByRole("button", { name: "Approve change" }).click();
     await expect(section.getByPlaceholder("Default Claude model")).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => (window as any).__last_ws_send__))
@@ -105,9 +111,12 @@ test.describe("Settings Panel", () => {
     // Capture inactive state
     await expect(rootToggle).toHaveScreenshot("settings-toggle-inactive.png");
 
-    // Confirm the policy change before capturing its active state.
+    // The daemon asks in its own approval dialog before root is on; approve it before checking the active state.
     await rootToggle.click();
-    await page.getByRole("button", { name: "Confirm" }).click();
+    await page
+      .getByRole("dialog", { name: "Change a safety setting" })
+      .getByRole("button", { name: "Approve change" })
+      .click();
     await page.waitForTimeout(100);
     await expect(rootToggle).toHaveClass(/active/);
     await expect(rootToggle).toHaveAttribute("aria-pressed", "true");
@@ -151,6 +160,11 @@ test.describe("Settings Panel", () => {
     await section.getByRole("button", { name: "Toggle Learned Risk World Model" }).click();
     await expect(runtimeCard).toContainText("Enabled");
     await section.getByRole("button", { name: "Save" }).click();
+    // Turning the risk check off waits for the daemon's approval dialog.
+    await page
+      .getByRole("dialog", { name: "Change a safety setting" })
+      .getByRole("button", { name: "Approve change" })
+      .click();
     await expect(runtimeCard).toContainText("Disabled");
 
     await expect

@@ -379,6 +379,29 @@ class TaskReceipts:
         path = self._path_for(receipt_id)
         return await asyncio.to_thread(self._read, path) if path else None
 
+    async def approved_settings(self) -> set[str]:
+        """The setting changes recorded as approved in receipts signed by this installation's key ("<what changed>
+        (<section.key>)"). A receipt that does not verify with this computer's key does not count."""
+        info = await self.key_info()
+        fingerprint = info.get("fingerprint") if info.get("available") else None
+        if not fingerprint:
+            return set()
+
+        def run() -> set[str]:
+            found: set[str] = set()
+            for path in self._files():
+                envelope = self._read(path)
+                if envelope is None:
+                    continue
+                if not verify_envelope(envelope, expected_fingerprint=fingerprint)["valid"]:
+                    continue
+                for action in envelope["receipt"].get("actions", []):
+                    if isinstance(action, dict) and action.get("action_type") == "setting_change":
+                        found.add(str(action.get("target", "")))
+            return found
+
+        return await asyncio.to_thread(run)
+
     async def verify(self, envelope: Any) -> dict[str, Any]:
         info = await self.key_info()
         result = verify_envelope(envelope)

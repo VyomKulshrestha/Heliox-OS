@@ -200,6 +200,71 @@ describe("SettingsPanel saves", () => {
     expect(input.value).toBe("rm -rf");
   });
 
+  it("asks nothing itself before turning root on, and leaves it off when the person does not approve", async () => {
+    settingsMocks.updateSectionDetailed.mockResolvedValue({
+      ok: false,
+      cancelled: true,
+      message: "Not changed.",
+      restartRequired: false,
+    });
+    await renderPanel();
+    const toggle = screen.getByRole("button", { name: "Toggle Root Access" }) as HTMLButtonElement;
+    await waitFor(() => expect(toggle.disabled).toBe(false));
+
+    await fireEvent.click(toggle);
+
+    // The daemon's approval dialog is the one question; the panel shows no prompt of its own.
+    await waitFor(() =>
+      expect(settingsMocks.updateSectionDetailed).toHaveBeenCalledWith("security", { root_enabled: true }),
+    );
+    expect(screen.queryByText(/ENABLE ROOT ACCESS/)).toBeNull();
+    const note = await screen.findByText("Not changed.");
+    expect(note.classList.contains("root-toast-quiet")).toBe(true);
+    expect(note.classList.contains("root-toast-warning")).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByText(/Not saved|was not changed/)).toBeNull();
+  });
+
+  it("turns dry run off without a prompt of its own", async () => {
+    settingsMocks.set({ ...structuredClone(baseSettings), security: { ...baseSettings.security, dry_run: true } });
+    settingsMocks.updateSectionDetailed.mockResolvedValue({ ok: true, message: "", restartRequired: false });
+    await renderPanel();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Toggle Dry Run Mode" }));
+
+    await waitFor(() =>
+      expect(settingsMocks.updateSectionDetailed).toHaveBeenCalledWith("security", { dry_run: false }),
+    );
+    expect(screen.queryByText(/RETURN TO LIVE EXECUTION/)).toBeNull();
+  });
+
+  it("saves a narrowing, such as turning dry run on, directly", async () => {
+    settingsMocks.updateSectionDetailed.mockResolvedValue({ ok: true, message: "", restartRequired: false });
+    await renderPanel();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Toggle Dry Run Mode" }));
+
+    await waitFor(() =>
+      expect(settingsMocks.updateSectionDetailed).toHaveBeenCalledWith("security", { dry_run: true }),
+    );
+    expect(await screen.findByText(/Dry Run enabled/)).toBeTruthy();
+  });
+
+  it("says only Not changed when a model change is not approved", async () => {
+    settingsMocks.updateSectionDetailed.mockResolvedValue({
+      ok: false,
+      cancelled: true,
+      message: "Not changed.",
+      restartRequired: false,
+    });
+    await renderPanel();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Subscription" }));
+
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Not changed."));
+    expect(screen.queryByText(/Not saved|was not changed/)).toBeNull();
+  });
+
   it("warns that settings are read-only while config.toml cannot be read", async () => {
     settingsMocks.setLoadErrors(["config.toml: Invalid value (at line 4, column 9)"]);
     await renderPanel();

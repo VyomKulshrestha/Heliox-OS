@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
   import { settings } from "../stores/settings";
+  import { NOT_CHANGED } from "../api/configSync";
 
   let enabled = $state(false);
   let imapHost = $state("");
@@ -14,6 +15,8 @@
   let busy = $state(false);
   let message = $state("");
   let failed = $state(false);
+  // A new mail server waits for the person's approval in the daemon's dialog; without it nothing changed.
+  let quiet = $state(false);
 
   $effect(() => {
     if (!edited) {
@@ -31,6 +34,7 @@
     edited = true;
     message = "";
     failed = false;
+    quiet = false;
   }
 
   async function refreshCredentialStatus() {
@@ -65,6 +69,7 @@
     busy = true;
     message = "";
     failed = false;
+    quiet = false;
     try {
       // Save the account first so a refused account never leaves a mismatched password
       // behind; if storing the new password fails, put the previous account back.
@@ -77,6 +82,14 @@
         username: username.trim(),
         password_provider: "email",
       });
+      if (saved.cancelled) {
+        // Left as it was: the form shows the saved account again, and no password is stored for the new one.
+        edited = false;
+        password = "";
+        message = NOT_CHANGED;
+        quiet = true;
+        return;
+      }
       if (!saved.ok) throw new Error(saved.message || "The daemon did not confirm the email configuration.");
       if (password.trim()) {
         let storeError = "";
@@ -171,7 +184,7 @@
       >Test IMAP</button
     >
   </div>
-  {#if message}<p class:error={failed} class:ok={!failed} class="message">{message}</p>{/if}
+  {#if message}<p class:error={failed} class:ok={!failed && !quiet} class="message">{message}</p>{/if}
 </section>
 
 <style>

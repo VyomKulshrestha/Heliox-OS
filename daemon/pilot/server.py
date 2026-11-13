@@ -60,6 +60,7 @@ from pilot.intelligence.experience import (
     stable_action_idempotency_key,
 )
 from pilot.logger import ColorFormatter
+from pilot.personal import spoken_settings as spoken_table
 from pilot.personal.spoken_settings import PATTERNS as SPOKEN_SETTINGS
 from pilot.personal.spoken_settings import spoken_setting
 from pilot.plan_checks import world_model_summary
@@ -286,6 +287,7 @@ CONFIRM_UNANSWERED_PATHS = ("timeout", "shutdown", "unacknowledged")
 CONFIG_MUTATING_RPC_METHODS = frozenset(
     {
         "update_config",
+        "live_set",
         "reset_config",
         "narration_config_update",
         "risk_gate_config_update",
@@ -346,6 +348,17 @@ RESTART_REQUIRED_SECTIONS = {"memory", "proxy", "redis"}
 # replacement/stop must interrupt an in-flight utterance. All other RPCs
 # remain sequential per connection.
 # Answered while the daemon is still starting; every other request waits for readiness (pilot.system.startup).
+# The widenings the person approved for the request being handled (set by _dispatch before it takes the config
+# lock). None: nothing was asked yet, so a handler called by the daemon itself asks on its own.
+_APPROVED_WIDENINGS: contextvars.ContextVar[frozenset[Any] | None] = contextvars.ContextVar(
+    "approved_widenings", default=None
+)
+# How long a widening asked for by voice with no window open is kept for the next window.
+SPOKEN_WIDENING_KEPT_SECONDS = 600
+
+# What wakes the listener: each phrase holds the name, so ordinary speech is not taken as addressed to Heliox.
+WAKE_WORDS = ("hey heliox", "heliox", "hey pilot")
+
 # How many proposed git conflict resolutions are remembered for apply_git_resolution (oldest forgotten first).
 GIT_PROPOSALS_KEPT = 256
 
@@ -2632,6 +2645,7 @@ class PilotServer:
         if role == RpcClientRole.UI:
             self._clients.add(websocket)
             self._on_window_connected()
+            self._offer_kept_spoken_widening()
         self._authenticated_clients.add(websocket)
         self._client_roles[websocket] = role
         if role == RpcClientRole.NEURAL_SIDECAR:
@@ -2779,11 +2793,25 @@ class PilotServer:
         if request.method not in CONFIG_MUTATING_RPC_METHODS:
             result = await handler(request.params, ws)
             return _success_response(request.id, result)
-        async with self._config_lock:
-            reload_if_edited = getattr(self.config, "reload_if_edited", None)
-            if reload_if_edited is not None and reload_if_edited():
-                await self._broadcast_notification("config_updated", {"method": "reload", "section": ""})
-            result = await handler(request.params, ws)
+        # A change that takes a protection away is asked about first, without the config lock: a narrowing, or a
+        # spoken "stop watching me", must never wait behind a dialog the person has not answered. The handler then
+        # works the widenings out again under the lock and writes only if they are still the ones approved.
+        approved: frozenset[Any] | None = None
+        found = self._widenings_for(request.method, request.params)
+        if found:
+            refusal = await self._approve_widenings(ws, found)
+            if refusal is not None:
+                return _success_response(request.id, refusal)
+            approved = frozenset(found)
+        token = _APPROVED_WIDENINGS.set(approved)
+        try:
+            async with self._config_lock:
+                reload_if_edited = getattr(self.config, "reload_if_edited", None)
+                if reload_if_edited is not None and reload_if_edited():
+                    await self._broadcast_notification("config_updated", {"method": "reload", "section": ""})
+                result = await handler(request.params, ws)
+        finally:
+            _APPROVED_WIDENINGS.reset(token)
         return _success_response(request.id, result)
 
     async def _announce_config_change(self, request: JsonRpcRequest, response: str | None) -> None:
@@ -6255,6 +6283,7 @@ class PilotServer:
         reason: str = "",
         risk_assessment: dict[str, Any] | None = None,
         force_all_actions: bool = False,
+        shown: list[dict[str, Any]] | None = None,
     ) -> tuple[bool, set[int], set[int]]:
         """Send a confirmation request and block until the user responds or timeout.
 
@@ -6288,6 +6317,8 @@ class PilotServer:
         pending.required_indices = frozenset(confirm_indices)
 
         def _dump_confirm_action(idx: int, a: Any) -> dict[str, Any]:
+            if shown is not None:  # what the dialog shows instead of an action (a setting change)
+                return {**shown[idx], "index": idx}
             payload = a.model_dump()
             payload["irreversible"] = a.is_irreversible
             payload["undo"] = self._undo_badge(a)
@@ -6720,6 +6751,188 @@ class PilotServer:
         )
         logger.info("Rolled back plan %s to snapshot %s", plan_id, snapshot_id)
         return {"status": "ok", "message": result_message}
+
+    async def _approve_widenings(self, ws: ServerConnection, found: list[Any]) -> dict[str, Any] | None:
+        """Ask the person, in the daemon's approval dialog, before a setting change that takes protection away
+        (pilot.security.guard_changes). None when nothing widens or the person approved every line; otherwise the
+        reply for the caller: "cancelled", the setting left as it was. Voice can only say no to it, as to every
+        approval. An approved change is written to the task receipts with its time."""
+        if not found:
+            return None
+        if ws is None:  # asked for by the daemon itself (a spoken setting): every open window shows the dialog
+            ws = _BroadcastConnection(self._broadcast_notification)
+        # One setting dialog at a time: a second widening waits for the first to be answered, then asks its own.
+        queue = self.__dict__.setdefault("_setting_dialog_lock", asyncio.Lock())
+        async with queue:
+            return await self._ask_widenings(ws, found)
+
+    async def _ask_widenings(self, ws: Any, found: list[Any]) -> dict[str, Any] | None:
+        from pilot.actions import Action, ActionPlan, ActionType, NotifyParams
+
+        placeholders = [
+            Action(action_type=ActionType.NOTIFY, target=w.says, parameters=NotifyParams(summary=w.says, body=w.stops))
+            for w in found
+        ]
+        shown = [
+            {
+                "action_type": "setting_change",
+                "target": w.says,
+                "description": w.stops,
+                "setting": w.key,
+                "irreversible": False,
+                "undo": {"kind": "undoable", "reason": "You can change it back in Settings."},
+            }
+            for w in found
+        ]
+        plan_id = f"setting-{uuid.uuid4().hex[:8]}"
+        reason = found[0].stops if len(found) == 1 else "Each of these takes a protection away. Approve them to go on."
+        confirmed, approved, required = await self._wait_for_confirmation(
+            plan_id,
+            ActionPlan(actions=placeholders, explanation="Change a safety setting", raw_input="settings"),
+            ws,
+            reason=reason,
+            force_all_actions=True,
+            shown=shown,
+        )
+        if not confirmed or required - approved:
+            return {
+                "status": "cancelled",
+                "message": "Nothing was changed.",
+                "settings": [w.key for w in found],
+            }
+        receipts = getattr(self, "_task_receipts", None)
+        if receipts is not None:
+            from types import SimpleNamespace
+
+            try:
+                for w in found:
+                    receipts.record_action(
+                        plan_id,
+                        plan_id,
+                        SimpleNamespace(action_type="setting_change", target=f"{w.says} ({w.key})", parameters=None),
+                        SimpleNamespace(success=True, executed=True, output="", error=""),
+                        user_confirmed=True,
+                    )
+                await receipts.finalize(
+                    plan_id,
+                    request="Change a safety setting",
+                    status="success",
+                    summary="; ".join(w.says for w in found),
+                    source="settings",
+                )
+            except Exception:
+                logger.warning("The approved setting change was not written to the receipts", exc_info=True)
+        return None
+
+    async def _approved_before(self, found: list[Any]) -> bool:
+        """Whether every one of these Live captures was approved before on this computer: turning back on exactly
+        what the person approved does not ask again. Only Live's reading and listening count, and only from a
+        receipt signed by this installation's key (a client cannot write one: backup_restore can add receipt files,
+        but not sign them with this computer's key)."""
+        if not all(w.key.startswith("live.") for w in found):
+            return False
+        receipts = getattr(self, "_task_receipts", None)
+        if receipts is None:
+            return False
+        try:
+            approved = await receipts.approved_settings()
+        except Exception:
+            logger.warning("Earlier setting approvals could not be read", exc_info=True)
+            return False
+        return all(f"{w.says} ({w.key})" in approved for w in found)
+
+    def _ask_for_spoken_widening(self, params: dict[str, Any]) -> str:
+        """Put a widening asked for by voice in the window, without waiting for the answer. With no window open,
+        keep it for the next window (SPOKEN_WIDENING_KEPT_SECONDS), asked once when that window connects."""
+        if not self._clients:
+            self._spoken_widening = (dict(params), time.monotonic() + SPOKEN_WIDENING_KEPT_SECONDS)
+            return spoken_table.OPEN_TO_APPROVE
+        self._spoken_widening = None
+        self._spawn_spoken_widening(params)
+        return spoken_table.APPROVE_IN_WINDOW
+
+    def _spawn_spoken_widening(self, params: dict[str, Any]) -> None:
+        async def ask_then_apply() -> None:
+            try:
+                # Through _dispatch, as a window's request goes: asked without the config lock, written under it.
+                response = await self._dispatch(
+                    JsonRpcRequest(method="update_config", params=dict(params), id="spoken-setting"),
+                    _BroadcastConnection(self._broadcast_notification),
+                )
+                result = json.loads(response or "{}").get("result") or {}
+                if result.get("status") == "ok":
+                    await self._broadcast_notification(
+                        "config_updated", {"method": "voice", "section": params.get("section", "")}
+                    )
+            except Exception:
+                logger.warning("A spoken setting change could not be asked about", exc_info=True)
+
+        task = asyncio.create_task(ask_then_apply())
+        self.__dict__.setdefault("_spoken_widening_tasks", set()).add(task)
+        task.add_done_callback(self.__dict__["_spoken_widening_tasks"].discard)
+
+    def _offer_kept_spoken_widening(self) -> None:
+        """A window connected: ask once about a widening voice asked for while no window was open, if still kept."""
+        kept = self.__dict__.get("_spoken_widening")
+        self._spoken_widening = None
+        if kept is not None and time.monotonic() < kept[1]:
+            self._spawn_spoken_widening(kept[0])
+
+    async def _widening_refusal(self, method: str, params: dict[str, Any], ws: ServerConnection) -> dict | None:
+        """The guard check every setting handler runs first, under the config lock. A request that came through
+        _dispatch was already asked about without the lock: here the widenings are worked out again and the change
+        goes ahead only if they are still the ones the person approved (the settings may have moved while the dialog
+        was open). A handler the daemon calls itself asks here."""
+        found = self._widenings_for(method, params)
+        if not found:
+            return None
+        approved = _APPROVED_WIDENINGS.get()
+        if approved is None:
+            return await self._approve_widenings(ws, found)
+        if set(found) <= approved:
+            return None
+        return {
+            "status": "cancelled",
+            "message": "The setting changed while you were deciding, so nothing was changed. Try again.",
+            "settings": [w.key for w in found],
+        }
+
+    def _widenings_for(self, method: str, params: dict[str, Any]) -> list[Any]:
+        """What this request would widen, from the settings as they are now. Pure but for reading the settings."""
+        from pilot.security import guard_changes as guards
+
+        if not isinstance(params, dict):
+            return []
+        found: list[Any] = []
+        if method == "update_config":
+            section = params.get("section", "")
+            values = params.get("values", {})
+            if isinstance(section, str) and isinstance(values, dict) and hasattr(self.config, section):
+                found = guards.section_widenings(section, getattr(self.config, section), values)
+        elif method == "risk_gate_config_update":
+            enabled = params.get("enabled", self.config.gateway.risk_gate_enabled)
+            found = guards.section_widenings("gateway", self.config.gateway, {"risk_gate_enabled": enabled})
+        elif method in {"self_healing_config_update", "narration_config_update"}:
+            section = method.removesuffix("_config_update")
+            found = guards.section_widenings(section, getattr(self.config, section), params)
+        elif method == "gateway_policy_update":
+            profile = params.get("profile", "")
+            current = self.config.gateway.source_profiles.get(profile) if isinstance(profile, str) else None
+            if current is not None:
+                found = guards.gateway_widenings(profile, current, params)
+        elif method == "reset_config":
+            defaults = PilotConfig()
+            sections = [
+                name
+                for name in defaults.__dataclass_fields__
+                if name not in {"server", "restrictions", "first_run_complete"}
+            ]
+            found = guards.reset_widenings(self.config, defaults, sections)
+            for profile, floor in self.config.gateway.source_profiles.items():
+                default_floor = defaults.gateway.source_profiles.get(profile)
+                if default_floor is not None:
+                    found.extend(guards.gateway_widenings(profile, floor, guards._plain(default_floor)))
+        return found
 
     def _undo_badge(self, action: Any) -> dict[str, str]:
         """What the approval dialog says about undoing ``action`` (decided by type, never by a model)."""
@@ -7839,7 +8052,7 @@ class PilotServer:
         if params.get("request_permission") is True and callable(request):
             request()  # macOS: the system's Accessibility prompt, at most once per run, on the person's action
         if values:
-            result = await self._handle_update_config({"section": "live", "values": values}, None)
+            result = await self._handle_update_config({"section": "live", "values": values}, ws)
             if result.get("status") != "ok":
                 return result
             await self._broadcast_notification("config_updated", {"method": "live", "section": "live"})
@@ -8250,7 +8463,17 @@ class PilotServer:
         target = getattr(self.config, section, None)
         if target is not None and all(getattr(target, key, object()) == value for key, value in values.items()):
             return reply  # already so: the person's file is not written again
-        result = await self._handle_update_config({"section": section, "values": values}, None)
+        params = {"section": section, "values": values}
+        found = self._widenings_for("update_config", params)
+        if found and not await self._approved_before(found):
+            # Voice cannot widen a guard (someone else's voice, or a video, could say it): the window asks.
+            return self._ask_for_spoken_widening(params)
+        token = _APPROVED_WIDENINGS.set(frozenset(found)) if found else None
+        try:
+            result = await self._handle_update_config(params, None)
+        finally:
+            if token is not None:
+                _APPROVED_WIDENINGS.reset(token)
         if result.get("status") != "ok":
             return f"That setting was not changed: {result.get('message', 'unknown error')}"
         await self._broadcast_notification("config_updated", {"method": "voice", "section": section})
@@ -9122,6 +9345,8 @@ class PilotServer:
             A dict with status and the updated policy, or an error if the
             profile name is unknown.
         """
+        if (refusal := await self._widening_refusal("gateway_policy_update", params, ws)) is not None:
+            return refusal  # it would take a protection away, and the person did not approve it
         from dataclasses import asdict
 
         from pilot.actions import ActionType, PermissionTier
@@ -9592,6 +9817,8 @@ class PilotServer:
             }
 
         if section == "restrictions":
+            if (refusal := await self._widening_refusal("update_config", params, ws)) is not None:
+                return refusal  # it would take a protection away, and the person did not approve it
             return self._update_restrictions(values)
         # Sections with their own RPC: the generic path would skip their validation and runtime
         # side effects (hooks, monitors, receivers), and "server" holds the daemon's auth token.
@@ -9615,6 +9842,8 @@ class PilotServer:
         target = getattr(self.config, section, None)
         if target is None:
             return {"status": "error", "message": f"Unknown config section: {section}"}
+        if (refusal := await self._widening_refusal("update_config", params, ws)) is not None:
+            return refusal  # it would take a protection away, and the person did not approve it
         voice_recorder_fields = {
             "input_device",
             "headset_input_choices",
@@ -10264,6 +10493,8 @@ class PilotServer:
         and the finished setup. Refuses while tasks run, because defaults include dry run
         and approval settings a running job depends on.
         """
+        if (refusal := await self._widening_refusal("reset_config", params, ws)) is not None:
+            return refusal  # it would take a protection away, and the person did not approve it
         from pilot.agents.autonomous import JobStatus
 
         busy_jobs = [
@@ -11806,6 +12037,8 @@ class PilotServer:
 
     async def _handle_risk_gate_config_update(self, params: dict, ws: ServerConnection) -> dict:
         """Enable or disable risk-world-model evaluation and persist it."""
+        if (refusal := await self._widening_refusal("risk_gate_config_update", params, ws)) is not None:
+            return refusal  # it would take a protection away, and the person did not approve it
         try:
             enabled = _validated_bool(params, "enabled", self.config.gateway.risk_gate_enabled)
         except ValueError as exc:
@@ -11882,6 +12115,8 @@ class PilotServer:
         Returns:
             A dict with status and the updated config.
         """
+        if (refusal := await self._widening_refusal("self_healing_config_update", params, ws)) is not None:
+            return refusal  # it would take a protection away, and the person did not approve it
         cfg = self.config.self_healing
         try:
             enabled = _validated_bool(params, "enabled", cfg.enabled)
@@ -11981,6 +12216,8 @@ class PilotServer:
         Returns:
             A dict with status and the updated config.
         """
+        if (refusal := await self._widening_refusal("narration_config_update", params, ws)) is not None:
+            return refusal  # it would take a protection away, and the person did not approve it
         cfg = self.config.narration
         try:
             enabled = _validated_bool(params, "enabled", cfg.enabled)
@@ -15702,7 +15939,10 @@ def handle_tool(tool_name, params):
         """
         from pilot.system.voice import ContinuousVoiceListener
 
-        wake_words = params.get("wake_words", ["hey heliox", "heliox", "hey pilot"])
+        # The daemon's own wake words, never the caller's: a client could otherwise pick a common word ("okay")
+        # and the listener would take ordinary speech as addressed to Heliox. Starting the listener is use and never
+        # asks; there is no wake-word setting yet, so these are the ones (until 13 November 2026 any list was taken).
+        wake_words = list(WAKE_WORDS)
 
         if self._voice_listener and self._voice_listener.is_running:
             return {"status": "already_running", "wake_words": self._voice_listener.wake_words}

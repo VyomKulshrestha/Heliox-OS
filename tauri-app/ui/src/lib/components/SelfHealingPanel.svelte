@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
   import { call, onNotification, offNotification, requireOkResult, type DaemonStatusResult } from "../api/daemon";
-  import { changedFields, onConfigChange } from "../api/configSync";
+  import { NOT_CHANGED, changedFields, isCancelled, onConfigChange } from "../api/configSync";
 
   interface HealingAttempt {
     attempt_id: string;
@@ -39,6 +39,8 @@
   let statusAvailable = $state(false);
   let saving = $state(false);
   let saved = $state(false);
+  // A higher tier or a shorter wait needs the person's approval in the daemon's dialog; without it nothing changed.
+  let notChanged = $state(false);
   let error = $state("");
   let notificationHandler: ((method: string, params: unknown) => void) | null = null;
   // The config the daemon last reported. Healing attempts refresh the status often; those
@@ -106,6 +108,7 @@
   async function save() {
     saving = true;
     saved = false;
+    notChanged = false;
     error = "";
     try {
       const values = formConfig();
@@ -113,6 +116,15 @@
         "self_healing_config_update",
         savedConfig ? changedFields(savedConfig, values) : values,
       )) as { status: string; message?: string };
+      if (isCancelled(result)) {
+        if (savedConfig) {
+          enabled = Boolean(savedConfig.enabled);
+          autoExecuteMaxTier = Number(savedConfig.auto_execute_max_tier);
+          watchedMetrics = [...(savedConfig.watched_metrics as string[])];
+        }
+        notChanged = true;
+        return;
+      }
       if (result.status !== "ok") throw new Error(result.message || "Configuration was not saved");
       savedConfig = values;
       await loadStatus();
@@ -236,6 +248,9 @@
       <button class="btn-save" onclick={save} disabled={saving || !statusAvailable}>
         {saving ? "Saving..." : saved ? "✓ Saved" : $_("settings.save")}
       </button>
+      {#if notChanged && !dirty}
+        <span class="not-changed" role="status">{NOT_CHANGED}</span>
+      {/if}
     </div>
 
     <div class="attempts-header">
@@ -304,6 +319,11 @@
     text-align: center;
     color: var(--text-muted);
     font-size: 13px;
+  }
+
+  .not-changed {
+    font-size: 11px;
+    color: var(--text-secondary);
   }
 
   .panel-error {

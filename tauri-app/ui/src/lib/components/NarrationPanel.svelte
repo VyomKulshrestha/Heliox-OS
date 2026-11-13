@@ -2,7 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { _ } from "svelte-i18n";
   import { call, requireOkResult, type DaemonStatusResult } from "../api/daemon";
-  import { changedFields, onConfigChange } from "../api/configSync";
+  import { NOT_CHANGED, changedFields, isCancelled, onConfigChange } from "../api/configSync";
   import { lateRetry, startingMessage } from "../api/lateParts";
 
   let enabled = $state(false);
@@ -17,6 +17,8 @@
   let statusAvailable = $state(false);
   let saving = $state(false);
   let saved = $state(false);
+  // Turning risk interrupts off or shortening the wait needs the person's approval in the daemon's dialog.
+  let notChanged = $state(false);
   let error = $state("");
   let learnedPatternCount = $state(0);
   let suggestionShownCount = $state(0);
@@ -90,19 +92,35 @@
     }
   }
 
+  /** Put the form back to what the daemon last reported. */
+  function restoreSaved(values: Record<string, unknown>) {
+    enabled = Boolean(values.enabled);
+    narrateSteps = Boolean(values.narrate_steps);
+    interruptOnRisk = Boolean(values.interrupt_on_risk);
+    proactiveReviewEnabled = Boolean(values.proactive_review_enabled);
+    liveCorrectionsEnabled = Boolean(values.live_corrections_enabled);
+    followUpEnabled = Boolean(values.follow_up_enabled);
+    confirmTimeoutSeconds = Number(values.confirm_timeout_seconds);
+    advisoryTimeoutSeconds = Number(values.advisory_timeout_seconds);
+  }
+
   async function save() {
     saving = true;
     saved = false;
+    notChanged = false;
     error = "";
     try {
       const values = formValues();
-      requireOkResult(
-        await call<DaemonStatusResult>(
-          "narration_config_update",
-          savedValues ? changedFields(savedValues, values) : values,
-        ),
-        "Narration settings were not saved",
+      const result = await call<DaemonStatusResult>(
+        "narration_config_update",
+        savedValues ? changedFields(savedValues, values) : values,
       );
+      if (isCancelled(result)) {
+        if (savedValues) restoreSaved(savedValues);
+        notChanged = true;
+        return;
+      }
+      requireOkResult(result, "Narration settings were not saved");
       savedValues = values;
       saved = true;
       setTimeout(() => (saved = false), 2500);
@@ -323,6 +341,9 @@
       <button class="btn-save" onclick={save} disabled={saving || !statusAvailable}>
         {saving ? "Saving..." : saved ? "✓ Saved" : $_("settings.save")}
       </button>
+      {#if notChanged && !dirty}
+        <span class="not-changed" role="status">{NOT_CHANGED}</span>
+      {/if}
     </div>
   {/if}
 </div>
@@ -363,6 +384,11 @@
     text-align: center;
     color: var(--text-muted);
     font-size: 13px;
+  }
+
+  .not-changed {
+    font-size: 11px;
+    color: var(--text-secondary);
   }
 
   .panel-error {

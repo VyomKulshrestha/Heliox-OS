@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
   import { settings } from "../stores/settings";
+  import { NOT_CHANGED } from "../api/configSync";
   import LiveShellCheck from "./LiveShellCheck.svelte";
 
   type Kind = { kind: string; label: string };
@@ -59,6 +60,8 @@
   let readsFocusedText = $state(true);
   let reader = $state<ReaderState | null>(null);
   let error = $state("");
+  // Turning Live or a capture on asks once, in the daemon's approval dialog; without approval nothing changed.
+  let notChanged = $state(false);
   let saving = $state(false);
 
   let cfg = $derived(
@@ -126,12 +129,18 @@
     { value: "proactive", label: "Proactive", hint: "Speaks up sooner and more often." },
   ] as const;
 
-  async function save(values: Record<string, unknown>) {
+  /** Save to the daemon; a checkbox the daemon did not change goes back to the saved state. */
+  async function save(values: Record<string, unknown>, event?: Event) {
     saving = true;
     error = "";
+    notChanged = false;
     const result = await settings.updateSectionDetailed("live", values);
     saving = false;
-    if (!result.ok) error = result.message;
+    if (result.ok) return;
+    const input = event?.currentTarget ?? event?.target;
+    if (input instanceof HTMLInputElement && input.type === "checkbox") input.checked = !input.checked;
+    if (result.cancelled) notChanged = true;
+    else error = result.message;
   }
 
   // macOS only: shows the system's Accessibility prompt (at most once per run) and reports the new state.
@@ -192,7 +201,12 @@
     </button>
   </div>
 
-  {#if error}<div class="message" role="alert">{error}</div>{/if}
+  {#if error}<div class="message" role="alert">{error}</div>{:else if notChanged}<div
+      class="message quiet"
+      role="status"
+    >
+      {NOT_CHANGED}
+    </div>{/if}
 
   <div class="block">
     <span class="block-label" id="live-level">How readily it speaks</span>
@@ -219,7 +233,7 @@
       <input
         type="checkbox"
         checked={learnsTiming}
-        onchange={(e) => save({ personal_timing: (e.currentTarget as HTMLInputElement).checked })}
+        onchange={(e) => save({ personal_timing: (e.currentTarget as HTMLInputElement).checked }, e)}
       />
       <span
         >Learn how long you pause in the middle of a sentence, so it waits for a real break instead of cutting in while
@@ -242,7 +256,7 @@
       <input
         type="checkbox"
         checked={cfg.read_focused_text}
-        onchange={(e) => save({ read_focused_text: (e.currentTarget as HTMLInputElement).checked })}
+        onchange={(e) => save({ read_focused_text: (e.currentTarget as HTMLInputElement).checked }, e)}
       />
       <span
         >The text field you're typing in{readsFocusedText ? "" : " (not available on this system)"}. Never password
@@ -268,7 +282,7 @@
       <input
         type="checkbox"
         checked={cfg.listen_to_speech}
-        onchange={(e) => save({ listen_to_speech: (e.currentTarget as HTMLInputElement).checked })}
+        onchange={(e) => save({ listen_to_speech: (e.currentTarget as HTMLInputElement).checked }, e)}
       />
       <span>What you say to Heliox, so it can catch a wrong date before planning.</span>
     </label>
@@ -277,7 +291,7 @@
       <input
         type="checkbox"
         checked={cfg.ocr_fallback}
-        onchange={(e) => save({ ocr_fallback: (e.currentTarget as HTMLInputElement).checked })}
+        onchange={(e) => save({ ocr_fallback: (e.currentTarget as HTMLInputElement).checked }, e)}
       />
       <span>Read the screen when no text field is readable (for errors only; uses more CPU).</span>
     </label>
@@ -285,7 +299,7 @@
       <input
         type="checkbox"
         checked={cfg.grounded_checks === true}
-        onchange={(e) => save({ grounded_checks: (e.currentTarget as HTMLInputElement).checked })}
+        onchange={(e) => save({ grounded_checks: (e.currentTarget as HTMLInputElement).checked }, e)}
       />
       <span
         >Check what you write against your own calendar, to-dos and reminders: a plan on top of a meeting, or the wrong
@@ -416,6 +430,11 @@
     color: var(--danger);
     background: var(--danger-bg);
     font-size: var(--text-sm);
+  }
+
+  .message.quiet {
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
   }
 
   .block {

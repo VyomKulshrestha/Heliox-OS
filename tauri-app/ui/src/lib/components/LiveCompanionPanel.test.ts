@@ -61,6 +61,33 @@ describe("LiveCompanionPanel timing", () => {
     expect(mocks.updateSectionDetailed).toHaveBeenCalledWith("live", { personal_timing: false });
   });
 
+  it("puts a capture back when the person does not approve turning it on, with no error", async () => {
+    mocks.call.mockResolvedValue({ status: "ok", kinds: [], timing: learned });
+    mocks.updateSectionDetailed.mockResolvedValue({ ok: false, cancelled: true, message: "Not changed." });
+    render(LiveCompanionPanel);
+    const box = screen.getByRole("checkbox", { name: /Read the screen when no text field/ }) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+
+    await fireEvent.click(box);
+
+    expect(mocks.updateSectionDetailed).toHaveBeenCalledWith("live", { ocr_fallback: true });
+    expect((await screen.findByRole("status")).textContent?.trim()).toBe("Not changed.");
+    expect(box.checked).toBe(false);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("turns reading the typed field off directly", async () => {
+    mocks.call.mockResolvedValue({ status: "ok", kinds: [], timing: learned });
+    render(LiveCompanionPanel);
+    const box = screen.getByRole("checkbox", { name: /The text field you're typing in/ }) as HTMLInputElement;
+
+    await fireEvent.click(box);
+
+    expect(mocks.updateSectionDetailed).toHaveBeenCalledWith("live", { read_focused_text: false });
+    await waitFor(() => expect(box.checked).toBe(false));
+    expect(screen.queryByText("Not changed.")).toBeNull();
+  });
+
   it("says how many catch-pack rules passed the precision check and why one was held back", async () => {
     mocks.call.mockResolvedValue({
       status: "ok",

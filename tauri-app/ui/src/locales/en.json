@@ -150,6 +150,9 @@
     "deny": "Deny",
     "approve": "Approve & Execute",
     "submitting": "Sending decision...",
+    "setting_title": "Change a safety setting",
+    "setting_body": "Heliox asks before it changes a setting that protects you. Approve to make the change, or deny to leave it as it is.",
+    "setting_approve": "Approve change",
     "nothing_checked": "Nothing is checked. Check the actions you want to approve, or deny."
   },
   "gesture": {

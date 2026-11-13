@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { call, requireOkResult, type DaemonStatusResult } from "../api/daemon";
-  import { changedFields, onConfigChange } from "../api/configSync";
+  import { NOT_CHANGED, changedFields, isCancelled, onConfigChange } from "../api/configSync";
 
   type SourceProfile = {
     max_tier: Record<string, number>;
@@ -40,6 +40,8 @@
   let loading = $state(true);
   let savingProfile = $state<string | null>(null);
   let savedProfile = $state<string | null>(null);
+  // The profile whose widening the person did not approve; it went back to the saved policy.
+  let unchangedProfile = $state<string | null>(null);
   let error = $state("");
 
   onMount(() => {
@@ -110,10 +112,12 @@
 
   function updateTier(name: string, family: string, e: Event) {
     const tier = Number((e.target as HTMLSelectElement).value);
+    unchangedProfile = null;
     profiles = { ...profiles, [name]: { ...profiles[name], max_tier: { ...profiles[name].max_tier, [family]: tier } } };
   }
 
   function toggleAllowRoot(name: string) {
+    unchangedProfile = null;
     profiles = { ...profiles, [name]: { ...profiles[name], allow_root: !profiles[name].allow_root } };
   }
 
@@ -123,14 +127,20 @@
     if (Object.keys(changes).length === 0) return;
     savingProfile = name;
     savedProfile = null;
+    unchangedProfile = null;
     error = "";
     try {
       // gateway_policy_update accepts any subset of max_tier/deny_action_types/allow_root and keeps
       // the rest, so a change made elsewhere to another field is not overwritten with stale values.
-      requireOkResult(
-        (await call("gateway_policy_update", { profile: name, ...changes })) as DaemonStatusResult,
-        "The daemon did not save the gateway policy.",
-      );
+      const result = (await call("gateway_policy_update", { profile: name, ...changes })) as DaemonStatusResult;
+      // A wider ceiling waits for the person's approval in the daemon's dialog; without it nothing changed.
+      if (isCancelled(result)) {
+        const saved = savedProfiles[name];
+        if (saved) profiles = { ...profiles, [name]: withAllFamilies(structuredClone(saved)) };
+        unchangedProfile = name;
+        return;
+      }
+      requireOkResult(result, "The daemon did not save the gateway policy.");
       savedProfiles = { ...savedProfiles, [name]: sent };
       savedProfile = name;
       setTimeout(() => {
@@ -174,6 +184,9 @@
               {savingProfile === name ? "Saving..." : savedProfile === name ? "✓ Saved" : "Save"}
             </button>
           </div>
+          {#if unchangedProfile === name}
+            <p class="not-changed" role="status">{NOT_CHANGED}</p>
+          {/if}
 
           <div class="family-grid">
             {#each FAMILIES as family}
@@ -258,6 +271,12 @@
     text-align: center;
     color: var(--text-muted);
     font-size: 13px;
+  }
+
+  .not-changed {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-secondary);
   }
 
   .error {

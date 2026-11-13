@@ -92,4 +92,34 @@ describe("self-healing approval results", () => {
     );
     expect(daemonState.auto_execute_max_tier).toBe(2);
   });
+
+  it("puts a higher tier back when the person does not approve it, with no error", async () => {
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "self_healing_status") {
+        return Promise.resolve({
+          status: "ok",
+          enabled: true,
+          auto_execute_max_tier: 1,
+          watched_metrics: ["cpu"],
+          monitors: {},
+          attempts: [],
+        });
+      }
+      if (method === "self_healing_config_update") {
+        return Promise.resolve({ status: "cancelled", message: "Nothing was changed.", settings: [] });
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+    const { container } = render(SelfHealingPanel);
+    await screen.findByRole("button", { name: "Toggle Autonomous Healing" });
+    const tier = container.querySelector("select") as HTMLSelectElement;
+    await fireEvent.change(tier, { target: { value: "3" } });
+
+    await fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    expect((await screen.findByRole("status")).textContent).toBe("Not changed.");
+    expect(daemonMocks.call).toHaveBeenCalledWith("self_healing_config_update", { auto_execute_max_tier: 3 });
+    expect(tier.value).toBe("1");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

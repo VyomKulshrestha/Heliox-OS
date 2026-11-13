@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
   import { settings } from "../stores/settings";
+  import { NOT_CHANGED } from "../api/configSync";
 
   let enabled = $state(false);
   let caldavUrl = $state("");
@@ -76,6 +77,14 @@
         caldav_password_provider: "caldav",
         ics_files: localSources,
       });
+      if (saved.cancelled) {
+        // A new calendar server waits for the person's approval in the daemon's dialog; without it nothing changed.
+        // The form shows the saved account again, and no password is stored for the new one.
+        edited = false;
+        password = "";
+        message = NOT_CHANGED;
+        return;
+      }
       if (!saved.ok) throw new Error(saved.message || "The daemon did not confirm the calendar configuration.");
 
       if (password.trim()) {

@@ -72,6 +72,29 @@ describe("companion settings result handling", () => {
     expect(daemonState.narrate_steps).toBe(false);
   });
 
+  it("puts risk interrupts back on when turning them off is not approved, with no error", async () => {
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "narration_status") return Promise.resolve(narrationStatus);
+      if (method === "proactive_learning_status") return Promise.resolve({ status: "ok", patterns: {} });
+      if (method === "narration_config_update") {
+        return Promise.resolve({ status: "cancelled", message: "Nothing was changed.", settings: [] });
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+    render(NarrationPanel);
+    const toggle = await screen.findByRole("button", { name: "Toggle risk interrupts" });
+    await vi.waitFor(() => expect(toggle.hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(toggle);
+    expect(toggle.classList.contains("active")).toBe(false);
+
+    await fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    expect((await screen.findByRole("status")).textContent).toBe("Not changed.");
+    expect(daemonMocks.call).toHaveBeenCalledWith("narration_config_update", { interrupt_on_risk: false });
+    expect(toggle.classList.contains("active")).toBe(true);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("does not claim narration settings were saved after daemon rejection", async () => {
     daemonMocks.call.mockImplementation((method: string) => {
       if (method === "narration_status") {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { call, requireResultStatus } from "../api/daemon";
+  import { NOT_CHANGED, isCancelled } from "../api/configSync";
 
   interface LastEvaluation {
     evaluated_at: string;
@@ -65,6 +66,8 @@
   let statusAvailable = $state(false);
   let saving = $state(false);
   let saved = $state(false);
+  // Turning the check off waits for the person's approval in the daemon's dialog; without it nothing changed.
+  let notChanged = $state(false);
   let error = $state("");
 
   onMount(loadStatus);
@@ -111,9 +114,15 @@
   async function save() {
     saving = true;
     saved = false;
+    notChanged = false;
     error = "";
     try {
       const result = (await call("risk_gate_config_update", { enabled })) as RiskStatus;
+      if (isCancelled(result)) {
+        enabled = runtimeEnabled;
+        notChanged = true;
+        return;
+      }
       requireResultStatus(result, "ok", "The daemon rejected the world-model setting.");
       applyStatus(result);
       saved = true;
@@ -143,7 +152,10 @@
     <button
       class="toggle"
       class:active={enabled}
-      onclick={() => (enabled = !enabled)}
+      onclick={() => {
+        enabled = !enabled;
+        notChanged = false;
+      }}
       aria-label="Toggle Learned Risk World Model"
       aria-pressed={enabled}
       title="Toggle Learned Risk World Model"
@@ -251,6 +263,8 @@
 
     {#if error}
       <div class="error" role="alert">{error}</div>
+    {:else if notChanged}
+      <p class="not-changed" role="status">{NOT_CHANGED}</p>
     {/if}
 
     <div class="actions">
@@ -388,6 +402,13 @@
     padding: 8px 0 0;
     margin: 0;
     text-align: left;
+  }
+
+  .not-changed {
+    margin: 0;
+    padding: 8px 14px 0;
+    font-size: 12px;
+    color: var(--text-secondary);
   }
 
   .error {

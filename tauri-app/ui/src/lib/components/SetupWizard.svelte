@@ -11,6 +11,8 @@
   let { oncomplete }: Props = $props();
   let finishing = $state(false);
   let finishError = $state("");
+  // Said when the person did not approve sending their requests to a cloud or subscription model.
+  let finishNote = $state("");
   let step = $state(0);
 
   let modelProvider = $state("ollama");
@@ -103,6 +105,7 @@
     if (finishing) return;
     finishing = true;
     finishError = "";
+    finishNote = "";
 
     try {
       if (modelProvider === "subscription") {
@@ -123,6 +126,12 @@
         subscription_provider: subscriptionProvider,
         subscription_model: subscriptionModel,
       });
+      // A model on another computer is asked about once, here, in the daemon's approval dialog (it names the host).
+      // Without approval nothing was changed: the wizard stays on this step and setup is not complete.
+      if (modelSaved.cancelled) {
+        finishNote = "Nothing was changed; choose a model on this computer or approve the cloud one.";
+        return;
+      }
       if (!modelSaved.ok) throw new Error(`The model choice was not saved: ${modelSaved.message}`);
 
       const folders = protectedFolders
@@ -433,6 +442,8 @@
     <div class="wizard-footer">
       {#if finishError}
         <p class="finish-error" role="alert">{finishError}</p>
+      {:else if finishNote}
+        <p class="finish-note" role="status">{finishNote}</p>
       {/if}
       {#if step > 0}
         <button class="btn-back" onclick={() => step--}>Back</button>
@@ -775,12 +786,17 @@
     border-top: 1px solid var(--border);
   }
 
-  .finish-error {
+  .finish-error,
+  .finish-note {
     margin: 0 auto 0 0;
     max-width: 58%;
     color: var(--danger);
     font-size: 11px;
     line-height: 1.35;
+  }
+
+  .finish-note {
+    color: var(--text-secondary);
   }
 
   .btn-back {

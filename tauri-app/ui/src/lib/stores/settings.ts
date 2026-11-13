@@ -1,5 +1,6 @@
 import { writable } from "svelte/store";
 import { call, onConnectionState, onNotification } from "../api/daemon";
+import { NOT_CHANGED, isCancelled } from "../api/configSync";
 
 export interface PilotSettings {
   model: {
@@ -315,6 +316,11 @@ export type SettingsSaveResult = {
   message: string;
   /** The daemon saved the value but only applies it after a restart. */
   restartRequired: boolean;
+  /**
+   * The change took a protection away, the daemon asked the person in its approval dialog, and they did not approve
+   * it: nothing changed. Not an error; the control goes back to the saved value. `ok` is false.
+   */
+  cancelled?: boolean;
 };
 
 const SETTINGS_CACHE_KEY = "heliox_settings";
@@ -429,6 +435,9 @@ function createSettings() {
           section,
           values,
         });
+        if (isCancelled(result)) {
+          return { ok: false, cancelled: true, message: NOT_CHANGED, restartRequired };
+        }
         if (result?.status !== "ok") {
           return { ok: false, message: result?.message || "The daemon rejected the setting.", restartRequired };
         }
@@ -496,15 +505,17 @@ function createSettings() {
     });
   }
 
-  async function reset(): Promise<boolean> {
+  /** Reset to the defaults. "cancelled" when the reset took a protection away and the person did not approve it. */
+  async function reset(): Promise<"reset" | "cancelled" | "failed"> {
     try {
       const result = await call<{ status?: string; message?: string }>("reset_config");
+      if (isCancelled(result)) return "cancelled";
       if (result?.status !== "ok") {
         throw new Error(result?.message || "Daemon rejected the factory reset");
       }
     } catch (err) {
       console.warn("Failed to reset backend config:", err);
-      return false;
+      return "failed";
     }
 
     try {
@@ -517,7 +528,7 @@ function createSettings() {
     // what it saved rather than the UI's copy of the defaults.
     set({ ...defaultSettings, theme: getSystemTheme(), hotkey: current.hotkey });
     await reloadFromDaemon();
-    return true;
+    return "reset";
   }
 
   return {

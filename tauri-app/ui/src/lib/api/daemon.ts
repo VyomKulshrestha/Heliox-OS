@@ -242,6 +242,17 @@ export async function waitForConnection(limitMs: number = START_WAIT_MS): Promis
   });
 }
 
+/** Methods whose change the daemon may first ask the person to approve (pilot.security.guard_changes). */
+const SETTING_METHODS = new Set([
+  "update_config",
+  "live_set",
+  "reset_config",
+  "risk_gate_config_update",
+  "self_healing_config_update",
+  "narration_config_update",
+  "gateway_policy_update",
+]);
+
 export async function call<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
   if (!isConnected()) {
     const connected = await waitForConnection();
@@ -265,12 +276,17 @@ export async function call<T = unknown>(method: string, params: Record<string, u
 
     ws!.send(JSON.stringify(request));
 
-    setTimeout(() => {
-      if (pending.has(id)) {
-        pending.delete(id);
-        reject(new Error("Request timeout"));
-      }
-    }, 300_000); // 5 minute timeout for complex agentic workflows
+    setTimeout(
+      () => {
+        if (pending.has(id)) {
+          pending.delete(id);
+          reject(new Error("Request timeout"));
+        }
+      },
+      // 5 minutes for complex agentic workflows. A setting change may wait up to 5 minutes for the person's approval
+      // first, so its reply ("cancelled" when unanswered) gets a little longer than that.
+      SETTING_METHODS.has(method) ? 360_000 : 300_000,
+    );
   });
 }
 

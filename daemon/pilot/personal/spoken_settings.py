@@ -54,6 +54,10 @@ SUGGESTIONS_ON = "Okay, I'll suggest things now and then again, held while you f
 OFFERS_OFF = 'Okay, no more offers. Say "you can offer things again" to undo it.'
 OFFERS_ON = "Okay, I'll offer what you usually do now and then, at a quiet moment."
 LIVE_ON = "Okay, I'm with you. I'll point out slips as you work, at your pauses, and stay quiet while you talk."
+# Turning on a capture by voice when it needs approval (pilot.security.guard_changes): voice cannot widen a
+# guard, so the question goes to the window. Nothing else is said until the change has applied.
+APPROVE_IN_WINDOW = "I've put that in Heliox's window for you to approve."
+OPEN_TO_APPROVE = "Open Heliox and approve it there."
 LIVE_OFF = 'Okay, Live is off: no more corrections. Say "be my live companion" to turn it back on.'
 LIVE_LESS = "Okay, fewer corrections: I'll only speak up about risky things and show the rest quietly."
 LIVE_LESS_WHILE_OFF = "Okay. Live is off now; when you turn it on, it will only speak up about risky things."

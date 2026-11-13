@@ -168,3 +168,14 @@ async def test_config_update_rejects_coercive_values_atomically(monkeypatch, par
     assert config.self_healing.enabled is False
     assert config.self_healing.auto_execute_max_tier == 1
     assert config.self_healing.cooldown_seconds == 600.0
+
+
+@pytest.fixture(autouse=True)
+def _the_person_approves_setting_changes(monkeypatch):
+    """These tests are about checking and saving settings; asking before a widening is test_guard_changes.py's."""
+    from pilot.server import PilotServer
+
+    async def approved(self, ws, found):
+        return None
+
+    monkeypatch.setattr(PilotServer, "_approve_widenings", approved)

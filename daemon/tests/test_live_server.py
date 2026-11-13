@@ -161,3 +161,19 @@ async def test_live_reads_only_writable_fields(tmp_path, monkeypatch):
 
     answer[0] = FocusedText(text="", control_type="Edit", pid=4, password=True)
     assert await server._live_observe() is None
+
+
+@pytest.fixture(autouse=True)
+def _the_person_approves_setting_changes(monkeypatch):
+    """These tests are about checking and saving settings; asking before a widening is test_guard_changes.py's."""
+    from pilot.server import PilotServer
+
+    async def approved(self, ws, found):
+        return None
+
+    monkeypatch.setattr(PilotServer, "_approve_widenings", approved)
+
+    async def approved_before(self, found):
+        return True  # as if this person had approved these captures before on this computer
+
+    monkeypatch.setattr(PilotServer, "_approved_before", approved_before)

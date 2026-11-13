@@ -87,6 +87,13 @@
   let blockingSafetyDecision = $derived(
     activeModal === "confirmation" || activeModal === "undo" || activeModal === "interrupt",
   );
+  // A change of setting that takes a protection away is asked about from Settings or the setup wizard, so its
+  // approval shows over whatever is open (any tab, the wizard) instead of only on the Command tab.
+  let settingApproval = $derived(
+    activeModal === "confirmation" &&
+      $session.confirmActions.length > 0 &&
+      $session.confirmActions.every((action) => action.action_type === "setting_change"),
+  );
   let documentVisible = $state(typeof document === "undefined" || document.visibilityState === "visible");
   let previousStudyActive = false;
 
@@ -289,6 +296,28 @@
 {#if showWizard}
   <SetupWizard oncomplete={onSetupComplete} />
 {/if}
+{#snippet confirmation()}
+  <!-- Keyed by plan: a new approval never inherits the previous dialog's checkboxes. -->
+  {#key $session.confirmPlanId}
+    <ConfirmDialog
+      actions={$session.confirmActions}
+      reason={$session.confirmReason}
+      riskAssessment={$session.confirmRiskAssessment}
+      gnomon={$session.confirmGnomon}
+      checks={$session.currentPlan?.plan_id === $session.confirmPlanId ? $session.currentPlan?.checks : null}
+      submitting={$session.confirmSubmitting}
+      error={$session.confirmError}
+      onselectionchange={(indices) => session.setConfirmSelection($session.confirmPlanId, indices)}
+      onconfirm={(approvedIndices) => session.confirm(true, approvedIndices, { inputChannel: "dialog" })}
+      ondeny={() => session.confirm(false, undefined, { inputChannel: "dialog" })}
+    />
+  {/key}
+{/snippet}
+{#if settingApproval}
+  <div class="setting-approval-layer">
+    {@render confirmation()}
+  </div>
+{/if}
 <main class="window" class:dragging={isDragging} class:hidden-behind-wizard={showWizard}>
   <header
     class="titlebar"
@@ -367,22 +396,8 @@
         <NeuralBackground />
 
         <InteractiveServices onconfigure={() => (activeTab = "settings")} />
-        {#if activeModal === "confirmation"}
-          <!-- Keyed by plan: a new approval never inherits the previous dialog's checkboxes. -->
-          {#key $session.confirmPlanId}
-            <ConfirmDialog
-              actions={$session.confirmActions}
-              reason={$session.confirmReason}
-              riskAssessment={$session.confirmRiskAssessment}
-              gnomon={$session.confirmGnomon}
-              checks={$session.currentPlan?.plan_id === $session.confirmPlanId ? $session.currentPlan?.checks : null}
-              submitting={$session.confirmSubmitting}
-              error={$session.confirmError}
-              onselectionchange={(indices) => session.setConfirmSelection($session.confirmPlanId, indices)}
-              onconfirm={(approvedIndices) => session.confirm(true, approvedIndices, { inputChannel: "dialog" })}
-              ondeny={() => session.confirm(false, undefined, { inputChannel: "dialog" })}
-            />
-          {/key}
+        {#if activeModal === "confirmation" && !settingApproval}
+          {@render confirmation()}
         {:else if activeModal === "undo" && $session.undoPreview}
           <UndoDialog
             remaining={$session.undoQueue.length}
@@ -900,6 +915,13 @@
 
   .window.hidden-behind-wizard {
     visibility: hidden;
+  }
+
+  /* Above the setup wizard (1000) and an inactive Command tab (1001), below the first-run install (1100). */
+  .setting-approval-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
   }
 
   .titlebar {

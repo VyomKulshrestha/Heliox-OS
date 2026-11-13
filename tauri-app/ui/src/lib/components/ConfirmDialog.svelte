@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PlanAction, PlanChecks as PlanChecksData } from "../stores/session";
   import PlanChecks, { criticRaised, findingsForStep } from "./PlanChecks.svelte";
-  import { ShieldAlert } from "@lucide/svelte";
+  import { ShieldAlert, SlidersHorizontal } from "@lucide/svelte";
   import { describeAction } from "../utils/actionDetails";
   import { _ } from "svelte-i18n";
   import { onMount, tick, untrack } from "svelte";
@@ -44,6 +44,14 @@
   // Keys whose keydown this dialog accepted; a keyup without one (a key held since before the dialog opened) is
   // swallowed so it cannot activate the focused button.
   const acceptedKeys = new Set<string>();
+
+  /** A change of setting that takes a protection away; the daemon asks before it takes effect. */
+  const isSettingChange = (action: PlanAction) => action.action_type === "setting_change";
+  let settingsOnly = $derived(actions.length > 0 && actions.every(isSettingChange));
+  // For one setting the reason is that line's own description; it is said once, under the line.
+  let reasonShown = $derived(
+    reason && !(settingsOnly && actions.some((action) => action.description?.trim() === reason.trim())) ? reason : "",
+  );
 
   let approved = $state<boolean[]>([]);
   let anyApproved = $derived(approved.some((v) => v));
@@ -226,13 +234,18 @@
     onkeyupcapture={handleKeyup}
   >
     <div class="confirm-header">
-      <span class="warn-icon">&#9888;</span>
-      <span id={titleId}>{$_("confirm.title")}</span>
+      {#if settingsOnly}
+        <span class="setting-icon"><SlidersHorizontal size={18} aria-hidden="true" /></span>
+        <span id={titleId}>{$_("confirm.setting_title")}</span>
+      {:else}
+        <span class="warn-icon">&#9888;</span>
+        <span id={titleId}>{$_("confirm.title")}</span>
+      {/if}
     </div>
 
     <div class="confirm-scroll" class:more-below={moreBelow} bind:this={scrollEl} onscroll={updateMoreBelow}>
       <p class="confirm-body">
-        {$_("confirm.body")}
+        {settingsOnly ? $_("confirm.setting_body") : $_("confirm.body")}
       </p>
 
       {#if riskAssessment}
@@ -248,8 +261,8 @@
         </div>
       {/if}
 
-      {#if reason && !riskAssessment}
-        <p class="confirm-reason">{reason}</p>
+      {#if reasonShown && !riskAssessment}
+        <p class="confirm-reason">{reasonShown}</p>
       {/if}
 
       {#if gnomon && gnomon.escalate}
@@ -284,8 +297,12 @@
                   onchange={() => toggle(i)}
                 />
               </label>
-              <strong>{action.action_type}</strong> on
-              <code>{action.target}</code>
+              {#if isSettingChange(action)}
+                <span class="setting-target">{action.target}</span>
+              {:else}
+                <strong>{action.action_type}</strong> on
+                <code>{action.target}</code>
+              {/if}
               {#if action.requires_root}
                 <span class="root-tag">{$_("tier.root")}</span>
               {/if}
@@ -301,6 +318,9 @@
                 <span class="undo-tag" title={action.undo.reason}>{$_("undo.badge_not_undoable")}</span>
               {/if}
             </div>
+            {#if isSettingChange(action) && action.description}
+              <p class="setting-description">{action.description}</p>
+            {/if}
             {#if stepFindings[i]?.length}
               <ul class="step-review" class:warns={criticWarns} id={`${titleId}-review-${i}`}>
                 {#each stepFindings[i] as finding, j (j)}
@@ -311,7 +331,7 @@
                 {/each}
               </ul>
             {/if}
-            {#each describeAction(action) as detail (detail.label)}
+            {#each isSettingChange(action) ? [] : describeAction(action) as detail (detail.label)}
               <div class="action-detail">
                 <span class="detail-label">{detail.label}</span>
                 {#if detail.code}<pre>{detail.value}</pre>{:else}<span class="detail-value">{detail.value}</span>{/if}
@@ -337,11 +357,11 @@
         >
         <button
           class="btn-confirm"
-          title={$_("confirm.approve")}
+          title={settingsOnly ? $_("confirm.setting_approve") : $_("confirm.approve")}
           disabled={!anyApproved || submitting}
           onclick={handleConfirm}
         >
-          {submitting ? $_("confirm.submitting") : $_("confirm.approve")}
+          {submitting ? $_("confirm.submitting") : settingsOnly ? $_("confirm.setting_approve") : $_("confirm.approve")}
         </button>
       </div>
     </div>
@@ -412,6 +432,23 @@
   .warn-icon {
     color: var(--warning);
     font-size: 20px;
+  }
+
+  .setting-icon {
+    display: inline-flex;
+    color: var(--accent);
+  }
+
+  .setting-target {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .setting-description {
+    margin: 4px 0 0 23px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-secondary);
   }
 
   .confirm-body {

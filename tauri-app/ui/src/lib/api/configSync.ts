@@ -40,6 +40,18 @@ export function onConfigChange(
   };
 }
 
+/** What a panel says when the person did not approve a setting change: it is left as it was. */
+export const NOT_CHANGED = "Not changed.";
+
+/**
+ * A setting change that takes a protection away waits for the person's approval in the daemon's own approval
+ * dialog. When they deny it, leave it unanswered or approve only part of it, the daemon changes nothing and replies
+ * `{ status: "cancelled" }`. That is not an error: the panel puts the control back to the saved value.
+ */
+export function isCancelled(result: unknown): boolean {
+  return Boolean(result) && typeof result === "object" && (result as { status?: unknown }).status === "cancelled";
+}
+
 /** The fields of `next` whose values differ from `saved` (compared as JSON). */
 export function changedFields<T extends Record<string, unknown>>(saved: T, next: T): Partial<T> {
   const changed: Partial<T> = {};
