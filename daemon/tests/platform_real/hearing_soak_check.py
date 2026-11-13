@@ -8,8 +8,10 @@ everything a person who talks to Heliox all day has on, on a real PulseAudio ser
   much space"), and every twenty minutes "Hey Heliox, what time is it?";
 - Heliox's voice: Kokoro (fetched with the speech set by the workflow, the conversation-timing way) speaking into a
   second null sink, recorded the whole time with parec;
-- Live on, reading typed text: every five minutes a typed slip goes into the readers' GTK field (linux_atspi_check's
-  fixture, under Xvfb);
+- Live on, reading typed text: every five minutes a slip goes into the readers' GTK field (linux_atspi_check's
+  fixture, under Xvfb), each time of the next kind (a weekday that does not match its date, a wrong sum, a date
+  already past written as ahead, the manager's name one letter off, a sentence pasted twice), then clean text; a
+  REPORT line says how many cards were raised of how many slips typed, per kind, and any card for the clean text;
 - a reminder set every fifteen minutes, one minute ahead, so a reminder speaks during the run too.
 
 Every five minutes it prints one SAMPLE line as it happens: the daemon's memory, threads, open files and child
@@ -77,7 +79,36 @@ ROOM = [
     "Shut down the computer when the download is done.",
     "Move all the spreadsheets into the archive folder.",
 ]
-SLIP = "See you on Monday the 14th of November "  # 14 November 2026 is a Saturday: a slip Live points out
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")  # fmt: skip
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+MANAGER = "My manager is Priya"  # told to Heliox first, so a greeting one letter off is a slip
+
+
+def slip_set(today) -> list[tuple[str, str]]:
+    """(kind, text) for one slip of each kind Live points out, made against the runner's own date, so each is a slip
+    on whatever day the run happens: the weekday and the sum, and the three newer kinds."""
+    from datetime import timedelta
+
+    ahead, past = today + timedelta(days=10), today - timedelta(days=4)
+    wrong = WEEKDAYS[(ahead.weekday() + 2) % 7]
+    return [
+        ("weekday_date", f"Hi Ana, can we move the review to {wrong} {ahead.day} {MONTHS[ahead.month - 1]} please."),
+        ("arithmetic", "Hotel and travel: 120 + 340 = 470."),
+        ("past_date", f"See you on {past.day} {MONTHS[past.month - 1]} at the office."),
+        ("near_name", "Hi Priay, the deck is attached for tomorrow."),
+        ("pasted_twice", "We should ship the first part on its own next week. " * 2),
+    ]
+
+
+def clean_text(today) -> str:
+    """Text with nothing in it to point out, typed between the slips: no card may come for it."""
+    from datetime import timedelta
+
+    ahead = today + timedelta(days=12)
+    return f"Lunch on {WEEKDAYS[ahead.weekday()]} {ahead.day} {MONTHS[ahead.month - 1]} works for me, thanks."
+
+
 SPEAKER, ROOM_SINK = "heliox_soak_speaker", "heliox_soak_room"
 RATE = 16000
 CATALOGUE_IDS = ("parakeet-tdt-0.6b-v2-int8", "whisper-base", "streaming-zipformer-en", "smart-turn-v3")
@@ -386,6 +417,13 @@ async def soak(minutes: float, every: float) -> int:
             print(f"INFO sources: {run('pactl', 'list', 'short', 'sources').stdout.strip()}", flush=True)
             return 1
         type_keys, _how = typer(False, fixture)
+        await session.call("profile_add", {"kind": "people", "text": MANAGER})
+        from datetime import date
+
+        slip_texts, clean = slip_set(date.today()), clean_text(date.today())
+        live_typed: dict[str, int] = {kind: 0 for kind, _text in slip_texts}
+        live_raised: dict[str, int] = {kind: 0 for kind, _text in slip_texts}
+        live_other: list[str] = []  # cards of another kind than the slip's, or for the clean text
         record = Record(session, speaker)
         await record.pump(60.0)  # the recognisers warm up
         first = await ask(record, addressed)
@@ -406,7 +444,24 @@ async def soak(minutes: float, every: float) -> int:
                 answer = await ask(record, addressed)
                 asks_heard += answer["heard"]
                 answered += answer["answered"]
-            type_keys(SLIP)
+            # One slip of the next kind, then clean text; each card is put down to what was typed just before it.
+            kind, text = slip_texts[(tick - 1) % len(slip_texts)]
+            before = len(session.notifications)
+            type_keys("\n" + text + " ")
+            await record.pump(20.0)  # Live speaks up at a pause
+            got = [str((m.get("params") or {}).get("kind", "")) for m in session.notifications[before:]
+                   if m.get("method") == "live_interjection"]  # fmt: skip
+            live_typed[kind] += 1
+            live_raised[kind] += kind in got
+            live_other += [f"{g} after {kind}" for g in got if g != kind]
+            before = len(session.notifications)
+            type_keys("\n" + clean + " ")
+            await record.pump(20.0)
+            live_other += [
+                f"{(m.get('params') or {}).get('kind', '')} after clean text"
+                for m in session.notifications[before:]
+                if m.get("method") == "live_interjection"
+            ]
             slips += 1
             if tick % 3 == 0:
                 await session.call("reminder_add", {"text": f"soak reminder {tick}", "in_minutes": 1})
@@ -453,8 +508,22 @@ async def soak(minutes: float, every: float) -> int:
             f"between it: {hearing} (first, last, and {asks_heard} of {asks}); captions of room talk {heard_room} "
             f"(none are shown for speech not addressed to Heliox); answered aloud {answered}",
         )
+        # Report only for its first run, then a pass mark: every kind raised for most of its slips, nothing for the
+        # clean text or of another kind.
+        print(
+            "REPORT hearing/live-reads-across-the-run: "
+            + ", ".join(f"{kind} {live_raised[kind]} of {live_typed[kind]}" for kind in live_typed)
+            + f"; cards for clean text or of another kind: {len(live_other)} {live_other[:6]}",
+            flush=True,
+        )
         if samples and baseline is not None:
             tail = samples[len(samples) * 2 // 3 :] or samples[-1:]
+            # The slope of memory over the run, least squares over every sample, in MB an hour, and what 24 hours
+            # would add if it held: 2 hours on 0fb22f4 gave about 5 MB an hour (656 to 667 MB), about 120 MB a day.
+            xs, ys = [s["minute"] / 60 for s in samples], [s["rss_mb"] for s in samples]
+            mean_x, mean_y = sum(xs) / len(xs), sum(ys) / len(ys)
+            spread = sum((x - mean_x) ** 2 for x in xs)
+            slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True)) / spread if spread else 0.0
             worst = {k: max(s[k] for s in tail) for k in ("rss_mb", "threads", "fds", "children")}
             check(
                 "flat-over-the-run",
@@ -463,7 +532,8 @@ async def soak(minutes: float, every: float) -> int:
                 and worst["fds"] <= baseline["fds"] + 50
                 and worst["children"] <= baseline["children"] + 1,
                 f"first sample { ({k: baseline[k] for k in worst}) }, last third at most {worst}, "
-                f"log {samples[-1]['log_kb']} KB",
+                f"log {samples[-1]['log_kb']} KB; memory slope {slope:+.1f} MB an hour ({slope * 24:+.0f} MB in 24 hours "
+                "if it held)",
             )
     finally:
         fixture.close()
