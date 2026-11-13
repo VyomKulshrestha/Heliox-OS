@@ -956,7 +956,7 @@
       "taken": true,
       "runs_nothing": true
      },
-     "expect_model": {
+     "expect_stub": {
       "has": [
        "do you want me|want me to"
       ]
@@ -968,7 +968,7 @@
      "expect": {
       "taken": true
      },
-     "expect_model": {
+     "expect_stub": {
       "runs": [
        "open_application"
       ]
@@ -2120,15 +2120,15 @@
      "gap": 1.5,
      "detail": true,
      "expect": {
-      "taken": true,
-      "model": false
+      "taken": true
      },
      "expect_stub": {
       "has": [
        "your computer first asks a resolver",
        "root servers",
        "next lookup"
-      ]
+      ],
+      "model": false
      }
     },
     {
@@ -2200,14 +2200,14 @@
      "gap": 3,
      "model": "Sorry, it's Canberra.",
      "expect": {
-      "taken": true,
-      "not": [
-       "sydney"
-      ]
+      "taken": true
      },
      "expect_stub": {
       "has": [
        "canberra"
+      ],
+      "not": [
+       "sydney"
       ]
      }
     },

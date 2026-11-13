@@ -133,6 +133,7 @@ class Record:
 SESSION_TURN: ContextVar[int] = ContextVar("session_turn", default=-1)
 END_SECONDS = 5.0  # real time a cancelled dispatch may take to end when the session is over
 SETTLE_SECONDS = 8.0  # real time a turn's own tasks may take to finish (a delayed acknowledgement waits 2.5 s)
+SETTLE_SECONDS_REAL = 20.0  # with a real model on a busy machine: 13 November, a turn took over 8 s at 73 % CPU
 
 
 def _turn_of(record: Record) -> int:
@@ -800,7 +801,7 @@ async def _settle(
     server's state, never by a fixed sleep. ``joins``: the turn whose withdrawn first half this one completes; the
     approval sentence that half said stands for the joined request (pilot.conversation.handover.keep_company)."""
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + SETTLE_SECONDS
+    deadline = loop.time() + (SETTLE_SECONDS_REAL if record.real else SETTLE_SECONDS)
     running: set[Any] = set()
     while loop.time() < deadline:
         running = {task for task in record.tasks.get(index, set()) if not task.done() and not _is_timer(task)}
