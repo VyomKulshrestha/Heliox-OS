@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -378,7 +380,11 @@ async def test_a_request_cancelled_while_open_is_recorded_as_an_estimate(tmp_pat
         body = json.dumps(started[0], ensure_ascii=False)
         assert (provider, model, source) == ("claude", "claude-opus-5-5", "abandoned_estimate")
         assert input_tokens == -(-len(body) // 4)  # the whole request body, system prompt included
-        assert output_tokens <= 1  # open for well under a hundredth of a second
+        # Open for well under a hundredth of a second, but measured on the loop's clock, which on Windows before
+        # Python 3.12 moves in steps of about 15.6 ms: one step is up to two tokens at 100 a second. The bound is
+        # one clock step's worth, plus one for the rounding up.
+        step = time.get_clock_info("monotonic").resolution
+        assert output_tokens <= math.ceil(step * cloud_module.ABANDONED_OUTPUT_TOKENS_PER_SECOND) + 1
         assert cost > 0
     finally:
         await h.tracker.close()  # its SQLite worker threads must not outlive this test's loop
