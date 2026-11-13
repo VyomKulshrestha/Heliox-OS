@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const call = vi.fn(() => Promise.resolve({ status: "ok" }));
+const call = vi.fn((..._args: unknown[]) => Promise.resolve({ status: "ok" }));
 let connected = true;
 vi.mock("./api/daemon", () => ({ call: (...args: unknown[]) => call(...args), isConnected: () => connected }));
 
