@@ -56,6 +56,7 @@ into and records from it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import difflib
 import json
 import logging
@@ -503,7 +504,9 @@ def switch_output(name: str | None) -> str:
 
 
 class MicrophoneLog(logging.Handler):
-    """The listener's "Microphone: ..." and "Microphone working again" lines, with the time each was logged."""
+    """The voice module's lines about the microphone and the output line ("Microphone: ...", "Microphone working
+    again", "Output line opened on the microphone's device: reopening the microphone", "Output line: ..."), with
+    the time each was logged."""
 
     def __init__(self) -> None:
         super().__init__(logging.INFO)
@@ -511,21 +514,77 @@ class MicrophoneLog(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         message = record.getMessage()
-        if message.startswith("Microphone"):
+        if message.startswith(("Microphone", "Output line")):
             self.lines.append((time.monotonic(), message))
+            EVENTS.append((time.monotonic(), f"log: {message}"))
+
+
+# Every PortAudio stream opened or closed in this process, and where each sentence starts and ends, in order:
+# (time, what). Printed at the end, so a failure shows which open came before which.
+EVENTS: list[tuple[float, str]] = []
+STATE: list = [lambda: ""]  # the line's pinning and the same-device decision, set once voice is imported
+
+
+def log_streams(sd) -> None:
+    """Wrap sounddevice's stream classes in this process so each open and close is recorded with its kind, device
+    index and rate. Heliox's voice module reads ``sd.InputStream`` and ``sd.OutputStream`` when it opens one."""
+
+    def recorded(base, kind: str):
+        class Recorded(base):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                EVENTS.append((time.monotonic(), f"open {kind}: device {self.device}, rate {self.samplerate:g}"))
+
+            def close(self, *args, **kwargs):
+                EVENTS.append((time.monotonic(), f"close {kind}: device {self.device}"))
+                return super().close(*args, **kwargs)
+
+        Recorded.__name__ = base.__name__
+        return Recorded
+
+    sd.InputStream = recorded(sd.InputStream, "input")
+    sd.OutputStream = recorded(sd.OutputStream, "output")
+
+
+def pin_state(voice, sd, recorder) -> str:
+    """The fix's own state: the output line pinned, and its same-device decision (absent before the fix)."""
+    line = voice._output_line
+    same = getattr(voice, "_same_core_audio_device", None)
+    try:
+        decided = same(sd, recorder.input_device) if same else "(no _same_core_audio_device here)"
+    except Exception as error:
+        decided = f"{type(error).__name__}: {error}"
+    return f"pinned {getattr(line, 'pinned', '(no pinned here)')}, same Core Audio device {decided}"
 
 
 async def measure(name: str, target: str, recorder, log: MicrophoneLog, speak) -> None:
     """Samples per half second before, while and for AFTER_SECONDS after ``speak()``; three CHECK lines."""
     first_line = len(log.lines)
+    started: list[float] = []
+
+    async def speaking():
+        started.append(time.monotonic())
+        EVENTS.append((started[0], f"sentence {name} starts"))
+        try:
+            return await speak()
+        finally:
+            EVENTS.append((time.monotonic(), f"sentence {name} ends"))
+
     marks, _ = await timeline(
         lambda: recorder.frames_received * recorder.frame_size,
-        speak,
+        speaking,
         before=2,
         after=int(AFTER_SECONDS * 2),
         limit=40.0,
     )
     print(f"DIAG {target}, {name}: samples received per 0.5 s: {shown(marks)}", flush=True)
+    first = next((samples for phase, _, samples in marks if phase == "during"), None)
+    print(f"DIAG {target}, {name}: samples in the first half second of speaking: {first} (8000 is normal)", flush=True)
+    since = [(moment - started[0], message) for moment, message in log.lines[first_line:]] if started else []
+    print(f"DIAG {target}, {name}: the voice module's lines, seconds from the start: {since}", flush=True)
+    reopened = any(message.startswith("Microphone: ") and "reopening" in message for _, message in since)
+    print(f"DIAG {target}, {name}: the watchdog reopened the microphone: {reopened}", flush=True)
+    print(f"DIAG {target}, {name}: after it: {STATE[0]()}", flush=True)
     during = [samples for phase, _, samples in marks if phase == "during"]
     after = [(seconds, samples) for phase, seconds, samples in marks if phase == "after"]
     prefix = f"voice-macos-speaking/{target}/{name}"
@@ -555,6 +614,228 @@ async def measure(name: str, target: str, recorder, log: MicrophoneLog, speak) -
         )
 
 
+# --- round 4d: which ways of opening an input and an output on one Core Audio device keep the input delivering ---
+
+QUIET = 0.02  # the output's tone level, as the control's quiet tone
+
+
+class _Counter:
+    """An input callback that counts the frames delivered and keeps any status PortAudio reports."""
+
+    def __init__(self) -> None:
+        self.frames = 0
+        self.statuses: set[str] = set()
+
+    def __call__(self, indata, frames, _time, status) -> None:
+        self.frames += frames
+        if status:
+            self.statuses.add(str(status).strip())
+
+
+class _Tone:
+    """An output callback that plays a quiet 220 Hz tone at ``rate``."""
+
+    def __init__(self, rate: int) -> None:
+        self.rate, self.position = rate, 0
+
+    def fill(self, outdata, frames: int) -> None:
+        import numpy as np
+
+        moments = (np.arange(frames) + self.position) / self.rate
+        outdata[:, 0] = QUIET * np.sin(2 * math.pi * 220 * moments)
+        self.position += frames
+
+    def __call__(self, outdata, frames, _time, _status) -> None:
+        self.fill(outdata, frames)
+
+
+def _count(counter: _Counter, halves: int) -> list[int]:
+    """Frames delivered in each of ``halves`` half seconds from now."""
+    out, last = [], counter.frames
+    for _ in range(halves):
+        time.sleep(0.5)
+        out.append(counter.frames - last)
+        last = counter.frames
+    return out
+
+
+def _report(name: str, rate: int, marks: list[int], counter: _Counter | None, errors: list[str]) -> None:
+    expected = rate // 2
+    sustained = bool(marks) and all(samples >= 0.8 * expected for samples in marks)
+    statuses = sorted(counter.statuses) if counter else []
+    print(
+        f"DIAG one device, {name}: input samples per 0.5 s {marks} (expected about {expected}), "
+        f"{counter.frames if counter else 0} since it opened; "
+        f"sustained {'yes' if sustained else 'no'}; PortAudio errors {errors or 'none'}; stream status {statuses or 'none'}",
+        flush=True,
+    )
+
+
+def _close(*streams) -> None:
+    for stream in streams:
+        if stream is None:
+            continue
+        with contextlib.suppress(Exception):
+            stream.abort()
+        with contextlib.suppress(Exception):
+            stream.close()
+
+
+def _output(sd, device: int, rate: int, latency: str):
+    stream = sd.OutputStream(
+        device=device, samplerate=rate, channels=1, dtype="float32", latency=latency, callback=_Tone(rate)
+    )
+    stream.start()
+    # How late a cut is heard depends on this: what PortAudio gives for the latency asked, on this device.
+    print(
+        f"DIAG one device: output at {rate} Hz asked latency {latency!r}, PortAudio reports "
+        f"{float(stream.latency) * 1000:.1f} ms",
+        flush=True,
+    )
+    return stream
+
+
+def _input(sd, device: int, rate: int, counter: _Counter):
+    # As Heliox's recorder opens it: mono int16, 50 ms blocks, default latency.
+    stream = sd.InputStream(
+        device=device, samplerate=rate, channels=1, dtype="int16", blocksize=rate // 20, callback=counter
+    )
+    stream.start()
+    return stream
+
+
+def _arrangement(name: str, rate: int, body) -> None:
+    """Run one arrangement; a PortAudio error in it is reported and never stops the next. A second of rest after."""
+    print(f"DIAG one device, {name}: starting (PortAudio's own error lines, if any, follow this line)", flush=True)
+    streams: list = []
+    errors: list[str] = []
+    counter = _Counter()
+    marks: list[int] = []
+    try:
+        marks = body(streams, counter)
+    except Exception as error:
+        errors.append(f"{type(error).__name__}: {error}")
+    finally:
+        _close(*streams)
+    _report(name, rate, marks, counter, errors)
+    time.sleep(1.0)
+
+
+def open_order_experiment(sd) -> None:
+    """DIAG only, about a minute: on BlackHole as input and output, each arrangement counts the input's samples per
+    half second for 3 s while the output plays a quiet tone. It answers how the product must open its two streams:
+    a settle time after the output, the device's own rate, the output's latency, one duplex stream, or the input
+    reopened after the output (the watchdog's path)."""
+    device = blackhole_output(sd)
+    if device is None or int(sd.query_devices(device)["max_input_channels"]) < 1:
+        print("DIAG one device: not run, no BlackHole device with an input and an output", flush=True)
+        return
+    native = device_rate(sd, device)
+    print(f"DIAG one device: BlackHole is PortAudio device {device} at {native} Hz", flush=True)
+
+    # 1. The product's order with a settle: output 24 kHz, latency low; then the 16 kHz input after a pause.
+    for settle in (0.1, 0.5, 1.0, 2.0, 5.0):
+
+        def settled(streams, counter, settle=settle):
+            streams.append(_output(sd, device, 24000, "low"))
+            time.sleep(settle)
+            streams.append(_input(sd, device, 16000, counter))
+            return _count(counter, 6)
+
+        _arrangement(f"output 24 kHz low, input 16 kHz {settle:g} s after", 16000, settled)
+
+    # 2. Both streams at the device's own rate, 2 s apart.
+    def native_rate(streams, counter):
+        streams.append(_output(sd, device, native, "low"))
+        time.sleep(2.0)
+        streams.append(_input(sd, device, native, counter))
+        return _count(counter, 6)
+
+    _arrangement(f"output and input both at {native} Hz, input 2 s after", native, native_rate)
+
+    # 3. The output at PortAudio's default latency instead of "low".
+    def default_latency(streams, counter):
+        streams.append(_output(sd, device, 24000, "high"))
+        time.sleep(2.0)
+        streams.append(_input(sd, device, 16000, counter))
+        return _count(counter, 6)
+
+    _arrangement("output 24 kHz default latency, input 16 kHz 2 s after", 16000, default_latency)
+
+    # 3b. The same with almost no settle: does the default latency need one?
+    def default_latency_at_once(streams, counter):
+        streams.append(_output(sd, device, 24000, "high"))
+        time.sleep(0.1)
+        streams.append(_input(sd, device, 16000, counter))
+        return _count(counter, 6)
+
+    _arrangement("output 24 kHz default latency, input 16 kHz 0.1 s after", 16000, default_latency_at_once)
+
+    # 3c. Today's order with the default latency: the input running, the output opened beside it, the same input
+    # counted through the open and for 3 s after (no reopen).
+    def default_latency_input_first(streams, counter):
+        streams.append(_input(sd, device, 16000, counter))
+        before = _count(counter, 2)
+        streams.append(_output(sd, device, 24000, "high"))
+        return before + _count(counter, 6)
+
+    _arrangement(
+        "input 16 kHz first, then output 24 kHz default latency (two half seconds before the open, six after)",
+        16000,
+        default_latency_input_first,
+    )
+
+    # 4. One duplex stream at the device's rate: input counted while its own output plays the tone.
+    def duplex(streams, counter):
+        tone = _Tone(native)
+
+        def both(indata, outdata, frames, time_info, status):
+            counter(indata, frames, time_info, status)
+            tone.fill(outdata, frames)
+
+        stream = sd.Stream(
+            device=(device, device),
+            samplerate=native,
+            channels=(1, 1),
+            dtype=("int16", "float32"),
+            blocksize=native // 20,
+            callback=both,
+        )
+        streams.append(stream)
+        stream.start()
+        reported = stream.latency
+        print(
+            f"DIAG one device: duplex at {native} Hz, PortAudio reports latency (in, out) "
+            f"{tuple(round(float(value) * 1000, 1) for value in reported)} ms",
+            flush=True,
+        )
+        return _count(counter, 6)
+
+    _arrangement(f"one duplex stream at {native} Hz", native, duplex)
+
+    # 5. Today's order: input running, then the output opens; the input is closed and reopened after a pause.
+    for pause in (0.5, 2.0):
+
+        def reopened(streams, counter, pause=pause):
+            first = _Counter()
+            streams.append(_input(sd, device, 16000, first))
+            before = _count(first, 2)
+            at_open = first.frames
+            streams.append(_output(sd, device, 24000, "low"))
+            time.sleep(pause)
+            after_open = first.frames - at_open
+            _close(streams.pop(0))  # the first input
+            print(
+                f"DIAG one device, input first: samples per 0.5 s before the output {before}; in the {pause:g} s "
+                f"after the output opened {after_open} (expected about {int(16000 * pause)}); input closed, reopening",
+                flush=True,
+            )
+            streams.append(_input(sd, device, 16000, counter))
+            return _count(counter, 6)
+
+        _arrangement(f"input first, output opened, input reopened {pause:g} s after", 16000, reopened)
+
+
 async def speak_through(target: str, folder: Path) -> None:
     """Heliox's listener on BlackHole's input; Heliox speaks one sentence through its own voice paths with the
     system default output on BlackHole (``blackhole``: microphone and speaker are one Core Audio device, as with a
@@ -567,6 +848,10 @@ async def speak_through(target: str, folder: Path) -> None:
         # Imported only now: PortAudio reads the default output when it starts.
         import sounddevice as sd
 
+        if target == "blackhole":
+            # Before the listener and before the stream log, so its streams are its own.
+            await asyncio.to_thread(open_order_experiment, sd)
+        log_streams(sd)
         from pilot.system import voice
 
         devices = voice.list_audio_input_devices(sd, sample_rate=RATE)
@@ -588,7 +873,10 @@ async def speak_through(target: str, folder: Path) -> None:
         print(f"DIAG the listener: {said}", flush=True)
         if not listener._running:
             check(f"voice-macos-speaking/{target}/listener", False, f"the listener did not start: {said}")
+            print(f"DIAG {target}: when the listener gave up: {pin_state(voice, sd, listener._recorder)}", flush=True)
             return
+        STATE[0] = lambda: pin_state(voice, sd, listener._recorder)
+        print(f"DIAG {target}: at the listener's start: {STATE[0]()}", flush=True)
         background = None
         try:
             if target == "default":
@@ -623,20 +911,40 @@ async def speak_through(target: str, folder: Path) -> None:
                 flush=True,
             )
             await asyncio.sleep(2.0)
-            # Another rate (22050 Hz; Kokoro's is 24000, Pocket's is its model's) makes _OutputLine.ensure reopen.
-            stream_before = line.stream
+            # Another rate (22050 Hz; Kokoro's is 24000, Pocket's is its model's). Before the same-device change it
+            # reopened the line; with it, a same-device line keeps its rate and plays this resampled, no new open.
+            stream_before, window_start = line.stream, time.monotonic()
             await measure(
                 "local-voice-other-rate", target, recorder, log, lambda: voice._play_local_tts_file(other_rate)
             )
+            opened = opens_between(window_start, time.monotonic(), "open output")
             print(
                 f"DIAG {target}: the output line after the other rate: {line_state(line)}; "
-                f"reopened: {line.stream is not stream_before}",
+                f"reopened: {line.stream is not stream_before}; output opens during it: {opened or 'none'}",
                 flush=True,
             )
+            if target == "blackhole":  # on separate devices the line reopens at another rate by design
+                check(
+                    f"voice-macos-speaking/{target}/local-voice-other-rate/no-new-open",
+                    not opened and line.stream is stream_before,
+                    f"output opens while the 22050 Hz sentence played: {opened or 'none'}",
+                )
             await asyncio.sleep(2.0)
             # Heliox silent with its line still open, another program plays to BlackHole: is it heard?
             await other_program_while_line_open(target, recorder, line, folder, sd)
             await asyncio.sleep(2.0)
+            # How late a cut (barge-in) is heard: only on BlackHole, where what Heliox plays comes back to the input.
+            # The sentence is played at the line's current rate, so nothing reopens and the figure measures the cut.
+            line_rate = int(line.rate or voice.LOCAL_VOICE_RATE)
+            at_line_rate = write_wav(
+                folder / f"heliox-sentence-{line_rate}.wav", resample(samples, rate, line_rate), line_rate
+            )
+            await cut_heard(target, recorder, voice, at_line_rate, line_rate)
+            await asyncio.sleep(2.0)
+            # The reopen that cannot be avoided: the default output moves away from the microphone's device and back.
+            if target == "blackhole":
+                await default_output_moves(recorder, log, original)
+                await asyncio.sleep(2.0)
             # The system voice: speak() runs say, a process of its own.
             await measure("system-voice", target, recorder, log, lambda: voice.speak(SENTENCE))
         finally:
@@ -645,6 +953,10 @@ async def speak_through(target: str, folder: Path) -> None:
                 background.wait(timeout=10)
             await listener.stop()
     finally:
+        # Every way out prints the order, the listener's own refusal to start included (round 4b on 676d6ed did not).
+        begin = EVENTS[0][0] if EVENTS else 0.0
+        for moment, what in EVENTS:
+            print(f"DIAG {target}, in order: {moment - begin:7.2f} s  {what}", flush=True)
         if target == "blackhole" and original:
             print(f"DIAG the default output put back: {switch_output(original)}", flush=True)
 
@@ -664,6 +976,140 @@ def quiet_tone_elsewhere(folder: Path) -> subprocess.Popen:
     path = write_wav(folder / "heliox-quiet-tone.wav", tone, out_rate)
     return subprocess.Popen(
         [sys.executable, "-c", PLAYER, str(path), "blackhole"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+
+
+QUIET_LEVEL = 0.005  # a 50 ms frame below this RMS counts as quiet (the sentence speaks at about 0.05 or more)
+
+
+async def cut_heard(target: str, recorder, voice, local: Path, line_rate: int = 0) -> None:
+    """DIAG only: the time from a cut being asked (the local voice's playback task cancelled, as barge-in does) to
+    the output going quiet, read from outside voice.py. On BlackHole what Heliox plays comes back to its input, so
+    "quiet" is the recorder's frame level falling below QUIET_LEVEL for three frames in a row. The time includes the
+    input's own buffering and has the frame's resolution (50 ms). On the runner's own output (the control) nothing
+    played comes back to the input, so it cannot be measured from outside and is not run."""
+    if target != "blackhole":
+        print(f"DIAG {target}, cut: not measured; the output does not come back to the input here", flush=True)
+        return
+    window_start = time.monotonic()
+    task = asyncio.ensure_future(voice._play_local_tts_file(local))
+    loud_by = time.monotonic() + 3.0
+    while recorder.last_frame_rms < QUIET_LEVEL * 4 and time.monotonic() < loud_by and not task.done():
+        await asyncio.sleep(0.01)
+    playing = recorder.last_frame_rms >= QUIET_LEVEL * 4
+    await asyncio.sleep(1.0)  # well into the sentence
+    asked = time.monotonic()
+    task.cancel()
+    quiet_frames, quiet_at, deadline = 0, None, asked + 3.0
+    last_seen = recorder.frames_received
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.005)
+        if recorder.frames_received == last_seen:
+            continue  # judge each frame once
+        last_seen = recorder.frames_received
+        if recorder.last_frame_rms < QUIET_LEVEL:
+            quiet_frames += 1
+            if quiet_frames == 1:
+                quiet_at = time.monotonic()
+            if quiet_frames >= 3:
+                break
+        else:
+            quiet_frames, quiet_at = 0, None
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await asyncio.wait_for(task, 5)
+    heard = (
+        f"{(quiet_at - asked) * 1000:.0f} ms" if quiet_at is not None and quiet_frames >= 3 else "not quiet within 3 s"
+    )
+    opened = opens_between(window_start, time.monotonic(), "open output")
+    print(
+        f"DIAG {target}, cut: the sentence at {line_rate or 'its own'} Hz (the line's rate); output opens during it: "
+        f"{opened or 'none'}",
+        flush=True,
+    )
+    print(
+        f"DIAG {target}, cut: the sentence was heard playing before the cut: {playing}; quiet at the microphone "
+        f"{heard} after the cut was asked (50 ms frames, input buffering included)",
+        flush=True,
+    )
+
+
+def opens_between(start: float, end: float, kind: str) -> list[str]:
+    """The stream log's entries of ``kind`` ("open output", "close input", ...) between two moments."""
+    return [what for moment, what in EVENTS if start <= moment <= end and what.startswith(kind)]
+
+
+HOOK_REOPEN = "Output line opened on the microphone's device: reopening the microphone"
+
+
+def default_speaker_seen() -> str:
+    """The default output as the voice module reads it (audio_health.default_speaker_name, through soundcard); ""
+    when it cannot, and then Heliox cannot follow a move of the default output."""
+    try:
+        from pilot.system.audio_health import default_speaker_name
+
+        return default_speaker_name()
+    except Exception as error:
+        return f"{type(error).__name__}: {error}"
+
+
+async def default_output_moves(recorder, log: MicrophoneLog, original: str) -> None:
+    """The one reopen that cannot be avoided: the system default output moves from BlackHole (the microphone's
+    device) to the runner's own device, then back, while the listener runs. Non-gating: the order of opens and
+    closes, the samples per half second across it, and whether exactly one reopen sequence ran for each move (the
+    output line's hook or the watchdog, never both)."""
+    away = original or "Apple Virtual Sound Device"
+    print(
+        f"DIAG blackhole, default output moves: what the voice module reads now: {default_speaker_seen()!r}", flush=True
+    )
+    first_line, window_start = len(log.lines), time.monotonic()
+    moments: dict[str, float] = {}
+
+    async def moves() -> None:
+        await asyncio.sleep(1.0)
+        moments["away"] = time.monotonic()
+        print(f"DIAG blackhole, default output moved away: {await asyncio.to_thread(switch_output, away)}", flush=True)
+        await asyncio.sleep(5.0)
+        moments["back"] = time.monotonic()
+        back = await asyncio.to_thread(switch_output, "BlackHole 2ch")
+        print(f"DIAG blackhole, default output moved back: {back}", flush=True)
+        await asyncio.sleep(5.0)
+
+    marks, _ = await timeline(lambda: recorder.frames_received * recorder.frame_size, moves, before=2, after=2)
+    print(f"DIAG blackhole, default output moves: samples received per 0.5 s: {shown(marks)}", flush=True)
+    window = [(moment, what) for moment, what in EVENTS if window_start <= moment]
+    for moment, what in window:
+        print(f"DIAG blackhole, default output moves, in order: {moment - window_start:6.2f} s  {what}", flush=True)
+    lines = log.lines[first_line:]
+    for name, start, end in (
+        ("away", moments.get("away", 0.0), moments.get("back", float("inf"))),
+        ("back", moments.get("back", float("inf")), float("inf")),
+    ):
+        hook = sum(1 for moment, message in lines if start <= moment < end and message.startswith(HOOK_REOPEN))
+        watchdog = sum(
+            1
+            for moment, message in lines
+            if start <= moment < end and message.startswith("Microphone: ") and "reopening" in message
+        )
+        outputs = [what for moment, what in window if start <= moment < end and what.startswith("open output")]
+        if not (hook or watchdog or outputs):
+            # Nothing reopened: the move was not seen (on 09e886c the voice module could not read the default
+            # output, soundcard not installed), which proves nothing either way.
+            skip(
+                f"voice-macos-speaking/blackhole/default-output-moves-{name}/one-reopen-sequence",
+                f"not exercised: no output opened and nothing reopened after the move "
+                f"(the output line's device: {default_speaker_seen()!r})",
+            )
+            continue
+        check(
+            f"voice-macos-speaking/blackhole/default-output-moves-{name}/one-reopen-sequence",
+            not (hook and watchdog),
+            f"the line's hook reopened the microphone {hook} time(s), the watchdog {watchdog} time(s); "
+            f"output opens: {outputs or 'none'}",
+        )
+    during = [samples for phase, _, samples in marks if phase == "during"]
+    print(
+        f"DIAG blackhole, default output moves: half seconds with no samples: {during.count(0)} of {len(during)}",
+        flush=True,
     )
 
 
