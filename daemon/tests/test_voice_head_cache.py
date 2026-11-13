@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from pilot.system import local_tts_worker
-from pilot.system.local_tts_worker import HEAD_CACHE_ENTRIES, HeadCache, LocalTTSWorkerManager, split_for_speech
+from pilot.system.local_tts_worker import HEAD_CACHE_ENTRIES, LocalTTSWorkerManager, SpeechStore, split_for_speech
 
 
 @pytest.mark.parametrize(
@@ -50,8 +50,8 @@ def wav(path: Path, data: bytes = b"RIFF-head") -> Path:
 
 
 def test_a_head_is_kept_after_it_has_been_said_twice_and_found_only_by_its_exact_text(tmp_path):
-    cache = HeadCache(tmp_path / "voice_heads")
-    sig = HeadCache.signature("kokoro_tts", "af_heart")
+    cache = SpeechStore(tmp_path / "voice_heads")
+    sig = SpeechStore.signature("kokoro_tts", "af_heart")
     made = wav(tmp_path / "okay.wav")
     assert cache.said("Okay,", sig, made) is False and cache.lookup("Okay,", sig) is None
     assert cache.said("Okay,", sig, made) is True
@@ -59,27 +59,27 @@ def test_a_head_is_kept_after_it_has_been_said_twice_and_found_only_by_its_exact
     assert kept is not None and kept.read_bytes() == b"RIFF-head" and kept.parent == tmp_path / "voice_heads"
     for other in ("Okay", "okay,", "Okay, ", "Okay then,"):
         assert cache.lookup(other, sig) is None
-    assert cache.lookup("Okay,", HeadCache.signature("kokoro_tts", "am_michael")) is None  # another voice
-    assert HeadCache(tmp_path / "voice_heads").lookup("Okay,", sig) is not None  # survives a restart
+    assert cache.lookup("Okay,", SpeechStore.signature("kokoro_tts", "am_michael")) is None  # another voice
+    assert SpeechStore(tmp_path / "voice_heads").lookup("Okay,", sig) is not None  # survives a restart
 
 
 def test_another_voice_drops_the_kept_heads_and_the_cache_stays_bounded(tmp_path):
-    cache = HeadCache(tmp_path / "voice_heads")
-    sig = HeadCache.signature("kokoro_tts", "af_heart")
+    cache = SpeechStore(tmp_path / "voice_heads")
+    sig = SpeechStore.signature("kokoro_tts", "af_heart")
     for n in range(HEAD_CACHE_ENTRIES + 5):
         made = wav(tmp_path / f"h{n}.wav")
         cache.said(f"Head {n},", sig, made)
         cache.said(f"Head {n},", sig, made)
     files = list((tmp_path / "voice_heads").glob("*.wav"))
     assert len(files) == HEAD_CACHE_ENTRIES
-    cache.keep_only(HeadCache.signature("kokoro_tts", "am_michael"))
+    cache.keep_only(SpeechStore.signature("kokoro_tts", "am_michael"))
     assert list((tmp_path / "voice_heads").glob("*.wav")) == []
     assert json.loads((tmp_path / "voice_heads" / "index.json").read_text(encoding="utf-8")) == {}
 
 
 def test_a_long_head_is_never_kept(tmp_path):
-    cache = HeadCache(tmp_path / "voice_heads")
-    sig = HeadCache.signature("kokoro_tts", "af_heart")
+    cache = SpeechStore(tmp_path / "voice_heads")
+    sig = SpeechStore.signature("kokoro_tts", "af_heart")
     made = wav(tmp_path / "long.wav")
     text = "Your next meeting is the launch call at ten,"
     assert not cache.said(text, sig, made) and not cache.said(text, sig, made)
@@ -134,7 +134,7 @@ async def test_a_kept_head_plays_without_synthesis_and_never_changes_the_words(m
     monkeypatch.setattr(local_tts_worker, "trim_silence", lambda path, lead, tail: None)
     worker = Worker()
     manager = LocalTTSWorkerManager(spawn=lambda engine, device, gpu_lease=False: worker)
-    manager.head_cache = HeadCache(tmp_path / "voice_heads")
+    manager.head_cache = SpeechStore(tmp_path / "voice_heads")
     await say(manager, "Okay, done.")
     await say(manager, "Okay, done.")  # said twice: "Okay, done." is kept
     worker.texts.clear()

@@ -122,7 +122,7 @@ Every folder in the list carries a name that is Heliox's alone, and the code say
 | `$XDG_DATA_HOME/heliox-os/models`, by default under `~/.local/share` | downloaded speech models | program files |
 | `$XDG_DATA_HOME/heliox-os`, by default `~/.local/share/heliox-os` (the rest) | memory, timeline, receipts, undo copies | the person's data |
 | `$XDG_STATE_HOME/heliox-os`, by default `~/.local/state/heliox-os` | logs | the app's working files |
-| `~/.cache/heliox`, `~/.heliox` | persona, voice calibration, plugins, screenshots, quarantined files | the person's data |
+| `~/.cache/heliox`, `~/.heliox` | persona, voice calibration, plugins, screenshots, quarantined files; and the local voice's ready-made audio (`~/.cache/heliox/voice_heads`: Heliox's own fixed sentences and the heads it said twice, at most about 64 MB; deleting the folder is safe, it is made again while the computer is idle) | the person's data |
 | `~/.pilot/usage_patterns.json`, `~/.pilot/failure_memory.json` | usage patterns and failure memory: only these two files, because another program could use a folder called `.pilot`; the folder goes only if that leaves it empty | the person's data |
 | The system credential store, under four services named in `pilot.system.credential_cleanup` | API keys, SSH keys and passphrases, paired devices, the receipt signing key, study and recording keys | the person's data |
 | Runtime folder: `%LOCALAPPDATA%\heliox-os`, `~/Library/Caches/heliox-os` | runtime files | the app's working files |

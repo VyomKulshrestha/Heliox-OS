@@ -617,6 +617,7 @@ ANSWERED_HELIOX_QUESTION: contextvars.ContextVar[str] = contextvars.ContextVar("
 REACH_LIMITED: contextvars.ContextVar[bool] = contextvars.ContextVar("heliox_reach_limited", default=False)
 # How an utterance must be known to be addressed before the fast model's connection is warmed for it.
 # A doubtful follow-up, or anything the addressing rule has not taken, never warms it.
+QUIET_FOR_MAKING_SECONDS = 1.0  # making fixed sentences ahead waits for this long with nothing heard
 WARM_FOR = frozenset({"wake", "button", "follow_up", "continuation", "live_reply"})
 
 
@@ -15775,9 +15776,11 @@ def handle_tool(tool_name, params):
     def _prewarm_voice(self, *, model: bool = False) -> None:
         """Load the local voice and open the output line, so Heliox's next words wait for neither. ``model``: also warm
         the fast model's connection, only for speech already known to be said to Heliox (warm_for_speech)."""
-        from pilot.system.local_tts_worker import LOCAL_ENGINES, prewarm_local_voice
+        from pilot.system.local_tts_worker import LOCAL_ENGINES, make_fixed_speech_ahead, prewarm_local_voice
 
         prewarm_local_voice(self.config.voice)
+        # The fixed sentences' audio, made while the machine is idle and nobody is talking to Heliox; once per voice.
+        make_fixed_speech_ahead(self.config.voice, quiet=self._nobody_talking_to_heliox)
         if model:
             from pilot.conversation import layer_for
 
@@ -15822,6 +15825,20 @@ def handle_tool(tool_name, params):
         started = time.monotonic()
         await asyncio.to_thread(load)
         logger.debug("Code handlers' modules imported ahead of the first turn in %.2f s", time.monotonic() - started)
+
+    def _nobody_talking_to_heliox(self) -> bool:
+        """Nothing above the speech threshold reached the microphone in the last QUIET_FOR_MAKING_SECONDS, nobody is
+        mid-utterance, and no turn is being recognised or acted on."""
+        listener = getattr(self, "_voice_listener", None)
+        if listener is None:
+            return True
+        recorder = getattr(listener, "_recorder", None)
+        heard_at = float(getattr(recorder, "last_above_threshold_at", 0.0) or 0.0)
+        return (
+            time.time() - heard_at >= QUIET_FOR_MAKING_SECONDS
+            and not bool(getattr(recorder, "user_is_speaking", False))
+            and not bool(getattr(listener, "busy", False))
+        )
 
     def _conversation_ready(self) -> bool:
         """The conversation layer runs once the model stack is up (start()); a server built without it plans."""

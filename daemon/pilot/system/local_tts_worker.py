@@ -33,7 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -298,16 +298,39 @@ HEAD_CACHE_ENTRIES = 40  # at most; each a second or two of 24 kHz audio, so abo
 HEAD_CACHE_WORDS = 6  # a head longer than this is too particular to say twice
 HEAD_CACHE_AFTER = 2  # said this many times: its audio is kept; from the next time it plays at once
 HEAD_CACHE_VERSION = 1
+# Making fixed sentences ahead rests this many times each piece's synthesis time before the next: about a sixth of four
+# threads' time while the machine is idle, and nothing while Heliox is speaking or the person is talking to it.
+MAKE_AHEAD_REST_FACTOR = 5.0
+# The fixed sentences made ahead (pilot.system.fixed_speech) may hold at most this much audio on disk; past it, no more
+# are made (none is dropped to make room: each was made once, when the machine was idle). About 220 pieces of 1 to 3 s
+# of 24 kHz float audio, about 40 MB in all, fit.
+FIXED_SPEECH_BYTES = 64 * 1024 * 1024
 
 
-class HeadCache:
-    """The heads this person's Heliox says most, kept as audio so the next one plays without being synthesised.
+def on_battery() -> bool:
+    """The computer runs on its battery (psutil's sensors_battery, which reads it on Windows, macOS and Linux). False
+    with no battery (a desktop), when it is plugged in, or when the state cannot be read."""
+    try:
+        import psutil
 
-    Keyed by the head's exact text and everything that makes its sound (engine, voice, speed, the trim settings, this
-    version), so a head plays from the cache only when the piece about to be spoken is exactly that text, made the
-    same way: it never adds, drops or changes a word of a reply. Filled only from audio Heliox has already made for a
-    reply (never synthesised for the cache), bounded to HEAD_CACHE_ENTRIES (the least recently used go first), kept
-    beside Heliox's other caches (``~/.cache/heliox/voice_heads``, which removal deletes on every system), and
+        battery = psutil.sensors_battery()
+    except Exception:
+        return False
+    return bool(battery is not None and battery.power_plugged is False)
+
+
+class SpeechStore:
+    """Audio Heliox's voice has already made, kept so a piece is played instead of synthesised: the one store of
+    ready-made speech.
+
+    Two kinds of entry, one key: the piece's exact text and everything that makes its sound (engine, voice, speed, the
+    trim settings, this version). A piece plays from the store only when the piece about to be spoken is exactly that
+    text, made the same way: it never adds, drops or changes a word of a reply.
+    - The fixed sentences Heliox says word for word (``pilot.system.fixed_speech``), made ahead while the machine is
+      idle (``LocalTTSWorkerManager.make_ahead``), bounded by FIXED_SPEECH_BYTES and never evicted.
+    - Heads of a reply this Heliox said twice (six words or fewer), copied from audio already made for a reply,
+      bounded to HEAD_CACHE_ENTRIES (the least recently used go first).
+    Kept beside Heliox's other caches (``~/.cache/heliox/voice_heads``, which removal deletes on every system) and
     emptied of every entry made another way when the voice or its settings change (``keep_only``)."""
 
     def __init__(self, folder: Path | None = None) -> None:
@@ -378,6 +401,43 @@ class HeadCache:
         self._save()
         return kept
 
+    def has(self, text: str, signature: str) -> bool:
+        """Whether audio for exactly ``text`` made this way is kept (without counting it as used)."""
+        entry = self._load().get(self.key(text, signature))
+        return bool(
+            entry
+            and entry.get("kept")
+            and entry.get("text") == text
+            and entry.get("signature") == signature
+            and (self.folder / f"{self.key(text, signature)}.wav").is_file()
+        )
+
+    def fixed_bytes(self) -> int:
+        total = 0
+        for key, entry in self._load().items():
+            if entry.get("fixed"):
+                with contextlib.suppress(OSError):
+                    total += (self.folder / f"{key}.wav").stat().st_size
+        return total
+
+    def add_fixed(self, text: str, signature: str, audio: Path) -> bool:
+        """Keep ``audio``, made ahead for the fixed piece ``text``. False when the store is full or it cannot be kept."""
+        if not audio.is_file() or self.fixed_bytes() + audio.stat().st_size > FIXED_SPEECH_BYTES:
+            return False
+        key = self.key(text, signature)
+        try:
+            import shutil
+
+            self.folder.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(audio, self.folder / f"{key}.wav")
+        except OSError:
+            logger.debug("Could not keep a fixed sentence's audio", exc_info=True)
+            return False
+        self._load()[key] = {"text": text, "signature": signature, "count": 0, "kept": True, "fixed": True,
+                             "last": time.time()}  # fmt: skip
+        self._save()
+        return True
+
     def keep_only(self, signature: str) -> None:
         """Drop every entry made another way (the voice or its settings changed): they would never be played."""
         index = self._load()
@@ -392,7 +452,7 @@ class HeadCache:
 
     def _prune(self) -> None:
         index = self._load()
-        kept = sorted((e.get("last", 0.0), k) for k, e in index.items() if e.get("kept"))
+        kept = sorted((e.get("last", 0.0), k) for k, e in index.items() if e.get("kept") and not e.get("fixed"))
         for _last, key in kept[: max(0, len(kept) - HEAD_CACHE_ENTRIES)]:
             self._drop(key)
         counted = sorted((e.get("last", 0.0), k) for k, e in index.items() if not e.get("kept"))
@@ -593,8 +653,8 @@ class LocalTTSWorkerManager:
         self.cpu_for_session = ""
         # Where the running worker's voice runs and why, in plain words, for the model health status.
         self.device_reason = ""
-        # The heads this Heliox says most, kept as audio (HeadCache); None: nothing kept (tests, a written file).
-        self.head_cache: HeadCache | None = None
+        # The heads this Heliox says most, kept as audio (SpeechStore); None: nothing kept (tests, a written file).
+        self.head_cache: SpeechStore | None = None
         # The last speak()'s pieces and playback, for what was heard of it when it is cut off (SpeechProgress).
         self.last_progress: SpeechProgress | None = None
         self._spoken_sequence = 0
@@ -973,13 +1033,14 @@ class LocalTTSWorkerManager:
         play: PlayFile,
     ) -> None:
         heads = self.head_cache
-        signature = HeadCache.signature(engine, voice)
+        signature = SpeechStore.signature(engine, voice)
         cached_head = heads.lookup(sentences[0], signature) if heads is not None and sentences else None
 
         def make(index: int) -> asyncio.Future[Path]:
-            if index == 0 and cached_head is not None:
+            kept = cached_head if index == 0 else (heads.lookup(sentences[index], signature) if heads else None)
+            if kept is not None:
                 done: asyncio.Future[Path] = asyncio.get_running_loop().create_future()
-                done.set_result(cached_head)  # exactly this text, made this way: played as kept
+                done.set_result(kept)  # exactly this text, made this way: played as kept
                 return done
             ahead = self._prepared.pop((engine, voice, sentences[index]), None)
             if ahead is not None and not ahead.cancelled():
@@ -1038,6 +1099,57 @@ class LocalTTSWorkerManager:
                 oldest = next(iter(self._prepared))
                 self._prepared.pop(oldest).cancel()
 
+    async def make_ahead(
+        self,
+        engine: str,
+        voice: str,
+        pieces: Sequence[str],
+        *,
+        quiet: Callable[[], bool] = lambda: True,
+        battery: Callable[[], bool] = on_battery,
+        rest_factor: float = MAKE_AHEAD_REST_FACTOR,
+        poll_seconds: float = 1.0,
+    ) -> int:
+        """Make the audio of the fixed ``pieces`` the store lacks, in their order, one at a time, only while the voice
+        is loaded and idle (no speak() under way), ``quiet()`` (nobody speaking near the microphone) and the computer
+        is not on ``battery()`` power (it waits, and goes on once plugged in), resting ``rest_factor`` times each
+        piece's synthesis time before the next. Stops when the store is full or the voice changes. Returns how many
+        pieces were made."""
+        store = self.head_cache
+        if store is None or engine not in LOCAL_ENGINES:
+            return 0
+        signature = SpeechStore.signature(engine, voice)
+        made = 0
+        with tempfile.TemporaryDirectory(prefix="heliox-tts-fixed-", ignore_cleanup_errors=True) as temp_dir:
+            folder = Path(temp_dir)
+            for index, text in enumerate(pieces):
+                if store.has(text, signature):
+                    continue
+                while not (
+                    self.running
+                    and self.loaded
+                    and self.engine == engine
+                    and self._busy == 0
+                    and quiet()
+                    and not battery()
+                ):
+                    if self.head_cache is not store or self._failed_until is not None:
+                        return made
+                    await self._sleep(poll_seconds)
+                started = self._clock()
+                try:
+                    path = await self._make(engine, text, voice, folder / f"fixed-{index}.wav", folder)
+                except LocalTTSUnavailable:
+                    return made
+                if not store.add_fixed(text, signature, path):
+                    return made  # full
+                made += 1
+                with contextlib.suppress(OSError):
+                    path.unlink()
+                await self._sleep(max(poll_seconds, rest_factor * (self._clock() - started)))
+        logger.info("Made %d fixed sentences of the local voice ahead", made)
+        return made
+
     async def _make(self, engine: str, text: str, voice: str, target: Path, folder: Path) -> Path:
         await self.synthesize(engine, text, voice, target, folder)
         keep_tail = None if ends_sentence(text) else KEEP_CLAUSE_SECONDS
@@ -1085,9 +1197,9 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
     if engine in LOCAL_ENGINES:
         # The heads this voice says most, ready to play; entries made with another voice or settings are dropped.
         if _manager.head_cache is None:
-            _manager.head_cache = HeadCache()
+            _manager.head_cache = SpeechStore()
         with contextlib.suppress(Exception):
-            _manager.head_cache.keep_only(HeadCache.signature(engine, str(getattr(voice_config, "tts_voice", ""))))
+            _manager.head_cache.keep_only(SpeechStore.signature(engine, str(getattr(voice_config, "tts_voice", ""))))
     if _manager.running and (_manager.engine != engine or _manager.process_device != _manager.device):
         with contextlib.suppress(RuntimeError):
             task = asyncio.get_running_loop().create_task(_manager.shutdown())
@@ -1115,6 +1227,36 @@ def prepare_local_speech(voice_config: Any, text: str) -> None:
     """Synthesise ``text`` ahead of time with the configured local voice (no-op for the system voice), so the
     speak() that follows plays it without waiting. Call it for the next sentence while the current one plays."""
     _manager.prepare(str(getattr(voice_config, "tts_engine", "")), text, str(getattr(voice_config, "tts_voice", "")))
+
+
+def make_fixed_speech_ahead(voice_config: Any, quiet: Callable[[], bool] = lambda: True) -> asyncio.Task[int] | None:
+    """Start making the configured local voice's audio for every fixed sentence (pilot.system.fixed_speech) in the
+    background, while the machine is idle; once per engine and voice. None when there is nothing to start."""
+    global _making_ahead
+    engine, voice = str(getattr(voice_config, "tts_engine", "")), str(getattr(voice_config, "tts_voice", ""))
+    if engine not in LOCAL_ENGINES or _manager.head_cache is None:
+        return None
+    current = _making_ahead
+    if current is not None and current[0] == (engine, voice) and not current[1].done():
+        return None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+    async def run() -> int:
+        from pilot.system.fixed_speech import gather
+
+        pieces = await asyncio.to_thread(gather)  # reads the source files: off the event loop
+        return await _manager.make_ahead(engine, voice, pieces, quiet=quiet)
+
+    task = loop.create_task(run())
+    task.add_done_callback(lambda done: done.cancelled() or done.exception())
+    _making_ahead = ((engine, voice), task)
+    return task
+
+
+_making_ahead: tuple[tuple[str, str], asyncio.Task[int]] | None = None
 
 
 def prewarm_local_voice(voice_config: Any) -> None:

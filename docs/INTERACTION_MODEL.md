@@ -147,18 +147,30 @@ when it ends, so the person hears "Okay," and then 1.9 to 3.6 s of silence. Cutt
 because Kokoro takes about 1.3 s for any piece, however short. On a graphics card the head is already about 0.1 s,
 so there is no machine the opener helps. Do not try it again without new evidence about synthesis speed.
 
-**Heads said often are kept as audio (`local_tts_worker.HeadCache`).** When the first piece of a reply is exactly a
-piece of six words or fewer that this Heliox has already spoken twice with the same engine, voice, speed and trim
-settings, the kept audio plays at once and nothing is synthesised for it. The key is the exact text and those
-settings, so a reply that only starts like a kept head ("Okay, done then." against a kept "Okay, done.") is made in
-full: the cache never adds, drops or changes a word. It holds at most 40 entries (the least recently used go first,
-about 3 MB in all), lives in `~/.cache/heliox/voice_heads` on Windows, macOS and Linux (removed with Heliox's other
-caches on uninstall), and drops every entry made another way when the voice or its settings change. It is filled only
-from audio already made for a reply. Of the 129 distinct sentences the conversation and personal layers write
-themselves, 62 start with a fixed piece of six words or fewer that it can keep ("Okay.", "Done.", "Working on it.",
-"Next track.", "Still checking the plan.", "Sorry, I didn't catch that."), and 45 of those are the whole reply. Once
-said twice, those play at once instead of after about 1.3 s of synthesis on a CPU. It does nothing for the model's
-own answers unless one starts with exactly such a piece.
+**Ready-made audio for what Heliox says word for word (`local_tts_worker.SpeechStore`).** One store of audio the
+local voice has already made, looked up for every piece of a reply: when a piece is exactly a kept one, made with the
+same engine, voice, speed and trim settings, the kept audio plays at once and nothing is synthesised for it. The key is
+the exact text and those settings, so a piece that only starts like a kept one ("Okay, done then." against a kept
+"Okay, done.") is made in full: the store never adds, drops or changes a word. It holds two kinds of entry:
+
+- The fixed sentences, gathered from where they are written (`pilot.system.fixed_speech`): every literal shaped like
+  a spoken sentence in the conversation layer, the personal layer and Heliox Live (constants such as the say-back's
+  "Okay, I've left it.", tables such as the media acknowledgements and the holding phrases, plain `return "Working on
+  it."`, Live's and the personal layer's offers), and the sentences of an f-string reply that hold no changing part
+  ("Want me to wrap up the day?"). Prompts, bench corpora, the router's phrasings and screen-reading diagnostics are
+  left out by file. On 13 November that is 223 pieces. Their audio is made ahead
+  (`LocalTTSWorkerManager.make_ahead`) in the order a person needs them (the short acknowledgements and holding
+  phrases, the say-back and the layer's short replies first, then the offers, then the rest), only while the voice is
+  loaded and idle, nothing has reached the microphone for a second, and the computer is not on battery power (it
+  waits, and goes on once plugged in); one piece at a time, resting five times each piece's synthesis time before the
+  next. At most 64 MB of it is kept, and none is ever evicted. Anything with a changing part ("It's 10:42.") is
+  synthesised as before. Nothing is shown for it: it is a cache, it never competes with the person, and a line in the
+  Voice panel would ask for attention about something there is nothing to do with.
+- Heads of six words or fewer that this Heliox has said twice, copied from audio already made for a reply, at most 40
+  (the least recently used go first).
+
+It lives in `~/.cache/heliox/voice_heads` on Windows, macOS and Linux (removed with Heliox's other caches on
+uninstall), and drops every entry made another way when the voice or its settings change.
 
 **No cheap seconds are left in the listener or the voice on a processor.** Measured on the owner's machine: the
 end of the turn is decided 400 ms after the last word, and ending it 200 ms sooner costs false starts (section 6);
