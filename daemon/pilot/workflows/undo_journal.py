@@ -49,6 +49,7 @@ EMPTY_CLIPBOARD = "(clipboard is empty)"  # what clipboard_read returns for an e
 UNDOABLE_TYPES = frozenset(
     {
         ActionType.FILE_WRITE,
+        ActionType.GIT_RESOLVE,  # rewrites one existing file: kept and put back as a file write
         ActionType.FILE_DELETE,
         ActionType.FILE_MOVE,
         ActionType.FILE_COPY,
@@ -397,7 +398,9 @@ class UndoJournal:
         def keep_copy(source: Path) -> None:
             self._keep_copy(journal, task_key, entry, source)
 
-        if action.action_type == ActionType.FILE_WRITE:
+        if action.action_type == ActionType.GIT_RESOLVE:
+            entry["type"] = ActionType.FILE_WRITE.value  # undone, previewed and listed as the file write it is
+        if action.action_type in (ActionType.FILE_WRITE, ActionType.GIT_RESOLVE):
             entry["path"] = str(path)
             entry["pre"] = _signature(path)
             if path.is_dir():
@@ -530,7 +533,7 @@ class UndoJournal:
                 entry["post_registry"] = _hash_optional(current[0] if current else None)
             if entry.get("profile"):
                 entry["profile_post"] = _signature(Path(entry["profile"]))
-        elif action.action_type in (ActionType.FILE_WRITE, ActionType.FILE_DELETE):
+        elif action.action_type in (ActionType.FILE_WRITE, ActionType.FILE_DELETE, ActionType.GIT_RESOLVE):
             entry["post"] = _signature(Path(entry["path"]))
         else:
             entry["post"] = _signature(Path(entry["final"]))

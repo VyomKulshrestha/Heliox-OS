@@ -555,9 +555,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::toggle_window,
-            commands::get_daemon_status,
-            commands::send_to_daemon,
-            commands::confirm_action,
             commands::open_terminal,
             commands::clear_logs,
             commands::restart_agents,

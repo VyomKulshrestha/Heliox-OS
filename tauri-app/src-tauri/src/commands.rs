@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use sysinfo::System;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
@@ -74,12 +74,6 @@ async fn connect_and_sign_in(url: &str, auth_token: &str) -> Result<DaemonSocket
 
 async fn connect_authenticated() -> Result<DaemonSocket, String> {
     connect_authenticated_to("ws://127.0.0.1:8785", &get_auth_token()).await
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct DaemonStatus {
-    pub connected: bool,
-    pub version: String,
 }
 
 /// Managed state wrapping a single lazily-shared `Enigo` instance for the
@@ -534,61 +528,6 @@ pub async fn toggle_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// 2. Command to check daemon connection and ping status
-#[tauri::command]
-pub async fn get_daemon_status(window: tauri::Window) -> Result<DaemonStatus, String> {
-    // Pass window down to the ping checker
-    let status = match try_ping_daemon(window).await {
-        Ok(version) => DaemonStatus {
-            connected: true,
-            version,
-        },
-        Err(_) => DaemonStatus {
-            connected: false,
-            version: String::new(),
-        },
-    };
-    Ok(status)
-}
-
-// 3. Command triggered by UI input prompts
-#[tauri::command]
-pub async fn send_to_daemon(
-    window: tauri::Window,
-    method: String,
-    params: serde_json::Value,
-) -> Result<(), String> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1
-    });
-
-    // Pass window directly to send streaming chunks
-    send_rpc(window, request).await
-}
-
-// 4. Command to confirm user specific milestones or plans
-#[tauri::command]
-pub async fn confirm_action(
-    window: tauri::Window,
-    plan_id: String,
-    confirmed: bool,
-) -> Result<(), String> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "confirm",
-        "params": {
-            "plan_id": plan_id,
-            "confirmed": confirmed
-        },
-        "id": 1
-    });
-
-    send_rpc(window, request).await
-}
-
 // Internal worker to parse handshake ping data
 /// One authenticated ping for the daemon supervisor: true when the daemon answered within the time limit.
 pub(crate) async fn daemon_answers() -> bool {
@@ -613,7 +552,7 @@ pub(crate) async fn daemon_answers() -> bool {
 const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Read until the reply whose id is `id`. The daemon also sends this connection notifications it sends to every
-/// window (late_parts, storage, Live), and those can arrive before the reply; they are skipped, as in send_rpc.
+/// window (late_parts, storage, Live), and those can arrive before the reply; they are skipped.
 async fn read_reply<S>(ws: &mut S, id: &serde_json::Value) -> Result<serde_json::Value, String>
 where
     S: futures_util::Stream<
@@ -720,55 +659,6 @@ pub(crate) async fn daemon_result(
     result_or_error(reply)
 }
 
-fn version_of(reply: &serde_json::Value) -> String {
-    reply
-        .get("result")
-        .and_then(|r| r.get("version"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string()
-}
-
-async fn try_ping_daemon(_window: tauri::Window) -> Result<String, String> {
-    let request =
-        serde_json::json!({"jsonrpc": "2.0", "method": "ping", "params": {}, "id": "native-ping"});
-    let mut ws = connect_authenticated().await?;
-    let reply = request_reply(&mut ws, &request, crate::supervisor::PING_TIMEOUT).await?;
-    Ok(version_of(&reply))
-}
-
-// Main streaming loop broadcasting raw frames back to Svelte context
-async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(), String> {
-    let request_id = request.get("id").cloned();
-    let mut ws = connect_authenticated().await?;
-
-    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into()))
-        .await
-        .map_err(|e| format!("Send failed: {}", e))?;
-
-    // Actively loop over streaming messages instead of breaking instantly
-    while let Some(Ok(response)) = ws.next().await {
-        let text = response.to_text().map_err(|e| e.to_string())?;
-        let parsed: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-
-        window
-            .emit("llm-chunk", &parsed)
-            .map_err(|e| e.to_string())?;
-
-        if request_id
-            .as_ref()
-            .is_some_and(|id| parsed.get("id") == Some(id))
-        {
-            break;
-        }
-    }
-
-    window
-        .emit("llm-complete", "DONE")
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
 #[tauri::command]
 
 pub fn open_terminal() -> Result<String, String> {
@@ -867,6 +757,16 @@ pub async fn apply_git_conflict_resolution(
     path: String,
     full_block: String,
     resolved_code: String,
+) -> Result<serde_json::Value, String> {
+    git_resolution(&path, &full_block, &resolved_code).await
+}
+
+/// The daemon's result for one conflict resolution ({"status": "success" | "error", "message"}; the window checks
+/// the status), or the error that kept the request from being answered within REPLY_TIMEOUT.
+pub(crate) async fn git_resolution(
+    path: &str,
+    full_block: &str,
+    resolved_code: &str,
 ) -> Result<serde_json::Value, String> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
@@ -1128,7 +1028,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(version_of(&reply), "1.2.3");
+        assert_eq!(reply["result"]["version"], "1.2.3");
         drop(ws);
         server.await.unwrap();
     }

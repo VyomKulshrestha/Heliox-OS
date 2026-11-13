@@ -1,6 +1,6 @@
 //! The supervisor restarting a real daemon after a crash and after a hang, the app stopping it on purpose (quitting,
-//! an update, a repair, removal) when it answers and when it cannot, and the log panel reading the daemon's own log,
-//! on a CI runner.
+//! an update, a repair, removal) when it answers and when it cannot, the log panel reading the daemon's own log, and
+//! the window's git conflict resolution as a real round trip, on a CI runner.
 //!
 //!     cargo test real_supervisor -- --ignored --nocapture
 //!
@@ -267,6 +267,34 @@ fn all_gone(control: &Path, limit: Duration) -> Vec<String> {
     }
 }
 
+/// apply_git_conflict_resolution against the real daemon: one side of a real conflict is written; the same block
+/// again, and text that is neither side, are refused.
+fn git_round_trip(control: &Path, check: &mut impl FnMut(&str, bool, String)) {
+    use crate::commands::git_resolution;
+    let repo = control.join("repo");
+    let _ = std::fs::create_dir_all(repo.join(".git"));
+    let file = repo.join("conflict.txt");
+    let block = "<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> branch\n";
+    let _ = std::fs::write(&file, format!("before\n{block}after\n"));
+    let path = file.to_string_lossy().to_string();
+    let resolve = |code: &str| tauri::async_runtime::block_on(git_resolution(&path, block, code));
+
+    let other = resolve("rm -rf ~\n");
+    let first = resolve("theirs\n");
+    let content = std::fs::read_to_string(&file).unwrap_or_default();
+    let again = resolve("theirs\n");
+    check(
+        "git-resolution-round-trip",
+        other.as_ref().is_ok_and(|r| r["status"] == "error")
+            && first.as_ref().is_ok_and(|r| r["status"] == "success")
+            && content.replace("\r\n", "\n") == "before\ntheirs\nafter\n"
+            && again.as_ref().is_ok_and(|r| r["status"] == "error"),
+        format!(
+            "other text {other:?}; one side {first:?}, the file now {content:?}; the same block again {again:?}"
+        ),
+    );
+}
+
 fn order(control: &Path, what: &str) {
     let _ = std::fs::write(control.join("order"), what);
 }
@@ -392,6 +420,9 @@ fn real_supervisor_restarts_a_crashed_and_a_hung_daemon() {
             first.is_some(),
             format!("ready: {}", first.is_some()),
         );
+
+        // The window's git conflict resolution (apply_git_conflict_resolution), a real round trip.
+        git_round_trip(&control, &mut check);
 
         // The log panel, "Clear logs" and "Open logs folder" use pilot_log_path: it must be the file this daemon
         // writes, under $XDG_STATE_HOME when that is set (until 13 November 2026 it was always ~/.local/state).

@@ -348,6 +348,9 @@ RESTART_REQUIRED_SECTIONS = {"memory", "proxy", "redis"}
 # replacement/stop must interrupt an in-flight utterance. All other RPCs
 # remain sequential per connection.
 # Answered while the daemon is still starting; every other request waits for readiness (pilot.system.startup).
+# How many proposed git conflict resolutions are remembered for apply_git_resolution (oldest forgotten first).
+GIT_PROPOSALS_KEPT = 256
+
 EARLY_STARTUP_METHODS = frozenset({"ping", "health", "ready", "startup_status", "daemon_stop"})
 OUT_OF_BAND_RPC_METHODS = frozenset(
     {
@@ -16656,13 +16659,34 @@ def handle_tool(tool_name, params):
             from pilot.system.git_conflict import resolve_conflicts_in_file
 
             resolved_blocks = await resolve_conflicts_in_file(filepath, self._model_router)
+            proposals = self._git_proposals()
+            for block in resolved_blocks:
+                proposals[(block["path"], block["full_block"])] = block["proposed_resolution_code"]
+            while len(proposals) > GIT_PROPOSALS_KEPT:
+                proposals.pop(next(iter(proposals)))
             return {"status": "success", "conflicts": resolved_blocks}
         except Exception as e:
             logger.exception("Failed to resolve git conflict in handler")
             return {"status": "error", "message": str(e)}
 
+    def _git_proposals(self) -> dict[tuple[str, str], str]:
+        """The resolutions resolve_git_conflict proposed, by (file, conflict block): apply_git_resolution writes one
+        of these or one side of the block, nothing else."""
+        proposals = self.__dict__.get("_git_proposal_store")
+        if proposals is None:
+            proposals = self._git_proposal_store = {}
+        return proposals
+
     async def _handle_apply_git_resolution(self, params: dict, ws: ServerConnection) -> dict:
-        """Apply a git conflict resolution securely.
+        """Write the person's choice for one git conflict block, from the window only.
+
+        Until 13 November 2026 any client with the window's token could replace any text in any file the validator
+        allowed with any text: ``full_block`` was any text found in the file and ``resolved_code`` anything. Now
+        the file must exist, be named by its full path, lie inside a git working tree and hold ``full_block`` once
+        as a whole conflict block, and ``resolved_code`` must be one of its two sides or the resolution
+        resolve_git_conflict proposed for it (git_conflict.resolution_refusal). The write then goes through the
+        executor like any file change: the validator's path rules, Heliox's own folders and protected folders,
+        the undo journal and the task receipts.
 
         Args:
             params: JSON-RPC parameters with path, full_block, resolved_code.
@@ -16671,26 +16695,35 @@ def handle_tool(tool_name, params):
         Returns:
             A dict with execution status.
         """
+        self._require_rpc_role(ws, RpcClientRole.UI)
         path = params.get("path")
         full_block = params.get("full_block")
         resolved_code = params.get("resolved_code")
 
-        if not path or full_block is None or resolved_code is None:
-            return {"status": "error", "message": "Missing required params: path, full_block, resolved_code"}
+        from pilot.system.git_conflict import git_resolution_action, resolution_refusal
+
+        refusal = await asyncio.to_thread(resolution_refusal, path, full_block, resolved_code)
+        if refusal is not None and isinstance(path, str) and isinstance(full_block, str):
+            # One side refused only because it is not a side: try again with what Heliox proposed for this block.
+            try:
+                key = (str(Path(path).resolve()), full_block)
+            except (OSError, RuntimeError, ValueError):
+                key = None
+            proposal = self._git_proposals().get(key) if key is not None else None
+            if proposal is not None:
+                refusal = await asyncio.to_thread(resolution_refusal, path, full_block, resolved_code, [proposal])
+        if refusal is not None:
+            return {"status": "error", "message": refusal}
 
         try:
-            from pilot.actions import Action, ActionPlan, ActionType, GitResolveParams
+            from pilot.actions import ActionPlan
 
-            action = Action(
-                action_type=ActionType.GIT_RESOLVE,
-                parameters=GitResolveParams(
-                    path=path,
-                    full_block=full_block,
-                    resolved_code=resolved_code,
-                ),
+            target = str(Path(str(path)).resolve())  # resolution_refusal checked all three are text
+            plan = ActionPlan(
+                actions=[git_resolution_action(target, str(full_block), str(resolved_code))],
+                explanation=f"Resolve a git conflict in {Path(target).name}",
             )
-            plan = ActionPlan(actions=[action], explanation="Apply git conflict resolution securely")
-            results = await self._executor.execute(plan)
+            results = await self._executor.execute(plan, plan_id=f"git-resolution-{uuid.uuid4().hex[:8]}")
             success = all(r.success for r in results)
             error = next((r.error for r in results if not r.success), None)
             return {

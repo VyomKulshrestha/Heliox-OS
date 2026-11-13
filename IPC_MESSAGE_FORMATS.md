@@ -3333,12 +3333,14 @@ confirmation gates.
 ### Interactive Git Conflict Resolver
 
 #### `resolve_git_conflict`
-Parse the file at the given path, locate conflict blocks, run LLM routing to get candidate resolutions structured per `schemas/git_conflict_resolution.json`, and return the blocks with original + suggested resolution.
+Read the file at the given path, find its conflict blocks (`<<<<<<<` to `>>>>>>>`) and ask the language model for a
+resolution of each. The two sides are always the file's own; the model only proposes `proposed_resolution_code`
+(the file's own side when the model fails). The daemon remembers each proposal for `apply_git_resolution`.
 
 **Params:**
 ```json
 {
-  "filepath": "conflict_demo.py"
+  "filepath": "/home/sam/project/conflict_demo.py"
 }
 ```
 
@@ -3348,27 +3350,31 @@ Parse the file at the given path, locate conflict blocks, run LLM routing to get
   "status": "success",
   "conflicts": [
     {
-      "id": "conflict_0",
-      "original_block": "<<<<<<< HEAD\ndef hello():\n    return 'local'\n=======\ndef hello():\n    return 'incoming'\n>>>>>>> feature-branch",
-      "our_code": "def hello():\n    return 'local'",
-      "their_code": "def hello():\n    return 'incoming'",
-      "our_branch": "HEAD",
-      "their_branch": "feature-branch",
-      "resolved_code": "def hello():\n    return 'local'"
+      "path": "/home/sam/project/conflict_demo.py",
+      "original_hunk": "def hello():\n    return 'local'\n",
+      "conflict_hunk": "def hello():\n    return 'incoming'\n",
+      "proposed_resolution_code": "def hello():\n    return 'local'\n",
+      "full_block": "<<<<<<< HEAD\ndef hello():\n    return 'local'\n=======\ndef hello():\n    return 'incoming'\n>>>>>>> feature-branch\n"
     }
   ]
 }
 ```
 
 #### `apply_git_resolution`
-Apply a git conflict resolution block by safely, atomically, and securely writing/replacing the resolved code block inside the file.
+Replace one conflict block with the person's choice. The window's role only (`PermissionError` for any other
+client). Refused with `{"status": "error", "message": ...}` unless the file exists, is named by its full path, lies
+inside a git working tree and holds `full_block` exactly once as a whole conflict block, and unless `resolved_code`
+is one of that block's two sides or the resolution `resolve_git_conflict` proposed for it. The write then runs as a
+`git_resolve` action through the executor, as any file change: the validator's path rules, Heliox's own folders and
+protected folders refuse it; the undo journal keeps the earlier file (undone as a file write); the task receipts
+record it.
 
 **Params:**
 ```json
 {
-  "path": "conflict_demo.py",
-  "full_block": "<<<<<<< HEAD\ndef hello():\n    return 'local'\n=======\ndef hello():\n    return 'incoming'\n>>>>>>> feature-branch",
-  "resolved_code": "def hello():\n    return 'local'"
+  "path": "/home/sam/project/conflict_demo.py",
+  "full_block": "<<<<<<< HEAD\ndef hello():\n    return 'local'\n=======\ndef hello():\n    return 'incoming'\n>>>>>>> feature-branch\n",
+  "resolved_code": "def hello():\n    return 'local'\n"
 }
 ```
 
@@ -3376,7 +3382,7 @@ Apply a git conflict resolution block by safely, atomically, and securely writin
 ```json
 {
   "status": "success",
-  "message": "Git conflict resolution applied successfully"
+  "message": "Git conflict resolved successfully"
 }
 ```
 

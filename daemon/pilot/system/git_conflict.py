@@ -8,10 +8,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pilot.actions import Action
     from pilot.models.router import ModelRouter
 
 logger = logging.getLogger("pilot.system.git_conflict")
@@ -63,6 +65,60 @@ def extract_conflict_blocks(content: str) -> list[dict[str, str]]:
                     conflict_lines.append(line)
 
     return blocks
+
+
+def in_git_work_tree(path: Path) -> bool:
+    """Inside a git working tree: a ``.git`` folder (or, in a linked worktree, file) in a folder above it."""
+    return any((parent / ".git").exists() for parent in path.parents)
+
+
+def resolution_refusal(
+    path: object, full_block: object, resolved_code: object, proposals: Iterable[str] = ()
+) -> str | None:
+    """Why one conflict resolution may not be written, or None when it may.
+
+    It may be written only to a file that exists, named by its full path, inside a git working tree, which holds
+    ``full_block`` exactly once as a whole conflict block (``<<<<<<<`` to ``>>>>>>>``), and only as one of that
+    block's two sides or a resolution Heliox proposed for it (``proposals``). Where the file may be is the
+    validator's to decide, as for any file Heliox writes (path rules, Heliox's own folders, protected folders).
+    """
+    if not isinstance(path, str) or not isinstance(full_block, str) or not isinstance(resolved_code, str):
+        return "path, full_block and resolved_code must be text"
+    if not path.strip() or not full_block:
+        return "Missing required params: path, full_block, resolved_code"
+    target = Path(path)
+    if not target.is_absolute():
+        return "The file must be named by its full path"
+    if not target.is_file():
+        return f"{path} is not a file that exists"
+    try:
+        resolved = target.resolve()
+        content = resolved.read_text("utf-8")
+    except (OSError, UnicodeDecodeError, RuntimeError) as error:
+        return f"{path} could not be read as text: {error}"
+    if not in_git_work_tree(resolved):
+        return f"{path} is not inside a git repository"
+    blocks = [block for block in extract_conflict_blocks(content) if block["full_block"] == full_block]
+    if not blocks:
+        return "That conflict is not in the file any more (it may have been resolved or changed already)"
+    if content.count(full_block) != 1:
+        return "That conflict appears more than once in the file, so Heliox cannot tell which one to resolve"
+    allowed = {blocks[0]["original_hunk"], blocks[0]["conflict_hunk"], *proposals}
+    if resolved_code not in allowed:
+        return "Only one side of the conflict, or the resolution Heliox proposed for it, can be written"
+    return None
+
+
+def git_resolution_action(path: str, full_block: str, resolved_code: str) -> Action:
+    """The action that writes one checked resolution, run through the executor like any file change: the
+    validator's path checks, the undo journal (git_resolve is undoable as a file write) and the task receipts."""
+    from pilot.actions import Action, ActionType, GitResolveParams
+
+    return Action(
+        action_type=ActionType.GIT_RESOLVE,
+        target=path,
+        parameters=GitResolveParams(path=path, full_block=full_block, resolved_code=resolved_code),
+    )
 
 
 async def resolve_conflicts_in_file(filepath: str, model_router: ModelRouter) -> list[dict[str, str]]:
@@ -126,11 +182,13 @@ async def resolve_conflicts_in_file(filepath: str, model_router: ModelRouter) ->
 
             parsed = json.loads(clean_response)
 
+            # The two sides are the file's own, never the model's: the window writes the side the person picks, and
+            # until 13 November 2026 a model that rewrote "original_hunk" made "keep mine" write the model's text.
             resolved_blocks.append(
                 {
                     "path": str(p.resolve()),
-                    "original_hunk": parsed.get("original_hunk", block["original_hunk"]),
-                    "conflict_hunk": parsed.get("conflict_hunk", block["conflict_hunk"]),
+                    "original_hunk": block["original_hunk"],
+                    "conflict_hunk": block["conflict_hunk"],
                     "proposed_resolution_code": parsed.get("proposed_resolution_code", ""),
                     "full_block": block["full_block"],
                 }
