@@ -100,25 +100,43 @@ class Finding:
 # fix only when a cell with something turned on shows a field read; with none, the sentence is that Live does not work
 # in the app yet.
 R22 = "platform-readers on 7f553b9 (ci_r22)"
+# CI on 9aa37d8 and 49bd35f (runs 43295213661 and 43337605746, apps_fields_check.py), after fa393b8 asks each window
+# for its attributes: with the desktop switch on and the app started after it, Chrome, Electron and Qt fields are read
+# with no flag, passwords refused 17 of 17. Started before the switch was turned on ("late"), Chrome and Electron stay
+# unread until they are restarted. The app's flag without the switch does not read Chrome or Electron (Qt's does).
+# ACCESSIBILITY_ENABLED=1 in the app's environment reads Chrome and Electron without the switch: something Heliox could
+# set for an app it starts itself, not a step to tell a person.
+R9A = "platform-readers on 9aa37d8 and 49bd35f"
 LINUX_FINDINGS: dict[str, dict[tuple[str, str], Finding]] = {
     "chromium": {
-        ("off", "off"): Finding(False, f"{R22}: Chrome not read by default"),
-        ("on", "off"): Finding(False, f"{R22}: on the bus with a titled window, no focused object found"),
-        ("off", "on"): Finding(False, f"{R22}: --force-renderer-accessibility alone, not on the bus"),
-        ("on", "on"): Finding(),
+        ("off", "off"): Finding(False, f"{R9A}: Chrome not read by default"),
+        ("on", "off"): Finding(
+            True, f"{R9A}: Chrome read with the switch on, started after it; password refused 17 of 17"
+        ),
+        ("off", "on"): Finding(False, f"{R9A}: --force-renderer-accessibility alone, not read"),
+        ("on", "on"): Finding(True, f"{R9A}: read with the switch on and the flag"),
     },
     "electron": {
-        ("off", "off"): Finding(False, f"{R22}: not read by default"),
-        ("on", "off"): Finding(False, f"{R22}: as Chrome, no focused object found"),
-        ("off", "on"): Finding(False, f"{R22}: as Chrome, not on the bus"),
-        ("on", "on"): Finding(),
+        ("off", "off"): Finding(False, f"{R9A}: not read by default"),
+        ("on", "off"): Finding(True, f"{R9A}: read with the switch on, started after it; password refused 17 of 17"),
+        ("off", "on"): Finding(False, f"{R9A}: --force-renderer-accessibility alone, not read"),
+        ("on", "on"): Finding(True, f"{R9A}: read with the switch on and the flag"),
     },
     "gecko": {("off", "off"): Finding(True, f"{R22}: Firefox read by default, password refused 17 of 17")},
-    "qt": {},
+    "qt": {
+        ("off", "off"): Finding(False, f"{R9A}: not read by default"),
+        ("on", "off"): Finding(True, f"{R9A}: read with the switch on; password refused 17 of 17"),
+        ("off", "on"): Finding(True, f"{R9A}: read with QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1"),
+    },
+}
+# Kinds a run showed unread when the switch was turned on after the app started: restarting the app is the step.
+LINUX_LATE_UNREAD: dict[str, str] = {
+    "chromium": f"{R9A}: the switch turned on after Chrome started, not read",
+    "electron": f"{R9A}: the switch turned on after the app started, not read",
 }
 LINUX_FLAGS = {
     "chromium": "--force-renderer-accessibility",
-    "electron": "ACCESSIBILITY_ENABLED=1",
+    "electron": "--force-renderer-accessibility",
     "qt": "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1",
 }
 # macOS: apps a run showed read with the default set-up (Accessibility granted to Heliox-OS).
@@ -159,6 +177,10 @@ def advice(app: str, *, platform: str = sys.platform, reader_state: str = "ready
     if not default.reads and switch == "on":
         default = cells.get(("off", "off"), Finding())
     if default.reads:
+        if switch == "on" and kind in LINUX_LATE_UNREAD:
+            # Read when it starts after the switch; one started before stays unread. Live cannot tell when the app
+            # started relative to the switch, so one step covers both: restart it.
+            return Advice("restart it, so it starts with accessibility for apps on", LINUX_LATE_UNREAD[kind])
         return _usually_read(app, default.shown)
     working = [(cell, found) for cell, found in cells.items() if found.reads]
     if working:

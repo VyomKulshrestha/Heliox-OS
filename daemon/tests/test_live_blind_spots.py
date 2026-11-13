@@ -37,19 +37,32 @@ def test_the_table_names_what_would_let_live_see():
     assert "Accessibility for Heliox-OS in System Settings" in mac.fix
     assert "remote control" in advice("kitty", platform="linux").fix
     assert "terminal check" in advice("alacritty", platform="darwin").fix
-    # Qt has not been run yet: what is documented, by whether the desktop's switch is on.
-    assert "toolkit-accessibility true" in advice("telegram-desktop", platform="linux", reader_message="off").fix
-    assert "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1" in advice("telegram-desktop", platform="linux").fix
     assert advice("SomeGame", platform="win32").fix == ""
     assert kind_of("Code.exe") == "electron" and kind_of("Google Chrome.app") == "chromium"
 
 
 @pytest.mark.parametrize("app", ["google-chrome", "chromium", "slack", "discord", "code"])
 @pytest.mark.parametrize("switch_off", [True, False])
-def test_chrome_and_electron_on_linux_get_the_honest_sentence(app, switch_off):
-    """CI on 7f553b9: nothing a person turns on (the desktop switch, the app's flag) made Live read them."""
+def test_chrome_and_electron_on_linux_get_what_the_runs_showed(app, switch_off):
+    """CI on 9aa37d8 and 49bd35f: read with the desktop switch on and the app started after it, no flag; started
+    before the switch, unread until restarted. The flag is never the step."""
     found = advice(app, platform="linux", reader_message="toolkit accessibility is off" if switch_off else "")
-    assert found.fix == "" and sentence(app, found).startswith("Live doesn't work in ") and found.shown
+    if switch_off:
+        assert found.fix == (
+            "turn on accessibility for apps (gsettings set org.gnome.desktop.interface toolkit-accessibility true), "
+            "then restart it"
+        )
+    else:
+        assert found.fix == "restart it, so it starts with accessibility for apps on"
+    assert "9aa37d8" in found.shown and "--force-renderer-accessibility" not in found.fix
+
+
+def test_qt_on_linux():
+    assert advice("telegram-desktop", platform="linux", reader_message="off").fix == (
+        "turn on accessibility for apps (gsettings set org.gnome.desktop.interface toolkit-accessibility true), "
+        "then restart it"
+    )
+    assert "usually can" in advice("telegram-desktop", platform="linux").fix  # switch on: read by default
 
 
 @pytest.mark.parametrize(("app", "platform"), [("firefox", "linux"), ("Safari", "darwin")])
@@ -65,26 +78,24 @@ def test_apps_read_by_default_are_only_named_if_the_reader_really_gives_nothing(
 
 
 def test_a_cell_a_run_shows_working_becomes_the_advice(monkeypatch):
+    """The first set-up a run showed reading is the step; here a kind only its own flag reads."""
     from pilot.live import blind_spots
 
-    cells = dict(blind_spots.LINUX_FINDINGS["chromium"])
-    cells[("on", "on")] = blind_spots.Finding(True, "a later run")
-    monkeypatch.setitem(blind_spots.LINUX_FINDINGS, "chromium", cells)
-    found = advice("google-chrome", platform="linux", reader_message="off")
-    assert found.fix == (
-        "turn on accessibility for apps (gsettings set org.gnome.desktop.interface toolkit-accessibility true) and "
-        "start it with --force-renderer-accessibility, then restart it"
-    )
+    cells = {
+        ("off", "off"): blind_spots.Finding(False, "a run"),
+        ("off", "on"): blind_spots.Finding(True, "a later run"),
+    }
+    monkeypatch.setitem(blind_spots.LINUX_FINDINGS, "qt", cells)
+    found = advice("telegram-desktop", platform="linux", reader_message="off")
+    assert found.fix == "start it with QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1, then restart it"
     assert found.shown == "a later run"
-    assert (
-        advice("google-chrome", platform="linux").fix == "start it with --force-renderer-accessibility, then restart it"
-    )
 
 
 def test_the_sentence():
     assert sentence("google-chrome", advice("google-chrome", platform="linux")) == (
-        "Live doesn't work in Google Chrome yet."
+        "Live can't see what you type in Google Chrome: restart it, so it starts with accessibility for apps on."
     )
+    assert sentence("python3", advice("python3", platform="linux")) == "Live doesn't work in Python3 yet."
     assert sentence("SomeGame", advice("SomeGame", platform="win32")) == "Live doesn't work in SomeGame yet."
 
 

@@ -87,25 +87,30 @@ in; what each says so far:
 | Safari on macOS | Not named while it gives fields (it does by default); if it ever gives nothing: it usually can, restarting it may help | Read by default, password refused 14 of 14: **Run for real** (`platform-readers` on 7f553b9) |
 | Chrome, Electron and Qt apps on macOS | Live doesn't work in it yet | **Not tested** (the checks did not finish) |
 | Firefox on Linux | Not named while it gives fields (it does by default); if it ever gives nothing: it usually can, restarting it may help | Read by default under X11, password refused 17 of 17: **Run for real** (`platform-readers` on 7f553b9) |
-| Chromium browsers on Linux (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | Live doesn't work in it yet | See the four set-ups below: none read so far |
-| Electron apps on Linux (Slack, Discord, VS Code, Teams, Signal, Obsidian and others) | Live doesn't work in it yet | As Chrome: none read so far |
-| Qt apps on Linux | With the desktop switch off: turn it on (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`); on: start it with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` | **Not tested**: what is documented |
+| Chromium browsers on Linux (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | With the desktop switch off: turn it on (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`), then restart it. With it on: restart it, so it starts with accessibility for apps on (an app already running when the switch was turned on stays unread; Live cannot tell that from one that simply gives nothing, so the one step covers both) | Read with the switch on and the app started after it, no flag, password refused 17 of 17; started before the switch, unread: **Run for real** (`platform-readers` on 9aa37d8 and 49bd35f, runs 43295213661 and 43337605746) |
+| Electron apps on Linux (Slack, Discord, VS Code, Teams, Signal, Obsidian and others) | As Chrome | As Chrome: **Run for real** (the same runs) |
+| Qt apps on Linux | With the desktop switch off: turn it on (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`), then restart it. With it on: it usually can, restarting it may help | Read with the switch on, and with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` alone, password refused 17 of 17: **Run for real** (the same runs). An app started before the switch: **Not tested** |
 | kitty | Turn on its remote control, or add the zsh or fish terminal check | kitty read directly: **Run for real** (above) |
 | Other terminals that expose nothing (Alacritty, foot, xterm, Ghostty and others) | Add the zsh or fish terminal check | The terminal check: **Run for real** (above) |
-| Anything else | Live doesn't work in it yet | |
+| Anything else (an app Live knows nothing about, as the X11 check's `python3` window) | Live doesn't work in it yet | The sentence said once, quietly: the `platform-readers` X11 blind step checks it; its expectation was out of date until this change, so **not yet shown** with it |
 
 On Linux each kind of app has four set-ups a person can choose: the desktop's accessibility switch off or on, and the
-app's own flag (`--force-renderer-accessibility` for Chromium, `ACCESSIBILITY_ENABLED=1` for Electron) off or on. A
-fix is offered only when a run has shown a field read in a set-up with something turned on
-(`LINUX_FINDINGS` in `blind_spots.py`, filled from the platform checks); until then the sentence is that Live doesn't
-work in the app yet. What the runs have shown so far (`platform-readers` on 7f553b9):
+app's own flag (`--force-renderer-accessibility` for Chromium and Electron, `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` for Qt)
+off or on. The step offered is the first set-up a run has shown reading the field (`LINUX_FINDINGS` in `blind_spots.py`,
+filled from the platform checks); with none, the sentence is that Live doesn't work in the app yet. The switch comes
+first, so the flag is no longer what a person on Linux is told. What the runs have shown (`apps_fields_check.py` in
+`platform-readers` on 9aa37d8 and 49bd35f, after fa393b8 asks each window for its attributes; before it, on 7f553b9
+and 052f815, Chrome and Electron needed the flag as well):
 
 | App | Switch off, flag off | Switch on, flag off | Switch off, flag on | Switch on, flag on |
 |---|---|---|---|---|
-| Chrome | Not read | On the bus with a titled window; no focused object found | Not on the bus | **Not tested** |
-| Electron | Not read | As Chrome | As Chrome | **Not tested** |
-| Firefox | Read; password refused 17 of 17 | **Not tested** | (no flag) | (no flag) |
-| Qt | **Not tested** | **Not tested** | **Not tested** | **Not tested** |
+| Chrome | Not read | Read when started after the switch; not read when started before it, until restarted | Not read | Read |
+| Electron | Not read | As Chrome | Not read | Read |
+| Firefox | Read; password refused 17 of 17 (7f553b9) | **Not tested** | (no flag) | (no flag) |
+| Qt | Not read | Read | Read | **Not tested** |
+
+Chrome and Electron started with `ACCESSIBILITY_ENABLED=1` in their environment were read with the switch off, too:
+something Heliox could set for an app it starts itself, not a step a person is told.
 
 The rule itself (when, how often, never for never-read windows, a terminal Live reads directly counted as seen into):
 **Fakes only** (`tests/test_live_blind_spots.py`); a real check runs in the `platform-readers` X11 step with a window

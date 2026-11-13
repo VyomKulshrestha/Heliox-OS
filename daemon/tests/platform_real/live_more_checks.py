@@ -197,7 +197,9 @@ async def blind_spot(python: str, folder: Path) -> None:
         told = live.engine.blind.notices()
         check(
             f"{prefix}/live-says-once-it-cannot-see-into-the-app",
-            len(told) == 1 and told[0]["sentence"].startswith("Live can't see what you type in"),
+            # The fixture's app is "python3": an app Live knows nothing about, so the sentence is that Live does
+            # not work in it yet (pilot.live.blind_spots.sentence; no fix is offered that no run has shown).
+            len(told) == 1 and told[0]["sentence"] == "Live doesn't work in Python3 yet.",
             repr(told),
         )
         check(
