@@ -614,3 +614,24 @@ async def test_gaze_tracking_is_not_turned_back_on_by_an_old_approval(monkeypatc
 
     assert not any("vision.".startswith(prefix) for prefix in CAPTURE_SETTINGS)  # the camera asks every time
     assert "live." in CAPTURE_SETTINGS  # Live's screen reading may come back by voice once approved
+
+
+@pytest.mark.asyncio
+async def test_adding_a_folder_to_index_asks_naming_it_and_removing_one_says_its_index_stays(monkeypatch):
+    person = Person(confirmed=False)
+    server = _server(person, monkeypatch)
+    server.config.semantic_search.folders = ["/home/sam/notes"]
+
+    added = await server._handle_update_config(
+        {"section": "semantic_search", "values": {"folders": ["/home/sam/notes", "/home/sam/mail"]}}, _ws()
+    )
+    assert added["status"] == "cancelled" and server.config.semantic_search.folders == ["/home/sam/notes"]
+    line = person.asked[0]["shown"][0]
+    assert (
+        line["target"] == "Let Heliox index /home/sam/mail" and "search index on this computer" in line["description"]
+    )
+
+    person.asked.clear()
+    removed = await server._handle_update_config({"section": "semantic_search", "values": {"folders": []}}, _ws())
+    assert person.asked == [] and server.config.semantic_search.folders == []
+    assert "/home/sam/notes" in removed["note"] and "stays in the search index" in removed["note"]

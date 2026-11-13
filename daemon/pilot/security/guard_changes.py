@@ -223,6 +223,18 @@ def section_widenings(
                     "your requests.",
                 )
             )
+    elif section == "semantic_search" and isinstance(values.get("folders"), list):
+        before = {str(folder) for folder in now.get("folders", []) or []}
+        for folder in values["folders"]:
+            if str(folder) not in before:
+                found.append(
+                    Widening(
+                        "semantic_search.folders",
+                        f"Let Heliox index {folder}",
+                        f"When Heliox indexes your files, the text of the files in {folder} will be kept in a search "
+                        "index on this computer.",
+                    )
+                )
     elif section == "vision":
         turned_on(
             "gaze_tracking_enabled",

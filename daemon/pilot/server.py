@@ -10611,9 +10611,19 @@ class PilotServer:
                 }
 
         restart_keys = RESTART_REQUIRED_KEYS.get(section, set())
+        reply: dict[str, Any] = {"status": "ok"}
         if section in RESTART_REQUIRED_SECTIONS or restart_keys & set(normalized_values):
-            return {"status": "ok", "restart_required": True}
-        return {"status": "ok"}
+            reply["restart_required"] = True
+        if section == "semantic_search" and isinstance(values.get("folders"), list):
+            kept = {str(folder) for folder in values["folders"]}
+            dropped = [str(f) for f in previous_values.get("folders", []) or [] if str(f) not in kept]
+            if dropped:
+                # The index has no way to forget one folder yet: say so rather than let a removal look like a clean-up.
+                reply["note"] = (
+                    f"Heliox will not index {', '.join(dropped)} again. What it already indexed from there stays in the "
+                    "search index on this computer until the index is cleared."
+                )
+        return reply
 
     async def _handle_calendar_test_connection(self, params: dict, ws: ServerConnection) -> dict:
         """Test the configured CalDAV account without mutating it."""
