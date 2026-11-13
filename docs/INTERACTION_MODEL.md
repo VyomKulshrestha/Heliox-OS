@@ -168,6 +168,41 @@ word. The remaining time is the model's first word and the synthesis speed itsel
 should look: a faster first word from the model, a faster voice model or runtime, or the graphics card, not new cut
 points.
 
+**Where a short answer's synthesis goes, and two things tried that do not help (13 November).** Measured on the
+owner's CPU (16 cores, 24 threads) with the machine quiet (4 to 17 % load), the six sentences of a short code answer
+("Done." to a 15-word sentence), median of 5 after a warm-up:
+
+| Stage | Time |
+|---|---|
+| Kokoro's text-to-phoneme step (misaki) | about 3 ms |
+| Kokoro's model, 1 to 15 words, 4 threads | 449 to 1645 ms |
+| The worker's handling per request: a new event loop and executor thread each time, and the WAV written | 85 to 130 ms more; the loop and thread are now gone (the piece is made on the worker's own thread) |
+| Reading the WAV back in the daemon | 8 to 12 ms |
+| The parent's trim of the piece | 10 to 17 ms |
+| Opening a closed output line to its first callback (Realtek speakers) | 541 ms, now opened while the turn is recognised |
+
+Threads: Kokoro on 4 threads took 449 to 1645 ms; torch's default here (16) 507 to 1741 ms; all 24 threads 605 to
+1929 ms; 2 threads 654 to 2627 ms. The voice worker now uses 4 (`local_tts_worker.VOICE_THREADS`).
+
+The model's floor is about 0.43 s even for "Done." because it makes 1.27 s of audio for it, of which 0.44 s is sound:
+the leading pad token is given 13 to 18 frames of 25 ms (0.33 to 0.45 s) in every sentence, and about 0.45 s follows
+the last word.
+
+- **Clamping the leading pad's duration** (to 2 frames, in a copy of `KModel.forward_with_tokens`, before the decoder
+  runs) cuts into the first word. Whisper base read the clamped audio back as "And that's it." for "Done.", "UM is at
+  30." for "Volume is at 30.", "Of three things on your list today." and "Battery is at 64%..."; only one sentence of
+  six came back whole. The first 100 ms of sound kept 0.09 to 0.8 of their level, with no correlation to the
+  unclamped onset: the model uses those frames to start speaking. It did not reliably save time either. Not adopted,
+  and a milder clamp would save at most a tenth of a short sentence's work for a first word at risk.
+- **Kokoro through sherpa-onnx** instead of PyTorch (`kokoro-int8-multi-lang-v1_0`, 126 MB, Apache-2.0, the same
+  `af_heart` voice as speaker 3, sherpa-onnx 2.0.1 on 4 threads): 939, 826, 1311, 1818, 2394 and 3792 ms for the six
+  sentences, against 449, 600, 666, 867, 1045 and 1645 ms for PyTorch: about twice as slow on this CPU, although it makes
+  less padding. Not adopted. Its published speed figures are for a Raspberry Pi only, and its front end documents
+  English and Mandarin readers only.
+- **A 2- to 4-word head synthesised apart from the rest of a short sentence** saved 0.1 to 0.35 s but left 0.29 to 0.36
+  s of silence at the join, a restarted pitch (the rest began at 222 to 282 Hz against 198 to 224 Hz for the sentence
+  made whole), and one word in ten read back differently ("Okay, aisle remind you"). Not adopted.
+
 **Whisper on an NVIDIA card.** Whisper's runtime needs NVIDIA's CUDA 12 cuBLAS and cuDNN libraries, which only the
 "Voice on the graphics card" part installs (docs/FIRST_RUN.md). Measured on the owner's laptop on 12 November with
 those two libraries added to the development environment (an RTX 4060 Laptop GPU; Whisper base; the libraries'

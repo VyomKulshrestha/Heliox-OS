@@ -158,12 +158,14 @@ async def synthesize_and_play(text: str, voice: str) -> None:
     await play(audio, sample_rate)
 
 
+def synthesize_to_file_here(text: str, voice: str, output_file: str) -> None:
+    """Make ``text`` and write it as a WAV, on the calling thread (the voice worker's own: no event loop, no thread
+    hop)."""
+    import soundfile
+
+    audio, sample_rate = _generate(text, voice)
+    soundfile.write(output_file, audio, sample_rate)
+
+
 async def synthesize_to_file(text: str, voice: str, output_file: str) -> None:
-    audio, sample_rate = await synthesize(text, voice)
-
-    def _write() -> None:
-        import soundfile
-
-        soundfile.write(output_file, audio, sample_rate)
-
-    await asyncio.to_thread(_write)
+    await asyncio.to_thread(synthesize_to_file_here, text, voice, output_file)

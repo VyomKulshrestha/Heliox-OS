@@ -93,12 +93,37 @@ def _engine_module(engine: str) -> Any:
     raise ValueError(f"Unsupported local TTS engine: {engine}")  # pragma: no cover - argparse enforces the choices
 
 
-async def _synthesize(engine: str, text: str, voice: str, output_file: str) -> None:
-    await _engine_module(engine).synthesize_to_file(text, voice, output_file)
+# Threads the voice model computes on. Measured 13 November on the owner's CPU (16 cores, 24 threads), Kokoro on the
+# six sentences of a short reply, 1 to 15 words: 4 threads 449 to 1645 ms; torch's default (16) 507 to 1741 ms; all 24
+# 605 to 1929 ms; 2 threads 654 to 2627 ms. More than four only adds contention, and leaves the recognisers less.
+VOICE_THREADS = 4
+_threads_set = False
+
+
+def _use_voice_threads(threads: int = VOICE_THREADS) -> None:
+    """Give the voice model VOICE_THREADS threads (fewer on a smaller machine), once, in the worker."""
+    global _threads_set
+    if _threads_set:
+        return
+    _threads_set = True
+    try:
+        import torch
+    except Exception:
+        return
+    torch.set_num_threads(max(1, min(threads, os.cpu_count() or threads)))
+
+
+def _synthesize(engine: str, text: str, voice: str, output_file: str) -> None:
+    """Make one piece on the worker's own thread. Through asyncio.run, each request started a new event loop and ran
+    the model on a new executor thread: 85 to 130 ms more per sentence than the same generation called directly
+    (measured 13 November on the owner's CPU, the six sentences of a short reply)."""
+    _use_voice_threads()
+    _engine_module(engine).synthesize_to_file_here(text, voice, output_file)
 
 
 def _load(engine: str, voice: str) -> None:
     """Load the model and voice, and run one throwaway synthesis so the first real sentence is warm."""
+    _use_voice_threads()
     module = _engine_module(engine)
     if hasattr(module, "prepare"):
         module.prepare(voice)
@@ -139,7 +164,7 @@ def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
             text = Path(request["text_file"]).read_text(encoding="utf-8")
             if not text or len(text) > MAX_TEXT_CHARACTERS:
                 raise ValueError("Speech text must contain between 1 and 20,000 characters")
-            asyncio.run(_synthesize(engine, text, str(request["voice"]), str(request["output_file"])))
+            _synthesize(engine, text, str(request["voice"]), str(request["output_file"]))
             response = {"status": "ok"}
         except Exception as exc:
             response = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}

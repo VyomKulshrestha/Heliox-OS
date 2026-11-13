@@ -109,11 +109,12 @@ async def synthesize_to_file(text: str, voice: str, output_file: str) -> None:
     """Generates `text` and writes it to output_file as a WAV file, for
     parity with speak()'s existing output_file parameter on the OS-native
     TTS paths."""
-    audio, sample_rate = await synthesize(text, voice)
+    await asyncio.to_thread(synthesize_to_file_here, text, voice, output_file)
 
-    def _write() -> None:
-        from scipy.io import wavfile
 
-        wavfile.write(output_file, sample_rate, audio)
+def synthesize_to_file_here(text: str, voice: str, output_file: str) -> None:
+    """The same on the calling thread (the voice worker's own: no event loop, no thread hop)."""
+    from scipy.io import wavfile
 
-    await asyncio.to_thread(_write)
+    audio, sample_rate = _generate(text, voice)
+    wavfile.write(output_file, sample_rate, audio)
