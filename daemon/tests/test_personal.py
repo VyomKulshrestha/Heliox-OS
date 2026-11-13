@@ -366,7 +366,7 @@ def test_with_a_frozen_clock_answers_go_to_the_latest_offer(tmp_path):
     offers.mark_offered(first)
     offers.made[-1].at -= MIN_GAP_SECONDS  # let a second offer through without moving the clock
     picks[0] = {"kind": "todos", "key": "todos", "text": "Two open.", "say": "what's on my list"}
-    offers.room = lambda: True
+    offers.room = lambda **_: True
     second = offers.next_offer()
     offers.mark_offered(second)
     assert offers.made[-1].at == offers.made[-2].at + MIN_GAP_SECONDS  # the clock did not move
