@@ -113,6 +113,75 @@ async def test_the_next_day_follows_the_answer(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_nothing_before_the_day_starts(tmp_path):
+    clock = Clock(MONDAY.replace(hour=7))
+    profile = UserProfile(tmp_path / "p.json", clock=clock)
+    server = SimpleNamespace(_user_profile=profile, _focus=None)
+    assert quiet_now(server, MONDAY.replace(hour=7)) == ""  # no start told: nothing held
+    await profile.answer_async("I start work at nine")
+    assert quiet_now(server, MONDAY.replace(hour=8, minute=55)) == "before_work"
+    assert quiet_now(server, MONDAY.replace(hour=9)) == ""
+    await profile.answer_async("I stop work at six")
+    assert quiet_now(server, MONDAY.replace(hour=2)) == "after_work"  # the small hours stay the evening before
+    assert quiet_now(server, MONDAY.replace(hour=6)) == "before_work"
+
+
+def _busy_offers(tmp_path, clock: Clock, *, end: int | None) -> Offers:
+    """Offers with something else to offer at every moment (three different keys), and a working day ending at
+    ``end``."""
+    from pilot.personal.offers import Offer, workday_end
+
+    extra = [Offer(key=f"other:{n}", kind="habit", text=f"other {n}", request="", why="") for n in range(4)]
+    return Offers(
+        mode=lambda: "on",
+        profile_empty=lambda: False,
+        moments=lambda now: day_moments(now, start=9 * 60, end=end) + extra,
+        day_end=lambda now: workday_end(now, end),
+        now=lambda: clock.at,
+        clock=clock,
+    )
+
+
+def _run_day(offers: Offers, clock: Clock) -> list[tuple[str, str]]:
+    made = []
+    clock.at = MONDAY.replace(hour=9)
+    while clock.at.hour < 18:
+        offer = offers.next_offer()
+        if offer is not None:
+            offers.mark_offered(offer)
+            made.append((clock.at.strftime("%H:%M"), offer.key))
+        clock.at += timedelta(minutes=5)
+    return made
+
+
+def test_the_wrap_up_keeps_its_place_under_the_daily_cap(tmp_path):
+    from pilot.personal.offers import MAX_PER_DAY
+
+    clock = Clock(MONDAY.replace(hour=9))
+    made = _run_day(_busy_offers(tmp_path, clock, end=18 * 60), clock)
+    assert len(made) == MAX_PER_DAY, made  # the total a person hears does not grow
+    assert made[-1][1] == "routine:wrap_up" and "17:40" <= made[-1][0] < "18:00", made
+    others = [t for t, k in made if k != "routine:wrap_up"]
+    assert all(t < "17:20" for t in others), made  # nothing in the 20 minutes before its window: the gap holds
+
+
+def test_without_a_day_end_the_cap_is_as_before(tmp_path):
+    from pilot.personal.offers import MAX_PER_DAY
+
+    clock = Clock(MONDAY.replace(hour=9))
+    made = _run_day(_busy_offers(tmp_path, clock, end=None), clock)
+    assert len(made) == MAX_PER_DAY and "routine:wrap_up" not in [k for _t, k in made], made
+
+
+def test_a_wrap_up_said_no_to_frees_its_place(tmp_path):
+    clock = Clock(MONDAY.replace(hour=9))
+    offers = _busy_offers(tmp_path, clock, end=18 * 60)
+    offers.declined["routine:wrap_up"] = MONDAY.date().isoformat()
+    made = _run_day(offers, clock)
+    assert len(made) == 3 and "routine:wrap_up" not in [k for _t, k in made], made
+
+
+@pytest.mark.asyncio
 async def test_quiet_unless_asked_holds_them(tmp_path):
     clock = Clock(MONDAY.replace(hour=9, minute=5))
     profile = UserProfile(tmp_path / "p.json", clock=clock)

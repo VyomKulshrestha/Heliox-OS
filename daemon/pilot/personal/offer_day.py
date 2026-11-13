@@ -22,7 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from pilot.personal.offers import Offers, day_moments, goal_progress
+from pilot.personal.offers import Offers, day_moments, goal_progress, workday_end
 from pilot.personal.wiring import quiet_now
 from pilot.workflows.suggestions import Suggester
 from pilot.workflows.user_profile import UserProfile
@@ -104,6 +104,7 @@ async def run_week(person: Person, folder: Path) -> list[Day]:
         profile_empty=profile.is_empty,
         suggestions=suggester.picks,
         moments=lambda now: day_moments(now, start=profile.work_start_minute(), end=profile.work_end_minute()),
+        day_end=lambda now: workday_end(now, profile.work_end_minute()),
         now=lambda: clock_at[0],
         clock=tick,
         state_path=folder / "offers.json",

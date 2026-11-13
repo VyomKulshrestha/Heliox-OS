@@ -228,6 +228,16 @@ def _label(offer: Offer) -> str:
 
 DAY_START_WINDOW_MINUTES = 45  # from the start the person gave, while the day is beginning
 WRAP_UP_WINDOW_MINUTES = 20  # before the end they gave: after it, the evening is quiet (wiring.quiet_now)
+WRAP_UP_KEY = "routine:wrap_up"
+# The wrap-up keeps its place: while it is still to come today, other offers stop one short of MAX_PER_DAY, and none
+# is made from this long before its window, so the minimum gap never shuts it out. The hourly cap does not hold it.
+WRAP_UP_CLEAR_MINUTES = WRAP_UP_WINDOW_MINUTES + int(MIN_GAP_SECONDS // 60)
+
+
+def workday_end(now: datetime, end: int | None) -> int | None:
+    """The minute today's working day ends, on a weekday the person gave an end for (when day_moments offers the
+    wrap-up), else None."""
+    return end if end is not None and now.weekday() < 5 else None
 
 
 def _clock(minute: int) -> str:
@@ -255,7 +265,7 @@ def day_moments(now: datetime, *, start: int | None, end: int | None) -> list[Of
     if end is not None and end - WRAP_UP_WINDOW_MINUTES <= minute < end:
         found.append(
             Offer(
-                key="routine:wrap_up",
+                key=WRAP_UP_KEY,
                 kind="routine",
                 text=f"It's nearly {_clock(end)}, when you stop work. Want me to wrap up the day?",
                 request="wrap up my day",
@@ -378,6 +388,8 @@ class Offers:
     spans: Callable[[float, float], list[dict[str, Any]]] | None = None
     # Offers tied to what the person told Heliox about their day (``day_moments``), given the current time.
     moments: Callable[[datetime], list[Offer]] = lambda now: []
+    # The minute today's working day ends (``workday_end``), or None: the wrap-up's place is kept until then.
+    day_end: Callable[[datetime], int | None] = lambda now: None
     # Offers about what was just done (``goal_progress``), each with the clock time it stops being timely.
     soon: list[tuple[Offer, float]] = field(default_factory=list)
     label: Callable[[str], str] = lambda app: app
@@ -455,15 +467,47 @@ class Offers:
     def _today(self) -> str:
         return self.now().date().isoformat()
 
-    def room(self) -> bool:
-        """Under the hourly and daily caps and the minimum gap."""
+    def room(self, *, hourly: bool = True) -> bool:
+        """Under the daily cap and the minimum gap, and (``hourly``) the hourly cap."""
         now, today = self.clock(), self._today()
         self.made = [m for m in self.made if m.day == today or now - m.at < 3600]
         if any(now - m.at < MIN_GAP_SECONDS for m in self.made):
             return False
-        if sum(now - m.at < 3600 for m in self.made) >= MAX_PER_HOUR:
+        if hourly and sum(now - m.at < 3600 for m in self.made) >= MAX_PER_HOUR:
             return False
         return sum(m.day == today for m in self.made) < MAX_PER_DAY
+
+    def _wrap_up_held(self) -> bool:
+        """The wrap-up is still to come today and could still be made: other offers leave it its place."""
+        now = self.now()
+        try:
+            end = self.day_end(now)
+        except Exception:
+            logger.debug("Could not read the end of the working day", exc_info=True)
+            return False
+        if end is None or now.hour * 60 + now.minute >= end:
+            return False
+        today = self._today()
+        if (
+            WRAP_UP_KEY in self.silenced
+            or "kind:routine" in self.silenced
+            or self.declined.get(WRAP_UP_KEY) == today
+            or self._resting(WRAP_UP_KEY)
+            or any(m.offer.key == WRAP_UP_KEY for m in self.made if m.day == today)
+        ):
+            return False
+        return True
+
+    def _leaves_wrap_up_room(self) -> bool:
+        """Another offer now would still leave the wrap-up its place: under the daily cap with one to spare, and
+        not within WRAP_UP_CLEAR_MINUTES of the end of the working day."""
+        if not self._wrap_up_held():
+            return True
+        now, today = self.now(), self._today()
+        end = self.day_end(now)
+        if end is not None and now.hour * 60 + now.minute >= end - WRAP_UP_CLEAR_MINUTES:
+            return False
+        return sum(m.day == today for m in self.made) < MAX_PER_DAY - 1
 
     def _intro_due(self) -> bool:
         if (
@@ -489,17 +533,20 @@ class Offers:
         return True
 
     def next_offer(self) -> Offer | None:
-        if not self.room():
+        if not self.room(hourly=False):
             return None
-        if self._intro_due():
+        others = self.room() and self._leaves_wrap_up_room()  # the wrap-up alone is not held by the hourly cap
+        if others and self._intro_due():
             return INTRO  # once a run, until the person answers, says "don't offer this" or tells Heliox something
-        if self._timeline_due():
+        if others and self._timeline_due():
             return TIMELINE
         if not self.active():
             return None
         today = self._today()
         offered_today = {m.offer.key for m in self.made if m.day == today}
         for offer in self.candidates():
+            if offer.key != WRAP_UP_KEY and not others:
+                continue
             if (
                 offer.key in self.silenced
                 or f"kind:{offer.kind}" in self.silenced

@@ -252,7 +252,7 @@ async def _speak_nothing(_text, _urgent):
 def offered(person, tmp_path_factory) -> list[tuple[str, str, str]]:
     """The day's offers, (time, kind, key), through the real offer rules, with the working day the person told, their
     habits, goals and list, and a routine record holding a request they made at ten on the weekdays before."""
-    from pilot.personal.offers import Offers, day_moments
+    from pilot.personal.offers import Offers, day_moments, workday_end
     from pilot.personal.routines import RoutineRecord
     from pilot.personal.wiring import quiet_now
     from pilot.workflows.suggestions import Suggester
@@ -280,6 +280,7 @@ def offered(person, tmp_path_factory) -> list[tuple[str, str, str]]:
         mode=lambda: "auto", profile_empty=person.profile.is_empty, suggestions=suggester.picks,
         moments=lambda now: day_moments(now, start=person.profile.work_start_minute(),
                                         end=person.profile.work_end_minute()) + record.offers(now),
+        day_end=lambda now: workday_end(now, person.profile.work_end_minute()),
         now=clock.wall, clock=clock.tick, timeline_off=lambda: False,
     )  # fmt: skip
     meeting = DAY["offers"]["meeting"]
@@ -307,6 +308,7 @@ def test_what_was_offered(offered):
     unwelcome = [m for m in made if m[1] not in DAY["offers"]["welcome"] + ["learned_routine"]]
     assert not unwelcome, f"Heliox offered what Sam's day did not call for: {unwelcome}"
     assert not [m for m in made if m[0] >= "18:00"], f"Heliox made an offer after six: {made}"
+    assert not [m for m in made if m[0] < "09:00"], f"Heliox made an offer before Sam's day started at nine: {made}"
     assert not [m for m in made if meeting["from"] <= m[0] < meeting["to"]], (
         f"Heliox offered during the meeting: {made}"
     )

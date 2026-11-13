@@ -222,6 +222,7 @@ def offers_for(server: Any, data_dir: Any = None) -> Any:
         timeline_off=lambda: not bool(getattr(getattr(config, "timeline", None), "enabled", False)),
         spans=spans,
         moments=lambda now: _day_moments(server, now) + _learned(server, now),
+        day_end=lambda now: _day_end(server, now),
         label=app_label,
         state_path=Path(data_dir) / "offers.json" if data_dir is not None else None,
     )
@@ -312,14 +313,29 @@ def _day_moments(server: Any, now: datetime) -> list[Any]:
         return []
 
 
+def _day_end(server: Any, now: datetime) -> int | None:
+    """The minute today's working day ends, for keeping the wrap-up's place (pilot.personal.offers.workday_end)."""
+    from pilot.personal.offers import workday_end
+
+    profile = getattr(server, "_user_profile", None)
+    if profile is None:
+        return None
+    try:
+        return workday_end(now, profile.work_end_minute())
+    except Exception:
+        logger.debug("Could not read the working day", exc_info=True)
+        return None
+
+
 # Until this hour the evening's quiet holds after the end of the working day ("I stop work at six").
 WORK_QUIET_UNTIL_HOUR = 5
 
 
 def quiet_now(server: Any, now: datetime | None = None) -> str:
     """Why Heliox holds back offers, suggestions and Live's non-urgent catches right now, or "": a focus session,
-    "stay quiet unless I ask", or after the end of the working day the person gave ("I stop work at six"), until
-    5 in the morning. The first time the working day's end applies on a day, one sentence goes to the chat."""
+    "stay quiet unless I ask", before the start of the working day the person gave ("I start work at nine"), or after
+    its end ("I stop work at six"), until 5 in the morning. The first time the working day's end applies on a day,
+    one sentence goes to the chat."""
     focus = getattr(server, "_focus", None)
     if focus is not None and getattr(focus, "active", False):
         return "focus"
@@ -329,15 +345,17 @@ def quiet_now(server: Any, now: datetime | None = None) -> str:
     try:
         if profile.quiet():
             return "asked"
-        end = profile.work_end_minute()
+        start, end = profile.work_start_minute(), profile.work_end_minute()
     except Exception:
         logger.debug("Could not read the quiet preferences", exc_info=True)
         return ""
-    if end is None:
-        return ""
     now = now or datetime.now()
     minute = now.hour * 60 + now.minute
-    if not (minute >= end or now.hour < WORK_QUIET_UNTIL_HOUR):
+    if end is None or not (minute >= end or now.hour < WORK_QUIET_UNTIL_HOUR):
+        if start is not None and minute < start and (end is None or start < end):
+            # Before the working day the person gave ("I start work at nine"): nothing offered until it starts, and
+            # no sentence about it (the morning's first offer is the day starting). A day past midnight is left alone.
+            return "before_work"
         return ""
     day = (now - timedelta(hours=WORK_QUIET_UNTIL_HOUR)).date()  # the evening and the small hours are one evening
     if getattr(server, "_work_end_said_on", None) != day:

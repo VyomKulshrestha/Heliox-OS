@@ -323,9 +323,9 @@
   },
   "personal_moments_baseline": {
     "note": "delivered moments measured when the count was added, raised with each fix; a run may do better, never worse",
-    "no model": 5,
-    "cloud, auto": 5,
-    "cloud, off": 5
+    "no model": 6,
+    "cloud, auto": 6,
+    "cloud, off": 6
   },
   "wrap_up_moment": {
     "name": "the goal they are working on, at the wrap-up",
