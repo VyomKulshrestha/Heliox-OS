@@ -480,10 +480,26 @@ pub fn plan(dirs: &SystemDirs) -> Vec<Location> {
         .collect()
 }
 
-/// What Heliox does not remove itself, and what the person can do.
-pub fn manual_steps(os: &str) -> Vec<String> {
+/// The AppImage this app runs from, when it does: the AppImage runtime sets APPIMAGE to the file's path. Only shown
+/// to the person, never deleted here.
+pub fn appimage_file() -> Option<String> {
+    std::env::var("APPIMAGE")
+        .ok()
+        .filter(|path| Path::new(path).is_absolute())
+}
+
+/// What Heliox does not remove itself, and what the person can do. Run from an AppImage, the app is a file no
+/// system uninstall knows about, so the step names that file.
+pub fn manual_steps(os: &str, appimage: Option<&str>) -> Vec<String> {
+    let app_itself = match appimage {
+        Some(path) => format!(
+            "This copy of Heliox runs from the AppImage file {path}. It is yours to delete: delete that file to \
+             remove the app itself. Nothing installed it, so no uninstall knows about it."
+        ),
+        None => "Uninstall the Heliox app itself the way your system removes apps.".to_string(),
+    };
     let mut steps = vec![
-        "Uninstall the Heliox app itself the way your system removes apps.".to_string(),
+        app_itself,
         "Shared caches are left alone because other programs use them: pip's download cache and the Hugging Face \
          cache (~/.cache/huggingface), which holds the local voice and Whisper models."
             .to_string(),
@@ -653,7 +669,7 @@ pub fn remove_files(dirs: &SystemDirs, keep_data: bool, credentials: Credentials
     let mut report = RemovalReport {
         kept_data: keep_data,
         credentials,
-        manual_steps: manual_steps(dirs.os),
+        manual_steps: manual_steps(dirs.os, appimage_file().as_deref()),
         ..RemovalReport::default()
     };
     for place in chosen(&locations(dirs), keep_data) {
@@ -714,7 +730,7 @@ pub fn heliox_files_plan() -> FilesPlan {
             home_known: true,
             message: String::new(),
             locations: plan(&dirs),
-            manual_steps: manual_steps(dirs.os),
+            manual_steps: manual_steps(dirs.os, appimage_file().as_deref()),
             credential_services: credential_services(),
         },
         None => FilesPlan {
@@ -744,13 +760,43 @@ pub fn heliox_files_remove(
         return Err(NO_HOME.into());
     };
     crate::setup::DAEMON_PAUSED.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut stopped_ours = false;
     if let Ok(mut guard) = app.state::<crate::DaemonProcess>().0.lock() {
         if let Some(mut child) = guard.take() {
             crate::supervisor::stop_on_purpose(&mut child, "removal");
             let _ = child.wait();
+            stopped_ours = true;
         }
     }
-    Ok(remove_heliox(&dirs, keep_data))
+    // A daemon this app did not start (it was already running when the app opened, and the app borrowed it) has
+    // no child here to stop, but it runs from the environment about to be deleted: ask it to stop as well, and say
+    // so if it is still answering.
+    let still_running = !stopped_ours && !stop_a_borrowed_daemon();
+    let mut report = remove_heliox(&dirs, keep_data);
+    if still_running {
+        report.failed.insert(0, BORROWED_STILL_RUNNING.into());
+    }
+    Ok(report)
+}
+
+const BORROWED_STILL_RUNNING: &str = "Heliox's background service, started before this window opened, did not stop \
+     when asked, so some of its files may still be in use. Restart your computer, then remove Heliox's files again.";
+
+/// Ask a daemon that answers on Heliox's port to stop, and wait (10 s at most) until the port is closed. True when
+/// nothing answers any more (or nothing answered to begin with).
+fn stop_a_borrowed_daemon() -> bool {
+    if !crate::daemon_port_answers() {
+        return true;
+    }
+    let _ = tauri::async_runtime::block_on(crate::commands::ask_daemon_to_stop("removal"));
+    let waited = std::time::Instant::now();
+    while waited.elapsed() < std::time::Duration::from_secs(10) {
+        if !crate::daemon_port_answers() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    false
 }
 
 /// The removal itself, once the daemon is stopped: with "everything", the saved keys through the daemon's own
@@ -1339,9 +1385,25 @@ mod tests {
 
     #[test]
     fn manual_steps_name_what_heliox_leaves_to_the_person() {
-        assert!(manual_steps("macos")
+        assert!(manual_steps("macos", None)
             .iter()
             .any(|s| s.contains("tccutil reset All com.helioxos.app")));
-        assert!(manual_steps("linux").iter().any(|s| s.contains("Wayland")));
+        assert!(manual_steps("linux", None)
+            .iter()
+            .any(|s| s.contains("Wayland")));
+        assert!(manual_steps("linux", None)[0].contains("the way your system removes apps"));
+    }
+
+    #[test]
+    fn run_from_an_appimage_the_steps_name_the_file_as_the_persons_to_delete() {
+        let steps = manual_steps(
+            "linux",
+            Some("/home/sam/Apps/Heliox-OS_0.16.0_amd64.AppImage"),
+        );
+        assert!(steps[0].contains("/home/sam/Apps/Heliox-OS_0.16.0_amd64.AppImage"));
+        assert!(steps[0].contains("yours to delete"));
+        assert!(!steps
+            .iter()
+            .any(|s| s.contains("the way your system removes apps")));
     }
 }

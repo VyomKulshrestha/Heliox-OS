@@ -7,7 +7,9 @@ name: "Linux package on a clean system"
 #   ends, what it leaves and what it says (daemon/tests/platform_real/deb_install_check.sh, "full");
 # - ubuntu:22.04, whose Python 3.10 Heliox cannot use: the app starts and its setup screen offers the private Python
 #   with its size and sources, nothing fetched ("offer"); the download itself is the first-run job's "private" leg;
-# - fedora: the .rpm installs, its libraries resolve and the app starts (rpm_install_check.sh).
+# - fedora: the .rpm installs, its libraries resolve and the app starts (rpm_install_check.sh);
+# - ubuntu:24.04, the AppImage: set up through its window, then removed through Settings' "Remove Heliox's
+#   files", the only removal an AppImage has (appimage_check.sh).
 # A release build is slow (about 35 to 45 runner minutes with a warm cache, 60 without), so this runs when the app,
 # its bundle settings, the first-run setup or this check change on main, nightly, and by hand; never on every push.
 
@@ -22,6 +24,7 @@ on:
       - "tauri-app/ui/src/lib/components/FirstRunInstall.svelte"
       - "daemon/tests/platform_real/deb_install_check.*"
       - "daemon/tests/platform_real/rpm_install_check.sh"
+      - "daemon/tests/platform_real/appimage_check.*"
       - "daemon/tests/platform_real/app_launch_check.py"
       - "daemon/tests/platform_real/first_run_rpc_check.py"
       - ".github/workflows/linux-package.yml"
@@ -66,13 +69,14 @@ jobs:
           cache: "npm"
           cache-dependency-path: tauri-app/ui/package-lock.json
 
-      - name: Build the .deb and the .rpm (release build)
+      - name: Build the .deb, the .rpm and the AppImage (release build)
         id: build
         timeout-minutes: 45
         run: |
           (cd tauri-app/ui && npm ci)
-          (cd tauri-app && npm ci && npx tauri build --bundles deb,rpm)
-          ls -l tauri-app/src-tauri/target/release/bundle/deb tauri-app/src-tauri/target/release/bundle/rpm
+          (cd tauri-app && npm ci && npx tauri build --bundles deb,rpm,appimage)
+          ls -l tauri-app/src-tauri/target/release/bundle/deb tauri-app/src-tauri/target/release/bundle/rpm \
+            tauri-app/src-tauri/target/release/bundle/appimage
 
       - name: Build tauri-driver (the test's own tool, not part of the package)
         id: driver
@@ -106,6 +110,22 @@ jobs:
             timeout 1100 bash /src/daemon/tests/platform_real/deb_install_check.sh "/src/$deb" /tools deb-22.04 offer
           status=$?
           for log in "$RUNNER_TEMP"/out-22.04/*.log; do
+            [ -f "$log" ] && { echo "--- $(basename "$log")"; tail -40 "$log"; }
+          done
+          exit $status
+
+      - name: The AppImage on a clean Ubuntu 24.04 (set up, then the app's own removal)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.driver.outcome == 'success' }}
+        timeout-minutes: 45
+        run: |
+          appimage="$(ls tauri-app/src-tauri/target/release/bundle/appimage/*.AppImage | head -1)"
+          mkdir -p "$RUNNER_TEMP/out-appimage"
+          set +e
+          docker run --rm -e GITHUB_ACTIONS -e RUNNER_TEMP=/out -v "$PWD:/src:ro" \
+            -v "$RUNNER_TEMP/tools/bin:/tools:ro" -v "$RUNNER_TEMP/out-appimage:/out" ubuntu:24.04 \
+            timeout 2400 bash /src/daemon/tests/platform_real/appimage_check.sh "/src/$appimage" /tools
+          status=$?
+          for log in "$RUNNER_TEMP"/out-appimage/*.log; do
             [ -f "$log" ] && { echo "--- $(basename "$log")"; tail -40 "$log"; }
           done
           exit $status
