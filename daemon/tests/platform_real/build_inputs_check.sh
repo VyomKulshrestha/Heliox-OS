@@ -33,10 +33,12 @@ else
     check bundle-settings FAIL "tauri-app/src-tauri/tauri.conf.json does not parse"
 fi
 
-# Which Tauri CLI the build will run. tauri-action finds @tauri-apps/cli in tauri-app/package.json and runs its
-# "tauri" script, "npx @tauri-apps/cli", and nothing installs tauri-app's own dependencies first, so npx takes the
-# newest release of the CLI on the day: no lock file pins it.
-declared="$(node -e 'console.log(require("./tauri-app/package.json").devDependencies["@tauri-apps/cli"] || "none")')"
-newest="$(npm view @tauri-apps/cli version 2>/dev/null || echo unknown)"
-echo "DIAG the Tauri CLI: package.json asks for $declared; npx will run the newest, $newest today"
+# The Tauri CLI, as tauri-app's lock file pins it: tauri-action runs tauri-app's "tauri" script, the CLI that npm ci
+# installs there from that lock (test_tauri_cli_pinned.py keeps the manifest, the lock and the tauri crate together).
+if out="$(cd tauri-app && npm ci --dry-run --ignore-scripts 2>&1)"; then
+    pinned="$(node -e 'console.log(require("./tauri-app/package-lock.json").packages["node_modules/@tauri-apps/cli"].version)')"
+    check cli-lock PASS "tauri-app: npm ci would install the Tauri CLI $pinned from package-lock.json as it is"
+else
+    check cli-lock FAIL "tauri-app: $(echo "$out" | grep -m3 -i 'error' | tr '\n' ' ')"
+fi
 exit "$failed"

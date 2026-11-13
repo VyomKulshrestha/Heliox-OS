@@ -259,7 +259,7 @@ To run the native desktop shell:
 
 ```bash
 cd Heliox-OS/tauri-app
-npm install
+npm ci
 npm run tauri dev
 ```
 

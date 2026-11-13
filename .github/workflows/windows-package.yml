@@ -51,7 +51,9 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: tauri-app/ui/package-lock.json
+          cache-dependency-path: |
+            tauri-app/ui/package-lock.json
+            tauri-app/package-lock.json
 
       - name: The build's inputs are consistent (a minute, before the long build)
         timeout-minutes: 5
@@ -73,6 +75,10 @@ jobs:
 
       - name: Install the page's dependencies (as the release job does)
         working-directory: tauri-app/ui
+        run: npm ci
+
+      - name: Install the Tauri CLI pinned in tauri-app's lock file
+        working-directory: tauri-app
         run: npm ci
 
       # The release's own build: the same action, version and projectPath. Without tagName, releaseName or releaseId

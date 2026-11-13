@@ -445,28 +445,35 @@ function Initialize-TauriCli {
     Write-Host ""
     Write-Info "Checking Tauri CLI installation..."
 
+    # The one Tauri CLI version every build uses: the one tauri-app/package.json names (and its lock file pins), so
+    # a contributor builds with the same tool as the release (daemon/tests/test_tauri_cli_pinned.py).
+    $manifest = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'tauri-app\package.json') | ConvertFrom-Json
+    $pinned = $manifest.devDependencies.'@tauri-apps/cli'
+
     try {
         $tauriVersion = cargo tauri --version 2>$null
 
-        if ($LASTEXITCODE -eq 0) {
+        if ($LASTEXITCODE -eq 0 -and "$tauriVersion".Trim() -eq "tauri-cli $pinned") {
             Write-Success "Tauri CLI is already installed: $tauriVersion"
             return
+        }
+        if ($LASTEXITCODE -eq 0) {
+            Write-Warn "Tauri CLI $tauriVersion is installed; Heliox builds with tauri-cli $pinned."
         }
     }
     catch {
         # cargo tauri --version throws when tauri-cli is not installed; fall through to install.
     }
 
-    Write-Warn "Tauri CLI not found."
-    Write-Info "Installing Tauri CLI via Cargo (compiling from source)..."
+    Write-Info "Installing Tauri CLI $pinned via Cargo (compiling from source)..."
     Write-Warn "This step may take several minutes."
 
-    cargo install tauri-cli --version "^2" --locked
+    cargo install tauri-cli --version "=$pinned" --locked --force
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install Tauri CLI. cargo exited with code $LASTEXITCODE"
     }
 
-    Write-Success "Tauri CLI installed."
+    Write-Success "Tauri CLI $pinned installed."
 }
 
 # Main
