@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from pilot.config import PilotConfig
+from pilot.system import voice_words
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
 from pilot.system.vad import AdaptiveEnergyThreshold, EndpointEvent, UtteranceEndpointer, frame_rms
 from pilot.system.voice_calibration import WakeWordCalibrator
@@ -60,11 +61,9 @@ JUST_BEGUN_SECONDS = 2.0
 # began 1.7 to 3.1 s after the last word, about 1.0 to 2.4 s after the first half's words were ready.
 UNFINISHED_WAIT_SECONDS = 2.5
 
-_VOICE_TRANSCRIPTION_PROMPT = (
-    "Hey Heliox. Desktop command vocabulary: open, close, click, type, search, scroll, launch, switch, "
-    "select, save, send, stop, continue, approve, deny. Proper names: Heliox, GitHub, Google, YouTube, "
-    "Gmail, Spotify, Chrome, Visual Studio Code, PowerShell, Docker."
-)
+# What Whisper is told before it listens: this English vocabulary in English, the names only in any other
+# language (voice_words.transcription_prompt).
+_VOICE_TRANSCRIPTION_PROMPT = voice_words.ENGLISH_PROMPT
 
 _AUTONOMOUS_COMMAND_START = re.compile(
     r"^(?:"
@@ -173,6 +172,8 @@ def looks_hallucinated(text: str) -> bool:
         return bool(words)
     if any(leak in " ".join(words) for leak in ("command vocabulary", "proper names")):
         return True  # the vocabulary prompt read back
+    if {"github", "youtube", "gmail"} <= set(words):
+        return True  # the names-only prompt read back
     # The same word or short phrase four times in a row ("Google, Google…", "Good morning. Good morning…").
     for size in (1, 2, 3):
         for start in range(len(words) - 4 * size + 1):
@@ -1656,7 +1657,7 @@ async def _transcribe_faster_whisper(
             "beam_size": 5,
             "temperature": 0,
             "condition_on_previous_text": False,
-            "initial_prompt": _VOICE_TRANSCRIPTION_PROMPT,
+            "initial_prompt": voice_words.transcription_prompt(language),
             # Measured on a real voice through a Bluetooth headset: without timestamps and without the prompt
             # repeated as hotwords, "Monday the 12th of November" was heard right and the pass took 0.7 to 0.8 s
             # instead of 1.0 s; with hotwords it heard "mildly the 12th".
@@ -1686,6 +1687,8 @@ async def _transcribe_faster_whisper(
             segments, info = model.transcribe(audio if audio is not None else audio_path, **kwargs)
             text = _speech_text(segments)
         detected_language = getattr(info, "language", None)
+        if language == "auto" and detected_language:
+            voice_words.note_detected(detected_language)  # "auto" follows it: prompt, stop and deny words
         return {
             "text": text.strip(),
             "language": detected_language or (language if language != "auto" else "en"),
@@ -1711,13 +1714,15 @@ async def _transcribe_whisper(
         kwargs["temperature"] = 0
         kwargs["beam_size"] = 5
         kwargs["condition_on_previous_text"] = False
-        kwargs["initial_prompt"] = _VOICE_TRANSCRIPTION_PROMPT
+        kwargs["initial_prompt"] = voice_words.transcription_prompt(language)
 
         local_audio = _load_pcm_wav_for_whisper(audio_path)
         if local_audio is not None:
             local_audio = _band_limit_voice_audio(local_audio)
             local_audio = _normalize_voice_audio(local_audio)
         result = mdl.transcribe(local_audio if local_audio is not None else audio_path, **kwargs)
+        if language == "auto" and result.get("language"):
+            voice_words.note_detected(str(result["language"]))
 
         return {
             "text": result["text"].strip(),
@@ -2736,6 +2741,10 @@ class ContinuousVoiceListener:
             rule.task_open = bool(self.task_open and self.task_open())
         except Exception:
             rule.task_open = False
+        try:
+            rule.language = voice_words.voice_language(str(self.config.voice.language))
+        except Exception:
+            rule.language = "en"
         recorder = self._recorder
         voiced = getattr(recorder, "last_voiced_seconds", None)
         ended = getattr(recorder, "last_turn_ended_at", None)

@@ -166,8 +166,13 @@ def _agrees(command: str, other_text: str) -> bool:
     return first in [m.group(0).casefold().split("'")[0] for m in _words(other_text)[:6]]
 
 
-def plausibly_addressed(text: str, *, question_open: bool, elliptical: bool = True) -> str:
-    """How a follow-up reads: "control", "reply", "request", "question" (confident), "unclear", or "talk"."""
+def plausibly_addressed(text: str, *, question_open: bool, elliptical: bool = True, language: str = "en") -> str:
+    """How a follow-up reads: "control", "reply", "request", "question" (confident), "unclear", or "talk".
+    A stop or deny word of the person's voice language (voice_words) is "control" in any script."""
+    from pilot.system import voice_words
+
+    if voice_words.is_control_word(text, language):
+        return "control"
     words = _words(text)
     if not words:
         return "talk"
@@ -255,6 +260,7 @@ class Addressing:
     heliox_ended_at: float | None = None
     question_open: bool = False
     task_open: bool = False  # a task the person started is running or an approval waits
+    language: str = "en"  # the person's voice language (voice_words.voice_language), for its stop and deny words
     _sorry_given: bool = False
     _at: float | None = None
     # When Heliox Live last finished a spoken remark (live_spoke), and the test for its own closed list of replies
@@ -344,12 +350,14 @@ class Addressing:
             return Decision(True, heard.text.strip(" \t,.:;!?-"), "live reply")
         if not self.conversation_open:
             return self._not_taken(heard, "no conversation open")
-        kind = plausibly_addressed(heard.text, question_open=self.question_open)
+        kind = plausibly_addressed(heard.text, question_open=self.question_open, language=self.language)
         if kind != "control" and self._quick_reply(heard):
             kind = "reply"  # read without the words: any language
         if kind == "elliptical" and not self._soon_after_answer(heard):
             # Not right after Heliox's answer: read as any other follow-up ("What about tomorrow?" is a question).
-            kind = plausibly_addressed(heard.text, question_open=self.question_open, elliptical=False)
+            kind = plausibly_addressed(
+                heard.text, question_open=self.question_open, elliptical=False, language=self.language
+            )
         if heard.heliox_was_speaking and kind != "control":
             return Decision(False, why="began while Heliox was talking")
         if not self.task_open:

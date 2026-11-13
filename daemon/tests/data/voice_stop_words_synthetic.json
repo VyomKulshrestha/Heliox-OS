@@ -1,0 +1,785 @@
+{
+ "about": "What Whisper wrote for synthetic no and stop clips (espeak-ng; Microsoft Helena for Spanish), 13 November 2026, with the English vocabulary prompt Heliox used before and with the names-only prompt it uses now for other languages. Synthetic voices only: no recording of a person.",
+ "clips": [
+  {
+   "prompt": "english vocabulary",
+   "lang": "hi",
+   "kind": "no",
+   "said": "नहीं।",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "hi",
+   "heard": "Love you."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "hi",
+   "kind": "no",
+   "said": "नहीं।",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Lucky."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "hi",
+   "kind": "no",
+   "said": "नहीं।",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "hi",
+   "heard": "Lucky."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "hi",
+   "kind": "no",
+   "said": "नहीं।",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Lucky."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "hi",
+   "kind": "stop",
+   "said": "रुको।",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "hi",
+   "heard": "ROOTAL"
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "hi",
+   "kind": "stop",
+   "said": "रुको।",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Roto."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "hi",
+   "kind": "stop",
+   "said": "रुको।",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "hi",
+   "heard": "Roto."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "hi",
+   "kind": "stop",
+   "said": "रुको।",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Roto."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "es",
+   "heard": "No."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "No."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "es",
+   "heard": "No."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "No."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "sapi-helena",
+   "whisper": "small",
+   "language_setting": "es",
+   "heard": "No."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "sapi-helena",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "No."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "sapi-helena",
+   "whisper": "base",
+   "language_setting": "es",
+   "heard": "No."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "sapi-helena",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "No."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "es",
+   "heard": "Para."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Bye-bye."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "es",
+   "heard": "PowerShell."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "PowerShell"
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "sapi-helena",
+   "whisper": "small",
+   "language_setting": "es",
+   "heard": "Para."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "sapi-helena",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Para."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "sapi-helena",
+   "whisper": "base",
+   "language_setting": "es",
+   "heard": "Para."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "sapi-helena",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Para."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "de",
+   "kind": "no",
+   "said": "Nein.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "de",
+   "heard": "Line."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "de",
+   "kind": "no",
+   "said": "Nein.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Line."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "de",
+   "kind": "no",
+   "said": "Nein.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "de",
+   "heard": "Hain."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "de",
+   "kind": "no",
+   "said": "Nein.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Hain."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "de",
+   "kind": "stop",
+   "said": "Stopp.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "de",
+   "heard": "Stop."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "de",
+   "kind": "stop",
+   "said": "Stopp.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Stop."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "de",
+   "kind": "stop",
+   "said": "Stopp.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "de",
+   "heard": "Desktop."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "de",
+   "kind": "stop",
+   "said": "Stopp.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Desktop."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "zh",
+   "kind": "no",
+   "said": "不要。",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "zh",
+   "heard": "不要。"
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "zh",
+   "kind": "no",
+   "said": "不要。",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "不要。"
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "zh",
+   "kind": "no",
+   "said": "不要。",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "zh",
+   "heard": "Google,"
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "zh",
+   "kind": "no",
+   "said": "不要。",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Google,"
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "zh",
+   "kind": "stop",
+   "said": "停。",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "zh",
+   "heard": "Send."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "zh",
+   "kind": "stop",
+   "said": "停。",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Send."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "zh",
+   "kind": "stop",
+   "said": "停。",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "zh",
+   "heard": "Save."
+  },
+  {
+   "prompt": "english vocabulary",
+   "lang": "zh",
+   "kind": "stop",
+   "said": "停。",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Send."
+  },
+  {
+   "prompt": "names only",
+   "lang": "hi",
+   "kind": "no",
+   "said": "नहीं।",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "hi",
+   "heard": "अगी"
+  },
+  {
+   "prompt": "names only",
+   "lang": "hi",
+   "kind": "no",
+   "said": "नहीं।",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Lucky."
+  },
+  {
+   "prompt": "names only",
+   "lang": "hi",
+   "kind": "no",
+   "said": "नहीं।",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "hi",
+   "heard": "Lucky."
+  },
+  {
+   "prompt": "names only",
+   "lang": "hi",
+   "kind": "no",
+   "said": "नहीं।",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Lucky."
+  },
+  {
+   "prompt": "names only",
+   "lang": "hi",
+   "kind": "stop",
+   "said": "रुको।",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "hi",
+   "heard": "ROOTAL"
+  },
+  {
+   "prompt": "names only",
+   "lang": "hi",
+   "kind": "stop",
+   "said": "रुको।",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Roto."
+  },
+  {
+   "prompt": "names only",
+   "lang": "hi",
+   "kind": "stop",
+   "said": "रुको।",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "hi",
+   "heard": "Roto."
+  },
+  {
+   "prompt": "names only",
+   "lang": "hi",
+   "kind": "stop",
+   "said": "रुको।",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Rotal."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "es",
+   "heard": "¡No!"
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "No."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "es",
+   "heard": "No."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "No."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "sapi-helena",
+   "whisper": "small",
+   "language_setting": "es",
+   "heard": "No."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "sapi-helena",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "No."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "sapi-helena",
+   "whisper": "base",
+   "language_setting": "es",
+   "heard": "No."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "no",
+   "said": "No.",
+   "synth": "sapi-helena",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "No."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "es",
+   "heard": "¡Vada!"
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Bye-bye."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "sapi-helena",
+   "whisper": "small",
+   "language_setting": "es",
+   "heard": "Para."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "sapi-helena",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Para."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "sapi-helena",
+   "whisper": "base",
+   "language_setting": "es",
+   "heard": "Para."
+  },
+  {
+   "prompt": "names only",
+   "lang": "es",
+   "kind": "stop",
+   "said": "Para.",
+   "synth": "sapi-helena",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Para."
+  },
+  {
+   "prompt": "names only",
+   "lang": "de",
+   "kind": "no",
+   "said": "Nein.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "de",
+   "heard": "Nein."
+  },
+  {
+   "prompt": "names only",
+   "lang": "de",
+   "kind": "no",
+   "said": "Nein.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Line."
+  },
+  {
+   "prompt": "names only",
+   "lang": "de",
+   "kind": "no",
+   "said": "Nein.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "de",
+   "heard": "Ein."
+  },
+  {
+   "prompt": "names only",
+   "lang": "de",
+   "kind": "no",
+   "said": "Nein.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Ein."
+  },
+  {
+   "prompt": "names only",
+   "lang": "de",
+   "kind": "stop",
+   "said": "Stopp.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "de",
+   "heard": "Stop!"
+  },
+  {
+   "prompt": "names only",
+   "lang": "de",
+   "kind": "stop",
+   "said": "Stopp.",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "ストップ!"
+  },
+  {
+   "prompt": "names only",
+   "lang": "de",
+   "kind": "stop",
+   "said": "Stopp.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "de",
+   "heard": "Stop."
+  },
+  {
+   "prompt": "names only",
+   "lang": "de",
+   "kind": "stop",
+   "said": "Stopp.",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Stop."
+  },
+  {
+   "prompt": "names only",
+   "lang": "zh",
+   "kind": "no",
+   "said": "不要。",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "zh",
+   "heard": "不要"
+  },
+  {
+   "prompt": "names only",
+   "lang": "zh",
+   "kind": "no",
+   "said": "不要。",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "不要"
+  },
+  {
+   "prompt": "names only",
+   "lang": "zh",
+   "kind": "no",
+   "said": "不要。",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "zh",
+   "heard": "Google,"
+  },
+  {
+   "prompt": "names only",
+   "lang": "zh",
+   "kind": "no",
+   "said": "不要。",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Google,"
+  },
+  {
+   "prompt": "names only",
+   "lang": "zh",
+   "kind": "stop",
+   "said": "停。",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "zh",
+   "heard": "Sign."
+  },
+  {
+   "prompt": "names only",
+   "lang": "zh",
+   "kind": "stop",
+   "said": "停。",
+   "synth": "espeak",
+   "whisper": "small",
+   "language_setting": "auto",
+   "heard": "Thank you."
+  },
+  {
+   "prompt": "names only",
+   "lang": "zh",
+   "kind": "stop",
+   "said": "停。",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "zh",
+   "heard": "刺激"
+  },
+  {
+   "prompt": "names only",
+   "lang": "zh",
+   "kind": "stop",
+   "said": "停。",
+   "synth": "espeak",
+   "whisper": "base",
+   "language_setting": "auto",
+   "heard": "Yeah."
+  }
+ ]
+}

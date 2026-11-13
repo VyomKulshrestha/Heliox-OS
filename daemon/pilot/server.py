@@ -101,6 +101,7 @@ from pilot.security.rpc_identity import (
     derive_neural_signing_key,
     rpc_method_allowed,
 )
+from pilot.system import voice_words
 from pilot.system.companion_speech import (
     CompanionSpeechCoordinator,
     SpeechChannel,
@@ -257,12 +258,9 @@ def _sanitize_summary(text: object, limit: int = 160) -> str:
 
 
 def _normalize_spoken_phrase(text: str) -> str:
-    """Casefold, turn punctuation into spaces and collapse whitespace, for matching exact spoken phrases."""
-    return " ".join(
-        "".join(
-            character if character.isalnum() or character.isspace() else " " for character in text.casefold()
-        ).split()
-    )
+    """Casefold, turn punctuation into spaces and collapse whitespace, for matching exact spoken phrases. Combining
+    marks are kept, so "नहीं" stays itself (voice_words.normalize)."""
+    return voice_words.normalize(text)
 
 
 def _co_adaptation_config_dict(config: Any) -> dict[str, Any]:
@@ -402,32 +400,7 @@ MAX_ATTENTION_NOTIFICATION_BUFFER = 64
 # affirmative phrases are detected only so they can be rejected clearly while
 # a visible confirmation is pending, instead of being misread as a plan
 # correction and cancelling/replanning the request.
-VOICE_DENIALS = frozenset(
-    {
-        "no",
-        "nope",
-        "deny",
-        "deny it",
-        "do not",
-        "dont",
-        "don t",
-        "do not do that",
-        "don t do that",
-        "dont do that",
-        "cancel that",
-        "reject",
-        "reject it",
-        "stop",
-        "stop it",
-        "cancel",
-        "cancel it",
-        "wait stop",
-        "no stop",
-        "no don t",
-        "no dont",
-        "not that",
-    }
-)
+VOICE_DENIALS = voice_words.ENGLISH_DENIALS  # and each voice language's: voice_words.is_denial
 
 
 def _mentions_approval(normalized: str) -> bool:
@@ -463,34 +436,7 @@ PHONE_READ_ONLY_ACTIONS = (
 # "Got it" and "okay okay" stop Heliox's voice and nothing else: said after an answer they only acknowledge it.
 VOICE_SOFT_STOPS = frozenset({"got it", "okay got it", "okay okay", "ok ok"})
 STOP_ACK_SECONDS = 15.0  # a stop said this soon after the person cut Heliox off is about that cut
-VOICE_STOP_PHRASES = frozenset(
-    {
-        "stop",
-        "cancel",
-        "stop it",
-        "stop that",
-        "stop everything",
-        "cancel everything",
-        "stop all tasks",
-        "cancel all tasks",
-        "never mind",
-        "nevermind",
-        # Said over Heliox to make it stop talking: it stops and listens, and nothing is planned.
-        "wait",
-        "wait wait",
-        "wait stop",
-        "hold on",
-        "wait a second",
-        "one second",
-        "one sec",
-        "that s enough",
-        "okay that s enough",
-        "ok that s enough",
-        "alright that s enough",
-        "enough",
-        "stop there",
-    }
-)
+VOICE_STOP_PHRASES = voice_words.ENGLISH_STOPS  # and each voice language's: voice_words.is_stop
 # Spoken or typed undo only opens the preview: undoing still needs a click on its Undo button.
 UNDO_ONE_REQUEST = re.compile(
     r"^(?:please )?(?:undo|take back|revert)(?: (?:that|it|the last task|my last task|last task))?$"
@@ -6968,6 +6914,55 @@ class PilotServer:
         await self._deliver_daily_brief(overview)
         return {"status": "ok", "text": overview["brief"]}
 
+    def _spoken_language(self) -> str:
+        """The person's voice language ("auto": the system's), for the stop and deny words."""
+        try:
+            return voice_words.voice_language(str(getattr(self.config.voice, "language", "auto")))
+        except Exception:
+            return "en"
+
+    @staticmethod
+    def _quick_command(text: str) -> bool:
+        """A one-step command the quick road recognises exactly: a media key, the volume, opening an app or a site."""
+        try:
+            from pilot.conversation.quick import from_words
+            from pilot.conversation.router import TurnKind, normalize, route
+
+            routed = route(text)
+            if routed.kind is not TurnKind.ACTION:
+                return False
+            return from_words(normalize(text), routed.verb, routed.target) is not None
+        except Exception:
+            logger.debug("Could not read %r as a quick command", text, exc_info=True)
+            return False
+
+    def _short_word_while_busy(self, text: str, normalized: str, language: str) -> str:
+        """Why a short utterance said while a task runs or an approval waits is not acted on: "acknowledgement"
+        ("okay", "thanks": nothing to say back), "unknown" (three words or fewer and no control word in English or
+        the person's language), or "" when it is acted on as before (a control word, an undo, an approval attempt,
+        a status question, a reply to a question Heliox asked, or a longer sentence)."""
+        from pilot.system.addressing import CONTROL, SHORT_REPLY
+
+        if voice_words.spoken_word_count(text) > 3 or not normalized:
+            return ""
+        listener = getattr(self, "_voice_listener", None)
+        if listener is not None and bool(getattr(listener, "question_open", False)):
+            return ""  # "Which file?" "The blue one."
+        if (
+            voice_words.is_control_word(normalized, language)
+            or normalized in VOICE_APPROVAL_ATTEMPTS
+            or _mentions_approval(normalized)  # a go-ahead: the correction path refuses it, as before
+            or normalized in VOICE_SOFT_STOPS
+            or UNDO_ONE_REQUEST.match(normalized)
+            or CONTROL.match(normalized)
+            or normalized in {"status", "read my screen", "hows it going", "how s it going"}
+            or normalized.startswith(("question ", "quick question ", "next task "))
+        ):
+            return ""
+        if SHORT_REPLY.match(normalized):
+            return "acknowledgement"
+        return "unknown"
+
     async def _undo_request(self, text: str) -> str | None:
         """ "undo that" / "undo the last two tasks": open the undo preview for those tasks, newest first.
 
@@ -7036,7 +7031,7 @@ class PilotServer:
         from pilot.workflows.task_receipts import ASKED_QUESTION, RECAP_QUESTION
         from pilot.workflows.undo_journal import WHERE_QUESTION
 
-        if phrase in VOICE_STOP_PHRASES or phrase in VOICE_DENIALS or phrase in VOICE_APPROVAL_ATTEMPTS:
+        if voice_words.is_control_word(phrase, self._spoken_language()) or phrase in VOICE_APPROVAL_ATTEMPTS:
             return True
         patterns = (UNDO_ONE_REQUEST, UNDO_MANY_REQUEST, REPEAT_REQUEST, ROUTINE_REQUEST)
         questions = (
@@ -9065,7 +9060,7 @@ class PilotServer:
                         "Approve in the visible confirmation dialog. Speech and typed text can deny but never approve."
                     ),
                 }
-            if phrase in VOICE_DENIALS:
+            if voice_words.is_denial(phrase, self._spoken_language()):
                 denied = await self._resolve_pending_denied(
                     plan_id, resolution_path="interject_deny", input_channel="voice_deny"
                 )
@@ -14806,6 +14801,7 @@ def handle_tool(tool_name, params):
             )
 
         normalized_command = _normalize_spoken_phrase(command_text)
+        language = self._spoken_language()  # the stop and deny words of the person's language count too
         # Any pending approval counts: interactive, a background job, a scheduled run or a workflow.
         pending_plan_id = (
             self._active_plan_id
@@ -14815,7 +14811,7 @@ def handle_tool(tool_name, params):
         pending_approval = self._pending_confirms.get(pending_plan_id) if pending_plan_id else None
         if pending_approval is not None and (
             normalized_command in VOICE_APPROVAL_ATTEMPTS
-            or (normalized_command not in VOICE_DENIALS and _mentions_approval(normalized_command))
+            or (not voice_words.is_denial(normalized_command, language) and _mentions_approval(normalized_command))
         ):
             # Said the way a person would, and shorter the second time for the same approval.
             refusals = getattr(self, "_voice_approval_refusals", {})
@@ -14841,7 +14837,7 @@ def handle_tool(tool_name, params):
                 dedupe_key=f"voice-approval-boundary:{pending_plan_id}:{refusals[pending_plan_id]}",
             )
             return
-        if pending_approval is not None and normalized_command in VOICE_DENIALS:
+        if pending_approval is not None and voice_words.is_denial(normalized_command, language):
             # Denying is always safe, so it works by voice; approving still needs the visible dialog. Marked before the
             # denial lands: the task it ends runs on at once and must not say its own ending as well.
             ours = self._interactive_request_active and bool(self._voice_request)  # read before the task ends
@@ -14920,9 +14916,14 @@ def handle_tool(tool_name, params):
             # approvals), never a shortcut around them.
             again_action = True
             command_text = repeated[0]
-        if not self._interactive_request_active and not again_action:
+        undo_during_task = self._interactive_request_active and bool(
+            UNDO_ONE_REQUEST.match(normalized_command) or UNDO_MANY_REQUEST.match(normalized_command)
+        )
+        if not again_action and not undo_during_task:
             # A change Heliox makes in its own code (a to-do, a note, a setting) does not start while the person is
-            # audibly going on either; in silence it runs at once.
+            # audibly going on either; in silence it runs at once. During a task too: "what time is it", "stop
+            # interrupting me" or "remind me at four" are answered here and never handed to the running task as a
+            # change (an undo during a task stops it first, below).
             await self._settle_voice_turn(voice_turn.turn_id, window=False)
             timeline_answer = await self._control_reply(command_text)
             asked = command_text
@@ -14983,7 +14984,7 @@ def handle_tool(tool_name, params):
                 )
             return
 
-        if not self._interactive_request_active and normalized_command in VOICE_STOP_PHRASES:
+        if not self._interactive_request_active and voice_words.is_stop(normalized_command, language):
             # "Stop" with no interactive task stops background work instead of becoming a new task.
             stopped = await self._stop_background_jobs()
             if stopped:
@@ -14998,6 +14999,65 @@ def handle_tool(tool_name, params):
             if stopped or time.monotonic() - self._voice_cut_off_at < STOP_ACK_SECONDS:
                 await self._speak_voice_response(
                     message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-stop:{uuid.uuid4()}"
+                )
+            return
+
+        # A stop or a denial must never become a request. While a task runs or an approval waits, a short utterance
+        # (three words or fewer) that is no control word in English or the person's language, and that nothing above
+        # answered, is not handed on: Mandarin "停" (stop) came out of Whisper as "Send." (13 November), and as a
+        # correction the planner would have taken it as the change to make. A one-step command Heliox recognises
+        # exactly (a media key, the volume, opening an app) waits for the task, as "next task ..." does; with only
+        # an approval waiting it runs as before. Anything else short is not taken: one sentence says so when the
+        # person said the wake phrase or pressed the button, and nothing when it came as a follow-up.
+        busy_with = pending_plan_id or (self._active_plan_id or "task" if self._interactive_request_active else "")
+        held_short = self._short_word_while_busy(command_text, normalized_command, language) if busy_with else ""
+        if held_short == "unknown" and self._quick_command(command_text):
+            if not self._interactive_request_active:
+                held_short = ""  # only an approval waits: a one-step command runs as any request does
+            else:
+                active_context = self._active_experience_context
+                result = await self._queue_interactive_request(
+                    {
+                        "input": command_text,
+                        "session_id": active_context.session_id,
+                        "user_id": active_context.user_id,
+                        "source": "voice",
+                    }
+                )
+                queued = result.get("status") == "queued"
+                message = (
+                    "I'll do that when this task finishes."
+                    if queued
+                    else "I can't do that until this task finishes. Say it again then."
+                )
+                await self._broadcast_notification(
+                    "voice_result",
+                    {"command": command_text, "status": result.get("status", "error"), "message": message},
+                )
+                await self._speak_voice_response(
+                    message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-queued-short:{uuid.uuid4()}"
+                )
+                return
+        if held_short:
+            logger.info("A short utterance while a task runs was not acted on: %r", command_text)
+            addressed = voice_turn_addressed.get() in {"wake", "button"}
+            said_for = getattr(self, "_short_word_said_for", "")
+            message = (
+                ""
+                if held_short == "acknowledgement" or not addressed or said_for == busy_with
+                else "That approval is still waiting. I didn't take that as a request. Say no or press Deny to "
+                "turn it down."
+                if pending_approval is not None and not self._interactive_request_active
+                else "I didn't take that as a change to the task. To stop it, say stop or press Stop."
+            )
+            await self._broadcast_notification(
+                "voice_result",
+                {"command": command_text, "status": "not_acted_on", "message": message, "reason": "short_while_busy"},
+            )
+            if message:
+                self._short_word_said_for = busy_with
+                await self._speak_voice_response(
+                    message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-short-busy:{busy_with}"
                 )
             return
 
@@ -15053,9 +15113,7 @@ def handle_tool(tool_name, params):
             undo_now = not is_question and bool(
                 UNDO_ONE_REQUEST.match(normalized_command) or UNDO_MANY_REQUEST.match(normalized_command)
             )
-            stop_now = not is_question and (
-                normalized_command in VOICE_STOP_PHRASES or normalized_command in VOICE_DENIALS or undo_now
-            )
+            stop_now = not is_question and (voice_words.is_control_word(normalized_command, language) or undo_now)
             if not is_question and not stop_now:
                 await self._interaction_runtime.transition(
                     InteractionPhase.CORRECTING,
