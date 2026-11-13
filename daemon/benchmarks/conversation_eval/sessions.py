@@ -458,6 +458,14 @@ async def build_server(kind: str, session: dict[str, Any], folder: Path, record:
         list=AsyncMock(return_value=[]),
         answer_async=AsyncMock(return_value=None),
     )
+    if session.get("receipts"):
+        # Signed receipts as the daemon keeps them (PilotServer.start), in the session's own folder with its own key:
+        # what an approved setting change leaves, read back by the settings guard.
+        from pilot.workflows.task_receipts import TaskReceipts
+
+        server._task_receipts = TaskReceipts(
+            folder / "receipts", config=lambda: config.receipts, vault=None, key_dir=folder / "keys"
+        )
     server._checkpoint_store = AsyncMock()
     server._orchestrator = None
     server._execution_companion = Companion()
@@ -584,6 +592,16 @@ async def run_session(session: dict[str, Any], kind: str, real_model: Any = None
                     continue
                 if event == "call":
                     listener.in_call = str(turn.get("app", "Teams"))
+                    continue
+                if event == "approve_setting":
+                    # The person approves a setting change in Heliox's window, as they would by clicking: the daemon
+                    # asks through its own dialog and writes the signed receipt itself (tests.settings_approval).
+                    from tests.settings_approval import approve_setting_change
+
+                    if not await approve_setting_change(server, str(turn["section"]), dict(turn["values"])):
+                        record.stuck.append(
+                            f"approve_setting: {turn['section']} {turn['values']} widened nothing to approve"
+                        )
                     continue
                 if event == "approve":
                     # The person presses Approve on the dialog (the only way an approval is given): the plan the
