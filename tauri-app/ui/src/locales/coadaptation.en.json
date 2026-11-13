@@ -65,6 +65,7 @@
       "close": "Close",
       "granting": "Saving your consent…",
       "grant_failed": "Consent was not saved: {message}",
+      "not_granted": "Not changed: you did not approve it in Heliox's dialog, so nothing was stored.",
       "update_title": "Update consent",
       "update_deletion_note": "Unticking an item deletes what was stored only for it. Your data are still erased on {expires_at}; updating never extends that date.",
       "update_deletes_title": "Unticking deletes:",

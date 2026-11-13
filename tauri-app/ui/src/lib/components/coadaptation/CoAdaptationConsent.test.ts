@@ -142,6 +142,32 @@ describe("new consent", () => {
     expect(JSON.stringify(otherCalls)).not.toContain("Lab B");
   });
 
+  it("a no in Heliox's approval dialog keeps the sheet open, says nothing was stored and is not an error", async () => {
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "co_adaptation_status") return statusReply();
+      if (method === "co_adaptation_consent_grant") {
+        return { status: "cancelled", message: "Nothing was stored. Co-adaptation is as it was." };
+      }
+      throw new Error(`unexpected call ${method}`);
+    });
+    const ongranted = vi.fn();
+    const onclose = vi.fn();
+    const { container } = render(CoAdaptationConsent, { onclose, ongranted });
+    await fireEvent.click(container.querySelector('input[name="selection_study"]')!);
+    await fireEvent.click(screen.getByRole("button", { name: "Grant" }));
+
+    await vi.waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe(
+        "Not changed: you did not approve it in Heliox's dialog, so nothing was stored.",
+      ),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(ongranted).not.toHaveBeenCalled();
+    expect(onclose).not.toHaveBeenCalled();
+    expect((container.querySelector('input[name="selection_study"]') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("button", { name: "Grant" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("closing the sheet grants nothing", async () => {
     const onclose = vi.fn();
     render(CoAdaptationConsent, { onclose, ongranted: vi.fn() });

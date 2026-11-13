@@ -24,6 +24,8 @@ class _Daemon:
         config.save = MagicMock()
         self.server = PilotServer(config)
         self.server._broadcast_notification = AsyncMock()
+        # The person approves each grant in the daemon's dialog; this file is about what expiry does afterwards.
+        self.server._ask_about_data = AsyncMock(return_value=True)
         self.tmp_path = tmp_path
         self.clock = FakeClock()
         self.keys = InMemoryKeyProvider()

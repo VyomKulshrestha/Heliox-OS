@@ -17598,6 +17598,35 @@ def handle_tool(tool_name, params):
             "restart_required": False,
         }
 
+    async def _co_adaptation_consent_approved(self, values: dict, ws: ServerConnection) -> bool:
+        """Ask the person in the daemon's dialog before a grant adds a purpose. The payload, ``authorized`` included,
+        says what is being asked for; the person's answer here is the consent. False only when they did not approve.
+
+        A payload the service would refuse (malformed, unknown participant) asks nothing: the service replies with
+        its error and stores nothing. An update that adds no purpose asks nothing either: it can only remove
+        purposes or bring the erase date nearer."""
+        service = self._co_adaptation
+        if service is None:
+            return True
+        # pilot.coadaptation is loaded once the service exists; importing it here keeps pilot.server light.
+        from pilot.coadaptation.consent_dialog import consent_lines
+        from pilot.coadaptation.schemas import ConsentGrantParams
+
+        try:
+            # The service's own parse: size limit, then the strict schema. A ValidationError is a ValueError.
+            request = ConsentGrantParams.parse(values)
+        except ValueError:
+            return True
+        on_file = None
+        if request.participant_key is not None:
+            consent_on_file = getattr(service, "consent_on_file", None)
+            if consent_on_file is not None:
+                on_file = consent_on_file(request.participant_key, request.retention_days)
+            if on_file is None:
+                return True
+        lines = consent_lines(request.purposes, request.retention_days, on_file)
+        return not lines or await self._ask_about_data(ws, lines)
+
     async def _handle_co_adaptation_consent_grant(self, params: dict, ws: ServerConnection) -> dict:
         """Grant or update a participant's consent, then turn the feature on unless ``enable`` is false."""
         values = params if isinstance(params, dict) else {}
@@ -17605,6 +17634,8 @@ def handle_tool(tool_name, params):
             enable = _validated_bool(values, "enable", True)
         except ValueError as exc:
             return {"status": "error", "message": str(exc)}
+        if not await self._co_adaptation_consent_approved(values, ws):
+            return {"status": "cancelled", "message": "Nothing was stored. Co-adaptation is as it was."}
         # A consent that expired but was not pruned yet still leaves no active consent: a grant starts from off,
         # so ``enable: false`` keeps the feature off.
         if (failure := await self._turn_off_co_adaptation_without_consent()) is not None:

@@ -342,6 +342,18 @@ class CoAdaptationService:
         with contextlib.suppress(Exception):
             await self._store.close()
 
+    def consent_on_file(self, participant_key: str, retention_days: int) -> tuple[frozenset[str], datetime] | None:
+        """The purposes of the participant's active consent and the erase date an update with ``retention_days``
+        would set (never later than the current one), or None when the participant has no active consent."""
+        now = self._clock()
+        if participant_key in self._gone:
+            return None
+        for record in self._active_consents:
+            if record.participant_key == participant_key and now < record.expires_at:
+                erase_at = min(record.expires_at, now + timedelta(days=retention_days))
+                return frozenset(purpose.value for purpose in record.purposes), erase_at
+        return None
+
     def has_active_consent(self) -> bool:
         now = self._clock()
         return any(

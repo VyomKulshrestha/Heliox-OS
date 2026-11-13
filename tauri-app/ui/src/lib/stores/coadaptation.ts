@@ -388,13 +388,15 @@ function createCoadaptation() {
     await load();
   }
 
-  async function grantConsent(input: GrantInput): Promise<string> {
+  /** The new or updated participant's key, or null when the person did not approve in the daemon's dialog. */
+  async function grantConsent(input: GrantInput): Promise<string | null> {
     let reply;
     try {
       reply = await coadaptConsentGrant(input);
     } catch (cause) {
       throw wrapRpcError(cause);
     }
+    if (reply.status === "cancelled") return null;
     if (reply.status !== "ok") {
       throw new Error(reply.message || refusalMessage(reply.reason ?? "unknown"));
     }

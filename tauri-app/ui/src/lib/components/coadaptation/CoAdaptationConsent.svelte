@@ -60,6 +60,8 @@
   let label = $state("");
   let busy = $state(false);
   let error = $state("");
+  /** Set when the person said no in Heliox's approval dialog: not an error, nothing changed. */
+  let notGranted = $state(false);
   let initializedFor = "";
 
   // In update mode the current purposes and retention start selected, once per participant.
@@ -85,6 +87,7 @@
     if (!canGrant) return;
     busy = true;
     error = "";
+    notGranted = false;
     try {
       const sha256 = await consentTextSha256(englishConsentText());
       const protocol = $coadaptation.status?.protocol ?? null;
@@ -101,7 +104,9 @@
         authorized: true,
         enable,
       });
-      ongranted(grantedKey);
+      // The daemon's dialog is the consent: a no keeps the sheet open, with everything as it was.
+      if (grantedKey === null) notGranted = true;
+      else ongranted(grantedKey);
     } catch (cause) {
       error = t("coadaptation.consent.grant_failed", {
         values: { message: cause instanceof Error ? cause.message : String(cause) },
@@ -198,6 +203,8 @@
 
     {#if error}
       <p class="error" role="alert">{error}</p>
+    {:else if notGranted}
+      <p class="not-granted" role="status">{t("coadaptation.consent.not_granted")}</p>
     {/if}
 
     <div class="actions">
@@ -214,6 +221,11 @@
 </div>
 
 <style>
+  .not-granted {
+    margin: 0;
+    color: var(--text-secondary);
+  }
+
   .consent-sheet {
     display: flex;
     flex-direction: column;

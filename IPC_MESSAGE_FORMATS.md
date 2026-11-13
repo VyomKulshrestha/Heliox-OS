@@ -2785,6 +2785,14 @@ change.
   model rebuild). An update that removes a purpose while the participant has an
   open session is refused.
 - Any other key is refused (`unknown_participant`); keys are never reused.
+- `authorized: true` is a request, not the consent. Before a grant that adds a
+  purpose (every new participant, and an update that ticks a purpose not granted
+  before) the daemon asks in its own approval dialog: one line per added purpose
+  with the consent sheet's label and detail, then where the data is kept and for
+  how long. A no returns `{ "status": "cancelled", "message": "Nothing was stored.
+  Co-adaptation is as it was." }` and stores nothing. A payload the service would
+  refuse, and an update that only removes purposes or shortens retention, ask
+  nothing.
 - After a successful grant the daemon sets `co_adaptation.enabled = true` unless
   `enable` is `false` (it must be a JSON boolean), and saves; a failed save turns
   it back off and returns the save error.

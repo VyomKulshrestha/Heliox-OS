@@ -57,6 +57,8 @@ export type ConsentGrantReply =
       config: CoAdaptationConfigV1;
       removed: { purposes: string[]; export_files: number; trials_rewritten: number; sessions_rewritten: number };
     }
+  /** The person said no in the daemon's approval dialog: nothing was stored. */
+  | { status: "cancelled"; message?: string }
   | RpcNotOk;
 
 export type ConsentRevokeReply =

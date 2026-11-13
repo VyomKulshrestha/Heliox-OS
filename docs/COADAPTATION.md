@@ -211,6 +211,11 @@ Consent is typed, purpose-bound, expiring and revocable. The purposes are `selec
 `adaptive_assistance`, `cross_session_learning`, `gaze_prior`, `hand_pointer` and `research_export`; there is no
 approval purpose because nothing about approval dialogs is stored.
 
+- **Who consents.** The consent sheet in Settings sends what is asked for; its `authorized: true` is a request.
+  The consent is the person's answer in the daemon's own approval dialog, which shows each purpose with the
+  sheet's own label and detail, then where the data is kept and until when. A grant that adds no purpose (it only
+  removes purposes or brings the erase date nearer) asks nothing. A no stores nothing and leaves the feature as it
+  was; the sheet stays open and says so.
 - **Participants.** Keys are daemon-generated (`p-` and 8 hex characters from `secrets.token_hex(4)`); the UI can
   never choose one. An optional display label is stored only encrypted with that participant's key. Anyone who
   uses the device can open Settings and view or erase every participant; on a shared lab machine the operator
