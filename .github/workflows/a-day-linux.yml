@@ -1,0 +1,54 @@
+name: "A day in the life (Linux desktop)"
+
+# The parts of the made-up day (tests/data/a_day_in_the_life.json) only a real desktop shows: slips typed into a real
+# GTK field read by the real AT-SPI reader in a real daemon with Live on, and the lid closed over a reminder (the
+# daemon frozen past it, then a window). The rest of the day runs in the ordinary suite on fake clocks
+# (tests/test_a_day_in_the_life.py). Never blocks anything. About 10 runner minutes; nightly and by hand.
+
+on:
+  schedule:
+    - cron: "47 3 * * *" # nightly, 03:47 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a-day-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  a-day:
+    name: A day in the life (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: daemon
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the daemon with its Linux extra
+        run: pip install -e ".[linux]"
+
+      - name: Install the Linux accessibility stack (AT-SPI, GTK 3, Xvfb, xdotool)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends             xvfb xdotool dbus dbus-x11 at-spi2-core libatk-adaptor python3-gi gir1.2-gtk-3.0
+
+      - name: The day's typing and the lid closed over a reminder
+        run: |
+          dbus-run-session -- bash -c '
+            Xvfb :99 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
+            export DISPLAY=:99 GTK_A11Y=atspi
+            sleep 2
+            python tests/platform_real/a_day_check.py --python /usr/bin/python3
+          '
