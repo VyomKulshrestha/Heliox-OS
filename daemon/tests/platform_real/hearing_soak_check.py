@@ -96,7 +96,7 @@ def run(*command: str, timeout: float = 30.0) -> subprocess.CompletedProcess:
 
 
 def inputs() -> int:
-    for tool in ("pactl", "paplay", "parec", "espeak-ng", "xdotool"):
+    for tool in ("pactl", "pacat", "paplay", "parec", "espeak-ng", "xdotool"):
         check(f"inputs/{tool}", shutil.which(tool) is not None, shutil.which(tool) or "not on PATH")
     check("inputs/pulseaudio", run("pactl", "info").returncode == 0, "pactl info answered")
     check("inputs/display", bool(os.environ.get("DISPLAY")), os.environ.get("DISPLAY", "no DISPLAY"))
@@ -175,6 +175,43 @@ def setup_pulse() -> None:
     )
     run("pactl", "set-default-source", f"{ROOM_SINK}.monitor")
     run("pactl", "set-default-sink", SPEAKER)
+    # An idle null sink is suspended, and its monitor then delivers nothing at all: the listener refused it ("opened
+    # but delivered no audio", run 43390694632). A room is never digital silence either.
+    run("pactl", "unload-module", "module-suspend-on-idle")
+
+
+class RoomHum:
+    """A quiet, never-ending hum in the room (a few units of noise), so the microphone always delivers sound and is
+    never exact zeros, which the listener would rightly report as a silent microphone."""
+
+    def __init__(self) -> None:
+        self.proc = subprocess.Popen(
+            ["pacat", "--playback", f"--device={ROOM_SINK}", "--format=s16le", f"--rate={RATE}", "--channels=1"],
+            stdin=subprocess.PIPE,
+        )
+        self._stop = False
+        import threading
+
+        self._thread = threading.Thread(target=self._feed, daemon=True)
+        self._thread.start()
+
+    def _feed(self) -> None:
+        import random
+        import struct
+
+        chunk = RATE // 10  # 0.1 s at a time, written as fast as pacat takes it (it blocks at real time)
+        while not self._stop and self.proc.stdin is not None:
+            data = struct.pack(f"<{chunk}h", *(random.randint(-4, 4) for _ in range(chunk)))
+            try:
+                self.proc.stdin.write(data)
+                self.proc.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                return
+
+    def close(self) -> None:
+        self._stop = True
+        self.proc.terminate()
+        self.proc.wait(timeout=10)
 
 
 # ---- what the daemon showed and said
@@ -328,6 +365,7 @@ async def soak(minutes: float, every: float) -> int:
     room = [(text, render(text, folder)) for text in ROOM]
     real_daemon.write_config(LIVE)
     daemon = real_daemon.start()
+    hum = RoomHum()
     speaker = Speaker(folder)
     fixture = Fixture("/usr/bin/python3")
     session = None
@@ -337,6 +375,9 @@ async def soak(minutes: float, every: float) -> int:
         started = await session.call("voice_listener_start", timeout=120)
         if not check("set-up", ready and started.get("status") in ("ok", "listening", "started", "already_running")
                      and fixture.wait_for("ready"), f"ready {ready}; listener {started}"):  # fmt: skip
+            for line in real_daemon.log_tail(60):
+                print(f"DAEMON-LOG {line}", flush=True)
+            print(f"INFO sources: {run('pactl', 'list', 'short', 'sources').stdout.strip()}", flush=True)
             return 1
         type_keys, _how = typer(False, fixture)
         record = Record(session, speaker)
@@ -414,6 +455,7 @@ async def soak(minutes: float, every: float) -> int:
     finally:
         fixture.close()
         speaker.close()
+        hum.close()
         await real_daemon.stop(daemon, session)
     return 0 if results and all(results) else 1
 
