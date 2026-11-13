@@ -23,6 +23,7 @@ import importlib.util
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 # Kokoro's reader for each first letter of a voice name (kokoro.KPipeline's lang_code).
 KOKORO_LANG_CODES = {"a": "en", "b": "en", "e": "es", "f": "fr", "h": "hi", "i": "it", "j": "ja", "p": "pt", "z": "zh"}
@@ -38,7 +39,13 @@ KOKORO_VOICES = {
     "zh": "zf_xiaobei",
 }
 # What Kokoro's reader needs beyond its English one (misaki's extras), by language.
-KOKORO_NEEDS = {"zh": ("jieba", "pypinyin", "cn2an"), "ja": ("pyopenjtalk",)}
+KOKORO_NEEDS = {"zh": ("jieba", "pypinyin", "cn2an"), "ja": ("pyopenjtalk", "fugashi", "unidic")}
+# Japanese also needs unidic's dictionary on disk, which ``pip install unidic`` does not bring: it is fetched apart
+# (``python -m unidic download``, about 770 MB). Without it Kokoro's Japanese reader raises as it starts ("Failed
+# initializing MeCab ... no such file: .../unidic/dicdir/mecabrc", voice-languages run 43341873370).
+# Scripts Kokoro's English reader cannot read at all: it says "Chinese letter" or "Japanese letter" for each
+# character instead (the same run). Latin-script languages come out with English sounds.
+NOT_LATIN = frozenset({"zh", "ja", "ko", "ru", "ar", "hi"})
 KOKORO_VOICE_BYTES = 523_000  # a voice file is about half a megabyte
 
 LANGUAGE_NAMES = {
@@ -71,6 +78,35 @@ def _installed(module: str) -> bool:
         return False
 
 
+def _japanese_dictionary() -> bool:
+    """Whether unidic's dictionary is on disk (its mecabrc), which Kokoro's Japanese reader opens as it starts."""
+    try:
+        import unidic
+
+        return (Path(unidic.DICDIR) / "mecabrc").is_file()
+    except Exception:
+        return False
+
+
+def reader_missing(
+    language: str, installed: Callable[[str], bool] = _installed, dictionary: Callable[[], bool] = _japanese_dictionary
+) -> str:
+    """What Kokoro's reader for ``language`` lacks on this computer, in words; "" when it can start."""
+    missing = [module for module in KOKORO_NEEDS.get(language, ()) if not installed(module)]
+    if missing:
+        return ", ".join(missing) + (" are" if len(missing) > 1 else " is") + " not installed"
+    if language == "ja" and not dictionary():
+        return "the Japanese dictionary (unidic, about 770 MB, fetched with python -m unidic download) is not here"
+    return ""
+
+
+def without_a_voice(name: str, language: str) -> str:
+    """What a person hears from the English voice in their language."""
+    if language in NOT_LATIN:
+        return f'so Heliox cannot read {name} replies aloud: the English voice says "letter" for each character'
+    return f"so it reads {name} replies with English sounds"
+
+
 @dataclass(frozen=True)
 class VoicePlan:
     language: str  # the voice language, as a code ("de")
@@ -93,18 +129,20 @@ def plan_voice(
     system_voices: Iterable[tuple[str, str]] = (),
     platform: str = "windows",
     installed: Callable[[str], bool] = _installed,
+    dictionary: Callable[[], bool] = _japanese_dictionary,
 ) -> VoicePlan:
     """The voice for ``language`` given the person's engine and voice, and the system voices (name, language code)."""
     name = LANGUAGE_NAMES.get(language, language)
     if not language or language == "en":
         return VoicePlan("en", engine, voice, False, 0, "")
-    if engine == "kokoro_tts" and kokoro_language(voice) == language:
+    lacking = reader_missing(language, installed, dictionary)
+    if engine == "kokoro_tts" and kokoro_language(voice) == language and not lacking:
         return VoicePlan(language, engine, voice, False, 0, f"Heliox speaks {name} with the voice {voice}.")
     system = [(n, lang) for n, lang in system_voices if lang == language]
     if engine == "os_native" and any(n == system_voice for n, _ in system):
         return VoicePlan(language, engine, system_voice, False, 0, f"Heliox speaks {name} with {system_voice}.")
     kokoro = KOKORO_VOICES.get(language, "")
-    if kokoro and all(installed(module) for module in KOKORO_NEEDS.get(language, ())):
+    if kokoro and not lacking:
         return VoicePlan(
             language, "kokoro_tts", kokoro, True, KOKORO_VOICE_BYTES,
             f"Heliox can speak {name} with Kokoro's voice {kokoro}; about half a megabyte is fetched the first time.",
@@ -113,12 +151,18 @@ def plan_voice(
         chosen = system[0][0]
         return VoicePlan(language, "os_native", chosen, True, 0, f"Heliox can speak {name} with {chosen}, a voice already on this computer.")  # fmt: skip
     where = WHERE_TO_ADD.get(platform, WHERE_TO_ADD["linux"])
-    missing = (
-        f" Kokoro's {name} voice needs {', '.join(KOKORO_NEEDS[language])}, which are not installed." if kokoro else ""
-    )
+    missing = f" Kokoro's {name} voice cannot start here: {lacking}." if kokoro else ""
+    if engine == "kokoro_tts" and kokoro_language(voice) == language:
+        # Chosen already, but its reader raises as it starts: Heliox falls back to the system voice, which read a
+        # Japanese sentence as "yen, pi, sigma" on Windows (13 November). Say so rather than call the voice working.
+        return VoicePlan(
+            language, engine, voice, False, 0,
+            f"Heliox's {name} voice {voice} cannot start on this computer: {lacking}. Until it can, replies are read "
+            f"by the system voice, which does not read {name}. A {name} voice can be added in {where}.",
+        )  # fmt: skip
     return VoicePlan(
         language, engine, voice, False, 0,
-        f"Heliox has no {name} voice on this computer, so it reads {name} replies with English sounds.{missing} "
+        f"Heliox has no {name} voice on this computer, {without_a_voice(name, language)}.{missing} "
         f"A {name} voice can be added in {where}.",
     )  # fmt: skip
 

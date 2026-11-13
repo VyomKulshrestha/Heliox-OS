@@ -18,6 +18,7 @@ import difflib
 import os
 import sys
 import time
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -63,34 +64,59 @@ def similar(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, keep(a), keep(b)).ratio()
 
 
+def failure(error: BaseException) -> str:
+    """The exception's type chain and its traceback, since a reader can raise with an empty message (run
+    43341873370: the Japanese one raised RuntimeError("") from MeCab)."""
+    chain, seen = [], error
+    while seen is not None:
+        chain.append(f"{type(seen).__name__}: {str(seen).strip() or '(no message)'}")
+        seen = seen.__cause__ or seen.__context__
+    return " <- ".join(chain) + "\n" + "".join(traceback.format_exception(error)).strip()
+
+
+def timed(what: str, call):
+    started = time.perf_counter()
+    result = call()
+    return result, time.perf_counter() - started
+
+
 def main() -> int:
     from faster_whisper import WhisperModel
+    from huggingface_hub import hf_hub_download
 
     kokoro_tts.configure(device="cpu")
     whisper = WhisperModel("small", device="cpu", compute_type="int8")
+    # What a person waits the first time they hear their language, apart from the model itself: the model's weights
+    # and the English reader are loaded first (a person who speaks English already has them), then for each
+    # language the voice file is fetched, its reader started, and the sentence made, each timed on its own.
+    _, model_seconds = timed("model", lambda: kokoro_tts._generate("Okay.", "af_heart"))
+    print(f"INFO model-and-english-reader: {model_seconds:.1f} s (fetching and loading the weights, once)", flush=True)
     for language, sentence in SENTENCES.items():
         voice = KOKORO_VOICES[language]
         try:
-            started = time.perf_counter()
-            audio, rate = kokoro_tts._generate(sentence, voice)
+            _, fetch = timed("voice", lambda voice=voice: hf_hub_download(kokoro_tts.REPO_ID, f"voices/{voice}.pt"))
+            _, reader = timed("reader", lambda voice=voice: kokoro_tts._get_pipeline(kokoro_lang_code(voice)))
+            (audio, rate), made = timed(
+                "synthesis", lambda voice=voice, sentence=sentence: kokoro_tts._generate(sentence, voice)
+            )
             seconds = len(audio) / rate
             text = heard(whisper, audio, language)
             score = similar(sentence, text)
             check(
                 f"voice-{language}/{voice}-is-heard-as-the-sentence",
                 seconds > 1.0 and score >= 0.6,
-                f"reader {kokoro_lang_code(voice)!r}, {seconds:.1f} s of audio in {time.perf_counter() - started:.1f} s, "
-                f"Whisper heard {text!r} (similarity {score:.2f})",
+                f"reader {kokoro_lang_code(voice)!r}, {seconds:.1f} s of audio; voice file {fetch:.1f} s, reader "
+                f"{reader:.1f} s, synthesis {made:.1f} s; Whisper heard {text!r} (similarity {score:.2f})",
             )
         except Exception as error:  # a reader's package missing on the runner is a failure to see, not a crash
-            check(f"voice-{language}/{voice}-is-heard-as-the-sentence", False, f"{type(error).__name__}: {error}")
+            check(f"voice-{language}/{voice}-is-heard-as-the-sentence", False, failure(error))
         try:
             old, rate = kokoro_tts._generate(sentence, "af_heart")
             text = heard(whisper, old, language)
             print(f"INFO voice-{language}/through-the-english-reader: {len(old) / rate:.1f} s, Whisper heard {text!r} "
                   f"(similarity {similar(sentence, text):.2f})", flush=True)  # fmt: skip
         except Exception as error:
-            print(f"INFO voice-{language}/through-the-english-reader: {type(error).__name__}: {error}", flush=True)
+            print(f"INFO voice-{language}/through-the-english-reader: {failure(error)}", flush=True)
     audio, rate = kokoro_tts._generate(GERMAN, "af_heart")
     text = heard(whisper, audio, "de")
     print(f"INFO voice-de/no-kokoro-voice: through the English voice, Whisper heard {text!r} "

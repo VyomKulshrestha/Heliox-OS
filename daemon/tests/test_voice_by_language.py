@@ -126,3 +126,25 @@ async def test_the_offer_is_listed_and_accepting_it_fetches_nothing_itself(monke
     result = await server._handle_voice_for_language_apply({}, None)
     assert config.voice.tts_engine == "kokoro_tts" and config.voice.tts_voice == "ef_dora"
     assert result["change"] is False and configured == [1]  # Kokoro fetches the voice when it first speaks
+
+
+def test_japanese_is_offered_only_with_its_dictionary_on_disk():
+    # run 43341873370: pyopenjtalk, fugashi and unidic installed, the dictionary not fetched: the reader raised
+    without = plan_voice("ja", "kokoro_tts", "af_heart", installed=ALL, dictionary=lambda: False)
+    assert not without.change and without.voice == "af_heart"
+    assert "Japanese dictionary" in without.say and "cannot read Japanese replies aloud" in without.say
+    with_it = plan_voice("ja", "kokoro_tts", "af_heart", installed=ALL, dictionary=lambda: True)
+    assert with_it.change and with_it.voice == "jf_alpha"
+
+
+def test_a_chosen_voice_whose_reader_cannot_start_is_not_called_working():
+    plan = plan_voice("ja", "kokoro_tts", "jf_alpha", installed=ALL, dictionary=lambda: False)
+    assert not plan.change and "cannot start on this computer" in plan.say and "system voice" in plan.say
+    working = plan_voice("ja", "kokoro_tts", "jf_alpha", installed=ALL, dictionary=lambda: True)
+    assert working.say == "Heliox speaks Japanese with the voice jf_alpha."
+
+
+def test_a_script_the_english_voice_cannot_read_is_said_so():
+    plan = plan_voice("zh", "kokoro_tts", "af_heart", installed=NONE)
+    assert "cannot read Mandarin replies aloud" in plan.say
+    assert "with English sounds" in plan_voice("de", "kokoro_tts", "af_heart").say
