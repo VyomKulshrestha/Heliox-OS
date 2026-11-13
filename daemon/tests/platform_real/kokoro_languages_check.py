@@ -30,7 +30,7 @@ require_runner("fetches Kokoro's voices and Whisper small into this computer's H
 
 import numpy as np  # noqa: E402
 
-from pilot.system import kokoro_tts  # noqa: E402
+from pilot.system import kokoro_tts, voice_by_language  # noqa: E402
 from pilot.system.voice_by_language import KOKORO_VOICES, kokoro_lang_code  # noqa: E402
 
 SENTENCES = {
@@ -87,6 +87,34 @@ def timed(what: str, call):
     return result, time.perf_counter() - started
 
 
+def japanese_refused() -> None:
+    """Without the dictionary: plan_voice must not offer Kokoro's Japanese voice, must name the download and its size,
+    and nothing may have been fetched for it."""
+    fetched_before = _unidic_files()
+    plan = voice_by_language.plan_voice("ja", "kokoro_tts", "af_heart", platform="linux")
+    check(
+        "voice-ja/refused-without-the-dictionary",
+        plan.voice != "jf_alpha"
+        and not (plan.change and plan.engine == "kokoro_tts")
+        and "770 MB" in plan.say
+        and "python -m unidic download" in plan.say
+        and _unidic_files() == fetched_before,
+        f"missing: {voice_by_language.reader_missing('ja')}; offered {plan.engine}/{plan.voice}, change={plan.change}; "
+        f"said {plan.say!r}",
+    )
+
+
+def _unidic_files() -> int:
+    """How many files unidic's dictionary folder holds (0 when there is none)."""
+    try:
+        import unidic
+
+        folder = Path(unidic.DICDIR)
+        return sum(1 for _ in folder.rglob("*")) if folder.is_dir() else 0
+    except Exception:
+        return 0
+
+
 def main() -> int:
     from faster_whisper import WhisperModel
     from huggingface_hub import hf_hub_download
@@ -106,6 +134,11 @@ def main() -> int:
     print(f"INFO model-and-english-reader: {model_seconds:.1f} s (fetching and loading the weights, once)", flush=True)
     for language, sentence in SENTENCES.items():
         voice = KOKORO_VOICES[language]
+        if language == "ja" and voice_by_language.reader_missing("ja"):
+            # The product does not offer the Japanese voice without unidic's dictionary (about 770 MB, a download
+            # only the person starts): the check follows it, and the reader itself is not exercised here.
+            japanese_refused()
+            continue
         try:
             _, fetch = timed("voice", lambda voice=voice: hf_hub_download(kokoro_tts.REPO_ID, f"voices/{voice}.pt"))
             _, reader = timed("reader", lambda voice=voice: kokoro_tts._get_pipeline(kokoro_lang_code(voice)))
