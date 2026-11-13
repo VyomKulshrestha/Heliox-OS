@@ -148,3 +148,21 @@ def test_a_script_the_english_voice_cannot_read_is_said_so():
     plan = plan_voice("zh", "kokoro_tts", "af_heart", installed=NONE)
     assert "cannot read Mandarin replies aloud" in plan.say
     assert "with English sounds" in plan_voice("de", "kokoro_tts", "af_heart").say
+
+
+def test_a_japanese_speaker_is_told_the_download_and_heliox_never_starts_it():
+    plan = plan_voice("ja", "kokoro_tts", "af_heart", installed=ALL, dictionary=lambda: False)
+    assert "after a download of about 770 MB" in plan.say and "python -m unidic download" in plan.say
+    assert "never starts that download itself" in plan.say and not plan.change and plan.download_bytes == 0
+    fresh = plan_voice("ja", "kokoro_tts", "af_heart", installed=NONE)
+    assert 'pip install "misaki[ja]"' in fresh.say
+    # a Japanese system voice already installed is offered first, with no download at all
+    system = plan_voice(
+        "ja",
+        "kokoro_tts",
+        "af_heart",
+        installed=ALL,
+        dictionary=lambda: False,
+        system_voices=[("Microsoft Haruka", "ja")],
+    )
+    assert system.change and system.engine == "os_native" and "770" not in system.say

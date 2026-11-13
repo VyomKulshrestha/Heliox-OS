@@ -100,6 +100,18 @@ def reader_missing(
     return ""
 
 
+def japanese_download(installed: Callable[[str], bool] = _installed) -> str:
+    """The sentence saying what it takes for Heliox to speak Japanese. Heliox never starts this download itself."""
+    packages = [module for module in KOKORO_NEEDS["ja"] if not installed(module)]
+    steps = (
+        "install Kokoro's Japanese reader (pip install \"misaki[ja]\" in Heliox's Python), then " if packages else ""
+    )
+    return (
+        f"Heliox can speak Japanese after a download of about 770 MB: {steps}fetch the Japanese dictionary with "
+        "python -m unidic download. Heliox never starts that download itself."
+    )
+
+
 def without_a_voice(name: str, language: str) -> str:
     """What a person hears from the English voice in their language."""
     if language in NOT_LATIN:
@@ -152,6 +164,9 @@ def plan_voice(
         return VoicePlan(language, "os_native", chosen, True, 0, f"Heliox can speak {name} with {chosen}, a voice already on this computer.")  # fmt: skip
     where = WHERE_TO_ADD.get(platform, WHERE_TO_ADD["linux"])
     missing = f" Kokoro's {name} voice cannot start here: {lacking}." if kokoro else ""
+    if language == "ja" and kokoro:
+        # The dictionary is a download a person makes, never one Heliox starts: name its size and how.
+        missing = " " + japanese_download(installed)
     if engine == "kokoro_tts" and kokoro_language(voice) == language:
         # Chosen already, but its reader raises as it starts: Heliox falls back to the system voice, which read a
         # Japanese sentence as "yen, pi, sigma" on Windows (13 November). Say so rather than call the voice working.
