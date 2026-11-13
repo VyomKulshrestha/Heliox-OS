@@ -36,13 +36,55 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The job's own set-up, tried first in its cheapest form, so the first run reaches the audio: two new
+      # workflows' first runs died in their set-up on 13 November (this one ran pip from inside daemon/, where
+      # ./daemon does not exist). Every path the job names, the pip install as a dry run, the two Homebrew packages
+      # known to Homebrew, and the system's say. Nothing is installed here.
+      - name: The job's inputs are there (a minute, before anything is installed)
+        timeout-minutes: 4
+        run: |
+          # The same fake home as the steps after it: pip's dry run writes its cache under HOME, and nothing here
+          # may touch the runner's own (test_ci_fake_home.py reads every step that names the check).
+          export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
+          failed=0
+          for path in daemon/pyproject.toml daemon/tests/platform_real/mac_voice_check.py daemon/tests/platform_real/ci_only.py; do
+            if [ -f "$path" ]; then
+              echo "CHECK job-inputs/path: PASS - $path"
+            else
+              echo "CHECK job-inputs/path: FAIL - $path is missing"
+              failed=$((failed + 1))
+            fi
+          done
+          if python -m pip install --disable-pip-version-check --dry-run -q -e ./daemon faster-whisper sounddevice \
+            > "$RUNNER_TEMP/pip-dry-run.log" 2>&1; then
+            echo "CHECK job-inputs/pip: PASS - the daemon, faster-whisper and sounddevice would install"
+          else
+            echo "CHECK job-inputs/pip: FAIL - $(tail -3 "$RUNNER_TEMP/pip-dry-run.log" | tr '\n' ' ')"
+            failed=$((failed + 1))
+          fi
+          for package in "--cask blackhole-2ch" "espeak-ng"; do
+            # shellcheck disable=SC2086 # "--cask blackhole-2ch" is two arguments on purpose
+            if brew info $package > /dev/null 2>&1; then
+              echo "CHECK job-inputs/brew: PASS - Homebrew knows $package"
+            else
+              echo "CHECK job-inputs/brew: FAIL - Homebrew does not know $package"
+              failed=$((failed + 1))
+            fi
+          done
+          if command -v say > /dev/null; then
+            echo "CHECK job-inputs/say: PASS - $(command -v say)"
+          else
+            echo "CHECK job-inputs/say: FAIL - no say on this runner"
+            failed=$((failed + 1))
+          fi
+          exit $failed
+
       - name: Install the daemon and the recogniser (core, Faster-Whisper, PortAudio)
         timeout-minutes: 8
         run: |
           python -m pip install --disable-pip-version-check --progress-bar off -e ./daemon faster-whisper sounddevice
           export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
           python -c "from huggingface_hub import snapshot_download; from pilot.system.model_presence import FASTER_WHISPER_REPOS as R; print(snapshot_download(R['tiny.en']))"
-        working-directory: daemon
 
       # BlackHole 2ch (Existential Audio, GPL-3.0): a Core Audio plug-in in /Library/Audio/Plug-Ins/HAL, loaded when
       # coreaudiod starts, so coreaudiod is restarted after the install. espeak-ng (GPL-3.0) is the voice when this
