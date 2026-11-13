@@ -117,7 +117,7 @@ Every folder in the list carries a name that is Heliox's alone, and the code say
 |---|---|---|
 | `~/.config/heliox-os/env`, `python`, `tools`, `uv-cache`, `setup` | the environment, private Python, uv and setup scripts; always under the home folder, whatever `XDG_CONFIG_HOME` says | program files |
 | `$XDG_CONFIG_HOME/heliox-os`, by default `~/.config/heliox-os` (the rest) | settings, keys, restrictions, shortcut | the person's data |
-| `~/.config/heliox-os/setup.json`, when `XDG_CONFIG_HOME` points elsewhere | the parts setup installed | program files |
+| `~/.config/heliox-os/setup.json` | the parts setup installed; until 13 November 2026 removed only when `XDG_CONFIG_HOME` pointed elsewhere, so "keep my data" kept it in the usual layout and a later install brought the earlier parts back (found by the linux-package AppImage check, CI on 0fb22f4) | program files |
 | `~/.config/heliox-os` (the rest), when `XDG_CONFIG_HOME` points elsewhere | settings from before the variable was set, which the daemon no longer reads; listed with their size, kept with "keep my data"; the folder goes once it is empty | the person's data |
 | `$XDG_DATA_HOME/heliox-os/models`, by default under `~/.local/share` | downloaded speech models | program files |
 | `$XDG_DATA_HOME/heliox-os`, by default `~/.local/share/heliox-os` (the rest) | memory, timeline, receipts, undo copies | the person's data |

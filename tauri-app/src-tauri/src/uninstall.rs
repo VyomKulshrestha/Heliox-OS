@@ -224,16 +224,19 @@ pub fn locations(dirs: &SystemDirs) -> Vec<Place> {
         .iter()
         .map(|child| place(setup.join(child), &format!("Setup: {child}"), App, Folder))
         .collect();
+    // Setup's record of the optional parts it installed is the app's own, in both layouts: before 13 November 2026
+    // it was listed only when XDG_CONFIG_HOME pointed elsewhere, so in the usual layout "keep my data" kept it inside
+    // the settings folder and a later install brought the earlier parts back.
+    out.push(place(
+        setup.join(SETUP_RECORD),
+        "Setup: record of the installed parts",
+        App,
+        Folder,
+    ));
     if setup != config {
         // XDG_CONFIG_HOME points elsewhere: the daemon's settings live there. ~/.config/heliox-os still holds what
-        // setup builds (the folders above) and records (setup.json), and can hold settings from before the
-        // variable was set, which "keep my data" keeps: only setup's own parts are app files here.
-        out.push(place(
-            setup.join(SETUP_RECORD),
-            "Setup: record of the installed parts",
-            App,
-            Folder,
-        ));
+        // setup builds (the folders and the record above), and can hold settings from before the variable was set,
+        // which "keep my data" keeps: only setup's own parts are app files here.
         let mut setup_parts: Vec<&'static str> = CONFIG_APP_CHILDREN.to_vec();
         setup_parts.push(SETUP_RECORD);
         out.push(place(
@@ -1151,6 +1154,59 @@ mod tests {
         let report = remove_files(&dirs, false, Credentials::default());
         assert!(report.failed.is_empty(), "{:?}", report.failed);
         assert!(!setup.exists(), "everything: the folder goes, empty");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn setups_record_is_an_app_file_in_both_layouts_on_every_system() {
+        for os in ["linux", "macos", "windows"] {
+            let home = PathBuf::from("/home/sam");
+            let record = home.join(".config").join("heliox-os").join(SETUP_RECORD);
+            let usual = dirs_for(&home, os);
+            let moved = SystemDirs {
+                xdg: Xdg {
+                    config: Some(PathBuf::from("/srv/cfg")),
+                    ..Xdg::default()
+                },
+                ..dirs_for(&home, os)
+            };
+            for (layout, dirs) in [("usual", usual), ("XDG_CONFIG_HOME elsewhere", moved)] {
+                let all = locations(&dirs);
+                let listed: Vec<&Place> = all.iter().filter(|p| p.path == record).collect();
+                assert_eq!(listed.len(), 1, "{os}, {layout}: listed once");
+                assert_eq!(listed[0].kind, Kind::App, "{os}, {layout}");
+                assert!(
+                    chosen(&all, true).iter().any(|p| p.path == record),
+                    "{os}, {layout}: keep my data removes it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn keep_my_data_removes_setups_record_and_keeps_the_settings_in_the_usual_layout() {
+        let root =
+            std::env::temp_dir().join(format!("heliox-uninstall-record-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let dirs = dirs_for(&home, "linux");
+        let setup = home.join(".config").join("heliox-os");
+        std::fs::create_dir_all(setup.join("env")).unwrap();
+        std::fs::write(setup.join(SETUP_RECORD), "{\"groups\": [\"voice\"]}").unwrap();
+        std::fs::write(setup.join("config.toml"), "theme = 'dark'\n").unwrap();
+
+        let report = remove_files(&dirs, true, Credentials::default());
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert!(!setup.join(SETUP_RECORD).exists(), "the record goes");
+        assert!(!setup.join("env").exists());
+        assert!(
+            setup.join("config.toml").exists(),
+            "keep my data keeps the settings"
+        );
+
+        let report = remove_files(&dirs, false, Credentials::default());
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert!(!setup.exists(), "everything: the folder goes");
         let _ = std::fs::remove_dir_all(&root);
     }
 
