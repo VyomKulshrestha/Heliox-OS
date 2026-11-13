@@ -97,6 +97,7 @@ OWN_WORDS_KINDS = frozenset(
         "repeated_word",
         "past_date",
         "near_name",
+        "pasted_twice",
         "community_catch",
         "personal_fact",
         COMMITMENT,

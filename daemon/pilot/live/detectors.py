@@ -9,6 +9,7 @@ a false correction costs more trust than a missed one.
 from __future__ import annotations
 
 import calendar
+import hashlib
 import logging
 import re
 from dataclasses import dataclass, field, replace
@@ -36,6 +37,7 @@ KINDS = (
     "said_vs_typed",  # pilot.live.crosscheck: a date said to Heliox against the date just typed for the same thing
     "past_date",  # a date that has already passed, written as if it were still ahead
     "near_name",  # a greeting to someone the person told Heliox about, with their name one letter off
+    "pasted_twice",  # the same sentence of eight words or more twice in one field
 )
 
 KIND_LABELS = {
@@ -54,6 +56,7 @@ KIND_LABELS = {
     "said_vs_typed": "A date you say that differs from the one you just wrote",
     "past_date": "A date that has already passed, written as if it were ahead",
     "near_name": "A name one letter off someone you told me about",
+    "pasted_twice": "The same sentence twice in what you write",
 }
 # Kinds found by a model rather than a rule: still there while their quoted evidence is in the text.
 MODEL_KINDS = frozenset({"personal_fact"})
@@ -1542,6 +1545,53 @@ def near_name(text: str, ctx: TextContext) -> list[Correction]:
     return list(found.values())
 
 
+# ── The same sentence twice in one field ──────────────────────────────────────────────────────────────────────
+
+# A sentence pasted or typed a second time: eight words or more, the same apart from case, spacing and the closing
+# mark, twice in the field. Not quoted lines, list items or headings, not code or terminals, not what is read
+# off the screen; and, as for other slips in the person's own words, not when the field already held both copies
+# when they started. A low-urgency card, never spoken.
+PASTED_MIN_WORDS = 8
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
+# Not prose: quoted lines of an earlier message, list items and headings, which often repeat a title on purpose
+# ("feat: add the panel" over "* feat: add the panel").
+_NOT_PROSE = re.compile(r"^(?:>|[*\-\u2022#]|\d+[.)]\s)")
+
+
+def _said_once(sentence: str) -> str:
+    return " ".join(sentence.casefold().split()).rstrip(".!?;: ")
+
+
+def pasted_twice(text: str, ctx: TextContext) -> list[Correction]:
+    """A sentence of PASTED_MIN_WORDS words or more that is in the field twice."""
+    if ctx.source != "focused_field" or ctx.is_terminal or ctx.is_code_editor:
+        return []
+    seen: dict[str, str] = {}
+    found: dict[str, Correction] = {}
+    for piece in _SENTENCE_END.split(text):
+        sentence = piece.strip()
+        if not sentence or _NOT_PROSE.match(sentence) or len(sentence.split()) < PASTED_MIN_WORDS:
+            continue
+        same = _said_once(sentence)
+        if same not in seen:
+            seen[same] = sentence
+            continue
+        key = f"pasted_twice:{hashlib.sha1(same.encode('utf-8')).hexdigest()[:12]}"
+        if key in found or len(found) == 2:
+            continue
+        found[key] = Correction(
+            kind="pasted_twice",
+            key=key,
+            title="This sentence is in there twice",
+            message="Delete one of them.",
+            evidence=_short(seen[same], 80),
+            urgency=LOW,
+            confidence=0.8,
+            trailing=_at_end(text, text.rfind(sentence) + len(sentence)),
+        )
+    return list(found.values())
+
+
 DETECTORS = {
     "community_catch": community_catch,
     "risky_command": risky_command,
@@ -1554,6 +1604,7 @@ DETECTORS = {
     "repeated_word": repeated_word,
     "past_date": past_date,
     "near_name": near_name,
+    "pasted_twice": pasted_twice,
 }
 
 # What a spoken sentence can be checked for; screen-only checks (commands, errors, typing) do not apply.
@@ -1610,6 +1661,7 @@ MENTION_KINDS = frozenset(
         "missing_attachment",
         "past_date",
         "near_name",
+        "pasted_twice",
     }
 )
 _QUOTE_MARKS = frozenset('"`\u201c\u201d')

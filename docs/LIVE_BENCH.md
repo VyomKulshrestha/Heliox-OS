@@ -227,6 +227,24 @@ into an email. A kind with a false alarm anywhere there would be a card only, ne
   very first word of a new field is already there at Live's first look, so it counts as text that was there
   before), 11/11 in all six runs of the whole bench; 0 false alarms in the pack. False alarms elsewhere: 0 on the
   bench, 0 of 975 sentences, 0 of 2,128 commit messages in each window.
+- **The same sentence twice** (`pasted_twice`). Rule: a sentence of eight words or more that is in the field twice,
+  the same apart from case, spacing and the closing mark. Not quoted lines of an earlier message, list items or
+  headings (a squash commit repeats its title as a bullet on purpose: that was the one false alarm found, in 2 of
+  2,129 commit messages, and it is gone), not code, terminals or what is read off the screen, and not when the field
+  already held both copies. Reads: the field's text only. A low-urgency card, never spoken; no "You sent" card.
+  Pack: 11 that must fire, 20 that must not; 11/11 caught and 0 false alarms in all six runs. False alarms
+  elsewhere: 0 on the bench, 0 of 975 sentences, 0 of 2,129 commit messages in each window.
+
+What was weighed and left out:
+- **"Attached" with nothing attached.** None of the three platform readers can tell whether a message has an
+  attachment: they read the focused field's text, and the attachment list is another part of the mail window
+  that UI Automation, the macOS Accessibility API and AT-SPI expose differently in each mail app, when at all.
+  The existing `missing_attachment` card ("You mention an attachment") stays as it is.
+- **A time that collides with the calendar, or contradicts a reminder.** Already the grounded check
+  (`personal_fact`), against the calendar, to-dos and reminders.
+- **A wrong percentage or unit sum.** Already `arithmetic` ("20% of 150 is 35").
+- **A reply that stops mid-sentence at send.** Too often meant (a quick "ok", "and you?"), and it can only be told
+  after it is sent.
 
 ## What it does not show
 

@@ -1,0 +1,675 @@
+[
+  {
+    "name": "pasted_twice fires 01: We should ship the first part on its own next we",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (1)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "We should ship the first part on its own next week. We should ship the first part on its own next week."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice fires 02: The venue holds two hundred people and has parki",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (2)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "The venue holds two hundred people and has parking at the back. Lunch is included. The venue holds two hundred people and has parking at the back."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice fires 03: Our plan is to finish the summary and send it ar",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (3)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "Our plan is to finish the summary and send it around on Friday.\nOur plan is to finish the summary and send it around on Friday."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice fires 04: Can someone check whether the build passes on th",
+    "app": "slack.exe",
+    "title": "#team - Slack (4)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "Can someone check whether the build passes on the release branch? can someone check whether the build passes on the release branch?"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice fires 05: Call the bank about the card that was charged tw",
+    "app": "notepad.exe",
+    "title": "notes.txt - Notepad (5)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "Call the bank about the card that was charged twice last month. Then the dentist. Call the bank about the card that was charged twice last month."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice fires 06: Please review the attached budget before the mee",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (6)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "Please review the attached budget before the meeting on Friday afternoon.\n\nPlease  review the attached budget before the meeting on Friday afternoon!"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice fires 07: The second section reads much better now that th",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (7)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "The second section reads much better now that the examples are shorter. The second section reads much better now that the examples are shorter."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice fires 08: I will be out of the office from Monday until We",
+    "app": "slack.exe",
+    "title": "#team - Slack (8)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "I will be out of the office from Monday until Wednesday next week. I will be out of the office from Monday until Wednesday next week."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice fires 09: Thank you for your patience while we sort out th",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (9)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "Thank you for your patience while we sort out the delivery problem. Thank you for your patience while we sort out the delivery problem."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice fires 10: Remember to water the plants and take the bins o",
+    "app": "notepad.exe",
+    "title": "notes.txt - Notepad (10)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "Remember to water the plants and take the bins out on Thursday night.\nRemember to water the plants and take the bins out on Thursday night"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice fires 11: Everyone on the team has access to the shared fo",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (11)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [
+      "pasted_twice"
+    ],
+    "steps": [
+      {
+        "type": "Everyone on the team has access to the shared folder from today onwards. Everyone on the team has access to the shared folder from today onwards."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 12: Thanks a lot. Thanks a lot.",
+    "app": "slack.exe",
+    "title": "#team - Slack (12)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Thanks a lot. Thanks a lot."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 13: > We should ship the first part on its own next ",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (13)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "> We should ship the first part on its own next week.\n> We should ship the first part on its own next week.\nAgreed, let's do that."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 14: total = price * quantity  # the price of one ite",
+    "app": "Code.exe",
+    "title": "plan.py - Visual Studio Code (14)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "total = price * quantity  # the price of one item times the number\ntotal = price * quantity  # the price of one item times the number"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 15: Error: the connection to the server timed out af",
+    "app": "WindowsTerminal.exe",
+    "title": "PowerShell (15)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Error: the connection to the server timed out after thirty seconds\nError: the connection to the server timed out after thirty seconds"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 16: Item one costs ten pounds in total for the whole",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (16)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Item one costs ten pounds in total for the whole team. Item two costs twelve pounds in total for the whole team."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 17: We should ship the first part on its own next we",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (17)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "We should ship the first part on its own next week. We should ship the second part on its own next month."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 18: Name: ____ Date: ____\nName: ____ Date: ____",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (18)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Name: ____ Date: ____\nName: ____ Date: ____"
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 19: As I said before, we should ship the first part ",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (19)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "As I said before, we should ship the first part on its own."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 20: Go team. Go team. Onwards and upwards, everyone.",
+    "app": "slack.exe",
+    "title": "#team - Slack (20)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Go team. Go team. Onwards and upwards, everyone."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 21: The meeting is on Friday at three in the large r",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (21)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "The meeting is on Friday at three in the large room on the second floor."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 22: Monday: gym, groceries, call mum.\nTuesday: gym, ",
+    "app": "notepad.exe",
+    "title": "notes.txt - Notepad (22)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Monday: gym, groceries, call mum.\nTuesday: gym, groceries, call mum."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 23: He wrote \"we should ship it now\" twice in the th",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (23)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "He wrote \"we should ship it now\" twice in the thread, and both times nobody answered him."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 24: Step one: open the settings and choose the accou",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (24)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Step one: open the settings and choose the account you want to change.\nStep two: open the settings and choose the account you want to remove."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 25: Happy birthday! Happy birthday! Hope you have a ",
+    "app": "slack.exe",
+    "title": "#team - Slack (25)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Happy birthday! Happy birthday! Hope you have a lovely day with the family."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 26: Thanks again for all your help this week, it mad",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (26)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Thanks again for all your help this week, it made a real difference to us."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 27: To do: book the flights, renew the passport, pay",
+    "app": "notepad.exe",
+    "title": "notes.txt - Notepad (27)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "To do: book the flights, renew the passport, pay the council tax before the end of the month."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 28: The results were good. The results were good for",
+    "app": "WINWORD.EXE",
+    "title": "Proposal.docx - Word (28)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "The results were good. The results were good for the second quarter as well, which was a surprise."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 29: Please find the minutes below.\n> Present: Sam, P",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (29)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "Please find the minutes below.\n> Present: Sam, Priya, Daniel and two people from the design team.\n> Present: Sam, Priya, Daniel and two people from the design team."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 30: I think we should wait. I think we should wait u",
+    "app": "slack.exe",
+    "title": "#team - Slack (30)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "I think we should wait. I think we should wait until the numbers for the whole month are in."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  },
+  {
+    "name": "pasted_twice quiet 31: See you tomorrow at nine in the morning for the ",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: plans - Message (HTML) (31)",
+    "today": "2026-11-13",
+    "people": {
+      "manager": "Priya",
+      "partner": "Daniel",
+      "sister": "Hannah",
+      "dentist": "Michael"
+    },
+    "expect": [],
+    "steps": [
+      {
+        "type": "See you tomorrow at nine in the morning for the review of the plan."
+      },
+      {
+        "pause": "done"
+      }
+    ]
+  }
+]
