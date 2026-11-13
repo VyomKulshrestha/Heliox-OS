@@ -46,18 +46,22 @@ def test_on_x11_the_portal_is_not_asked(monkeypatch, tmp_path):
 
 
 def test_a_quote_in_the_windows_path_cannot_end_the_powershell_string(monkeypatch, tmp_path):
-    scripts: list[str] = []
+    """The path is a value the script reads, never part of its text, so no quote in it can end a string there."""
+    calls: list[tuple[str, dict]] = []
 
-    async def run_powershell(script, **_kwargs):
-        scripts.append(script)
+    async def run_powershell(script, **kwargs):
+        calls.append((script, kwargs))
         return 0, "", ""
 
     monkeypatch.setattr(screen, "CURRENT_PLATFORM", Platform.WINDOWS)
     monkeypatch.setattr(screen, "run_powershell", run_powershell)
-    target = tmp_path / "O'Brien" / "shot.png"
-    asyncio.run(screen.screenshot(str(target)))
-    assert f"$bitmap.Save('{str(target).replace(chr(39), chr(39) * 2)}')" in scripts[0]
-    assert f"Save('{target}')" not in scripts[0]
+    for name in ("O'Brien", "O\u2019Brien", "a`b$(c)"):
+        calls.clear()
+        target = tmp_path / name / "shot.png"
+        asyncio.run(screen.screenshot(str(target)))
+        script, kwargs = calls[0]
+        assert str(target) in kwargs["values"].values()
+        assert name not in script and str(target) not in script
 
 
 def test_the_take_screenshot_rpc_saves_where_the_system_keeps_screenshots(monkeypatch, tmp_path):
