@@ -1,0 +1,443 @@
+{
+  "interactive": {
+    "max_tier": {
+      "shell": 4,
+      "browsing": 4,
+      "system_control": 4,
+      "other": 4
+    },
+    "deny_action_types": [],
+    "allow_root": true
+  },
+  "autonomous": {
+    "max_tier": {
+      "shell": 2,
+      "browsing": 2,
+      "system_control": 1,
+      "other": 2
+    },
+    "deny_action_types": [
+      "browser_execute_js",
+      "power_shutdown",
+      "power_restart",
+      "registry_write"
+    ],
+    "allow_root": false
+  },
+  "web_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 2,
+      "system_control": 0,
+      "other": 1
+    },
+    "deny_action_types": [
+      "browser_execute_js"
+    ],
+    "allow_root": false
+  },
+  "voice": {
+    "max_tier": {
+      "shell": 1,
+      "browsing": 1,
+      "system_control": 1,
+      "other": 2
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "gesture": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 2,
+      "other": 1
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "neural": {
+    "max_tier": {
+      "shell": 1,
+      "browsing": 1,
+      "system_control": 1,
+      "other": 1
+    },
+    "deny_action_types": [
+      "file_read",
+      "file_write",
+      "file_delete",
+      "file_move",
+      "file_copy",
+      "file_list",
+      "file_search",
+      "directory_summary",
+      "directory_size",
+      "file_hash",
+      "file_compare",
+      "file_permissions",
+      "git_resolve",
+      "git_status",
+      "git_diff",
+      "git_log",
+      "git_branch",
+      "git_stage",
+      "git_commit",
+      "git_push",
+      "package_install",
+      "package_remove",
+      "package_update",
+      "package_search",
+      "service_start",
+      "service_stop",
+      "service_restart",
+      "service_enable",
+      "service_disable",
+      "service_status",
+      "gnome_setting_read",
+      "gnome_setting_write",
+      "dbus_call",
+      "shell_command",
+      "shell_script",
+      "pty_exec",
+      "open_url",
+      "request_human_help",
+      "process_kill",
+      "process_info",
+      "clipboard_read",
+      "clipboard_write",
+      "system_health_review",
+      "power_shutdown",
+      "power_restart",
+      "power_sleep",
+      "power_lock",
+      "power_logout",
+      "schedule_create",
+      "schedule_list",
+      "schedule_delete",
+      "env_get",
+      "env_set",
+      "env_list",
+      "window_focus",
+      "window_close",
+      "window_minimize",
+      "window_maximize",
+      "volume_set",
+      "volume_mute",
+      "brightness_get",
+      "brightness_set",
+      "screenshot",
+      "wifi_list",
+      "wifi_connect",
+      "wifi_disconnect",
+      "disk_list",
+      "disk_mount",
+      "disk_unmount",
+      "user_list",
+      "user_info",
+      "download_file",
+      "registry_read",
+      "registry_write",
+      "log_analyze",
+      "mouse_click",
+      "mouse_double_click",
+      "mouse_right_click",
+      "mouse_move",
+      "mouse_drag",
+      "mouse_scroll",
+      "mouse_position",
+      "keyboard_type",
+      "keyboard_press",
+      "keyboard_hotkey",
+      "keyboard_hold",
+      "screen_ocr",
+      "screen_find_text",
+      "screen_analyze",
+      "screen_element_map",
+      "screen_accessibility_snapshot",
+      "browser_navigate",
+      "browser_click",
+      "browser_click_text",
+      "browser_type",
+      "browser_select",
+      "browser_hover",
+      "browser_scroll",
+      "browser_extract",
+      "browser_extract_table",
+      "browser_extract_links",
+      "browser_execute_js",
+      "browser_screenshot",
+      "browser_fill_form",
+      "browser_new_tab",
+      "browser_close_tab",
+      "browser_list_tabs",
+      "browser_switch_tab",
+      "browser_back",
+      "browser_forward",
+      "browser_refresh",
+      "browser_wait",
+      "browser_close",
+      "browser_page_info",
+      "browser_snapshot",
+      "trigger_create",
+      "trigger_list",
+      "trigger_delete",
+      "trigger_start",
+      "trigger_stop",
+      "code_execute",
+      "code_generate_and_run",
+      "calendar_parse",
+      "calendar_sync",
+      "calendar_create_event",
+      "calendar_list_events",
+      "calendar_delete_event",
+      "file_parse",
+      "file_search_content",
+      "api_request",
+      "api_github",
+      "api_send_email",
+      "api_webhook",
+      "api_slack",
+      "api_discord",
+      "api_scrape",
+      "workspace_index",
+      "workspace_search",
+      "email_fetch",
+      "email_summarize",
+      "email_reply",
+      "calendar_fetch",
+      "calendar_reconcile",
+      "ssh_command",
+      "ssh_script",
+      "screen_detect_elements",
+      "wasm_call",
+      "plugin_call",
+      "skill_run",
+      "mcp_list_tools",
+      "mcp_call_tool"
+    ],
+    "allow_root": false
+  },
+  "mcp": {
+    "max_tier": {
+      "shell": 1,
+      "browsing": 1,
+      "system_control": 1,
+      "other": 2
+    },
+    "deny_action_types": [
+      "browser_execute_js",
+      "power_shutdown",
+      "power_restart",
+      "power_logout",
+      "registry_write"
+    ],
+    "allow_root": false
+  },
+  "self_healing": {
+    "max_tier": {
+      "shell": 2,
+      "browsing": 0,
+      "system_control": 3,
+      "other": 2
+    },
+    "deny_action_types": [
+      "power_shutdown",
+      "power_restart",
+      "power_logout",
+      "registry_write",
+      "browser_execute_js"
+    ],
+    "allow_root": false
+  },
+  "system_agent": {
+    "max_tier": {
+      "shell": 4,
+      "browsing": 4,
+      "system_control": 4,
+      "other": 4
+    },
+    "deny_action_types": [],
+    "allow_root": true
+  },
+  "ssh_agent": {
+    "max_tier": {
+      "shell": 2,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 0
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "code_agent": {
+    "max_tier": {
+      "shell": 3,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 1
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "monitor_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 1
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "comm_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 2
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "rss_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 1
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "calendar_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 3
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "forensics_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 0
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "semantic_search_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 0
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "file_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 3,
+      "other": 1
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "package_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 3
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "service_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 2,
+      "other": 0
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "desktop_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 2,
+      "other": 1
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "automation_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 3,
+      "other": 3
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "integration_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 2
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "vision_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 0
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "plugin_runtime_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 2
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "network_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 2,
+      "other": 1
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  },
+  "git_agent": {
+    "max_tier": {
+      "shell": 0,
+      "browsing": 0,
+      "system_control": 0,
+      "other": 2
+    },
+    "deny_action_types": [],
+    "allow_root": false
+  }
+}

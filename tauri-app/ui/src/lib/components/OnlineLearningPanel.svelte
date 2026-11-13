@@ -353,6 +353,8 @@
     color: var(--text-secondary);
     background: var(--bg-primary);
     cursor: pointer;
+    /* Settings' shared button rules set a size; this panel keeps the browser's. */
+    font-size: revert;
   }
 
   .btn-danger {

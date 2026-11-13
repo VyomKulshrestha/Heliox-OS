@@ -2811,7 +2811,13 @@
     opacity: 0.6;
   }
 
-  .setting-row {
+  /* The row family: Settings' rows, labels, descriptions, switches, inputs and buttons. Components shown inside
+     Settings (ProfileSharing, PlannerModel, TalkModel, the LazyPanel panels...) use these class names without
+     styling them, and Svelte keeps a component's styles to its own markup, so these rules are global within
+     .settings-panel. :where() keeps every one of them at the weight of a single class, so a panel that styles its
+     own rows keeps its values. The Visual Regression suite fails if any row in Settings is left without this
+     layout (tests/visual/settings-rows.spec.ts). */
+  :global(:where(.settings-panel) .setting-row) {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -2819,27 +2825,27 @@
     border-bottom: 1px solid var(--border);
   }
 
-  .setting-row:last-child {
+  :global(:where(.settings-panel) .setting-row:where(:last-child)) {
     border-bottom: none;
   }
 
-  .setting-info {
+  :global(:where(.settings-panel) .setting-info) {
     display: flex;
     flex-direction: column;
     gap: 2px;
   }
 
-  .setting-label {
+  :global(:where(.settings-panel) .setting-label) {
     font-size: 13px;
     font-weight: 500;
   }
 
-  .setting-desc {
+  :global(:where(.settings-panel) .setting-desc) {
     font-size: 11px;
     color: var(--text-muted);
   }
 
-  .toggle {
+  :global(:where(.settings-panel) .toggle) {
     width: 40px;
     height: 22px;
     border-radius: 11px;
@@ -2851,13 +2857,13 @@
     flex-shrink: 0;
   }
 
-  .toggle.active {
+  :global(:where(.settings-panel) .toggle:where(.active)) {
     background: var(--accent);
     border-color: var(--accent);
     color: var(--on-accent);
   }
 
-  .toggle-knob {
+  :global(:where(.settings-panel) .toggle-knob) {
     position: absolute;
     top: 2px;
     left: 2px;
@@ -2868,7 +2874,7 @@
     transition: transform 0.2s;
   }
 
-  .toggle.active .toggle-knob {
+  :global(:where(.settings-panel) :where(.toggle.active) .toggle-knob) {
     transform: translateX(18px);
   }
 
@@ -2898,7 +2904,7 @@
     color: var(--on-accent);
   }
 
-  .input-sm {
+  :global(:where(.settings-panel) .input-sm) {
     width: 80px;
     padding: 5px 8px;
     font-size: 13px;
@@ -2909,7 +2915,7 @@
     text-align: right;
   }
 
-  .input-md {
+  :global(:where(.settings-panel) .input-md) {
     width: 160px;
     padding: 5px 8px;
     font-size: 13px;
@@ -2995,7 +3001,7 @@
     align-items: center;
   }
 
-  .btn-save {
+  :global(:where(.settings-panel) .btn-save) {
     padding: 5px 14px;
     font-size: 12px;
     font-weight: 600;
@@ -3006,12 +3012,12 @@
     white-space: nowrap;
   }
 
-  .btn-save:hover:not(:disabled) {
+  :global(:where(.settings-panel) .btn-save:where(:hover:not(:disabled))) {
     background: var(--accent-hover);
     color: var(--on-accent);
   }
 
-  .btn-save:disabled {
+  :global(:where(.settings-panel) .btn-save:where(:disabled)) {
     cursor: not-allowed;
     background: var(--bg-tertiary);
     color: var(--text-secondary);
@@ -3051,7 +3057,7 @@
     gap: 6px;
   }
 
-  .btn-secondary {
+  :global(:where(.settings-panel) .btn-secondary) {
     padding: 5px 12px;
     color: var(--text-primary);
     background: var(--bg-tertiary);
@@ -3060,7 +3066,7 @@
     font-size: 12px;
   }
 
-  .btn-secondary:disabled {
+  :global(:where(.settings-panel) .btn-secondary:where(:disabled)) {
     cursor: not-allowed;
     opacity: 0.55;
   }
@@ -3273,7 +3279,7 @@
     line-height: 1.3;
   }
 
-  .security-setting-status {
+  :global(:where(.settings-panel) .security-setting-status) {
     margin-top: 3px;
     font-size: 11px;
     color: var(--text-muted);

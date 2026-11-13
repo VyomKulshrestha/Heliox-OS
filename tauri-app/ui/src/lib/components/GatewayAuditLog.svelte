@@ -252,6 +252,18 @@
     padding: 10px 16px 0;
   }
 
+  /* The filters stay the browser's own selects: Settings' shared 80 px input would cut their option names. */
+  .filter-bar .input-sm {
+    width: revert;
+    padding: revert;
+    font-size: revert;
+    color: inherit;
+    background: revert;
+    border: revert;
+    border-radius: revert;
+    text-align: revert;
+  }
+
   .verify-banner {
     margin: 10px 16px 0;
     padding: 8px 12px;

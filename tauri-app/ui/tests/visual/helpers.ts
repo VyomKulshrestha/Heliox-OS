@@ -7,6 +7,7 @@
  */
 
 import type { Page } from "@playwright/test";
+import { EVERY_PANEL_SETTINGS, everyPanelReplies } from "./everyPanel";
 
 /**
  * Inject a minimal Tauri IPC stub so the app doesn't crash when it tries
@@ -258,6 +259,18 @@ export async function mockTauriIpc(page: Page): Promise<void> {
                 id: request.id,
                 error: { code: -32601, message: "Method not found: risk_gate_status" },
               }),
+            });
+          }, 0);
+          return;
+        }
+
+        // The answers that make every Settings panel show its rows, only for the tests that ask (gotoApp's
+        // everyPanel, everyPanel.ts): the screenshot tests keep the page as it was without them.
+        const canned = (window as any).__mock_every_panel__?.[request.method];
+        if (canned !== undefined) {
+          setTimeout(() => {
+            this.onmessage?.({
+              data: JSON.stringify({ jsonrpc: "2.0", id: request.id, result: canned }),
             });
           }, 0);
           return;
@@ -675,16 +688,25 @@ export async function emitNotification(page: Page, method: string, params: Recor
  * Navigate to the app root and wait for the main window to be visible.
  * Skips the SetupWizard by pre-seeding localStorage.
  */
-export async function gotoApp(page: Page, options: { riskGateStatusMissing?: boolean } = {}): Promise<void> {
+export async function gotoApp(
+  page: Page,
+  options: { riskGateStatusMissing?: boolean; everyPanel?: boolean; modelProvider?: string } = {},
+): Promise<void> {
   if (options.riskGateStatusMissing) {
     await page.addInitScript(() => {
       (window as any).__mock_risk_gate_status_missing__ = true;
     });
   }
+  if (options.everyPanel) {
+    await page.addInitScript((replies: Record<string, unknown>) => {
+      (window as any).__mock_every_panel__ = replies;
+    }, everyPanelReplies());
+  }
   await mockTauriIpc(page);
 
   // Pre-seed localStorage so the SetupWizard is skipped
-  await page.addInitScript(() => {
+  const seed = { provider: options.modelProvider ?? "ollama", extra: options.everyPanel ? EVERY_PANEL_SETTINGS : {} };
+  await page.addInitScript(({ provider, extra }: typeof seed) => {
     localStorage.setItem("heliox_first_run_complete", "true");
     // Minimal settings so the app doesn't crash on undefined reads
     localStorage.setItem(
@@ -693,7 +715,7 @@ export async function gotoApp(page: Page, options: { riskGateStatusMissing?: boo
         first_run_complete: true,
         theme: "dark",
         model: {
-          provider: "ollama",
+          provider,
           ollama_model: "llama3.1:8b",
           mode: "lightweight",
           cloud_provider: "gemini",
@@ -712,9 +734,10 @@ export async function gotoApp(page: Page, options: { riskGateStatusMissing?: boo
           protected_packages: [],
           blocked_commands: [],
         },
+        ...extra,
       }),
     );
-  });
+  }, seed);
 
   await page.goto("/");
   // Wait for the main window chrome to appear

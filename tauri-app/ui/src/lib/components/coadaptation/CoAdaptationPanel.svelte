@@ -698,6 +698,8 @@
     justify-content: space-between;
     gap: 12px;
     padding: 6px 0;
+    /* Settings' shared rows have a rule underneath; this panel's rows do not. */
+    border-bottom: none;
   }
 
   .setting-info {

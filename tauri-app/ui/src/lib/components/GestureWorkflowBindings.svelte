@@ -340,6 +340,9 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 12px;
+    /* Settings' shared input rules set these; this panel keeps its own sizing. */
+    width: revert;
+    text-align: revert;
   }
 
   .btn-remove {

@@ -334,6 +334,18 @@
     text-transform: capitalize;
   }
 
+  /* The tier selects stay the browser's own: Settings' shared 80 px input would cut "SYSTEM_MODIFY". */
+  .family-row .input-sm {
+    width: revert;
+    padding: revert;
+    font-size: revert;
+    color: inherit;
+    background: revert;
+    border: revert;
+    border-radius: revert;
+    text-align: revert;
+  }
+
   .deny-list {
     margin-top: 8px;
     display: flex;

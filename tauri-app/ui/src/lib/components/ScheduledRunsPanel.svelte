@@ -215,7 +215,7 @@ Heliox will stop running it on its timetable. A run that already started keeps g
             {#if run.enabled}<small>Next: {new Date(run.next_run_at * 1000).toLocaleString()}</small>{/if}
           </div>
           <div class="run-buttons">
-            <label class="toggle"
+            <label class="enable-check"
               ><input
                 type="checkbox"
                 checked={run.enabled}
@@ -309,7 +309,7 @@ Heliox will stop running it on its timetable. A run that already started keeps g
     gap: 6px;
   }
   .form .day,
-  .toggle {
+  .enable-check {
     display: flex;
     align-items: center;
     gap: 4px;

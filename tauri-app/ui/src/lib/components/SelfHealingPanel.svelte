@@ -402,6 +402,8 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 12px;
+    /* Settings' shared input rules right-align; this select keeps its own alignment. */
+    text-align: revert;
   }
 
   .metric-checks {
