@@ -1520,6 +1520,9 @@ class PilotServer:
         self._user_profile = UserProfile(
             DATA_DIR / "user_profile.json", remember=self._profile_remember, forget=self._profile_forget
         )
+        from pilot.personal.wiring import routines_for
+
+        self._user_profile.routines = routines_for(self)  # "what do you know about me" and the routine phrases
         if self._memory is not None:
             # What they told Heliox about themselves leads every planner context (pilot.memory.store).
             self._memory.set_profile_source(self._user_profile.context_lines)
@@ -3744,9 +3747,10 @@ class PilotServer:
                 )
                 await self._broadcast_notification("task_complete", payload)
                 if status == "success" and last_plan_id and not dry_run:
-                    from pilot.personal.wiring import note_task_done
+                    from pilot.personal.wiring import note_request, note_task_done
 
                     note_task_done(self, request_text)  # progress on a goal: offered at the next quiet moment
+                    note_request(self, request_text, planned=True)  # a routine, if it is one (memory.learn_routines)
                 # The execute reply carries these too, so the window that ran the task can show
                 # Undo and the receipt on the task's own message.
                 footer = {key: payload[key] for key in ("undo", "receipt_id") if key in payload}
@@ -7349,6 +7353,7 @@ class PilotServer:
 
     def _phrase_reserved(self, phrase: str) -> bool:
         """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
+        from pilot.personal.routines import PATTERNS as routine_phrases
         from pilot.workflows import (
             app_reminders,
             clipboard_history,
@@ -7446,6 +7451,7 @@ class PilotServer:
             user_profile.STYLE_REQUEST,
             user_profile.READ_REQUEST,
             user_profile.CLEAR_REQUEST,
+            *routine_phrases,
             goals.CREATE_REQUEST,
             goals.UPDATE_REQUEST,
             goals.NEXT_SET_REQUEST,
@@ -7630,6 +7636,9 @@ class PilotServer:
         for handler in handlers:
             reply = await handler(text)
             if reply is not None:
+                from pilot.personal.wiring import note_request
+
+                note_request(self, text, planned=False)  # "good morning" at nine every day is a routine
                 CODE_ANSWER_BY.set(
                     handler.__name__ + (f":{LOCAL_ANSWER_SOURCE.get()}" if handler.__name__ == "_local_answer" else "")
                 )
@@ -8626,6 +8635,7 @@ class PilotServer:
             ("snippets", self._snippets),
             ("profile", self._user_profile),
             ("goals", self._goals),
+            ("routines", getattr(self, "_routines", None)),
             ("habits", self._habits),
             ("focus_history", self._focus_log),
             ("todos", self._todos),

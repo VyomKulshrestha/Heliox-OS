@@ -220,12 +220,47 @@ def offers_for(server: Any, data_dir: Any = None) -> Any:
         suggestions=(suggester.picks if suggester is not None else None),
         legacy_suggestions_on=lambda: bool(getattr(config.suggestions, "enabled", False)),
         spans=spans,
-        moments=lambda now: _day_moments(server, now),
+        moments=lambda now: _day_moments(server, now) + _learned(server, now),
         label=app_label,
         state_path=Path(data_dir) / "offers.json" if data_dir is not None else None,
     )
     server._offers = offers
     return offers
+
+
+def routines_for(server: Any) -> Any:
+    """The person's routine record (pilot.personal.routines), made once."""
+    record = getattr(server, "_routines", None)
+    if record is not None:
+        return record
+    from pathlib import Path
+
+    from pilot.config import DATA_DIR
+    from pilot.personal.routines import RoutineRecord
+
+    def learning() -> bool:
+        return bool(getattr(getattr(server.config, "memory", None), "learn_routines", True))
+
+    record = RoutineRecord(Path(DATA_DIR) / "routines.json", enabled=learning)
+
+    async def stop() -> None:
+        await server._handle_update_config({"section": "memory", "values": {"learn_routines": False}}, None)
+        await server._broadcast_notification("config_updated", {"method": "voice", "section": "memory"})
+
+    record.stop = stop
+    server._routines = record
+    return record
+
+
+def note_request(server: Any, text: str, *, planned: bool) -> None:
+    """A request the person addressed to Heliox and Heliox took: kept for routines when it is one (never raises)."""
+    record = getattr(server, "_routines", None)
+    if record is None:
+        return
+    try:
+        record.note(str(text), planned=planned)
+    except Exception:
+        logger.debug("Could not note the request for routines", exc_info=True)
 
 
 def note_task_done(server: Any, request: str) -> None:
@@ -242,6 +277,17 @@ def note_task_done(server: Any, request: str) -> None:
             offers_for(server).offer_soon(offer)
     except Exception:
         logger.debug("Could not check the request against the goals", exc_info=True)
+
+
+def _learned(server: Any, now: datetime) -> list[Any]:
+    record = getattr(server, "_routines", None)
+    if record is None:
+        return []
+    try:
+        return record.offers(now)
+    except Exception:
+        logger.debug("Could not read the learned routines", exc_info=True)
+        return []
 
 
 def _day_moments(server: Any, now: datetime) -> list[Any]:
@@ -374,6 +420,23 @@ def offer_in_reply(server: Any, kind: str, text: str, request: str, why: str) ->
     return offers.mark_offered(offer)
 
 
+# Offers built from the routine record (pilot.personal.routines): what they say never goes to a cloud model.
+PRIVATE_OFFER_KINDS = frozenset({"learned_routine"})
+OFFERED_HERE = "(made an offer on this computer, from your routines)"
+
+
+def offer_in_history(offer: Any, layer: Any) -> str:
+    """What the conversation's history keeps of an offer, the history a model is later sent: the offer's words, except
+    for one built from the routine record when the conversation's model is not on this computer."""
+    if getattr(offer, "kind", "") not in PRIVATE_OFFER_KINDS:
+        return str(offer.text)
+    try:
+        local = bool(getattr(layer._model(), "local", False))
+    except Exception:
+        local = False
+    return str(offer.text) if local else OFFERED_HERE
+
+
 async def deliver_offer(server: Any, offer: Any, offer_id: str = "") -> None:
     """A card always (the app's offer card: Yes, Not today, Don't offer this, Why); spoken only when the person is
     using voice (the listener runs), so they can answer by voice too."""
@@ -391,7 +454,7 @@ async def deliver_offer(server: Any, offer: Any, offer_id: str = "") -> None:
     )
     layer = _layer(server)
     if layer is not None:
-        layer.memory.add_heliox(offer.text)
+        layer.memory.add_heliox(offer_in_history(offer, layer))
     listener = getattr(server, "_voice_listener", None)
     if listener is not None and getattr(listener, "is_running", False):
         await server._speak_companion_text(

@@ -432,6 +432,19 @@ unanswered), and an offer declined on two days within a week rests for a week af
 suggestion no longer hides the next (a habit behind a quiet goal). **Fakes only**: what a real person wants is not
 measured.
 
+Routines are learned from what the person asks Heliox for (`pilot.personal.routines`, on by default,
+`memory.learn_routines`). Kept for each request addressed to Heliox and taken: the kind and target as the router has
+them ("open", "outlook"), or one of three requests answered in code (the day, the wrap-up, the list), with the day
+and the hour; never the words as said, the audio or the reply, nothing overheard and nothing Live reads; only
+requests worth offering again (open, play, find and the like; never delete, send, pay). Kept 60 days, never put into
+a model's prompt. A routine is the same request in the same hour band on 4 of the last 10 days of the same kind, and
+at least 70% of all the times it was asked: in a simulation of sparse, varied use (about 7 requests a day from
+about 60 kinds, at any hour), 4 gives 0.04 false routines a month (3 gave 0.32), and finds a request made at
+nine on 70% of weekdays every time (42 of 50 at 50%). At most one offer a day comes from it, with "why" ("You've
+asked for this around nine on five days."). "What do you know about my routines", "forget my routines" and "stop
+learning my routines" work by voice; Settings has the switch and Your data lists and clears them; they are in "what
+do you know about me" and in the backup. **Fakes only** (`tests/test_learned_routines.py`).
+
 Suggestions, offers and Live are turned off, back on, down or up by voice from one table
 (`pilot.personal.spoken_settings`), each phrase family with the value it saves and the sentence said, and a request to
 stop something is answered by a sentence that says it stopped. "Stop suggesting things" (also "quit", "don't",

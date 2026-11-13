@@ -316,6 +316,9 @@ class UserProfile:
         self._forget = forget
         self._clock = clock  # for notes said in passing, which lapse (an "expires" field on the entry)
         self._dropped: list[str] = []  # kinds of entries the sweep removed, said once in the next "about me" answer
+        # The routines learned from what the person asks (pilot.personal.routines.RoutineRecord), when the server
+        # gives one: its phrases are answered here, and "what do you know about me" ends with them.
+        self.routines: Any = None
 
     async def _mirror_add(self, profile: dict[str, Any], key: str, predicate: str, value: str) -> None:
         if self._remember is None:
@@ -633,11 +636,26 @@ class UserProfile:
             "notes like that."
         )
 
+    async def _stop_learning(self) -> None:
+        stop = getattr(self.routines, "stop", None)
+        if stop is not None:
+            await stop()
+
+    def _routines_line(self) -> str:
+        record = self.routines
+        if record is None:
+            return ""
+        try:
+            found = record.routines() if record._learning() else []
+        except Exception:
+            return ""
+        return f" {record.describe()}" if found else ""
+
     def describe(self) -> str:
         dropped = self._dropped_sentence()
         if dropped:
-            return f"{dropped} {self._describe()}"
-        return self._describe()
+            return f"{dropped} {self._describe()}{self._routines_line()}"
+        return f"{self._describe()}{self._routines_line()}"
 
     def _nothing_yet(self, profile: dict[str, Any]) -> str:
         """An empty profile, said short. How to tell Heliox things is said to someone who has never told it anything,
@@ -684,6 +702,10 @@ class UserProfile:
             await self.sweep()  # what is never kept leaves the file and long-term memory the next time it is used
         except Exception:
             logger.warning("Could not remove stored entries Heliox never keeps", exc_info=True)
+        if self.routines is not None:
+            said = await self.routines.answer(text, stop=self._stop_learning)
+            if said is not None:
+                return said
         corrected = CORRECTION.match(normalized)
         if corrected:
             # "No, call me Sam": the phrase after the correction, which replaces the old fact wherever it is used.

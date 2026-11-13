@@ -1,19 +1,19 @@
 <script lang="ts">
-  /** One switch for notes said in passing ("my flight is on Friday"), and what is never kept that way. */
+  /** Notes said in passing ("my flight is on Friday"), what is never kept that way, and learning routines. */
   import { settings } from "../stores/settings";
 
   let error = $state("");
   let saving = $state(false);
   // Settings may not have loaded yet, or may come back without a memory section: the default (on) applies.
-  const on = $derived(
-    (($settings as unknown as { memory?: { passing_notes?: boolean } } | null)?.memory?.passing_notes ?? true) !==
-      false,
-  );
+  type Memory = { passing_notes?: boolean; learn_routines?: boolean };
+  const memory = $derived(($settings as unknown as { memory?: Memory } | null)?.memory ?? {});
+  const on = $derived(memory.passing_notes !== false);
+  const routines = $derived(memory.learn_routines !== false);
 
-  async function toggle(value: boolean) {
+  async function toggle(value: boolean, key: keyof Memory = "passing_notes") {
     saving = true;
     try {
-      const result = await settings.updateSectionDetailed("memory", { passing_notes: value });
+      const result = await settings.updateSectionDetailed("memory", { [key]: value });
       error = result?.ok ? "" : result?.message || "The setting was not saved.";
     } catch (err) {
       error = err instanceof Error ? err.message : "Heliox is not connected, so the setting was not saved.";
@@ -47,6 +47,23 @@
     <p class="never">
       Never kept this way, whatever the wording: passwords, keys and codes; health, including appointments with a doctor
       or dentist; money amounts, rent and pay; and other people's private details beyond a name and how you know them.
+    </p>
+  </div>
+  <div class="block">
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={routines}
+        disabled={saving}
+        onchange={(event) => void toggle(event.currentTarget.checked, "learn_routines")}
+      />
+      <span>Learn my routines from what I ask</span>
+    </label>
+    <p class="never">
+      Heliox keeps the kind of request you ask it for, with the weekday and the hour, for 60 days on this computer,
+      never in a model's prompt, and offers once a day what you usually ask for at that time. Ask "what do you know
+      about my routines" to hear them, or "forget my routines"; Your data lists and clears them. Off: nothing more is
+      kept.
     </p>
   </div>
 </section>

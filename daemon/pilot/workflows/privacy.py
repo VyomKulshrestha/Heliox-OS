@@ -36,6 +36,11 @@ STORES: dict[str, tuple[str, str, str]] = {
     "snippets": ("Snippets", "snippets.json", "Named texts you saved to copy again."),
     "profile": ("About you", "user_profile.json", "What you told Heliox to remember about you."),
     "goals": ("Goals", "goals.json", "Your goals, their updates and next steps."),
+    "routines": (
+        "Routines",
+        "routines.json",
+        "The kind of request you asked Heliox for, its weekday and hour, for 60 days, to learn your routines.",
+    ),
     "live": (
         "Live companion",
         "live_relevance.json",
@@ -75,6 +80,7 @@ BACKUP_FILES = (
     "snippets.json",
     "user_profile.json",
     "goals.json",
+    "routines.json",
     "habits.json",
     "focus_history.json",
     "todos.json",

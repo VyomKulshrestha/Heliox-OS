@@ -206,6 +206,7 @@ _KIND_WORDS = {
     "get_to_know": "questions to get to know you",
     "routine": "offers at the start and end of your working day",
     "goal_progress": "noting progress on your goals",
+    "learned_routine": "repeating what you usually ask for at that time",
 }
 
 
@@ -268,6 +269,7 @@ def day_moments(now: datetime, *, start: int | None, end: int | None) -> list[Of
 INTRO_MAX_ASKS = 2
 # "No" holds an offer for the rest of the day; "no" on two days within a week rests it for a week after the last.
 DECLINES_BEFORE_REST = 2
+ONE_A_DAY_KINDS = frozenset({"learned_routine"})  # at most one offer a day of these kinds, whichever key
 REST_DAYS = 7
 INTRO_EVERY_DAYS = 3
 GOAL_OFFER_WITHIN_SECONDS = 15 * 60  # after the task: later it is no longer about what was just done
@@ -478,6 +480,10 @@ class Offers:
                 or offer.key in offered_today
                 or self.declined.get(offer.key) == today
                 or self._resting(offer.key)
+                or (
+                    offer.kind in ONE_A_DAY_KINDS
+                    and any(m.offer.kind == offer.kind for m in self.made if m.day == today)
+                )
             ):
                 continue
             return offer

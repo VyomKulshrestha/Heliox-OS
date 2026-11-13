@@ -754,6 +754,9 @@ class MemoryConfig:
     # Keep things said to Heliox in passing ("my flight is on Friday") as short-lived notes (pilot.personal.passing).
     # Never health, money, secrets or other people's private details. Off: only "remember that ..." is kept.
     passing_notes: bool = True
+    # Learn routines from what the person asks Heliox for (pilot.personal.routines): the kind of request and its
+    # target, the weekday and the hour, kept 60 days on this computer, never in a model's prompt. Off: nothing kept.
+    learn_routines: bool = True
 
 
 @dataclass
@@ -1454,6 +1457,7 @@ def _validate_config_types(raw: dict) -> None:
             "max_context_tokens": int,
             "max_recent_messages": int,
             "passing_notes": bool,
+            "learn_routines": bool,
         },
         "rss": {
             "enabled": bool,
