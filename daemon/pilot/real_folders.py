@@ -15,7 +15,10 @@ The settings are covered too: PilotConfig.save refuses outside the daemon on the
 
 A paid run, under a scratch root, reads the person's provider settings with ``apply_owner_model_settings(config)``
 (copied onto its own config, whose save writes its own folder) and records what it spent with
-``real_budget_tracker(config.model)``, the one intended write to the real folders.
+``real_budget_tracker(config.model)``, the one intended write to the real folders. Each of its writes leaves a
+one-line note (in the run's own folder, PAID_RUN_NOTES) and remembers the stamp it left on the store, so a check
+that lists the person's data folder before and after the run (``who_changed``, ``describe_changes``) can say
+"changed by this approved paid run" for those files and "changed by something this run cannot name" for any other.
 """
 
 from __future__ import annotations
@@ -199,12 +202,88 @@ def real_budget_db() -> Path:
     return _owner_folder("XDG_DATA_HOME", ".local/share") / "pilot.db"
 
 
-def real_budget_tracker(model_config: Any) -> Any:
+# Where a paid run notes each write it made to the person's folders: a file in the run's own state folder.
+PAID_RUN_NOTES = "paid-run-writes.txt"
+PAID_RUN = "changed by this approved paid run (what it spent, through the budget tracker)"
+UNKNOWN = "changed by something this run cannot name"
+
+# (size, modified ns) each file of the person's budget store had just after this run's own last write to it.
+_paid_stamps: dict[str, tuple[int, int]] = {}
+
+
+def _stamp(path: Path) -> tuple[int, int] | None:
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    return info.st_size, info.st_mtime_ns
+
+
+def _note_paid_write(db: Path, purpose: str, step: str) -> None:
+    """After the budget tracker wrote the person's store: remember the stamps it left (the store and SQLite's own
+    journal files beside it) and add one line to the run's notes. Never raises: the note is for the check."""
+    for file in (
+        db,
+        db.with_name(db.name + "-wal"),
+        db.with_name(db.name + "-shm"),
+        db.with_name(db.name + "-journal"),
+    ):
+        stamp = _stamp(file)
+        if stamp is not None:
+            _paid_stamps[_key(file)] = stamp
+    try:
+        from datetime import datetime
+
+        from pilot.config import STATE_DIR
+
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(STATE_DIR / PAID_RUN_NOTES, "a", encoding="utf-8") as notes:
+            notes.write(f"{datetime.now().isoformat(timespec='seconds')} {purpose}: {step} wrote {db}\n")
+    except OSError:
+        pass
+
+
+def who_changed(path: str | Path, stamp: tuple[int, int] | None) -> str:
+    """Why a file of the person's folders has ``stamp`` (size, modified ns; None when it is gone) after this run:
+    PAID_RUN when this run's own budget tracker left exactly that stamp, UNKNOWN otherwise."""
+    return PAID_RUN if stamp is not None and _paid_stamps.get(_key(Path(path))) == stamp else UNKNOWN
+
+
+def describe_changes(before: dict[str, tuple[int, int]], after: dict[str, tuple[int, int]]) -> list[tuple[str, str]]:
+    """The files that changed between two listings of the person's folders (name -> (size, modified ns)), each with
+    who changed it: [(path, PAID_RUN or UNKNOWN)], sorted by path."""
+    changed = {path for path in set(before) | set(after) if before.get(path) != after.get(path)}
+    return [(path, who_changed(path, after.get(path))) for path in sorted(changed)]
+
+
+def real_budget_tracker(model_config: Any, purpose: str = "a paid run") -> Any:
     """The one write a paid run makes to the real folders: its spend, through the budget tracker, into the person's
-    own store. Nothing else of the real data folder is opened; the run's server and stores stay in its own folder."""
+    own store. Nothing else of the real data folder is opened; the run's server and stores stay in its own folder.
+    Each write (setting the store up, recording a call's spend, closing) is noted for ``who_changed``."""
     from pilot.models.budget_tracker import BudgetTracker
 
-    return BudgetTracker(model_config, str(real_budget_db()))
+    db = real_budget_db()
+
+    class NotedBudgetTracker(BudgetTracker):
+        async def initialize(self) -> None:
+            try:
+                await super().initialize()
+            finally:
+                _note_paid_write(db, purpose, "setting up the budget store")
+
+        async def record_usage(self, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return await super().record_usage(*args, **kwargs)
+            finally:
+                _note_paid_write(db, purpose, "recording a call's spend")
+
+        async def close(self) -> None:
+            try:
+                await super().close()
+            finally:
+                _note_paid_write(db, purpose, "closing the budget store")
+
+    return NotedBudgetTracker(model_config, str(db))
 
 
 # The sections a run outside the daemon may copy from the person's settings: the provider and model ([model]), how

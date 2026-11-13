@@ -320,3 +320,48 @@ def test_only_the_named_sections_can_be_read(monkeypatch, tmp_path):
     _owner_with(monkeypatch, tmp_path, "[live]\nenabled = true\n")
     with pytest.raises(ValueError, match="not a section"):
         real_folders.owner_settings("live")
+
+
+def _stamps(folder: Path) -> dict[str, tuple[int, int]]:
+    found = {}
+    for path in folder.rglob("*"):
+        if path.is_file():
+            info = path.stat()
+            found[str(path)] = (info.st_size, info.st_mtime_ns)
+    return found
+
+
+@pytest.mark.asyncio
+async def test_a_paid_runs_budget_write_is_named_as_its_own_and_any_other_change_is_not(monkeypatch, tmp_path):
+    own = tmp_path / "own"
+    data = own / ".local" / "share" / "heliox-os"
+    data.mkdir(parents=True)
+    notes = data / "notes.json"
+    notes.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(real_folders, "account_home", lambda: own)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setattr(real_folders, "_paid_stamps", {})
+    before = _stamps(data)
+
+    tracker = real_folders.real_budget_tracker(config.PilotConfig().model, "the test run")
+    await tracker.initialize()
+    await tracker.record_usage("claude", "claude-haiku", 100, 20)
+    await tracker.close()
+    notes.write_text('[{"text": "not the run"}]', encoding="utf-8")  # something else changed a file meanwhile
+
+    said = dict(real_folders.describe_changes(before, _stamps(data)))
+    assert said[str(data / "pilot.db")] == real_folders.PAID_RUN
+    assert said[str(notes)] == real_folders.UNKNOWN
+    lines = (config.STATE_DIR / real_folders.PAID_RUN_NOTES).read_text(encoding="utf-8").splitlines()
+    assert any(line.endswith(f"the test run: recording a call's spend wrote {data / 'pilot.db'}") for line in lines)
+
+
+def test_a_store_changed_after_the_runs_own_write_is_not_called_the_runs():
+    path = "/somewhere/pilot.db"
+    real_folders._paid_stamps[real_folders._key(Path(path))] = (10, 1)
+    try:
+        assert real_folders.who_changed(path, (10, 1)) == real_folders.PAID_RUN
+        assert real_folders.who_changed(path, (12, 2)) == real_folders.UNKNOWN  # written again by someone else
+        assert real_folders.who_changed(path, None) == real_folders.UNKNOWN  # removed
+    finally:
+        real_folders._paid_stamps.pop(real_folders._key(Path(path)), None)
