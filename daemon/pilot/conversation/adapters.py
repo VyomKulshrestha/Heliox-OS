@@ -140,13 +140,19 @@ class FocusSource:
                 source=str(getattr(obs, "source", "") or ""),
             )
         try:
-            from pilot.agents.screen_vision import _get_active_window
-
             async with asyncio.timeout(self._timeout):  # not wait_for: it can lose a cancellation before 3.12
-                app, title = await asyncio.to_thread(_get_active_window)
+                app, title = await asyncio.to_thread(_active_window)
         except Exception:
             return None
         return Focus(app=str(app or ""), title=str(title or "")) if app else None
+
+
+def _active_window() -> tuple[str, str]:
+    """The focused window's app and title, in a worker thread. The import is here, not on the event loop: the first
+    import of pilot.agents.screen_vision held the first turn of the day for 0.55 to 0.75 s (the bench, 13 November)."""
+    from pilot.agents.screen_vision import _get_active_window
+
+    return _get_active_window()
 
 
 def _app_label(process: str) -> str:

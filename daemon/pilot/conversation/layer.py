@@ -111,6 +111,12 @@ AGAIN_ALTERNATE = "Not without the language model, sorry."
 # A model that is only slow is there: its second plain line does not say it is missing.
 AGAIN_ALTERNATES = {"slow": "Still slow, sorry. Try again in a few seconds."}
 UNCLEAR_OFFLINE = "Sorry, I didn't catch that. Could you say it again?"
+# The screen read for a spoken turn starts at the wake phrase (prewarm). At the turn it is waited for this long at
+# most, and the request goes without it when it is not there: on the first turn after start-up it took 0.55 to 0.75
+# s, and every later one 0.00 (the bench, 13 November). A read started more than SCREEN_FRESH_SECONDS before the turn
+# is not used: the person may have moved to another window.
+SCREEN_WAIT_SECONDS = 0.15
+SCREEN_FRESH_SECONDS = 8.0
 HOLD_AFTER_SECONDS = 2.0  # no first sentence yet: a short holding phrase, so the wait is not silent
 HOLD_PHRASES = ("One moment.", "Let me think.", "Give me a second.")
 LOCAL_LOADING = "Loading the local model, one moment."
@@ -381,6 +387,7 @@ class ConversationLayer:
         self._background: set[asyncio.Task[Any]] = set()
         self._last_hold = ""
         self._hold_after = hold_after
+        self._screen_read: tuple[float, Any] | None = None  # (started, task) of the screen read under way
         self._first_text_deadline = first_text_deadline
         self._said_loading = False
         # Synthesise the next sentence while this one plays (one ahead only), and when the person's last word ended.
@@ -439,6 +446,44 @@ class ConversationLayer:
                 return
             self._background.add(task)
             task.add_done_callback(self._background.discard)
+        self._prefetch_screen(model)
+
+    def _prefetch_screen(self, model: Any) -> None:
+        """Start reading the screen while the person is still talking, so the turn finds it ready. At most one read
+        at a time; the turn decides whether the result is fresh enough to use (_screen_for_turn)."""
+        if self.sources.screen_async is None:
+            return
+        running = self._screen_read
+        if running is not None and not running[1].done():
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(
+                self.sources.screen_async(bool(getattr(model, "local", False)))
+            )
+        except RuntimeError:
+            return
+        self._screen_read = (self._clock(), task)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _screen_for_turn(self, model: Any) -> Any:
+        """The screen for this turn's context: the read started at the wake phrase when it is fresh, else a new one,
+        waited for SCREEN_WAIT_SECONDS at most. None when it is not there in time: the request never waits longer."""
+        if self.sources.screen_async is None:
+            return self.sources.screen()
+        started = self._screen_read
+        self._screen_read = None
+        if started is None or self._clock() - started[0] > SCREEN_FRESH_SECONDS:
+            self._prefetch_screen(model)
+            started, self._screen_read = self._screen_read, None
+            if started is None:
+                return None
+        task = started[1]
+        try:
+            async with asyncio.timeout(SCREEN_WAIT_SECONDS):  # not wait_for: it can lose a cancellation before 3.12
+                return await asyncio.shield(task)
+        except Exception:
+            return None  # not available here, or too slow to wait for: the read goes on, unused
 
     # ── provisional answers (conv_interfaces.md, section c) ──
 
@@ -700,16 +745,8 @@ class ConversationLayer:
             self.memory.add_user(text)
             await self._fallback(result, "none", decided, started)
             return result
-        screen = None
         reading = self._clock()
-        if self.sources.screen_async is not None:
-            try:
-                async with asyncio.timeout(0.5):  # not wait_for: it can lose a cancellation before 3.12
-                    screen = await self.sources.screen_async(bool(getattr(model, "local", False)))
-            except Exception:
-                screen = None  # not available here, or too slow to wait for
-        else:
-            screen = self.sources.screen()
+        screen = await self._screen_for_turn(model)
         if screen is not None and getattr(screen, "excerpt", ""):
             self._saw_screen_text = True
         sources = self.sources

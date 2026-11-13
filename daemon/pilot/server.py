@@ -7739,14 +7739,17 @@ class PilotServer:
 
     async def _control_reply(self, text: str) -> str | None:
         """Requests Heliox answers in code without planning: history questions, undo, routines, shortcuts."""
-        from pilot.workflows.routines import REPEAT_REQUEST, normalize_phrase
-
         # The person's own voice shortcut wins over a built-in phrase added later (say, an old "good night"
         # shortcut): leave it to _expand_request, which runs before planning on every path.
         if self._shortcuts is not None and await asyncio.to_thread(self._shortcuts.match, text) is not None:
             return None
 
-        handlers = (
+        CODE_ANSWER_BY.set("")
+        return await self._run_code_handlers(text, self._code_handlers())
+
+    def _code_handlers(self) -> tuple[Any, ...]:
+        """The handlers asked, in order, before any model: each answers in code or says None."""
+        return (
             self._getting_to_know_request,  # while its three questions are open, answers go to it first
             self._offer_reply,
             self._live_reply,
@@ -7767,8 +7770,11 @@ class PilotServer:
             self._shortcut_request,
             self._memory_talk_request,
         )
-        CODE_ANSWER_BY.set("")
+
+    async def _run_code_handlers(self, text: str, handlers: tuple[Any, ...]) -> str | None:
+        """Ask each handler in turn; the first answer wins. The turn trace gets the time they took and the slowest."""
         from pilot.conversation import trace
+        from pilot.workflows.routines import REPEAT_REQUEST, normalize_phrase
 
         began = slowest_at = time.perf_counter()  # perf_counter: the monotonic clock moves in 15.6 ms steps on Windows
         slowest, slowest_ms = "", -1.0
@@ -15698,6 +15704,42 @@ def handle_tool(tool_name, params):
 
             warm_output_line()
 
+    async def _warm_code_handlers(self) -> None:
+        """Import, in a worker thread, every module the code handlers and the screen read import on first use, so the
+        first spoken turn of the day does not pay for it on the event loop (0.25 s in the code handlers and 0.55 to
+        0.75 s in the screen read on the bench, 13 November; every later turn 0.00). The modules are read from the
+        handlers' own source, so a handler added later is covered without a list to keep. Imports only: nothing is
+        asked, read or changed."""
+        import ast
+        import importlib
+        import inspect
+        import textwrap
+
+        def modules() -> list[str]:
+            found = {"pilot.agents.screen_vision", "pilot.conversation.adapters", "pilot.workflows.routines"}
+            for handler in self._code_handlers():
+                try:
+                    tree = ast.parse(textwrap.dedent(inspect.getsource(handler)))
+                except (OSError, TypeError, SyntaxError):
+                    continue
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                        found.add(node.module)
+                    elif isinstance(node, ast.Import):
+                        found.update(alias.name for alias in node.names)
+            return sorted(name for name in found if name.startswith("pilot."))
+
+        def load() -> None:
+            for name in modules():
+                try:
+                    importlib.import_module(name)
+                except Exception:
+                    logger.debug("Could not import %s ahead of the first turn", name, exc_info=True)
+
+        started = time.monotonic()
+        await asyncio.to_thread(load)
+        logger.debug("Code handlers' modules imported ahead of the first turn in %.2f s", time.monotonic() - started)
+
     def _conversation_ready(self) -> bool:
         """The conversation layer runs once the model stack is up (start()); a server built without it plans."""
         return getattr(self, "_model_router", None) is not None
@@ -16521,6 +16563,7 @@ def handle_tool(tool_name, params):
         # Loading the local voice can take most of a minute when memory is short; start it with listening, not
         # at the first sentence, so the first answer is not held at "Getting my voice ready...".
         self._prewarm_voice()
+        self._spawn_background_task(self._warm_code_handlers())
         await self._interaction_runtime.transition(
             InteractionPhase.LISTENING,
             message="Listening for your wake word",
