@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 from datetime import date
 from types import SimpleNamespace
 
@@ -225,9 +226,49 @@ def test_scenarios_are_valid_and_bad_ones_are_rejected(tmp_path):
 KNOWN_MISSES = {s["name"] for s in bench.load_scenarios() if s.get("known_miss")}
 
 
+def _length(scenario: dict) -> float:
+    """Simulated seconds the scenario lasts for the steady persona (what it costs to run)."""
+    return bench.expand(scenario, bench.PERSONAS["steady"], random.Random(0))[-1].until
+
+
+def bench_sample() -> list[dict]:
+    """A fixed sample of the bench for the unit test, in the bench's own order: for each kind the bench expects, the
+    shortest scenario that expects it; the three shortest that expect nothing; and the shortest of each place a slip
+    can be (typed, said, on screen) and of the floor and call groups. The whole bench (every pack, all six runs) is
+    ``python -m pilot.live.bench``. Left out here: the rest of each pack, most of the scenarios that must stay quiet,
+    the long calls, and how the personal timing model learns over a long run."""
+    scenarios = bench.load_scenarios()
+    by_length = sorted(scenarios, key=_length)
+    chosen: list[str] = []
+
+    def take(scenario: dict) -> None:
+        if scenario["name"] not in chosen:
+            chosen.append(scenario["name"])
+
+    for kind in sorted({kind for s in scenarios for kind in s.get("expect", [])}):
+        take(next(s for s in by_length if kind in s.get("expect", [])))
+    for scenario in [s for s in by_length if not s.get("expect")][:3]:
+        take(scenario)
+    for place in ("typed", "speech", "screen"):
+        take(next(s for s in by_length if bench.where_of(s) == place))
+    for group in ("floor", "call"):
+        take(next(s for s in by_length if s["name"].startswith(f"{group}:")))
+    return [s for s in scenarios if s["name"] in chosen]
+
+
+SAMPLE = bench_sample()
+
+
+def test_the_sample_covers_each_kind_in_the_bench_and_each_place():
+    in_bench = {kind for s in bench.load_scenarios() for kind in s.get("expect", [])}
+    assert {kind for s in SAMPLE for kind in s.get("expect", [])} == in_bench
+    assert {bench.where_of(s) for s in SAMPLE} == {"typed", "speech", "screen"}
+    assert any(not s.get("expect") for s in SAMPLE) and len(SAMPLE) < len(bench.load_scenarios()) // 4
+
+
 @pytest.mark.asyncio
 async def test_the_bench_scores_personal_timing_against_fixed_rules():
-    scores = {(s.policy, s.persona): s for s in await bench.run_all()}
+    scores = {(s.policy, s.persona): s for s in await bench.run_all(SAMPLE)}
     for persona in bench.PERSONAS:
         personal, rules = scores["personal", persona], scores["rules", persona]
         assert personal.precision == 1.0, personal.as_dict()
@@ -246,11 +287,15 @@ async def test_the_bench_scores_personal_timing_against_fixed_rules():
     rules = sum(s.cut_offs for (policy, _), s in scores.items() if policy == "rules")
     assert personal <= 3 and rules <= 4, (personal, rules)
     # It is deterministic, so a change to the policy shows up as a change in these numbers.
-    again = await bench.run("personal", bench.PERSONAS["thinker"], bench.load_scenarios())
+    again = await bench.run("personal", bench.PERSONAS["thinker"], SAMPLE)
     assert again.as_dict() == scores["personal", "thinker"].as_dict()
 
 
-def test_the_cli_prints_a_table_and_writes_json(tmp_path, capsys):
+def test_the_cli_prints_a_table_and_writes_json(tmp_path, capsys, monkeypatch):
+    packs = tmp_path / "packs"
+    packs.mkdir()
+    (packs / "one.json").write_text(json.dumps(SAMPLE[:2]), encoding="utf-8")
+    monkeypatch.setattr(bench, "SCENARIO_DIR", packs)  # the CLI itself, on two scenarios
     out = tmp_path / "scores.json"
     assert bench.main(["--persona", "quick", "--policy", "personal", "--json", str(out)]) == 0
     assert "personal  quick" in capsys.readouterr().out
