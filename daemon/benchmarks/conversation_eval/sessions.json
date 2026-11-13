@@ -2463,6 +2463,122 @@
      }
     }
    ]
+  },
+  {
+   "name": "a repair that turns destructive, or comes after the dialog opened, gets a new approval",
+   "plans": {
+    "screenshots": [
+     {
+      "action_type": "file_delete",
+      "target": "C:/Users/me/Downloads/screenshots",
+      "parameters": {
+       "path": "C:/Users/me/Downloads/screenshots"
+      }
+     }
+    ],
+    "reports": [
+     {
+      "action_type": "file_delete",
+      "target": "C:/Users/me/reports",
+      "parameters": {
+       "path": "C:/Users/me/reports"
+      }
+     }
+    ],
+    "logs": [
+     {
+      "action_type": "file_delete",
+      "target": "C:/Users/me/Downloads/logs",
+      "parameters": {
+       "path": "C:/Users/me/Downloads/logs"
+      }
+     }
+    ]
+   },
+   "runs_count": {
+    "file_delete": 0
+   },
+   "turns": [
+    {
+     "say": "Hey Heliox, open the reports folder, no, delete it.",
+     "expect": {
+      "taken": true,
+      "runs_nothing": true,
+      "not": [
+       "opening"
+      ]
+     },
+     "expect_model": {
+      "approval": true,
+      "planned_with": [
+       "delete the reports folder"
+      ]
+     },
+     "expect_none": {
+      "approval": false
+     }
+    },
+    {
+     "say": "No.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     }
+    },
+    {
+     "say": "Hey Heliox, delete the logs in my Downloads folder.",
+     "gap": 4,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     },
+     "expect_model": {
+      "approval": true,
+      "has": [
+       "needs your approval"
+      ],
+      "planned_with": [
+       "the screenshots"
+      ]
+     },
+     "expect_none": {
+      "approval": false
+     }
+    },
+    {
+     "say": "No, the screenshots.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     },
+     "expect_model": {
+      "has": [
+       "closed that one",
+       "changed one is on the screen"
+      ]
+     }
+    },
+    {
+     "say": "No.",
+     "gap": 1.5,
+     "expect": {
+      "taken": true,
+      "runs_nothing": true
+     }
+    },
+    {
+     "say": "Hey Heliox, what time is it?",
+     "gap": 3,
+     "expect": {
+      "taken": true,
+      "has": [
+       "9|nine"
+      ]
+     }
+    }
+   ]
   }
  ]
 }

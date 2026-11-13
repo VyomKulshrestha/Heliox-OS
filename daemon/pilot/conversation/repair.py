@@ -32,6 +32,7 @@ _QUESTION = re.compile(r"^(?:what|when|where|who|which|how|why|is|are|do|does|ca
 _PREPOSITION = r"(?:to|for|in|from|at|on|with|about|into|by)"
 _NOT_A_REPAIR = re.compile(r"\bno (?:more|longer|one|matter|need|idea|problem|way|thanks)\b", re.IGNORECASE)
 _FILLERS = {"uh", "um", "er"}
+_PRONOUNS = {"it", "that", "them", "this", "those", "these"}
 _NUMBER = r"(?:\d+(?::\d\d)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty)"
 _LAST_NUMBER = re.compile(rf"\b{_NUMBER}\b(?!.*\b{_NUMBER}\b)", re.IGNORECASE)
 _STARTS_WITH_NUMBER = re.compile(rf"^{_NUMBER}\b", re.IGNORECASE)
@@ -70,6 +71,11 @@ def resolve(text: str) -> str | None:
     if not repair_words:
         return ""  # "open Spotify, no": taken back
     if _verb(repair_words):
+        named = " ".join(first_words[1:]).strip(" ,")
+        if named and len(repair_words) == 2 and repair_words[1].casefold() in _PRONOUNS:
+            # "open the reports folder, no, delete it": "it" is what the first part named, said out in full, so a
+            # destructive repair names its target and goes through the approval it needs
+            return f"{repair_words[0]} {named}"
         return repair
     if _STARTS_WITH_NUMBER.match(repair) and _LAST_NUMBER.search(first):
         number = _LAST_NUMBER.search(first)

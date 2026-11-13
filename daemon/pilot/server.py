@@ -9543,6 +9543,25 @@ class PilotServer:
         )
         return {"status": "revising", "message": "Live correction accepted."}
 
+    async def _announce_changed_approval(self, before: Any, *, seconds: float = 60.0, poll: float = 0.2) -> None:
+        """After a change closed a plan's dialog: when the changed plan waits for approval in turn, say so once. Nothing
+        is said if it needs none (its result is said as usual) or the task ends first."""
+        from pilot.conversation.handover import APPROVAL_CHANGED
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + seconds
+        while loop.time() < deadline:
+            await asyncio.sleep(poll)
+            state = self._interaction_runtime.status()
+            phase = str(state.get("phase") or "")
+            if phase == "awaiting_approval" and state.get("sequence") != before and self._pending_confirms:
+                await self._speak_voice_response(
+                    APPROVAL_CHANGED, channel=SpeechChannel.APPROVAL_RISK, dedupe_key=f"voice-changed:{before}"
+                )
+                return
+            if phase in {"completed", "failed", "interrupted", "idle", "listening"}:
+                return
+
     async def _answer_active_task_question(self, question: str) -> dict[str, Any]:
         """Answer without changing, approving, or cancelling the running task."""
         if len(question) > 2000:
@@ -15636,6 +15655,9 @@ def handle_tool(tool_name, params):
             if dropping:
                 self._voice_end_said = True  # before the stop lands: the task ends at once
             mode = {"mode": "ask"} if is_question else {"mode": "stop"} if stop_now else {}
+            # A change said while the plan's dialog is open closes that dialog (it is never approved) and plans again.
+            changing_approval = not is_question and not stop_now and bool(self._interactive_pending_confirmation())
+            before = self._interaction_runtime.status().get("sequence")
             result = await self._handle_interject(
                 {"input": question_text if is_question else command_text, **mode},
                 None,
@@ -15649,6 +15671,13 @@ def handle_tool(tool_name, params):
                     "coordinated_correction": not is_question and not stop_now,
                 },
             )
+            if changing_approval and result.get("status") == "revising":
+                from pilot.conversation.handover import CHANGING
+
+                await self._speak_voice_response(
+                    CHANGING, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-changing:{uuid.uuid4()}"
+                )
+                self._spawn_background_task(self._announce_changed_approval(before))
             if is_question and result.get("status") == "answered":
                 await self._speak_voice_response(
                     str(result.get("message") or "")[:350],

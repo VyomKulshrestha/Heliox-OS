@@ -50,3 +50,11 @@ def test_only_the_repair_is_acted_on(said, meant):
 )
 def test_what_is_not_a_repair_is_left_as_said(said):
     assert resolve(said) is None
+
+
+def test_a_repair_that_turns_destructive_names_its_target():
+    """ "Open the reports folder, no, delete it": the request handed on names what it deletes, so the planner and
+    the approval dialog show it (session: "a repair that turns destructive, or comes after the dialog opened, ...")."""
+    assert resolve("open the reports folder, no, delete it") == "delete the reports folder"
+    assert resolve("open Spotify, no, close it") == "close Spotify"
+    assert resolve("open, no, close it") == "close it"  # nothing was named: left for the conversation to resolve

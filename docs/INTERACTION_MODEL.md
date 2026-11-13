@@ -1049,7 +1049,13 @@ anything acts on it, so only the repair is acted on, never both halves:
 - Nothing after the marker ("open Spotify, no") takes the request back: "Okay, I've left it."
 - What does not clearly read as a repair is left as said: "No, stop.", "no more than fifty", or a pause ("um")
   with no new verb after it.
-- A destructive repaired request still goes through the planner's approval, which shows what will be done.
+- A destructive repaired request still goes through the planner's approval, which shows what will be done. A
+  pronoun in a repair names what was said before it: "open the reports folder, no, delete it" asks to delete the
+  reports folder, and the dialog says so.
+- A change said after a plan's dialog opened ("No, the screenshots.") closes that dialog, never approving it, and
+  plans the change. Heliox says "Okay, I've closed that one and I'm changing it." and, when the changed plan waits
+  for approval in turn, "The changed one is on the screen; press Approve if you want it." Before, nothing was said
+  after the change, and the new dialog appeared without a word.
 
 **Fakes only** (`tests/test_conversation_repair.py`, and the session "a sentence repaired as it is said: only the
 repair is acted on").

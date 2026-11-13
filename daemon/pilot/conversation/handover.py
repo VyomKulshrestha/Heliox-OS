@@ -177,6 +177,9 @@ def progress_sentence(phase: str, message: str) -> str:
 
 
 APPROVAL_SENTENCE = "This one needs your approval. It's on the screen; press Approve if you want it to go ahead."
+# The person changed a request while its dialog was open: that dialog was closed (never approved), and then a new one.
+CHANGING = "Okay, I've closed that one and I'm changing it."
+APPROVAL_CHANGED = "The changed one is on the screen; press Approve if you want it."
 
 Speak = Callable[[str, str, str], Awaitable[str]]
 
