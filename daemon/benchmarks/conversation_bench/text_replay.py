@@ -83,6 +83,44 @@ def apply_arm(config: Any, compare: str, arm: tuple[str, str, str | None]) -> No
     setattr(target, name, value)
 
 
+# A provider that answers this way is stopped after its first such answer (no key, no credit, no such model); the
+# other arms carry on. The reason is the fast model's own classification, in plain words, never the key or account.
+STOP_REASONS = frozenset({"no_key", "credit", "unknown_model", "budget"})
+PROMPT_TOKENS_FOR_BOUND = 8000  # the layer's system prompt, context and turns, rounded up
+
+
+def call_bound(provider: str, model: str, max_out: int) -> float:
+    """The most one talk call can cost, at the product's own prices (pilot.models.prices; Claude per model), with the
+    prompt rounded up to PROMPT_TOKENS_FOR_BOUND."""
+    if provider == "claude":
+        from pilot.models.budget_tracker import claude_price_for
+
+        price, _known = claude_price_for(model)
+        return (PROMPT_TOKENS_FOR_BOUND * price.input + max_out * price.output) / 1e6
+    from pilot.models import prices
+
+    return prices.cost_usd(provider, model, PROMPT_TOKENS_FOR_BOUND, max_out)
+
+
+def call_cost(provider: str, model: str, input_tokens: int, output_tokens: int) -> float:
+    """One call's cost from its reported tokens, at the same prices."""
+    if provider == "claude":
+        from pilot.models.budget_tracker import claude_price_for
+
+        price, _known = claude_price_for(model)
+        return (input_tokens * price.input + output_tokens * price.output) / 1e6
+    from pilot.models import prices
+
+    return prices.cost_usd(provider, model, input_tokens, output_tokens)
+
+
+def stock_opener(sentence: str) -> bool:
+    """The filler check: a first sentence that opens with a stock phrase ("Sure", "Great question", ...)."""
+    from benchmarks.conversation_eval.checks import STOCK_OPENERS
+
+    return bool(STOCK_OPENERS.match(sentence.strip()))
+
+
 def modelled_delay(text: str) -> float:
     """The voice model's time from a piece handed over to its first audio."""
     return round(VOICE_FLOOR_S + VOICE_PER_WORD_S * len(text.split()), 3)
@@ -109,6 +147,11 @@ def turn_row(events: list[tuple[str, float, dict[str, Any]]], handed: float, han
             row["warm"] = data.get("warm")
         if name == "piece to the voice":
             row["first_piece"] = data.get("kind")
+    content = next((data for name, at, data in events if name == "piece to the voice" and data.get("kind") == "content"
+                    and at >= handed), None)  # fmt: skip
+    if content is not None:
+        row["first_sentence_words"] = content.get("words")
+        row["first_sentence_stock_opener"] = bool(content.get("stock"))
     answer = next((at for name, at, data in events if name == "first audio (modelled)" and data.get("kind") == "content"
                    and at >= handed), None)  # fmt: skip
     row["content audio (modelled)"] = None if answer is None else round(answer - handed, 3)
@@ -117,14 +160,45 @@ def turn_row(events: list[tuple[str, float, dict[str, Any]]], handed: float, han
     return row
 
 
+def free_gb() -> float | None:
+    """Free memory in GB (psutil), or None when it cannot be read."""
+    try:
+        import psutil
+
+        return psutil.virtual_memory().available / 1e9
+    except Exception:
+        return None
+
+
+def plain(reason: str) -> str:
+    """The fast model's failure class in plain words."""
+    return {"no_key": "the key was refused (authentication)", "credit": "no credit left on the account",
+            "unknown_model": "the provider does not know that model", "budget": "Heliox's own budget gate",
+            "busy": "the provider was busy or rate-limited", "offline": "the provider could not be reached",
+            }.get(reason, f"the call failed ({reason})")  # fmt: skip
+
+
+def call_figures(model: Any, provider: str) -> dict[str, Any]:
+    """The turn's talk call: tokens, reply length and cost at the product's prices (from the model's own records)."""
+    calls = list(getattr(model, "calls", []) or [])
+    if not calls:
+        return {}
+    call = calls[-1]
+    if not hasattr(call, "input_tokens"):
+        return {}  # the bench's stub model keeps its own records, with no tokens
+    return {"input_tokens": call.input_tokens, "output_tokens": call.output_tokens, "reply_chars": call.chars,
+            "cost_usd": round(call_cost(provider, model.name, call.input_tokens, call.output_tokens), 6)}  # fmt: skip
+
+
 def turn_line(row: dict[str, Any]) -> str:
     """One turn: the measured stamps from the hand-over, and the provider's real first text beside the voice MODEL's
     first audio (two different kinds of figure: never to be added up into a claim about the voice)."""
     measured = ", ".join(f"{k} {row[k]:.2f}" for k in STAMPS if row.get(k) is not None and k != "model first text")
     first_text = row.get("model first text")
     modelled = row.get("first audio (modelled)")
-    return (f"turn {row['turn']} [{row.get('arm')}] (CPU {row.get('cpu_percent')} %), seconds after the hand-over: "
-            f"{measured}; MODEL FIRST TEXT (real provider) {'-' if first_text is None else f'{first_text:.2f}'}; "
+    return (f"turn {row['turn']} [{row.get('arm')}] (CPU {row.get('cpu_percent')} %, {row.get('free_gb')} GB free), "
+            "seconds after the hand-over: "
+            f"{measured}; MODEL FIRST TEXT ({row.get('source', 'real provider')}) {'-' if first_text is None else f'{first_text:.2f}'}; "
             f"first piece {row.get('first_piece')}, its first audio MODELLED VOICE "
             f"{'-' if modelled is None else f'{modelled:.2f}'}; warm at the request {row.get('warm')}")  # fmt: skip
 
@@ -143,6 +217,13 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             out[key] = {"median": round(statistics.median(values), 3), "min": values[0], "max": values[-1],
                         "n": len(values)}  # fmt: skip
     out["first piece"] = {kind: sum(r.get("first_piece") == kind for r in rows) for kind in ("hold", "content")}
+    for key in ("output_tokens", "reply_chars", "first_sentence_words"):
+        values = sorted(r[key] for r in rows if r.get(key) is not None)
+        if values:
+            out[key] = {"median": statistics.median(values), "min": values[0], "max": values[-1]}
+    out["cost_usd"] = round(sum(r.get("cost_usd") or 0.0 for r in rows), 6)
+    out["stock openers"] = sum(bool(r.get("first_sentence_stock_opener")) for r in rows)
+    out["failures"] = sorted({plain(r["failed"]) for r in rows if r.get("failed")})
     out["warm at the request"] = {str(flag): sum(r.get("warm") is flag for r in rows) for flag in (True, False, None)}
     return out
 
@@ -151,6 +232,10 @@ async def _main(args: argparse.Namespace) -> int:
     from .voice_latency import MODEL_TURNS, CallCap, paid_bound
 
     root = bench_root.enter(Path(args.root))
+    free = free_gb()
+    if free is not None and free < args.start_free_gb:
+        print(f"Refused: {free:.2f} GB free, under the {args.start_free_gb} GB a run starts with")
+        return 2
     quiet, load = machine.wait_for_quiet(args.wait_quiet * 60, threshold=args.threshold)
     print(f"CPU before the run: {load} % ({'quiet' if quiet else 'busy'})")
     from pilot.config import PilotConfig
@@ -163,6 +248,10 @@ async def _main(args: argparse.Namespace) -> int:
     copied = apply_owner_settings(config, ("model", "conversation"), only=CONVERSATION_FIELDS)
     print("settings copied:", ", ".join(copied) or "none")
     config.live.enabled = False  # Live's own remarks would speak between turns
+    # The voice is modelled: no local voice worker may start. The server prewarms the configured local voice when a
+    # person talks to it (a 1.5 GB Kokoro worker on 14 November, which the memory gate stopped), so the engine is
+    # the system voice, which loads nothing; the speaker stand-in below speaks every piece.
+    config.voice.tts_engine = "os_native"
     bench_root.check_inside(root)
     server = PilotServer(config)
 
@@ -178,7 +267,7 @@ async def _main(args: argparse.Namespace) -> int:
 
     async def voice(text: str, recorder: Any) -> bool:
         kind = "hold" if text.strip() in HOLD else "content"
-        clock("piece to the voice", kind=kind, words=len(text.split()))
+        clock("piece to the voice", kind=kind, words=len(text.split()), stock=kind == "content" and stock_opener(text))
         await asyncio.sleep(modelled_delay(text))
         clock("first audio (modelled)", kind=kind)
         await asyncio.sleep(SPOKEN_PER_WORD_S * len(text.split()))
@@ -224,17 +313,53 @@ async def _main(args: argparse.Namespace) -> int:
             async for piece in original_stream(system, messages):
                 yield piece
 
-        made.stream = stream
+        async def guarded(system: str, messages: list[dict[str, str]]) -> Any:
+            try:
+                async for piece in stream(system, messages):
+                    yield piece
+            except Exception as error:  # the fast model's own class of failure, in plain words; never key material
+                clock("model failed", reason=getattr(error, "reason", type(error).__name__))
+                raise
+
+        made.stream = guarded
         return made
 
+    if args.model == "configured":
+        # The bound, per arm, before any call: the product's own price for each arm's model, the prompt rounded up.
+        total = 0.0
+        for arm in arms:
+            apply_arm(config, args.compare, arm)
+            probe = fresh_model()
+            provider = str(getattr(config.model, "cloud_provider", "") or getattr(config.model, "provider", ""))
+            each = call_bound(provider, probe.name, int(config.conversation.max_reply_tokens or 400))
+            total += each * args.turns
+            print(f"bound [{arm[0]}]: {provider} {probe.name}, at most ${each:.4f} a call, {args.turns} calls "
+                  f"${each * args.turns:.4f}", flush=True)  # fmt: skip
+        print(f"bound for the run: ${total:.4f}; calls stop before any one that could pass --max-usd "
+              f"${args.max_usd}", flush=True)  # fmt: skip
     trace.listener = clock
     rows = []
     try:
+        stopped: dict[str, str] = {}
+        spent = 0.0
         for n in range(args.turns * len(arms)):
             arm = arms[n % len(arms)]  # interleaved; each arm gets the same question in turn
+            if arm[0] in stopped:
+                continue
+            free = free_gb()
+            if free is not None and free < args.min_free_gb:
+                print(f"Stopped: {free:.2f} GB free, under {args.min_free_gb} GB", flush=True)
+                break
             text = f"Hey Heliox, {MODEL_TURNS[(n // len(arms)) % len(MODEL_TURNS)]}"
             apply_arm(config, args.compare, arm)
             model = fresh_model()
+            provider = str(getattr(config.model, "cloud_provider", "") or getattr(config.model, "provider", ""))
+            if args.model == "configured":
+                worst = call_bound(provider, model.name, int(config.conversation.max_reply_tokens or 400))
+                if spent + worst > args.max_usd:
+                    print(f"turn {n + 1} [{arm[0]}]: not run: ${spent:.4f} spent and one more call could cost up to "
+                          f"${worst:.4f}, past --max-usd ${args.max_usd}", flush=True)  # fmt: skip
+                    continue
             layer_for(server)._model = lambda m=model: m
             cpu = machine.cpu_percent(0.5)
             clock.events.clear()
@@ -252,8 +377,17 @@ async def _main(args: argparse.Namespace) -> int:
             with contextlib.suppress(asyncio.TimeoutError, Exception):
                 await asyncio.wait_for(turn, 30.0)
             await asyncio.sleep(1.0)
-            row = {"turn": n + 1, "arm": arm[0], "cpu_percent": cpu,
-                   **turn_row(list(clock.events), handed, args.handover_s)}  # fmt: skip
+            row = {"turn": n + 1, "arm": arm[0], "cpu_percent": cpu, "free_gb": None if free is None else round(free, 2),
+                   "provider": provider, "model": model.name,
+                   "source": "real provider" if args.model == "configured" else "STUB model, fixed delay",
+                   **turn_row(list(clock.events), handed, args.handover_s), **call_figures(model, provider)}  # fmt: skip
+            spent += row.get("cost_usd") or 0.0
+            failed = next((data.get("reason") for name, _at, data in clock.events if name == "model failed"), None)
+            if failed:
+                row["failed"] = failed
+                if failed in STOP_REASONS:
+                    stopped[arm[0]] = failed
+                    print(f"[{arm[0]}] stopped after its first failure: {plain(failed)}", flush=True)
             rows.append(row)
             client = getattr(model, "_client", None)
             if client is not None:
@@ -281,6 +415,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", choices=("stub", "configured"), default="stub")
     parser.add_argument("--paid", action="store_true")
     parser.add_argument("--max-calls", type=int, default=24)
+    parser.add_argument("--start-free-gb", type=float, default=1.0, help="refuse to start under this much free")
+    parser.add_argument("--min-free-gb", type=float, default=1.0, help="stop when free memory falls under this")
+    parser.add_argument("--max-usd", type=float, default=0.05, help="stop before a call that could pass this spend")
     parser.add_argument("--warm-lead", type=float, default=1.0, help="seconds from the wake warm-up to the hand-over")
     parser.add_argument("--handover-s", type=float, default=0.60, help="added for the estimate from the last word")
     parser.add_argument("--wait-quiet", type=float, default=0.0)

@@ -86,3 +86,29 @@ def test_a_comparison_summary_says_its_checks_describe_the_first_setting_only():
 
     assert "scored on the first setting only (final_pass=whisper)" in note[0]
     assert ci_timing.comparison_note("", [""]) == []
+
+
+def test_a_providers_failure_is_named_in_plain_words_and_auth_or_credit_stops_its_arm():
+    assert text_replay.plain("no_key") == "the key was refused (authentication)"
+    assert text_replay.plain("credit") == "no credit left on the account"
+    assert {"no_key", "credit"} <= text_replay.STOP_REASONS and "busy" not in text_replay.STOP_REASONS
+
+
+def test_each_call_is_costed_from_its_own_tokens_and_bounded_before():
+    from types import SimpleNamespace
+
+    model = SimpleNamespace(name="claude-haiku-5-5", calls=[SimpleNamespace(input_tokens=1000, output_tokens=50,
+                                                                            chars=180)])  # fmt: skip
+    figures = text_replay.call_figures(model, "claude")
+
+    assert figures["input_tokens"] == 1000 and figures["reply_chars"] == 180
+    assert 0 < figures["cost_usd"] < text_replay.call_bound("claude", "claude-haiku-5-5", 400)
+    assert text_replay.call_figures(SimpleNamespace(name="x", calls=[]), "claude") == {}
+
+
+def test_the_first_sentences_stock_opener_is_counted():
+    events = [("piece to the voice", 10.2, {"kind": "content", "words": 4, "stock": True})]
+    row = text_replay.turn_row(events, 10.0, 0.6)
+
+    assert row["first_sentence_words"] == 4 and row["first_sentence_stock_opener"] is True
+    assert text_replay.stock_opener("Sure, it's Canberra.") and not text_replay.stock_opener("It's Canberra.")
