@@ -151,6 +151,39 @@ jobs:
           PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
         run: python tests/platform_real/voice_worker_stop_check.py
 
+      # Report only: the local voice on this 4-core CPU. Making fixed sentences ahead beside the recognisers, the time
+      # per piece, the voice worker's reload split twice three minutes apart, and which voice speaks a reply asked for
+      # while the worker is released. The script moves every Heliox folder under HELIOX_BENCH_ROOT itself
+      # (use_scratch_folders), where the models fetched above are; it plays nothing and fetches nothing. About five
+      # minutes; runs whatever the timing step did, and never fails the job.
+      - name: The local voice on this runner (report only)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 12
+        env:
+          HF_HUB_OFFLINE: "1"
+          PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+        run: |
+          failed=0
+          for path in tests/platform_real/voice_make_ahead_check.py scripts/measure_kokoro_startup.py pilot/system/fixed_speech.py; do
+            if [ -f "$path" ]; then
+              echo "CHECK job-inputs/path: PASS - $path"
+            else
+              echo "CHECK job-inputs/path: FAIL - $path is missing"
+              failed=$((failed + 1))
+            fi
+          done
+          if [ -d "$BENCH_AUDIO/synthetic" ]; then
+            echo "CHECK job-inputs/audio: PASS - $BENCH_AUDIO/synthetic"
+          else
+            echo "CHECK job-inputs/audio: FAIL - no rendered synthetic speech under $BENCH_AUDIO"
+            failed=$((failed + 1))
+          fi
+          if [ "$failed" -ne 0 ]; then
+            exit "$failed"
+          fi
+          python tests/platform_real/voice_make_ahead_check.py --audio "$BENCH_AUDIO" --gap 180 --summary "$GITHUB_STEP_SUMMARY"
+
       - name: Upload timelines
         if: always()
         uses: actions/upload-artifact@v4
