@@ -796,11 +796,13 @@ async def _run_local_tts_worker(
     text: str,
     voice: str,
     output_file: str | None,
+    *,
+    wait_for_load: bool = False,
 ) -> None:
     """Speak (or write) with a heavy local voice, outside the long-lived daemon process."""
     from pilot.system.local_tts_worker import manager
 
-    await manager().speak(engine, text, voice, output_file, play=_play_local_tts_file)
+    await manager().speak(engine, text, voice, output_file, play=_play_local_tts_file, wait_for_load=wait_for_load)
 
 
 # ── Text-to-Speech ───────────────────────────────────────────────────
@@ -884,6 +886,9 @@ async def _speak_impl(
         logger.debug(f"Failed to modulate TTS rate by cognitive load: {e}")
 
     config = PilotConfig.load()
+    from pilot.system.local_tts_worker import LocalVoiceNotReady
+
+    loading = ""  # the local voice that was still loading when this reply was ready ("" when none)
     if config.voice.tts_engine == "kokoro_tts":
         try:
             await _run_local_tts_worker("kokoro_tts", spoken_text, config.voice.tts_voice, output_file)
@@ -893,7 +898,9 @@ async def _speak_impl(
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            if not getattr(e, "already_logged", False):
+            if isinstance(e, LocalVoiceNotReady):
+                loading = "kokoro_tts"  # the system voice speaks this reply while Heliox's own voice loads
+            elif not getattr(e, "already_logged", False):
                 logger.warning("Kokoro TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
 
     if config.voice.tts_engine == "pocket_tts":
@@ -910,18 +917,27 @@ async def _speak_impl(
             # do not fall back to them mid-interruption.
             raise
         except Exception as e:
-            if not getattr(e, "already_logged", False):
+            if isinstance(e, LocalVoiceNotReady):
+                loading = "pocket_tts"  # the system voice speaks this reply while Heliox's own voice loads
+            elif not getattr(e, "already_logged", False):
                 logger.warning("Pocket TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
             # falls through to the platform dispatch below
 
     # The system voice the person chose for their language (voice_by_language), unless the caller named one.
-    voice = voice or str(getattr(config.voice, "system_voice", "") or "") or None
+    system_voice = voice or str(getattr(config.voice, "system_voice", "") or "") or None
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        return await _tts_windows(spoken_text, voice, rate, volume, output_file)
+        result = await _tts_windows(spoken_text, system_voice, rate, volume, output_file)
     elif CURRENT_PLATFORM == Platform.MACOS:
-        return await _tts_macos(spoken_text, voice, rate, output_file)
+        result = await _tts_macos(spoken_text, system_voice, rate, output_file)
     else:
-        return await _tts_linux(spoken_text, voice, rate, output_file)
+        result = await _tts_linux(spoken_text, system_voice, rate, output_file)
+    if loading and unheard_reason(result):
+        # No system voice on this computer (or it failed): the reply waits for Heliox's own voice rather than being
+        # lost. The bar says "Getting my voice ready…" meanwhile.
+        logger.info("No system voice to speak while the local voice loads; the reply waits for it")
+        await _run_local_tts_worker(loading, spoken_text, config.voice.tts_voice, output_file, wait_for_load=True)
+        return f"Speech saved to {output_file}" if output_file else f"Spoken: {text[:80]}..."
+    return result
 
 
 class SpeechUnheard(RuntimeError):

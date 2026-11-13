@@ -53,6 +53,10 @@ RETRY_AFTER_SECONDS = 120.0
 LOAD_TIMEOUT_SECONDS = 180.0
 REQUEST_TIMEOUT_SECONDS = 120.0
 LOADING_MESSAGE = "Getting my voice ready…"
+# How long a reply waits for a local voice that is not loaded before the system voice speaks it instead. A cold load
+# takes 20 to 25 s on a laptop CPU, and no reply should wait for it; this only lets a load that is about to finish
+# (one already under way for a while) speak the reply in Heliox's own voice.
+LOAD_GRACE_SECONDS = 0.3
 VOICE_HOST_RAM_BYTES = 2 * 1024**3  # Kokoro's worker holds 1.6-1.9 GB once loaded
 ON_CPU_MESSAGE = (
     "My voice hit a graphics card error, so it runs on the processor for the rest of this session. "
@@ -199,6 +203,11 @@ class LocalTTSUnavailable(RuntimeError):
     """The local voice cannot speak right now; the failure has already been logged once."""
 
     already_logged = True
+
+
+class LocalVoiceNotReady(LocalTTSUnavailable):
+    """The local voice is still loading when a reply is ready to be spoken: this reply is spoken with the system voice,
+    whole, and the local voice takes over from the next one. Not a failure: nothing is marked failed."""
 
 
 class _MovedToCpu(LocalTTSUnavailable):
@@ -674,6 +683,7 @@ class LocalTTSWorkerManager:
         self._load_task: asyncio.Future[None] | None = None
         self._idle_task: asyncio.Task[None] | None = None
         self._busy = 0
+        self._announcing: asyncio.Future[None] | None = None  # a load started for a reply (_ready_within_grace)
         self._last_activity = clock()
         self._failed_until: float | None = None
         self._background: set[asyncio.Future[Any]] = set()
@@ -984,8 +994,12 @@ class LocalTTSWorkerManager:
         voice: str,
         output_file: str | None,
         play: PlayFile,
+        *,
+        wait_for_load: bool = False,
     ) -> None:
-        """Say ``text`` with the local voice, or write it to ``output_file``.
+        """Say ``text`` with the local voice, or write it to ``output_file``. A voice that is not loaded is waited for
+        at most LOAD_GRACE_SECONDS (LocalVoiceNotReady after that), unless ``wait_for_load``: then the reply waits for
+        the load, as when this computer has no system voice to speak it meanwhile.
 
         Playback starts after the first sentence is synthesised; later sentences are made while earlier ones play.
         Cancelling stops at once: ``play`` stops the audio, and a sentence still being made is finished unheard.
@@ -997,13 +1011,16 @@ class LocalTTSWorkerManager:
         self._busy += 1
         self.note_activity()
         try:
-            await self._announce_loading(engine, voice)
+            sentences = [] if output_file else split_for_speech(text)
+            if output_file or wait_for_load:
+                await self._announce_loading(engine, voice)  # a file, or no other voice: waited for
+            elif not self._all_kept(engine, voice, sentences):
+                await self._ready_within_grace(engine, voice)
             with tempfile.TemporaryDirectory(prefix="heliox-tts-", ignore_cleanup_errors=True) as temp_dir:
                 folder = Path(temp_dir)
                 if output_file:
                     await self.synthesize(engine, text, voice, Path(output_file), folder)
                     return
-                sentences = split_for_speech(text)
                 if not sentences:
                     return
                 self._spoken_sequence += 1
@@ -1018,6 +1035,36 @@ class LocalTTSWorkerManager:
         finally:
             self._busy -= 1
             self.note_activity()
+
+    def _all_kept(self, engine: str, voice: str, pieces: list[str]) -> bool:
+        """Every piece of the reply is in the store of made audio: it plays without the worker, loaded or not."""
+        store = self.head_cache
+        if store is None or not pieces:
+            return False
+        signature = SpeechStore.signature(engine, voice)
+        return all(store.has(piece, signature) for piece in pieces)
+
+    async def _ready_within_grace(self, engine: str, voice: str) -> None:
+        """Return when the local voice can speak this reply: at once when it is loaded, else after waiting at most
+        LOAD_GRACE_SECONDS for a load (started now when none is under way, and left running). Still loading after
+        that: LocalVoiceNotReady, and the system voice speaks this reply whole. A voice that cannot load (too little
+        memory, a small computer, a failure) raises LocalTTSUnavailable as before."""
+        if self.loaded and self.running and self.engine == engine:
+            return
+        if self._failed_until is not None:
+            return  # the caller's synthesis falls back as before, without a new announcement
+        loading = self._announcing
+        if loading is None or loading.done():
+            loading = asyncio.ensure_future(self._announce_loading(engine, voice))
+            self._announcing = loading
+            self._background.add(loading)
+            loading.add_done_callback(self._background.discard)
+            loading.add_done_callback(lambda done: done.cancelled() or done.exception())
+        try:
+            await bounded(asyncio.shield(loading), timeout=LOAD_GRACE_SECONDS)
+        except TimeoutError:
+            logger.info("The local voice is still loading; this reply is spoken with the system voice")
+            raise LocalVoiceNotReady(f"{engine}: still loading") from None
 
     async def _announce_loading(self, engine: str, voice: str) -> None:
         if self.loaded and self.running and self.engine == engine:
