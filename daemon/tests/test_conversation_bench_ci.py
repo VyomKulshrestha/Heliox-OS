@@ -256,6 +256,7 @@ def test_a_latency_mode_runs_instead_of_the_timing_lines_on_synthetic_voices_onl
     assert "${{" not in run  # the typed inputs reach the command through the environment, never pasted into it
     assert "LATENCY_ONLY: ${{ inputs.only || 'u-syn' }}" in latency
     assert "--model configured" not in run and "--paid" not in run
+    assert "--recommended" in run  # the timing lines' set-up: Parakeet as the final pass when fetched
     assert text.index("- name: Voice latency mode") < text.index("- name: The local voice on this runner")
 
 

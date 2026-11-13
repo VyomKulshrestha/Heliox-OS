@@ -166,7 +166,7 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/conversation-timing"
           python -m benchmarks.conversation_bench.voice_latency --root "$HELIOX_BENCH_ROOT" --audio "$BENCH_AUDIO" \
-            --mode "$LATENCY_MODE" $LATENCY_LOADING --only "$LATENCY_ONLY" --model-turns 6 --wait-quiet 2 \
+            --mode "$LATENCY_MODE" $LATENCY_LOADING --only "$LATENCY_ONLY" --model-turns 6 --wait-quiet 2 --recommended \
             --out "$RUNNER_TEMP/conversation-timing/voice_latency.json" \
             | tee "$RUNNER_TEMP/conversation-timing/voice_latency.txt"
           {

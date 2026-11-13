@@ -457,3 +457,33 @@ def test_the_released_table_keeps_warm_and_after_release_apart():
     events = [tl.Event(t=1.0, event=tl.VOICE_REPLY, detail="", data={"voice": "store", "branch": "store"})]
     assert vl.reply_voice(events) == {"spoke_with": "store", "branch": "store", "reason": None}
     assert vl.reply_voice([]) == {}
+
+
+def test_a_scenario_started_at_once_skips_the_wait_for_quiet(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from benchmarks.conversation_bench.driver import Harness
+    from benchmarks.conversation_bench.models import KINDS
+    from benchmarks.conversation_bench.scenarios import Scenario
+
+    harness = Harness(audio_root=str(tmp_path), data_dir=tmp_path / "root", model=KINDS["cloud"])
+    waited = []
+
+    async def before() -> None:
+        waited.append("waited for quiet")
+
+    async def nothing(*_a, **_k) -> None:
+        return None
+
+    monkeypatch.setattr(harness, "_before_scenario", before)
+    monkeypatch.setattr(harness, "_settle", nothing)
+    monkeypatch.setattr(harness, "_teardown", nothing)
+    harness.server = SimpleNamespace(_pending_confirms={})
+    harness.pump = SimpleNamespace(busy=lambda: False, queued_end=lambda: 0, played=0, pace=1.0)
+    scenario = Scenario(id="x", set="understanding", voice="synthetic", lines=(), steps=(), expect={})
+
+    asyncio.run(harness.run(scenario, "as-recorded", start_at_once=True))
+    assert waited == []
+    asyncio.run(harness.run(scenario, "as-recorded"))
+    assert waited == ["waited for quiet"]

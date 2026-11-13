@@ -782,12 +782,12 @@ class Harness:
 
             self._observed[0] = Observation(**state["observation"])
 
-    async def run(self, scenario: Scenario, condition: str) -> list[tl.Event]:
-        server, log, pump = self.server, self.log, self.pump
-        assert pump is not None
+    async def _before_scenario(self) -> None:
+        """Wait for the voice to be idle and the listener to have finished the previous scenario's words."""
+        log = self.log
         await self._wait(self._speech_idle, 40)
-        # Let the listener finish the previous scenario's words first: on a busy CPU the recognisers fall behind
-        # real time, and their late words must not be scored as this scenario's.
+        # Let the listener finish the previous scenario's words first: on a busy CPU the recognisers fall
+        # behind real time, and their late words must not be scored as this scenario's.
         drained_from = time.perf_counter()
         queue = getattr(self.listener._recorder, "_queue", None)
         await self._wait(lambda: queue is None or queue.qsize() == 0, 180)
@@ -796,6 +796,14 @@ class Harness:
         if drain_s > 6:
             log("listener behind", f"{drain_s:.0f} s spent letting the previous words finish", seconds=drain_s)
         await asyncio.sleep(0.8)
+
+    async def run(self, scenario: Scenario, condition: str, *, start_at_once: bool = False) -> list[tl.Event]:
+        """One scenario. ``start_at_once``: play it now, without first waiting for the voice to be idle and the
+        listener to be quiet (a sentence said right after start-up, while the listener is still loading)."""
+        server, log, pump = self.server, self.log, self.pump
+        assert pump is not None
+        if not start_at_once:
+            await self._before_scenario()
         before = table_rows(self.data_dir)
         start = log.now()
         log(tl.SCENARIO, scenario.id, condition=condition, model=self.model.name, cpu_percent=system_cpu())

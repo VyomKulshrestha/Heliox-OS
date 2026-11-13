@@ -698,6 +698,11 @@ async def _main(args: argparse.Namespace) -> int:
 
         print("conversation settings copied:", ", ".join(apply_owner_settings(
             config, ("conversation",), only=CONVERSATION_FIELDS)) or "none")  # fmt: skip
+        if args.recommended:
+            from .ci_timing import configure as recommended
+
+            recommended(config)  # the timing lines' set-up: Parakeet as the final pass when fetched, Kokoro
+            print(f"recommended set-up: final pass {config.voice.final_pass}, voice {config.voice.tts_engine}")
 
     root = Path(args.root)
     loading = args.mode == "first-utterance" and args.during_loading
@@ -764,7 +769,9 @@ async def _main(args: argparse.Namespace) -> int:
             synthetic_turn = scenario in synthetic
             harness.audio_root = str(root) if synthetic_turn else args.audio
             cpu = machine.cpu_percent(1.0)
-            events = await harness.run(scenario, "as-recorded")
+            # During loading the first sentence is played at once: waiting for quiet first let the listener finish
+            # loading before it (run 43404800561: ready 1.4 s after it began, before the sentence started).
+            events = await harness.run(scenario, "as-recorded", start_at_once=loading and not warmed)
             during = next((e.data.get("cpu_percent") for e in events if e.event == tl.SCENARIO), None)
             worst = max([v for v in (cpu, during) if v is not None], default=None)
             found = stages(events) or {}
@@ -873,6 +880,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model-turns", type=int, default=12, help="synthetic questions for the talk model")
     parser.add_argument("--mode", choices=MODES, default="full", help="which measurement (see the module text)")
     parser.add_argument("--repeats", type=int, default=3, help="voice-released: warm / after-release pairs")
+    parser.add_argument("--recommended", action="store_true",
+                        help="the timing lines' set-up (Parakeet as the final pass when fetched), as on a runner")  # fmt: skip
     parser.add_argument("--during-loading", action="store_true",
                         help="first-utterance: speak while the listener is still loading")  # fmt: skip
     parser.add_argument("--model", choices=("stub", "configured"), default="stub")
