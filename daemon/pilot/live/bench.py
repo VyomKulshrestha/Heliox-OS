@@ -105,6 +105,14 @@ class Delivery:
     wait: float | None
     spoken: bool
     source: str
+    # When it landed against the person's own clock (``moment_of``): seconds from the slip being complete (typed: the
+    # evidence first whole in its field; said: the end of the sentence) to the delivery, what the person was doing
+    # then, how long they had paused, and (spoken) whether Heliox's words ran into the person's next sentence.
+    after_slip: float | None = None
+    doing: str = ""
+    paused: float | None = None
+    overlaps_person: bool = False
+    resumed_after: float | None = None  # seconds until the person next typed or spoke (None: not in the session)
 
 
 @dataclass
@@ -276,6 +284,18 @@ def where_of(scenario: dict[str, Any]) -> str:
     return "typed"
 
 
+# Most scenarios end with the slip and a pause, so a card can never land as the person goes on. ``--keep-typing``
+# adds, to every typed scenario, a short pause to find the next words and one more sentence with no slip in it.
+KEEP_TYPING = [{"pause": "think"}, {"type": " Then a few more words about the rest of the week."}, {"pause": "done"}]
+
+
+def keep_typing(scenario: dict[str, Any]) -> dict[str, Any]:
+    """``scenario`` with the person typing on after it (a measurement of timing only: nothing in it is a slip)."""
+    if where_of(scenario) != "typed" or scenario.get("editable") is False:
+        return scenario
+    return {**scenario, "steps": [*scenario["steps"], *KEEP_TYPING]}
+
+
 def by_where_table(scores: list[Score]) -> str:
     lines = [f"{'policy':<9} {'persona':<8} " + "  ".join(f"{w:<22}" for w in ("typed", "speech", "screen"))]
     for s in scores:
@@ -319,6 +339,8 @@ class Session:
         self.replies: list[str] = []
         # False: focus is on page text (a web page, a chat transcript), which the person reads but does not write.
         self.editable = bool(scenario.get("editable", True))
+        # Every state of every field, in order: (seconds into the session, window, text). For ``moment_of`` only.
+        self.history: list[tuple[float, str, str]] = [(0.0, self.window, self.doc)]
 
     @property
     def doc(self) -> str:
@@ -393,6 +415,8 @@ class Session:
             if now >= due:
                 self.reactions.remove((due, card))
                 self._act_on(card)
+        if self.history[-1][1:] != (self.window, self.doc):
+            self.history.append((round(rel, 3), self.window, self.doc))
 
     def _act_on(self, card: dict[str, Any]) -> None:
         evidence, fix = card.get("evidence", ""), card.get("fix", "")
@@ -413,6 +437,130 @@ class Session:
                 break
             began = step.at
         return self.start + began
+
+
+# Heliox's speaking rate, for whether a spoken correction would still be going when the person speaks again.
+SPOKEN_WORDS_PER_SECOND = 2.5
+# A card the person types or talks over this soon after it arrived came at a moment they had not finished.
+RESUMED_SOON_SECONDS = 2.0
+
+
+def _squash(text: str) -> str:
+    return " ".join(str(text or "").split()).casefold()
+
+
+def moment_of(session: Session, payload: dict[str, Any], at: float) -> dict[str, Any]:
+    """When a delivery landed, on the person's own clock: a measurement only, nothing here changes what Live does.
+
+    - ``after_slip``: seconds from the slip being complete to the delivery. Typed or on screen: from the first moment
+      the card's evidence was whole in a field. Said: from the end of the sentence that held it (the last one before
+      the delivery when the evidence is not in any).
+    - ``doing``: what the person was doing at that moment: ``mid-word`` or ``between words`` (typing),
+      ``mid-sentence pause`` (looking for the next words), ``pause`` (a finished thought or idle), ``speaking``,
+      ``Heliox answering``, ``left the field`` (another window in front) or ``text gone`` (sent, deleted or fixed),
+      and for a said slip ``after speaking``. A card whose evidence is not text of the field (a screen read, a
+      masked secret, a repeated rewrite) gets no ``after_slip`` and is classed by the activity alone.
+    - ``paused``: how long they had stopped typing or talking (None while busy).
+    - ``overlaps_person``: a spoken delivery whose words (at SPOKEN_WORDS_PER_SECOND) would still be going when the
+      person's next sentence starts, or that starts while they are speaking."""
+    rel = at - session.start
+    evidence = _squash(payload.get("evidence", ""))
+    label = session.label(at)
+    busy = label in BUSY
+    paused = None if busy else round(at - session.stopped_at(at), 2)
+    later = [step.at for step in session.script if step.label in BUSY and step.at > rel]
+    resumed = round(min(later) - rel, 2) if later and not busy else None
+    says = [step for step in session.script if step.kind == "say"]
+    words = len(f"{payload.get('title', '')} {payload.get('message', '')}".split())
+    overlaps = False
+    if payload.get("spoken"):
+        ends = rel + words / SPOKEN_WORDS_PER_SECOND
+        overlaps = label == "speaking" or any(rel < step.at < ends for step in says)
+    if payload.get("source") == "speech":
+        heard = [step for step in says if step.until <= rel + 1e-6]
+        holding = [step for step in heard if evidence and evidence in _squash(step.text)]
+        sentence = (holding or heard or [None])[-1]
+        after = round(rel - sentence.until, 2) if sentence is not None else None
+        doing = "speaking" if label == "speaking" else "Heliox answering" if label == "heliox" else "after speaking"
+        return {
+            "after_slip": after,
+            "doing": doing,
+            "paused": paused,
+            "overlaps_person": overlaps,
+            "resumed_after": resumed,
+        }
+    first = next(
+        ((t, window) for t, window, text in session.history if evidence and evidence in _squash(text)), (None, "")
+    )
+    after = round(rel - first[0], 2) if first[0] is not None else None
+    if first[1] and session.window != first[1]:
+        doing = "left the field"
+    elif first[1] and evidence not in _squash(session.doc):
+        doing = "text gone"
+    elif label == "typing":
+        doing = "mid-word" if session.doc[-1:].isalnum() else "between words"
+    elif label in ("speaking", "heliox"):
+        doing = "speaking" if label == "speaking" else "Heliox answering"
+    elif label == "think":
+        doing = "mid-sentence pause"
+    else:
+        doing = "pause"
+    return {
+        "after_slip": after,
+        "doing": doing,
+        "paused": paused,
+        "overlaps_person": overlaps,
+        "resumed_after": resumed,
+    }
+
+
+def _spread(values: list[float]) -> str:
+    if not values:
+        return "none"
+    ordered = sorted(values)
+
+    def at(share: float) -> float:
+        return ordered[min(len(ordered) - 1, int(share * (len(ordered) - 1) + 0.5))]
+
+    return (
+        f"n {len(ordered)}: min {ordered[0]:.1f}, p10 {at(0.1):.1f}, median {at(0.5):.1f}, p90 {at(0.9):.1f}, "
+        f"max {ordered[-1]:.1f} s"
+    )
+
+
+def when_table(details: list[dict[str, Any]]) -> str:
+    """The moments deliveries landed (``moment_of``), as distributions: typed and said apart, caught slips and false
+    alarms apart."""
+    lines = []
+    for where, typed in (("typed or on screen", True), ("said", False)):
+        rows = [d for d in details if "doing" in d and (d.get("source") != "speech") == typed]
+        for name, keep in (("caught", True), ("false alarm", False)):
+            chosen = [d for d in rows if d.get("expected") == keep]
+            if not chosen:
+                continue
+            doing: dict[str, int] = {}
+            for d in chosen:
+                doing[d["doing"]] = doing.get(d["doing"], 0) + 1
+            spoken = [d for d in chosen if d.get("spoken")]
+            lines.append(f"{where}, {name}: {len(chosen)} deliveries ({len(spoken)} spoken)")
+            lines.append(
+                "  after the slip: " + _spread([d["after_slip"] for d in chosen if d["after_slip"] is not None])
+            )
+            lines.append(
+                "  pause the person had made: " + _spread([d["paused"] for d in chosen if d["paused"] is not None])
+            )
+            lines.append(
+                "  doing then: " + ", ".join(f"{k} {v}" for k, v in sorted(doing.items(), key=lambda kv: -kv[1]))
+            )
+            resumed = [d["resumed_after"] for d in chosen if d.get("resumed_after") is not None]
+            lines.append(
+                f"  went on typing or talking within {RESUMED_SOON_SECONDS:g} s of it: "
+                f"{sum(r < RESUMED_SOON_SECONDS for r in resumed)} of {len(chosen)} ({_spread(resumed)})"
+            )
+            lines.append(
+                f"  spoken over or into the person's speech: {sum(d['overlaps_person'] for d in spoken)} of {len(spoken)}"
+            )
+    return "\n".join(lines)
 
 
 async def run(
@@ -550,6 +698,7 @@ async def run(
                             wait,
                             bool(payload.get("spoken")),
                             str(payload.get("source", "")),
+                            **moment_of(session, payload, at),
                         ).__dict__
                     )
             clock["t"] = round(clock["t"] + TICK_SECONDS, 3)
@@ -615,8 +764,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", type=Path, help="write the full results, every delivery included, here")
     parser.add_argument("--no-floor", action="store_true", help="Live without the shared floor (the old behaviour)")
     parser.add_argument("--no-calls", action="store_true", help="Live blind to calls (the old behaviour)")
+    parser.add_argument("--when", action="store_true", help="also print when deliveries landed (moment_of)")
+    parser.add_argument(
+        "--keep-typing", action="store_true", help="the person types on after each typed scenario (timing only)"
+    )
     args = parser.parse_args(argv)
     scenarios = load_scenarios(args.scenarios)
+    if args.keep_typing:
+        scenarios = [keep_typing(scenario) for scenario in scenarios]
     scores = asyncio.run(
         run_all(
             scenarios,
@@ -631,6 +786,9 @@ def main(argv: list[str] | None = None) -> int:
     print(table(scores))
     print("\nBy where the slip was (caught/expected, precision, recall):")
     print(by_where_table(scores))
+    if args.when:
+        print("\nWhen deliveries landed, every policy and persona together:")
+        print(when_table([d for s in scores for d in s.details]))
     if args.json:
         args.json.write_text(json.dumps([s.as_dict() for s in scores], indent=2), encoding="utf-8")
     return 0

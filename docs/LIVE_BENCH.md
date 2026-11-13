@@ -144,6 +144,21 @@ which now moves only for thanks, fixes, mutes and cards left alone. Relevance co
 know days, so two "not now"s a minute apart would count as two days, and nothing would let it lapse after a week.
 `tests/test_live_learning_week.py` asserts the table.
 
+## When it landed (13 November 2026)
+
+`--when` adds, for every delivery, when it landed on the person's own clock (`bench.moment_of`; measuring only,
+nothing in it changes what Live does):
+- seconds from the slip being complete (typed: the evidence first whole in its field; said: the end of the sentence);
+- what the person was doing then: mid-word, between words, a mid-sentence pause, a pause, speaking, Heliox
+  answering, gone to another window, or the text already sent or deleted;
+- how long they had paused, and how soon they went on typing or talking;
+- for a spoken delivery, whether its words ran into the person's next sentence (at 2.5 words a second).
+
+It prints the distributions, not only the median. Most scenarios end with the slip and a pause, so a card can never
+land as the person goes on; `--keep-typing` adds, to every typed scenario, a short pause and one more sentence
+with no slip in it. The measurement covers Live's own waits only: the time a voice takes to start speaking
+(synthesis, about a second on a CPU) is not in the simulated clock.
+
 ## What it does not show
 
 These are scripted sessions and simulated people, not recordings of real ones. The personas are three points on
