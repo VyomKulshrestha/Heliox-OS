@@ -1124,6 +1124,57 @@ autonomous source floor (no root, no arbitrary page JavaScript, no registry
 writes or shutdown) still applies. A run that came due while Heliox was off is
 skipped rather than fired late.
 
+## Who can ask Heliox to do what
+
+**Three kinds of client, three tokens.** The daemon listens only on this computer. Each kind of client signs in with
+its own token, which the daemon writes into its runtime folder at every start: the window's (`auth_token`), the neural
+sidecar's and the local MCP client's. The files are readable only by the person's account (0600 on Linux and macOS;
+on Windows the folder is in their own profile). The sidecar and MCP roles can call only their own short lists of
+methods. The window's role can call every settings, data and task method.
+
+**A client's word is never the approval.** A `confirmed`, `authorized` or `consent` flag in a request says what
+is being asked for, never that the person agreed. What decides is the person's answer in the daemon's own approval
+dialog.
+
+**What the daemon asks about itself, whoever asked.** Before any of these takes effect the daemon asks the person
+in its own approval dialog, in words (Heliox's window shows it over any tab; a change asked for by voice with no
+window open waits for the next window), and waits for the answer; a no, or no answer, leaves things as they were and
+the reply is "cancelled":
+- taking a protection away: any shell command, administrator rights, dry run off, no snapshot before destructive
+  actions, a weaker sandbox, a protected folder, package or blocked command removed, the risk check off, a higher
+  tier or an allowed action for a request source, and a settings reset that would do any of these;
+- sending something off this computer: a language model that is not on this computer (one sentence says what goes
+  with each request), the web search address, a proxy, mail and calendar servers, the text on the screen and the
+  person's profile to a cloud model, and a file's conflicting lines to a cloud model;
+- watching or recording the person: Heliox Live's reading, listening and screen reading, clipboard history, the
+  activity timeline, supervision of the screen and of every key and click, the camera's gaze tracking, a workflow
+  recording (every time it starts), and a folder added to the search index;
+- running somewhere else: a new SSH host or one moved to another address, its host key check off, SSH turned on, and
+  letting paired phones send requests or start status checks without the person;
+- the person's data: emptying a store, clearing undo history, restoring a backup, undoing a task (listing what it
+  puts back), and the co-adaptation study's consent (in the consent sheet's own words);
+- every plan step that needs approval, as before, and a plugin tool, which runs only as an approved plan step.
+Turning any of these back off, or narrowing a protection, is never asked about and never waits behind a dialog.
+Nothing the daemon does by itself at start-up waits on one either.
+
+**Voice can deny, never approve** (next section). A capture the person approved in the window on this computer
+(Live's captures, clipboard history, the activity timeline) can later be turned back on by voice without asking
+again; Heliox knows it was approved from a receipt signed with this computer's receipt key.
+
+**What the approvals are for.** Mistakes; a model that misunderstood; a web page, message or document that tries
+to steer Heliox; a paired phone; speech in the room that was not meant for Heliox or not said by the person; and any
+client that merely holds a token and sends a flag. Against all of these the daemon asks the person itself, and a
+client's word is never the approval.
+
+**What they are not for.** Another program already running under the person's own account. Such a program can read
+what Heliox's window reads and act as the window, its approval dialog included, and on a system without a keyring it
+can also reach the key that signs receipts. Heliox does not defend against software the person is already running as
+themselves, as most desktop applications do not, and says so here.
+
+**What follows for the person.** Keep your computer account to yourself: anything you run under it can act on Heliox
+as you can. On a system without a keyring, Heliox's receipts are evidence of what Heliox did, not proof against
+tampering by other software running under your account.
+
 ## 🎙️ Voice can deny, never approve
 
 Spoken "no", "deny" or "don't" denies whichever approval is pending, including
