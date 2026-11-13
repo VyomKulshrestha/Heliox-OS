@@ -86,6 +86,8 @@ FALLBACK = {
     "under Model.",
     "slow": "The language model is slow right now, so I stopped waiting. Ask me again.",
     "refused": "I can't help with that one.",
+    "unknown_model": "Your {provider} account doesn't offer the model named in Settings. Pick another under Model, or "
+    "leave it blank for the default.",
     "error": "Something went wrong reaching the language model. I can still do what I handle myself.",
     "not_api": "I'm getting a web page instead of the language model. The network may want you to sign in first.",
     "empty": "The language model sent back nothing that time. Ask me again?",
@@ -100,6 +102,7 @@ FALLBACK_AGAIN = {
     "offline": "Still offline, so I can't answer that one.",
     "busy": "The model is still busy. Try again in a moment.",
     "credit": "The model account is still out of credit.",
+    "unknown_model": "The model named in Settings still isn't available to your account.",
     "slow": "The language model is still slow. Ask me again in a moment.",
     "refused": "I can't help with that one.",
 }

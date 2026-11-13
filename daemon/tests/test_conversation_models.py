@@ -284,12 +284,53 @@ def test_claude_error_and_refusal_events_become_reasons():
 
 
 @pytest.mark.parametrize(
-    ("cloud", "cloud_model", "expected"),
-    [("gemini", "", "gemini-2.5-flash"), ("openai", "gpt-4o", "gpt-4o"), ("openrouter", "", "openrouter/auto")],
+    ("cloud", "planner", "expected"),
+    [
+        ("gemini", "", "gemini-2.5-flash-lite"),
+        ("gemini", "gemini-4-carbon", "gemini-2.5-flash-lite"),
+        ("openai", "gpt-6.1-sol", "gpt-6-luna"),
+        ("openai", "gpt-5.5-pro", "gpt-6-luna"),
+        ("openrouter", "", "openai/gpt-6-luna"),
+        ("openrouter", "openrouter/auto", "openai/gpt-6-luna"),
+        ("meta", "muse-wonder-1.0", "muse-spark-1.3"),
+        ("claude", "claude-opus-5-5", "claude-haiku-5-5"),
+    ],
 )
-def test_other_cloud_providers_stream_their_configured_model(cloud, cloud_model, expected):
-    model = build_fast_model(config("cloud", cloud, cloud_model), vault=VAULT, router=object(), budget=None)
+def test_talk_never_inherits_the_planners_model(cloud, planner, expected):
+    """A reasoning or large planner model (o3, a Pro model, openrouter/auto) is never the talking model: with only
+    the planner's model set, talk takes the provider's fast default."""
+    model = build_fast_model(config("cloud", cloud, planner), vault=VAULT, router=object(), budget=None)
     assert isinstance(model, HttpFastModel) and model.provider == cloud and model.name == expected
+
+
+@pytest.mark.parametrize(
+    ("provider", "name", "field", "value"),
+    [
+        ("openai", "gpt-6-luna", "reasoning_effort", "none"),
+        ("openrouter", "openai/gpt-6-luna", "reasoning", {"effort": "none"}),
+    ],
+)
+def test_the_talk_default_is_asked_for_no_reasoning(provider, name, field, value):
+    model = HttpFastModel(provider=provider, name=name, client_factory=lambda: None, api_key=None)
+    _url, _headers, body = model.request("s", [{"role": "user", "content": "hi"}], "k")
+    assert body[field] == value
+
+
+def test_a_model_the_person_chose_is_sent_as_it_is():
+    model = HttpFastModel(provider="openai", name="gpt-6.1-sol", client_factory=lambda: None, api_key=None)
+    _url, _headers, body = model.request("s", [{"role": "user", "content": "hi"}], "k")
+    assert "reasoning_effort" not in body  # GPT-6.1 Sol rejects "none"; the person's own model is left as it is
+
+
+def test_every_provider_in_settings_has_a_fast_default_with_a_current_price():
+    from pilot.conversation.fast_model import FAST_DEFAULTS
+    from pilot.models.cloud import PROVIDER_ENDPOINTS
+    from pilot.models.prices import price_for
+
+    assert set(FAST_DEFAULTS) == set(PROVIDER_ENDPOINTS)
+    for provider, name in FAST_DEFAULTS.items():
+        if provider != "claude":
+            assert price_for(provider, name)[1], f"{provider}: no current price for its fast default {name}"
 
 
 def test_each_provider_has_its_own_fast_model_setting():

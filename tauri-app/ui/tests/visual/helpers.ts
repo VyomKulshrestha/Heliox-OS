@@ -296,6 +296,8 @@ export async function mockTauriIpc(page: Page): Promise<void> {
           request.method === "update_config" ||
           request.method === "co_adaptation_status" ||
           request.method === "startup_status" ||
+          request.method === "model_catalog" ||
+          request.method === "budget_stats" ||
           request.method.startsWith("air_handoff_")
         ) {
           let result: Record<string, unknown>;
@@ -477,6 +479,34 @@ export async function mockTauriIpc(page: Page): Promise<void> {
                 output_tokens: 12,
               },
             };
+          } else if (request.method === "model_catalog") {
+            // The daemon's model lists (pilot.models.catalog), cut to what the Settings rows show.
+            const note = (who: string) =>
+              `Default chosen from ${who}'s published list on 2026-11-13; not yet checked against the live service by Heliox's tests.`;
+            result = {
+              status: "ok",
+              read_on: "2026-11-13",
+              providers: {
+                gemini: {
+                  planner_default: "gemini-3.5-flash-lite",
+                  talk_default: "gemini-2.5-flash-lite",
+                  planner_note: note("Google"),
+                  talk_note: note("Google"),
+                  offered: ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite"],
+                  withdrawn: {},
+                },
+                claude: {
+                  planner_default: "claude-opus-5-5",
+                  talk_default: "claude-haiku-5-5",
+                  planner_note: note("Anthropic"),
+                  talk_note: "",
+                  offered: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+                  withdrawn: {},
+                },
+              },
+            };
+          } else if (request.method === "budget_stats") {
+            result = { enabled: true, cost_usd: 0.42, limit_usd: 10, estimated_high: [] };
           } else if (request.method === "subscription_login") {
             result = {
               status: "started",

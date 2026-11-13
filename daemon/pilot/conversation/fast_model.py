@@ -34,9 +34,16 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from pilot.models.catalog import REASONING_OFF, TALK_DEFAULTS
+
 logger = logging.getLogger("pilot.conversation.fast_model")
 
 DEFAULT_CLAUDE_FAST_MODEL = "claude-haiku-5-5"
+# The model that talks, per provider, when the person has not chosen one (conversation.<provider>_model). Talk never
+# inherits the planner's model (model.cloud_model): a planner set to a reasoning or large model would make every
+# spoken reply slow, and its reasoning tokens count against the reply's token limit. The list, with the pages it was
+# checked against, is pilot.models.catalog.TALK_DEFAULTS; the Settings panel shows it beside the planner's model.
+FAST_DEFAULTS: dict[str, str] = dict(TALK_DEFAULTS)
 OFFLINE_HOLD_SECONDS = 30.0  # after a connection failure, answer at once from local rules for this long
 CREDIT_HOLD_SECONDS = 600.0  # an account out of credit does not refill in seconds
 BUSY_HOLD_SECONDS = 20.0  # a rate limit without a Retry-After header
@@ -54,7 +61,8 @@ OPENAI_COMPATIBLE = frozenset({"openai", "openrouter", "meta"})
 
 
 class FastModelUnavailable(RuntimeError):
-    """The fast model cannot answer now. ``reason`` is one of: offline, no_key, budget, busy, refused, error."""
+    """The fast model cannot answer now. ``reason`` is one of: offline, no_key, unknown_model, credit, budget, busy,
+    refused, error (and for a local model local_down, local_missing)."""
 
     def __init__(self, reason: str, detail: str = "") -> None:
         super().__init__(detail or reason)
@@ -172,8 +180,8 @@ class _StreamingBase:
     def _after_failure(self, reason: str, error: BaseException) -> None:
         if reason in ("offline", "local_down"):
             self._went_offline()
-        elif reason == "credit":
-            self.hold(CREDIT_HOLD_SECONDS, "credit")
+        elif reason in ("credit", "unknown_model"):
+            self.hold(CREDIT_HOLD_SECONDS, reason)  # neither is fixed by asking again in a moment
         elif reason == "busy":
             self.hold(_retry_after(error), "busy")
 
@@ -269,6 +277,12 @@ def _classify(error: BaseException, errors: dict[str, tuple[type[BaseException],
         return "credit"
     if status in (401, 403):
         return "no_key"
+    # The model named in Settings is not one this account can use: OpenAI 404 model_not_found, Anthropic 404
+    # not_found_error, Gemini 404 NOT_FOUND, OpenRouter 400 "is not a valid model ID". Waiting does not fix it.
+    if status == 404 or "model_not_found" in body or "not a valid model" in body:
+        return "unknown_model"
+    if status == 400 and ("api_key_invalid" in body or "api key not valid" in body):
+        return "no_key"  # Gemini says a bad key with 400 INVALID_ARGUMENT, reason API_KEY_INVALID
     if status == 429 or (isinstance(status, int) and status >= 500):
         return "busy"
     try:
@@ -377,8 +391,10 @@ class HttpFastModel(_StreamingBase):
             if "flash" in self.name:
                 # Flash models think by default; a spoken reply does not need it, and it delays the first word.
                 body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
-            url = f"{PROVIDER_ENDPOINTS['gemini']}/models/{self.name}:streamGenerateContent?alt=sse&key={key}"
-            return url, {"Content-Type": "application/json"}, body
+            # The key goes in Google's header, as the warm-up sends it, never in the address: an address ends up in
+            # exception text and request logs.
+            url = f"{PROVIDER_ENDPOINTS['gemini']}/models/{self.name}:streamGenerateContent?alt=sse"
+            return url, {"Content-Type": "application/json", "x-goog-api-key": key}, body
         from pilot.models.cloud import PROVIDER_ENDPOINTS
 
         body = {
@@ -388,6 +404,13 @@ class HttpFastModel(_StreamingBase):
             "stream_options": {"include_usage": True},
         }
         body["max_completion_tokens" if self.provider == "openai" else "max_tokens"] = self.max_tokens
+        if self.name in REASONING_OFF:
+            # A spoken reply needs no reasoning phase: it delays the first word and spends the token limit. Only for
+            # models whose own page says effort "none" is accepted (pilot.models.catalog).
+            if self.provider == "openrouter":
+                body["reasoning"] = {"effort": "none"}
+            else:
+                body["reasoning_effort"] = "none"
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
         if self.provider == "openrouter":
             headers["HTTP-Referer"] = "https://www.helioxos.dev/"
@@ -447,6 +470,12 @@ class HttpFastModel(_StreamingBase):
                 usage.reported = True
             parts = ((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
             return "".join(str(part.get("text") or "") for part in parts if not part.get("thought"))
+        failed = data.get("error")
+        if failed:
+            # OpenRouter (and some OpenAI-compatible servers) report a failure after the 200 has been sent as a chunk
+            # with an error object and finish_reason "error": the reply stopped, it did not finish.
+            detail = failed.get("code") if isinstance(failed, dict) else failed
+            raise FastModelUnavailable("error", str(detail or "error in the stream")[:120])
         found = data.get("usage")
         if isinstance(found, dict) and "prompt_tokens" in found:
             usage.input_tokens = int(found.get("prompt_tokens") or 0)
@@ -616,7 +645,9 @@ def _warn_once(key: str, message: str) -> None:
 
 
 def fast_model_name(config: Any, provider: str) -> str:
-    """The fast model for ``provider``: its setting, else the known fast tier, else the configured model."""
+    """The model that talks for ``provider``: the person's own choice for talk, else the provider's fast default
+    (FAST_DEFAULTS), never the planner's model. A provider with no known fast model (none today) falls back to the
+    planner's model, so it still answers. A local model is the one model on this computer."""
     from pilot.models.cloud import DEFAULT_MODELS
 
     conv = getattr(config, "conversation", None)
@@ -624,10 +655,10 @@ def fast_model_name(config: Any, provider: str) -> str:
     chosen = str(getattr(conv, f"{provider}_model", "") or "").strip()
     if chosen:
         return chosen
-    if provider == "claude":
-        return DEFAULT_CLAUDE_FAST_MODEL
     if provider in LOCAL_PROVIDERS:
         return str(getattr(model_cfg, "ollama_model", "") or "")
+    if provider in FAST_DEFAULTS:
+        return FAST_DEFAULTS[provider]
     return str(getattr(model_cfg, "cloud_model", "") or DEFAULT_MODELS.get(provider, ""))
 
 

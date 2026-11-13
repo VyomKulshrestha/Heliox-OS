@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **336 WebSocket RPC methods**. That is the API
+The daemon currently registers **337 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -3323,7 +3323,16 @@ PreferenceV1      pref_id, kind, scope, value, origin = "explicit_user", created
 ### Operations and audit status
 
 #### `budget_stats`
-Return the current month's recorded model token and cost summary.
+Return the current month's recorded model token and cost summary. `estimated_high` lists, in words, every model
+this month that was costed without a current price ("estimated high: no current price for <model>"); such calls
+are costed at the provider's highest current rate (`pilot.models.prices`).
+
+#### `model_catalog`
+Return the cloud models Settings offers, per provider, as checked against each provider's own pages on `read_on`
+(`pilot.models.catalog`). Read-only.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok", "read_on": "2026-11-13", "providers": { "<provider>": { "planner_default": "...", "talk_default": "...", "offered": ["..."], "withdrawn": { "<model>": { "state": "deprecated|retired|unlisted", "successor": "...", "date": "YYYY-MM-DD", "says": "..." } }, "sources": [{ "url": "...", "read_on": "..." }] } } }`
 
 #### `budget_reset`
 Delete current-month token-usage records. This is a destructive settings

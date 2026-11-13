@@ -139,7 +139,7 @@ def call_cost(provider: str, model: str, record: Any) -> float:
         output_tokens = int(getattr(record, "output_tokens", 0) or 0)
         if provider == "claude":
             return float(bt.claude_cost_usd(model, input_tokens, output_tokens))
-        return float(bt._estimate_cost(provider, input_tokens, output_tokens))
+        return float(bt._estimate_cost(provider, input_tokens, output_tokens, model))
     except Exception:
         return 0.0
 

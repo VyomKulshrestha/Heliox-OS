@@ -5,6 +5,9 @@
   import WakeTeach from "./WakeTeach.svelte";
   import FollowUpCounts from "./FollowUpCounts.svelte";
   import ProfileSharing from "./ProfileSharing.svelte";
+  import TalkModel from "./TalkModel.svelte";
+  import PlannerModel from "./PlannerModel.svelte";
+  import BudgetSpent from "./BudgetSpent.svelte";
   import { _, locale } from "svelte-i18n";
   import { session } from "../stores/session";
   import { call, requireOkResult, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
@@ -213,21 +216,6 @@
   let hotkeySaved = $state(false);
   let hotkeyError = $state("");
   const hotkeySupported = isNativeTauriRuntime();
-
-  const cloudModels: Record<string, string[]> = {
-    gemini: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
-    openai: ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
-    openrouter: [
-      "openrouter/auto",
-      "deepseek/deepseek-v4-pro",
-      "~deepseek/deepseek-v4-flash-latest",
-      "~anthropic/claude-sonnet-latest",
-      "~google/gemini-pro-latest",
-      "~openai/gpt-latest",
-    ],
-    claude: ["claude-3-7-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"],
-    meta: ["muse-spark-1.1"],
-  };
 
   let availableOllamaModels = $state<string[]>([]);
   type SubscriptionStatus = {
@@ -477,11 +465,6 @@
 
   function setCloudProvider(cloud_provider: string) {
     void saveSetting("model", { cloud_provider, cloud_model: "", provider: "cloud" });
-  }
-
-  function updateCloudModel(e: Event) {
-    const val = (e.target as HTMLInputElement).value;
-    void saveSetting("model", { cloud_model: val }, { event: e });
   }
 
   async function setSubscriptionProvider(subscription_provider: "codex" | "claude") {
@@ -2209,33 +2192,9 @@
       </div>
     </div>
 
-    <div class="setting-row">
-      <div class="setting-info">
-        <span class="setting-label">{$_("settings.cloud_model")}</span>
-        <span class="setting-desc">{$_("settings.cloud_model_desc")}</span>
-      </div>
-      {#if $settings.model.cloud_provider === "openrouter"}
-        <input
-          class="input-md"
-          list="openrouter-model-options"
-          value={$settings.model.cloud_model}
-          onchange={updateCloudModel}
-          placeholder="openrouter/auto or any OpenRouter model slug"
-        />
-        <datalist id="openrouter-model-options">
-          {#each cloudModels.openrouter as modelOption}
-            <option value={modelOption}></option>
-          {/each}
-        </datalist>
-      {:else}
-        <select class="input-md" value={$settings.model.cloud_model} onchange={updateCloudModel}>
-          <option value="">Default for provider</option>
-          {#each cloudModels[$settings.model.cloud_provider || "gemini"] || [] as modelOption}
-            <option value={modelOption}>{modelOption}</option>
-          {/each}
-        </select>
-      {/if}
-    </div>
+    <PlannerModel />
+
+    <TalkModel />
 
     <div class="setting-row">
       <div class="setting-info">
@@ -2623,6 +2582,8 @@
           )}
       />
     </div>
+
+    <BudgetSpent />
 
     <div class="setting-row">
       <div class="setting-info">

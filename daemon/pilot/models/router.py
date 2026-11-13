@@ -179,7 +179,7 @@ class ModelRouter:
             if self._config.model.provider == "subscription":
                 model_name = self._config.model.subscription_model or "cli-default"
             else:
-                model_name = self._config.model.cloud_model or self._config.model.ollama_model
+                model_name = self._planner_model_name()
 
             await self._budget_tracker.record_usage(
                 provider_key,
@@ -189,6 +189,17 @@ class ModelRouter:
             )
 
         return result
+
+    def _planner_model_name(self) -> str:
+        """The model a cloud or local call went to, as the budget prices it: a cloud provider's configured model, or
+        its default (pilot.models.cloud.DEFAULT_MODELS) when none is set; never the local model's name for a cloud
+        call, which has no price and would be costed at the provider's highest rate."""
+        model = self._config.model
+        if model.provider == "cloud":
+            from pilot.models.cloud import DEFAULT_MODELS
+
+            return model.cloud_model or DEFAULT_MODELS.get(model.cloud_provider, "")
+        return model.cloud_model or model.ollama_model
 
     async def _record_billed_cloud_calls(
         self,

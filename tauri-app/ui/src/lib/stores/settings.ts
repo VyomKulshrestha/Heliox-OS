@@ -148,6 +148,12 @@ export interface PilotSettings {
   /** The conversation layer; only what the window shows. share_profile: what a cloud model is told about you. */
   conversation?: {
     share_profile?: "auto" | "off";
+    // The model that talks for each cloud provider ("" = its fast default; TalkModel.svelte).
+    claude_model?: string;
+    openai_model?: string;
+    gemini_model?: string;
+    openrouter_model?: string;
+    meta_model?: string;
   };
   first_run_complete: boolean;
   theme: "light" | "dark";

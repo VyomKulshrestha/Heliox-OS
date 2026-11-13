@@ -47,14 +47,14 @@ async def make_tracker(tmp_path, **kwargs) -> BudgetTracker:
 async def test_record_usage_accumulates(tmp_path):
     """record_usage() persists rows and accumulates the monthly cost."""
     tracker = await make_tracker(tmp_path)
-    await tracker.record_usage("openai", "gpt-4", 1000, 500)
-    await tracker.record_usage("openai", "gpt-4", 1000, 500)
+    await tracker.record_usage("openai", "gpt-4o", 1000, 500)
+    await tracker.record_usage("openai", "gpt-4o", 1000, 500)
     stats = await tracker.get_stats()
     assert stats["calls"] == 2
     assert stats["input_tokens"] == 2000
     assert stats["output_tokens"] == 1000
-    # 2 × ((1000×0.005 + 500×0.015) / 1000) = 2 × 0.0125 = 0.025
-    assert abs(stats["cost_usd"] - 0.025) < 1e-6
+    # gpt-4o at $2.50 / $10 per million (pilot.models.prices): 2 × (1000×2.5 + 500×10) / 1e6 = 0.015
+    assert abs(stats["cost_usd"] - 0.015) < 1e-6
     await tracker.close()
 
 

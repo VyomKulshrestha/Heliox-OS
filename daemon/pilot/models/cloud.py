@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from pilot.config import PilotConfig
+from pilot.models.catalog import PLANNER_DEFAULTS, openai_reasoning
 from pilot.system.http_client import create_httpx_client
 
 if TYPE_CHECKING:
@@ -30,6 +31,7 @@ logger = logging.getLogger("pilot.models.cloud")
 # How long the planner's client keeps an idle connection to a provider (httpx's default is 5 s; the providers keep
 # one at least 120 s, measured 13 November).
 IDLE_CONNECTION_SECONDS = 120.0
+
 
 PROVIDER_ENDPOINTS = {
     "openai": "https://api.openai.com/v1/chat/completions",
@@ -45,13 +47,9 @@ PROVIDER_ENDPOINTS = {
     "meta": "https://api.meta.ai/v1/chat/completions",
 }
 
-DEFAULT_MODELS = {
-    "openai": "gpt-4o",
-    "gemini": "gemini-2.5-flash",
-    "claude": "claude-opus-5-5",
-    "openrouter": "openrouter/auto",
-    "meta": "muse-spark-1.1",
-}
+# The planner's model per provider when none is set: current on each provider's own pages as read on the date in
+# pilot.models.catalog (where a former default was deprecated, the successor the provider names).
+DEFAULT_MODELS = dict(PLANNER_DEFAULTS)
 
 PROVIDER_DISPLAY_NAMES = {
     "openrouter": "OpenRouter",
@@ -592,8 +590,11 @@ class CloudClient:
         payload: dict = {
             "model": model,
             "messages": messages,
-            "temperature": temperature,
         }
+        if not openai_reasoning(model):
+            # OpenAI's reasoning models (the GPT-5 and GPT-6 families, the o-series) take a reasoning effort, not a
+            # sampling temperature; it is left out for them, as it is for every model that does not need it.
+            payload["temperature"] = temperature
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 

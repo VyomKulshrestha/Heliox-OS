@@ -17,26 +17,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.models.budget_tracker")
 
-# (input_usd, output_usd) per 1 000 tokens
-COST_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
-    "openai": (0.005, 0.015),
-    # Fallback only: Claude Opus 5.5 ($4/$20 per million tokens). Calls that
-    # report usage are priced per model by claude_cost_usd instead.
-    "claude": (0.004, 0.020),
-    "gemini": (0.000075, 0.0003),
-    # OpenRouter prices vary by selected/routed model. Until usage-cost
-    # metadata is plumbed through the response contract, use a non-zero
-    # conservative planning estimate instead of silently recording $0.00.
-    # The OpenRouter dashboard remains authoritative for billed cost.
-    "openrouter": (0.005, 0.015),
-    # Meta Model API public-preview pricing ($1.25/$4.25 per million
-    # tokens) as of July 2026 -- reverify once Muse Spark leaves preview;
-    # an unlisted provider key here silently costs $0.00 and never trips
-    # the budget gate, so this must stay in sync with actual pricing.
-    "meta": (0.00125, 0.00425),
-    "ollama": (0.0, 0.0),
-    "local": (0.0, 0.0),
-}
+
+# Each provider's highest current rate, (input_usd, output_usd) per 1 000 tokens: what a call is costed at when
+# its model is not known. Calls name their model and are priced per model (pilot.models.prices, every table with
+# the page and date it was read from; Claude below).
+def _highest_per_1k(provider: str) -> tuple[float, float]:
+    from pilot.models import prices
+
+    if provider in prices.FREE_PROVIDERS:
+        return (0.0, 0.0)
+    found = prices.price_for(provider, "")[0]
+    return (found.input / 1000.0, found.output / 1000.0)
+
+
+class _HighestRates(dict):
+    """COST_PER_1K_TOKENS[provider]: that provider's highest current rate, read when asked (the tables may change)."""
+
+    def __missing__(self, provider: str) -> tuple[float, float]:
+        return _highest_per_1k(provider)
+
+    def get(self, provider: str, default: object = None) -> tuple[float, float]:  # type: ignore[override]
+        return _highest_per_1k(provider)
+
+
+COST_PER_1K_TOKENS: dict[str, tuple[float, float]] = _HighestRates()
 
 
 @dataclass(frozen=True)
@@ -53,25 +57,30 @@ class ClaudePrice:
     long_output: float = 0.0
 
 
-# Source: the claude-api skill model table (cached 2026-11-03), Anthropic
-# first-party API rates. Cache reads use the table value where it states one
-# (Opus 5.5 $0.20, Sonnet 5.5 $0.10, Fable 5.2 $0.20) and 0.1x input otherwise,
-# which overstates rather than understates. Cache writes are billed at 1.25x
-# input (5 minute TTL, the only TTL Heliox requests).
+# Source: https://platform.claude.com/docs/en/about-claude/pricing, read 2026-11-13 (pilot.models.prices.SOURCES),
+# Anthropic first-party API rates. Cache reads use the page's value where it differs from 0.1x input (0.025x for
+# Fable and Mythos 5.2 and 5.1, 0.05x for Opus 5.5 and Sonnet 5.5) and 0.1x input otherwise. Cache writes are billed
+# at 1.25x input (5 minute TTL, the only TTL Heliox requests). Retired models stay so old usage keeps its price.
 CLAUDE_MODEL_PRICES: dict[str, ClaudePrice] = {
     "claude-fable-5-2": ClaudePrice(8.0, 40.0, 0.20),
     "claude-mythos-5-2": ClaudePrice(8.0, 40.0, 0.20),
-    "claude-fable-5-1": ClaudePrice(10.0, 50.0),
-    "claude-mythos-5-1": ClaudePrice(10.0, 50.0),
+    "claude-fable-5-1": ClaudePrice(10.0, 50.0, 0.25),
+    "claude-mythos-5-1": ClaudePrice(10.0, 50.0, 0.25),
     "claude-fable-5": ClaudePrice(10.0, 50.0),
+    "claude-mythos-5": ClaudePrice(10.0, 50.0),
     "claude-opus-5-5": ClaudePrice(4.0, 20.0, 0.20),
     "claude-opus-5": ClaudePrice(5.0, 25.0),
     "claude-opus-4-8": ClaudePrice(5.0, 25.0),
     "claude-opus-4-7": ClaudePrice(5.0, 25.0),
     "claude-opus-4-6": ClaudePrice(5.0, 25.0),
+    "claude-opus-4-5": ClaudePrice(5.0, 25.0),
+    "claude-opus-4-1": ClaudePrice(15.0, 75.0),
+    "claude-opus-4": ClaudePrice(15.0, 75.0),
     "claude-sonnet-5-5": ClaudePrice(2.0, 10.0, 0.10),
     "claude-sonnet-5": ClaudePrice(2.0, 10.0),
     "claude-sonnet-4-6": ClaudePrice(3.0, 15.0),
+    "claude-sonnet-4-5": ClaudePrice(3.0, 15.0),
+    "claude-sonnet-4": ClaudePrice(3.0, 15.0),
     # Haiku 5.5: $0.10/$0.50 up to 100K prompt tokens, $0.50/$2.50 beyond.
     "claude-haiku-5-5": ClaudePrice(0.10, 0.50, None, 100_000, 0.50, 2.50),
     "claude-haiku-4-5": ClaudePrice(1.0, 5.0),
@@ -79,7 +88,12 @@ CLAUDE_MODEL_PRICES: dict[str, ClaudePrice] = {
 
 # An unknown Claude model is billed at the most expensive known rate so the
 # cap errs on the safe side.
-CLAUDE_UNKNOWN_MODEL_PRICE = max(CLAUDE_MODEL_PRICES.values(), key=lambda p: (p.output, p.input))
+# Retired models keep their price for old usage, but do not set the price of an unknown one.
+CLAUDE_RETIRED = frozenset({"claude-opus-4-1", "claude-opus-4", "claude-sonnet-4"})
+CLAUDE_UNKNOWN_MODEL_PRICE = max(
+    (price for name, price in CLAUDE_MODEL_PRICES.items() if name not in CLAUDE_RETIRED),
+    key=lambda p: (p.output, p.input),
+)
 
 CLAUDE_CACHE_WRITE_MULTIPLIER = 1.25
 _DATED_SUFFIX = re.compile(r"^-\d{8}$")
@@ -164,14 +178,17 @@ def _current_month() -> str:
     return datetime.now(UTC).strftime("%Y-%m")
 
 
-def _estimate_cost(provider: str, input_tokens: int, output_tokens: int) -> float:
+def _estimate_cost(provider: str, input_tokens: int, output_tokens: int, model: str = "") -> float:
+    """One call's cost for a provider other than Claude, priced per model (pilot.models.prices). A model with no
+    current price is costed at its provider's highest rate, never at zero."""
     # Subscription CLI calls consume plan quota, not metered API dollars.
     # Keep their token evidence while preventing API-price estimates from
     # being attached to (for example) a Claude Pro/Max invocation.
     if provider.startswith("subscription:"):
         return 0.0
-    rates = COST_PER_1K_TOKENS.get(provider, (0.0, 0.0))
-    return (input_tokens * rates[0] + output_tokens * rates[1]) / 1000.0
+    from pilot.models import prices
+
+    return prices.cost_usd(provider, model, input_tokens, output_tokens)
 
 
 class TaskBudgetExceededError(BudgetExceededError):
@@ -460,7 +477,7 @@ class BudgetTracker:
         if provider == "claude":
             cost = claude_cost_usd(model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
         else:
-            cost = _estimate_cost(provider, input_tokens, output_tokens)
+            cost = _estimate_cost(provider, input_tokens, output_tokens, model)
         call_tokens = input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
         now = datetime.now(UTC).isoformat()
         month = _current_month()
@@ -524,6 +541,15 @@ class BudgetTracker:
             )
             row = await cursor.fetchone()
             await cursor.close()
+            cursor = await db.execute(
+                "SELECT DISTINCT provider, model FROM token_usage WHERE month = ? ORDER BY provider, model", (month,)
+            )
+            used = await cursor.fetchall()
+            await cursor.close()
+        from pilot.models.prices import estimated_high
+
+        # Calls this month costed without a current price: said in the budget view, so a high figure is explained.
+        notes = sorted({note for provider, model in used if (note := estimated_high(str(provider), str(model)))})
         calls, total_input, total_output, total_cost = row if row else (0, 0, 0, 0.0)
         remaining = max(0.0, self._monthly_limit - float(total_cost)) if self._monthly_limit > 0 else None
         return {
@@ -535,6 +561,7 @@ class BudgetTracker:
             "cost_usd": round(float(total_cost), 6),
             "limit_usd": self._monthly_limit,
             "remaining_usd": round(remaining, 6) if remaining is not None else None,
+            "estimated_high": notes,
         }
 
     async def reset_current_month(self) -> None:

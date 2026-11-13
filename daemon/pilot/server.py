@@ -2425,6 +2425,7 @@ class PilotServer:
             "proactive_accept": self._handle_proactive_accept,
             "proactive_dismiss": self._handle_proactive_dismiss,
             "budget_stats": self._handle_budget_stats,
+            "model_catalog": self._handle_model_catalog,
             "budget_reset": self._handle_budget_reset,
             # ── LAN Mesh Network ──
             "mesh_peers": self._handle_mesh_peers,
@@ -14675,6 +14676,13 @@ def handle_tool(tool_name, params):
         if not self._budget_tracker:
             return {}
         return await self._budget_tracker.get_stats()
+
+    async def _handle_model_catalog(self, params: dict, ws: ServerConnection) -> dict:
+        """The cloud models Settings offers, per provider: the planner and talk defaults, the offered models and the
+        withdrawn ones with what each provider suggests (pilot.models.catalog). Read-only; nothing leaves the machine."""
+        from pilot.models.catalog import catalog
+
+        return {"status": "ok", **catalog()}
 
     async def _handle_budget_reset(self, params: dict, ws: ServerConnection) -> dict:
         """Delete all token-usage records for the current month.
