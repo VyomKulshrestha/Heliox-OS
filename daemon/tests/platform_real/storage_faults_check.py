@@ -290,11 +290,19 @@ async def full_while_running() -> None:
         print(f"INFO a note before the disk is full: {said!r}")
         # A store small enough to live in the file system's own records needs no free space to be rewritten: NTFS
         # keeps a file of a few hundred bytes inside its MFT record, so on Windows a full volume still took the
-        # note (CI on 49bd35f). A long note makes notes.json need real clusters, as a person's notes soon do.
-        await session.call("note_add", {"text": "the disk has room for this longer note " * 120}, timeout=60)
+        # note (CI on 49bd35f). Notes past every file system's in-record limit (4 KB here) make its next rewrite
+        # need real clusters, as a person's notes soon do. A note holds at most 500 characters (notes.MAX_TEXT): a
+        # single long one was refused, and notes.json stayed at 103 bytes (CI on 2d24504).
+        for number in range(12):
+            added = await session.call("note_add", {"text": f"room note {number}: " + "x" * 450}, timeout=60)
+            if added.get("status") != "ok":
+                print(f"INFO a filler note was refused: {added}")
+                break
         notes_file = MOUNT / "heliox-os" / "notes.json"
         size = notes_file.stat().st_size if notes_file.exists() else -1
         print(f"INFO notes.json is {size} bytes before the disk is filled")
+        if not check("full/store-needs-space", size > 4096, f"notes.json is {size} bytes (more than 4096 needed)"):
+            return
         filler, written = fill()
         print(f"INFO filled the tmpfs with {written / 2**20:.1f} MB; {options()}")
         began = time.monotonic()
