@@ -619,7 +619,7 @@ REACH_LIMITED: contextvars.ContextVar[bool] = contextvars.ContextVar("heliox_rea
 # A doubtful follow-up, or anything the addressing rule has not taken, never warms it.
 VOICE_PREPARE_REASONS = frozenset({"focus", "typing"})
 VOICE_PREPARE_SECONDS = 2.0  # voice_prepare from the window: repeats within this are ignored
-QUIET_FOR_MAKING_SECONDS = 1.0  # making fixed sentences ahead waits for this long with nothing heard
+QUIET_FOR_MAKING_SECONDS = 30.0  # making fixed sentences ahead waits for this long with nothing heard
 WARM_FOR = frozenset({"wake", "button", "follow_up", "continuation", "live_reply"})
 
 
@@ -15904,15 +15904,21 @@ def handle_tool(tool_name, params):
         logger.debug("Code handlers' modules imported ahead of the first turn in %.2f s", time.monotonic() - started)
 
     def _nobody_talking_to_heliox(self) -> bool:
-        """Nothing above the speech threshold reached the microphone in the last QUIET_FOR_MAKING_SECONDS, nobody is
+        """No conversation is open (the wake phrase, a request, a reply or a follow-up window in the last stretch),
+        nothing above the speech threshold reached the microphone in the last QUIET_FOR_MAKING_SECONDS, nobody is
         mid-utterance, and no turn is being recognised or acted on."""
         listener = getattr(self, "_voice_listener", None)
         if listener is None:
             return True
         recorder = getattr(listener, "_recorder", None)
         heard_at = float(getattr(recorder, "last_above_threshold_at", 0.0) or 0.0)
+        try:
+            talking = bool(listener.conversation_open())
+        except Exception:
+            talking = True  # cannot tell: treated as a conversation
         return (
-            time.time() - heard_at >= QUIET_FOR_MAKING_SECONDS
+            not talking
+            and time.time() - heard_at >= QUIET_FOR_MAKING_SECONDS
             and not bool(getattr(recorder, "user_is_speaking", False))
             and not bool(getattr(listener, "busy", False))
         )

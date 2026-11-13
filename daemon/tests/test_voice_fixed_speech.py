@@ -164,6 +164,7 @@ class Worker:
 
 def manager_with(tmp_path, monkeypatch) -> tuple[LocalTTSWorkerManager, Worker]:
     monkeypatch.setattr(local_tts_worker, "trim_silence", lambda path, lead, tail: None)
+    monkeypatch.setattr(local_tts_worker, "MAKE_AHEAD_IDLE_SECONDS", 0.0)  # the quiet stretch: tests_make_ahead_bound
     worker = Worker()
     manager = LocalTTSWorkerManager(spawn=lambda engine, device, gpu_lease=False: worker)
     manager.head_cache = SpeechStore(tmp_path / "voice_heads")

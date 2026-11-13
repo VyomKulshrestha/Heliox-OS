@@ -173,10 +173,16 @@ the exact text and those settings, so a piece that only starts like a kept one (
   ("Want me to wrap up the day?"). Prompts, bench corpora, the router's phrasings and screen-reading diagnostics are
   left out by file. On 13 November that is 223 pieces. Their audio is made ahead
   (`LocalTTSWorkerManager.make_ahead`) in the order a person needs them (the short acknowledgements and holding
-  phrases, the say-back and the layer's short replies first, then the offers, then the rest), only while the voice is
-  loaded and idle, nothing has reached the microphone for a second, and the computer is not on battery power (it
-  waits, and goes on once plugged in); one piece at a time, resting five times each piece's synthesis time before the
-  next. At most 64 MB of it is kept, and none is ever evicted. Anything with a changing part ("It's 10:42.") is
+  phrases, the say-back and the layer's short replies first, then the offers, then the rest), only pieces of eight
+  words or fewer, and only once Heliox has been unused for 30 s: no conversation open, no reply, request or sign of
+  use (the window's focus, typing), and nothing reaching the microphone for 30 s; and not on battery power (it waits,
+  and goes on once plugged in). One piece at a time, resting five times each piece's synthesis time before the next.
+  At first the rule waited only for one second of microphone quiet, and on CI (f6a1f8e, run 43390770874) the replies
+  to a cut came 0.45 to 0.95 s later: a piece started a second after the cut, just as "Okay." needed the voice, and
+  the worker finishes a piece before the next request. A piece being made when the first request after a quiet stretch
+  arrives still finishes first; at eight words that is under a second here, less than the request's own speech and the
+  end of its turn, and a reply in the store does not need the worker at all. At most 64 MB of it is kept, and none is
+  ever evicted. Anything with a changing part ("It's 10:42.") is
   synthesised as before. Nothing is shown for it: it is a cache, it never competes with the person, and a line in the
   Voice panel would ask for attention about something there is nothing to do with.
 - Heads of six words or fewer that this Heliox has said twice, copied from audio already made for a reply, at most 40

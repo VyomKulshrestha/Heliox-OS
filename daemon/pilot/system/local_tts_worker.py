@@ -311,6 +311,15 @@ HEAD_CACHE_VERSION = 1
 # Making fixed sentences ahead rests this many times each piece's synthesis time before the next: about a sixth of four
 # threads' time while the machine is idle, and nothing while Heliox is speaking or the person is talking to it.
 MAKE_AHEAD_REST_FACTOR = 5.0
+# No piece is made ahead until Heliox has been silent and unused this long: a conversation (a request, every reply, a
+# cut, a follow-up) keeps it waiting, so a reply never finds the worker busy with a piece made for later. On CI's
+# control scenarios a piece started one second after a cut, as the "Okay." for that cut arrived, and the reply waited
+# for it (0.45 to 0.95 s later to first sound on f6a1f8e).
+MAKE_AHEAD_IDLE_SECONDS = 30.0
+# Only pieces this short are made ahead, so one already being made when the first request after a quiet stretch
+# arrives ends soon: 8 words took 0.75 s on a 16-core laptop CPU (13 November), and the request's own speech and the
+# end of its turn take longer than that. Longer fixed pieces are synthesised when they are said, as before.
+MAKE_AHEAD_MAX_WORDS = 8
 # The fixed sentences made ahead (pilot.system.fixed_speech) may hold at most this much audio on disk; past it, no more
 # are made (none is dropped to make room: each was made once, when the machine was idle). About 220 pieces of 1 to 3 s
 # of 24 kHz float audio, about 40 MB in all, fit.
@@ -1192,11 +1201,13 @@ class LocalTTSWorkerManager:
         rest_factor: float = MAKE_AHEAD_REST_FACTOR,
         poll_seconds: float = 1.0,
     ) -> int:
-        """Make the audio of the fixed ``pieces`` the store lacks, in their order, one at a time, only while the voice
-        is loaded and idle (no speak() under way), ``quiet()`` (nobody speaking near the microphone) and the computer
-        is not on ``battery()`` power (it waits, and goes on once plugged in), resting ``rest_factor`` times each
-        piece's synthesis time before the next. Stops when the store is full or the voice changes. Returns how many
-        pieces were made."""
+        """Make the audio of the fixed ``pieces`` the store lacks (of MAKE_AHEAD_MAX_WORDS words or fewer), in their
+        order, one at a time, only while the voice is loaded, nothing has used it for MAKE_AHEAD_IDLE_SECONDS (no
+        reply, no request, no sign of use: note_activity), ``quiet()`` (no conversation open and the room quiet) and
+        the computer is not on ``battery()`` power (it waits, and goes on once plugged in), resting ``rest_factor``
+        times each piece's synthesis time before the next. A piece already being made when a reply arrives is
+        finished first (the worker cannot drop it): at most one short piece's synthesis. Stops when the store is full
+        or the voice changes. Returns how many pieces were made."""
         store = self.head_cache
         if store is None or engine not in LOCAL_ENGINES:
             return 0
@@ -1205,13 +1216,14 @@ class LocalTTSWorkerManager:
         with tempfile.TemporaryDirectory(prefix="heliox-tts-fixed-", ignore_cleanup_errors=True) as temp_dir:
             folder = Path(temp_dir)
             for index, text in enumerate(pieces):
-                if store.has(text, signature):
+                if store.has(text, signature) or len(text.split()) > MAKE_AHEAD_MAX_WORDS:
                     continue
                 while not (
                     self.running
                     and self.loaded
                     and self.engine == engine
                     and self._busy == 0
+                    and self._clock() - self._last_activity >= MAKE_AHEAD_IDLE_SECONDS
                     and quiet()
                     and not battery()
                 ):
