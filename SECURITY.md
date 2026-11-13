@@ -1069,6 +1069,11 @@ to keep the saved safety settings intact:
   `delete_api_key` RPCs refuse `heliox_mesh` and names starting with `ssh:` or
   `air_handoff:`, so a client cannot replace the mesh secret or an SSH key
   through the API-key path.
+- **A new place to run commands is asked about.** Saving an SSH host that Heliox could
+  not sign in to before (a new alias, or one moved to another address, account or port),
+  turning its host key check off, or turning SSH on waits for the person's yes in the
+  daemon's approval dialog, which names the account and the computer; nothing is stored
+  before it, the key included. A new key for the same host, and turning SSH off, are free.
 - **Dry run is fixed per job.** A background job records whether dry run was on
   when it was submitted and keeps that mode until it ends; turning dry run off
   mid-job does not let that job start changing the system.

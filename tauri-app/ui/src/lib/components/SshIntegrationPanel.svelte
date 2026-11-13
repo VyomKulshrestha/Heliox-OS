@@ -27,6 +27,9 @@
   let messageType = $state<"ok" | "error" | "">("");
   let confirmDelete = $state("");
 
+  /** Said when the person kept things as they were in Heliox's approval dialog: not an error. */
+  const NOT_APPROVED = "Not changed: you did not approve it in Heliox's dialog.";
+
   onMount(() => void refresh());
 
   async function refresh() {
@@ -51,6 +54,11 @@
       const result = await call<{ status: string; enabled?: boolean; message?: string }>("ssh_set_enabled", {
         enabled: next,
       });
+      if (result.status === "cancelled") {
+        message = NOT_APPROVED;
+        messageType = "";
+        return;
+      }
       if (result.status !== "ok") throw new Error(result.message || "SSH state was not saved.");
       enabled = result.enabled ?? next;
       message = enabled ? "SSH integration enabled." : "SSH integration disabled; saved hosts were kept.";
@@ -110,6 +118,12 @@
         strict_host_key_checking: strictHostKeyChecking,
         enabled,
       });
+      if (result.status === "cancelled") {
+        // Nothing was stored, the key included; what was typed stays, so the person can look again.
+        message = NOT_APPROVED;
+        messageType = "";
+        return;
+      }
       if (result.status !== "ok") throw new Error(result.message || "The SSH host was not saved.");
       privateKey = "";
       passphrase = "";

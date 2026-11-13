@@ -6950,6 +6950,12 @@ class PilotServer:
             found = guards.section_widenings("gateway", self.config.gateway, {"risk_gate_enabled": enabled})
         elif method == "supervision_config_update":
             found = guards.section_widenings("supervision", self.config.supervision, params)
+        elif method == "ssh_set_enabled":
+            enabled = params.get("enabled")
+            if isinstance(enabled, bool):
+                found = guards.section_widenings("ssh", self.config.ssh, {"enabled": enabled})
+        elif method == "ssh_save_host":
+            found = guards.ssh_host_widenings(self.config.ssh, params)
         elif method in {"self_healing_config_update", "narration_config_update"}:
             section = method.removesuffix("_config_update")
             found = guards.section_widenings(section, getattr(self.config, section), params)
@@ -10759,6 +10765,8 @@ class PilotServer:
         enabled = params.get("enabled")
         if not isinstance(enabled, bool):
             return {"status": "error", "message": "enabled must be a boolean"}
+        if (refusal := await self._widening_refusal("ssh_set_enabled", params, ws)) is not None:
+            return refusal  # turning SSH on, and the person did not approve it in the daemon's dialog
         previous_ssh = copy.deepcopy(self.config.ssh)
         self.config.ssh.enabled = enabled
         if (failure := self._save_section("ssh", previous_ssh)) is not None:
@@ -10803,6 +10811,10 @@ class PilotServer:
         has_saved_key = bool(key_provider and await self._vault.get_key(key_provider))
         if not private_key and not has_saved_key:
             return {"status": "error", "message": "A private key is required for a new SSH host"}
+        # A new place to run commands, its host key check turned off, or SSH turned on: asked in the daemon's dialog,
+        # naming the account and the computer, before any secret is stored.
+        if (refusal := await self._widening_refusal("ssh_save_host", params, ws)) is not None:
+            return refusal
 
         try:
             if private_key:

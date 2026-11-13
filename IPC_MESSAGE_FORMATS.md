@@ -1333,8 +1333,8 @@ keyring and are unavailable to the MCP and neural sidecar roles.
 | `calendar_test_connection` | Authenticate to the enabled HTTPS CalDAV account and list calendar names without changing events. |
 | `email_test_connection` | Authenticate to the enabled IMAP account without reading or changing messages. |
 | `ssh_list_hosts` | Return allowlisted aliases and credential-readiness booleans; never key material or provider identifiers. |
-| `ssh_set_enabled` | Persist the global SSH integration switch without deleting saved hosts. |
-| `ssh_save_host` | Validate and persist one host alias; store its private key/passphrase only in the OS keyring. |
+| `ssh_set_enabled` | Persist the global SSH integration switch without deleting saved hosts. Turning it on asks first in the daemon's approval dialog ("Let Heliox run commands on your SSH hosts"); turning it off is free. A no returns `{ "status": "cancelled" }`. |
+| `ssh_save_host` | Validate and persist one host alias; store its private key/passphrase only in the OS keyring. A new alias, or one moved to another address, account or port, asks first in the daemon's dialog, naming it ("Let Heliox sign in to builder@10.0.0.7:2222"); so do turning its host key check off and `enabled: true` on an SSH that is off. A no returns `{ "status": "cancelled" }` and stores nothing, the key included. A new key for the same place asks nothing. Malformed requests are refused before anything is asked. |
 | `ssh_delete_host` | Remove one alias and its associated keyring credentials. |
 | `ssh_test_connection` | Authenticate to one allowlisted alias without executing a remote command. |
 

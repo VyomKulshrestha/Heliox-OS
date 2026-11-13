@@ -635,3 +635,94 @@ async def test_adding_a_folder_to_index_asks_naming_it_and_removing_one_says_its
     removed = await server._handle_update_config({"section": "semantic_search", "values": {"folders": []}}, _ws())
     assert person.asked == [] and server.config.semantic_search.folders == []
     assert "/home/sam/notes" in removed["note"] and "stays in the search index" in removed["note"]
+
+
+def _ssh_server(person: Person, monkeypatch) -> PilotServer:
+    server = _server(person, monkeypatch)
+    server._vault = MagicMock()
+    server._vault.get_key = AsyncMock(return_value=None)
+    server._vault.store_key = AsyncMock()
+    return server
+
+
+SSH_HOST = {
+    "name": "build-box",
+    "hostname": "10.0.0.7",
+    "port": 2222,
+    "username": "builder",
+    "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nnot a real key\n-----END OPENSSH PRIVATE KEY-----",
+    "strict_host_key_checking": True,
+    "enabled": False,
+}
+
+
+@pytest.mark.asyncio
+async def test_a_new_ssh_host_asks_naming_the_account_and_a_no_stores_no_key(monkeypatch):
+    person = Person(confirmed=False)
+    server = _ssh_server(person, monkeypatch)
+
+    reply = await server._handle_ssh_save_host(dict(SSH_HOST), _ws())
+
+    assert reply["status"] == "cancelled" and server.config.ssh.allowed_hosts == []
+    server._vault.store_key.assert_not_awaited()  # nothing stored before the yes, the key included
+    (line,) = person.asked[0]["shown"]
+    assert line["target"] == "Let Heliox sign in to builder@10.0.0.7:2222"
+    assert "run commands there" in line["description"]
+
+
+@pytest.mark.asyncio
+async def test_an_ssh_host_without_its_host_key_check_and_ssh_on_say_so(monkeypatch):
+    person = Person(confirmed=False)
+    server = _ssh_server(person, monkeypatch)
+
+    await server._handle_ssh_save_host({**SSH_HOST, "strict_host_key_checking": False, "enabled": True}, _ws())
+
+    assert _lines(person) == [
+        "Let Heliox sign in to builder@10.0.0.7:2222",
+        "Skip checking that 10.0.0.7 is the computer it was",
+        "Let Heliox run commands on your SSH hosts",
+    ]
+    assert server.config.ssh.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_an_approved_ssh_host_is_saved_and_a_new_key_for_the_same_place_asks_nothing(monkeypatch):
+    person = Person(confirmed=True)
+    server = _ssh_server(person, monkeypatch)
+
+    saved = await server._handle_ssh_save_host(dict(SSH_HOST), _ws())
+    assert saved["status"] == "ok" and [h.hostname for h in server.config.ssh.allowed_hosts] == ["10.0.0.7"]
+    server._vault.store_key.assert_awaited()
+
+    person.asked.clear()
+    again = await server._handle_ssh_save_host({**SSH_HOST, "private_key": "another key"}, _ws())
+    assert again["status"] == "ok" and person.asked == []
+
+    moved = await server._handle_ssh_save_host({**SSH_HOST, "hostname": "10.0.0.8"}, _ws())
+    assert moved["status"] == "ok" and _lines(person) == ["Let Heliox sign in to builder@10.0.0.8:2222"]
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_ssh_host_is_refused_before_anything_is_asked(monkeypatch):
+    person = Person(confirmed=True)
+    server = _ssh_server(person, monkeypatch)
+
+    no_key = await server._handle_ssh_save_host({**SSH_HOST, "private_key": ""}, _ws())
+    bad_port = await server._handle_ssh_save_host({**SSH_HOST, "port": 70000}, _ws())
+
+    assert no_key["status"] == bad_port["status"] == "error" and person.asked == []
+
+
+@pytest.mark.asyncio
+async def test_turning_ssh_on_asks_and_off_is_free(monkeypatch):
+    person = Person(confirmed=False)
+    server = _ssh_server(person, monkeypatch)
+
+    on = await server._handle_ssh_set_enabled({"enabled": True}, _ws())
+    assert on["status"] == "cancelled" and server.config.ssh.enabled is False
+    assert _lines(person) == ["Let Heliox run commands on your SSH hosts"]
+
+    person.asked.clear()
+    server.config.ssh.enabled = True
+    off = await server._handle_ssh_set_enabled({"enabled": False}, _ws())
+    assert off["status"] == "ok" and person.asked == [] and server.config.ssh.enabled is False

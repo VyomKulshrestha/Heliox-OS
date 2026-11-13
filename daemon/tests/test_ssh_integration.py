@@ -21,6 +21,8 @@ def _server() -> PilotServer:
     server._vault.get_key = AsyncMock(return_value=None)
     server._vault.store_key = AsyncMock()
     server._vault.delete_key = AsyncMock()
+    # The person approves in the daemon's dialog (test_guard_changes.py drives it); this file is about storage.
+    server._approve_widenings = AsyncMock(return_value=None)
     return server
 
 

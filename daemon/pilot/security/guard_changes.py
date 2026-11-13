@@ -235,6 +235,12 @@ def section_widenings(
                         "index on this computer.",
                     )
                 )
+    elif section == "ssh":
+        turned_on(
+            "enabled",
+            "Let Heliox run commands on your SSH hosts",
+            "Steps you approve may sign in to the hosts saved in Settings and run commands there.",
+        )
     elif section == "vision":
         turned_on(
             "gaze_tracking_enabled",
@@ -333,6 +339,53 @@ def _shorter_wait(found: list[Widening], section: str, now: dict[str, Any], valu
                 "the time you have to stop it",
             )
         )
+
+
+def ssh_host_widenings(current_ssh: Any, params: dict[str, Any]) -> list[Widening]:
+    """An ssh_save_host request: a computer Heliox may sign in to and run commands on that it could not before (a new
+    alias, or an alias moved to another address or account), the host key check turned off for it, and SSH turned
+    on. A request the handler will refuse as malformed widens nothing, so it is refused before anything is asked."""
+    now = _plain(current_ssh)
+    name = str(params.get("name", "")).strip()
+    hostname = str(params.get("hostname", "")).strip()
+    username = str(params.get("username", "")).strip()
+    port = params.get("port", 22)
+    strict = params.get("strict_host_key_checking", True)
+    if not (name and hostname and username) or not isinstance(port, int) or isinstance(port, bool):
+        return []
+    if not isinstance(strict, bool):
+        return []
+    existing = next((host for host in now.get("allowed_hosts", []) or [] if host.get("name") == name), None)
+    if existing is None and not str(params.get("private_key", "")):
+        return []  # a new host needs its key: refused by the handler, not asked about
+    where = f"{username}@{hostname}" + (f":{port}" if port != 22 else "")
+    found: list[Widening] = []
+    if existing is None or (existing.get("hostname"), existing.get("username"), existing.get("port")) != (
+        hostname,
+        username,
+        port,
+    ):
+        found.append(
+            Widening(
+                "ssh.allowed_hosts",
+                f"Let Heliox sign in to {where}",
+                f"With the key you give it, a step you approve that names {name} will sign in to {hostname} as "
+                f"{username} and run commands there.",
+            )
+        )
+    if strict is False and (existing is None or existing.get("strict_host_key_checking", True)):
+        found.append(
+            Widening(
+                "ssh.strict_host_key_checking",
+                f"Skip checking that {hostname} is the computer it was",
+                f"Heliox will not check {hostname}'s host key, so another computer answering in its place would get "
+                "the commands and whatever they send.",
+            )
+        )
+    enabled = params.get("enabled", now.get("enabled"))
+    if isinstance(enabled, bool):
+        found.extend(section_widenings("ssh", current_ssh, {"enabled": enabled}))
+    return found
 
 
 def gateway_widenings(profile: str, current_floor: Any, params: dict[str, Any]) -> list[Widening]:
