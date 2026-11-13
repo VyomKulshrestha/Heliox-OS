@@ -105,8 +105,12 @@ def _server(tmp_path):
 async def test_everyday_settings_change_by_voice(tmp_path):
     server = _server(tmp_path)
 
-    assert await server._control_reply("turn on the activity timeline") == "The activity timeline is on."
-    assert server.config.timeline.enabled is True
+    # Keeping the timeline is a capture: by voice it asks in the window (pilot.security.guard_changes).
+    from pilot.personal.spoken_settings import OPEN_TO_APPROVE
+
+    assert await server._control_reply("turn on the activity timeline") == OPEN_TO_APPROVE
+    assert server.config.timeline.enabled is False
+    server.config.timeline.enabled = True  # as approved in the window
     assert await server._control_reply("send me a daily brief at 7 pm") == (
         "I'll send your daily brief every day at 19:00."
     )
@@ -115,7 +119,7 @@ async def test_everyday_settings_change_by_voice(tmp_path):
     assert server.config.brief.speak is True
     assert await server._control_reply("stop recording my activity") == "The activity timeline is off."
     methods = [call.args[0] for call in server._broadcast_notification.await_args_list]
-    assert methods.count("config_updated") == 4
+    assert methods.count("config_updated") == 3
 
 
 @pytest.mark.asyncio

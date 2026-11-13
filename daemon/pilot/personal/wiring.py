@@ -219,6 +219,7 @@ def offers_for(server: Any, data_dir: Any = None) -> Any:
         suggestion=(suggester.suggest if suggester is not None else (lambda: None)),
         suggestions=(suggester.picks if suggester is not None else None),
         legacy_suggestions_on=lambda: bool(getattr(config.suggestions, "enabled", False)),
+        timeline_off=lambda: not bool(getattr(getattr(config, "timeline", None), "enabled", False)),
         spans=spans,
         moments=lambda now: _day_moments(server, now) + _learned(server, now),
         label=app_label,
@@ -253,7 +254,14 @@ def routines_for(server: Any) -> Any:
 
 
 def note_request(server: Any, text: str, *, planned: bool) -> None:
-    """A request the person addressed to Heliox and Heliox took: kept for routines when it is one (never raises)."""
+    """A request the person addressed to Heliox and Heliox took: counted as a day of use (dates only, for the one
+    timeline offer) and kept for routines when it is one (never raises)."""
+    offers = getattr(server, "_offers", None)
+    if offers is not None:
+        try:
+            offers.note_used(offers.now().date().isoformat())
+        except Exception:
+            logger.debug("Could not count the day of use", exc_info=True)
     record = getattr(server, "_routines", None)
     if record is None:
         return

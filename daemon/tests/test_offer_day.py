@@ -51,7 +51,7 @@ def test_the_student_day(week):
 
 def test_the_table_prints(week, capsys):
     text = offer_day.table(week)
-    assert text.count("\n") == 3 and "told Heliox nothing" in text
+    assert text.count("\n") == 4 and "told Heliox nothing" in text
     print(text, file=sys.stderr)
 
 
@@ -82,3 +82,13 @@ def test_the_rest_rule_on_its_own(tmp_path):
     assert offers._resting("habit:water")  # six days after the last "no"
     now[0] = datetime(2026, 11, 24, 11)
     assert not offers._resting("habit:water")  # a week after it
+
+
+def test_the_timeline_is_offered_once_after_three_days_of_use(week):
+    used = week["a week of use, nothing told"]
+    offered = [i for i, day in enumerate(used) if any(kind == "timeline" for _t, kind in day.offers)]
+    assert offered == [2]  # Wednesday, the third day with a request, and never again
+    office = [kind for day in week["office, nine to six"] for _t, kind in day.offers]
+    assert office.count("timeline") == 1
+    for name in ("student, no fixed hours", "told Heliox nothing"):  # no requests taken: no days of use
+        assert not any(kind == "timeline" for day in week[name] for _t, kind in day.offers)

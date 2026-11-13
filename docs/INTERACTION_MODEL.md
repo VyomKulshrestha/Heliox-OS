@@ -445,6 +445,15 @@ asked for this around nine on five days."). "What do you know about my routines"
 learning my routines" work by voice; Settings has the switch and Your data lists and clears them; they are in "what
 do you know about me" and in the backup. **Fakes only** (`tests/test_learned_routines.py`).
 
+Once the person has used Heliox on three different days (a request taken; only the dates are kept, the first
+three) and the activity timeline is off, one offer is made, once ever: "I could keep a private timeline of what you
+work on, on this computer, so I can remind you where you left off. Want that?". Keeping the timeline is a capture,
+so turning it on is a widening (`guard_changes`, section `timeline`): a spoken yes, like "turn on the activity
+timeline" said any time, puts the change in the window's approval dialog and says so, and the Settings switch asks
+there too; turning it off is free. Whatever the answer, it is not offered again; the person can still ask for it. On
+the day bench a fourth made-up person, who uses Heliox all week and tells it nothing, gets it on Wednesday and never
+again. **Fakes only** (`tests/test_timeline_offer.py`, `tests/test_offer_day.py`).
+
 Suggestions, offers and Live are turned off, back on, down or up by voice from one table
 (`pilot.personal.spoken_settings`), each phrase family with the value it saves and the sentence said, and a request to
 stop something is answered by a sentence that says it stopped. "Stop suggesting things" (also "quit", "don't",

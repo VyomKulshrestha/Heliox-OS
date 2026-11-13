@@ -177,6 +177,12 @@ def section_widenings(section: str, current_section: Any, values: dict[str, Any]
         goes_to("smtp_host", "Send mail through {host}", "Mail Heliox sends will go through {host}.")
     elif section == "calendar":
         goes_to("caldav_url", "Use the calendar at {host}", "Your calendar will be read from and written to {host}.")
+    elif section == "timeline":
+        turned_on(
+            "enabled",
+            "Keep the activity timeline",
+            "Heliox will record which app and window title are in front, and when, on this computer.",
+        )
     elif section == "live":
         # A capture counts when Live is on with it: turning Live on with captures set, or a capture on while Live is.
         captures = {

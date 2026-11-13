@@ -68,6 +68,11 @@ PEOPLE = (
         answers_by_day={(1, "todos"): "don't offer that again"},
     ),
     Person("told Heliox nothing"),
+    Person(
+        "a week of use, nothing told",
+        requests={"10:00": "open outlook", "15:00": "play some music"},
+        answers={"timeline": "no"},
+    ),
 )
 
 
@@ -102,6 +107,7 @@ async def run_week(person: Person, folder: Path) -> list[Day]:
         now=lambda: clock_at[0],
         clock=tick,
         state_path=folder / "offers.json",
+        timeline_off=lambda: True,  # the default
     )
     server = SimpleNamespace(_user_profile=profile, _focus=None)
 
@@ -119,6 +125,7 @@ async def run_week(person: Person, folder: Path) -> list[Day]:
             hhmm = clock_at[0].strftime("%H:%M")
             done = person.requests.get(hhmm)
             if done:
+                offers.note_used(clock_at[0].date().isoformat())  # a request taken: a day of use
                 offer = goal_progress(done, goals)
                 if offer is not None:
                     offers.offer_soon(offer)

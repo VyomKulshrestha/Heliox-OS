@@ -207,6 +207,7 @@ _KIND_WORDS = {
     "routine": "offers at the start and end of your working day",
     "goal_progress": "noting progress on your goals",
     "learned_routine": "repeating what you usually ask for at that time",
+    "timeline": "keeping an activity timeline",
 }
 
 
@@ -267,6 +268,23 @@ def day_moments(now: datetime, *, start: int | None, end: int | None) -> list[Of
 # The getting-to-know offer to someone who has told Heliox nothing: at most twice, three days apart, then never
 # unless asked ("get to know me"). Before, it came back every day an always-on Heliox ran without an answer.
 INTRO_MAX_ASKS = 2
+# Once the person has used Heliox on this many different days, and the activity timeline is off, one offer to keep it:
+# made once ever. A spoken yes asks in the window (turning a capture on is a widening, pilot.security.guard_changes);
+# a no, or no answer, and it is never offered again; the person can still ask for it ("turn on the activity timeline").
+TIMELINE_AFTER_DAYS = 3
+TIMELINE = Offer(
+    key="timeline",
+    kind="timeline",
+    text=(
+        "I could keep a private timeline of what you work on, on this computer, so I can remind you where you left "
+        "off. Want that?"
+    ),
+    request="turn on the activity timeline",
+    why=(
+        "You've used Heliox on three different days and the timeline is off. It stays on this computer, and Your data "
+        "shows and clears it."
+    ),
+)
 # "No" holds an offer for the rest of the day; "no" on two days within a week rests it for a week after the last.
 DECLINES_BEFORE_REST = 2
 ONE_A_DAY_KINDS = frozenset({"learned_routine"})  # at most one offer a day of these kinds, whichever key
@@ -371,6 +389,10 @@ class Offers:
     # key -> what was offered, in words, so Settings can list it and undo it
     silenced: dict[str, str] = field(default_factory=dict)
     intro_days: list[str] = field(default_factory=list)  # the days the getting-to-know offer was made
+    # The activity timeline is off (the one offer to keep it is made only then).
+    timeline_off: Callable[[], bool] = lambda: False
+    used_days: list[str] = field(default_factory=list)  # the first few days a request was taken (dates only)
+    timeline_offered: bool = False
     declined_on: dict[str, list[str]] = field(default_factory=dict)  # key -> the days "no" was said to it
 
     def __post_init__(self) -> None:
@@ -378,6 +400,8 @@ class Offers:
             try:
                 state = json.loads(self.state_path.read_text(encoding="utf-8"))
                 self.intro_days = [str(day) for day in state.get("intro_days", []) if isinstance(day, str)]
+                self.used_days = [str(day) for day in state.get("used_days", []) if isinstance(day, str)]
+                self.timeline_offered = bool(state.get("timeline_offered", False))
                 raw = state.get("silenced", {})
                 if isinstance(raw, list):  # the first version kept keys only
                     raw = {key: key for key in raw}
@@ -469,6 +493,8 @@ class Offers:
             return None
         if self._intro_due():
             return INTRO  # once a run, until the person answers, says "don't offer this" or tells Heliox something
+        if self._timeline_due():
+            return TIMELINE
         if not self.active():
             return None
         today = self._today()
@@ -495,6 +521,25 @@ class Offers:
         if day not in days:
             days.append(day)
 
+    def note_used(self, day: str) -> None:
+        """A request was taken on ``day`` (ISO date). Only the first TIMELINE_AFTER_DAYS different days are kept."""
+        if day in self.used_days or len(self.used_days) >= TIMELINE_AFTER_DAYS:
+            return
+        self.used_days.append(day)
+        self._save(change=False)  # Heliox's own count, not something the person changed
+
+    def _timeline_due(self) -> bool:
+        if self.timeline_offered or len(self.used_days) < TIMELINE_AFTER_DAYS:
+            return False
+        if str(self.mode() or "auto").casefold() == "off" or TIMELINE.key in self.silenced:
+            return False
+        if "kind:timeline" in self.silenced or self.declined.get(TIMELINE.key):
+            return False
+        try:
+            return bool(self.timeline_off())
+        except Exception:
+            return False
+
     def _resting(self, key: str) -> bool:
         """Declined on two different days within a week: left alone for a week after the last "no"."""
         days = sorted(date.fromisoformat(d) for d in set(self.declined_on.get(key, [])))
@@ -514,6 +559,9 @@ class Offers:
         if offer.key == INTRO.key:
             self.intro_days.append(made.day)
             self._save(change=False)  # Heliox's own count, not something the person changed
+        if offer.key == TIMELINE.key:
+            self.timeline_offered = True  # once ever, whatever the answer
+            self._save(change=False)
         return made.id
 
     # ── the person's answer ──
@@ -617,6 +665,7 @@ class Offers:
         self.silenced.clear()
         self.declined.clear()
         self.intro_days.clear()
+        self.used_days.clear()
         self._save()
 
     def _save(self, *, change: bool = True) -> None:
@@ -626,7 +675,12 @@ class Offers:
             return
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            state = {"silenced": dict(sorted(self.silenced.items())), "intro_days": self.intro_days[-INTRO_MAX_ASKS:]}
+            state = {
+                "silenced": dict(sorted(self.silenced.items())),
+                "intro_days": self.intro_days[-INTRO_MAX_ASKS:],
+                "used_days": self.used_days[:TIMELINE_AFTER_DAYS],
+                "timeline_offered": self.timeline_offered,
+            }
             self.state_path.write_text(json.dumps(state), encoding="utf-8")
         except OSError:
             logger.debug("Could not save offers", exc_info=True)
