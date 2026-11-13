@@ -381,6 +381,11 @@ jobs:
         # Windows: the runner's own output, or one NOT-POSSIBLE line when it has none.
         run: python tests/platform_real/volume_check.py
 
+      - name: Linux, media - next, previous, play and pause through MPRIS, against test players on a private bus
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: dbus-run-session -- python tests/platform_real/mpris_check.py --python /usr/bin/python3
+
       - name: Linux, X11 session - type into a GTK field and read it through AT-SPI
         if: runner.os == 'Linux'
         run: |

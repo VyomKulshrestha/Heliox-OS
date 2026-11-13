@@ -2484,6 +2484,15 @@ class Executor:
         from pilot.system.input_control import keyboard_press
 
         p: KeyboardParams = action.parameters  # type: ignore[assignment]
+        if p.key in {"playpause", "nexttrack", "prevtrack"}:
+            # Linux: the media player itself through MPRIS, which says what it is doing afterwards; the key press
+            # only when MPRIS cannot be reached (and on Windows and macOS, which have no such call here yet).
+            from pilot.system.mpris import media_command
+
+            request = action.target if action.target in {"pause", "play"} else p.key
+            said = await asyncio.to_thread(media_command, request)
+            if said is not None:
+                return said
         return await keyboard_press(p.key, p.presses)
 
     async def _exec_keyboard_hotkey(self, action: Action) -> str:

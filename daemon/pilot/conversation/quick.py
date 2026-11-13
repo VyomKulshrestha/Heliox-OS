@@ -287,7 +287,10 @@ def from_words(
                 step = VOLUME_STEP if key == "volumeup" else -VOLUME_STEP
                 action = _action(ActionType.VOLUME_SET, "", VolumeParams(step=step))
             else:
-                action = _action(ActionType.KEYBOARD_PRESS, key, KeyboardParams(key=key, presses=1))
+                # "pause" or "play" travels as the target, so the media player is asked for exactly that (MPRIS on
+                # Linux); the key is the play/pause key either way.
+                wanted = media_request(key, text)
+                action = _action(ActionType.KEYBOARD_PRESS, wanted, KeyboardParams(key=key, presses=1))
             break
     sound = {"", "the sound", "the volume", "sound", "volume", "the audio", "audio", "it", "everything"}
     if action is None and verb in {"mute", "unmute"} and target.strip() in sound:
@@ -443,6 +446,13 @@ def quick_acknowledgement(plan: QuickPlan, words: str) -> str:
 #     Audio on Windows, osascript on macOS, pactl or amixer on Linux), where it is there;
 #   the read-only checks on every system (battery, disk, memory, CPU, processes, system information, the volume).
 VOLUME_STEP = 10
+MEDIA_PLAYER_KEYS = frozenset({"playpause", "nexttrack", "prevtrack"})  # asked of the player itself on Linux
+# The sentences pilot.system.mpris says from what the player reports (a key press says "Pressed ...").
+_MEDIA_SAID = re.compile(
+    r"^(?:Paused |Playing |Now playing |No media player|Next track in |Previous track in |I asked |The media player )"
+    r"|(?:is already (?:paused|playing)|isn't playing|are all (?:playing|paused)|are open but none"
+    r"|didn't change track|is playing|is stopped)"
+)
 _VOLUME_SAID = re.compile(
     r"^(?:Volume is at|Already (?:un)?muted|(?:Un)?muted\.|The sound is|I (?:pressed|set|changed|muted|unmuted))"
 )
@@ -459,12 +469,27 @@ _READ_ONLY = frozenset(
 _VOLUME = frozenset({ActionType.VOLUME_MUTE, ActionType.VOLUME_SET, ActionType.VOLUME_GET})
 
 
-def runs_beside_a_task(plan: QuickPlan, volume_call: bool | None = None) -> bool:
+def media_request(key: str, words: str) -> str:
+    """What a media command asks the player for: "pause" or "play" for the play/pause key as said, else the key."""
+    if key != "playpause":
+        return key
+    return "pause" if re.match(r"^(?:please )?pause\b", words.strip().casefold()) else "play"
+
+
+def runs_beside_a_task(plan: QuickPlan, volume_call: bool | None = None, media_call: bool | None = None) -> bool:
     """Whether this one-step command may run at once while a task runs (a system call that cannot land in a window).
-    ``volume_call``: whether this system's own volume call is here (pilot.system.volume.volume_call_available)."""
-    kind = plan.plan.actions[0].action_type
+    ``volume_call``: whether this system's own volume call is here (pilot.system.volume.volume_call_available);
+    ``media_call``: whether the media player can be asked directly (MPRIS on Linux, pilot.system.mpris)."""
+    action = plan.plan.actions[0]
+    kind = action.action_type
     if kind in _READ_ONLY:
         return True
+    if kind is ActionType.KEYBOARD_PRESS and getattr(action.parameters, "key", "") in MEDIA_PLAYER_KEYS:
+        if media_call is None:
+            from pilot.system.mpris import media_call_available
+
+            media_call = media_call_available()
+        return media_call
     if kind not in _VOLUME:
         return False
     if volume_call is None:
@@ -532,6 +557,12 @@ def quick_result_sentence(plan: QuickPlan, result: str, status: str) -> str:
     state = speakable_state(result)
     if state:
         return state
+    if (
+        action.action_type is ActionType.KEYBOARD_PRESS
+        and getattr(action.parameters, "key", "") in MEDIA_PLAYER_KEYS
+        and _MEDIA_SAID.search((result or "").strip())
+    ):
+        return result.strip()  # what the media player reports (pilot.system.mpris): "Paused Spotify."
     if action.action_type in _VOLUME and _VOLUME_SAID.match((result or "").strip()):
         return result.strip()  # pilot.system.volume says what is true now: "Volume is at 30.", "Already unmuted."
     if action.action_type is ActionType.OPEN_APPLICATION and not getattr(action.parameters, "args", None):

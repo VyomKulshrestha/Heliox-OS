@@ -305,13 +305,15 @@ Heliox names it: "I'll open Notepad when this is done." (`pilot/conversation/qui
 |---|---|---|---|
 | Volume up, volume down, louder, quieter, mute, unmute, set the volume to 30 | At once (Core Audio); waits when Core Audio does not answer | At once (`osascript`) | At once (`pactl`, else `amixer`); waits when neither is installed |
 | Battery, disk, memory, processor, processes, system information | At once | At once | At once |
-| Next track, previous track, play, pause | Waits (a media key press) | Waits (a media key event) | Waits (an X key event) |
+| Next track, previous track, play, pause | Waits: a media key press (SendInput), and Heliox cannot tell what the player did | Waits: a media key event, and Heliox cannot tell what the player did | At once, through the media player itself (MPRIS), saying what it reports ("Paused Spotify."); waits, as a key press, only without a session bus |
 | Open an app or a site, search the web, switch to a window | Waits | Waits | Waits |
 
-Media keys, the proper route (a note, not built): each system has a call that reaches the media player rather than a
-key press, which would let next, previous, play and pause run beside a task too.
-- Linux: MPRIS over D-Bus, `org.mpris.MediaPlayer2.Player` `PlayPause`, `Next` and `Previous` on the player that is
-  playing (found by its `PlaybackStatus`). jeepney, already a dependency on Linux, can make the calls.
+Media commands on Linux go to the player itself over MPRIS (`pilot/system/mpris.py`, through jeepney): the player
+that is playing; with none playing, the only paused one; with none paused, the only player there is. No player:
+"No media player is running." Two or more playing (or, with none playing, two or more paused): Heliox names them and
+changes none. Fakes for the bus, and a real check against test players on a private session bus in
+`platform-readers` (`mpris_check.py`). Windows and macOS still send a media key, which waits during a task, and the
+sentence there says only what was asked, not what the player did. Their routes, not built:
 - Windows: the system media transport controls, `GlobalSystemMediaTransportControlsSessionManager` (WinRT),
   `TryTogglePlayPauseAsync`, `TrySkipNextAsync`, `TrySkipPreviousAsync` on the current session. From Python this
   needs a WinRT binding (the `winrt` packages) or a PowerShell WinRT call, which is a new dependency or a script.
