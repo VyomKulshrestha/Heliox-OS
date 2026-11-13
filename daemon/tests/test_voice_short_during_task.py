@@ -20,6 +20,17 @@ from pilot.workflows.reminders import ReminderStore
 from pilot.workflows.user_profile import UserProfile
 
 
+@pytest.fixture(autouse=True)
+def no_media_player(monkeypatch):
+    """No media player can be asked directly (no session bus on Linux, and none on Windows or macOS), set here so the
+    computer the tests run on never decides: "Next track." and "Pause the music." are key presses and wait. With a
+    player on Linux they are answered beside the task: tests/test_voice_beside_task.py."""
+    from pilot.system import mpris
+
+    monkeypatch.setattr(mpris, "media_call_available", lambda bus_factory=None: False)
+    monkeypatch.setattr(mpris, "media_command", lambda request, **_: None)
+
+
 def running_server(tmp_path, *, interactive: bool = True, approval: bool = False) -> PilotServer:
     config = PilotConfig()
     config.save = lambda *a, **k: None

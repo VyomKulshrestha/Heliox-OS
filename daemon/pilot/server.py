@@ -7299,16 +7299,17 @@ class PilotServer:
         the executor's own handler for that action, without waiting for the desktop the task holds. Returns what to
         say."""
         from pilot.actions import ActionType
-        from pilot.conversation.quick import quick_acknowledgement, quick_result_sentence
+        from pilot.conversation.quick import player_request, quick_acknowledgement, quick_result_sentence
 
         action = quick.plan.actions[0]
         if action.action_type is ActionType.KEYBOARD_PRESS:
             # A media command beside a task goes to the player itself (MPRIS), never as a key press: when the
-            # player cannot be asked, it waits for the task instead ("" here).
+            # player cannot be asked after all, nothing has happened and it waits for the task instead ("" here),
+            # so "I'll skip to the next track when this is done." stays true.
             from pilot.system.mpris import media_command
 
-            key = getattr(action.parameters, "key", "")
-            said = await asyncio.to_thread(media_command, action.target if action.target in {"pause", "play"} else key)
+            request, platform = player_request(action), quick.platform or None
+            said = await asyncio.to_thread(lambda: media_command(request, platform=platform))
             return said or ""
         handler = getattr(self._executor, "_dispatch_table", {}).get(action.action_type) if self._executor else None
         if handler is None:

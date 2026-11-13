@@ -120,8 +120,8 @@ def test_pause_and_play_are_told_apart_from_the_words():
 def test_media_commands_run_beside_a_task_only_where_the_player_can_be_asked(platform):
     routed = route("Next track.")
     plan = quick.from_words(normalize("Next track."), routed.verb, routed.target, platform=platform)
-    assert quick.runs_beside_a_task(plan, media_call=True)
-    assert not quick.runs_beside_a_task(plan, media_call=False)  # Windows and macOS: a key press, so it waits
+    assert quick.runs_beside_a_task(plan, media_call=True) is (platform == "linux")  # elsewhere a key press: waits
+    assert not quick.runs_beside_a_task(plan, media_call=False)
 
 
 @pytest.mark.asyncio
@@ -144,8 +144,9 @@ async def test_the_executor_asks_the_player_and_presses_the_key_only_without_mpr
 
 
 def running(monkeypatch, *, media: bool) -> PilotServer:
+    monkeypatch.setattr(quick, "_platform", lambda: "linux")  # set here: the host never decides
     monkeypatch.setattr(mpris, "media_call_available", lambda bus_factory=None: media)
-    monkeypatch.setattr(mpris, "media_command", lambda request: "Paused Spotify." if media else None)
+    monkeypatch.setattr(mpris, "media_command", lambda request, **_: "Paused Spotify." if media else None)
     config = PilotConfig()
     config.save = lambda *a, **k: None
     server = PilotServer(config)

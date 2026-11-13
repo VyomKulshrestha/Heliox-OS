@@ -157,6 +157,7 @@ class QuickPlan:
     plan: ActionPlan
     source: str  # "router" or "model"
     summary: str  # what is being done, for the log
+    platform: str = ""  # the system it was made for (sys.platform's form); "" for this computer
 
 
 def _platform() -> str:
@@ -331,7 +332,10 @@ def from_words(
     if not ok:
         return None
     return QuickPlan(
-        ActionPlan(actions=[action], explanation="", raw_input=normalized), "router", action.action_type.value
+        ActionPlan(actions=[action], explanation="", raw_input=normalized),
+        "router",
+        action.action_type.value,
+        platform,
     )
 
 
@@ -361,7 +365,12 @@ def from_model(proposal: Any, *, words: str, platform: str | None = None, home: 
     ok, _reason = admissible(action, platform=platform, home=home)
     if not ok:
         return None
-    return QuickPlan(ActionPlan(actions=[action], explanation="", raw_input=words), "model", action_type.value)
+    return QuickPlan(
+        ActionPlan(actions=[action], explanation="", raw_input=words),
+        "model",
+        action_type.value,
+        platform or _platform(),
+    )
 
 
 def speakable_state(result: str) -> str:
@@ -437,13 +446,16 @@ def quick_acknowledgement(plan: QuickPlan, words: str) -> str:
 # Which one-step commands may run while a task is running, by how each is carried out on each system (read from
 # pilot/system/volume.py and pilot/system/input_control.py). A command sent as a key press, or one that brings a
 # window to the front, could land in the window the task is typing in, so it waits for the task:
-#   next and previous track, play and pause: a media key press through pyautogui on every system (no system's media
-#     session call is used yet: see docs/PLATFORM_SUPPORT.md, "Media keys");
+#   next and previous track, play and pause on Windows and macOS: a media key press through pyautogui (no system's
+#     media session call is used there yet: see docs/PLATFORM_SUPPORT.md, "Media keys"), and on Linux when no
+#     session bus answers;
 #   opening an app or a site, switching to a window: they change which window is in front;
 #   the volume commands on a computer where the system's volume call is missing (they fall back to key presses).
 # A command that is a system call and cannot land in a window runs at once:
 #   volume up and down, louder and quieter, mute, unmute and a level, through the system's own volume call (Core
 #     Audio on Windows, osascript on macOS, pactl or amixer on Linux), where it is there;
+#   next and previous track, play and pause on Linux when the session bus answers: the player itself through MPRIS
+#     (pilot.system.mpris.goes_to_player decides, from the platform and whether the bus answers);
 #   the read-only checks on every system (battery, disk, memory, CPU, processes, system information, the volume).
 VOLUME_STEP = 10
 MEDIA_PLAYER_KEYS = frozenset({"playpause", "nexttrack", "prevtrack"})  # asked of the player itself on Linux
@@ -476,20 +488,25 @@ def media_request(key: str, words: str) -> str:
     return "pause" if re.match(r"^(?:please )?pause\b", words.strip().casefold()) else "play"
 
 
+def player_request(action: Action) -> str:
+    """What a media key action asks the player for: "pause" or "play" when said so, else the key."""
+    return action.target if action.target in {"pause", "play"} else str(getattr(action.parameters, "key", ""))
+
+
 def runs_beside_a_task(plan: QuickPlan, volume_call: bool | None = None, media_call: bool | None = None) -> bool:
     """Whether this one-step command may run at once while a task runs (a system call that cannot land in a window).
     ``volume_call``: whether this system's own volume call is here (pilot.system.volume.volume_call_available);
-    ``media_call``: whether the media player can be asked directly (MPRIS on Linux, pilot.system.mpris)."""
+    ``media_call``: whether the session bus answers, so the media player can be asked directly (None: asked on
+    this computer). A media command goes to the player only on Linux (pilot.system.mpris.goes_to_player, with the
+    plan's own platform); elsewhere it is a key press and waits."""
     action = plan.plan.actions[0]
     kind = action.action_type
     if kind in _READ_ONLY:
         return True
     if kind is ActionType.KEYBOARD_PRESS and getattr(action.parameters, "key", "") in MEDIA_PLAYER_KEYS:
-        if media_call is None:
-            from pilot.system.mpris import media_call_available
+        from pilot.system.mpris import goes_to_player
 
-            media_call = media_call_available()
-        return media_call
+        return goes_to_player(player_request(action), plan.platform or None, media_call)
     if kind not in _VOLUME:
         return False
     if volume_call is None:

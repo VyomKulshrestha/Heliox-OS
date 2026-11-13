@@ -27,7 +27,8 @@ def plan(text: str, platform: str = "windows") -> quick.QuickPlan:
 
 VOLUME = ["Volume down.", "Louder.", "Quieter.", "Mute.", "Unmute.", "Set the volume to 30."]
 READ_ONLY = ["Check the battery."]
-ALWAYS_WAIT = ["Next track.", "Pause the music.", "Open Notepad."]
+MEDIA = ["Next track.", "Pause the music.", "Previous track."]
+ALWAYS_WAIT = ["Open Notepad."]
 
 
 @pytest.fixture(autouse=True)
@@ -42,8 +43,30 @@ def test_which_commands_run_beside_a_task(platform):
     for text in VOLUME:
         assert quick.runs_beside_a_task(plan(text, platform), volume_call=True), (text, platform)
         assert not quick.runs_beside_a_task(plan(text, platform), volume_call=False), (text, platform)
-    for text in ALWAYS_WAIT:  # media keys are key presses; opening an app brings a window to the front
-        assert not quick.runs_beside_a_task(plan(text, platform), volume_call=True), (text, platform)
+    for text in ALWAYS_WAIT:  # opening an app brings a window to the front
+        assert not quick.runs_beside_a_task(plan(text, platform), volume_call=True, media_call=True), text
+    for text in MEDIA:  # the player itself on Linux when the bus answers; a key press otherwise, which waits
+        reachable = quick.runs_beside_a_task(plan(text, platform), volume_call=True, media_call=True)
+        assert reachable is (platform == "linux"), (text, platform)
+        assert not quick.runs_beside_a_task(plan(text, platform), volume_call=True, media_call=False), (text, platform)
+
+
+@pytest.mark.parametrize("host", ["linux", "win32", "darwin"])
+def test_the_plan_s_platform_decides_not_the_host(host, monkeypatch):
+    """The computer the tests run on never decides: a plan made for Windows or macOS waits even on a Linux host
+    whose session bus answers, and the bus is not even asked; a plan for Linux asks it."""
+    from pilot.system import mpris
+
+    asked = []
+    monkeypatch.setattr(mpris.sys, "platform", host)
+    monkeypatch.setattr(mpris, "media_call_available", lambda bus_factory=None: asked.append(1) or True)
+    for platform in ("windows", "macos", "win32", "darwin"):
+        assert not quick.runs_beside_a_task(plan("Next track.", platform)), (platform, host)
+    assert asked == []
+    assert quick.runs_beside_a_task(plan("Next track.", "linux"))
+    assert asked == [1]
+    assert mpris.goes_to_player("nexttrack", "linux", reachable=False) is False
+    assert mpris.media_command("nexttrack", platform="win32") is None  # nothing asked of any bus, no key here
 
 
 def test_volume_up_and_down_are_volume_calls_not_key_presses():
@@ -117,17 +140,69 @@ async def test_without_the_volume_call_volume_waits_and_is_named(monkeypatch):
     assert server._speak_voice_response.await_args.args[0] == "I'll turn the volume down when this is done."
 
 
+def media_state(monkeypatch, platform: str, *, bus: bool, player_says: str | None = "Next track in Spotify.") -> list:
+    """The system the request is made on and what the media player does, set explicitly so the host never decides:
+    ``bus`` whether the session bus answers, ``player_says`` what pilot.system.mpris reports after the call (None:
+    the player could not be asked after all). Returns the requests the player got."""
+    from pilot.system import mpris
+
+    got: list[str] = []
+
+    def media_command(request, *, platform=None, **_):
+        if not mpris.goes_to_player(request, platform, reachable=bus):
+            return None
+        got.append(request)
+        return player_says
+
+    monkeypatch.setattr(quick, "_platform", lambda: platform)
+    monkeypatch.setattr(mpris, "media_call_available", lambda bus_factory=None: bus)
+    monkeypatch.setattr(mpris, "media_command", media_command)
+    return got
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("platform", "bus"), [("win32", True), ("darwin", True), ("win32", False), ("linux", False)]
+)  # Windows and macOS: a key press whatever a bus would say; Linux without a bus: a key press too
 @pytest.mark.parametrize(
     ("said", "sentence"),
     [
         ("Next track.", "I'll skip to the next track when this is done."),
+        ("Pause the music.", "I'll pause the music when this is done."),
         ("Open Notepad.", "I'll open Notepad when this is done."),
     ],
 )
-async def test_key_presses_and_windows_wait(said, sentence, monkeypatch):
+async def test_key_presses_and_windows_wait(said, sentence, platform, bus, monkeypatch):
+    got = media_state(monkeypatch, platform, bus=bus)
     server = running(monkeypatch, volume_call=True)
     await server._voice_command_dispatch(said)
+    assert got == []  # nothing changed yet, so "when this is done" is true
     server._queue_interactive_request.assert_awaited_once()
     assert server._speak_voice_response.await_args.args[0] == sentence
     server._handle_interject.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("said", "asked", "player_says"),
+    [("Next track.", "nexttrack", "Next track in Spotify."), ("Pause the music.", "pause", "Paused Spotify.")],
+)
+async def test_on_linux_with_a_player_the_command_is_answered_beside_the_task(said, asked, player_says, monkeypatch):
+    got = media_state(monkeypatch, "linux", bus=True, player_says=player_says)
+    server = running(monkeypatch, volume_call=True)
+    await server._voice_command_dispatch(said)
+    assert got == [asked]
+    server._queue_interactive_request.assert_not_awaited()
+    server._handle_interject.assert_not_awaited()
+    assert [c.args[0] for c in server._speak_voice_response.await_args_list] == [player_says]  # never "when done"
+
+
+@pytest.mark.asyncio
+async def test_on_linux_a_player_that_cannot_be_asked_after_all_waits_and_is_named(monkeypatch):
+    """The bus answered the check, then the call found nothing to reach: nothing happened, so it waits and the
+    sentence says it will happen later."""
+    media_state(monkeypatch, "linux", bus=True, player_says=None)
+    server = running(monkeypatch, volume_call=True)
+    await server._voice_command_dispatch("Next track.")
+    server._queue_interactive_request.assert_awaited_once()
+    assert server._speak_voice_response.await_args.args[0] == "I'll skip to the next track when this is done."

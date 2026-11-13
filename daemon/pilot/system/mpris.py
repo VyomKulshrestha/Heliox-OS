@@ -157,18 +157,33 @@ def said_after(player: Player, request: str, before_track: str) -> str:
     return f"I asked {label}, but it didn't say what it is doing."
 
 
+def goes_to_player(request: str, platform: str | None = None, reachable: bool | None = None) -> bool:
+    """Whether a media command goes to the player itself through MPRIS rather than as a key press. The one place
+    this is decided, from two inputs: ``platform``, the system the command is for (sys.platform's form, "linux",
+    "win32", "darwin"; None for this computer), and ``reachable``, whether the session bus answers (None: asked
+    here, and only on Linux). Windows and macOS have no such call here, so there it is always the key press,
+    whatever a bus would say."""
+    if request not in METHODS:
+        return False
+    if not (sys.platform if platform is None else platform).casefold().startswith("linux"):
+        return False
+    return media_call_available() if reachable is None else bool(reachable)
+
+
 def media_command(
     request: str,
     *,
+    platform: str | None = None,
     bus_factory: Callable[[], Bus] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> str | None:
     """Do ``request`` ("pause", "play", "playpause", "nexttrack", "prevtrack") through MPRIS and say what is true.
-    None when MPRIS cannot be reached (not Linux, no session bus, no jeepney): the caller may press the key."""
+    None when MPRIS cannot be reached (not Linux, no session bus, no jeepney): the caller may press the key.
+    ``platform`` as for goes_to_player (None: this computer)."""
     if request not in METHODS:
         return None
     if bus_factory is None:
-        if not sys.platform.startswith("linux"):
+        if not goes_to_player(request, platform, reachable=True):
             return None
         bus_factory = JeepneyBus
     try:
@@ -208,9 +223,9 @@ def media_command(
 
 
 def media_call_available(bus_factory: Callable[[], Bus] | None = None) -> bool:
-    """Whether MPRIS can be reached here (Linux with a session bus and jeepney)."""
+    """Whether MPRIS can be reached on this computer (Linux with a session bus and jeepney)."""
     if bus_factory is None:
-        if not sys.platform.startswith("linux"):
+        if not goes_to_player("playpause", reachable=True):
             return False
         bus_factory = JeepneyBus
     try:
