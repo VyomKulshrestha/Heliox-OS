@@ -1158,6 +1158,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check --progress-bar off -e ./daemon
 
       - name: Hard kills (a worker's parent, a task in the middle)
+        id: hard-kills
         continue-on-error: true
         timeout-minutes: 6  # about three times what it needs; the check has its own limit inside
         run: |
@@ -1172,6 +1173,7 @@ jobs:
           python daemon/tests/platform_real/kill_checks.py
 
       - name: Two daemons started together
+        id: two-copies
         if: runner.os != 'Windows'
         continue-on-error: true
         run: |
@@ -1180,6 +1182,7 @@ jobs:
           python daemon/tests/platform_real/two_copies_check.py
 
       - name: Stop with a request in flight
+        id: stop-in-flight
         continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/stop" USERPROFILE="$RUNNER_TEMP/stop" LOCALAPPDATA="$RUNNER_TEMP/stop/AppData/Local"
@@ -1187,6 +1190,7 @@ jobs:
           python daemon/tests/platform_real/stop_timing_check.py
 
       - name: Network faults in front of the real clients
+        id: network-faults
         continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/net" USERPROFILE="$RUNNER_TEMP/net" LOCALAPPDATA="$RUNNER_TEMP/net/AppData/Local"
@@ -1194,6 +1198,7 @@ jobs:
           python daemon/tests/platform_real/network_faults_check.py
 
       - name: The network goes away in the middle of a request (the kernel drops the packets), then comes back
+        id: network-drop
         if: runner.os == 'Linux'
         continue-on-error: true
         timeout-minutes: 8  # about three times what it needs; the check has its own limit inside
@@ -1203,6 +1208,7 @@ jobs:
           python daemon/tests/platform_real/network_drop_check.py
 
       - name: A stand-in for sleep (the daemon frozen for 100 s, then let go)
+        id: frozen
         continue-on-error: true
         timeout-minutes: 12  # about three times what it needs; the check has its own limit inside
         run: |
@@ -1211,6 +1217,7 @@ jobs:
           python daemon/tests/platform_real/frozen_daemon_check.py
 
       - name: The update path with the port held by something else
+        id: foreign-port
         continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/port" USERPROFILE="$RUNNER_TEMP/port" LOCALAPPDATA="$RUNNER_TEMP/port/AppData/Local"
@@ -1218,6 +1225,7 @@ jobs:
           python daemon/tests/platform_real/foreign_port_check.py
 
       - name: What "no NVIDIA card" claims, on a machine without one
+        id: no-nvidia
         continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/gpu" USERPROFILE="$RUNNER_TEMP/gpu" LOCALAPPDATA="$RUNNER_TEMP/gpu/AppData/Local"
@@ -1229,6 +1237,7 @@ jobs:
           exit $status
 
       - name: The learner's saved state after the runtime folder is emptied (a reboot), and an earlier key moved
+        id: learner-key
         continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/learner" USERPROFILE="$RUNNER_TEMP/learner" LOCALAPPDATA="$RUNNER_TEMP/learner/AppData/Local"
@@ -1236,6 +1245,7 @@ jobs:
           python daemon/tests/platform_real/learner_key_reboot_check.py
 
       - name: The last run, killed then stopped cleanly (startup_status says the unclean end once, the clean one never)
+        id: run-record
         continue-on-error: true
         timeout-minutes: 6  # about three times what it needs; the check has its own limit inside
         run: |
@@ -1244,6 +1254,7 @@ jobs:
           python daemon/tests/platform_real/run_record_check.py
 
       - name: A full disk and a read-only data folder (Linux tmpfs and ext4, a macOS disk image, a Windows VHD)
+        id: storage
         continue-on-error: true
         timeout-minutes: 12  # about three times what it needs; the check has its own limit inside
         run: |
@@ -1252,6 +1263,7 @@ jobs:
           python daemon/tests/platform_real/storage_faults_check.py
 
       - name: A locked keychain (one made for the check; the login keychain is not touched)
+        id: keychain
         if: runner.os == 'macOS'
         continue-on-error: true
         env:
@@ -1264,6 +1276,40 @@ jobs:
   # daemon/tests/platform_real/app_launch_check.py checks that the page loads under the content-security policy
   # with no error, that a command answers, that a removed permission is refused, that neither script nor a link
   # click can take the window to another site, and that WebAssembly compiles under 'wasm-unsafe-eval'.
+
+      # Each check step above goes on after a FAIL so the later checks still run, which left a FAIL line inside a
+      # green job, read by nobody (CI on 5a3a9b3: two-copies/one-stops). This step fails the job when any of them
+      # printed a FAIL (or ran out of time). A check that should only report goes in REPORT_ONLY with its reason.
+      - name: Every check above passed (a FAIL line fails this job)
+        if: always()
+        env:
+          OUTCOMES: >-
+            hard-kills=${{ steps.hard-kills.outcome }}
+            two-copies=${{ steps.two-copies.outcome }}
+            stop-in-flight=${{ steps.stop-in-flight.outcome }}
+            network-faults=${{ steps.network-faults.outcome }}
+            network-drop=${{ steps.network-drop.outcome }}
+            frozen=${{ steps.frozen.outcome }}
+            foreign-port=${{ steps.foreign-port.outcome }}
+            no-nvidia=${{ steps.no-nvidia.outcome }}
+            learner-key=${{ steps.learner-key.outcome }}
+            run-record=${{ steps.run-record.outcome }}
+            storage=${{ steps.storage.outcome }}
+            keychain=${{ steps.keychain.outcome }}
+          REPORT_ONLY: ""
+        run: |
+          failed=""
+          for pair in $OUTCOMES; do
+            name="${pair%%=*}"
+            case " $REPORT_ONLY " in *" $name "*) continue ;; esac
+            case "$pair" in *=failure) failed="$failed $name" ;; esac
+          done
+          if [ -n "$failed" ]; then
+            echo "These checks printed a FAIL line or did not finish:$failed (their CHECK lines are in their steps)"
+            exit 1
+          fi
+          echo "Every check passed."
+
   app-launch:
     name: App launch (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
