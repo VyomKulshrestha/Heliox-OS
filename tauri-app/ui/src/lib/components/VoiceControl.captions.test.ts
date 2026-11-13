@@ -64,6 +64,29 @@ describe("VoiceControl live captions", () => {
     expect(screen.queryByText("Getting my voice ready…")).toBeNull();
   });
 
+  it("says it is getting ready to listen while the recognisers warm, and stops once they are ready", async () => {
+    render(VoiceControl);
+    emit("voice_status", { status: "hearing_loading", message: "Getting ready to listen…" });
+    await tick();
+    expect(screen.getByText("Getting ready to listen…")).toBeTruthy();
+
+    emit("voice_status", { status: "hearing_ready" });
+    await tick();
+    expect(screen.queryByText("Getting ready to listen…")).toBeNull();
+  });
+
+  it("says a sentence came too early to be heard, and to say it again", async () => {
+    render(VoiceControl);
+    emit("voice_status", { status: "hearing_loading", message: "Getting ready to listen…" });
+    emit("voice_status", {
+      status: "hearing_not_ready",
+      message: "I wasn't ready to listen yet. Say that again in a moment.",
+    });
+    await tick();
+    expect(screen.getByText("I wasn't ready to listen yet. Say that again in a moment.")).toBeTruthy();
+    expect(screen.getByText("Getting ready to listen…")).toBeTruthy();
+  });
+
   it("with always-listening on, the microphone button says the next sentence is for Heliox", async () => {
     render(VoiceControl);
     const button = await screen.findByRole("button", { name: "Talk to Heliox now" });

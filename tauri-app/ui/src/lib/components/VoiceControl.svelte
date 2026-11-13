@@ -235,6 +235,9 @@
   let holding = $state(false);
   // The local voice is loading (up to ~25 s from cold): say a spoken reply is coming instead of going silent.
   let preparingVoice = $state("");
+  // The recognisers' first inference after start (hearing_loading .. hearing_ready): a sentence said now is heard once
+  // they are warm, so the bar says so instead of looking deaf.
+  let warmingEars = $state("");
   let inCall = $state("");
   // The microphone or speakers failed or changed: what Heliox is doing about it (cleared when sound flows again).
   let deviceNotice = $state("");
@@ -365,6 +368,19 @@
       if (preparingTimer) clearTimeout(preparingTimer);
       if (deviceTimer) clearTimeout(deviceTimer);
       preparingTimer = setTimeout(() => (preparingVoice = ""), 90000);
+      return;
+    }
+    if (status === "hearing_loading") {
+      warmingEars = String(payload.message ?? "") || "Getting ready to listen…";
+      return;
+    }
+    if (status === "hearing_ready") {
+      warmingEars = "";
+      return;
+    }
+    if (status === "hearing_not_ready") {
+      // A sentence came before Heliox could hear: it was not taken, and the person is asked to say it again.
+      showDeviceNotice(String(payload.message ?? ""), 8000);
       return;
     }
     if (status === "in_call") {
@@ -694,7 +710,7 @@
   {/if}
 
   <!-- Transcript Preview -->
-  {#if interimTranscript || transcript || holding || preparingVoice || inCall || deviceNotice}
+  {#if interimTranscript || transcript || holding || preparingVoice || warmingEars || inCall || deviceNotice}
     <div class="transcript-preview" aria-live="polite">
       {#if transcript}
         <span class="final">{transcript}</span>
@@ -707,6 +723,9 @@
       {/if}
       {#if preparingVoice}
         <span class="holding">{preparingVoice}</span>
+      {/if}
+      {#if warmingEars}
+        <span class="holding">{warmingEars}</span>
       {/if}
       {#if inCall}
         <span class="holding">{inCall}</span>

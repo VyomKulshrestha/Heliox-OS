@@ -2564,6 +2564,11 @@ def _counted(function: Any, *args: Any) -> Any:
 # A speculative pass that took under this share of its audio's length is cheap to waste: then it may start at
 # 100 ms of quiet instead of 200 ms (speculation_frames).
 CHEAP_PASS_RTF = 0.1
+# Warming the recognisers at start (ContinuousVoiceListener._warm_recognisers): each first inference is bounded, and an
+# utterance captured while the models load or warm waits at most this long for them. Still not ready by then (a slow
+# machine, a cold disk), it is not read and the bar asks the person to say it again (_until_warm).
+WARM_STEP_SECONDS = 30.0
+WARM_WAIT_SECONDS = 20.0
 
 
 class _Speculation:
@@ -2697,6 +2702,9 @@ class ContinuousVoiceListener:
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._transcriber_warmup_task: asyncio.Task[None] | None = None
+        # Set when every recogniser has run its first inference (_warm_recognisers); None before start().
+        self._warmed: asyncio.Event | None = None
+        self.warm_ms: dict[str, float] = {}
         self._command_tasks: set[asyncio.Task[None]] = set()
         self._diagnostic_waiter: asyncio.Future[dict[str, Any]] | None = None
         self._listening_for_command = False
@@ -3141,6 +3149,11 @@ class ContinuousVoiceListener:
 
         self._recogniser_missing_said = False
         self._note_recogniser_missing()  # listening starts anyway: the voice bar says what is missing
+        self._warmed = asyncio.Event()
+        self._loop = asyncio.get_running_loop()
+        if self._on_status:
+            # Listening has started, but the recognisers are warming: the voice bar says so until "hearing_ready".
+            self._schedule(self._on_status, "hearing_loading", {"message": "Getting ready to listen…"})
         self._task = asyncio.create_task(self._listen_loop())
         self._transcriber_warmup_task = asyncio.create_task(self._warm_transcriber())
         self._call_watch_task = asyncio.create_task(self._watch_calls())
@@ -3389,6 +3402,82 @@ class ContinuousVoiceListener:
         except Exception as error:
             # Normal transcription retains its Windows fallback path.
             logger.warning("Voice recognizer warmup unavailable: %s", error)
+        try:
+            await self._warm_recognisers()
+        finally:
+            self._mark_warm()
+
+    def _mark_warm(self) -> None:
+        if self._warmed is not None and not self._warmed.is_set():
+            self._warmed.set()
+            if self._on_status:
+                self._schedule(self._on_status, "hearing_ready", {})
+
+    async def _warm_recognisers(self) -> dict[str, float]:
+        """One real inference on a second of near-silence in each recogniser this listener will use, off the event
+        loop, each bounded by WARM_STEP_SECONDS. Loaded models are slow on their first call (measured on the
+        owner's CPU, 13 November: Whisper's wake check 5.0 and 4.8 s against a later median of 0.19 s, and the
+        first utterance of both runs lost; the streaming decode 0.91 s against 0.017; Parakeet 0.41 against 0.17).
+        Returns each one's time in ms; a step that fails or runs out of time is logged and skipped."""
+        import numpy as np
+
+        timings: dict[str, float] = {}
+        quiet = (np.random.default_rng(0).normal(0, 30, 16000)).astype(np.int16)  # a second of room hush
+        path = _write_wav([quiet], 16000)
+
+        async def step(name: str, call: Any) -> None:
+            begun = time.perf_counter()
+            try:
+                await bounded(call(), timeout=WARM_STEP_SECONDS)
+                timings[name] = round((time.perf_counter() - begun) * 1000)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.info("Warming %s failed or took too long: %s", name, error)
+
+        try:
+            if self.config.voice.transcription_engine in {"auto", "faster_whisper", "streaming"}:
+                await step("whisper", lambda: _transcribe_faster_whisper(path, "en", self._whisper_model()))
+            parakeet = self._parakeet()
+            if parakeet is not None:
+                samples = quiet.astype(np.float32) / 32768.0
+                await step("parakeet", lambda: asyncio.to_thread(_counted, parakeet.transcribe, samples))
+            streaming = self._streaming
+            if streaming is not None and streaming.ready:
+                await step("streaming", lambda: asyncio.to_thread(streaming.warm))
+            detector = self._turn_detector
+            if detector is not None and detector.ready:
+                await step("smart_turn", lambda: asyncio.to_thread(detector.probability, np.concatenate([quiet] * 2)))
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+        self.warm_ms = timings
+        logger.info("Recognisers warmed with a first inference (ms): %s", timings)
+        return timings
+
+    async def _until_warm(self) -> bool:
+        """An utterance captured while the recognisers are still loading or warming waits for them, at most
+        WARM_WAIT_SECONDS. True when they are ready (it is read then); False when they are still not ready, and the
+        utterance is not read: the person hears nothing acted on and the bar asks them to say it again
+        (_not_heard_yet). A sentence more than WARM_WAIT_SECONDS old, read once the voice is finally ready, could act
+        on something the person has since repeated, changed or given up on."""
+        event = self._warmed
+        if event is None or event.is_set():
+            return True
+        with contextlib.suppress(TimeoutError):
+            await bounded(event.wait(), timeout=WARM_WAIT_SECONDS)
+        return event.is_set()
+
+    def _not_heard_yet(self) -> None:
+        """Say on the bar that a sentence came before Heliox could hear, so it was not taken; the bar keeps saying
+        "Getting ready to listen…" until hearing_ready."""
+        logger.info("An utterance came before the recognisers were ready; not read, the person is asked to repeat it")
+        if self._on_status:
+            self._schedule(
+                self._on_status,
+                "hearing_not_ready",
+                {"message": "I wasn't ready to listen yet. Say that again in a moment."},
+            )
 
     def adopt_command_tasks(self, tasks: set[asyncio.Task[None]]) -> None:
         """Take over commands still running from a listener this one replaced."""
@@ -3963,6 +4052,11 @@ class ContinuousVoiceListener:
             else:
                 audio_path = await _record_audio(duration)
 
+            if not await self._until_warm():  # said while the models load: held, then read once they are ready
+                if self._recorder.is_active:
+                    speculation.cancel()
+                self._not_heard_yet()
+                return ""
             started = time.perf_counter()
             self._busy = True
             self._asr_started_at, self._asr_done_at = time.monotonic(), None
@@ -4166,6 +4260,10 @@ class ContinuousVoiceListener:
         """Return listener statistics."""
         return {
             "running": self._running,
+            # Heliox hears: listening, and every recogniser has finished its first inference (or failed or timed out
+            # at it). One half of "ready" with "answers" and "speaks" (hearing_loading / hearing_ready on the bar).
+            "hears": bool(self._running and self._warmed is not None and self._warmed.is_set()),
+            "warm_ms": dict(self.warm_ms),
             "wake_words": self.wake_words,
             "listening_for_command": self._listening_for_command,
             "language": self.last_detected_language,

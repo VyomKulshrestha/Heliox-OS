@@ -137,6 +137,21 @@ class StreamingTranscriber:
         self._queue.put(("finish", done))
         return done
 
+    def warm(self, timeout: float = 30.0) -> bool:
+        """One decode of a second of silence on a stream of its own, through the recogniser's worker thread (the first
+        decode of a loaded model is slow); the utterance stream is untouched. Blocking: call it from a worker thread.
+        Returns whether it ran."""
+        if not self.ready:
+            return False
+        done: Future[str] = Future()
+        self._ensure_worker()
+        self._queue.put(("warm", done))
+        try:
+            done.result(timeout=timeout)
+            return True
+        except Exception:
+            return False
+
     async def finish(self, timeout: float = 3.0) -> str:
         """The final text of the utterance, normally available at once."""
         started = time.perf_counter()
@@ -164,6 +179,15 @@ class StreamingTranscriber:
                     while self._recognizer.is_ready(self._stream):
                         self._recognizer.decode_stream(self._stream)
                     self._maybe_partial()
+                elif kind == "warm":
+                    stream = self._recognizer.create_stream()
+                    stream.accept_waveform(
+                        SAMPLE_RATE, np.zeros(SAMPLE_RATE + int(SAMPLE_RATE * TAIL_SECONDS), np.float32)
+                    )
+                    stream.input_finished()
+                    while self._recognizer.is_ready(stream):
+                        self._recognizer.decode_stream(stream)
+                    payload.set_result("")
                 elif kind == "finish":
                     text = ""
                     if self._stream is not None:
@@ -177,9 +201,10 @@ class StreamingTranscriber:
                     payload.set_result(text)
             except Exception as error:
                 logger.debug("Streaming recognition step failed", exc_info=True)
-                if kind == "finish" and not payload.done():
+                if kind in {"finish", "warm"} and not payload.done():
                     payload.set_exception(error)
-                self._stream = None
+                if kind != "warm":
+                    self._stream = None  # a failed warm-up leaves the utterance's stream as it was
 
     def _result(self) -> str:
         result = self._recognizer.get_result(self._stream)
