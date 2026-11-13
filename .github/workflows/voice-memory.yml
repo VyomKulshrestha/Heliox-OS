@@ -21,7 +21,6 @@ jobs:
   report:
     name: Voice memory (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    continue-on-error: true
     timeout-minutes: 75
     strategy:
       fail-fast: false

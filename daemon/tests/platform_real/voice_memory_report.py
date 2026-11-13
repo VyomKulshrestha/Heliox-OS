@@ -28,7 +28,6 @@ import sys
 import tempfile
 import threading
 import time
-import wave
 from pathlib import Path
 
 from ci_only import require_runner
@@ -137,16 +136,6 @@ async def started_daemon() -> None:
         await real_daemon.stop(daemon, session)
 
 
-def silence(folder: Path) -> Path:
-    path = folder / "silence.wav"
-    with wave.open(str(path), "wb") as out:
-        out.setnchannels(1)
-        out.setsampwidth(2)
-        out.setframerate(16000)
-        out.writeframes(b"\0\0" * 16000)
-    return path
-
-
 async def voice_stages(idle_minutes: float) -> None:
     import numpy as np
 
@@ -162,7 +151,9 @@ async def voice_stages(idle_minutes: float) -> None:
 
         sampler.reset()
         whisper = voice._get_faster_whisper_model("base")
-        list(whisper.transcribe(str(silence(folder)))[0])
+        # Samples, as the listener hands them (voice._transcribe_faster_whisper): given a path, faster-whisper 1.2
+        # decodes through PyAV, and PyAV 19 refuses its metadata_errors argument (run 43394164459, all three systems).
+        list(whisper.transcribe(np.zeros(16000, dtype=np.float32))[0])
         parakeet = ParakeetTranscriber(model_dir("", DATA_DIR))
         parakeet_ok = parakeet.load()
         if parakeet_ok:
