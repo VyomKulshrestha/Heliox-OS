@@ -40,6 +40,10 @@ class FakeSD:
         ]
         self.plugged_in: list[dict] = []
         self.refreshes = 0
+        # "hangs": a start that blocks on a stalled Core Audio unit until ``release`` is set; its close then waits for
+        # ``close_gate`` when one is given.
+        self.release = threading.Event()
+        self.close_gate: threading.Event | None = None
         sd = self
 
         class Stream:
@@ -59,6 +63,15 @@ class FakeSD:
                 if plan == "fails":
                     sd.events.append(f"failed {self.kind} {where}")
                     raise RuntimeError("PaMacCore (AUHAL) err='-50'")
+                if plan.startswith("hangs"):
+                    self.hung = True
+                    sd.events.append(f"hung {self.kind} {where}")
+                    sd.release.wait(10)
+                    self.active = True
+                    if plan == "hangs-then-delivers":
+                        for _ in range(5):
+                            self.callback(np.zeros((800, 1), dtype=np.int16) + 100, 800, None, None)
+                    return
                 self.active = True
                 sd.events.append(f"open {self.kind} {where} {self.samplerate}")
                 if self.kind == "output":
@@ -82,6 +95,8 @@ class FakeSD:
                 self.active = False
 
             def close(self) -> None:
+                if getattr(self, "hung", False) and sd.close_gate is not None:
+                    sd.close_gate.wait(10)
                 where = self.device if self.device is not None else sd.default.device[1]
                 sd.events.append(f"close {self.kind} {where}")
 
@@ -126,7 +141,8 @@ def setup(
     monkeypatch.setattr("pilot.system.audio_health.default_speaker_name", lambda: "")
     monkeypatch.setattr(voice, "MAC_SAME_DEVICE_ORDER", "output_first")  # variant A; the variant B test sets its own
     monkeypatch.setattr(voice, "MIC_RETRY_PAUSES", (0.0, 0.0, 0.0))
-    monkeypatch.setattr(voice, "MIC_FRAMES_WITHIN_SECONDS", 0.05)
+    monkeypatch.setattr(voice, "MIC_FRAMES_WITHIN_SECONDS", 0.3)  # the open runs in its own thread now
+    monkeypatch.setattr(voice, "MIC_CLOSE_WAIT_SECONDS", 5.0)  # stand-in closes return at once: keep the order
     monkeypatch.setattr(voice, "MIC_SUSTAIN_SECONDS", 0.1)
     monkeypatch.setattr(voice, "_portaudio_inputs_open", 0)
     recorder = voice._ContinuousRecorder()
@@ -293,6 +309,7 @@ def test_an_input_that_fails_or_stays_silent_beside_the_line_is_retried_until_it
     assert sd.events == [
         f"open output {IN_AND_OUT} 24000",
         f"failed input {IN_AND_OUT}",
+        f"close input {IN_AND_OUT}",  # opened but not started: closed, not left behind
         f"open input {IN_AND_OUT} 16000",
         f"close input {IN_AND_OUT}",
         f"open input {IN_AND_OUT} 16000",
@@ -339,6 +356,7 @@ def test_variant_b_keeps_today_s_order_at_start_and_retries_after_a_later_open(m
         f"open output {IN_AND_OUT} 24000",
         f"close input {IN_AND_OUT}",
         f"failed input {IN_AND_OUT}",
+        f"close input {IN_AND_OUT}",
         f"open input {IN_AND_OUT} 16000",
     ]
     finish(recorder)
@@ -646,4 +664,61 @@ def test_windows_and_linux_open_the_host_default_which_follows_the_system(monkey
     assert line.check_device("Headphones (Rockerz)")
     assert sd.events == [f"close output {IN_AND_OUT}", f"open output {IN_AND_OUT} 24000"]  # device=None: the default
     assert line.device_index is None and line.notice == "Speaking on Headphones (Rockerz) now."
+    finish(recorder)
+
+
+def test_an_open_that_hangs_is_given_up_at_the_first_frame_time_and_closed_when_it_returns(monkeypatch, caplog):
+    """Run 43442841532: "attempt 1 ... no audio" came 3.1 s after the open, because the start itself hung."""
+    caplog.set_level("INFO", logger=voice.logger.name)
+    sd, recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, IN_AND_OUT)
+    sd.input_plan = ["hangs", "works"]
+    assert recorder._open_capture()  # attempt 2 kept while attempt 1 is still inside its start
+    assert sd.events == [
+        f"open output {IN_AND_OUT} 24000",
+        f"hung input {IN_AND_OUT}",
+        f"open input {IN_AND_OUT} 16000",
+    ]
+    assert voice._portaudio_inputs_open == 1
+    said = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Microphone attempt 1 beside")]
+    assert len(said) == 1 and said[0].startswith(
+        "Microphone attempt 1 beside the output line: the open did not return after"
+    )
+    sd.release.set()
+    wait_for(lambda: f"close input {IN_AND_OUT}" in sd.events)
+    wait_for(lambda: voice._portaudio_inputs_open == 1)
+    assert sd.events[-1] == f"close input {IN_AND_OUT}" and voice._portaudio_inputs_open == 1
+    finish(recorder)
+
+
+def test_an_attempt_given_up_stays_counted_until_its_close_returns(monkeypatch):
+    sd, recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, IN_AND_OUT)
+    monkeypatch.setattr(voice, "MIC_CLOSE_WAIT_SECONDS", 0.0)  # the decision does not wait for this close
+    sd.input_plan = ["hangs", "works"]
+    sd.close_gate = threading.Event()
+    assert recorder._open_capture()
+    sd.release.set()  # its start returns; the close of the stalled unit blocks
+    wait_for(lambda: voice._portaudio_inputs_open == 2)
+    assert voice._portaudio_inputs_open == 2  # the kept microphone and the one still closing
+    sd.close_gate.set()
+    wait_for(lambda: voice._portaudio_inputs_open == 1)
+    assert voice._portaudio_inputs_open == 1 and sd.events[-1] == f"close input {IN_AND_OUT}"
+    finish(recorder)
+
+
+def test_frames_from_an_attempt_given_up_never_reach_the_recorder(monkeypatch):
+    sd, recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, IN_AND_OUT)
+    sd.input_plan = ["hangs-then-delivers", "silent", "silent", "silent", "silent"]
+    assert recorder._open_capture()  # every attempt failed: the fallback's open is silent too
+    frames = recorder.frames_received
+    sd.release.set()  # the first attempt's start returns and its callback delivers five blocks
+    wait_for(lambda: f"close input {IN_AND_OUT}" in sd.events[-1:])
+    assert recorder.frames_received == frames
+    finish(recorder)
+
+
+def test_a_failed_start_closes_the_stream_it_opened(monkeypatch):
+    sd, recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, IN_AND_OUT)
+    sd.input_plan = ["fails", "works"]
+    assert recorder._open_capture()
+    assert sd.events[1:3] == [f"failed input {IN_AND_OUT}", f"close input {IN_AND_OUT}"]
     finish(recorder)

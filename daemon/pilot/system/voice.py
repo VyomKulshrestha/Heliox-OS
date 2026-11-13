@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
+import functools
 import json
 import logging
 import os
@@ -907,6 +908,82 @@ def _same_core_audio_device(sd: Any, input_device: Any) -> bool:
 
 
 _portaudio_inputs_open = 0  # microphone streams opened through PortAudio (the non-Windows path)
+_portaudio_inputs_lock = threading.Lock()
+
+
+def _count_portaudio_inputs(delta: int) -> None:
+    """Change the count of open PortAudio inputs; from any thread (attempts are closed in the background)."""
+    global _portaudio_inputs_open
+    with _portaudio_inputs_lock:
+        _portaudio_inputs_open = max(0, _portaudio_inputs_open + delta)
+
+
+# How long the decision waits for an attempt given up to be aborted and closed before it moves on: PortAudio's close of
+# a stalled Core Audio unit can block, and then it finishes in the background (still counted until it has).
+MIC_CLOSE_WAIT_SECONDS = 0.3
+
+
+def _close_abandoned_input(stream: Any) -> None:
+    """Abort and close a microphone attempt that was given up, off the deciding path. It counts as an open PortAudio
+    input until the close has returned, so the device list is not re-read under it."""
+    _count_portaudio_inputs(+1)
+
+    def close() -> None:
+        try:
+            with contextlib.suppress(Exception):
+                stream.abort()
+            with contextlib.suppress(Exception):
+                stream.close()
+        finally:
+            _count_portaudio_inputs(-1)
+
+    closer = threading.Thread(target=close, name="heliox-microphone-close", daemon=True)
+    closer.start()
+    closer.join(MIC_CLOSE_WAIT_SECONDS)
+    if closer.is_alive():
+        logger.info(
+            "Microphone attempt still closing after %.1f s; it finishes in the background", MIC_CLOSE_WAIT_SECONDS
+        )
+
+
+class _InputAttempt:
+    """One microphone open beside the output line, in its own thread: on run 43442841532 a start on a stalled Core
+    Audio unit took about 2.6 s before the 0.5 s first-frame test could even begin. The decision reads the attempt
+    with a deadline; an attempt given up stops feeding the recorder at once (``live``) and is aborted and closed in
+    the background as soon as its open returns."""
+
+    def __init__(self, open_input: Any) -> None:
+        self.live = threading.Event()
+        self.live.set()
+        self.done = threading.Event()
+        self.stream: Any = None
+        self.error: Exception | None = None
+        self._lock = threading.Lock()
+        self._abandoned = False
+        threading.Thread(target=self._run, args=(open_input,), name="heliox-microphone-attempt", daemon=True).start()
+
+    def _run(self, open_input: Any) -> None:
+        stream = None
+        try:
+            stream = open_input(self.live)
+        except Exception as error:  # reported to the deciding thread
+            self.error = error
+        with self._lock:
+            self.stream = stream
+            abandoned = self._abandoned
+            self.done.set()
+        if abandoned and stream is not None:
+            _close_abandoned_input(stream)
+
+    def abandon(self) -> None:
+        self.live.clear()
+        with self._lock:
+            self._abandoned = True
+            stream = self.stream if self.done.is_set() else None
+        if stream is not None:
+            _close_abandoned_input(stream)
+
+
 _output_line = _OutputLine()
 LOCAL_VOICE_RATE = 24000  # Kokoro's output; another rate reopens the line
 
@@ -2302,10 +2379,12 @@ class _ContinuousRecorder:
         except ImportError:
             return False
 
-        def _callback(indata, frames, time_info, status):
+        def _callback(indata, frames, time_info, status, live=None):
             # Runs on PortAudio's own thread, not the asyncio loop -- must
             # hand off via call_soon_threadsafe rather than touching the
             # queue directly.
+            if live is not None and not live.is_set():
+                return  # an attempt that was given up: its frames are not the microphone's
             block = indata[:, 0].copy()
             self._publish_audio_block(block, captured=_portaudio_capture_end(time_info, frames, self.sample_rate))
 
@@ -2344,24 +2423,29 @@ class _ContinuousRecorder:
                     )
                     logger.warning(self.input_device_notice)
 
-            def open_input() -> Any:
+            def open_input(live: threading.Event | None = None) -> Any:
+                callback = _callback if live is None else functools.partial(_callback, live=live)
                 stream = sd.InputStream(
                     samplerate=self.sample_rate,
                     channels=1,
                     dtype="int16",
                     blocksize=self.frame_size,
-                    callback=_callback,
+                    callback=callback,
                     device=self.input_device,
                 )
-                stream.start()
+                try:
+                    stream.start()
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        stream.close()  # opened but not started (err -50): do not leave it open
+                    raise
                 return stream
 
             if self._output_before_input(sd):
                 self._stream = self._open_input_beside_output(open_input)
             else:
                 self._stream = open_input()
-            global _portaudio_inputs_open
-            _portaudio_inputs_open += 1
+            _count_portaudio_inputs(+1)
             self.capture_backend = "portaudio"
             self.last_error = ""
             if self._stopped:
@@ -2429,20 +2513,23 @@ class _ContinuousRecorder:
             if pause:
                 time.sleep(pause)
             before = self.frames_received
-            try:
-                stream = open_input()
-            except Exception as error:
-                logger.info("Microphone attempt %d beside the output line failed: %s", number, error)
-                continue
-            verdict = self._sustained(before)
+            started = time.monotonic()
+            first_frame_by = started + MIC_FRAMES_WITHIN_SECONDS  # the open's own time counts against the first frame
+            attempt = _InputAttempt(open_input)
+            if not attempt.done.wait(MIC_FRAMES_WITHIN_SECONDS):
+                verdict = "the open did not return"
+            elif attempt.error is not None:
+                verdict = f"failed ({attempt.error})"
+            else:
+                verdict = self._sustained(before, first_frame_by)
+            took = time.monotonic() - started
             if verdict == "sustained":
-                logger.info("Microphone delivering beside the output line at attempt %d (sustained)", number)
-                return stream
-            logger.info("Microphone attempt %d beside the output line: %s", number, verdict)
-            with contextlib.suppress(Exception):
-                stream.stop()
-            with contextlib.suppress(Exception):
-                stream.close()
+                logger.info(
+                    "Microphone delivering beside the output line at attempt %d (sustained, %.1f s)", number, took
+                )
+                return attempt.stream
+            logger.info("Microphone attempt %d beside the output line: %s after %.1f s", number, verdict, took)
+            attempt.abandon()
         if getattr(self, "_reopening_after_output", False):
             logger.info("Microphone: every attempt beside the output line failed; a plain open, the watchdog follows")
             return open_input()
@@ -2450,15 +2537,15 @@ class _ContinuousRecorder:
         self._release_output_line()
         return open_input()
 
-    def _sustained(self, before: int) -> str:
+    def _sustained(self, before: int, first_frame_by: float | None = None) -> str:
         """Whether frames keep arriving after an open: "sustained", or why not ("no audio", "stopped after a first
-        burst", "too few frames: N of M")."""
+        burst", "too few frames: N of M"). The first frame must come by ``first_frame_by`` (time.monotonic())."""
         block_seconds = self.frame_size / float(self.sample_rate)
         expected = MIC_SUSTAIN_SECONDS / block_seconds
-        waited = 0.0
-        while self.frames_received == before and waited < MIC_FRAMES_WITHIN_SECONDS:
+        if first_frame_by is None:
+            first_frame_by = time.monotonic() + MIC_FRAMES_WITHIN_SECONDS
+        while self.frames_received == before and time.monotonic() < first_frame_by:
             time.sleep(0.02)
-            waited += 0.02
         if self.frames_received == before:
             return "no audio"
         start = self.frames_received
@@ -2739,8 +2826,7 @@ class _ContinuousRecorder:
             except Exception:
                 pass
             self._stream = None
-            global _portaudio_inputs_open
-            _portaudio_inputs_open = max(0, _portaudio_inputs_open - 1)
+            _count_portaudio_inputs(-1)
 
     @property
     def is_active(self) -> bool:
