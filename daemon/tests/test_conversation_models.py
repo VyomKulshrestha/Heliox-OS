@@ -426,3 +426,13 @@ def test_warming_opens_the_connection_with_the_free_token_count_at_most_every_fe
     now[0] += 5
     asyncio.run(model.warm())
     assert len(client.posted) == 2
+
+
+def test_the_model_is_asked_to_answer_in_the_persons_language():
+    """Spoken and typed: the reply's language follows the person's, including Hindi that the recogniser wrote in
+    Latin letters (docs/PLATFORM_SUPPORT.md, "Languages other than English")."""
+    from pilot.conversation.style import SYSTEM_PROMPT, TYPED_SYSTEM_PROMPT
+
+    assert "Answer in the language the person spoke to you in" in SYSTEM_PROMPT
+    assert "Latin letters" in SYSTEM_PROMPT
+    assert "Answer in the language the person wrote in" in TYPED_SYSTEM_PROMPT
