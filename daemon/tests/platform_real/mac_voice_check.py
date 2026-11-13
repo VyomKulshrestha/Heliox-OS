@@ -19,7 +19,9 @@ Checks, each one CHECK line (PASS, FAIL, or SKIP with its reason), in the shape 
 - ``audio-macos/microphone-permission``: what macOS says about the microphone for this process, without a prompt
   (a runner cannot click one). Not granted: the lines below SKIP with that reason;
 - ``audio-macos/capture-hears-audio``: Heliox's recorder (voice._ContinuousRecorder, PortAudio on Core Audio) opens
-  on BlackHole and, while a tone is played into it, returns frames at 16 kHz (within 10 %) well above silence;
+  on BlackHole and, while a tone is played into it, returns frames at 16 kHz (within 10 %) well above silence.
+  The tone and the speech clips are played at BlackHole's own rate (48 kHz), resampled; a DIAG line gives the
+  samples received every half second before and during the tone, so a stall shows when it starts;
 - ``voice-macos/wake-found``: the listener, started as Heliox starts it, takes "Hey Heliox, what is the weather in
   Paris tomorrow" as addressed by the wake phrase;
 - ``voice-macos/request-heard``: the command it passes on is the request (similarity to the sentence at least 0.6,
@@ -161,11 +163,28 @@ def make_clip(text: str, path: Path) -> tuple[Path | None, str]:
     return None, "neither say nor espeak-ng wrote speech"
 
 
+def device_rate(sd, device: int) -> int:
+    """The rate the device runs at. Playing at any other rate made Core Audio stop Heliox's input on the same device
+    (round 1: frames stopped as the tone started, PortAudio "err='-10863' cannot do in current context")."""
+    return int(round(float(sd.query_devices(device)["default_samplerate"])))
+
+
+def resample(samples, rate: int, to_rate: int):
+    import numpy as np
+
+    if rate == to_rate or len(samples) == 0:
+        return samples.astype(np.float32)
+    count = int(round(len(samples) * to_rate / rate))
+    return np.interp(np.arange(count) * rate / to_rate, np.arange(len(samples)), samples).astype(np.float32)
+
+
 def play(sd, samples, rate: int, device: int) -> None:
     import numpy as np
 
-    silence = np.zeros(int(rate * 1.0), dtype=np.float32)
-    sd.play(np.concatenate([silence, samples, silence, silence]), rate, device=device, blocking=True)
+    out_rate = device_rate(sd, device)
+    samples = resample(samples, rate, out_rate)
+    silence = np.zeros(int(out_rate * 1.0), dtype=np.float32)
+    sd.play(np.concatenate([silence, samples, silence, silence]), out_rate, device=device, blocking=True)
 
 
 async def capture(sd, voice, device_id: str, output: int) -> bool:
@@ -176,12 +195,30 @@ async def capture(sd, voice, device_id: str, output: int) -> bool:
         return check("audio-macos/capture-hears-audio", False, f"did not open: {recorder.last_error}")
     try:
         receiving = await recorder.wait_until_receiving(timeout=5.0)
+        out_rate = device_rate(sd, output)
+        print(f"DIAG the tone: 440 Hz at {out_rate} Hz, BlackHole's own rate; Heliox records at {RATE} Hz", flush=True)
+        timeline: list[str] = []
+        last = recorder.frames_received
+
+        def mark(label: str) -> None:
+            nonlocal last
+            now = recorder.frames_received
+            timeline.append(f"{label} +{(now - last) * recorder.frame_size}")
+            last = now
+
+        for step in (1, 2):
+            await asyncio.sleep(0.5)
+            mark(f"before {step * 0.5:.1f}s")
         start_frames, started = recorder.frames_received, time.monotonic()
-        tone = (0.4 * np.sin(2 * math.pi * 440 * np.arange(RATE * 2) / RATE)).astype(np.float32)
-        player = threading.Thread(target=lambda: sd.play(tone, RATE, device=output, blocking=True))
+        tone = (0.4 * np.sin(2 * math.pi * 440 * np.arange(out_rate * 2) / out_rate)).astype(np.float32)
+        player = threading.Thread(target=lambda: sd.play(tone, out_rate, device=output, blocking=True))
         player.start()
-        await asyncio.sleep(2.5)
+        for step in range(1, 6):
+            await asyncio.sleep(0.5)
+            mark(f"tone {step * 0.5:.1f}s")
         player.join(timeout=5)
+        # Samples Heliox received in each half second, before and while the tone plays (about 8000 is normal).
+        print(f"DIAG samples received per 0.5 s: {', '.join(timeline)}", flush=True)
         elapsed = time.monotonic() - started
         rate = (recorder.frames_received - start_frames) * recorder.frame_size / elapsed if elapsed else 0.0
         heard = recorder.peak_frame_rms
