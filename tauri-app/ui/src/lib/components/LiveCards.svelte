@@ -57,7 +57,10 @@
             <strong class="title"
               ><span class="sr-only">{`${URGENCY_WORDS[card.urgency] ?? ""} `}</span>{card.title}</strong
             >
-            {#if note}<span class="note">{note}</span>{/if}
+            {#if note}<span class="note">{note}</span>{:else if card.spoken}<span
+                class="said"
+                data-testid="live-card-said">Said aloud</span
+              >{/if}
             <button
               type="button"
               class="close"
@@ -176,6 +179,13 @@
     color: var(--success);
     background: var(--success-bg);
     border-radius: var(--radius-pill);
+  }
+
+  /* Heliox said this card aloud: a quiet mark, so a person who heard something can find what it was. */
+  .said {
+    flex: none;
+    font-size: var(--text-2xs);
+    color: var(--text-muted);
   }
 
   .close {

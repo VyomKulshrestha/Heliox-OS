@@ -157,6 +157,55 @@ describe("Live companion UI", () => {
     expect(screen.queryByTestId("live-card")).toBeNull();
   });
 
+  it("a card with no fix (what was sent) has no fix button and no gap, and its answers still work", async () => {
+    render(LiveCards);
+    emit(
+      "live_interjection",
+      card({
+        id: "sent",
+        title: "You sent Thursday 25 November; 25 November is a Wednesday",
+        message: "You wrote Thursday.",
+        detail: "",
+        evidence: "Thursday 25 November",
+        fix: "",
+        fix_kind: "",
+        spoken: false,
+      }),
+    );
+    await tick();
+    const shown = screen.getByTestId("live-card");
+    expect(shown.querySelector(".title")?.textContent).toContain("You sent Thursday 25 November");
+    expect(shown.querySelector(".actions .primary")).toBeNull();
+    const actions = [...(shown.querySelector(".actions")?.children ?? [])];
+    expect(actions.map((element) => element.textContent?.trim())).toEqual(["Thanks", "Don't mention these"]);
+    expect(actions.every((element) => element.tagName === "BUTTON")).toBe(true); // nothing empty in the row
+    expect(screen.queryByTestId("live-card-said")).toBeNull(); // never said aloud
+    await fireEvent.click(screen.getByRole("button", { name: "Thanks" }));
+    expect(mocks.call).toHaveBeenCalledWith("live_feedback", { id: "sent", verdict: "helpful" });
+
+    emit("live_interjection", card({ id: "sent2", fix: "", fix_kind: "", spoken: false }));
+    emit("live_interjection", card({ id: "sent3", fix: "", fix_kind: "", spoken: false }));
+    await tick();
+    await fireEvent.click(screen.getAllByRole("button", { name: "Not now" })[0]);
+    expect(mocks.call).toHaveBeenCalledWith("live_feedback", { id: "sent2", verdict: "dismissed" });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Don't mention these" }).at(-1)!);
+    expect(mocks.call).toHaveBeenCalledWith("live_feedback", { id: "sent3", verdict: "mute" });
+  });
+
+  it("marks a card said aloud, also when it is said after it was shown, and ignores an unknown id", async () => {
+    render(LiveCards);
+    emit("live_interjection", card({ id: "first", spoken: false }));
+    await tick();
+    expect(screen.queryByTestId("live-card-said")).toBeNull();
+    emit("live_interjection_spoken", { id: "first" });
+    await tick();
+    expect(screen.getByTestId("live-card-said").textContent).toBe("Said aloud");
+    emit("live_interjection_spoken", { id: "gone" });
+    emit("live_interjection_spoken", {});
+    await tick();
+    expect(screen.getAllByTestId("live-card")).toHaveLength(1);
+  });
+
   it("shows presence only while on, and pauses with a click", async () => {
     render(LivePresence);
     expect(screen.queryByTestId("live-presence")).toBeNull();

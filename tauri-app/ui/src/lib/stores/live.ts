@@ -95,6 +95,10 @@ function createLiveStore() {
       const card = p as unknown as LiveCard;
       update((s) => ({ ...s, cards: [...s.cards.filter((c) => c.id !== card.id), card].slice(-MAX_CARDS) }));
       void notifyIfAway(card);
+    } else if (method === "live_interjection_spoken") {
+      // A card shown first and said aloud after a longer pause: mark it, so a person who heard something can find it.
+      const id = String(p.id ?? "");
+      update((s) => ({ ...s, cards: s.cards.map((c) => (c.id === id ? { ...c, spoken: true } : c)) }));
     } else if (method === "live_interjection_withdrawn") {
       const id = String(p.id ?? "");
       if (p.reason === "fixed") {
