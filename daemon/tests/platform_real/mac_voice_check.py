@@ -46,7 +46,9 @@ is, and a third at another rate (22050 Hz), which makes the output line reopen, 
 of the line's state; and, with Heliox silent and its line open, the tone from another process, which must keep the
 input arriving and be heard (an open line must not shut other programs out). The control (``default``) plays a
 quiet tone into BlackHole from another process throughout, so its input is never exact zeros and the watchdog's
-silent-input rule does not fire. A measurement: it always exits 0.
+silent-input rule does not fire. Since the same-device fix (a872dc6) the ``blackhole`` run exits with the number of
+same-device gating lines (GATED) that failed or never printed, and prints a SUMMARY line; the experiment, the cut,
+the default-output moves and the control (``default``, which always exits 0) stay measurements.
 
 Every wait is bounded; the exit code is the number of failed checks (a SKIP is not one). CI-only
 (``ci_only.require_runner``): the workflow installs an audio driver and restarts coreaudiod, and this check plays
@@ -84,11 +86,48 @@ NOT_ADDRESSED = "The weather in Paris was lovely last week."
 RATE = 16000
 
 
+SAME_DEVICE = "voice-macos-speaking/blackhole/"
+# The same-device lines that decide the job since the fix proved itself (a872dc6): frames while and after Heliox
+# speaks in the four speaking cases, the line staying open at another rate, and frames arriving while another
+# program plays with the line open (that case has no speaking, so its frames line is the one that counts).
+GATED = tuple(
+    SAME_DEVICE + line
+    for line in (
+        *(
+            f"{case}/frames-{when}-speaking"
+            for case in ("local-voice", "local-voice-again", "local-voice-other-rate", "system-voice")
+            for when in ("while", "after")
+        ),
+        "local-voice-other-rate/no-new-open",
+        "other-program-with-line-open/frames-arriving",
+    )
+)
+# Lines that mean the same-device cases could not run at all; they fail the job too.
+GATED_IF_FAILED = tuple(SAME_DEVICE + line for line in ("listener", "sentence", "check-itself"))
+SAME_DEVICE_LINES: dict[str, bool] = {}  # every same-device CHECK printed, PASS or FAIL
+
+
 def check(name: str, ok: bool, detail: str = "") -> bool:
     global failures
     failures += 0 if ok else 1
     print(f"CHECK {name}: {'PASS' if ok else 'FAIL'}{' - ' + detail if detail else ''}", flush=True)
+    if name.startswith(SAME_DEVICE):
+        SAME_DEVICE_LINES[name] = ok
     return ok
+
+
+def same_device_verdict() -> int:
+    """The summary of the same-device lines and how many gating lines failed or never printed."""
+    failed = [name for name in GATED if not SAME_DEVICE_LINES.get(name, False)]
+    failed += [name for name in GATED_IF_FAILED if SAME_DEVICE_LINES.get(name) is False]
+    passed = sum(1 for ok in SAME_DEVICE_LINES.values() if ok)
+    gated_passed = sum(1 for name in GATED if SAME_DEVICE_LINES.get(name))
+    print(
+        f"SUMMARY same device: {passed} of {len(SAME_DEVICE_LINES)} lines passed; gating {gated_passed} of "
+        f"{len(GATED)} passed{'; failed or missing: ' + ', '.join(failed) if failed else ''}",
+        flush=True,
+    )
+    return len(failed)
 
 
 def skip(name: str, reason: str) -> None:
@@ -485,7 +524,7 @@ async def main() -> int:
     return failures
 
 
-# --speak-through: Heliox speaking while its listener listens (a measurement; it never fails the job) ----------------
+# --speak-through: Heliox speaking while its listener listens (the same-device frames lines gate; the rest measures) --
 
 SENTENCE = "Here is what I found about the weather in Paris tomorrow. It will be sunny in the afternoon."
 AFTER_SECONDS = 5.0  # how long the listener is watched after Heliox stops speaking
@@ -1153,8 +1192,11 @@ if __name__ == "__main__":
             asyncio.run(speak_through(where, folder_arg))
         except Exception as error:  # every exit path prints a CHECK line
             check(f"voice-macos-speaking/{where}/check-itself", False, f"{type(error).__name__}: {error}")
-        print("DIAG a measurement (round 4): these lines do not fail the job", flush=True)
-        sys.exit(0)
+        if where != "blackhole":
+            print("DIAG the control: a measurement, these lines do not fail the job", flush=True)
+            sys.exit(0)
+        # Same device: the gating lines decide; the experiment, the cut and the move stay measurements.
+        sys.exit(min(same_device_verdict(), 100))
     try:
         sys.exit(asyncio.run(main()))
     except Exception as error:  # every exit path prints a CHECK line

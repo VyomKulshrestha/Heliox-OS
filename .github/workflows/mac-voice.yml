@@ -105,15 +105,18 @@ jobs:
           export HOME="$RUNNER_TEMP/home"
           python tests/platform_real/mac_voice_check.py "$RUNNER_TEMP"
 
-      # A measurement, not a pass mark (round 3): Heliox's listener on BlackHole while Heliox speaks one sentence
-      # through its own voice paths, first with BlackHole as the system default output (microphone and speaker one
-      # device, as with a USB headset), then with the runner's own output as the control. The check reads the
-      # default output first and puts it back; it always exits 0, so these lines never fail the job.
-      - name: "Measurement: Heliox speaking on the device it listens on (round 4, never fails the job)"
+      # Heliox's listener on BlackHole while Heliox speaks through its own voice paths, first with BlackHole as the
+      # system default output (microphone and speaker one device, as with a USB headset), then with the runner's own
+      # output as the control. The check reads the default output first and puts it back. Since the same-device fix
+      # (a872dc6) the same-device frames lines and no-new-open decide the job; the experiment, the cut, the default
+      # output moves and the control stay measurements. The control runs even when the same-device lines fail.
+      - name: Heliox speaking on the device it listens on (same-device lines gate)
         if: always()
         timeout-minutes: 12
         working-directory: daemon
         run: |
           export HOME="$RUNNER_TEMP/home"
-          python tests/platform_real/mac_voice_check.py "$RUNNER_TEMP" --speak-through blackhole || true
+          status=0
+          python tests/platform_real/mac_voice_check.py "$RUNNER_TEMP" --speak-through blackhole || status=$?
           python tests/platform_real/mac_voice_check.py "$RUNNER_TEMP" --speak-through default || true
+          exit "$status"
