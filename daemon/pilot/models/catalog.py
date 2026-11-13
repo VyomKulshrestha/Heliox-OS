@@ -62,14 +62,26 @@ TALK_DEFAULTS: dict[str, str] = {
     # Google's named successor to gemini-2.5-flash-lite, which Google refuses to accounts that had not used it (its
     # own 404 to a key new to that model on 14 November); sent with thinkingLevel "minimal" (Gemini 3 takes no thinkingBudget).
     "gemini": "gemini-3.5-flash-lite",
-    "openrouter": "openai/gpt-6-luna",  # on OpenRouter; sent with reasoning effort "none"
+    # Claude Haiku through OpenRouter, sent with reasoning effort "none" and pinned to Anthropic: first text 0.89 s
+    # median against 1.59 s for openai/gpt-6-luna, which twice in 16 replayed turns reasoned through all 400 output
+    # tokens and said nothing (the provider comparison and its replay, 14 November).
+    "openrouter": "anthropic/claude-haiku-5.5",
     "meta": "muse-spark-1.3",  # latency unmeasured
 }
 
 # Defaults that have answered through Heliox's own request shape in a paid run (the conversation eval, 12 and 13
 # November, Claude key). Every other default was chosen from its provider's published list and is said to be so in
 # Settings until a run with that provider's key has answered.
-CHECKED_LIVE: frozenset[tuple[str, str]] = frozenset({("claude", "claude-haiku-5-5")})
+# (provider, model, road): the talk road (pilot.conversation.fast_model) and the planner's (pilot.models.cloud) build
+# their requests differently, so a model checked on one is not checked on the other.
+CHECKED_LIVE: frozenset[tuple[str, str, str]] = frozenset(
+    {
+        ("claude", "claude-haiku-5-5", "talk"),
+        # Answered 8 of 8 replayed turns through Heliox's own talk request, with real keys (14 November).
+        ("gemini", "gemini-3.5-flash-lite", "talk"),
+        ("openrouter", "anthropic/claude-haiku-5.5", "talk"),
+    }
+)
 
 
 def unchecked_note(provider: str) -> str:
@@ -83,7 +95,7 @@ def unchecked_note(provider: str) -> str:
 
 # Talk models whose own page says reasoning can be switched off with effort "none" (GPT-6 Astra and GPT-6.1 Sol
 # reject it, so this is per model, not per family). Talk sends it; the planner does not.
-REASONING_OFF: frozenset[str] = frozenset({"gpt-6-luna", "openai/gpt-6-luna"})
+REASONING_OFF: frozenset[str] = frozenset({"gpt-6-luna", "openai/gpt-6-luna", "anthropic/claude-haiku-5.5"})
 
 
 def openai_reasoning(model: str) -> bool:
@@ -127,7 +139,7 @@ OFFERED: dict[str, list[str]] = {
         "gemini-3.5-flash-lite",
         "gemini-3.1-flash-lite",
     ],
-    "openrouter": ["openrouter/auto", "openai/gpt-6-luna"],
+    "openrouter": ["openrouter/auto", "anthropic/claude-haiku-5.5", "openai/gpt-6-luna"],
     "meta": ["muse-spark-1.3", "muse-spark-1.2", "muse-spark-1.1", "muse-ember-1.0"],
 }
 
@@ -231,9 +243,11 @@ def catalog() -> dict[str, object]:
                 "planner_default": PLANNER_DEFAULTS[provider],
                 "talk_default": TALK_DEFAULTS[provider],
                 "planner_note": ""
-                if (provider, PLANNER_DEFAULTS[provider]) in CHECKED_LIVE
+                if (provider, PLANNER_DEFAULTS[provider], "planner") in CHECKED_LIVE
                 else unchecked_note(provider),
-                "talk_note": "" if (provider, TALK_DEFAULTS[provider]) in CHECKED_LIVE else unchecked_note(provider),
+                "talk_note": ""
+                if (provider, TALK_DEFAULTS[provider], "talk") in CHECKED_LIVE
+                else unchecked_note(provider),
                 "offered": list(OFFERED[provider]),
                 "withdrawn": {
                     model: {

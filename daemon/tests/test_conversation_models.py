@@ -293,8 +293,8 @@ def test_claude_error_and_refusal_events_become_reasons():
         ("gemini", "gemini-4-carbon", "gemini-3.5-flash-lite"),
         ("openai", "gpt-6.1-sol", "gpt-6-luna"),
         ("openai", "gpt-5.5-pro", "gpt-6-luna"),
-        ("openrouter", "", "openai/gpt-6-luna"),
-        ("openrouter", "openrouter/auto", "openai/gpt-6-luna"),
+        ("openrouter", "", "anthropic/claude-haiku-5.5"),
+        ("openrouter", "openrouter/auto", "anthropic/claude-haiku-5.5"),
         ("meta", "muse-wonder-1.0", "muse-spark-1.3"),
         ("claude", "claude-opus-5-5", "claude-haiku-5-5"),
     ],
@@ -311,12 +311,20 @@ def test_talk_never_inherits_the_planners_model(cloud, planner, expected):
     [
         ("openai", "gpt-6-luna", "reasoning_effort", "none"),
         ("openrouter", "openai/gpt-6-luna", "reasoning", {"effort": "none"}),
+        ("openrouter", "anthropic/claude-haiku-5.5", "reasoning", {"effort": "none"}),
     ],
 )
 def test_the_talk_default_is_asked_for_no_reasoning(provider, name, field, value):
     model = HttpFastModel(provider=provider, name=name, client_factory=lambda: None, api_key=None)
     _url, _headers, body = model.request("s", [{"role": "user", "content": "hi"}], "k")
     assert body[field] == value
+    if provider == "openrouter":
+        # Only upstream providers that take every parameter sent: one that ignored effort "none" reasoned through
+        # all 400 tokens and the reply had no text (the provider comparison, 14 November).
+        # Pinned to the model's own upstream (its slug's author), which takes every parameter sent.
+        assert body["provider"] == {"require_parameters": True, "order": [name.split("/", 1)[0]]}
+    else:
+        assert "provider" not in body
 
 
 def test_a_model_the_person_chose_is_sent_as_it_is():

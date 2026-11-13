@@ -432,6 +432,10 @@ class HttpFastModel(_StreamingBase):
             # models whose own page says effort "none" is accepted (pilot.models.catalog).
             if self.provider == "openrouter":
                 body["reasoning"] = {"effort": "none"}
+                # OpenRouter sends a model to one of several upstream providers, and a provider that does not take a
+                # parameter may ignore it: a reasoning upstream then spent all 400 tokens thinking and the reply had
+                # no text (the provider comparison, 14 November). Only providers that take every parameter sent.
+                body["provider"] = {"require_parameters": True, "order": [self.name.split("/", 1)[0]]}
             else:
                 body["reasoning_effort"] = "none"
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}

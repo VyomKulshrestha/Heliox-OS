@@ -167,11 +167,15 @@ def test_a_current_model_is_never_mistaken_for_a_withdrawn_one(provider, current
 
 def test_a_default_not_yet_answered_live_says_so_in_settings():
     shown = catalog.catalog()["providers"]
-    assert shown["claude"]["talk_note"] == ""  # claude-haiku-5-5 answered in the paid conversation runs
-    for provider in ("openai", "gemini", "openrouter", "meta"):
-        for field in ("planner_note", "talk_note"):
-            assert "not yet checked against the live service by Heliox's tests" in shown[provider][field]
-            assert catalog.READ_ON in shown[provider][field]
+    # Answered through Heliox's own request: Claude's in the paid conversation runs, Gemini's and OpenRouter's talk
+    # defaults in the replay with real keys (14 November).
+    for provider in ("claude", "gemini", "openrouter"):
+        assert shown[provider]["talk_note"] == ""
+    unchecked = [("openai", "planner_note"), ("openai", "talk_note"), ("meta", "planner_note"), ("meta", "talk_note")]
+    unchecked += [("gemini", "planner_note"), ("openrouter", "planner_note")]
+    for provider, field in unchecked:
+        assert "not yet checked against the live service by Heliox's tests" in shown[provider][field]
+        assert catalog.READ_ON in shown[provider][field]
 
 
 def test_the_planner_sends_no_temperature_to_a_reasoning_model():
