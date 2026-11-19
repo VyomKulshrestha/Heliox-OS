@@ -2,7 +2,7 @@
   "format": 1,
   "id": "portrait-woman",
   "name": "Portrait, woman",
-  "credit": "Generated with ChatGPT image generation in November 2026; shows no real person. Pack made for Heliox. See README.md in this folder.",
+  "credit": "Generated with ChatGPT image generation in November 2026. Shows no real person.",
   "kind": "photo",
   "size": [
     512,
@@ -13,37 +13,6 @@
       "idle-00.webp"
     ],
     "fps": 1
-  },
-  "mouth": {
-    "rect": [
-      140,
-      308,
-      248,
-      122
-    ],
-    "shapes": {
-      "sil": "mouth-sil.webp",
-      "FF": "mouth-FF.webp",
-      "SS": "mouth-SS.webp",
-      "nn": "mouth-nn.webp",
-      "aa": "mouth-aa.webp",
-      "E": "mouth-E.webp",
-      "I": "mouth-I.webp",
-      "O": "mouth-O.webp",
-      "U": "mouth-U.webp"
-    }
-  },
-  "states": {
-    "listening": {
-      "lift": -2
-    },
-    "thinking": {
-      "lift": -3
-    }
-  },
-  "breathe": {
-    "amount": 0.004,
-    "seconds": 4.5
   },
   "eyes": {
     "rect": [
@@ -68,33 +37,90 @@
       "eyes-glance-2.webp"
     ]
   },
+  "mouth": {
+    "rect": [
+      126,
+      285,
+      276,
+      186
+    ],
+    "shapes": {
+      "sil": "mouth-sil.webp",
+      "FF": "mouth-FF.webp",
+      "SS": "mouth-SS.webp",
+      "nn": "mouth-nn.webp",
+      "aa": "mouth-aa.webp",
+      "E": "mouth-E.webp",
+      "I": "mouth-I.webp",
+      "O": "mouth-O.webp",
+      "U": "mouth-U.webp"
+    },
+    "chin": {
+      "FF": 1.21,
+      "SS": 3.52,
+      "nn": 6.62,
+      "aa": 7.93,
+      "E": 7.03,
+      "I": 3.03,
+      "O": 10.25,
+      "U": 0.93
+    }
+  },
   "mouth_steps": {
     "SS": [
-      "mouth-SS-1.webp"
+      "mouth-SS-1.webp",
+      "mouth-SS-2.webp",
+      "mouth-SS-3.webp",
+      "mouth-SS-4.webp"
     ],
     "nn": [
       "mouth-nn-1.webp",
-      "mouth-nn-2.webp"
+      "mouth-nn-2.webp",
+      "mouth-nn-3.webp",
+      "mouth-nn-4.webp"
     ],
     "aa": [
       "mouth-aa-1.webp",
-      "mouth-aa-2.webp"
+      "mouth-aa-2.webp",
+      "mouth-aa-3.webp",
+      "mouth-aa-4.webp"
     ],
     "E": [
       "mouth-E-1.webp",
-      "mouth-E-2.webp"
+      "mouth-E-2.webp",
+      "mouth-E-3.webp",
+      "mouth-E-4.webp"
     ],
     "I": [
-      "mouth-I-1.webp"
+      "mouth-I-1.webp",
+      "mouth-I-2.webp",
+      "mouth-I-3.webp",
+      "mouth-I-4.webp"
     ],
     "O": [
       "mouth-O-1.webp",
-      "mouth-O-2.webp"
+      "mouth-O-2.webp",
+      "mouth-O-3.webp",
+      "mouth-O-4.webp"
     ],
     "U": [
       "mouth-U-1.webp",
-      "mouth-U-2.webp"
+      "mouth-U-2.webp",
+      "mouth-U-3.webp",
+      "mouth-U-4.webp"
     ]
+  },
+  "states": {
+    "listening": {
+      "lift": -2
+    },
+    "thinking": {
+      "lift": -3
+    }
+  },
+  "breathe": {
+    "amount": 0.004,
+    "seconds": 4.5
   },
   "voice": {
     "kokoro": "af_heart",
