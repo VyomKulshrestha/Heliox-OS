@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pilot.live.shell_line import readable
+from pilot.live.shell_line import OWN_GROUP, end_child, readable
 from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.live.terminal_text")
@@ -222,16 +222,14 @@ async def run(argv: list[str], timeout: float) -> tuple[int | None, str]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             env=child_env(),
+            start_new_session=OWN_GROUP,
         )
     except OSError:
         return None, ""
     try:
         out, _ = await bounded(proc.communicate(), timeout)
     except asyncio.TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        with contextlib.suppress(Exception):
-            await proc.wait()
+        await end_child(proc)
         return None, ""
     return proc.returncode, out.decode("utf-8", errors="replace")
 

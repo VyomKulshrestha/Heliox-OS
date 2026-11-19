@@ -40,6 +40,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import stat
 import sys
 import tempfile
@@ -577,6 +578,26 @@ async def _serve(folder: Path, name: str, answer: bool, held: list[Any]) -> tupl
     return server, path
 
 
+# How long a killed child is waited for. asyncio's Process.wait() returns only once the child's output pipes close,
+# and a process the child started (a shell's `sleep`, nc under fish) holds them open after the child itself is gone.
+# Killing the child's whole process group ends those too; this bound covers one that left the group.
+REAP_SECONDS = 2.0
+
+# On macOS and Linux each child starts its own process group, so a kill reaches what it started as well.
+OWN_GROUP = sys.platform != "win32"
+
+
+async def end_child(proc: asyncio.subprocess.Process) -> None:
+    """Kill a child that ran out of time, with every process in its group, and wait at most ``REAP_SECONDS``."""
+    if OWN_GROUP:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+    with contextlib.suppress(Exception):
+        await bounded(proc.wait(), REAP_SECONDS)
+
+
 async def _run(
     argv: list[str], env: dict[str, str] | None, timeout: float, stdin: bytes | None = None
 ) -> tuple[int | None, str, float, str]:
@@ -588,15 +609,14 @@ async def _run(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,
+        start_new_session=OWN_GROUP,
     )
     try:
         out, err = await bounded(proc.communicate(stdin), timeout)
     except asyncio.TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        with contextlib.suppress(Exception):
-            await proc.wait()
-        return None, "", time.monotonic() - started, ""
+        took = time.monotonic() - started
+        await end_child(proc)
+        return None, "", took, ""
     decode = lambda raw: (raw or b"").decode("utf-8", errors="replace").strip()  # noqa: E731
     return proc.returncode, decode(out), time.monotonic() - started, decode(err)
 

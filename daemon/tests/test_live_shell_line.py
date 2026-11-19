@@ -285,6 +285,36 @@ async def test_an_nc_that_never_gives_up_is_caught_and_add_is_not_offered(tmp_pa
 
 @POSIX
 @pytest.mark.asyncio
+async def test_a_killed_shell_is_not_waited_on_for_what_it_started(tmp_path):
+    """asyncio's Process.wait() returns only when the child's pipes close. A shell that started a process of its own
+    and was then killed left that process holding them: each silent-socket probe above waited out its `sleep 30`, a
+    minute per test on the CI runners, and a child that never ends would have held the dry run forever."""
+    from pilot.timeouts import bounded
+
+    marker = tmp_path / "started"
+    forever = _stub(tmp_path, f'(while :; do sleep 1; done) & echo $! > "{marker}"; wait', "forever")
+    code, out, _took, _err = await bounded(shell_line._run([forever], None, 0.5), 15)
+    assert code is None and out == "" and marker.exists()
+    left = int(marker.read_text(encoding="utf-8"))
+    for _ in range(100):  # the loop was killed with the shell: at most a zombie until init reaps it
+        if _gone(left):
+            break
+        await asyncio.sleep(0.05)
+    else:
+        pytest.fail(f"the shell's own child {left} is still running")
+
+
+def _gone(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[-1].split()[0] if sys.platform == "linux" else ""
+    except (ProcessLookupError, FileNotFoundError):
+        return True
+    return state == "Z"
+
+
+@POSIX
+@pytest.mark.asyncio
 async def test_a_shell_that_cannot_reach_the_socket_is_caught(tmp_path):
     fake = _stub(tmp_path, "exit 3")
     zsh = await dry_run("zsh", which=lambda name: fake if name == "zsh" else None, platform="linux")
