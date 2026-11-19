@@ -17,7 +17,8 @@ import { gotoApp, clickTab } from "./helpers";
 
 // Rows Settings shows with everyPanel on 0fb22f4 and the Settings rows fix; more is fine, fewer means a panel went
 // missing from the page or from the mock.
-const AT_LEAST: Record<string, number> = { cloud: 119, ollama: 121 };
+// The speech switch for a card with driver errors (SpeechDriverErrorsRow) added one to each.
+const AT_LEAST: Record<string, number> = { cloud: 120, ollama: 122 };
 
 test.describe("Settings rows", () => {
   for (const provider of ["cloud", "ollama"]) {
@@ -43,6 +44,7 @@ test.describe("Settings rows", () => {
           .locator(".settings-panel .setting-row")
           .filter({ hasText: "Speech recognition for other languages (Whisper small)" }),
       ).toHaveCount(1);
+      await expect(page.getByTestId("speech-driver-errors")).toBeVisible();
 
       const rows = await page.locator(".settings-panel .setting-row").evaluateAll((elements) =>
         elements.map((row) => {

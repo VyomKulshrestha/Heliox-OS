@@ -574,9 +574,13 @@ class GpuArbiter:
         return None
 
     def status(self) -> dict[str, Any]:
+        from pilot.system import gpu_driver_record
+
         reading = self.reading(fresh=False)
         last = self.last_fault()
         return {
+            # Whether the driver's error record moved speech recognition to the processor (Settings' switch).
+            "driver_record": gpu_driver_record.status(self.speech_despite_driver_errors),
             "machine": reading.to_dict(),
             "max_temperature_c": self.max_temperature_c,
             "holder": self.holder() if reading.kind in {"nvidia", "apple"} else None,

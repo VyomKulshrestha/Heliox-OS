@@ -255,3 +255,32 @@ def test_the_setting_uses_the_card_despite_the_driver_s_errors(gpu_world):
     card["driver_record"]["errors"] = 40
     shared.configure(SimpleNamespace(speech_despite_driver_errors=True))
     assert voice._faster_whisper_runtime("base") == ("cuda", "float16")
+
+
+def test_the_status_says_when_the_record_moved_whisper_with_the_count(gpu_world):
+    """What Settings reads (autonomy_review_status's gpu.driver_record) to show its switch, with the count beside it."""
+    card, shared = gpu_world
+    assert shared.status()["driver_record"]["speech_on_processor"] is False
+    card["driver_record"]["errors"] = 7
+    assert voice._faster_whisper_runtime("base") == ("cpu", "int8")
+    record = shared.status()["driver_record"]
+    assert record == {
+        "errors": 7,
+        "limit": 3,
+        "window_days": 7,
+        "speech_on_processor": True,
+        "speech_despite_driver_errors": False,
+    }
+
+
+def test_with_the_setting_on_the_count_is_still_read_for_settings_without_waiting(gpu_world):
+    from pilot.system import gpu_driver_record
+
+    card, shared = gpu_world
+    card["driver_record"]["errors"] = 9
+    shared.configure(SimpleNamespace(speech_despite_driver_errors=True))
+    assert voice._faster_whisper_runtime("base") == ("cuda", "float16")
+    assert gpu_driver_record.errors_this_week(wait=2.0) == 9  # the read started by the rule, finished
+    record = shared.status()["driver_record"]
+    assert record["errors"] == 9 and record["speech_on_processor"] is False
+    assert record["speech_despite_driver_errors"] is True

@@ -69,6 +69,26 @@ export function everyPanelReplies(): Record<string, unknown> {
         say: "Heliox speaks English with Kokoro's af_heart voice.",
       },
     },
+    // The driver's error record moved speech recognition to the processor: Settings shows its switch
+    // (SpeechDriverErrorsRow, at the end of Voice & Speech), with the count beside it.
+    autonomy_review_status: {
+      status: "ok",
+      local_models: [],
+      gpu: {
+        machine: { kind: "nvidia", gpus: [{ name: "NVIDIA GeForce RTX 4060 Laptop GPU", temperature_c: 52 }] },
+        max_temperature_c: 83,
+        disabled: false,
+        disabled_reason: "",
+        faults_this_session: 0,
+        driver_record: {
+          errors: 12,
+          limit: 3,
+          window_days: 7,
+          speech_on_processor: true,
+          speech_despite_driver_errors: false,
+        },
+      },
+    },
     gateway_policy_get: { status: "ok", enabled: true, profiles },
     list_gateway_events: { status: "ok", events: [] },
     narration_status: {

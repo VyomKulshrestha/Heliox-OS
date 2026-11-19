@@ -10,6 +10,7 @@
   import TalkModel from "./TalkModel.svelte";
   import PlannerModel from "./PlannerModel.svelte";
   import BudgetSpent from "./BudgetSpent.svelte";
+  import SpeechDriverErrorsRow from "./SpeechDriverErrorsRow.svelte";
   import { _, locale } from "svelte-i18n";
   import { session } from "../stores/session";
   import { call, requireOkResult, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
@@ -2062,6 +2063,8 @@
         <button class="btn-save" onclick={testConfiguredVoice} disabled={speechSaving}>Test voice</button>
       {/if}
     </div>
+
+    <SpeechDriverErrorsRow />
   </section>
 
   <section class="settings-group">

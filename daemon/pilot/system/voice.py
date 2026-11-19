@@ -2056,6 +2056,7 @@ def _driver_record_keeps_whisper_off(gpu: Any) -> str:
     from pilot.system import gpu_driver_record
 
     if getattr(gpu, "speech_despite_driver_errors", False):
+        gpu_driver_record.start_reading()  # not waited for: only so Settings can show the count beside its switch
         return ""
     errors = gpu_driver_record.errors_this_week(wait=gpu_driver_record.WAIT_SECONDS) or 0
     try:
@@ -2068,6 +2069,7 @@ def _driver_record_keeps_whisper_off(gpu: Any) -> str:
         f"On the processor: this graphics card reported {errors} errors this week, and a driver error during speech "
         "recognition would stop Heliox. The [gpu] setting speech_despite_driver_errors uses the card anyway."
     )
+    gpu_driver_record.note_kept_off(errors)
     if gpu_driver_record.first_time_said():
         logger.warning(
             "Speech recognition runs on the processor: the graphics card reported %d errors this week", errors

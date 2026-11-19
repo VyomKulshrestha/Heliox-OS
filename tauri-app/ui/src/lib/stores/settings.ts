@@ -158,6 +158,10 @@ export interface PilotSettings {
     openrouter_model?: string;
     meta_model?: string;
   };
+  /** [gpu]; only what the window shows (SpeechDriverErrorsRow.svelte). */
+  gpu?: {
+    speech_despite_driver_errors?: boolean;
+  };
   first_run_complete: boolean;
   theme: "light" | "dark";
   hotkey: string; // Added tracking for active UI theme mode

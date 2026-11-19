@@ -579,3 +579,25 @@ def _the_person_approves_setting_changes(monkeypatch):
         return None
 
     monkeypatch.setattr(PilotServer, "_approve_widenings", approved)
+
+
+@pytest.mark.asyncio
+async def test_the_speech_switch_for_a_card_with_driver_errors_reaches_the_arbiter_and_asks_for_a_restart(monkeypatch):
+    """Settings' switch ([gpu] speech_despite_driver_errors): saved, applied to the GPU arbiter at once, and a restart
+    asked for, since Whisper's device is chosen when it loads."""
+    from pilot.system import gpu_arbiter
+
+    shared = gpu_arbiter.GpuArbiter()
+    monkeypatch.setattr(gpu_arbiter, "_shared", shared)
+    config = PilotConfig()
+    config.save = MagicMock()
+    server = PilotServer(config)
+
+    result = await server._handle_update_config(
+        {"section": "gpu", "values": {"speech_despite_driver_errors": True}},
+        MagicMock(),
+    )
+
+    assert result == {"status": "ok", "restart_required": True}
+    assert config.gpu.speech_despite_driver_errors is True and shared.speech_despite_driver_errors is True
+    config.save.assert_called_once()

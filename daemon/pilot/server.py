@@ -341,6 +341,8 @@ RESTART_REQUIRED_KEYS = {
     "screen_vision": {"capture_timeout_seconds", "max_consecutive_timeouts", "auto_resume_after_seconds"},
     "cognitive": {"enabled"},
     "rss": {"enabled"},
+    # Whisper's device is chosen when it loads, once per session.
+    "gpu": {"speech_despite_driver_errors"},
 }
 RESTART_REQUIRED_SECTIONS = {"memory", "proxy", "redis"}
 
@@ -10775,6 +10777,11 @@ class PilotServer:
             & values.keys()
         ):
             self._start_tts_warmup()
+
+        if section == "gpu":
+            from pilot.system.gpu_arbiter import arbiter as gpu_arbiter
+
+            gpu_arbiter().configure(self.config.gpu)  # the limits apply to the next model that starts
 
         if section == "screen_vision" and "capture_interval_seconds" in values and self._screen_vision:
             try:

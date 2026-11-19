@@ -76,3 +76,24 @@ def test_the_read_runs_once_in_the_background_and_a_failure_is_no_record(monkeyp
     assert record.errors_this_week(wait=2.0) is None
     assert record.errors_this_week(wait=2.0) is None
     assert calls == [1]
+
+
+def test_the_status_for_settings_never_starts_a_read_of_the_system_log(monkeypatch):
+    record.reset()
+    calls = []
+    monkeypatch.setattr(record, "read_count", lambda platform=None: calls.append(1) or 4)
+    before = record.status(False)
+    assert calls == [] and record.known_count() is None
+    assert before == {
+        "errors": None,
+        "limit": record.LIMIT,
+        "window_days": record.WINDOW_DAYS,
+        "speech_on_processor": False,
+        "speech_despite_driver_errors": False,
+    }
+    record.note_kept_off(5)  # the rule moved Whisper with five counted (errors and this session's faults)
+    after = record.status(True)
+    assert after["errors"] == 5 and after["speech_on_processor"] is True and after["speech_despite_driver_errors"]
+    assert calls == []
+    record.reset()
+    assert record.status(False)["speech_on_processor"] is False

@@ -36,7 +36,9 @@ _WINDOWS_QUERY = (
 )
 
 _lock = threading.Lock()
-_state: dict[str, Any] = {"thread": None, "count": None, "said": False}
+# kept_off: the count (driver errors and this session's GPU faults) when the rule last moved Whisper to the processor;
+# None while it has not.
+_state: dict[str, Any] = {"thread": None, "count": None, "said": False, "kept_off": None}
 _done = threading.Event()
 
 
@@ -102,6 +104,34 @@ def errors_this_week(wait: float = 0.0) -> int | None:
     return _state["count"]
 
 
+def known_count() -> int | None:
+    """The count if it has been read, without starting a read (for status: never reads the system log itself)."""
+    return _state["count"]
+
+
+def note_kept_off(errors: int) -> None:
+    """The rule moved Whisper to the processor this session, with ``errors`` counted."""
+    with _lock:
+        _state["kept_off"] = int(errors)
+
+
+def status(speech_despite_driver_errors: bool) -> dict[str, Any]:
+    """For Settings: the count, the limit, whether the rule keeps Whisper on the processor this session, and the
+    setting. Settings shows its switch when the rule moved Whisper, or when the switch is on and the record is over
+    the limit (so it can be turned off again)."""
+    with _lock:
+        kept_off = _state["kept_off"]
+    count = _state["count"]
+    errors = kept_off if kept_off is not None else count
+    return {
+        "errors": errors,
+        "limit": LIMIT,
+        "window_days": WINDOW_DAYS,
+        "speech_on_processor": kept_off is not None,
+        "speech_despite_driver_errors": bool(speech_despite_driver_errors),
+    }
+
+
 def first_time_said() -> bool:
     """True once: the person is told why speech recognition is on the processor only the first time."""
     with _lock:
@@ -114,5 +144,5 @@ def first_time_said() -> bool:
 def reset() -> None:
     """Forget the count (tests)."""
     with _lock:
-        _state.update(thread=None, count=None, said=False)
+        _state.update(thread=None, count=None, said=False, kept_off=None)
         _done.clear()
