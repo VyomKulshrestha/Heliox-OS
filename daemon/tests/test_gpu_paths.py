@@ -182,7 +182,8 @@ async def speak(manager):
 
 
 @pytest.mark.asyncio
-async def test_a_voice_worker_missing_a_library_moves_to_the_processor_without_a_fault(cuda_torch):
+async def test_a_voice_worker_missing_a_library_moves_to_the_processor_without_a_fault(monkeypatch, cuda_torch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     manager, started, faults, said = voice_manager("OSError: libcudnn.so.9: cannot open shared object file")
     await speak(manager)
     assert started == ["auto", "cpu"] and faults == [] and "voice_on_cpu" not in said
@@ -192,7 +193,8 @@ async def test_a_voice_worker_missing_a_library_moves_to_the_processor_without_a
 
 
 @pytest.mark.asyncio
-async def test_a_voice_worker_with_a_device_error_is_still_a_fault(cuda_torch):
+async def test_a_voice_worker_with_a_device_error_is_still_a_fault(monkeypatch, cuda_torch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     manager, started, faults, said = voice_manager("RuntimeError: cuDNN error: CUDNN_STATUS_EXECUTION_FAILED")
     await speak(manager)
     assert started == ["auto", "cpu"] and faults == ["voice"] and "voice_on_cpu" in said
@@ -203,6 +205,7 @@ async def test_a_voice_worker_with_a_device_error_is_still_a_fault(cuda_torch):
 
 @pytest.mark.asyncio
 async def test_a_cpu_build_of_torch_never_takes_the_card(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     monkeypatch.setattr(gpu_paths, "torch_build", lambda platform=None: "cpu")
     manager, started, faults, _said = voice_manager("")
     await speak(manager)
@@ -213,7 +216,8 @@ async def test_a_cpu_build_of_torch_never_takes_the_card(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_voice_on_the_card_says_so(cuda_torch):
+async def test_the_voice_on_the_card_says_so(monkeypatch, cuda_torch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     manager, started, _faults, _said = voice_manager("")
     await speak(manager)
     assert started == ["auto"] and manager.device_reason == "On the graphics card."

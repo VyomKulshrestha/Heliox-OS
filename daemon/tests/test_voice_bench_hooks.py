@@ -56,6 +56,7 @@ def manager(monkeypatch) -> LocalTTSWorkerManager:
 
 @pytest.mark.asyncio
 async def test_release_runs_the_idle_release_and_force_overrides_the_keep_rule(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     item = manager(monkeypatch)
     await item.speak("kokoro_tts", "Okay.", "af_heart", None, AsyncMock())
     item.keep_while = lambda: True  # memory to spare: the keep rule would keep it
@@ -68,6 +69,7 @@ async def test_release_runs_the_idle_release_and_force_overrides_the_keep_rule(m
 
 @pytest.mark.asyncio
 async def test_never_released_while_a_reply_is_being_spoken(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     item = manager(monkeypatch)
     gate = asyncio.Event()
 
@@ -85,6 +87,7 @@ async def test_never_released_while_a_reply_is_being_spoken(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_loads_releases_and_syntheses_are_stamped(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     item = manager(monkeypatch)
     await item.speak("kokoro_tts", "Okay.", "af_heart", None, AsyncMock())
     events = [event for event, _detail, _at in item.reload_log]
@@ -97,6 +100,7 @@ async def test_loads_releases_and_syntheses_are_stamped(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_which_voice_spoke_each_reply_and_by_which_branch(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     item = manager(monkeypatch)
     monkeypatch.setattr(local_tts_worker, "_manager", item)
     await item.speak("kokoro_tts", "Okay.", "af_heart", None, AsyncMock())  # loaded within the grace (cold)

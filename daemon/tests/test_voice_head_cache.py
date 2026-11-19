@@ -131,6 +131,7 @@ async def say(manager, text):
 
 @pytest.mark.asyncio
 async def test_a_kept_head_plays_without_synthesis_and_never_changes_the_words(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     monkeypatch.setattr(local_tts_worker, "trim_silence", lambda path, lead, tail: None)
     worker = Worker()
     manager = LocalTTSWorkerManager(spawn=lambda engine, device, gpu_lease=False: worker)

@@ -61,7 +61,8 @@ async def test_an_8_gb_computer_speaks_with_the_system_voice_says_why_once_and_s
 
 
 @pytest.mark.asyncio
-async def test_a_16_gb_computer_loads_the_local_voice():
+async def test_a_16_gb_computer_loads_the_local_voice(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     clock, spawner = FakeClock(), Spawner(FakeWorker())
     manager = _manager(spawner, clock)
     manager.light_reason = lambda: speech_budget.light_voice_reason(16 * GB, True)
@@ -71,7 +72,8 @@ async def test_a_16_gb_computer_loads_the_local_voice():
 
 
 @pytest.mark.asyncio
-async def test_a_load_that_raises_memory_error_falls_back_and_says_why():
+async def test_a_load_that_raises_memory_error_falls_back_and_says_why(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     clock = FakeClock()
 
     def spawn(engine: str, device: str):
@@ -101,6 +103,7 @@ async def test_too_little_free_memory_says_so_in_plain_words():
 
 @pytest.mark.asyncio
 async def test_a_worker_that_dies_leaves_the_system_voice_and_ready_says_why(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     clock, worker = FakeClock(), FakeWorker()
     manager = _manager(Spawner(worker), clock)
     await manager.speak("kokoro_tts", "One.", "af_heart", None, AsyncMock())

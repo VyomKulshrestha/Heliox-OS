@@ -115,7 +115,8 @@ async def speak(manager: LocalTTSWorkerManager, text: str) -> list[Path]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail_on", ["speak", "load", "exit"])
-async def test_after_a_gpu_error_the_same_voice_goes_on_on_the_cpu_for_the_session_said_once(fail_on):
+async def test_after_a_gpu_error_the_same_voice_goes_on_on_the_cpu_for_the_session_said_once(monkeypatch, fail_on):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     manager, started, leases, _asked, faults, said = manager_on_a_failing_card(fail_on)
     if fail_on == "load":
         assert len(await speak(manager, "The backup is done.")) == 1  # the load failed: nothing was said yet
@@ -140,7 +141,8 @@ async def test_after_a_gpu_error_the_same_voice_goes_on_on_the_cpu_for_the_sessi
 
 
 @pytest.mark.asyncio
-async def test_an_empty_cuda_visible_devices_keeps_the_voice_off_the_card():
+async def test_an_empty_cuda_visible_devices_keeps_the_voice_off_the_card(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     manager, started, leases, asked, _faults, said = manager_on_a_failing_card("speak")
     manager.environ = {"CUDA_VISIBLE_DEVICES": ""}
     assert len(await speak(manager, "Hello.")) == 1
@@ -162,7 +164,8 @@ async def test_without_an_environment_of_its_own_the_voice_reads_the_daemon_s(mo
 
 
 @pytest.mark.asyncio
-async def test_the_arbiter_s_word_decides_where_the_voice_starts():
+async def test_the_arbiter_s_word_decides_where_the_voice_starts(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     manager, started, leases, asked, _faults, _said = manager_on_a_failing_card("speak", arbiter=("cpu", False))
     assert len(await speak(manager, "Hello.")) == 1
     assert asked == ["auto"] and [w.device for w in started] == ["cpu"] and leases == [False]
@@ -170,7 +173,8 @@ async def test_the_arbiter_s_word_decides_where_the_voice_starts():
 
 
 @pytest.mark.asyncio
-async def test_a_voice_error_that_is_not_the_card_still_falls_back_to_the_system_voice():
+async def test_a_voice_error_that_is_not_the_card_still_falls_back_to_the_system_voice(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     manager, _started, _leases, _asked, _faults, said = manager_on_a_failing_card("")
 
     class BadVoice(FakeWorker):
@@ -212,7 +216,8 @@ def test_kokoro_configured_for_the_card_runs_on_the_cpu_when_every_card_is_hidde
 
 
 @pytest.mark.asyncio
-async def test_a_card_failing_partway_through_a_reply_leaves_only_the_unheard_part_to_the_system_voice():
+async def test_a_card_failing_partway_through_a_reply_leaves_only_the_unheard_part_to_the_system_voice(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     manager, started, _leases, _asked, _faults, _said = manager_on_a_failing_card("")
     played: list[Path] = []
 

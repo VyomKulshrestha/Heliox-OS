@@ -82,6 +82,7 @@ async def test_local_tts_inference_runs_in_isolated_reusable_worker() -> None:
     worker = _SuccessfulWorker()
 
     with (
+        patch.object(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0),  # the grace is not what is tested here
         patch.object(voice.subprocess, "Popen", return_value=worker) as spawn,
         patch.object(voice, "_play_local_tts_file", new=AsyncMock()) as play,
     ):
@@ -119,6 +120,7 @@ async def test_a_long_reply_starts_playing_after_its_first_sentence() -> None:
         await asyncio.sleep(0.05)
 
     with (
+        patch.object(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0),  # the grace is not what is tested here
         patch.object(voice.subprocess, "Popen", return_value=worker),
         patch.object(voice, "_play_local_tts_file", new=play),
     ):
@@ -154,6 +156,7 @@ async def test_speech_cut_off_mid_synthesis_keeps_the_worker_warm_for_the_next_r
     gates: list = []
     worker.stdout = _SlowStdout(worker, gates)
     with (
+        patch.object(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0),  # the grace is not what is tested here
         patch.object(voice.subprocess, "Popen", return_value=worker) as spawn,
         patch.object(voice, "_play_local_tts_file", new=AsyncMock()) as play,
     ):
@@ -187,6 +190,7 @@ async def test_stopping_mid_reply_stops_playback_and_skips_the_remaining_sentenc
         await asyncio.sleep(30)  # cancelled by the stop
 
     with (
+        patch.object(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0),  # the grace is not what is tested here
         patch.object(voice.subprocess, "Popen", return_value=worker),
         patch.object(voice, "_play_local_tts_file", new=play),
     ):
@@ -295,6 +299,7 @@ async def test_a_sentence_prepared_while_the_last_one_plays_is_not_synthesised_a
 
     config = SimpleNamespace(tts_engine="kokoro_tts", tts_voice="af_heart")
     with (
+        patch.object(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0),  # the grace is not what is tested here
         patch.object(voice.subprocess, "Popen", return_value=worker),
         patch.object(voice, "_play_local_tts_file", new=play),
     ):

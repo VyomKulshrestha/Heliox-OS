@@ -79,7 +79,8 @@ def worker():
 
 
 @pytest.mark.asyncio
-async def test_an_idle_voice_stays_loaded_while_memory_allows_and_goes_when_it_is_needed():
+async def test_an_idle_voice_stays_loaded_while_memory_allows_and_goes_when_it_is_needed(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     clock, process = Clock(), worker()
     manager = LocalTTSWorkerManager(spawn=lambda engine, device: process, clock=clock, sleep=clock.sleep)
     memory = {"enough": True}
@@ -95,7 +96,8 @@ async def test_an_idle_voice_stays_loaded_while_memory_allows_and_goes_when_it_i
 
 
 @pytest.mark.asyncio
-async def test_never_released_sooner_than_keep_loaded_seconds_and_the_clock_rule_still_works():
+async def test_never_released_sooner_than_keep_loaded_seconds_and_the_clock_rule_still_works(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     clock, process = Clock(), worker()
     manager = LocalTTSWorkerManager(spawn=lambda engine, device: process, clock=clock, sleep=clock.sleep)
     manager.keep_while = lambda: False  # memory short from the start
@@ -142,10 +144,13 @@ def cuda_torch(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_voice_on_the_card_stays_loaded_while_idle_until_another_component_asks_for_the_card(cuda_torch):
+async def test_a_voice_on_the_card_stays_loaded_while_idle_until_another_component_asks_for_the_card(
+    monkeypatch, cuda_torch
+):
     """19 November, one development laptop: released by the clock after 300 s, the next reply waited for a 15 s reload
     in the system voice. Now it stays, and gives the lease up once Gnomon, Whisper or screen reading finds the card
     held by it (the lease is not taken from its holder)."""
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     memory, wants = {"enough": True}, {"count": 4}  # four asked before this voice took the card: they do not count
     clock, manager = on_the_card(memory, wants)
     await manager.speak("kokoro_tts", "Okay.", "af_heart", None, AsyncMock())
@@ -157,11 +162,16 @@ async def test_a_voice_on_the_card_stays_loaded_while_idle_until_another_compone
     await clock.advance(local_tts_worker.MEMORY_RECHECK_SECONDS + 1)
     await clock.advance(1)
     assert not manager.running
+    for _ in range(500):  # the release is logged once the worker's close returns from its thread
+        if any(kind == "released" for kind, _detail, _at in manager.reload_log):
+            break
+        await asyncio.sleep(0.01)
     assert [kind for kind, _detail, _at in manager.reload_log].count("released") == 1
 
 
 @pytest.mark.asyncio
-async def test_a_voice_on_the_card_goes_when_memory_runs_short_as_on_the_processor(cuda_torch):
+async def test_a_voice_on_the_card_goes_when_memory_runs_short_as_on_the_processor(monkeypatch, cuda_torch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     memory, wants = {"enough": True}, {"count": 0}
     clock, manager = on_the_card(memory, wants)
     await manager.speak("kokoro_tts", "Okay.", "af_heart", None, AsyncMock())
@@ -174,7 +184,8 @@ async def test_a_voice_on_the_card_goes_when_memory_runs_short_as_on_the_process
 
 
 @pytest.mark.asyncio
-async def test_a_request_for_the_card_mid_conversation_waits_for_the_idle_time(cuda_torch):
+async def test_a_request_for_the_card_mid_conversation_waits_for_the_idle_time(monkeypatch, cuda_torch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     memory, wants = {"enough": True}, {"count": 0}
     clock, manager = on_the_card(memory, wants)
     await manager.speak("kokoro_tts", "Okay.", "af_heart", None, AsyncMock())

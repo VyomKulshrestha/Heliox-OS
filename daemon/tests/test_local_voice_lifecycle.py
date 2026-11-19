@@ -96,7 +96,8 @@ def _manager(spawner: Spawner, clock: FakeClock, keep: float = 300.0) -> LocalTT
 
 
 @pytest.mark.asyncio
-async def test_the_voice_stays_loaded_through_a_conversation_and_is_released_after_real_inactivity() -> None:
+async def test_the_voice_stays_loaded_through_a_conversation_and_is_released_after_real_inactivity(monkeypatch) -> None:
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     clock, worker = FakeClock(), FakeWorker()
     manager = _manager(Spawner(worker), clock)
     play = AsyncMock()
@@ -117,7 +118,8 @@ async def test_the_voice_stays_loaded_through_a_conversation_and_is_released_aft
 
 
 @pytest.mark.asyncio
-async def test_a_long_reply_is_not_released_while_it_is_still_playing() -> None:
+async def test_a_long_reply_is_not_released_while_it_is_still_playing(monkeypatch) -> None:
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     clock, worker = FakeClock(), FakeWorker()
     manager = _manager(Spawner(worker), clock, keep=10)
     gate = asyncio.Event()
@@ -160,7 +162,8 @@ async def test_hearing_the_person_loads_the_voice_before_there_is_anything_to_sa
 
 
 @pytest.mark.asyncio
-async def test_a_cold_reply_says_the_voice_is_getting_ready_and_then_speaks() -> None:
+async def test_a_cold_reply_says_the_voice_is_getting_ready_and_then_speaks(monkeypatch) -> None:
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     clock, worker = FakeClock(), FakeWorker()
     manager = _manager(Spawner(worker), clock)
     statuses: list[tuple[str, dict]] = []
@@ -188,7 +191,8 @@ async def test_prewarm_ignores_the_system_voice() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_worker_that_fails_to_load_is_reported_once_and_retried_later(caplog) -> None:
+async def test_a_worker_that_fails_to_load_is_reported_once_and_retried_later(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     clock = FakeClock()
     # A load failure that is not the graphics card (that one moves the voice to the CPU: test_voice_gpu_fallback).
     broken = FakeWorker(load_reply=b'{"status":"error","error":"RuntimeError: voice weights are damaged"}\n')
@@ -227,7 +231,8 @@ async def test_a_worker_that_fails_to_load_is_reported_once_and_retried_later(ca
 
 
 @pytest.mark.asyncio
-async def test_a_worker_that_dies_mid_conversation_falls_back_without_waiting() -> None:
+async def test_a_worker_that_dies_mid_conversation_falls_back_without_waiting(monkeypatch) -> None:
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     clock, worker = FakeClock(), FakeWorker()
     manager = _manager(Spawner(worker), clock)
     await manager.speak("kokoro_tts", "One.", "af_heart", None, AsyncMock())

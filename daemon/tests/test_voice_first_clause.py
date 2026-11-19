@@ -121,6 +121,7 @@ class _Worker:
 
 @pytest.mark.asyncio
 async def test_the_head_plays_first_and_each_piece_is_trimmed_for_its_place(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     worker = _Worker()
     manager = LocalTTSWorkerManager(spawn=lambda engine, device, gpu_lease=False: worker)
     trims: list[tuple[str, float, float | None]] = []

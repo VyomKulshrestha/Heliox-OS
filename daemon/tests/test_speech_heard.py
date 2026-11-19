@@ -79,6 +79,7 @@ class Worker:
 
 @pytest.mark.asyncio
 async def test_the_local_voice_records_its_pieces_and_where_it_was_cut(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     monkeypatch.setattr(local_tts_worker, "trim_silence", lambda path, lead, tail: None)
     manager = LocalTTSWorkerManager(spawn=lambda engine, device, gpu_lease=False: Worker())
     played = []
