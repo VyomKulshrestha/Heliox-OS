@@ -1,0 +1,79 @@
+name: "Pocket speed — the streaming voice on a 4-core runner (report only)"
+
+# Does Pocket TTS, the streaming voice planned for computers without a usable graphics card, stream without gaps on
+# an ordinary 4-core machine? The first audible chunk and the real-time factor through Heliox's own stream
+# (pilot.system.pocket_stream), for 1, 2 and 4 threads (daemon/tests/platform_real/pocket_speed_report.py). On one
+# development laptop with 16 cores: first audible chunk 0.13 s (median), real-time factor 0.32 on one thread.
+# Report only: nothing passes or fails on the numbers. The English model (about 219 MB) and its default voice are
+# fetched by pocket-tts from Hugging Face in the job.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pocket-speed-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Pocket speed (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    defaults:
+      run:
+        working-directory: daemon
+        shell: bash
+    env:
+      HELIOX_BENCH_ROOT: ${{ github.workspace }}/.heliox-bench
+      CUDA_VISIBLE_DEVICES: ""
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: "System libraries (Linux: libsndfile)"
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsndfile1
+
+      - name: Install the daemon with Pocket TTS (CPU-only PyTorch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e . "pocket-tts>=1.0" soundfile psutil
+
+      - name: Restore the Pocket model
+        id: pocket-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/huggingface
+          key: pocket-${{ runner.os }}-${{ hashFiles('daemon/pyproject.toml') }}
+
+      - name: Fetch the English model and its default voice
+        env:
+          HF_HUB_OFFLINE: "0"
+        run: python -c "from pocket_tts import TTSModel; m = TTSModel.load_model(); m.get_state_for_audio_prompt('alba')"
+
+      - name: Save the Pocket model
+        if: steps.pocket-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ steps.pocket-cache.outputs.cache-primary-key }}
+
+      - name: First chunk and real-time factor for 1, 2 and 4 threads
+        timeout-minutes: 20
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: python tests/platform_real/pocket_speed_report.py --threads 1,2,4 --summary "$GITHUB_STEP_SUMMARY"
