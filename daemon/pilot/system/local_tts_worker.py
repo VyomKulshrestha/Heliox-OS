@@ -32,6 +32,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
@@ -622,6 +623,36 @@ def _close_process(worker: Any) -> None:
             worker.stdout.close()
 
 
+class _Spawning:
+    """One start of the worker process, on a thread of its own. Cancelling the task that waits for it does not stop
+    the thread, so a worker that starts after its caller gave up (shutdown() during the start) would be left running
+    with nobody to close it. abandon() makes sure it is closed: by the starting thread when the start returns later,
+    or here when it has returned already."""
+
+    def __init__(self, spawn: Callable[..., Any], args: tuple[Any, ...]) -> None:
+        self._spawn = spawn
+        self._args = args
+        self._lock = threading.Lock()
+        self._abandoned = False
+        self._process: Any = None
+
+    def run(self) -> Any:
+        process = self._spawn(*self._args)
+        with self._lock:
+            if not self._abandoned:
+                self._process = process
+                return process
+        _close_process(process)
+        return None
+
+    def abandon(self) -> None:
+        with self._lock:
+            self._abandoned = True
+            process, self._process = self._process, None
+        if process is not None:
+            threading.Thread(target=_close_process, args=(process,), name="heliox-voice-close", daemon=True).start()
+
+
 StatusCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 PlayFile = Callable[[Path], Awaitable[None]]
 
@@ -862,11 +893,12 @@ class LocalTTSWorkerManager:
                     gpu_paths.note_not_installed("voice", "a CUDA build of PyTorch")
                     device, gpu_lease = "cpu", False
             self.device_reason = self._describe(device, gpu_lease)
+            spawning = _Spawning(self._spawn, (engine, device, True) if gpu_lease else (engine, device))
             try:
-                if gpu_lease:
-                    process = await asyncio.to_thread(self._spawn, engine, device, True)
-                else:
-                    process = await asyncio.to_thread(self._spawn, engine, device)
+                process = await asyncio.to_thread(spawning.run)
+            except asyncio.CancelledError:
+                spawning.abandon()  # shutdown() while the worker starts: it is closed as soon as it has started
+                raise
             except Exception as exc:
                 self._mark_failed(engine, f"could not start: {exc}")
                 raise LocalTTSUnavailable(f"{engine} worker could not start: {exc}") from exc

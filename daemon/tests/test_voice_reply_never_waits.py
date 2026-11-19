@@ -25,6 +25,7 @@ class SlowWorker:
 
     def __init__(self) -> None:
         self.loaded = threading.Event()
+        self.load_asked = threading.Event()  # the load request has been read
         self.texts: list[str] = []
         self.returncode: int | None = None
         self._payload = b""
@@ -41,6 +42,7 @@ class SlowWorker:
     def _readline(self) -> bytes:
         request = json.loads(self._payload)
         if request.get("op") == "load":
+            self.load_asked.set()
             self.loaded.wait(10)
             return b'{"status":"ok","op":"load"}\n'
         text = Path(request["text_file"]).read_text(encoding="utf-8")
@@ -123,23 +125,60 @@ async def test_a_reply_that_is_all_in_the_store_plays_with_the_worker_released(m
 
 
 @pytest.mark.asyncio
-async def test_shutting_down_while_the_voice_loads_ends_every_task_it_started(monkeypatch):
-    """A reply did not wait for the load, and Heliox stops (or the voice setting changes) while the load is still
-    held: shutdown ends the load, the announcement waiting for it and the pipe exchange, so none is left pending
-    when the event loop closes ("Task was destroyed but it is pending"), and the cut-short load is no failure."""
+@pytest.mark.parametrize("stage", ["worker starting", "load asked"])
+async def test_shutting_down_while_the_voice_loads_ends_every_task_it_started(stage):
+    """A reply did not wait for the load, and Heliox stops (or the voice setting changes) while the voice is still
+    getting ready: shutdown ends every task the manager started (the announcement, the load, its pipe exchange, the
+    idle watch), so none is left pending when the event loop closes ("Task was destroyed but it is pending"); it
+    closes the worker even when the worker had not finished starting; it cancels no task it did not start; and the
+    cut-short load is no failure.
+
+    Every task created on the loop from the reply on is recorded, whatever the manager keeps track of. How many exist
+    at one instant depends on how far the load got within LOAD_GRACE_SECONDS, so the test waits for the stage it
+    shuts down in (the worker's start called, or the load request read by the worker) and counts nothing."""
     worker, statuses = SlowWorker(), []
+    starting, start_gate = threading.Event(), threading.Event()
+
+    def spawn(engine: str, device: str) -> SlowWorker:
+        starting.set()
+        if stage == "worker starting":
+            start_gate.wait(10)  # the process takes its time to start
+        return worker
+
     manager = manager_for(worker, statuses)
-    with pytest.raises(LocalVoiceNotReady):
-        await manager.speak("kokoro_tts", "It's 10:42.", "af_heart", None, AsyncMock())
-    started = [task for task in manager._background if not task.done()]
-    assert len(started) == 3  # the announcement, the load and its exchange on the pipe, all still waiting
+    manager._spawn = spawn
+    bystander = asyncio.ensure_future(asyncio.Event().wait())  # not the manager's: shutdown leaves it alone
+    loop = asyncio.get_running_loop()
+    created: list[asyncio.Task] = []
 
-    await manager.shutdown()
+    def record(loop, coro, **kwargs):
+        task = asyncio.Task(coro, loop=loop, **kwargs)
+        created.append(task)
+        return task
 
-    assert [task for task in started if not task.done()] == []
+    loop.set_task_factory(record)
+    try:
+        with pytest.raises(LocalVoiceNotReady):
+            await manager.speak("kokoro_tts", "It's 10:42.", "af_heart", None, AsyncMock())
+        await settle(starting.is_set if stage == "worker starting" else worker.load_asked.is_set)
+        assert starting.is_set() and worker.load_asked.is_set() == (stage == "load asked")
+
+        await manager.shutdown()
+    finally:
+        loop.set_task_factory(None)
+
+    assert created and [task for task in created if not task.done()] == []
+    assert not bystander.done()
     assert not manager.running and not manager.failing
     assert statuses == ["voice_loading"]  # not "voice_unavailable": the voice did not fail
+    start_gate.set()  # a start still under way returns now
+    for _ in range(500):  # the start's thread closes what it started; an ordering, not a time limit
+        if worker.stdin.closed:
+            break
+        await asyncio.sleep(0.01)
+    assert worker.stdin.closed  # no worker left running with nobody to close it
     worker.loaded.set()  # the fake worker's pipe thread, still parked in its read, ends
+    bystander.cancel()
 
 
 @pytest.mark.asyncio
