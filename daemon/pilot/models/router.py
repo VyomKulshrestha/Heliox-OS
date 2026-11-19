@@ -220,6 +220,8 @@ class ModelRouter:
         last = len(capture.calls) - 1
         for index, call in enumerate(capture.calls):
             if call.reported:
+                # The provider's own figure for the call, when it gave one (OpenRouter): booked as it is.
+                cost = {} if call.cost_usd is None else {"cost_usd": call.cost_usd}
                 await self._budget_tracker.record_usage(
                     call.provider,
                     call.model,
@@ -228,6 +230,7 @@ class ModelRouter:
                     cache_read_tokens=call.cache_read_tokens,
                     cache_creation_tokens=call.cache_creation_tokens,
                     usage_source="reported",
+                    **cost,
                 )
             else:
                 await self._budget_tracker.record_usage(

@@ -918,7 +918,10 @@ certain, otherwise the model the person already configured.
 In every case control words, local answers and approvals work as before, and a request to act still reaches the
 planner with a specific acknowledgement. Every call is checked against and recorded in the budget tracker the
 planner uses, with the same provider names and `usage_source` values; a stream cut off by the person records the
-usage it had reported, or the existing abandoned-call estimate when it had reported none.
+usage it had reported, or the existing abandoned-call estimate when it had reported none. Where OpenRouter reports
+what a call cost (`usage.cost`, at the price of the host that served it), that figure is booked instead of the price
+tables. A call cut short is never booked below its abandoned-call estimate, and an estimate for a model whose last
+reported cost was above its table price is raised by that ratio (`BudgetTracker.cost_of`).
 
 No provider SDK is needed: every cloud provider is streamed over `httpx`, which Heliox already depends on.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -235,8 +236,30 @@ class AgentTokenBudget:
     exceeded: bool = False
 
 
+# Bookings made from an estimate, not from the provider's own usage: a call with no usage object, and a call Heliox
+# stopped waiting for or cut short.
+ESTIMATED_SOURCES = frozenset({"estimate", "abandoned_estimate"})
+
+
+def _usable_cost(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) and value >= 0.0 else None
+
+
 class BudgetTracker:
-    """Tracks cumulative LLM token spend and enforces a monthly USD limit."""
+    """Tracks cumulative LLM token spend and enforces a monthly USD limit.
+
+    How one call is costed (record_usage):
+    - the provider said what it cost (OpenRouter's ``usage.cost``): that figure, as it is;
+    - otherwise the price tables (pilot.models.prices, CLAUDE_MODEL_PRICES) times the tokens;
+    - an estimate for a model whose reported cost was above its table price (an OpenRouter model served by a host
+      that charges more than the list price) is raised by the last such ratio for that provider and model, never
+      lowered: until the provider reports again, the last thing it reported is the best guess;
+    - a call cut short (``at_least_tokens``, the abandoned-call estimate) is never booked below that estimate, even
+      when part of its usage arrived.
+    """
 
     def __init__(self, config: ModelConfig, db_path: str) -> None:
         self._enabled: bool = config.budget_enabled
@@ -250,6 +273,8 @@ class BudgetTracker:
         self._tasks: dict[str, TaskBudget] = {}
         self._agent_tasks: dict[tuple[str, str], AgentTokenBudget] = {}
         self._lock = asyncio.Lock()
+        # (provider, model) -> reported cost over table price of the last call that reported one, when above 1.
+        self._reported_ratio: dict[tuple[str, str], float] = {}
 
     async def initialize(self) -> None:
         self._pool = AsyncSqlitePool(self._db_path, read_pool_size=2)
@@ -462,11 +487,17 @@ class BudgetTracker:
         cache_read_tokens: int = 0,
         cache_creation_tokens: int = 0,
         usage_source: str = "estimate",
+        cost_usd: float | None = None,
+        at_least_tokens: tuple[int, int] | None = None,
     ) -> None:
         """Persist one call's token usage and update in-memory totals.
 
         `usage_source` is "reported" when the numbers came from the provider's
         own usage object and "estimate" when they were guessed from text length.
+        `cost_usd` is the provider's own figure for the call (OpenRouter's
+        usage.cost): booked instead of the price tables when given. A call cut
+        short passes its abandoned-call estimate as `at_least_tokens` (input,
+        output): the booking is never below that estimate's cost.
 
         Reads the active task_id from the contextvar; if a task is in flight,
         the call's tokens and cost are also added to the in-memory TaskBudget
@@ -474,10 +505,17 @@ class BudgetTracker:
         """
         if not self._pool:
             return
-        if provider == "claude":
-            cost = claude_cost_usd(model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
-        else:
-            cost = _estimate_cost(provider, input_tokens, output_tokens, model)
+        cost = self.cost_of(
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            usage_source=usage_source,
+            cost_usd=cost_usd,
+            at_least_tokens=at_least_tokens,
+        )
         call_tokens = input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
         now = datetime.now(UTC).isoformat()
         month = _current_month()
@@ -523,6 +561,46 @@ class BudgetTracker:
                 task.usd_spent += cost
             if task_id and agent_id and (task_id, agent_id) in self._agent_tasks:
                 self._agent_tasks[(task_id, agent_id)].tokens_used += call_tokens
+
+    def cost_of(
+        self,
+        provider: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        *,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+        usage_source: str = "estimate",
+        cost_usd: float | None = None,
+        at_least_tokens: tuple[int, int] | None = None,
+    ) -> float:
+        """What one call is booked at (the rules in the class docstring); remembers a reported cost's ratio."""
+
+        def table(tokens_in: int, tokens_out: int, cache_read: int = 0, cache_write: int = 0) -> float:
+            if provider == "claude":
+                return claude_cost_usd(model, tokens_in, tokens_out, cache_read, cache_write)
+            return _estimate_cost(provider, tokens_in, tokens_out, model)
+
+        listed = table(input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
+        reported = _usable_cost(cost_usd)
+        key = (provider, model)
+        known_ratio = self._reported_ratio.get(key, 1.0)  # from earlier calls only
+        if reported is not None:
+            cost = reported
+            if usage_source not in ESTIMATED_SOURCES and at_least_tokens is None and listed > 0:
+                # A whole call's own figure against its table price: what estimates for this model are raised by.
+                ratio = reported / listed
+                if ratio > 1.0:
+                    self._reported_ratio[key] = ratio
+                else:
+                    self._reported_ratio.pop(key, None)
+        else:
+            cost = listed * (known_ratio if usage_source in ESTIMATED_SOURCES else 1.0)
+        if at_least_tokens is not None:
+            floor = table(max(0, int(at_least_tokens[0])), max(0, int(at_least_tokens[1])))
+            cost = max(cost, floor * known_ratio)
+        return cost
 
     async def get_stats(self) -> dict:
         """Return current-month usage summary."""

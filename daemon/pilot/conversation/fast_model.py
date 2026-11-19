@@ -18,9 +18,11 @@ fast tier where one is known for certain (Claude: ``claude-haiku-5-5``), and oth
 already configured for that provider, so nothing is hard-wired to a vendor.
 
 Every call goes to the same ``BudgetTracker`` as the planner's, with the same provider names and
-``usage_source`` values. A finished stream records what the provider reported. A stream cut off by the person
-records what it had reported so far, with output estimated from the text received; a stream cut off before any
-usage arrived records the existing abandoned-call estimate (``pilot.models.cloud.estimate_abandoned_call``).
+``usage_source`` values. A finished stream records what the provider reported, and the cost OpenRouter reports
+(``usage.cost``, the price of the host that served it) instead of the list price. A stream cut off by the person or
+the layer records what it had reported so far, with output estimated from the text received, never booked below the
+abandoned-call estimate; a stream cut off before any usage arrived (an OpenAI-compatible stream reports usage only in
+its last chunk) records that estimate (``pilot.models.cloud.estimate_abandoned_call``).
 """
 
 from __future__ import annotations
@@ -118,6 +120,8 @@ class Budget(Protocol):
         cache_read_tokens: int = 0,
         cache_creation_tokens: int = 0,
         usage_source: str = "estimate",
+        cost_usd: float | None = None,
+        at_least_tokens: tuple[int, int] | None = None,
     ) -> None: ...
 
 
@@ -128,6 +132,7 @@ class _Usage:
     cache_read: int = 0
     cache_write: int = 0
     reported: bool = False
+    cost: float | None = None  # what the provider said the call cost, in US dollars (OpenRouter's usage.cost)
     reasoned: bool = False  # thinking or reasoning arrived in the stream (never spoken)
 
 
@@ -242,12 +247,23 @@ class _StreamingBase:
             self.hold(_retry_after(error), "busy")
 
     async def _record(self, record: CallRecord, usage: _Usage, payload: dict[str, Any], finished: bool) -> None:
+        extra: dict[str, Any] = {}
         if usage.reported and usage.input_tokens:
             record.input_tokens = usage.input_tokens
             record.output_tokens = (
                 usage.output_tokens if finished else max(usage.output_tokens, math.ceil(record.chars / 4))
             )
             record.usage_source = "reported"
+            if usage.cost is not None:
+                extra["cost_usd"] = usage.cost
+            if not finished:
+                # Cut short: what arrived may not be all the provider bills, so never less than the estimate.
+                from pilot.models.cloud import estimate_abandoned_call
+
+                estimate = estimate_abandoned_call(
+                    self.provider, self.name, payload, (record.ended_at or self.clock()) - record.started
+                )
+                extra["at_least_tokens"] = (estimate.input_tokens, estimate.output_tokens)
         elif finished:
             # A billed response without a usage object: the router's length-based estimate.
             body = json.dumps(payload, ensure_ascii=False, default=str)
@@ -274,6 +290,7 @@ class _StreamingBase:
                 cache_read_tokens=usage.cache_read if record.usage_source == "reported" else 0,
                 cache_creation_tokens=usage.cache_write if record.usage_source == "reported" else 0,
                 usage_source=record.usage_source,
+                **extra,
             )
         except Exception:
             logger.warning("Could not record the fast model's usage", exc_info=True)
@@ -612,6 +629,10 @@ class HttpFastModel(_StreamingBase):
             usage.input_tokens = int(found.get("prompt_tokens") or 0)
             usage.output_tokens = int(found.get("completion_tokens") or 0)
             usage.reported = True
+            from pilot.models.cloud import REPORTS_COST, reported_cost
+
+            if self.provider in REPORTS_COST:
+                usage.cost = reported_cost(found)
         choices = data.get("choices") or []
         if not choices:
             return ""

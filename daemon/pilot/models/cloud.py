@@ -106,6 +106,7 @@ class CloudCallUsage:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     reported: bool = False
+    cost_usd: float | None = None  # what the provider said the call cost (OpenRouter's usage.cost), when it did
 
 
 @dataclass
@@ -169,7 +170,32 @@ def _note_billed_call(provider: str, model: str, data: Any, parse) -> None:
     if usage is None:
         capture.calls.append(CloudCallUsage(provider, model))
     else:
+        if provider not in REPORTS_COST:
+            usage.pop("cost_usd", None)  # a figure from another host is not known to be US dollars
         capture.calls.append(CloudCallUsage(provider, model, reported=True, **usage))
+
+
+# Providers whose responses say what the call cost, in US dollars.
+REPORTS_COST = frozenset({"openrouter"})
+
+
+def reported_cost(usage: Any) -> float | None:
+    """What OpenRouter says one call cost, in US dollars, from the response's usage object, or None when it says
+    nothing usable. ``cost`` is what the OpenRouter account was charged, at the price of the host that served the call
+    (a pinned host can cost many times the model's list price). For a call made with the person's own provider key
+    (``is_byok``) that provider bills the inference apart, so ``cost_details.upstream_inference_cost`` is added; on
+    other calls it repeats ``cost`` and is not added."""
+    if not isinstance(usage, dict):
+        return None
+    cost = usage.get("cost")
+    if isinstance(cost, bool) or not isinstance(cost, int | float) or not math.isfinite(cost) or cost < 0:
+        return None
+    total = float(cost)
+    if usage.get("is_byok") is True:
+        upstream = (usage.get("cost_details") or {}).get("upstream_inference_cost")
+        if isinstance(upstream, int | float) and not isinstance(upstream, bool) and math.isfinite(upstream):
+            total += max(0.0, float(upstream))
+    return total
 
 
 def _output_limit(payload: dict[str, Any]) -> int | None:
@@ -206,16 +232,20 @@ def _anthropic_usage(data: dict[str, Any]) -> dict[str, int] | None:
     }
 
 
-def _openai_usage(data: dict[str, Any]) -> dict[str, int] | None:
+def _openai_usage(data: dict[str, Any]) -> dict[str, Any] | None:
     usage = data.get("usage")
     if not isinstance(usage, dict) or "prompt_tokens" not in usage or "completion_tokens" not in usage:
         return None
     # completion_tokens includes reasoning tokens; prompt_tokens includes
     # cached tokens (priced at the full input rate, which overstates).
-    return {
+    found: dict[str, Any] = {
         "input_tokens": _int(usage.get("prompt_tokens")),
         "output_tokens": _int(usage.get("completion_tokens")),
     }
+    cost = reported_cost(usage)
+    if cost is not None:
+        found["cost_usd"] = cost  # kept for OpenRouter only (_note_billed_call)
+    return found
 
 
 def _gemini_usage(data: dict[str, Any]) -> dict[str, int] | None:
