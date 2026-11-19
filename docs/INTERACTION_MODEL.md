@@ -180,6 +180,36 @@ way on a new reason, on "I'll go anyway" and by the third exchange. Spoken disag
 `often`. A statement gets one spoken sentence
 (the statement rule), so a held point is sometimes cut to its first sentence.
 
+The limit does not rest on the STANCE line alone. Two signals that need no model call count an exchange too:
+- the person holding to their decision ("It'll be fine.", "I really need to.", "But ...", "do it anyway"), read from
+  their words before the model is asked: at the second such turn in a row the reply is told to give way, whatever the
+  replies before were marked, and every later reply on that thread is too;
+- the reply's own words pushing back ("would be tight", "cost you sleep", "no other copy", "I'd put that first"),
+  read after it was written.
+On a turn that gives way, a sentence that still pushes back is not said; when none is left, Heliox says "Okay, your
+call." A STANCE line on a reply that opens by agreeing ("Okay, you're leaving at two.") is not counted.
+
+Measured on 9 scripted decisions with grounds and 6 without, through the real layer (19 November):
+
+| Talk model | Disagreeing replies | Without the line | Ordinary replies counted |
+|---|---|---|---|
+| Claude Haiku 5.5 | 10 | 1 | 0 of 6 |
+| OpenRouter's default (Claude Haiku 5.5) | 10 | 0 | 0 of 6 |
+| Gemini's default (gemini-3.5-flash-lite) | 9 | 1 | 0 of 2 |
+| qwen3.5 2B on this computer (CPU) | about 2 of 10 | wrote the line on 7 replies that agreed | 1 of 6 |
+
+The reply-word signal caught 9 of 10 OpenRouter and 2 of 9 Gemini disagreements it had not been tuned on (Gemini's
+are often implicit: "Your meeting is at three, and the bus takes forty minutes."), which is why the person's side
+carries the limit. On 387 recorded replies from earlier sessions it counted none, and on 317 person turns from the
+conversation eval packs the person's signal counted one ("Yes, go ahead."), never two in a row. Three of 14 Gemini
+calls passed the 4.5 s first-text limit.
+
+For a step that cannot be undone, costs money or affects other people, no road leaves the person having heard the
+concern with the step neither done nor asked about: a reply that pushes back without an ACT line and asks nothing is
+followed by "Do you still want me to go ahead?"; after a question of the reply's own, "do it anyway" hands the step
+over; a concern talked over still waits a minute for a yes; and a reply that gives way in words does the step only
+when the person held to it, asks once otherwise, and does nothing when they backed off.
+
 Provisional answers (`pilot.conversation.provisional`) have no caller in the product: the listener never calls
 `provisional_voice_turn`, so they do nothing today. Starting them from the early final pass was measured at about
 0.05 s (0.15 s at most) and dropped.

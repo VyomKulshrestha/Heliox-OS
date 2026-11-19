@@ -306,8 +306,7 @@ async def test_a_reply_that_gives_way_opens_nothing_even_with_a_stance_line():
     model = Scripted("Okay, your call. Keep an eye on the time.\nSTANCE: gym before the meeting")
     layer, ear = make(model)
     await layer.take("I'll go anyway")
-    assert layer.debate.stance is None
-    assert layer.debate.settled == ["gym before the meeting"]
+    assert layer.debate.stance is None  # the line on a reply that agrees is not counted (debate.false_mark)
     assert "STANCE" not in " ".join(ear.heard)
 
 

@@ -118,6 +118,10 @@ AGAIN_ALTERNATE = "Not without the language model, sorry."
 # A model that is only slow is there: its second plain line does not say it is missing.
 AGAIN_ALTERNATES = {"slow": "Still slow, sorry. Try again in a few seconds."}
 UNCLEAR_OFFLINE = "Sorry, I didn't catch that. Could you say it again?"
+# Asked after Heliox pushed back on a costly step the person asked for and the reply asked nothing (debate).
+STILL_GO_AHEAD = "Do you still want me to go ahead?"
+# Said on a turn that gives way when every sentence the model wrote still pushed back (debate.pushes_back).
+GIVE_WAY = "Okay, your call."
 # The screen read for a spoken turn starts at the wake phrase (prewarm). At the turn it is waited for this long at
 # most, and the request goes without it when it is not there: on the first turn after start-up it took 0.55 to 0.75
 # s, and every later one 0.00 (the bench, 13 November). A read started more than SCREEN_FRESH_SECONDS before the turn
@@ -443,6 +447,10 @@ class ConversationLayer:
         self.provisional = prov.ProvisionalAnswers(clock=clock)
         # Disagreeing with a decision, then giving way (conversation.disagree, pilot.conversation.debate).
         self.debate = dbt.Debate(disagree)
+        # A costly step Heliox pushed back on while the reply asked its own question: "do it anyway" hands it over.
+        self._pending_step: tuple[float, HandoverIntent] | None = None
+        self._provisional_lines: dict[str, str] = {}  # turn id -> the disagreement line its provisional answer had
+        self._debate_offer = False  # the waiting offer came from a disagreement: "do it anyway" is a yes to it
 
     # ── the server's hooks ──
 
@@ -565,6 +573,7 @@ class ConversationLayer:
         )
 
         stance = self.debate.context_line(normalize(text))
+        self._provisional_lines[turn_id] = stance
 
         async def build() -> tuple[list[dict[str, str]], Any]:
             screen = await self._read_screen(model)
@@ -587,6 +596,7 @@ class ConversationLayer:
     def cancel_provisional(self, turn_id: str, reason: str) -> None:
         """The listener: the person carried on, the addressing rule did not take the utterance, or it was dropped."""
         self.provisional.drop(turn_id, reason or "dropped")
+        self._provisional_lines.pop(turn_id, None)
 
     def provisional_dispatch(self, turn_id: str) -> None:
         """A voice dispatch starts: every provisional answer for another turn is dropped (a stop, a new request), and
@@ -597,6 +607,7 @@ class ConversationLayer:
     def provisional_done(self, turn_id: str) -> None:
         """The voice dispatch for ``turn_id`` has ended: a provisional answer it did not adopt is dropped."""
         self.provisional.finish(turn_id)
+        self._provisional_lines.pop(turn_id, None)
 
     async def _read_screen(self, model: Any) -> Any:
         """What the screen shows, for the fast model's context, as _answer reads it."""
@@ -626,6 +637,10 @@ class ConversationLayer:
         if [(t.role, t.text, t.at) for t in self.memory.recent()] != [(t.role, t.text, t.at) for t in held.before]:
             self.provisional.not_adopted(held, "conversation_moved")
             return None
+        if self._provisional_lines.pop(held.turn_id, "") != self.debate.context_line(normalize(text)):
+            # The disagreement moved on since the answer started (this turn gives way): the model is asked afresh.
+            self.provisional.not_adopted(held, "conversation_moved")
+            return None
         return held
 
     def clear(self) -> None:
@@ -633,6 +648,7 @@ class ConversationLayer:
         self.interrupt()
         self.memory.clear()
         self.debate.reset()
+        self._pending_step = None
         self._sorry_said = False
         self._saw_screen_text = False
         self.last_result = ""
@@ -667,11 +683,16 @@ class ConversationLayer:
         logger.info("Conversation turn routed as %s (%s)", decided.kind.value, decided.reason)
 
         offer, self._offer = self._offer, None
+        debate_offer, self._debate_offer = self._debate_offer, False
         words = normalize(text)
         stance = self.debate.stance
         # After Heliox said its concern about a costly step and asked once, "do it anyway" is a yes too; never while
         # an approval waits on the screen (voice does not approve, and the person may mean that dialog).
-        kept_decision = stance is not None and stance.offered and dbt.go_ahead(words) and not self._approval_waiting()
+        kept_decision = (
+            (debate_offer or (stance is not None and stance.offered))
+            and dbt.go_ahead(words)
+            and not self._approval_waiting()
+        )
         if offer is not None and (words in YES or kept_decision) and self._clock() - offer[0] <= OFFER_SECONDS:
             # The person's yes to "Do you want me to ...?": their request, taken through the normal road with all
             # its reviews and approvals. It is never an approval of a pending plan: with one pending, the server
@@ -697,6 +718,19 @@ class ConversationLayer:
             except Exception:
                 logger.debug("Could not tell the listener the turn was not understood", exc_info=True)
             return result
+        step, self._pending_step = self._pending_step, None
+        if (
+            step is not None
+            and dbt.go_ahead(words)
+            and not self._approval_waiting()
+            and self._clock() - step[0] <= OFFER_SECONDS
+        ):
+            # "Do it anyway" after Heliox pushed back on a costly step and asked a question of its own: the step is
+            # handed over through the usual road, with every review and approval.
+            self.debate.close(settle=True)
+            self.memory.add_user(text)
+            result._before = self.memory.recent()
+            return self._hand_over(result, step[1])
         if (
             self.debate.stance is not None
             and decided.kind is TurnKind.ACTION
@@ -857,10 +891,13 @@ class ConversationLayer:
             bool
         ] = []  # an ACT line came after words: never spoken, and it hands over only if nothing held back
         stance_line = dbt.StanceFilter()  # the reply's last line when it disagrees: read, never spoken
+        held_back: list[str] = []  # sentences not said because this turn gives way and they still pushed back
+        written: list[str] = []  # every sentence the reply wrote, said or not: the second signal reads them
         stance_topics: list[str] = []  # the same line written in another case, as a sentence of its own
 
         async def put(sentence: str) -> None:
             trace.mark_once("first sentence complete")
+            written.append(str(sentence))
             await queue.put(sentence)
 
         async def produce() -> None:
@@ -1029,6 +1066,12 @@ class ConversationLayer:
                     if clean:
                         logger.info("Dropped a sentence claiming an action the fast model cannot take: %r", clean)
                     continue
+                if self.debate.giving and dbt.pushes_back(clean):
+                    # This turn gives way (the third exchange, or "do it anyway"): a sentence still arguing the
+                    # point is not said, whatever the model wrote.
+                    logger.info("Held back a sentence that still pushed back on a turn that gives way: %r", clean)
+                    held_back.append(clean)
+                    continue
                 if not typed and statement and said and not continues and not ends_with_question(clean):
                     # A statement that asks for nothing gets one sentence, and at most one question after it. The
                     # rest is read (a promise to act still hands the request over) but not said.
@@ -1099,19 +1142,33 @@ class ConversationLayer:
         # The reply's STANCE line: it disagreed, on this topic (pilot.conversation.debate). Read even when the reply
         # was capped at a question, since the stream has usually ended by the time that question has been said.
         topic = stance_line.topic or next((found for found in stance_topics if found), "")
+        written_text = " ".join(written)
+        if topic and dbt.false_mark(written_text or " ".join(said)):
+            logger.info("A STANCE line on a reply that agrees is not counted: %r", topic)
+            topic = ""
+        # A reply whose words push back without the line (debate.pushes_back): the second signal.
+        pushed = topic or self.debate.unmarked_topic(" ".join(said), written=written_text, words=normalize(text))
+        if held_back and not said and not act_text and not promised and not failure:
+            # Every sentence still argued on a turn that gives way: Heliox gives way in a few words instead.
+            if await self._say_one(result, GIVE_WAY, started) in HEARD:
+                said.append(GIVE_WAY)
 
         if act_text:
             act = parse_act("".join(act_text))
-            if act is not None and topic and self.debate.concern_allowed(act.object or act.request) and declined(said):
+            if act is not None and pushed and declined(said):
                 # The reply said its disagreement in words ("I'd hold off, that's your only copy") and wrote the ACT
-                # line too. Disagreeing never refuses: the words were the concern, and the step is asked about once.
+                # line too. Disagreeing never refuses: the words were the concern, and the step is asked about once;
+                # when it was asked about already, or the turn gives way, it is done.
                 intent = HandoverIntent(
                     verb=act.verb, object=act.object, words=text, request=act.request, source="model", say=act.say
                 )
                 quick = from_model(act.action, words=text) if act.action is not None else None
-                self.debate.note_concern(act.object or act.request, " ".join(said), offered=True)
-                await self._offer_to(result, intent, quick, started, still=True)
-                return result
+                if self.debate.concern_allowed(act.object or act.request):
+                    self.debate.note_concern(act.object or act.request, " ".join(said), offered=True)
+                    await self._offer_to(result, intent, quick, started, still=True)
+                    return result
+                self.debate.close(settle=True)
+                return self._hand_over(result, intent, quick=quick)
             if act is not None and declined(said, say=act.say):
                 # The reply held back ("I can't tell which ones you mean") and wrote an ACT line anyway: the decline
                 # wins and nothing is handed over. What it said stands; if it said nothing, its own sentence or a
@@ -1132,9 +1189,16 @@ class ConversationLayer:
                         # Cannot be undone, costs money or reaches other people: the concern first, once, and the
                         # step waits for a yes or "do it anyway", which hands it over through the usual road.
                         if await self._say_one(result, act.concern, started) in STOPPED:
-                            result.done = True  # talked over: nothing more is said, as for any reply cut off
+                            # Talked over: nothing more is said, as for any reply cut off, but the step still waits
+                            # for a yes or "do it anyway" in the next minute; it is never left neither done nor asked.
+                            self.debate.note_concern(about, act.concern, offered=True)
+                            self.debate.remember_request(text)
+                            self._offer = (self._clock(), intent, quick)
+                            self._debate_offer = True
+                            result.done = True
                             return result
                         self.debate.note_concern(about, act.concern, offered=True)
+                        self.debate.remember_request(text)
                         await self._offer_to(result, intent, quick, started, still=True)
                         return result
                     # A small step that can be undone: done, and the concern said after the acknowledgement.
@@ -1167,7 +1231,50 @@ class ConversationLayer:
             self.debate.close(settle=True)
             return self._hand_over(result, intent)
         if said and not failure:
-            self.debate.after_reply(topic, " ".join(said))
+            before = self.debate.stance
+            pending = before.request if before is not None else ""
+            giving = self.debate.giving
+            asked_already = any(ends_with_question(sentence) for sentence in said)
+            costly_words = dbt.asks_for_costly_step(normalize(text))
+            self.debate.after_reply(pushed, " ".join(said), written=written_text, words=normalize(text))
+            plain = normalize(text)
+            gave_way = giving or dbt.gives_way(" ".join(said))
+            if gave_way and pending and not self._approval_waiting() and not dbt.withdraws(plain):
+                # The reply gave way in words ("Okay, your call.", "Fair, that changes it.") and wrote no ACT line.
+                intent = HandoverIntent(
+                    verb=dbt.asks_for_costly_step(normalize(pending)) or "do",
+                    object="",
+                    words=pending,
+                    request=pending,
+                    source="model",
+                )
+                if dbt.insists(plain) or dbt.go_ahead(plain):
+                    # The person held to it: what they asked for is done, through the usual road.
+                    self.debate.close(settle=True)
+                    return self._hand_over(result, intent)
+                # Anything else (a new reason, a remark): asked once, never done on a guess.
+                await self._say_one(result, STILL_GO_AHEAD, started)
+                self._offer = (self._clock(), intent, None)
+                self._debate_offer = True
+                self.debate.close(settle=True)
+                result.done = True
+                return result
+            stance = self.debate.stance
+            if pushed and costly_words and stance is not None and not self._approval_waiting():
+                # The reply pushed back on a step the person asked for that cannot be undone, costs money or affects
+                # others, and wrote no ACT line. The step is never left neither done nor asked about: with no question
+                # in the reply, Heliox asks once, and a yes or "do it anyway" hands the person's own words to the
+                # planner through the usual road; after the reply's own question ("restore it first?") a plain yes
+                # answers that question, and "do it anyway" hands the step over.
+                stance.request = text
+                intent = HandoverIntent(verb=costly_words, object="", words=text, request=text, source="model")
+                if asked_already:
+                    self._pending_step = (self._clock(), intent)
+                else:
+                    await self._say_one(result, STILL_GO_AHEAD, started)
+                    stance.offered = True
+                    self._offer = (self._clock(), intent, None)
+                    self._debate_offer = True
         if failure and not said:
             reason = failure[0]
             if reason == "unknown_model" and getattr(model, "chosen", True) is False:
@@ -1360,6 +1467,7 @@ class ConversationLayer:
         sentence = f"{ask} {request[:1].lower()}{request[1:]}?" if request else f"{ask} do that?"
         await self._say_one(result, clean_for_speech(sentence), started)
         self._offer = (self._clock(), intent, quick)
+        self._debate_offer = still
         result.done = True
 
     def _remember_said(self, said: list[str], cut: str | None, unsaid: list[str] | None = None) -> None:

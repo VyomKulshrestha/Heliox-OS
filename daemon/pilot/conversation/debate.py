@@ -206,7 +206,8 @@ _GO_AHEAD = re.compile(
     r"(?: (?:anyway|anyways|regardless|please|now|then|all the same))*"
     r"|i'?m sure|i am sure|i'?m doing it anyway|i'?m going anyway|"
     r"i(?:'ll| will|'m going to|'m gonna|m going to|ll) (?:\w+ ){0,3}?\w+ (?:anyway|anyways|regardless)|"
-    r"(?:it'?s )?my (?:call|decision|choice)|i(?:'ve| have) decided|i still want (?:to|it)|do it anyway)"
+    r"(?:it'?s )?my (?:call|decision|choice)|i(?:'ve| have) decided|i still want (?:to|it)|do it anyway|"
+    r"(?:just )?\w+ (?:it|them|that|those)(?: \w+)? (?:anyway|anyways|regardless))"
     r"(?: anyway| please| thanks)*$"
 )
 
@@ -222,12 +223,143 @@ def costly(verb: str, risk: str) -> bool:
     return risk in RISKS or verb.casefold().strip() in COSTLY_VERBS
 
 
+# ── the second signal: a reply that pushes back without the STANCE line ──
+#
+# The model does not always write the line. A reply is also counted as holding a point when its words push back on
+# the decision: a clash, a cost to the person, a step that cannot be undone, or Heliox saying it would not. Read from
+# the reply's own text after it was written, so it costs no call and nothing waits for it. Kept narrow on purpose: a
+# reply counted by mistake only makes Heliox give way sooner; it never makes it argue or hold anything back.
+_PUSHES_BACK = re.compile(
+    r"\b(?:"
+    r"(?<!sleep )(?<!hold )tight|won't work|but you(?:'d| would|'ll| will)|^maybe,? but|"
+    r"you(?:'d| would|'ll| will) be (?:up late|tired|exhausted|short|rushed|starting)|"
+    r"(?:less|little|short on|lose|losing) sleep|keeps? you (?:up|awake)|short of (?:the|your)|"
+    r"i'?d (?:put|do|start with|finish) (?:that|it|the \w+(?: \w+)?) first|"
+    r"(?:isn't|is not|aren't|are not) done|hasn't (?:been )?(?:signed|approved|reviewed)|signs? off|"
+    r"(?:is|that's|it's) a lot (?:to|for)|still want (?:it|to|me to)\b|"
+    r"no time (?:to|for|left)|not enough time|(?:too|very) (?:late|close) (?:for|to|before)|clash(?:es)? with|"
+    r"conflicts? with|overlaps? with|double[- ]booked|"
+    r"(?:would|will|could|might) (?:permanently )?(?:delete|erase|wipe|lose|cost you|miss|eat into|cut into)|"
+    r"(?:cost|costs|costing) you|leaves? (?:you )?(?:no|very little|little|barely)|"
+    r"you(?:'ll| will| would|'d) (?:be late|miss|lose|struggle|be wiped|be exhausted|regret)|"
+    r"or you(?:'ll| will) (?:be late|miss|lose)|(?:gets?|will be) missed|"
+    r"(?:can't|cannot|can not) be undone|no other copy|(?:the )?only copy|no backup|"
+    r"i(?:'d| would) (?:hold off|wait|skip|rethink|reconsider|not|avoid|think twice)|i wouldn't|"
+    r"might want to (?:rethink|reconsider|wait|hold off|move|skip)|are you sure|"
+    r"(?:is|isn't) that (?:wise|a lot|too)|that's a lot|(?:that's|it's|that is|it is|a bit) risky|risky to|"
+    r"not (?:a good|the best) (?:idea|time)|before (?:legal|the review|it'?s (?:signed|reviewed|approved))"
+    r")\b",
+    re.IGNORECASE,
+)
+# A reply that opens by giving way ("Okay, your call.", "Fair, that changes it.") is not holding a point, whatever it
+# adds after ("Keep an eye on the time.").
+_GIVES_WAY = re.compile(
+    r"^\W*(?:okay|ok|alright|all right|sure|fine)?[,.!]?\s*(?:your call|fair(?: enough)?\b|that changes it|"
+    r"i'll drop it|good point|you're right|makes sense|go for it|enjoy)",
+    re.IGNORECASE,
+)
+
+
+def gives_way(reply: str) -> bool:
+    """A reply that opens by giving way ("Okay, your call.", "Fair, that changes it.")."""
+    return bool(_GIVES_WAY.match(" ".join(str(reply or "").split())))
+
+
+def pushes_back(reply: str) -> bool:
+    """Whether a reply's words push back on a decision (the second signal; the STANCE line is the first)."""
+    text = " ".join(str(reply or "").split())
+    if not text or _GIVES_WAY.match(text):
+        return False
+    return bool(_PUSHES_BACK.search(text))
+
+
+# A reply that opens by agreeing ("Okay, you're leaving at two.", "Good, the early train it is.").
+_AGREES = re.compile(r"^\W*(?:okay|ok|good|great|sounds good|perfect|lovely|sure|got it|nice|noted)\b", re.IGNORECASE)
+
+
+def false_mark(reply: str) -> bool:
+    """A STANCE line on a reply that agrees: it opens by agreeing and no words push back. Small local models write
+    the line on such replies (seen with a 2B model on 7 of 16 replies); it is not counted."""
+    text = " ".join(str(reply or "").split())
+    return bool(_AGREES.match(text)) and not _PUSHES_BACK.search(text)
+
+
+def topic_of(words: str) -> str:
+    """A topic named from the person's own words, for a disagreement the model did not mark (normalized words in)."""
+    content = [word for word in words.split() if len(word) >= 4 and word not in _SMALL and word not in _PLAN_WORDS]
+    return " ".join(content[:5])[:TOPIC_CHARS]
+
+
+_PLAN_WORDS = frozenset({"going", "gonna", "think", "want", "need", "will", "it'll", "i'll", "i'm", "let's", "just"})
+# The person telling Heliox their own plan ("I'll book the early train"): the step is theirs, not one to hand over.
+_OWN_PLAN = re.compile(
+    r"^(?:so |and |well |ok |okay )?(?:i'?ll|i will|i'?m going to|i am going to|i'?m gonna|i think i'?ll|i plan to|i might)\b"
+)
+
+
+def _forms(verb: str) -> set[str]:
+    forms = {verb, verb + "s", verb + "ed", verb + "ing"}
+    if verb.endswith("e"):
+        forms |= {verb + "d", verb[:-1] + "ing"}
+    if verb.endswith("y"):
+        forms |= {verb[:-1] + "ied", verb[:-1] + "ies"}
+    return forms
+
+
+_COSTLY_FORMS = frozenset(
+    {form for verb in COSTLY_VERBS for form in _forms(verb)} | {"sent", "paid", "bought", "shut down", "emptied"}
+)
+
+
+def asks_for_costly_step(words: str) -> str:
+    """The costly verb when the person asked Heliox for a step that cannot be undone, costs money or affects others
+    ("I want the recycle bin emptied", "send the contract to Dana"); "" otherwise, and "" for their own plan ("I'll
+    book the early train"). ``words`` normalized."""
+    text = " ".join(words.split())
+    if not text or _OWN_PLAN.match(text):
+        return ""
+    return next((word for word in text.split() if word in _COSTLY_FORMS), "")
+
+
+# The person holding to their decision after Heliox spoke ("It'll be fine.", "I really need to.", "But the report can
+# wait."): each such turn is one more exchange on the same thread, whatever Heliox's reply was marked. Read from the
+# person's words before the model is asked, so it needs nothing from the model; "do it anyway" counts too (go_ahead).
+_INSISTS = re.compile(
+    r"^(?:(?:no|nah|yes|yeah|yep|look|well|okay|ok|honestly|seriously|still|and)\s+)*"
+    r"(?:it'?ll be (?:fine|okay|ok|alright)|it'?s (?:fine|okay|ok|alright|not a problem|no problem|worth it)|"
+    r"i'?ll (?:manage|be fine|be okay|be ok|cope|make it|sort it|handle it)|"
+    r"i (?:really |still |just )?(?:need|want|have) to\b|i (?:really|still|just) (?:need|want)\b|"
+    r"i don'?t care|don'?t worry|trust me|"
+    r"i know what i'?m doing|i'?ve got (?:it|this)|i can handle it|i'?m still going|i'?m going anyway|"
+    r"i'?m (?:still )?doing it|"
+    r"i still (?:want|need|think)|that'?s fine|it doesn'?t matter|i'?d rather|"
+    r"but\b|because\b|i know\b|i hear you\b|i get it\b|yeah but|yes but)"
+)
+
+
+_WITHDRAWS = re.compile(
+    r"\b(?:don'?t|do not|never ?mind|cancel|stop|wait|leave (?:it|them)|keep (?:it|them)|hold off|not now|"
+    r"restore|check (?:it|the|that) first|let me check|on second thought|you'?re right)\b"
+)
+
+
+def withdraws(words: str) -> bool:
+    """The person backs off the step (``words`` normalized): it is then never done on Heliox's giving way."""
+    return bool(_WITHDRAWS.search(" ".join(words.split())))
+
+
+def insists(words: str) -> bool:
+    """The person holds to their decision (``words`` normalized)."""
+    return bool(_INSISTS.match(" ".join(words.split())))
+
+
 @dataclass
 class Stance:
     topic: str
     position: str  # what Heliox said when it disagreed
     count: int = 1  # replies that held the point
     offered: bool = False  # a costly step asked about once: a yes or "do it anyway" hands it over
+    request: str = ""  # the person's words asking for that step: done when Heliox gives way
 
 
 class Debate:
@@ -239,6 +371,11 @@ class Debate:
         self.settled: list[str] = []
         self.voiced: list[str] = []  # topics whose concern was said once in this conversation
         self._giving_way = False  # this turn was told to give way: whatever it writes, the topic is settled
+        # The person's turns in a row that held to their decision (insists, go_ahead) since they last said something
+        # else, the words that started that thread, and Heliox's last reply in it.
+        self.pushes = 0
+        self._thread_words = ""
+        self._last_reply = ""
 
     def setting(self) -> str:
         try:
@@ -250,17 +387,27 @@ class Debate:
     def on(self) -> bool:
         return self.setting() != "off"
 
+    @property
+    def giving(self) -> bool:
+        """This turn was told to give way (read before ``after_reply``)."""
+        return self._giving_way and self.stance is not None
+
     def reset(self) -> None:
         self.stance = None
         self.settled.clear()
         self.voiced.clear()
         self._giving_way = False
+        self.pushes = 0
 
-    def close(self, *, settle: bool = True) -> None:
+    def close(self, *, settle: bool = True, keep_thread: bool = False) -> None:
+        """No open disagreement. ``keep_thread``: the person's run of insisting turns still counts (a reply that
+        merely carried no mark ends the stance, not the thread)."""
         if self.stance is not None and settle:
             self._settle(self.stance.topic)
         self.stance = None
         self._giving_way = False
+        if not keep_thread:
+            self.pushes = 0
 
     def _settle(self, topic: str) -> None:
         if topic and not any(same_topic(topic, old) for old in self.settled):
@@ -275,7 +422,26 @@ class Debate:
         return go_ahead(words) or (stance is not None and stance.count >= MAX_EXCHANGES - 1)
 
     def start_turn(self, words: str) -> None:
-        """A turn the model will answer begins (``words`` normalized)."""
+        """A turn the model will answer begins (``words`` normalized). The person's insisting turns count here,
+        before the model is asked: at the second in a row the reply gives way, so a thread takes at most three
+        exchanges even when no reply carried the STANCE line or words the second signal knows."""
+        if not self.on:
+            self._giving_way = False
+            return
+        if insists(words) or go_ahead(words):
+            self.pushes += 1
+        else:
+            self.pushes = 0
+            self._thread_words = words
+        if self.pushes >= MAX_EXCHANGES - 1:
+            if self.stance is None:
+                self.stance = Stance(
+                    topic=topic_of(self._thread_words) or "this decision",
+                    position=self._last_reply[:POSITION_CHARS],
+                    count=MAX_EXCHANGES - 1,
+                )
+            else:
+                self.stance.count = max(self.stance.count, self.pushes)
         self._giving_way = self.giving_way(words)
 
     def context_line(self, words: str) -> str:
@@ -307,14 +473,19 @@ class Debate:
             lines.append(f"You already gave way about {'; '.join(settled)}. Don't raise it again.")
         return " ".join(lines)
 
-    def after_reply(self, topic: str, said: str) -> None:
-        """A reply was said in full: ``topic`` from its STANCE line ("" for none), ``said`` its words."""
+    def after_reply(self, topic: str, said: str, *, written: str = "", words: str = "") -> None:
+        """A reply was said in full: ``topic`` from its STANCE line ("" for none), ``said`` its words, ``written``
+        all it wrote (some of it may not have been said), ``words`` what the person said (normalized). A reply with
+        no line whose words push back (``pushes_back``) counts as holding a point: on the open topic, or on one named
+        from the person's words."""
         if not self.on:
             self.close(settle=False)
             return
+        self._last_reply = " ".join(said.split())
+        topic = topic or self.unmarked_topic(said, written=written, words=words)
         if self._giving_way:
             held = self.stance
-            self.close(settle=True)  # held twice, or told to go ahead: settled whatever the reply wrote
+            self.close(settle=True, keep_thread=True)  # held twice, or told to go ahead: settled, whatever it wrote
             if held is None:
                 if topic:
                     self._settle(topic)  # "Okay, your call. Keep an eye on the time." with a STANCE line: given way
@@ -323,10 +494,10 @@ class Debate:
                 return
             # The reply was about something else: that disagreement starts at one.
         if not topic:
-            self.close(settle=True)  # a concession, or the talk moved on
+            self.close(settle=True, keep_thread=True)  # a concession, or the talk moved on
             return
         if any(same_topic(topic, old) for old in self.settled):
-            self.close(settle=False)  # a settled topic is not argued again
+            self.close(settle=False, keep_thread=True)  # a settled topic is not argued again
             return
         position = " ".join(said.split())[:POSITION_CHARS]
         stance = self.stance
@@ -337,7 +508,20 @@ class Debate:
             return
         if stance is not None:
             self._settle(stance.topic)
-        self.stance = Stance(topic=topic, position=position)
+        self.stance = Stance(topic=topic, position=position, count=max(1, self.pushes))
+
+    def remember_request(self, words: str) -> None:
+        """The person's words asking for the step the open stance is about: done if Heliox gives way in words."""
+        if self.stance is not None:
+            self.stance.request = words
+
+    def unmarked_topic(self, said: str, *, written: str = "", words: str = "") -> str:
+        """The topic of a reply that pushes back without the STANCE line, or "" when it does not push back."""
+        if not self.on or not pushes_back(written or said):
+            return ""
+        if self.stance is not None:
+            return self.stance.topic
+        return topic_of(words) or "this decision"
 
     def concern_allowed(self, topic: str) -> bool:
         """Whether the concern about a step on ``topic`` may be said: the setting is on, this turn is not giving way,
