@@ -643,7 +643,7 @@ class ConversationConfig:
     share_profile: str = "auto"  # "auto" | "off"
     second_voice_guard: bool = False
     second_voice_threshold: int = 1  # 2 caught no single second voice; at 1 the cost alone is unmeasured
-    # A short "Mm." or "Let me see." about half a second after you stop talking, while a spoken answer from the model
+    # A short "Let me see." or "One sec." about half a second after you stop talking, while a spoken answer from the model
     # is on its way, and never when the answer is already ready (pilot.conversation.acknowledge). Off until the sounds
     # have been heard in the local voice; a person can turn it on in Settings, Voice.
     acknowledge: bool = False

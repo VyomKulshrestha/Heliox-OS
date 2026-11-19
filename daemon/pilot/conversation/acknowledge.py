@@ -7,9 +7,13 @@ is dropped, and one playing is cut by the answer's higher priority). The words c
 or "sure", which said before "No, I can't do that" would make Heliox contradict itself, and before a request with an
 effect would sound like a promise.
 
-The set is provisional: chosen for what a voice like Kokoro can say naturally, to be heard by the owner (the speech
-agent's test audio). Until then conversation.acknowledge is off by default; a person can turn it on in Settings, Voice. They are string literals here so the speech store makes their audio
-ahead (pilot.system.fixed_speech): saying one costs no synthesis.
+The set is four short phrases. Made in Heliox's voice (Kokoro, af_heart) on 19 November and read back by Whisper,
+each came back word for word. The hums ("Mm.", "Mhm.", "Hmm.") are out until the owner has listened to them:
+Kokoro's reader gave "Mhm." and "Hmm." the same sounds, so "Mhm." did not say the agreeing "mm-hmm", and a
+recogniser cannot tell whether a hum sounds like a person. conversation.acknowledge stays off by default; a person
+can turn it on in Settings, Voice. They are string literals here so the speech store makes their audio ahead
+(pilot.system.fixed_speech): saying one costs no synthesis. "One moment." is also a holding phrase; the holding
+phrase skips the words of the last acknowledgement (ConversationLayer._hold_phrase).
 
 Never: on a typed turn; on a turn whose last word's time is unknown (it cannot be timed); on control words, a turn of
 fewer than ACK_MIN_WORDS words, a thanks or an acknowledgement; on a statement (its one-sentence reply is the
@@ -21,7 +25,7 @@ from __future__ import annotations
 
 import re
 
-ACKNOWLEDGEMENTS = ("Mm.", "Mhm.", "Hmm.", "Let me see.", "One sec.")
+ACKNOWLEDGEMENTS = ("Let me see.", "One sec.", "One moment.", "Let me check.")
 ACK_AFTER_SECONDS = 0.45  # after the person's last word
 ACK_MIN_WORDS = 3
 

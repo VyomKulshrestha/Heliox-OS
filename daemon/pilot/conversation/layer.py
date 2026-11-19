@@ -1568,6 +1568,8 @@ class ConversationLayer:
 
     async def _hold_phrase(self, result: TurnResult, started: float) -> None:
         index = (HOLD_PHRASES.index(self._last_hold) + 1) % len(HOLD_PHRASES) if self._last_hold in HOLD_PHRASES else 0
+        if HOLD_PHRASES[index] == self._last_ack:  # "One moment." is an acknowledgement too: never the same words again
+            index = (index + 1) % len(HOLD_PHRASES)
         phrase = HOLD_PHRASES[index]
         self._last_hold = phrase
         self._held_last_turn = True

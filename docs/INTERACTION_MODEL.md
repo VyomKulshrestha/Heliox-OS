@@ -129,7 +129,7 @@ turns of the 13 November bench run it would have fired twice, on the two slowest
 
 **An acknowledgement while the answer is on its way** (`pilot.conversation.acknowledge`, `conversation.acknowledge`,
 in Settings under Voice; off by default until the sounds have been heard in the local voice). 0.45 s after the person's last word, on the model's road, Heliox says one of
-"Mm.", "Mhm.", "Hmm.", "Let me see.", "One sec." when nothing of the answer is ready. Never when the answer is ready:
+"Let me see.", "One sec.", "One moment.", "Let me check." when nothing of the answer is ready (the hums "Mm.", "Mhm.", "Hmm." are out until they have been heard; Kokoro says "Mhm." and "Hmm." the same). Never when the answer is ready:
 content always wins, an acknowledgement not yet started is dropped, and one playing is on a lower channel than the
 answer, which cuts it. The words commit to nothing: "okay", "right" or "sure" before "No, I can't do that" would
 contradict it, and before a request with an effect would sound like a promise.

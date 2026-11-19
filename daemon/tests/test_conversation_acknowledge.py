@@ -125,7 +125,7 @@ async def test_a_turn_with_an_acknowledgement_gets_no_holding_phrase_as_well():
     model.release.set()
     await turn
     said = [text for text, _ch in ear.heard]
-    assert said[0] in ACKNOWLEDGEMENTS and not set(HOLD_PHRASES) & set(said)
+    assert said[0] in ACKNOWLEDGEMENTS and not set(HOLD_PHRASES) & set(said[1:])
 
 
 @pytest.mark.parametrize(
@@ -158,6 +158,31 @@ def test_the_words_commit_to_nothing_and_rotate():
     assert not {sound.casefold() for sound in ACKNOWLEDGEMENTS} & assent
     assert next_acknowledgement(ACKNOWLEDGEMENTS[0]) == ACKNOWLEDGEMENTS[1]
     assert next_acknowledgement(ACKNOWLEDGEMENTS[-1]) == ACKNOWLEDGEMENTS[0]
+
+
+def test_the_set_is_the_four_phrases_that_read_back_and_never_repeats_running():
+    """19 November: the four phrases came back word for word from Whisper in Heliox's voice; the hums are out until the
+    owner has listened to them."""
+    assert ACKNOWLEDGEMENTS == ("Let me see.", "One sec.", "One moment.", "Let me check.")
+    assert not {"Mm.", "Mhm.", "Hmm."} & set(ACKNOWLEDGEMENTS)
+    said, last = [], ""
+    for _turn in range(3 * len(ACKNOWLEDGEMENTS)):
+        last = next_acknowledgement(last)
+        said.append(last)
+    assert all(a != b for a, b in zip(said, said[1:], strict=False))
+    assert set(said) == set(ACKNOWLEDGEMENTS)  # each is used in turn
+    assert next_acknowledgement("Working on it.") == ACKNOWLEDGEMENTS[0]  # after an action's own words
+
+
+async def test_the_holding_phrase_never_repeats_the_acknowledgement_s_words():
+    from pilot.conversation.layer import TurnResult
+
+    ear = Ear()
+    layer = layer_for(Gate(), ear)
+    layer._last_ack = "One moment."  # also the first holding phrase
+    await layer._hold_phrase(TurnResult(done=False), 100.0)
+    assert ear.heard == [(HOLD_PHRASES[1], "task_narration")]
+    assert HOLD_PHRASES[0] == "One moment."
 
 
 def test_the_store_makes_them_ahead():
