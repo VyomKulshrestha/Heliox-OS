@@ -49,23 +49,39 @@ export const PRESS_MS = 140;
 /** How strongly a shape is formed: from MIN_STRENGTH for a quiet sound to 1 at FULL_LEVEL (envelope, 0 to 15). */
 export const MIN_STRENGTH = 0.45;
 export const FULL_LEVEL = 9;
-/** A consonant with a picture of its own is formed at most this much (the vowels carry the opening). */
-export const CONSONANT_STRENGTH = 0.7;
+/**
+ * A consonant with a picture of its own is formed at most this much, and one drawn with the vowel before it this much:
+ * the vowels carry the opening. 0.7 and 0.55 left the woman's n and t (her nn picture opens nearly as far as her E)
+ * about as open as her stressed vowels, which read as mumbling.
+ */
+export const CONSONANT_STRENGTH = 0.45;
+export const CARRIED_VOWEL_STRENGTH = 0.4;
 /** Loudness (envelope, 0 to 15) at or below which the sound has died away. */
 export const QUIET_LEVEL = 3;
 /** A quiet stretch this long or longer rests the mouth; a shorter one (a stop closure inside a word) does not. */
 export const QUIET_MIN_MS = 80;
-/** The mouth closes from CLOSE_AHEAD_MS before the quiet starts to SETTLE_MS after it, half closed as it starts. */
-export const CLOSE_AHEAD_MS = 10;
+/**
+ * The mouth closes from CLOSE_AHEAD_MS before the quiet starts to SETTLE_MS after it: the spring and the frame delay a
+ * closing too. With 10 ms the picture closed about 60 ms after the sound in replays of both portraits (and opened about
+ * 20 ms after it); with 70 ms it closes 30 to 50 ms after the sound.
+ */
+export const CLOSE_AHEAD_MS = 70;
 export const SETTLE_MS = 30;
 /** It reopens over this long before the sound returns. */
 export const REOPEN_AHEAD_MS = 10;
-/** Stress: a syllable at least this loud (0 to 1 of the piece's loudest) and this far from the last one nods. */
-export const STRESS_LEVEL = 0.75;
-export const STRESS_GAP_MS = 220;
-/** The nod and sway peak this long before the stressed syllable and last about twice STRESS_WIDTH_MS. */
-export const STRESS_LEAD_MS = 60;
-export const STRESS_WIDTH_MS = 170;
+/**
+ * Stress: a syllable at least this loud (0 to 1 of the piece's loudest) and this far from the last one nods. A nod
+ * for every loud syllable (stage 3: 220 ms apart) bobs once it is large enough to see; one at most every 600 ms, on
+ * the strongest syllables, reads as emphasis.
+ */
+export const STRESS_LEVEL = 0.85;
+export const STRESS_GAP_MS = 600;
+/**
+ * The nod and sway peak this long before the stressed syllable and last about twice STRESS_WIDTH_MS: a slow rise
+ * and fall, so the head moves at a few pixels a second at most and is seen as alive rather than as motion.
+ */
+export const STRESS_LEAD_MS = 80;
+export const STRESS_WIDTH_MS = 300;
 
 const STEP_MS = 4;
 
@@ -226,7 +242,7 @@ export function calmShape(shape: Shape, has: (s: Shape) => boolean, vowelBefore:
   // The tongue-tip sounds (t, d, th, and n, l) share the pack's calm small opening when it has one; s-like ch shares s.
   if ((shape === "DD" || shape === "TH") && has("nn")) return ["nn", CONSONANT_STRENGTH];
   if (shape === "CH" && has("SS")) return ["SS", CONSONANT_STRENGTH];
-  if (vowelBefore && has(vowelBefore)) return [vowelBefore, 0.55];
+  if (vowelBefore && has(vowelBefore)) return [vowelBefore, CARRIED_VOWEL_STRENGTH];
   if (has("E")) return ["E", 0.3];
   if (has("I")) return ["I", 0.25];
   return ["sil", 0];

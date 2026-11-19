@@ -119,6 +119,14 @@ describe("face packs", () => {
     expect((await installedPacks(fetcher))[0].voice).toEqual({ kokoro: "af_heart", hint: "feminine" });
   });
 
+  it("takes how far each shape moves the chin", () => {
+    const chin = (value: unknown) => ({ ...GOOD, mouth: { ...GOOD.mouth, chin: value } });
+    expect(manifestProblems(chin({ aa: 10.7, O: 4.9, PP: -2.8 }), "ana")).toEqual([]);
+    expect(manifestProblems(chin({ jaw: 3 }), "ana")).toContain("mouth.chin: unknown shape jaw");
+    expect(manifestProblems(chin({ aa: "far" }), "ana")).toContain("mouth.chin.aa: pixels, -100 to 100");
+    expect(manifestProblems(chin([1]), "ana")).toContain("mouth.chin: an object");
+  });
+
   it("takes the voice a pack names, and the portraits name theirs", () => {
     expect(manifestProblems({ ...GOOD, voice: { kokoro: "am_michael", hint: "masculine" } }, "ana")).toEqual([]);
     expect(manifestProblems({ ...GOOD, voice: { hint: "feminine" } }, "ana")).toEqual([]);

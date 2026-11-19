@@ -29,12 +29,21 @@ a mouth moves in running speech:
   (a stop inside a word) changes nothing;
 - a shape the pack has no picture of stays calm: a lip closure (`PP`) shows the closed mouth; t, d and th use the
   pack's `nn` (a small calm opening) and ch its `SS` when it has them; other consonants keep the opening of the vowel
-  before them a little smaller (or a small neutral opening); a vowel uses the nearest vowel the pack has. A consonant
-  is formed at most 70 % of the way, so the vowels carry the opening;
-- a cut closes the mouth on the next frame.
+  before them at 40 % (or a small neutral opening); a vowel uses the nearest vowel the pack has. A consonant with a
+  picture of its own is formed at most 45 % of the way, so the vowels carry the opening: at 70 % a consonant picture
+  that opens nearly as far as a vowel (the woman's `nn`) left her stressed vowels hardly more open than her n and t;
+- a cut closes the mouth on the next frame;
+- one picture is always dominant: between two steps of a shape the blend stays on one step until a quarter of the
+  way and is on the next from three quarters (a lip closure's steps cross between 40 and 60 %), and of two shapes
+  drawn at once the less formed one fades in only as the two near each other, half and half only where they swap.
+  Two pictures with the chin at different heights blended half and half show two soft chins; with `mouth.chin` the
+  less formed shape is also drawn at the step whose chin matches the other's, as far as it reaches.
 
-The rest of the face moves with the speech, by a pixel or so at the size the face is shown: the loudest syllables
-bring a small nod just before them and a slight lean that changes side every second stressed syllable; a blink never
+The rest of the face moves with the speech: the strongest syllables, at most one every 600 ms, bring a nod of
+about 2.5 px at the 132 px the face is shown at (1.9 % of the picture's height), rising and falling over about
+600 ms with its lowest point 80 ms before the syllable, and a lean of up to 0.8 degrees that changes side every second
+nod. That is slow enough (a dozen pixels a second at most) to read as a person talking rather than as movement; a
+nod for every loud syllable, as before, bobs once it is large enough to be seen. A blink never
 starts while a word sounds, and the end of a phrase brings one more often; a long pause may bring a short glance
 through the pack's `eyes.glance` pictures and back; and at rest the face breathes (`breathe`). Under reduced motion the head and the eyes
 stay still and the mouth only opens and closes.
@@ -93,7 +102,8 @@ a pack may name the voice that suits it (`voice`, below).
 | `eyes.listening`, `eyes.thinking` | no | Eyes for those moments (raised brows, a look up). |
 | `eyes.rect` | no | Where eye images go: `[x, y, width, height]`. Default: the whole picture. |
 | `mouth.shapes` | yes | One image per mouth shape (below). `sil`, the closed mouth, is required. |
-| `mouth.rect` | no | Where mouth images go: `[x, y, width, height]`. Default: the whole picture. |
+| `mouth.rect` | no | Where mouth images go: `[x, y, width, height]`. Default: the whole picture. A rectangle covering the whole lower face (the jaw moving with each shape) works as well as one around the lips; the canvas draws at most about ten pictures of it a frame. |
+| `mouth.chin` | no | How far each shape's full picture moves the chin, in the pack's pixels, down positive: `{"aa": 10.7, "O": 4.9, "PP": -2.8}`. When two shapes are drawn at once (one giving way to the next), the less formed one is drawn at the weight whose chin sits where the other's does, so the face shows one chin, not two half-faded ones. Shapes left out, or moving the chin less than a pixel or the other way, are drawn as formed. |
 | `states` | no | How the face rests in `idle`, `listening`, `thinking` and `speaking`: `tilt` in degrees, `lift` in pixels (up is negative), `scale` (0.5 to 2) for a small turn of the whole head, and `mouth`, an image drawn in `mouth.rect` in place of `sil` while the face rests in that state (a closed-lip smile while listening, for example; missing means `sil`). Every one of them eases in over about 160 ms when the state changes. While Heliox speaks, the closed moments of speech show the `speaking` state's `mouth` (normally left out, so `sil`). |
 | `mouth_steps` | no | In-between pictures for a shape: `{"aa": ["mouth-aa-1.webp", "mouth-aa-2.webp"]}`, ordered from nearly closed to nearly full, made with the same crop and alpha as the shape's own picture (morphed offline). The shape's own picture is the last step and the resting mouth is step zero. A shape formed part of the way shows the two neighbouring steps at that point blended, so the mouth opens through real in-between shapes instead of fading a full one in. A shape without steps fades its full picture in over the rest. Each listed shape must have its own picture in `mouth.shapes`; 1 to 8 steps. |
 | `overscan` | no | How much larger than its card the picture is drawn, from 0 to 0.25 (0.04 is 4 %), about its centre. Left out, a `"photo"` pack gets exactly enough that no `tilt`, `lift` or `scale` in `states`, with breathing, ever shows the card behind the picture (about 2 % for a 3 px lift, about 10 % for a 3 degree tilt), and a drawing gets none. Give `0` to turn it off, or a number to fix it. |
@@ -160,9 +170,9 @@ be used.
   cut the same rectangle around the mouth from each. Give each image soft (feathered) transparent edges a few pixels
   wide, so it blends into the face under it. The closed mouth `sil` must match the idle frames, or the face will flicker
   at every pause.
-- **In-between steps:** for each shape, one to three pictures between the closed mouth and the full shape
-  (`mouth_steps`), made by morphing, same crop and alpha. Two steps are enough for the wide shapes (`aa`, `O`); one
-  for the rest.
+- **In-between steps:** for each shape, one to four pictures between the closed mouth and the full shape
+  (`mouth_steps`), made by morphing, same crop and alpha. With a moving jaw, four for the wide shapes keep the chin
+  sharp half way between two of them; one or two for small shapes.
 - **Calm consonants:** keep consonant pictures (`DD`, `nn`, `TH`, `SS`, `FF`) close to a relaxed half-open mouth. A
   showy one (a visible tongue, prominent teeth) flashes on the commonest sounds; leaving a consonant out is better
   than a showy picture, since the window keeps the vowel's opening instead.

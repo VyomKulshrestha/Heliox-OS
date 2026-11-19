@@ -39,7 +39,16 @@ export interface FaceManifest {
     thinking?: string;
     rect?: [number, number, number, number];
   };
-  mouth: { shapes: Partial<Record<Shape, string>>; rect?: [number, number, number, number] };
+  mouth: {
+    shapes: Partial<Record<Shape, string>>;
+    rect?: [number, number, number, number];
+    /**
+     * How far each shape's full picture moves the chin, in the pack's pixels (down is positive; a pressed `PP` may
+     * raise it). With it, of two shapes drawn at once the less formed one is drawn at the chin height of the other,
+     * so one chin shows instead of two half-faded ones. Optional.
+     */
+    chin?: Partial<Record<Shape, number>>;
+  };
   states?: { idle?: FaceState; listening?: FaceState; thinking?: FaceState; speaking?: FaceState };
   /** How much larger than the card the picture is drawn (0.04 is 4 %). A photo gets enough by default. */
   overscan?: number;
@@ -124,6 +133,16 @@ export function manifestProblems(raw: unknown, id: string): string[] {
     }
     if (!isFile(shapes.sil)) problems.push("mouth.shapes.sil (the closed mouth) is required");
     if (mouth.rect !== undefined && !isRect(mouth.rect)) problems.push("mouth.rect: [x, y, width, height]");
+    if (mouth.chin !== undefined) {
+      const chin = mouth.chin as Record<string, unknown>;
+      if (!chin || typeof chin !== "object" || Array.isArray(chin)) problems.push("mouth.chin: an object");
+      else
+        for (const [name, px] of Object.entries(chin)) {
+          if (!(SHAPES as readonly string[]).includes(name)) problems.push(`mouth.chin: unknown shape ${name}`);
+          else if (typeof px !== "number" || !Number.isFinite(px) || Math.abs(px) > 100)
+            problems.push(`mouth.chin.${name}: pixels, -100 to 100`);
+        }
+    }
   }
   const eyes = m.eyes as Record<string, unknown> | undefined;
   if (eyes) {

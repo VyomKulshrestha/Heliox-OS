@@ -128,8 +128,8 @@ describe("mouth player: timing", () => {
 
   it("closes as a quiet stretch begins and reopens just before the sound returns, leaving a short stop alone", () => {
     const envelope = [10, 10, 0, 0, 0, 0, 10, 10]; // quiet from 80 to 240 ms
-    expect(soundGate(envelope, 25, 40)).toBe(1);
-    expect(soundGate(envelope, 25, 80)).toBeCloseTo(0.75, 5); // closing from 70 ms, at rest from 110 ms
+    expect(soundGate(envelope, 25, 5)).toBe(1);
+    expect(soundGate(envelope, 25, 80)).toBeCloseTo(0.3, 5); // closing from 10 ms, at rest from 110 ms
     expect(soundGate(envelope, 25, 150)).toBe(0);
     expect(soundGate(envelope, 25, 235)).toBeCloseTo(0.5, 5); // reopening over the last 10 ms
     expect(soundGate(envelope, 25, 240)).toBe(1);
@@ -171,7 +171,7 @@ describe("mouth player: shapes a pack does not have", () => {
 
   it("keeps a consonant without a picture near the vowel before it, or a small neutral opening", () => {
     const pack = has(["sil", "PP", "aa", "E", "O"]);
-    expect(calmShape("DD", pack, "aa")).toEqual(["aa", 0.55]);
+    expect(calmShape("DD", pack, "aa")).toEqual(["aa", 0.4]);
     expect(calmShape("nn", pack, null)).toEqual(["E", 0.3]);
     expect(calmShape("kk", has(["sil", "PP", "aa"]), null)).toEqual(["sil", 0]);
     expect(calmShape("O", pack, null)).toEqual(["O", 1]);
@@ -179,10 +179,10 @@ describe("mouth player: shapes a pack does not have", () => {
     expect(calmShape("FF", pack, null)).toEqual(["PP", 1]); // a lip shape stays a lip shape
     expect(calmShape("TH", has(["sil", "TH", "aa"]), "aa")[1]).toBeLessThan(1); // its own consonant, held back
     const calm = has(["sil", "FF", "SS", "nn", "aa", "E", "I", "O", "U"]); // a pack with a calm small opening, nn
-    expect(calmShape("DD", calm, "aa")).toEqual(["nn", 0.7]); // t, d and th share it
-    expect(calmShape("TH", calm, null)).toEqual(["nn", 0.7]);
-    expect(calmShape("CH", calm, null)).toEqual(["SS", 0.7]);
-    expect(calmShape("kk", calm, "O")).toEqual(["O", 0.55]); // k keeps the vowel's shape
+    expect(calmShape("DD", calm, "aa")).toEqual(["nn", 0.45]); // t, d and th share it
+    expect(calmShape("TH", calm, null)).toEqual(["nn", 0.45]);
+    expect(calmShape("CH", calm, null)).toEqual(["SS", 0.45]);
+    expect(calmShape("kk", calm, "O")).toEqual(["O", 0.4]); // k keeps the vowel's shape, smaller
     expect(calmShape("PP", calm, "aa")).toEqual(["sil", 0]); // no lip picture: the closed mouth
   });
 
@@ -231,16 +231,23 @@ describe("mouth player: loudness alone, the system voice, reduced motion", () =>
 });
 
 describe("mouth player: the head and the pauses", () => {
-  it("nods just before the loudest syllables and leans to one side for two of them, then the other", () => {
-    const levels = [2, 4, 14, 6, 3, 2, 3, 5, 6, 15, 7, 3, 2, 2, 2, 2];
+  it("nods before the strongest syllables only, slowly, and never for two loud syllables close together", () => {
+    // Loud syllables at 100, 380 and 860 ms: the one at 380 is within 600 ms of the first, so it brings no nod.
+    const levels = [2, 4, 14, 6, 3, 2, 3, 5, 6, 13, 7, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 15, 6, 2, 2, 2, 2, 2, 2, 2, 2, 2];
     const peaks = stressPeaks(levels, 25);
-    expect(peaks.map(([at]) => at)).toEqual([100, 380]);
-    const player = played(piece({ seconds: 0.64, envelope: levels, visemes: [["E", 0, 640]] }));
-    const before = player.sample(START + 100 - 60);
+    expect(peaks.map(([at]) => at)).toEqual([100, 860]);
+    const player = played(piece({ seconds: 1.28, envelope: levels, visemes: [["E", 0, 1280]] }));
+    const before = player.sample(START + 100 - 80);
     expect(before.nod).toBeGreaterThan(0.8);
     expect(before.sway).toBeGreaterThan(0.55);
-    expect(player.sample(START + 380 - 60).sway).toBeGreaterThan(0.55); // the second: the same side
-    expect(player.sample(START + 600).nod).toBeLessThan(0.05);
+    expect(player.sample(START + 860 - 80).sway).toBeGreaterThan(0.55); // the second: the same side
+    // A slow rise and fall: no more than a fifth of the nod in any 33 ms frame, so it never bobs.
+    let steepest = 0;
+    for (let t = 0; t < 1250; t += 33) {
+      steepest = Math.max(steepest, Math.abs(player.sample(START + t + 33).nod! - player.sample(START + t).nod!));
+    }
+    expect(steepest).toBeLessThan(0.2);
+    expect(player.sample(START + 480).nod).toBeLessThan(0.1); // back between the two
   });
 
   it("says how long the sound will now rest, so blinks fall between phrases", () => {

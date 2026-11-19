@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { coverScale, FaceRenderer, NOD_SHARE, overscanFor, SWAY_DEG, type FaceMode } from "./faceRenderer";
+import {
+  CLOSURE_FROM,
+  CLOSURE_TO,
+  coverScale,
+  dominant,
+  FaceRenderer,
+  NOD_SHARE,
+  overscanFor,
+  SWAY_DEG,
+  type FaceMode,
+} from "./faceRenderer";
 import type { MouthFrame } from "./mouthPlayer";
 import { manifestProblems, type FaceManifest } from "./pack";
 import placeholder from "../../../public/faces/placeholder/manifest.json";
@@ -77,7 +87,7 @@ describe("face renderer", () => {
     // The portraits only lift (2 and 3 px), breathe, and nod and sway a little while speaking: a few % larger.
     const lifted = overscanFor(photo({ states: { listening: { lift: -2 }, thinking: { lift: -3 } } }));
     expect(lifted).toBeGreaterThan(1.01);
-    expect(lifted).toBeLessThan(1.05);
+    expect(lifted).toBeLessThan(1.08);
     // The speech's own nod (down) and sway are covered too.
     expect(lifted).toBeGreaterThan(coverScale(512, 512, SWAY_DEG, NOD_SHARE * 512, 0.996));
   });
@@ -88,7 +98,7 @@ describe("face renderer", () => {
     expect(overscanFor(photo({ overscan: 0 }))).toBe(1);
     const still = overscanFor(photo({ states: {}, breathe: undefined })); // only the speech's nod and sway to hide
     expect(still).toBeGreaterThan(1);
-    expect(still).toBeLessThan(1.05);
+    expect(still).toBeLessThan(1.08);
   });
 
   it("eases a state's scale like its tilt and lift instead of jumping", () => {
@@ -137,8 +147,53 @@ describe("face renderer", () => {
       { file: "aa-1.webp", alpha: 1 },
       { file: "aa-2.webp", alpha: 0.5 },
     ]);
-    expect(at(0.2)).toEqual([{ file: "aa-1.webp", alpha: expect.closeTo(0.6, 5) }]); // rest toward aa-1
+    // Elsewhere one picture stays dominant: two jaws at different heights half and half look soft and doubled.
+    expect(at(0.2)).toEqual([{ file: "aa-1.webp", alpha: expect.closeTo(0.784, 3) }]); // rest toward aa-1, mostly aa-1
+    expect(at(0.4)).toEqual([{ file: "aa-1.webp", alpha: 1 }]); // a fifth of the way to aa-2: aa-1 alone
+    expect(at(0.62)).toEqual([{ file: "aa-2.webp", alpha: 1 }]); // past three quarters of the way: aa-2 alone
     expect(at(0)).toEqual([]);
+  });
+
+  it("crosses a lip closure's pictures in a narrow band, and lets the less formed of two shapes show only as they swap", () => {
+    expect(dominant(0.5)).toBe(0.5);
+    expect(dominant(0.2)).toBe(0);
+    expect(dominant(0.8)).toBe(1);
+    expect(dominant(0.35, CLOSURE_FROM, CLOSURE_TO)).toBe(0);
+    expect(dominant(0.65, CLOSURE_FROM, CLOSURE_TO)).toBe(1);
+    const { made, drawn } = renderer(photo());
+    drawFor(made, "speaking", 0, 300);
+    const second = (mix: number) => {
+      drawn.length = 0;
+      made.draw(400, "speaking", { ...SPEAKING, next: "O", weight: 0.9, nextWeight: (0.9 * mix) / (1 - mix), mix });
+      return drawn.filter((d) => d.file === "o.webp");
+    };
+    expect(second(0.15)).toEqual([]); // O hardly formed beside aa: aa alone, one jaw
+    const swapping = second(0.5);
+    expect(swapping).toHaveLength(1); // where they swap: half and half
+    expect(swapping[0].alpha).toBeCloseTo(0.45, 5);
+  });
+
+  it("draws the less formed of two shapes at the chin height of the other, where the pack gives chins", () => {
+    const frame = { ...SPEAKING, next: "O" as const, weight: 0.4, nextWeight: 0.1, mix: 0.5 };
+    const oOf = (manifest: FaceManifest) => {
+      const { made, drawn } = renderer(manifest);
+      drawFor(made, "speaking", 0, 300);
+      drawn.length = 0;
+      made.draw(400, "speaking", frame);
+      return drawn.filter((d) => d.file === "o.webp").map((d) => d.alpha);
+    };
+    const shapes = { sil: "sil.webp", aa: "aa.webp", O: "o.webp" };
+    // aa at 0.4 moves the chin 4 px; O reaches 4 px at 0.8 of the way: drawn there (at half, where they swap).
+    expect(oOf(photo({ mouth: { rect: [140, 300, 240, 120], shapes, chin: { aa: 10, O: 5 } } }))[0]).toBeCloseTo(
+      0.4,
+      5,
+    );
+    expect(oOf(photo())[0]).toBeCloseTo(0.05, 5); // without chins: as formed
+    // A chin moving the other way (pressed lips) cannot be matched: as formed.
+    expect(oOf(photo({ mouth: { rect: [140, 300, 240, 120], shapes, chin: { aa: 10, O: -3 } } }))[0]).toBeCloseTo(
+      0.05,
+      5,
+    );
   });
 
   it("without in-between pictures, lays the full shape over the rest as strongly as it is formed", () => {

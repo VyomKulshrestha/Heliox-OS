@@ -12,7 +12,7 @@
  */
 
 import type { MouthFrame } from "./mouthPlayer";
-import { imageForShape, packUrl, STATE_NAMES, stepsOf, type FaceManifest, type FaceState } from "./pack";
+import { imageForShape, packUrl, shapeShown, STATE_NAMES, stepsOf, type FaceManifest, type FaceState } from "./pack";
 
 export type FaceMode = "idle" | "listening" | "thinking" | "speaking";
 
@@ -22,11 +22,29 @@ type Rect = [number, number, number, number];
 /** How fast every motion eases toward its target: the whole way in this many milliseconds at one frame. */
 export const EASE_MS = 160;
 /**
- * The head with the speech's stress, at its largest: a nod of this share of the picture's height (about 1 px of a
- * 132 px face) and a sway of this many degrees (the top of the head moves about 1 px).
+ * The head with the speech's stress, at its largest: a nod of this share of the picture's height and a sway of this
+ * many degrees. At the 132 px the face is shown at, 0.019 is 2.5 px down and 0.8 degrees moves the top of the head
+ * about 1.7 px, in a rise and fall of about 600 ms (the player's STRESS_WIDTH_MS): enough to be seen, at a dozen
+ * pixels a second at most. Stage 3's 1 px (0.009, 0.45 degrees) could not be seen at that size.
  */
-export const NOD_SHARE = 0.009;
-export const SWAY_DEG = 0.45;
+export const NOD_SHARE = 0.019;
+export const SWAY_DEG = 0.8;
+/**
+ * Two pictures of different jaw positions blended half and half show both chins and both lower lips, softly doubled.
+ * A blend from one picture to the next stays on the first until DOMINANT_FROM of the way and is on the second from
+ * DOMINANT_TO (a smooth step between), so it is half and half only for a moment. A lip closure's pictures differ in
+ * the lips alone and cross in a narrower band still.
+ */
+export const DOMINANT_FROM = 0.25;
+export const DOMINANT_TO = 0.75;
+export const CLOSURE_FROM = 0.4;
+export const CLOSURE_TO = 0.6;
+
+/** 0 below `from`, 1 above `to`, a smooth step between. */
+export function dominant(x: number, from = DOMINANT_FROM, to = DOMINANT_TO): number {
+  const t = Math.max(0, Math.min(1, (x - from) / (to - from)));
+  return t * t * (3 - 2 * t);
+}
 /**
  * Blinks while Heliox speaks wait for a pause. At the end of a phrase (a pause of PHRASE_PAUSE_MS or more, or the end
  * of speech) a blink follows with PHRASE_BLINK_CHANCE if the last one was at least BLINK_GAP_MS ago; otherwise a
@@ -306,14 +324,17 @@ export class FaceRenderer {
       this.drawShape(ctx, mouth.shape, first, at, 1);
       return;
     }
-    const second = mouth.nextWeight ?? legacy;
+    const second = this.atSameChin(mouth.shape, first, mouth.next, mouth.nextWeight ?? legacy);
+    // mix is at most a half (the more formed shape is `shape`): the second shape shows only as it nears the first,
+    // and the two are half and half only where they swap, so one jaw is seen at a time.
+    const over = 0.5 * dominant(Math.min(0.5, mouth.mix) * 2, 0.4, 1);
     const a = this.shapeCanvas(0, at);
     const b = this.shapeCanvas(1, at);
     const actx = a?.getContext("2d");
     const bctx = b?.getContext("2d");
     if (!a || !b || !actx || !bctx) {
       this.drawShape(ctx, mouth.shape, first, at, 1);
-      this.drawShape(ctx, mouth.next, second, at, mouth.mix);
+      this.drawShape(ctx, mouth.next, second, at, over);
       return;
     }
     const local: Rect = [0, 0, a.width, a.height];
@@ -328,9 +349,29 @@ export class FaceRenderer {
       this.drawShape(tctx, shape, weight, local, 1, at);
     }
     ctx.drawImage(a, at[0], at[1], at[2], at[3]);
-    ctx.globalAlpha = Math.min(1, mouth.mix);
+    ctx.globalAlpha = over;
     ctx.drawImage(b, at[0], at[1], at[2], at[3]);
     ctx.globalAlpha = 1;
+  }
+
+  /**
+   * The weight to draw `next` at beside `shape` at `weight`: where the pack gives both chins (mouth.chin), the one
+   * whose chin sits where `shape`'s does (as far as `next` reaches), so the two pictures share one chin; else
+   * `nextWeight` as it is.
+   */
+  private atSameChin(
+    shape: MouthFrame["shape"],
+    weight: number,
+    next: MouthFrame["shape"],
+    nextWeight: number,
+  ): number {
+    const chin = this.manifest.mouth.chin;
+    if (!chin) return nextWeight;
+    const here = chin[shapeShown(this.manifest, shape)];
+    const there = chin[shapeShown(this.manifest, next)];
+    if (typeof here !== "number" || typeof there !== "number" || Math.abs(there) < 1 || here * there <= 0)
+      return nextWeight;
+    return Math.max(0, Math.min(1, (here * Math.max(0, Math.min(1, weight))) / there));
   }
 
   /** One shape formed `weight` of the way from the rest (already drawn under it) to its full picture. */
@@ -348,8 +389,10 @@ export class FaceRenderer {
     if (!steps.length || w <= 0.01) return;
     const position = w * steps.length; // 0 is the rest, steps.length the full picture
     const below = Math.floor(position);
-    const toward = position - below;
-    if (below >= 1) this.layer(ctx, "mouth", steps[below - 1], rect, alpha, packRect);
+    // Between two pictures one stays dominant (dominant); a shape with its full picture alone fades it in as it is.
+    const raw = position - below;
+    const toward = steps.length < 2 ? raw : shape === "PP" ? dominant(raw, CLOSURE_FROM, CLOSURE_TO) : dominant(raw);
+    if (below >= 1 && toward < 0.99) this.layer(ctx, "mouth", steps[below - 1], rect, alpha, packRect);
     if (below < steps.length && toward > 0.01) this.layer(ctx, "mouth", steps[below], rect, alpha * toward, packRect);
   }
 
