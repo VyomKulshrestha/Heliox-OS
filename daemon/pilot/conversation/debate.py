@@ -297,6 +297,25 @@ _OWN_PLAN = re.compile(
 )
 
 
+# Words that make the plan a request after all: "I'm going to need you to delete it", "I'll have Heliox send it".
+_ASKS_HELIOX = re.compile(r"\b(?:you|heliox)\b")
+_ADDRESS = re.compile(r"^(?:(?:hey|hi|ok|okay) )?heliox ")  # "Hey Heliox, I'm going to ..." when the name was kept
+
+
+def own_plan(words: str) -> bool:
+    """The person told Heliox what they will do themselves ("I'm going to delete my only copy of the thesis", "I'll
+    book the early train"), and did not ask Heliox to do it. ``words`` normalized."""
+    text = _ADDRESS.sub("", " ".join(words.split()))
+    return bool(text and _OWN_PLAN.match(text)) and not _ASKS_HELIOX.search(text)
+
+
+def said_already(concern: str, said: str) -> bool:
+    """The reply's own words already gave the concern: at least half of its words of four letters or more are in what
+    was said ("It is the only copy and cannot be undone." after "That is your only copy, so it cannot be undone.")."""
+    wanted = _content(concern)
+    return bool(wanted) and 2 * len(wanted & _content(said)) >= len(wanted)
+
+
 def _forms(verb: str) -> set[str]:
     forms = {verb, verb + "s", verb + "ed", verb + "ing"}
     if verb.endswith("e"):
@@ -316,7 +335,7 @@ def asks_for_costly_step(words: str) -> str:
     ("I want the recycle bin emptied", "send the contract to Dana"); "" otherwise, and "" for their own plan ("I'll
     book the early train"). ``words`` normalized."""
     text = " ".join(words.split())
-    if not text or _OWN_PLAN.match(text):
+    if not text or own_plan(text):
         return ""
     return next((word for word in text.split() if word in _COSTLY_FORMS), "")
 

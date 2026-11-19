@@ -222,6 +222,14 @@ followed by "Do you still want me to go ahead?"; after a question of the reply's
 over; a concern talked over still waits a minute for a yes; and a reply that gives way in words does the step only
 when the person held to it, asks once otherwise, and does nothing when they backed off.
 
+The concern is heard once. When the reply's words already gave it ("That is your only copy, so it cannot be undone.")
+and its ACT line carries it again, the ACT line's wording is not said; when the reply asked its own question ("Are you
+sure you want to proceed?"), a yes answers that one and Heliox asks no second. The person's own plan ("I'm going to
+delete my only copy of the thesis", `debate.own_plan`) is never Heliox's step: an ACT line a model writes for it with
+a concern or a costly verb is neither handed over nor offered, and only the concern is said. A weaker model wrote
+exactly that reply on 19 November, and the person heard the concern twice and "Do you still want me to delete the
+only copy of the thesis?". "I'm going to need you to delete it" asks Heliox, and is a request.
+
 Provisional answers (`pilot.conversation.provisional`) have no caller in the product: the listener never calls
 `provisional_voice_turn`, so they do nothing today. Starting them from the early final pass was measured at about
 0.05 s (0.15 s at most) and dropped.

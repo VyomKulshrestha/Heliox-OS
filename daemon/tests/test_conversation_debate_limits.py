@@ -252,6 +252,105 @@ async def test_the_persons_own_plan_is_not_turned_into_a_step():
     assert STILL_GO_AHEAD not in ear.heard and not waiting(layer)
 
 
+# ── 3b. the person's own plan versus a request: the concern once, and an offer only for a request ──
+
+# A weaker model's whole reply to "I'm going to delete my only copy of the thesis to free up some disk space."
+# (OpenRouter, 19 November): words with the concern and a question, an ACT line with the concern again, the line.
+THESIS_WORDS = "That is your only copy, so it cannot be undone. Are you sure you want to proceed?"
+THESIS_ACT = (
+    'ACT {"verb": "delete", "object": "the thesis", "request": "delete the only copy of the thesis", '
+    '"say": "I\'ll delete it.", "concern": "It is the only copy and cannot be undone.", "risk": "cannot_undo"}'
+)
+THESIS_REPLY = f"{THESIS_WORDS}\n\n{THESIS_ACT}\n\nSTANCE: Deleting only thesis copy"
+OWN_PLAN = "I'm going to delete my only copy of the thesis to free up some disk space."
+ASKED = "I want my only copy of the thesis deleted."
+
+
+def concern_said(heard: list[str]) -> int:
+    return sum("cannot be undone" in sentence for sentence in heard)  # every wording of the concern says it
+
+
+@pytest.mark.parametrize("words", [OWN_PLAN, "Hey Heliox, " + OWN_PLAN, "I'll delete my only copy of the thesis."])
+async def test_the_persons_own_plan_hears_the_concern_once_and_no_offer(words):
+    model = Scripted(THESIS_REPLY, "Okay.")
+    layer, ear = make(model)
+    result = await layer.take(words)
+    assert result is not None and result.done and result.intent is None
+    assert ear.heard == ["That is your only copy, so it cannot be undone.", "Are you sure you want to proceed?"]
+    assert concern_said(ear.heard) == 1
+    assert not any("want me to" in sentence for sentence in ear.heard) and not waiting(layer)
+    assert layer.debate.stance is not None  # the disagreement is held like any other: it counts and gives way
+    after = await layer.take("Yes")
+    assert after is not None and after.intent is None  # a yes to "Are you sure" hands nothing to the planner
+
+
+async def test_an_own_plan_whose_concern_is_only_in_the_act_line_hears_it_once():
+    model = Scripted(THESIS_ACT + "\nSTANCE: Deleting only thesis copy")
+    layer, ear = make(model)
+    result = await layer.take(OWN_PLAN)
+    assert result is not None and result.intent is None
+    assert ear.heard == ["It is the only copy and cannot be undone."] and not waiting(layer)
+
+
+@pytest.mark.parametrize("words", [ASKED, "I'm going to need you to delete my only copy of the thesis."])
+async def test_a_request_hears_the_concern_once_and_one_question_then_a_yes_hands_it_over(words):
+    model = Scripted(THESIS_REPLY)
+    layer, ear = make(model)
+    first = await layer.take(words)
+    assert first is not None and first.done and waiting(layer)
+    # The reply's words were the concern and its own question was the question: neither is said twice.
+    assert ear.heard == ["That is your only copy, so it cannot be undone.", "Are you sure you want to proceed?"]
+    assert concern_said(ear.heard) == 1
+    second = await layer.take("Yes")
+    assert second is not None and not second.done and second.intent is not None
+    assert second.intent.request == "delete the only copy of the thesis"
+    assert len(model.calls) == 1
+
+
+async def test_a_request_whose_reply_asked_nothing_gets_heliox_s_question_after_the_concern():
+    model = Scripted(THESIS_REPLY.replace(" Are you sure you want to proceed?", ""))
+    layer, ear = make(model)
+    await layer.take(ASKED)
+    assert ear.heard == [
+        "That is your only copy, so it cannot be undone.",
+        "Do you still want me to delete the only copy of the thesis?",
+    ]
+    second = await layer.take("Do it anyway")
+    assert second is not None and not second.done and second.intent is not None
+
+
+async def test_a_concern_the_words_did_not_give_is_still_said_before_the_question():
+    model = Scripted("Sure, I can do that.\n" + THESIS_ACT)
+    layer, ear = make(model)
+    await layer.take(ASKED)
+    assert ear.heard[-2:] == [
+        "It is the only copy and cannot be undone.",
+        "Do you still want me to delete the only copy of the thesis?",
+    ]
+    assert concern_said(ear.heard) == 1
+
+
+async def test_the_imperative_is_handed_straight_to_the_planner_as_before():
+    model = Scripted(THESIS_REPLY)
+    layer, ear = make(model)
+    result = await layer.take("Delete my only copy of the thesis")
+    assert result is not None and not result.done and result.intent is not None
+    assert ear.heard == [] and model.calls == []  # the planner's own review and approval decide
+
+
+def test_own_plan_and_said_already():
+    assert dbt.own_plan(normalize(OWN_PLAN)) and dbt.own_plan(normalize("Hey Heliox, " + OWN_PLAN))
+    assert dbt.own_plan(normalize("I'll book the six am train on Friday."))
+    assert not dbt.own_plan(normalize(ASKED))
+    assert not dbt.own_plan(normalize("I'm going to need you to delete the backups."))
+    assert not dbt.own_plan(normalize("I'll have Heliox send it to Dana."))
+    assert dbt.asks_for_costly_step(normalize("I'm going to need you to delete the backups.")) == "delete"
+    assert dbt.said_already(
+        "It is the only copy and cannot be undone.", "That is your only copy, so it cannot be undone."
+    )
+    assert not dbt.said_already("It costs forty dollars a month.", "That is your only copy, so it cannot be undone.")
+
+
 # ── 4. "a model on this computer" is read as the rest of the conversation layer reads it ──
 
 

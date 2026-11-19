@@ -1177,8 +1177,29 @@ class ConversationLayer:
             if await self._say_one(result, GIVE_WAY, started) in HEARD:
                 said.append(GIVE_WAY)
 
+        own_step = False  # an ACT line for a costly step the person described as their own: never Heliox's
         if act_text:
             act = parse_act("".join(act_text))
+            if (
+                act is not None
+                and (act.concern or dbt.costly(act.verb, act.risk))
+                and dbt.own_plan(normalize(text))
+                and not self._only_asked(text)
+            ):
+                # "I'm going to delete my only copy of the thesis": the person's own plan, and the model wrote a step
+                # for Heliox with a concern. The concern is said once (not when the reply's words gave it already);
+                # the step is neither handed over nor offered, since nobody asked Heliox to do it.
+                logger.info("An ACT line for the person's own plan: not handed over or offered (%r)", act.request)
+                about = act.object or act.request
+                if (
+                    act.concern
+                    and not dbt.said_already(act.concern, " ".join(said))
+                    and self.debate.concern_allowed(about)
+                    and await self._say_one(result, act.concern, started) in HEARD
+                ):
+                    said.append(act.concern)
+                own_step = True
+                act = None
             if act is not None and pushed and declined(said):
                 # The reply said its disagreement in words ("I'd hold off, that's your only copy") and wrote the ACT
                 # line too. Disagreeing never refuses: the words were the concern, and the step is asked about once;
@@ -1211,10 +1232,17 @@ class ConversationLayer:
                 if act.concern and self.debate.concern_allowed(about):
                     if dbt.costly(act.verb, act.risk):
                         # Cannot be undone, costs money or reaches other people: the concern first, once, and the
-                        # step waits for a yes or "do it anyway", which hands it over through the usual road.
-                        if await self._say_one(result, act.concern, started) in STOPPED:
-                            # Talked over: nothing more is said, as for any reply cut off, but the step still waits
-                            # for a yes or "do it anyway" in the next minute; it is never left neither done nor asked.
+                        # step waits for a yes or "do it anyway", which hands it over through the usual road. When the
+                        # reply's words gave the concern already it is not said again, and when the reply asked its
+                        # own question ("Are you sure you want to proceed?") the yes answers that one: one question.
+                        asked = any(ends_with_question(sentence) for sentence in said)
+                        if dbt.said_already(act.concern, " ".join(said)):
+                            outcome = "spoken"
+                        else:
+                            outcome = await self._say_one(result, act.concern, started)
+                        if outcome in STOPPED or asked:
+                            # Talked over (nothing more is said, as for any reply cut off) or asked already: the step
+                            # waits for a yes or "do it anyway" in the next minute; never left neither done nor asked.
                             self.debate.note_concern(about, act.concern, offered=True)
                             self.debate.remember_request(text)
                             self._offer = (self._clock(), intent, quick)
@@ -1234,7 +1262,8 @@ class ConversationLayer:
                     return result
                 self.debate.close(settle=True)  # what was asked is being done: the topic is not argued again
                 return self._hand_over(result, intent, quick=quick)
-            failure.append("unparsed_act")
+            if not own_step:
+                failure.append("unparsed_act")
         elif promised and not failure and declined(said):
             # "I can't tell which files you mean, so I won't delete anything yet" with a promise elsewhere in the
             # reply: holding back wins; what was said stands and nothing is handed over.
