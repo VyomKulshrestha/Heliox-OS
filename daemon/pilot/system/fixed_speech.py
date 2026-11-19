@@ -44,9 +44,11 @@ NOT_SPOKEN = frozenset(
     }
 )
 # The order the audio is made in: what a person hears most comes first, so the first minute of making ahead already
-# covers most of what is said (acknowledgements and holding phrases, the say-back, the layer's own short replies and
-# the quick road, then the offers), then every other file.
+# covers most of what is said (the hums said while an answer is on its way, which are only ever said from made audio,
+# acknowledgements and holding phrases, the say-back, the layer's own short replies and the quick road, then the
+# offers), then every other file.
 FIRST = (
+    "conversation/acknowledge.py",
     "conversation/handover.py",
     "conversation/say_back.py",
     "conversation/layer.py",

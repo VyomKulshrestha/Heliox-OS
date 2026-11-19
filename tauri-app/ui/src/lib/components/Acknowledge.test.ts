@@ -27,21 +27,32 @@ describe('Say "Mm" while thinking', () => {
     mocks.sent.length = 0;
   });
 
-  it("is off by default, and says what it is for and that it is new", async () => {
+  it("is on by default, and says what it is for and which voice says it", async () => {
     mocks.config = { conversation: {} };
     await settings.reloadFromDaemon();
     render(Acknowledge);
     const toggle = screen.getByRole("button", { name: "Say a short sound while thinking" });
-    expect(toggle.classList.contains("active")).toBe(false);
+    expect(toggle.classList.contains("active")).toBe(true);
+    expect(screen.getByText(/"Mm" or "Hmm"/)).toBeTruthy();
     expect(screen.getByText(/so you are not left in silence/)).toBeTruthy();
-    expect(screen.getByText(/Off for now while the sounds are being checked/)).toBeTruthy();
+    expect(screen.getByText(/never with the system voice/)).toBeTruthy();
   });
 
-  it("turns on with one press, saved under conversation", async () => {
+  it("turns off with one press, saved under conversation", async () => {
     mocks.config = { conversation: {} };
     await settings.reloadFromDaemon();
     render(Acknowledge);
     await fireEvent.click(screen.getByRole("button", { name: "Say a short sound while thinking" }));
+    await waitFor(() => expect(mocks.sent).toEqual([{ section: "conversation", values: { acknowledge: false } }]));
+  });
+
+  it("turns back on when it was saved off", async () => {
+    mocks.config = { conversation: { acknowledge: false } };
+    await settings.reloadFromDaemon();
+    render(Acknowledge);
+    const toggle = screen.getByRole("button", { name: "Say a short sound while thinking" });
+    expect(toggle.classList.contains("active")).toBe(false);
+    await fireEvent.click(toggle);
     await waitFor(() => expect(mocks.sent).toEqual([{ section: "conversation", values: { acknowledge: true } }]));
   });
 });

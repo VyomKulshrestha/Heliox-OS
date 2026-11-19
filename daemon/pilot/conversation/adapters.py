@@ -331,6 +331,15 @@ def _prepare_speech(server: Any, text: str) -> None:
     prepare_local_speech(server.config.voice, text)
 
 
+def _ready_made(server: Any, text: str) -> bool:
+    """The voice has ``text``'s audio made ahead (pilot.system.fixed_speech): saying it plays that audio at once. False
+    with the system voice and before the local voice has made it, so a sound that must not wait is left out."""
+    from pilot.system.local_tts_worker import made_ahead
+    from pilot.system.voice import _prepare_spoken_text
+
+    return made_ahead(server.config.voice, _prepare_spoken_text(text))
+
+
 def _turn_ended() -> float | None:
     """When the person's last word ended (time.monotonic), set by the listener for each voice dispatch."""
     from pilot.system.voice import voice_turn_ended_at
@@ -481,7 +490,8 @@ def layer_for(server: Any) -> Any:
         not_understood=lambda: _not_understood(server),
         screen_text_ok=lambda: screen_text_ok_for_planner(server.config),
         provisional_setting=lambda: str(getattr(settings(), "provisional_answers", "auto") or "auto"),
-        acknowledge=lambda: bool(getattr(settings(), "acknowledge", False)),
+        acknowledge=lambda: bool(getattr(settings(), "acknowledge", True)),
+        ready_made=lambda text: _ready_made(server, text),
         disagree=lambda: str(getattr(settings(), "disagree", "when_it_matters") or "when_it_matters"),
     )
     server._conversation = layer

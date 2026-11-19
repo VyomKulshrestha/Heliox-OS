@@ -1573,6 +1573,20 @@ def local_voice_state(voice_config: Any) -> dict[str, bool]:
     return {"voice_loaded": loaded, "voice_loading": loading}
 
 
+def made_ahead(voice_config: Any, text: str) -> bool:
+    """Whether every piece of ``text`` (as the worker is given it) is in the store of audio made with the configured
+    local voice, so saying it plays that audio and needs neither the worker nor a load. False for the system voice,
+    with no store, or when a piece has not been made yet. Reads the store's index (kept in memory after the first
+    read); never synthesises."""
+    engine, voice = str(getattr(voice_config, "tts_engine", "")), str(getattr(voice_config, "tts_voice", ""))
+    store = _manager.head_cache
+    if engine not in LOCAL_ENGINES or store is None:
+        return False
+    pieces = split_for_speech(text)
+    signature = SpeechStore.signature(engine, voice)
+    return bool(pieces) and all(store.has(piece, signature) for piece in pieces)
+
+
 def prepare_local_speech(voice_config: Any, text: str) -> None:
     """Synthesise ``text`` ahead of time with the configured local voice (no-op for the system voice), so the
     speak() that follows plays it without waiting. Call it for the next sentence while the current one plays."""

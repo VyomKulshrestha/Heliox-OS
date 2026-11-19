@@ -149,7 +149,7 @@ export interface PilotSettings {
   /** The conversation layer; only what the window shows. share_profile: what a cloud model is told about you. */
   conversation?: {
     share_profile?: "auto" | "off";
-    // A short "Let me see." while a spoken answer is on its way (Acknowledge.svelte); off unless turned on.
+    // A short "Mm." or "Hmm." while a spoken answer is on its way (Acknowledge.svelte); on unless turned off.
     acknowledge?: boolean;
     // When Heliox says it has a reason against a decision (Disagree.svelte); "when_it_matters" unless set.
     disagree?: "off" | "when_it_matters" | "often";

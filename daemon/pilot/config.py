@@ -643,10 +643,10 @@ class ConversationConfig:
     share_profile: str = "auto"  # "auto" | "off"
     second_voice_guard: bool = False
     second_voice_threshold: int = 1  # 2 caught no single second voice; at 1 the cost alone is unmeasured
-    # A short "Let me see." or "One sec." about half a second after you stop talking, while a spoken answer from the model
-    # is on its way, and never when the answer is already ready (pilot.conversation.acknowledge). Off until the sounds
-    # have been heard in the local voice; a person can turn it on in Settings, Voice.
-    acknowledge: bool = False
+    # A short "Mm." or "Hmm." about half a second after you stop talking, while a spoken answer from the model is on its
+    # way, and never when the answer is already ready (pilot.conversation.acknowledge). Said only from audio the local
+    # voice made ahead, so nothing is said with the system voice. A person can turn it off in Settings, Voice.
+    acknowledge: bool = True
     # Heliox says so when it has a reason against a decision or a request: the person's own calendar, to-dos, habits,
     # files or earlier words, a named risk, or a stated trade-off; holds the point for at most three exchanges, then
     # gives way (pilot.conversation.debate). "when_it_matters" speaks up on real clashes and risks only, "often" on

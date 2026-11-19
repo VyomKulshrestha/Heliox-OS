@@ -7,13 +7,16 @@ is dropped, and one playing is cut by the answer's higher priority). The words c
 or "sure", which said before "No, I can't do that" would make Heliox contradict itself, and before a request with an
 effect would sound like a promise.
 
-The set is four short phrases. Made in Heliox's voice (Kokoro, af_heart) on 19 November and read back by Whisper,
-each came back word for word. The hums ("Mm.", "Mhm.", "Hmm.") are out until the owner has listened to them:
-Kokoro's reader gave "Mhm." and "Hmm." the same sounds, so "Mhm." did not say the agreeing "mm-hmm", and a
-recogniser cannot tell whether a hum sounds like a person. conversation.acknowledge stays off by default; a person
-can turn it on in Settings, Voice. They are string literals here so the speech store makes their audio ahead
-(pilot.system.fixed_speech): saying one costs no synthesis. "One moment." is also a holding phrase; the holding
-phrase skips the words of the last acknowledgement (ConversationLayer._hold_phrase).
+The set is two hums, "Mm." and "Hmm.". Four short phrases ("Let me see.", "One sec.", "One moment.", "Let me
+check.") came back word for word from Whisper in Heliox's voice on 19 November, but heard in that voice the hums
+sounded like a person thinking and the phrases did not. "Mhm." stays out: Kokoro gives it the sound of "Hmm.".
+conversation.acknowledge is on by default. They are string literals here so the speech store makes their
+audio ahead (pilot.system.fixed_speech), and a hum is said only from that audio (the layer's ``ready_made``): with
+the system voice, or before the local voice has made it, nothing is said and nothing waits for it.
+
+So that it does not become a habit (spaced_out): the two take turns, so the same hum is never heard twice running; it
+is never said on the turn after one that had it; on the turn after that it is said half the time; after that, as on
+any turn. A run of slow answers then hears one every second or third turn, at no fixed rhythm.
 
 Never: on a typed turn; on a turn whose last word's time is unknown (it cannot be timed); on control words, a turn of
 fewer than ACK_MIN_WORDS words, a thanks or an acknowledgement; on a statement (its one-sentence reply is the
@@ -24,10 +27,13 @@ holding phrase as well.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
-ACKNOWLEDGEMENTS = ("Let me see.", "One sec.", "One moment.", "Let me check.")
+ACKNOWLEDGEMENTS = ("Mm.", "Hmm.")
 ACK_AFTER_SECONDS = 0.45  # after the person's last word
 ACK_MIN_WORDS = 3
+# The chance of one on the second turn after a turn that had one (never on the first; always from the third on).
+SECOND_TURN_CHANCE = 0.5
 
 _WORDS = re.compile(r"[\w']+")
 
@@ -68,3 +74,14 @@ def next_acknowledgement(last: str) -> str:
     if last in ACKNOWLEDGEMENTS:
         return ACKNOWLEDGEMENTS[(ACKNOWLEDGEMENTS.index(last) + 1) % len(ACKNOWLEDGEMENTS)]
     return ACKNOWLEDGEMENTS[0]
+
+
+def spaced_out(turns_since: int | None, draw: Callable[[], float]) -> bool:
+    """Whether a turn ``turns_since`` turns after the last one that had an acknowledgement (None: none had one yet) may
+    have one: never on the next turn, SECOND_TURN_CHANCE of the time on the one after (``draw`` gives a number in
+    [0, 1), asked only then), always from the third on."""
+    if turns_since is None or turns_since >= 3:
+        return True
+    if turns_since <= 1:
+        return False
+    return draw() < SECOND_TURN_CHANCE

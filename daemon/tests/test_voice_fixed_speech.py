@@ -232,7 +232,9 @@ async def test_nothing_is_made_while_a_reply_is_being_spoken(tmp_path, monkeypat
 
 def test_what_is_said_most_is_made_first():
     order = list(fixed_speech.gather())
-    first = set(order[:64])  # about the first four minutes of making ahead at a rest of five
+    # About the first four minutes of making ahead at a rest of five, after the two hums made before everything else.
+    first = set(order[: 64 + 2])
+    assert order[:2] == ["Mm.", "Hmm."]
     wanted = [*handover.MEDIA_ACKS.values(), *(line for lines in handover.STILL.values() for line in lines)]
     wanted += [say_back.DROPPED, "Working on it."]
     assert all(set(pieces(sentence)) <= first for sentence in wanted)

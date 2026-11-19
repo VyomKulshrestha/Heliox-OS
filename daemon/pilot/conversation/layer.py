@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import dataclasses
 import logging
+import random
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -31,7 +32,12 @@ from typing import Any
 from pilot.conversation import debate as dbt
 from pilot.conversation import provisional as prov
 from pilot.conversation import trace
-from pilot.conversation.acknowledge import ACK_AFTER_SECONDS, next_acknowledgement, wants_acknowledgement
+from pilot.conversation.acknowledge import (
+    ACK_AFTER_SECONDS,
+    next_acknowledgement,
+    spaced_out,
+    wants_acknowledgement,
+)
 from pilot.conversation.action_talk import needs_approval_first, result_sentence, said_again
 from pilot.conversation.context import SAVE_OR_CHANGE, ContextSources, ConversationMemory, build_messages
 from pilot.conversation.fast_model import FastModel, FastModelUnavailable, stream_with_retry
@@ -396,6 +402,8 @@ class ConversationLayer:
         provisional_setting: Callable[[], str] = lambda: "off",
         acknowledge: Callable[[], bool] = lambda: False,
         disagree: Callable[[], str] = lambda: "off",
+        ready_made: Callable[[str], bool] = lambda _text: True,
+        ack_draw: Callable[[], float] = random.random,
     ) -> None:
         self._sink = sink
         self._model = model
@@ -446,7 +454,12 @@ class ConversationLayer:
         # Answers started on the listener's words before the turn was confirmed (pilot.conversation.provisional).
         self._provisional_setting = provisional_setting
         self._acknowledge = acknowledge  # conversation.acknowledge (pilot.conversation.acknowledge)
-        self._acked_last_turn = False
+        # Whether the voice has the audio of a sentence made ahead: an acknowledgement is said only from that audio.
+        self._ready_made = ready_made
+        self._ack_draw = ack_draw  # a number in [0, 1) for acknowledge.spaced_out
+        self._model_turns = 0  # spoken and typed turns that went to the model
+        self._ack_turn: int | None = None  # the model turn that last had an acknowledgement heard
+        self._last_hum = ""  # the last acknowledgement said (an action's own words in _last_ack do not count)
         self._last_ack = ""
         self.provisional = prov.ProvisionalAnswers(clock=clock)
         # Disagreeing with a decision, then giving way (conversation.disagree, pilot.conversation.debate).
@@ -998,18 +1011,25 @@ class ConversationLayer:
         acked = asyncio.Event()
         ended = _safe_call(self._turn_ended, None)
         ack_task: asyncio.Future[Any] | None = None
-        if wants_acknowledgement(
-            text,
-            typed=typed,
-            ended=ended if isinstance(ended, float) else None,
-            statement=statement,
-            acked_last_turn=self._acked_last_turn,
-            enabled=bool(_safe_call(self._acknowledge, False)),
-        ):
-            ack_task = asyncio.ensure_future(
-                self._acknowledge_when_due(result, float(ended), queue, content_handed, acked)
+        self._model_turns += 1
+        since = None if self._ack_turn is None else self._model_turns - self._ack_turn
+        hum = next_acknowledgement(self._last_hum)
+        if (
+            wants_acknowledgement(
+                text,
+                typed=typed,
+                ended=ended if isinstance(ended, float) else None,
+                statement=statement,
+                acked_last_turn=since == 1,
+                enabled=bool(_safe_call(self._acknowledge, False)),
             )
-        self._acked_last_turn = False
+            and _safe_call(lambda: self._ready_made(hum), False) is True
+            and spaced_out(since, self._ack_draw)
+        ):
+            # Only from audio made ahead: with the system voice, or before the local voice made it, nothing is said.
+            ack_task = asyncio.ensure_future(
+                self._acknowledge_when_due(result, float(ended), queue, content_handed, acked, hum)
+            )
         repeat_asked = self._asked_again(text)
         dropped = False
         said: list[str] = []
@@ -1553,21 +1573,22 @@ class ConversationLayer:
         queue: asyncio.Queue[Any],
         content_handed: list[bool],
         acked: asyncio.Event,
+        phrase: str,
     ) -> None:
-        """At ACK_AFTER_SECONDS after the person's last word, one acknowledgement, unless the answer is ready by then.
-        Said on the task-narration channel, below the answer's: an answer that comes while it plays cuts it."""
+        """At ACK_AFTER_SECONDS after the person's last word, ``phrase``, unless the answer is ready by then. Said on
+        the task-narration channel, below the answer's: an answer that comes while it plays cuts it."""
+        turn = self._model_turns  # this turn's number, read before any wait
         due = ended + ACK_AFTER_SECONDS - self._clock()
         if due > 0:
             await asyncio.sleep(due)
         if content_handed[0] or not queue.empty():
             return  # the answer is ready: it goes first, and nothing is said before it
-        phrase = next_acknowledgement(self._last_ack)
-        self._last_ack = phrase
+        self._last_ack = self._last_hum = phrase
         trace.mark("sentence to voice", hold=False, kind="acknowledgement")
         result.timings.setdefault("acknowledged_ms", (self._clock() - ended) * 1000)
         outcome = await self._sink(phrase, "task_narration", f"conv-ack:{id(result)}")
         if outcome in HEARD:
-            self._acked_last_turn = True
+            self._ack_turn = turn
             acked.set()
 
     def _may_hold(self) -> bool:
@@ -1577,7 +1598,7 @@ class ConversationLayer:
 
     async def _hold_phrase(self, result: TurnResult, started: float) -> None:
         index = (HOLD_PHRASES.index(self._last_hold) + 1) % len(HOLD_PHRASES) if self._last_hold in HOLD_PHRASES else 0
-        if HOLD_PHRASES[index] == self._last_ack:  # "One moment." is an acknowledgement too: never the same words again
+        if HOLD_PHRASES[index] == self._last_ack:  # never the words an acknowledgement just said, if they ever match
             index = (index + 1) % len(HOLD_PHRASES)
         phrase = HOLD_PHRASES[index]
         self._last_hold = phrase
