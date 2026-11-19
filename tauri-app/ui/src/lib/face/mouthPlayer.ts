@@ -43,6 +43,16 @@ export interface MouthFrame {
   mix: number;
   /** For the envelope: how open, 0 to 1. For visemes: 0 for a closed shape, else 1. */
   open: number;
+  /** How strongly the shapes are formed over the resting mouth, 0 to 1 (missing: 1, fully). */
+  amount?: number;
+  /** How far `shape` and `next` are each formed, 0 to 1 (missing: `amount`). */
+  weight?: number;
+  nextWeight?: number;
+  /** The head with the speech's stress: nod 0 to 1 (down), sway -1 to 1. Missing: still. */
+  nod?: number;
+  sway?: number;
+  /** Milliseconds the sound will now rest (a pause between phrases); 0 while it sounds. */
+  pause?: number;
 }
 
 interface Planned {

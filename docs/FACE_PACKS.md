@@ -43,7 +43,7 @@ The folder name is the pack's id: lower-case letters, digits and dashes, at most
   "eyes": { "blink": ["blink-1.webp", "blink-2.webp", "blink-1.webp"], "blink_fps": 24, "blink_every": [2.5, 6],
             "rect": [150, 170, 212, 80] },
   "mouth": { "rect": [176, 300, 160, 112], "shapes": { "sil": "mouth-sil.webp", "aa": "mouth-aa.webp" } },
-  "states": { "listening": { "tilt": -2 }, "thinking": { "tilt": 1.5, "lift": -2 } },
+  "states": { "listening": { "tilt": -2, "mouth": "mouth-smile.webp" }, "thinking": { "tilt": 1.5, "lift": -2 } },
   "breathe": { "amount": 0.004, "seconds": 4.5 }
 }
 ```
@@ -59,12 +59,15 @@ The folder name is the pack's id: lower-case letters, digits and dashes, at most
 | `idle.frames` | yes | One image, or a loop. A loop plays at `fps`, forward and back (`"pingpong"`, the default) or forward only. |
 | `idle.mouth_offsets` | no | One `[dx, dy]` per idle frame: how far the mouth moved in that frame, so the mouth images follow the head. |
 | `eyes.open` | no | An eyes layer drawn over the idle frame (for drawn faces; a photo has its eyes in the idle frames). |
-| `eyes.blink` | no | The blink, as eye images played at `blink_fps`, every `blink_every` seconds (a random time between the two). |
+| `eyes.blink` | no | The blink, as eye images played at `blink_fps`, every `blink_every` seconds (a random time between the two). A blink of one image (closed eyes only) lasts `1 / blink_fps` seconds and fades in and out over the open eyes instead of snapping shut; add a half-closed image (`["blink-half.webp", "blink-closed.webp", "blink-half.webp"]`) and the images play in turn. |
+| `eyes.glance` | no | A small shift of the eyes, as pictures from slight to further (`["eyes-glance-1.webp", "eyes-glance-2.webp"]`), cut like the blink. Shown now and then in a pause between phrases while Heliox speaks: out through the list, a moment at the last, and back. |
 | `eyes.listening`, `eyes.thinking` | no | Eyes for those moments (raised brows, a look up). |
 | `eyes.rect` | no | Where eye images go: `[x, y, width, height]`. Default: the whole picture. |
 | `mouth.shapes` | yes | One image per mouth shape (below). `sil`, the closed mouth, is required. |
 | `mouth.rect` | no | Where mouth images go: `[x, y, width, height]`. Default: the whole picture. |
-| `states` | no | A small turn of the whole head for `listening`, `thinking` and `speaking`: `tilt` in degrees, `lift` in pixels (up is negative), `scale`. |
+| `states` | no | How the face rests in `idle`, `listening`, `thinking` and `speaking`: `tilt` in degrees, `lift` in pixels (up is negative), `scale` (0.5 to 2) for a small turn of the whole head, and `mouth`, an image drawn in `mouth.rect` in place of `sil` while the face rests in that state (a closed-lip smile while listening, for example; missing means `sil`). Every one of them eases in over about 160 ms when the state changes. While Heliox speaks, the closed moments of speech show the `speaking` state's `mouth` (normally left out, so `sil`). |
+| `mouth_steps` | no | In-between pictures for a shape: `{"aa": ["mouth-aa-1.webp", "mouth-aa-2.webp"]}`, ordered from nearly closed to nearly full, made with the same crop and alpha as the shape's own picture (morphed offline). The shape's own picture is the last step and the resting mouth is step zero. A shape formed part of the way shows the two neighbouring steps at that point blended, so the mouth opens through real in-between shapes instead of fading a full one in. A shape without steps fades its full picture in over the rest. Each listed shape must have its own picture in `mouth.shapes`; 1 to 8 steps. |
+| `overscan` | no | How much larger than its card the picture is drawn, from 0 to 0.25 (0.04 is 4 %), about its centre. Left out, a `"photo"` pack gets exactly enough that no `tilt`, `lift` or `scale` in `states`, with breathing, ever shows the card behind the picture (about 2 % for a 3 px lift, about 10 % for a 3 degree tilt), and a drawing gets none. Give `0` to turn it off, or a number to fix it. |
 | `breathe` | no | A slow scale of the whole picture: `amount` (0.004 is 0.4 %) over `seconds`. Leave it out for a filmed loop. |
 | `tint` | no | For drawings only: `{"idle": "--text-secondary", "eyes": "--text-primary", "mouth": "--text-primary"}`. Each layer's image is used as a mask and filled with that colour from the window's theme, so a line drawing follows light and dark mode. Leave it out for a photo. |
 
@@ -110,7 +113,18 @@ be used.
   cut the same rectangle around the mouth from each. Give each image soft (feathered) transparent edges a few pixels
   wide, so it blends into the face under it. The closed mouth `sil` must match the idle frames, or the face will flicker
   at every pause.
-- **Blinks:** 2 or 3 images of the eye region (half closed, closed), cut the same way, with feathered edges.
+- **In-between steps:** for each shape, one to three pictures between the closed mouth and the full shape
+  (`mouth_steps`), made by morphing, same crop and alpha. Two steps are enough for the wide shapes (`aa`, `O`); one
+  for the rest.
+- **Calm consonants:** keep consonant pictures (`DD`, `nn`, `TH`, `SS`, `FF`) close to a relaxed half-open mouth. A
+  showy one (a visible tongue, prominent teeth) flashes on the commonest sounds; leaving a consonant out is better
+  than a showy picture, since the window keeps the vowel's opening instead.
+- **Blinks:** 2 or 3 images of the eye region (half closed, closed), cut the same way, with feathered edges. One
+  closed image works too (it fades in and out).
+- **A resting smile:** a closed-lip smile cut like the mouth images, named in `states.listening.mouth` (or `idle`).
+  It must match the idle frame everywhere but the mouth, like `sil`.
+- **Tilt:** a photograph is enlarged to hide its corners while it tilts, which crops a little of its edges: keep
+  `tilt` to 2 degrees or less, or use `lift` alone.
 - **Size on disk:** WebP at quality 80 keeps a pack of this kind to a few megabytes.
 
 ## The placeholder

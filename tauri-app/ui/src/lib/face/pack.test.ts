@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { imageForShape, installedPacks, manifestProblems, validPackId, type FaceManifest } from "./pack";
+import { imageForShape, installedPacks, manifestProblems, stepsOf, validPackId, type FaceManifest } from "./pack";
 import placeholder from "../../../public/faces/placeholder/manifest.json";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -71,6 +71,23 @@ describe("face packs", () => {
     };
     expect(manifestProblems(offsets, "ana")).toContain("idle.mouth_offsets: one [dx, dy] per idle frame");
     expect(manifestProblems({ ...GOOD, tint: { idle: "red" } }, "ana")[0]).toMatch(/^tint/);
+  });
+
+  it("takes in-between pictures for a shape the pack has, from nearly closed to nearly full", () => {
+    const stepped = { ...GOOD, mouth_steps: { aa: ["aa-1.webp", "aa-2.webp"] } };
+    expect(manifestProblems(stepped, "ana")).toEqual([]);
+    const pack = stepped as unknown as FaceManifest;
+    expect(stepsOf(pack, "aa")).toEqual(["aa-1.webp", "aa-2.webp", "mouth-aa.webp"]);
+    expect(stepsOf(pack, "O")).toEqual(["mouth-O.webp"]); // no steps: the full picture alone
+    expect(stepsOf(pack, "E")).toEqual(["aa-1.webp", "aa-2.webp", "mouth-aa.webp"]); // E is drawn as aa, steps too
+    expect(stepsOf(pack, "sil")).toEqual([]);
+    expect(manifestProblems({ ...GOOD, mouth_steps: { U: ["u-1.webp"] } }, "ana")).toContain(
+      "mouth_steps.U: the shape has no picture",
+    );
+    expect(manifestProblems({ ...GOOD, mouth_steps: { aa: [] } }, "ana")).toContain(
+      "mouth_steps.aa: 1 to 8 image files",
+    );
+    expect(manifestProblems({ ...GOOD, mouth_steps: { aa: ["../x.png"] } }, "ana")[0]).toMatch(/^mouth_steps.aa/);
   });
 
   it("draws a missing shape with the nearest one the pack has, then E, then the closed mouth", () => {

@@ -14,6 +14,8 @@ export interface FaceState {
   tilt?: number;
   lift?: number;
   scale?: number;
+  /** The mouth while the face rests in this state (an image drawn in mouth.rect); missing means the `sil` image. */
+  mouth?: string;
 }
 
 export interface FaceManifest {
@@ -29,6 +31,8 @@ export interface FaceManifest {
   eyes?: {
     open?: string;
     blink?: string[];
+    /** A small shift of the eyes, from slight to further, for glances between phrases. */
+    glance?: string[];
     blink_fps?: number;
     blink_every?: [number, number];
     listening?: string;
@@ -36,8 +40,17 @@ export interface FaceManifest {
     rect?: [number, number, number, number];
   };
   mouth: { shapes: Partial<Record<Shape, string>>; rect?: [number, number, number, number] };
-  states?: { listening?: FaceState; thinking?: FaceState; speaking?: FaceState };
+  states?: { idle?: FaceState; listening?: FaceState; thinking?: FaceState; speaking?: FaceState };
+  /** How much larger than the card the picture is drawn (0.04 is 4 %). A photo gets enough by default. */
+  overscan?: number;
+  /**
+   * In-between pictures of a shape, from nearly closed to nearly full, made with the same crop and alpha as the
+   * shape's own picture (the last step, the full shape, is that picture; sil is step zero). Optional.
+   */
+  mouth_steps?: Partial<Record<Shape, string[]>>;
 }
+
+export const STATE_NAMES = ["idle", "listening", "thinking", "speaking"] as const;
 
 export function validPackId(id: unknown): id is string {
   return typeof id === "string" && ID.test(id);
@@ -105,7 +118,41 @@ export function manifestProblems(raw: unknown, id: string): string[] {
     }
     if (eyes.blink !== undefined && (!Array.isArray(eyes.blink) || !eyes.blink.every(isFile)))
       problems.push("eyes.blink: image files");
+    if (eyes.glance !== undefined && (!Array.isArray(eyes.glance) || !eyes.glance.length || !eyes.glance.every(isFile)))
+      problems.push("eyes.glance: image files");
     if (eyes.rect !== undefined && !isRect(eyes.rect)) problems.push("eyes.rect: [x, y, width, height]");
+  }
+  const states = m.states as Record<string, unknown> | undefined;
+  if (states !== undefined) {
+    if (!states || typeof states !== "object") problems.push("states: an object");
+    else
+      for (const [name, value] of Object.entries(states)) {
+        if (!(STATE_NAMES as readonly string[]).includes(name)) continue; // a later format's state: not drawn
+        const state = (value ?? {}) as Record<string, unknown>;
+        for (const key of ["tilt", "lift", "scale"]) {
+          const n = state[key];
+          if (n !== undefined && (typeof n !== "number" || !Number.isFinite(n)))
+            problems.push(`states.${name}.${key}: a number`);
+        }
+        if (typeof state.scale === "number" && (state.scale < 0.5 || state.scale > 2))
+          problems.push(`states.${name}.scale: 0.5 to 2`);
+        if (state.mouth !== undefined && !isFile(state.mouth))
+          problems.push(`states.${name}.mouth: not an image file name`);
+      }
+  }
+  if (m.overscan !== undefined && (typeof m.overscan !== "number" || !(m.overscan >= 0 && m.overscan <= 0.25)))
+    problems.push("overscan: 0 to 0.25");
+  if (m.mouth_steps !== undefined) {
+    const steps = m.mouth_steps as Record<string, unknown>;
+    if (!steps || typeof steps !== "object" || Array.isArray(steps)) problems.push("mouth_steps: an object");
+    else
+      for (const [name, files] of Object.entries(steps)) {
+        if (!(SHAPES as readonly string[]).includes(name)) problems.push(`mouth_steps: unknown shape ${name}`);
+        else if (!Array.isArray(files) || !files.length || files.length > 8 || !files.every(isFile))
+          problems.push(`mouth_steps.${name}: 1 to 8 image files`);
+        else if (!(shapes as Record<string, unknown>)[name])
+          problems.push(`mouth_steps.${name}: the shape has no picture`);
+      }
   }
   const tint = (m.tint ?? {}) as Record<string, unknown>;
   if (!isToken(tint.idle) || !isToken(tint.eyes) || !isToken(tint.mouth))
@@ -133,12 +180,29 @@ const STAND_INS: Record<Shape, Shape[]> = {
 };
 
 export function imageForShape(manifest: FaceManifest, shape: Shape): string {
+  return manifest.mouth.shapes[shapeShown(manifest, shape)] as string;
+}
+
+/** The shape whose picture stands for `shape`: its own, the nearest one the pack has, then E, then sil. */
+export function shapeShown(manifest: FaceManifest, shape: Shape): Shape {
   const shapes = manifest.mouth.shapes;
   for (const name of [shape, ...STAND_INS[shape], "E" as Shape, "sil" as Shape]) {
-    const file = shapes[name];
-    if (file) return file;
+    if (shapes[name]) return name;
   }
-  return shapes.sil as string;
+  return "sil";
+}
+
+/** The pictures of a shape from closed to full: the in-between steps the pack has (mouth_steps), then the shape. */
+export function stepsOf(manifest: FaceManifest, shape: Shape): string[] {
+  const shown = shapeShown(manifest, shape);
+  const full = manifest.mouth.shapes[shown] as string;
+  if (shown === "sil") return [];
+  return [...(manifest.mouth_steps?.[shown] ?? []), full];
+}
+
+/** The shapes a pack has a picture of. */
+export function packShapes(manifest: FaceManifest): Shape[] {
+  return SHAPES.filter((shape) => Boolean(manifest.mouth.shapes[shape]));
 }
 
 export interface PackEntry {
