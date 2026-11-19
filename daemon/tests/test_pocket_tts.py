@@ -166,3 +166,17 @@ async def test_synthesize_to_file_writes_wav(tmp_path):
     assert args[0] == output_file
     assert args[1] == 24000
     assert list(args[2]) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_pocket_is_given_every_number_as_words():
+    """Pocket misread "3:15" as "three feet" and "2026" as "2020" (19 November): it never sees a digit."""
+    model = _fake_model(sample_rate=24000)
+    fake_module = _fake_pocket_tts_module(model)
+
+    with patch.dict(sys.modules, {"pocket_tts": fake_module}):
+        await pocket_tts.synthesize("She called at 3:15 in March 2026.", "alba")
+
+    model.generate_audio.assert_called_once_with(
+        "state-for-alba", "She called at three fifteen in March twenty twenty-six."
+    )

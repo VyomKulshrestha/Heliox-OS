@@ -48,9 +48,12 @@ def _generate(text: str, voice: str) -> tuple[Any, int]:
     """Blocking model load + inference -- always called via asyncio.to_thread
     (see synthesize()), the same reasoning as _transcribe_whisper's own
     asyncio.to_thread(_do) for genuinely CPU-bound work."""
+    from pilot.system.spoken_digits import words_for_voice
+
     model = _get_model()
     state = _get_voice_state(model, voice)
-    audio = model.generate_audio(state, text)
+    # Pocket misreads digits ("3:15" as "three feet", "2026" as "2020"): it is given every number as words.
+    audio = model.generate_audio(state, words_for_voice(text))
     return audio.numpy(), model.sample_rate
 
 
