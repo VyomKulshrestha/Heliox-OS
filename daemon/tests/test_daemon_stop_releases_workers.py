@@ -14,6 +14,7 @@ from pilot import server as server_module
 from pilot.config import PilotConfig
 from pilot.server import PilotServer
 from pilot.system import local_tts_worker
+from pilot.timeouts import bounded
 
 STOP_LIMIT = 30.0  # only matters if stop() hangs
 
@@ -101,6 +102,22 @@ async def test_a_typed_turn_streaming_is_interrupted_before_the_stores_close(qui
     await asyncio.wait_for(server.stop(), STOP_LIMIT)
 
     assert layer.interrupted and layer._active.cancelled() and ledger.running_at_close == [False]
+
+
+async def test_stop_ends_the_background_tasks_the_server_started(quiet_voice):
+    """A task started with _spawn_background_task (the imports ahead of the first turn when listening starts, a
+    waiting-line sentence) is ended by stop(), before the stores close, and none is left pending on the loop."""
+    server = PilotServer(PilotConfig())
+    started = asyncio.Event()
+    server._spawn_background_task(_forever(started))
+    await started.wait()
+    (task,) = server._waiting_line_tasks
+    server._experience_ledger = ledger = _Ledger(task)
+
+    await bounded(server.stop(), STOP_LIMIT)
+
+    assert task.cancelled() and ledger.running_at_close == [False]
+    assert not server._waiting_line_tasks
 
 
 async def test_a_voice_turn_is_cancelled_before_the_stores_close(quiet_voice, monkeypatch):

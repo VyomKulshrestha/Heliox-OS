@@ -18,6 +18,7 @@ from pilot.system.voice_calibration import (
     WakeWordVariant,
     levenshtein,
 )
+from pilot.timeouts import bounded
 
 
 class TestLevenshtein:
@@ -172,6 +173,9 @@ async def test_visible_listener_start_uses_live_server_config(monkeypatch):
             self.is_running = True
             return "started"
 
+        async def stop(self):
+            self.is_running = False
+
     config = PilotConfig()
     server = PilotServer(config)
     monkeypatch.setattr("pilot.system.voice.ContinuousVoiceListener", _FakeListener)
@@ -186,6 +190,11 @@ async def test_visible_listener_start_uses_live_server_config(monkeypatch):
 
     config.adaptive_calibration.voice_wake_word_enabled = False
     assert server._voice_listener.config.adaptive_calibration.voice_wake_word_enabled is False
+
+    # Starting to listen started the code handlers' imports in the background; stopping the server ends them.
+    warming = [task for task in server._waiting_line_tasks if not task.done()]
+    await bounded(server.stop(), 30.0)
+    assert all(task.done() for task in warming) and not server._waiting_line_tasks
 
 
 @pytest.mark.asyncio

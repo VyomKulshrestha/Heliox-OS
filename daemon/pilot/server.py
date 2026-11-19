@@ -14706,6 +14706,13 @@ def handle_tool(tool_name, params):
         if size_task is not None and not size_task.done():
             size_task.cancel()
             await self._bounded_stop_step("data size watch", asyncio.gather(size_task, return_exceptions=True))
+        # What _spawn_background_task started (the code handlers' imports ahead of the first turn, a waiting-line
+        # sentence, an approval announcement): ended here, so none is left pending when the event loop closes.
+        spawned = [task for task in self.__dict__.get("_waiting_line_tasks", ()) if not task.done()]
+        for task in spawned:
+            task.cancel()
+        if spawned:
+            await self._bounded_stop_step("background tasks", asyncio.gather(*spawned, return_exceptions=True))
         after_ready = self.__dict__.get("_after_ready_task")
         if after_ready is not None and not after_ready.done():
             after_ready.cancel()
