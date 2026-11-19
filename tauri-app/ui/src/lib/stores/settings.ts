@@ -164,6 +164,10 @@ export interface PilotSettings {
   gpu?: {
     speech_despite_driver_errors?: boolean;
   };
+  /** The talking face in the conversation view: "off" or an installed pack's id (FaceChoice.svelte, FACE_PACKS.md). */
+  face?: {
+    pack?: string;
+  };
   first_run_complete: boolean;
   theme: "light" | "dark";
   hotkey: string; // Added tracking for active UI theme mode

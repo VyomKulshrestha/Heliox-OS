@@ -11,6 +11,8 @@ describe("describePhase", () => {
     expect(describePhase("critic review").stage).toBe(1);
     expect(describePhase("executing")).toMatchObject({ label: "Working on it", stage: 2 });
     expect(describePhase("verifying")).toMatchObject({ label: "Checking the result", stage: 3 });
+    // The daemon's "Speaking" while a reply plays keeps a running task on its act stage.
+    expect(describePhase("Speaking")).toMatchObject({ label: "Speaking", stage: 2 });
   });
 
   it("keeps the numbers in retry and revision phases", () => {

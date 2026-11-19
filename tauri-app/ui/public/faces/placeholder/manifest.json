@@ -1,0 +1,69 @@
+{
+  "format": 1,
+  "id": "placeholder",
+  "name": "Line drawing",
+  "credit": "Drawn for Heliox as a placeholder; a drawing of nobody. CC0 1.0.",
+  "kind": "drawing",
+  "size": [
+    256,
+    256
+  ],
+  "tint": {
+    "idle": "--text-secondary",
+    "eyes": "--text-primary",
+    "mouth": "--text-primary"
+  },
+  "breathe": {
+    "amount": 0.008,
+    "seconds": 4.5
+  },
+  "idle": {
+    "frames": [
+      "base.svg"
+    ],
+    "fps": 1
+  },
+  "eyes": {
+    "open": "eyes-open.svg",
+    "blink": [
+      "eyes-half.svg",
+      "eyes-closed.svg",
+      "eyes-half.svg"
+    ],
+    "blink_fps": 24,
+    "blink_every": [
+      2.5,
+      6.0
+    ],
+    "listening": "eyes-listening.svg",
+    "thinking": "eyes-thinking.svg"
+  },
+  "mouth": {
+    "shapes": {
+      "sil": "mouth-sil.svg",
+      "PP": "mouth-PP.svg",
+      "FF": "mouth-FF.svg",
+      "TH": "mouth-TH.svg",
+      "DD": "mouth-DD.svg",
+      "kk": "mouth-kk.svg",
+      "CH": "mouth-CH.svg",
+      "SS": "mouth-SS.svg",
+      "nn": "mouth-nn.svg",
+      "RR": "mouth-RR.svg",
+      "aa": "mouth-aa.svg",
+      "E": "mouth-E.svg",
+      "I": "mouth-I.svg",
+      "O": "mouth-O.svg",
+      "U": "mouth-U.svg"
+    }
+  },
+  "states": {
+    "listening": {
+      "tilt": -3,
+      "lift": -2
+    },
+    "thinking": {
+      "tilt": 2.5
+    }
+  }
+}

@@ -48,6 +48,7 @@
   import StorageNotice from "./lib/components/StorageNotice.svelte";
   import LivePresence from "./lib/components/LivePresence.svelte";
   import LiveCards from "./lib/components/LiveCards.svelte";
+  import FaceHost from "./lib/components/FaceHost.svelte";
   import { live } from "./lib/stores/live";
   import HeaderMiniMonitor from "./lib/components/HeaderMiniMonitor.svelte";
   import CommandHistory from "./lib/components/CommandHistory.svelte";
@@ -67,6 +68,7 @@
     !$settings.first_run_complete && localStorage.getItem("heliox_first_run_complete") !== "true",
   );
   let showScrollFAB = $state(false);
+  let faceShown = $state(false); // a face is chosen (FaceHost): the conversation keeps clear of it
   let isAtBottom = $state(true);
   let prefillText = $state("");
   let paletteOpen = $state(false);
@@ -586,7 +588,8 @@
           </aside>
         {/if}
 
-        <div class="results">
+        <div class="results" class:with-face={faceShown}>
+          <FaceHost onshown={(shown) => (faceShown = shown)} />
           {#if $session.messages.length === 0 && !$session.loading}
             <div class="empty-state">
               <img class="empty-mark" src={heliosMark} alt="" width="64" height="64" />
@@ -1115,6 +1118,18 @@
     display: flex;
     flex-direction: column;
     position: relative;
+    --face-size: 132px;
+  }
+
+  /* The face sits at the top right of the conversation (FaceHost); the messages keep to its left. */
+  .results.with-face {
+    padding-right: calc(var(--face-size) + 16px);
+  }
+
+  @media (max-width: 880px) {
+    .results {
+      --face-size: 104px;
+    }
   }
 
   /* ── Banners above the conversation ────────────────────────────────── */

@@ -7,6 +7,7 @@
   import FollowUpCounts from "./FollowUpCounts.svelte";
   import Acknowledge from "./Acknowledge.svelte";
   import Disagree from "./Disagree.svelte";
+  import FaceChoice from "./FaceChoice.svelte";
   import ProfileSharing from "./ProfileSharing.svelte";
   import TalkModel from "./TalkModel.svelte";
   import PlannerModel from "./PlannerModel.svelte";
@@ -1156,6 +1157,7 @@
         <option value="hi">Hindi</option>
       </select>
     </div>
+    <FaceChoice />
   </section>
 
   <section class="settings-group">

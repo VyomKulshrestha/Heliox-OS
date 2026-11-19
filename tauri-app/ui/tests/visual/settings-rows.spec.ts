@@ -15,10 +15,11 @@
 import { test, expect } from "@playwright/test";
 import { gotoApp, clickTab } from "./helpers";
 
-// Rows Settings shows with everyPanel on 0fb22f4 and the Settings rows fix, plus two rows added since: "Push back on
-// decisions" (Disagree.svelte, at the end of Voice) and the speech switch for a card with driver errors
-// (SpeechDriverErrorsRow). More is fine; fewer means a panel went missing from the page or from the mock.
-const AT_LEAST: Record<string, number> = { cloud: 121, ollama: 123 };
+// Rows Settings shows with everyPanel on 0fb22f4 and the Settings rows fix, plus three rows added since: "Push back on
+// decisions" (Disagree.svelte, at the end of Voice), the speech switch for a card with driver errors
+// (SpeechDriverErrorsRow) and the Face row (FaceChoice.svelte, the last row of Appearance). More is fine; fewer means
+// a panel went missing from the page or from the mock.
+const AT_LEAST: Record<string, number> = { cloud: 122, ollama: 124 };
 
 test.describe("Settings rows", () => {
   for (const provider of ["cloud", "ollama"]) {

@@ -47,6 +47,8 @@ const RULES: Rule[] = [
   [/^detecting conflicts$/, "Checking for merge conflicts", 2],
   [/^resume needs attention$/, "Resume needs your attention", 2, true],
   [/^verifying$/, "Checking the result", 3],
+  // Sent while a spoken reply plays (speech_notices); during a task that is still the act stage.
+  [/^speaking$/, "Speaking", 2],
 ];
 
 /** Unknown phases are placed by their leading verb ("Planning the safest useful action" is planning, not acting). */
