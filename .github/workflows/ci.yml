@@ -43,19 +43,28 @@ jobs:
       - name: Ruff format check
         run: ruff format --check . --no-cache
 
+      # A test that stops names itself: tests/ci_names.py prints each test as it starts and ends a process that
+      # outlives its tests; the thread timeout method stops a test blocked inside a C call; faulthandler prints every
+      # thread's stack first. The suite takes 8 to 13 minutes here.
       - name: Run tests
-        run: pip install pytest-timeout && pytest tests/ -v --tb=short --timeout=300
+        timeout-minutes: 35
+        env:
+          PYTHONPATH: tests
+        run: >
+          pip install pytest-timeout && pytest -p ci_names tests/ -v --tb=short
+          --timeout=300 --timeout-method=thread -o faulthandler_timeout=240
 
       # Which steps hold the event loop longer than 100 ms (asyncio debug mode, tests/loop_watch.py), with the test
       # name, on these quiet runners. For reading, not a gate: a step over 100 ms is a person waiting on the daemon.
       - name: Event-loop steps over 100 ms (session suite, IPC, typed end to end)
         if: ${{ !cancelled() }} # also after a failed "Run tests": its lines matter most then
         continue-on-error: true
+        timeout-minutes: 15
         env:
           HELIOX_LOOP_WATCH: "1"
           PYTHONPATH: tests
         run: >
-          pytest -p loop_watch -q --timeout=600
+          pytest -p loop_watch -p ci_names -q --timeout=600 --timeout-method=thread -o faulthandler_timeout=300
           tests/test_conversation_sessions.py tests/test_ipc_integration.py tests/test_conversation_typed_e2e.py
           tests/test_start_loop_steps.py
 
@@ -315,7 +324,10 @@ jobs:
     name: Platform readers (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     continue-on-error: true
-    timeout-minutes: 20
+    # Ubuntu takes about 16 minutes when its package mirror is quick. On 19 November the mirror answered 503 and was
+    # slow all day: the 20-minute limit ended the job four times (once 43 s into its unit tests, three times before
+    # them), and one run still had 6 steps left at 30 minutes. Each pytest step has its own limit, well under this.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -356,6 +368,9 @@ jobs:
         if: runner.os == 'Linux'
         # Its own failure must not stop the accessibility checks below.
         continue-on-error: true
+        timeout-minutes: 12 # its own package install can be slow
+        env:
+          PYTHONPATH: tests
         run: |
           pip install pytest pytest-asyncio pytest-timeout sounddevice soundcard
           sudo apt-get install -y -q --no-install-recommends pulseaudio pulseaudio-utils libportaudio2 libasound2-plugins
@@ -363,8 +378,8 @@ jobs:
           pactl load-module module-null-source source_name=heliox_mic
           pactl load-module module-null-source source_name=heliox_headset
           pactl set-default-source heliox_headset
-          HELIOX_REAL_PULSE=1 pytest tests/test_call_detection_mac_linux.py tests/test_audio_health.py -q --timeout=120 \
-            -k "real"
+          HELIOX_REAL_PULSE=1 pytest -p ci_names tests/test_call_detection_mac_linux.py tests/test_audio_health.py -q \
+            --timeout=120 --timeout-method=thread -o faulthandler_timeout=90 -k "real"
 
       - name: Linux, audio - Heliox's voice reaches the default sink, and the default microphone is followed
         if: runner.os == 'Linux'
@@ -714,11 +729,18 @@ jobs:
           pip install -q pyautogui
           python tests/platform_real/live_end_to_end_check.py
 
+      # Under 10 s on macOS. Each test's name is printed as it starts (tests/ci_names.py), a test blocked for 60 s prints every
+      # thread's stack, one blocked for 120 s ends the run, and this step's own limit comes long before the job's.
       - name: Unit tests for the readers on this runner
         if: ${{ !cancelled() }}
+        timeout-minutes: 6
+        env:
+          PYTHONPATH: tests
         run: |
           pip install pytest pytest-asyncio pytest-timeout
-          pytest tests/test_platform_readers.py tests/test_platform_quiet_failures.py tests/test_live_shell_line.py tests/test_live_terminal_text.py -q --timeout=120
+          pytest -p ci_names tests/test_platform_readers.py tests/test_platform_quiet_failures.py \
+            tests/test_live_shell_line.py tests/test_live_terminal_text.py -q \
+            --timeout=120 --timeout-method=thread -o faulthandler_timeout=60
 
   # ── First run from nothing (experimental, non-blocking) ──
   # Runs the app's own first-run script (tauri-app/src-tauri/setup) in an empty home folder with the core only
