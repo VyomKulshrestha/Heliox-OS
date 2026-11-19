@@ -121,12 +121,19 @@ def _use_voice_threads(threads: int = VOICE_THREADS) -> None:
     torch.set_num_threads(max(1, min(threads, os.cpu_count() or threads)))
 
 
-def _synthesize(engine: str, text: str, voice: str, output_file: str) -> None:
+def _synthesize(engine: str, text: str, voice: str, output_file: str, timing_file: str = "") -> None:
     """Make one piece on the worker's own thread. Through asyncio.run, each request started a new event loop and ran
     the model on a new executor thread: 85 to 130 ms more per sentence than the same generation called directly
-    (measured 13 November on the owner's CPU, the six sentences of a short reply)."""
+    (measured 13 November on the owner's CPU, the six sentences of a short reply).
+
+    ``timing_file``: also write when each phoneme is said there, when the engine knows (a face is shown)."""
     _use_voice_threads()
-    _engine_module(engine).synthesize_to_file_here(text, voice, output_file)
+    module = _engine_module(engine)
+    timed = getattr(module, "synthesize_with_timing_here", None) if timing_file else None
+    if timed is not None:
+        timed(text, voice, output_file, timing_file)
+    else:
+        module.synthesize_to_file_here(text, voice, output_file)
 
 
 def _load(engine: str, voice: str) -> None:
@@ -172,7 +179,9 @@ def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
             text = Path(request["text_file"]).read_text(encoding="utf-8")
             if not text or len(text) > MAX_TEXT_CHARACTERS:
                 raise ValueError("Speech text must contain between 1 and 20,000 characters")
-            _synthesize(engine, text, str(request["voice"]), str(request["output_file"]))
+            _synthesize(
+                engine, text, str(request["voice"]), str(request["output_file"]), str(request.get("timing_file") or "")
+            )
             response = {"status": "ok"}
         except Exception as exc:
             response = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
@@ -542,18 +551,20 @@ def silence_edges(audio: Any, rate: int, keep_lead: float, keep_tail: float | No
     return start, stop
 
 
-def trim_silence(path: Path, keep_lead: float, keep_tail: float | None) -> None:
-    """Cut a synthesised WAV's padding in place (see KEEP_LEAD_SECONDS). Without soundfile it is left as made."""
+def trim_silence(path: Path, keep_lead: float, keep_tail: float | None) -> tuple[int, int] | None:
+    """Cut a synthesised WAV's padding in place (see KEEP_LEAD_SECONDS). Without soundfile it is left as made.
+    Returns the sample range kept of the audio as made (None when it was not read)."""
     try:
         import soundfile
     except ImportError:
-        return
+        return None
     info = soundfile.info(str(path))
     audio, rate = soundfile.read(str(path), dtype="float32")
     start, stop = silence_edges(audio, rate, keep_lead, keep_tail)
     if start == 0 and stop == len(audio):
-        return
+        return start, stop
     soundfile.write(str(path), audio[start:stop], rate, subtype=info.subtype)
+    return start, stop
 
 
 def _default_spawn(engine: str, device: str, gpu_lease: bool = False) -> Any:
@@ -1116,6 +1127,11 @@ class LocalTTSWorkerManager:
         request_path = request_dir / f"{output_file.stem}-{id(output_file):x}.txt"
         request_path.write_text(text, encoding="utf-8")
         request = {"text_file": str(request_path), "voice": voice, "output_file": str(output_file)}
+        from pilot.system import speech_notices
+
+        if speech_notices.face_on():
+            # A face is shown: the worker also writes when each phoneme is said, beside the audio.
+            request["timing_file"] = str(speech_notices.timing_path(output_file))
         try:
             await self._request(
                 process, engine, request, timeout=LOAD_TIMEOUT_SECONDS if not self.loaded else REQUEST_TIMEOUT_SECONDS
@@ -1321,6 +1337,8 @@ class LocalTTSWorkerManager:
                 if self._prepared_dir is not None and path.parent == self._prepared_dir:
                     with contextlib.suppress(OSError):
                         path.unlink()
+                    with contextlib.suppress(OSError):
+                        path.with_name(path.name + ".timing.json").unlink(missing_ok=True)
         finally:
             if upcoming is not None and not upcoming.done():
                 upcoming.cancel()
@@ -1414,9 +1432,15 @@ class LocalTTSWorkerManager:
         await self.synthesize(engine, text, voice, target, folder, wait_after_gpu_fault=False)
         keep_tail = None if ends_sentence(text) else KEEP_CLAUSE_SECONDS
         try:
-            await asyncio.to_thread(trim_silence, target, KEEP_LEAD_SECONDS, keep_tail)
+            kept = await asyncio.to_thread(trim_silence, target, KEEP_LEAD_SECONDS, keep_tail)
         except Exception:
+            kept = None
             logger.debug("Could not trim the silence around a synthesised piece; playing it as made", exc_info=True)
+        if kept is not None:
+            from pilot.system import speech_notices
+
+            # The phoneme times count from the first sample made: from the first one kept after the trim.
+            await asyncio.to_thread(speech_notices.shift_timing, target, kept[0], kept[1])
         speech_trace.emit("piece trimmed", words=len(text.split()), done=time.monotonic())
         return target
 

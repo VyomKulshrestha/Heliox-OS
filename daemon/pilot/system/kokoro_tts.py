@@ -97,24 +97,63 @@ def _to_numpy(audio: Any) -> Any:
 
 
 def _generate(text: str, voice: str) -> tuple[Any, int]:
+    audio, rate, _timing = _generate_timed(text, voice, timing=False)
+    return audio, rate
+
+
+def _generate_timed(text: str, voice: str, *, timing: bool = True) -> tuple[Any, int, dict[str, Any] | None]:
+    """The audio, its rate, and (with ``timing``) when each phoneme and English word is said, in seconds from the
+    first sample made: {"rate", "samples", "phonemes": [[symbol, start, end]], "words": [[text, start, end]]}. None
+    when the reader gave no durations."""
     import numpy as np
 
     from pilot.system.voice_by_language import kokoro_lang_code
 
     pipeline = _get_pipeline(kokoro_lang_code(voice))  # the reader of the voice's own language ("ef_dora": Spanish)
     _allow_fetching_missing_voice(voice)
-    chunks = [
-        _to_numpy(audio)
-        for _graphemes, _phonemes, audio in pipeline(
-            text,
-            voice=voice,
-            speed=1.0,
-            split_pattern=r"\n+",
-        )
-    ]
+    chunks = []
+    phonemes: list[list[Any]] = []
+    words: list[list[Any]] = []
+    offset = 0
+    timed = timing
+    for result in pipeline(text, voice=voice, speed=1.0, split_pattern=r"\n+"):
+        audio = _to_numpy(result[2])
+        chunks.append(audio)
+        if timed:
+            timed = _add_timing(result, pipeline, len(audio), offset, phonemes, words)
+        offset += len(audio)
     if not chunks:
         raise RuntimeError("Kokoro produced no audio")
-    return np.concatenate(chunks), SAMPLE_RATE
+    found = {"rate": SAMPLE_RATE, "samples": offset, "phonemes": phonemes, "words": words} if timed else None
+    return np.concatenate(chunks), SAMPLE_RATE, found
+
+
+def _add_timing(
+    result: Any, pipeline: Any, samples: int, offset: int, phonemes: list[list[Any]], words: list[list[Any]]
+) -> bool:
+    """Add one chunk's phonemes (and English words) at ``offset`` samples. Kokoro predicts a duration per phoneme it
+    knows, plus one before and one after (pred_dur, in frames of 600 samples); they are scaled to the chunk's real
+    length. False when the chunk has no durations or they do not line up with its phonemes."""
+    durations = getattr(result, "pred_dur", None)
+    symbols_text = getattr(result, "phonemes", None)
+    if durations is None or not isinstance(symbols_text, str):
+        return False
+    frames = [int(value) for value in (durations.tolist() if hasattr(durations, "tolist") else durations)]
+    vocab = getattr(getattr(pipeline, "model", None), "vocab", None)
+    symbols = [symbol for symbol in symbols_text if not vocab or symbol in vocab]
+    if len(frames) != len(symbols) + 2 or sum(frames) <= 0:
+        return False
+    per_frame = samples / sum(frames) / SAMPLE_RATE
+    start = offset / SAMPLE_RATE
+    clock = start + frames[0] * per_frame
+    for symbol, count in zip(symbols, frames[1:-1], strict=True):
+        phonemes.append([symbol, round(clock, 4), round(clock + count * per_frame, 4)])
+        clock += count * per_frame
+    for token in getattr(result, "tokens", None) or []:
+        begin, end = getattr(token, "start_ts", None), getattr(token, "end_ts", None)
+        if isinstance(begin, (int, float)) and isinstance(end, (int, float)):
+            words.append([str(getattr(token, "text", "")), round(start + begin, 4), round(start + end, 4)])
+    return True
 
 
 def prepare(voice: str) -> None:
@@ -157,6 +196,20 @@ def synthesize_to_file_here(text: str, voice: str, output_file: str) -> None:
 
     audio, sample_rate = _generate(text, voice)
     soundfile.write(output_file, audio, sample_rate)
+
+
+def synthesize_with_timing_here(text: str, voice: str, output_file: str, timing_file: str) -> None:
+    """As synthesize_to_file_here, and write when each phoneme is said to ``timing_file`` (JSON, see
+    _generate_timed); no file when the reader gave no durations. Asked for only while a face is shown."""
+    import json
+
+    import soundfile
+
+    audio, sample_rate, timing = _generate_timed(text, voice)
+    soundfile.write(output_file, audio, sample_rate)
+    if timing is not None:
+        with open(timing_file, "w", encoding="utf-8") as handle:
+            json.dump(timing, handle, ensure_ascii=False)
 
 
 async def synthesize_to_file(text: str, voice: str, output_file: str) -> None:

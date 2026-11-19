@@ -3820,6 +3820,55 @@ model chain-of-thought.
 `awaiting_approval`, `acting`, `verifying`, `correcting`, `speaking`,
 `completed`, `interrupted`, or `failed`.
 
+`speaking` is sent when the first piece of a spoken reply goes to the speaker
+(the first `voice_piece` below), with `message` "Speaking". When the reply ends
+or is cut off, the phase goes back to what it was before, unless something else
+changed it meanwhile.
+
+### `voice_piece`, `voice_end`, `voice_cut`
+Heliox's own speech, as it happens (`pilot.system.speech_notices`). The daemon
+plays every sound itself, so these are how the window knows when Heliox speaks.
+They are put on a queue and sent by their own task: speech never waits for them.
+A reply is one spoken text (one `speak`); it plays as one or more pieces.
+
+`voice_piece`, sent when a piece is handed to the output line:
+
+```json
+{
+  "reply": 12,
+  "index": 0,
+  "seconds": 1.42,
+  "lead_ms": 48.0,
+  "voice": "local",
+  "mouth": "visemes",
+  "visemes": [["sil", 0, 30], ["PP", 30, 95], ["aa", 95, 260]],
+  "words": [["Siobhan", 30, 540]],
+  "sent_ms": 1795400000123.4
+}
+```
+
+- `seconds`: the piece's length (null for the system voice, which plays by itself).
+- `lead_ms`: the daemon's estimate of the time from `sent_ms` to the piece's
+  first sample at the speaker: the output line's latency, or the device's own
+  figure for the first block after the line opened. Null when unknown.
+- `sent_ms`: wall-clock milliseconds when the piece was handed over.
+- `mouth`: what moves a face's mouth.
+  - `"visemes"`: `visemes` is a list of `[shape, start_ms, end_ms]` from 0 to the
+    end of the piece with no gaps. Shapes: `sil`, `PP`, `FF`, `TH`, `DD`, `kk`,
+    `CH`, `SS`, `nn`, `RR`, `aa`, `E`, `I`, `O`, `U` (docs/FACE_PACKS.md).
+    `words` (English only) is `[text, start_ms, end_ms]`.
+  - `"envelope"`: no phoneme timing for this audio (another engine, a piece kept
+    from earlier). `envelope` is loudness from 0 to 15, `envelope_rate` (25)
+    values a second.
+  - `"none"`: there are no samples to time a mouth by (the system voice).
+  - `"off"`: no face is chosen (`face.pack` is `"off"`), so nothing was made.
+
+`voice_end` `{ "reply": 12, "pieces": 3, "sent_ms": ... }`: the reply played to
+the end. `voice_cut` `{ "reply": 12, "index": 1, "sent_ms": ... }`: the reply is
+being cut off (the person spoke over it, or a newer reply took the voice); sent
+as the fade starts, before the speech task has stopped. A reply gets one of the
+two, never both, and none when no piece of it played.
+
 ### `task_complete`
 Terminal, sanitized summary for an interactive task.
 

@@ -1057,6 +1057,9 @@ class _Playback:
         # estimate of how long it takes from there to the speaker.
         self.first_block_at: float | None = None
         self.first_dac_delay: float | None = None
+        # Told when this piece is on the line, with the seconds until its first sample is heard (speech_notices).
+        self.on_handed: Any = None
+        self.first_block = threading.Event()
 
     def callback(self, outdata: Any, frames: int, time_info: Any, _status: Any) -> None:
         if self.first_block_at is None:
@@ -1065,6 +1068,7 @@ class _Playback:
                 self.first_dac_delay = float(time_info.outputBufferDacTime) - float(time_info.currentTime)
             except (AttributeError, TypeError, ValueError):
                 self.first_dac_delay = None
+            self.first_block.set()
         chunk = self.audio[self.position : self.position + frames]
         self.position += len(chunk)
         outdata[: len(chunk)] = chunk
@@ -1108,6 +1112,8 @@ class _Playback:
         self.fit_to_line()
         self.stream = _output_line.ensure(self.sample_rate, self.audio.shape[1])
         _output_line.attach(self)
+        if self.on_handed is not None:
+            self._report_handed()
         # The device can disappear mid-sentence (headphones unplugged): its callbacks stop, and without a limit
         # Heliox would wait for the end of a sentence that never plays.
         if not self.finished.wait(len(self.audio) / max(1, self.sample_rate) + 2.0):
@@ -1118,6 +1124,34 @@ class _Playback:
         # Let the last block reach the speaker before the next sentence takes the line.
         time.sleep(max(0.0, float(getattr(self.stream, "latency", 0.0) or 0.0)))
         _output_line.detach(self)
+
+    def _report_handed(self) -> None:
+        """Tell on_handed how long until this piece's first sample is heard. On a running line that is the line's
+        output latency (the next block holds the piece). On a line that has just opened the device may take a second
+        to start, so the answer waits for the first block, on a thread of its own: playback never waits for it."""
+        hook = self.on_handed
+
+        def latency() -> float | None:
+            try:
+                return float(getattr(self.stream, "latency", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                return None
+
+        def call(lead: float | None) -> None:
+            try:
+                hook(lead)
+            except Exception:
+                logger.debug("The piece notice failed", exc_info=True)
+
+        if _output_line.running.is_set():
+            call(latency())
+            return
+
+        def after_first_block() -> None:
+            if self.first_block.wait(len(self.audio) / max(1, self.sample_rate) + 2.0):
+                call(self.first_dac_delay if self.first_dac_delay is not None else latency())
+
+        threading.Thread(target=after_first_block, name="heliox-piece-notice", daemon=True).start()
 
     def cut(self) -> None:
         """Fade out over the next block; the line plays silence after it. Returns at once: nothing here waits on
@@ -1169,28 +1203,49 @@ async def play_on_output_line(audio: Any, sample_rate: int) -> None:
     """Play audio through the shared output line: the one way the daemon puts sound out in its own process, so the
     line's rules hold for it (kept open, faded on a cut, and on a Mac with the microphone on the same device, the
     microphone reopened after any new open). Cancelling cuts it at once."""
-    playback = _Playback(audio, sample_rate)
-    try:
-        await asyncio.to_thread(playback.play)
-    except asyncio.CancelledError:
-        await asyncio.to_thread(playback.cut)
-        raise
+    from pilot.system import speech_notices
+
+    with speech_notices.reply():
+        playback = _Playback(audio, sample_rate)
+        face = speech_notices.face_on()
+        mouth = await asyncio.to_thread(speech_notices.mouth_for, None, audio, sample_rate) if face else None
+        # The seconds as played, from the samples given: fitting them to the line's rate later keeps the length.
+        playback.on_handed = speech_notices.handed(mouth, len(audio) / max(1, sample_rate))
+        try:
+            await asyncio.to_thread(playback.play)
+        except asyncio.CancelledError:
+            speech_notices.cut_now()  # the window stops the mouth as the fade starts
+            await asyncio.to_thread(playback.cut)
+            raise
+
+
+def _read_piece(path: Path) -> tuple[Any, int, Any]:
+    """A piece's samples, rate and, while a face is shown, its mouth data (speech_notices.mouth_for)."""
+    from pilot.system import speech_notices
+
+    audio, sample_rate = _read_audio_file(path)
+    return audio, sample_rate, speech_notices.mouth_for(path, audio, sample_rate)
 
 
 async def _play_local_tts_file(path: Path) -> None:
     """Play a synthesized WAV without importing the model runtime. Cancelling it (barge-in) cuts it at once."""
-    audio, sample_rate = await asyncio.to_thread(_read_audio_file, path)
-    playback = _Playback(audio, sample_rate)
-    from pilot.system.local_tts_worker import speech_progress
+    from pilot.system import speech_notices
 
-    progress = speech_progress.get()
-    if progress is not None:
-        progress.playing = playback  # its position says how much of this piece was heard if it is cut
-    try:
-        await asyncio.to_thread(playback.play)
-    except asyncio.CancelledError:
-        await asyncio.to_thread(playback.cut)
-        raise
+    audio, sample_rate, mouth = await asyncio.to_thread(_read_piece, path)
+    with speech_notices.reply():
+        playback = _Playback(audio, sample_rate)
+        playback.on_handed = speech_notices.handed(mouth, len(playback.audio) / max(1, sample_rate))
+        from pilot.system.local_tts_worker import speech_progress
+
+        progress = speech_progress.get()
+        if progress is not None:
+            progress.playing = playback  # its position says how much of this piece was heard if it is cut
+        try:
+            await asyncio.to_thread(playback.play)
+        except asyncio.CancelledError:
+            speech_notices.cut_now()  # the window stops the mouth as the fade starts
+            await asyncio.to_thread(playback.cut)
+            raise
 
 
 async def _shutdown_local_tts_worker() -> None:
@@ -1257,13 +1312,28 @@ async def speak(
 
     await _supersede_current_speech()
 
-    task = asyncio.ensure_future(_speak_impl(text, voice, rate, volume, output_file))
+    task = asyncio.ensure_future(_speak_noticed(text, voice, rate, volume, output_file))
     _current_speech_task = task
     try:
         return await task
     finally:
         if _current_speech_task is task:
             _current_speech_task = None
+
+
+async def _speak_noticed(
+    text: str,
+    voice: str | None,
+    rate: int,
+    volume: float,
+    output_file: str | None,
+) -> str:
+    """_speak_impl as one reply for the window (speech_notices): a notice per piece played, one when it ends, one
+    when it is cut off."""
+    from pilot.system import speech_notices
+
+    with speech_notices.reply():
+        return await _speak_impl(text, voice, rate, volume, output_file)
 
 
 async def _speak_impl(
@@ -1346,6 +1416,10 @@ async def _speak_impl(
         record_reply_voice("system", "system_local_unavailable", local_unavailable[:200])
     else:
         record_reply_voice("system", "system_chosen", "the system voice is the chosen voice")
+    if not output_file:
+        from pilot.system import speech_notices
+
+        speech_notices.unvoiced_piece()  # it plays by itself: no samples here to move a mouth by
     if CURRENT_PLATFORM == Platform.WINDOWS:
         result = await _tts_windows(spoken_text, system_voice, rate, volume, output_file)
     elif CURRENT_PLATFORM == Platform.MACOS:

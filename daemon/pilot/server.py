@@ -10689,6 +10689,11 @@ class PilotServer:
                             "status": "error",
                             "message": f"typed_decision.{k} must be an absolute local path",
                         }
+                if section == "face" and k == "pack":
+                    from pilot.config import face_pack_valid
+
+                    if not isinstance(v, str) or not face_pack_valid(v):
+                        return {"status": "error", "message": 'face.pack must be "off" or a face pack id'}
                 from pilot.config import _validate_config_types
 
                 try:
@@ -14502,6 +14507,7 @@ def handle_tool(tool_name, params):
         configured host and port, and announces new features to clients.
         """
         self._running = True
+        self._install_speech_notices()
         from pilot.system.startup import StartupProgress
         from pilot.system.storage_health import preflight, storage
 
@@ -14684,6 +14690,11 @@ def handle_tool(tool_name, params):
         """
         self._stop_deadline = time.monotonic() + STOP_TOTAL_SECONDS
         self._running = False
+        if self.__dict__.get("_speech_notices_installed"):
+            from pilot.system import speech_notices
+
+            speech_notices.uninstall()
+            self._speech_notices_installed = False
         run_record = self.__dict__.get("_run_record")
         if run_record is not None:  # first: a stop on purpose is a clean end even if it is cut short later
             await self._bounded_stop_step("run record", asyncio.to_thread(run_record.end_cleanly, "stopped"))
@@ -16649,6 +16660,19 @@ def handle_tool(tool_name, params):
                 await self._arm_voice_follow_up()
             except Exception:
                 pass
+
+    def _install_speech_notices(self) -> None:
+        """The window hears when Heliox speaks: voice_piece, voice_end and voice_cut (pilot.system.speech_notices),
+        and the interaction phase reads "speaking" meanwhile. The mouth data in them is made only while a face is
+        chosen (face.pack, Settings, Appearance)."""
+        from pilot.system import speech_notices
+
+        speech_notices.install(
+            self._broadcast_notification,
+            face_on=lambda: str(getattr(getattr(self.config, "face", None), "pack", "off") or "off") != "off",
+            phase=self._interaction_runtime,
+        )
+        self._speech_notices_installed = True
 
     async def _voice_status_broadcast(self, status: str, data: dict) -> None:
         """Called by ContinuousVoiceListener for status updates.

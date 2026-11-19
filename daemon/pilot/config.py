@@ -860,6 +860,24 @@ class GpuConfig:
 
 
 @dataclass
+class FaceConfig:
+    """The talking face in the conversation view (docs/FACE_PACKS.md). "off" (the default) or the id of a face pack
+    the window has installed, picked in Settings, Appearance. While it is off the daemon makes no mouth data for the
+    window (pilot.system.speech_notices). The face is never tied to the voice: any face goes with any voice."""
+
+    pack: str = "off"
+
+
+FACE_PACK_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+
+
+def face_pack_valid(pack: str) -> bool:
+    """``pack`` is "off" or could name a face pack folder (lower-case letters, digits and dashes): the window builds a
+    path from it."""
+    return pack == "off" or bool(FACE_PACK_ID.match(pack))
+
+
+@dataclass
 class RedisConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
@@ -971,6 +989,7 @@ class PilotConfig:
     cognitive: CognitiveConfig = field(default_factory=CognitiveConfig)
     typed_decision: TypedDecisionConfig = field(default_factory=TypedDecisionConfig)
     gpu: GpuConfig = field(default_factory=GpuConfig)
+    face: FaceConfig = field(default_factory=FaceConfig)
 
     @classmethod
     def load(cls) -> PilotConfig:
@@ -1567,6 +1586,9 @@ def _validate_config_types(raw: dict) -> None:
             "fault_window_seconds": (int, float),
             "speech_despite_driver_errors": bool,
         },
+        "face": {
+            "pack": str,
+        },
         "proxy": {
             "http": str,
             "https": str,
@@ -2016,6 +2038,11 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["gpu"].items():
             if hasattr(config.gpu, k):
                 setattr(config.gpu, k, v)
+
+    if "face" in raw and isinstance(raw["face"], dict):
+        pack = raw["face"].get("pack")
+        if isinstance(pack, str) and face_pack_valid(pack):
+            config.face.pack = pack
 
     if "proxy" in raw and isinstance(raw["proxy"], dict):
         for k, v in raw["proxy"].items():
