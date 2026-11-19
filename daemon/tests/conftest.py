@@ -32,6 +32,16 @@ if os.environ.get("HELIOX_REAL_VOICE_MODELS") != "1":
 
 from pilot.config import PilotConfig  # noqa: E402
 
+if os.environ.get("HELIOX_TEST_GPU") != "1":
+    # nvidia-smi is the driver's own program and reads the card whatever CUDA_VISIBLE_DEVICES says. The GPU arbiter
+    # every test shares reads a machine without an NVIDIA driver, as on CI; a test that decides over made-up cards
+    # gives its arbiter its own reading and environment.
+    import functools
+
+    from pilot.system import gpu_arbiter as _gpu_arbiter
+
+    _gpu_arbiter.arbiter().read = functools.partial(_gpu_arbiter.read_machine, nvidia=lambda: None)
+
 # Keep ordinary CI lightweight; research checks can explicitly use real Torch.
 if os.environ.get("HELIOX_TEST_REAL_TORCH") != "1":
     sys.modules["torch"] = None

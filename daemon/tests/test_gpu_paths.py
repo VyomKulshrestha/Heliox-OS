@@ -152,6 +152,7 @@ def voice_manager(error: str):
         return Worker(device, error)
 
     manager = LocalTTSWorkerManager(spawn=spawn)
+    manager.environ = {}  # a made-up machine with every card visible; the test process keeps CUDA_VISIBLE_DEVICES=-1
     manager.choose_device = lambda configured: (configured, True)
     manager.on_gpu_fault = lambda component, reason: faults.append(component)
 
@@ -164,7 +165,6 @@ def voice_manager(error: str):
 
 @pytest.fixture
 def cuda_torch(monkeypatch):
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     monkeypatch.setattr(gpu_paths, "torch_build", lambda platform=None: "cuda")
 
 
@@ -203,7 +203,6 @@ async def test_a_voice_worker_with_a_device_error_is_still_a_fault(cuda_torch):
 
 @pytest.mark.asyncio
 async def test_a_cpu_build_of_torch_never_takes_the_card(monkeypatch):
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     monkeypatch.setattr(gpu_paths, "torch_build", lambda platform=None: "cpu")
     manager, started, faults, _said = voice_manager("")
     await speak(manager)

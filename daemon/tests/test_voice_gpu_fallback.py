@@ -84,6 +84,7 @@ def manager_on_a_failing_card(fail_on: str, arbiter: tuple[str, bool] = ("auto",
         return worker
 
     manager = LocalTTSWorkerManager(spawn=spawn)
+    manager.environ = {}  # a made-up machine with every card visible; the test process keeps CUDA_VISIBLE_DEVICES=-1
     asked: list[str] = []
 
     def choose(configured: str) -> tuple[str, bool]:
@@ -110,11 +111,6 @@ async def speak(manager: LocalTTSWorkerManager, text: str) -> list[Path]:
 
     await manager.speak("kokoro_tts", text, "af_heart", None, play)
     return played
-
-
-@pytest.fixture(autouse=True)
-def every_card_visible(monkeypatch):
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
 
 
 @pytest.mark.asyncio
@@ -144,13 +140,24 @@ async def test_after_a_gpu_error_the_same_voice_goes_on_on_the_cpu_for_the_sessi
 
 
 @pytest.mark.asyncio
-async def test_an_empty_cuda_visible_devices_keeps_the_voice_off_the_card(monkeypatch):
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+async def test_an_empty_cuda_visible_devices_keeps_the_voice_off_the_card():
     manager, started, leases, asked, _faults, said = manager_on_a_failing_card("speak")
+    manager.environ = {"CUDA_VISIBLE_DEVICES": ""}
     assert len(await speak(manager, "Hello.")) == 1
     assert [w.device for w in started] == ["cpu"] and leases == [False]
     assert asked == []  # every card hidden: nothing to ask the arbiter
     assert "voice_on_cpu" not in [s for s, _ in said]
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_without_an_environment_of_its_own_the_voice_reads_the_daemon_s(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")  # as the suite sets it (conftest): every card hidden
+    manager, started, leases, asked, _faults, said = manager_on_a_failing_card("speak")
+    manager.environ = None  # what the daemon runs with
+    assert len(await speak(manager, "Hello.")) == 1
+    assert [w.device for w in started] == ["cpu"] and leases == [False] and asked == []
+    assert manager.device_reason == "On the processor: CUDA_VISIBLE_DEVICES hides every graphics card."
     await manager.shutdown()
 
 
@@ -195,12 +202,10 @@ def test_the_worker_itself_stays_off_a_hidden_card(monkeypatch):
 def test_kokoro_configured_for_the_card_runs_on_the_cpu_when_every_card_is_hidden(monkeypatch):
     from pilot.system import kokoro_tts
 
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")
     try:
-        kokoro_tts.configure(device="cuda")
+        kokoro_tts.configure(device="cuda", environ={"CUDA_VISIBLE_DEVICES": "-1"})
         assert kokoro_tts._device == "cpu"
-        monkeypatch.delenv("CUDA_VISIBLE_DEVICES")
-        kokoro_tts.configure(device="cuda")
+        kokoro_tts.configure(device="cuda", environ={})  # a made-up machine with every card visible
         assert kokoro_tts._device == "cuda"
     finally:
         kokoro_tts.configure(device="auto")

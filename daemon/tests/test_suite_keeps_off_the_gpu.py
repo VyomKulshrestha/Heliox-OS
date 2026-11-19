@@ -32,3 +32,13 @@ def test_the_hugging_face_cache_is_the_session_folder_and_offline():
     assert os.environ["HF_HUB_OFFLINE"] == "1"
     for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "SENTENCE_TRANSFORMERS_HOME"):
         assert name not in os.environ
+
+
+@pytest.mark.skipif(os.environ.get("HELIOX_TEST_GPU") == "1", reason="the card was asked for on purpose")
+def test_the_shared_gpu_arbiter_reads_a_machine_without_an_nvidia_driver():
+    """nvidia-smi reads the card whatever CUDA_VISIBLE_DEVICES says: the arbiter the tests share never runs it, so on
+    a machine with an NVIDIA card it reads no card at all."""
+    from pilot.system import gpu_arbiter
+
+    reading = gpu_arbiter.arbiter().reading(fresh=True)
+    assert reading.kind in ("cpu", "apple") and reading.gpus == ()

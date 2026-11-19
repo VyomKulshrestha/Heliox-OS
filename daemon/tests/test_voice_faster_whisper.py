@@ -10,7 +10,6 @@ import pilot.system.voice as voice
 
 @pytest.fixture(autouse=True)
 def _clear_model_cache(monkeypatch):
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)  # made-up cards: unhide what the suite hides
     voice._faster_whisper_model_cache.clear()
     # These tests are about devices and decoding: the model counts as on this computer (presence has its own tests).
     monkeypatch.setattr("pilot.system.model_presence.faster_whisper_source", lambda name: name)
@@ -91,7 +90,9 @@ async def test_unknown_transcription_engine_is_rejected():
 
 @pytest.fixture
 def gpu_world(monkeypatch):
-    """One NVIDIA card as ctranslate2 and the arbiter see it; the test sets its temperature and holder."""
+    """One NVIDIA card as ctranslate2 and the arbiter see it; the test sets its temperature and holder. The made-up
+    machine has its own environment (every card visible); the test process keeps CUDA_VISIBLE_DEVICES=-1 (conftest),
+    so the real card stays hidden from it."""
     from pilot.system import gpu_arbiter
 
     card = {"temperature": 60.0, "holder": None, "free": 6 * gpu_arbiter.GIB}
@@ -101,6 +102,7 @@ def gpu_world(monkeypatch):
             gpus=(gpu_arbiter.GpuInfo(0, "RTX 4060", card["temperature"], card["free"], 8 * gpu_arbiter.GIB),),
         ),
         holder=lambda: card["holder"],
+        environ={},
     )
     monkeypatch.setattr(gpu_arbiter, "_shared", shared)
     monkeypatch.setitem(__import__("sys").modules, "ctranslate2", SimpleNamespace(get_cuda_device_count=lambda: 1))

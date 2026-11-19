@@ -746,6 +746,9 @@ class LocalTTSWorkerManager:
         self.effective_device: str | None = None
         self.choose_device: Callable[[str], tuple[str, bool]] | None = None
         self.on_gpu_fault: Callable[[str, str], Any] | None = None
+        # Where CUDA_VISIBLE_DEVICES is read (cuda_hidden); None: the daemon's own environment. Tests give a made-up
+        # machine its own environment here and keep every card hidden from the test process itself.
+        self.environ: Any = None
         # Why the voice runs on the CPU for the rest of the session ("" while the GPU may still be used).
         self.cpu_for_session = ""
         # Where the running worker's voice runs and why, in plain words, for the model health status.
@@ -878,7 +881,7 @@ class LocalTTSWorkerManager:
                 self._mark_failed(engine, reason)
                 raise LocalTTSUnavailable(f"{engine}: {reason}")
             device, gpu_lease = self.device, False
-            if device != "cpu" and (self.cpu_for_session or cuda_hidden()):
+            if device != "cpu" and (self.cpu_for_session or cuda_hidden(self.environ)):
                 device = "cpu"  # a GPU error earlier this session, or every card hidden
             elif self.choose_device is not None:
                 try:
@@ -1063,7 +1066,7 @@ class LocalTTSWorkerManager:
             return gpu_paths.on_processor_because_missing(missing)
         if self.cpu_for_session:
             return "On the processor for this session: the graphics card failed for the voice."
-        if cuda_hidden():
+        if cuda_hidden(self.environ):
             return "On the processor: CUDA_VISIBLE_DEVICES hides every graphics card."
         return "On the processor: the graphics card was hot, busy or switched off when it started."
 

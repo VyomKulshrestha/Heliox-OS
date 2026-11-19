@@ -364,11 +364,11 @@ def test_cpu_device_is_passed_to_kokoro(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_too_little_free_memory_speaks_with_the_system_voice_and_starts_no_worker(monkeypatch) -> None:
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)  # the card visible: the suite hides it (conftest)
+async def test_too_little_free_memory_speaks_with_the_system_voice_and_starts_no_worker() -> None:
     clock = FakeClock()
     spawner = Spawner(FakeWorker())
     manager = _manager(spawner, clock)
+    manager.environ = {}  # a made-up machine with every card visible; the test process keeps CUDA_VISIBLE_DEVICES=-1
     manager.free_memory = lambda: int(1.2 * 1024**3)  # an 8 GB machine with little left
 
     with pytest.raises(LocalTTSUnavailable) as raised:

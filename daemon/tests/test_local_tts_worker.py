@@ -71,8 +71,8 @@ def _spoken(worker: _SuccessfulWorker) -> list[str]:
 
 @pytest.fixture(autouse=True)
 def _fresh_manager(monkeypatch: pytest.MonkeyPatch) -> local_tts_worker.LocalTTSWorkerManager:
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)  # every card visible: "auto" stays "auto"
     fresh = local_tts_worker.LocalTTSWorkerManager()
+    fresh.environ = {}  # every card visible on the made-up machine ("auto" stays "auto"); the process keeps "-1"
     monkeypatch.setattr(local_tts_worker, "_manager", fresh)
     return fresh
 

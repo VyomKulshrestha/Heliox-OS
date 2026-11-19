@@ -27,13 +27,9 @@ from pilot.system.gpu_arbiter import (
     visible_from_env,
 )
 
-
-@pytest.fixture(autouse=True)
-def _cards_visible(monkeypatch):
-    """The suite hides every card (conftest: CUDA_VISIBLE_DEVICES=-1); these tests decide over made-up cards, so the
-    variable is unset here unless a test sets it itself."""
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
-
+# The suite hides every card from the test process (conftest: CUDA_VISIBLE_DEVICES=-1) and it stays hidden here. These
+# tests decide over made-up cards, so each made-up machine has its own environment: MADE_UP_ENV, every card visible.
+MADE_UP_ENV: dict[str, str] = {}
 
 GNOMON = Needs(gpu_bytes=int(3.5 * GIB), host_bytes=int(2.5 * GIB), requires_cuda=True)
 VOICE = gpu_arbiter.VOICE_NEEDS
@@ -182,7 +178,9 @@ class _Clock:
 
 def test_three_faults_in_ten_minutes_switch_the_gpu_off_for_the_session():
     clock = _Clock()
-    arbiter = GpuArbiter(read=lambda: _nvidia(_card()), holder=lambda: None, clock=clock, wall=lambda: 0.0)
+    arbiter = GpuArbiter(
+        environ=MADE_UP_ENV, read=lambda: _nvidia(_card()), holder=lambda: None, clock=clock, wall=lambda: 0.0
+    )
     assert arbiter.record_fault("gnomon", "exit") is False
     clock.now += 700  # outside the window
     assert arbiter.record_fault("voice", "exit") is False
@@ -201,7 +199,7 @@ def test_three_faults_in_ten_minutes_switch_the_gpu_off_for_the_session():
 
 
 def test_settings_out_of_range_keep_their_defaults():
-    arbiter = GpuArbiter(read=lambda: _nvidia(_card()), holder=lambda: None)
+    arbiter = GpuArbiter(environ=MADE_UP_ENV, read=lambda: _nvidia(_card()), holder=lambda: None)
     arbiter.configure(SimpleNamespace(max_temperature_c=500, vram_headroom_mb=256, fault_limit=0))
     assert arbiter.max_temperature_c == 83.0 and arbiter.headroom_bytes == 256 * 1024**2 and arbiter.fault_limit == 3
 
@@ -210,7 +208,7 @@ def test_a_probe_that_raises_never_takes_the_caller_down():
     def broken():
         raise RuntimeError("driver gone")
 
-    assert GpuArbiter(read=broken, holder=lambda: None).check("voice", VOICE).code == "no_gpu"
+    assert GpuArbiter(environ=MADE_UP_ENV, read=broken, holder=lambda: None).check("voice", VOICE).code == "no_gpu"
 
 
 @pytest.mark.parametrize(
@@ -224,13 +222,17 @@ def test_a_probe_that_raises_never_takes_the_caller_down():
     ],
 )
 def test_voice_device_per_machine(monkeypatch, reading, configured, expected):
-    monkeypatch.setattr(gpu_arbiter, "_shared", GpuArbiter(read=lambda: reading, holder=lambda: None))
+    monkeypatch.setattr(
+        gpu_arbiter, "_shared", GpuArbiter(environ=MADE_UP_ENV, read=lambda: reading, holder=lambda: None)
+    )
     assert gpu_arbiter.voice_device(configured) == expected
 
 
 def test_voice_moves_to_the_cpu_while_gnomon_holds_the_card(monkeypatch):
     holder = {"component": "gnomon", "pid": 1}
-    monkeypatch.setattr(gpu_arbiter, "_shared", GpuArbiter(read=lambda: _nvidia(_card()), holder=lambda: holder))
+    monkeypatch.setattr(
+        gpu_arbiter, "_shared", GpuArbiter(environ=MADE_UP_ENV, read=lambda: _nvidia(_card()), holder=lambda: holder)
+    )
     assert gpu_arbiter.voice_device("auto") == ("cpu", False)
 
 

@@ -94,8 +94,7 @@ def test_autonomy_review_status_carries_every_local_model_and_the_gpu(monkeypatc
     assert card["device"] == "cpu" and card["reason"].startswith("No NVIDIA graphics card")
 
 
-async def test_the_voice_starts_on_the_cpu_when_the_arbiter_says_the_card_is_hot_and_counts_gpu_faults(monkeypatch):
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)  # the card visible: the suite hides it (conftest)
+async def test_the_voice_starts_on_the_cpu_when_the_arbiter_says_the_card_is_hot_and_counts_gpu_faults():
     from tests.test_local_voice_lifecycle import FakeClock, FakeWorker
 
     calls, faults = [], []
@@ -107,6 +106,7 @@ async def test_the_voice_starts_on_the_cpu_when_the_arbiter_says_the_card_is_hot
     clock = FakeClock()
     worker = FakeWorker(load_reply=CUDA_FAULT)
     manager = LocalTTSWorkerManager(spawn=spawn, clock=clock, sleep=clock.sleep)
+    manager.environ = {}  # a made-up machine with every card visible; the test process keeps CUDA_VISIBLE_DEVICES=-1
     manager.choose_device = lambda configured: ("cpu", False)  # hot card
     manager.on_gpu_fault = lambda component, reason: faults.append(component)
     with pytest.raises(LocalTTSUnavailable):
@@ -125,11 +125,10 @@ async def test_the_voice_starts_on_the_cpu_when_the_arbiter_says_the_card_is_hot
     await manager.shutdown()
 
 
-async def test_a_cuda_error_from_a_worker_started_on_the_cpu_is_a_plain_failure_and_nothing_is_remembered(monkeypatch):
+async def test_a_cuda_error_from_a_worker_started_on_the_cpu_is_a_plain_failure_and_nothing_is_remembered():
     """The arbiter put the voice on the CPU (a hot card) and its load failed with an error that names CUDA: no GPU
     fault for the arbiter, no CPU-for-the-session, and the system voice until it recovers. When the card is cool
     again, the next start asks for the card."""
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)  # the card visible: the suite hides it (conftest)
     from tests.test_local_voice_lifecycle import FakeClock, FakeWorker
 
     calls, faults = [], []
@@ -141,6 +140,7 @@ async def test_a_cuda_error_from_a_worker_started_on_the_cpu_is_a_plain_failure_
     clock = FakeClock()
     worker = FakeWorker(load_reply=CUDA_FAULT)
     manager = LocalTTSWorkerManager(spawn=spawn, clock=clock, sleep=clock.sleep)
+    manager.environ = {}  # a made-up machine with every card visible; the test process keeps CUDA_VISIBLE_DEVICES=-1
     manager.choose_device = lambda configured: ("cpu", False)  # hot card
     manager.on_gpu_fault = lambda component, reason: faults.append(component)
     with pytest.raises(LocalTTSUnavailable):

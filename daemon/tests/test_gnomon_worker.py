@@ -141,6 +141,9 @@ class Spawner:
 
 
 def _arbiter(reading: MachineReading = COOL, **kwargs) -> GpuArbiter:
+    """A made-up machine with its own environment (every card visible); the test process keeps the suite's
+    CUDA_VISIBLE_DEVICES=-1 (conftest), so the real card stays hidden from it."""
+    kwargs.setdefault("environ", {})
     return GpuArbiter(read=lambda: reading, holder=lambda: None, **kwargs)
 
 
@@ -168,7 +171,6 @@ async def _until(predicate, timeout: float = 3.0) -> bool:
 
 @pytest.fixture(autouse=True)
 def _fast_restarts(monkeypatch):
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)  # made-up cards: unhide what the suite hides
     monkeypatch.setattr(gnomon_worker, "RESTART_BASE_SECONDS", 0.2)
 
 

@@ -22,13 +22,14 @@ _device = "auto"
 _offline_by_us = False
 
 
-def configure(*, device: str = "auto") -> None:
-    """Choose where the model runs: "auto" (CUDA when present), "cpu" or "cuda"."""
+def configure(*, device: str = "auto", environ: Any = None) -> None:
+    """Choose where the model runs: "auto" (CUDA when present), "cpu" or "cuda". ``environ``: where
+    CUDA_VISIBLE_DEVICES is read; None means this process's own environment."""
     global _device
     _device = device if device in {"auto", "cpu", "cuda"} else "auto"
     from pilot.system.local_tts_worker import cuda_hidden
 
-    if _device != "cpu" and cuda_hidden():
+    if _device != "cpu" and cuda_hidden(environ):
         _device = "cpu"  # CUDA_VISIBLE_DEVICES hides every card
 
 
