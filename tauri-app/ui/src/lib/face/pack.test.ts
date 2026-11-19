@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { imageForShape, installedPacks, manifestProblems, validPackId, type FaceManifest } from "./pack";
 import placeholder from "../../../public/faces/placeholder/manifest.json";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+/** Every image file a manifest names. */
+function filesNamed(manifest: Record<string, any>): string[] {
+  const eyes = manifest.eyes ?? {};
+  return [
+    ...manifest.idle.frames,
+    ...Object.values(manifest.mouth.shapes as Record<string, string>),
+    ...[eyes.open, eyes.listening, eyes.thinking, ...(eyes.blink ?? [])],
+  ].filter((file): file is string => typeof file === "string");
+}
 
 const GOOD = {
   format: 1,
@@ -22,6 +34,22 @@ describe("face packs", () => {
   it("accepts the placeholder that ships, and a realistic pack's manifest", () => {
     expect(manifestProblems(placeholder, "placeholder")).toEqual([]);
     expect(manifestProblems(GOOD, "ana")).toEqual([]);
+  });
+
+  it("ships every listed pack whole: a valid manifest, every file it names, and terms beside a photograph", () => {
+    const faces = join(process.cwd(), "public", "faces"); // vitest runs in tauri-app/ui
+    const listed = JSON.parse(readFileSync(join(faces, "packs.json"), "utf-8")).packs as string[];
+    expect(listed).toContain("placeholder");
+    expect(listed.length).toBeGreaterThan(1);
+    for (const id of listed) {
+      const manifest = JSON.parse(readFileSync(join(faces, id, "manifest.json"), "utf-8"));
+      expect(manifestProblems(manifest, id), id).toEqual([]);
+      for (const file of filesNamed(manifest)) expect(existsSync(join(faces, id, file)), `${id}/${file}`).toBe(true);
+      if (manifest.kind === "photo") {
+        const readme = readFileSync(join(faces, id, "README.md"), "utf-8");
+        expect(readme, `${id}/README.md`).toMatch(/under the project's own licence, the MIT License/);
+      }
+    }
   });
 
   it("names what is wrong with a manifest that cannot be played", () => {

@@ -1,0 +1,96 @@
+{
+  "format": 1,
+  "id": "portrait-man",
+  "name": "Portrait, man",
+  "credit": "Generated with ChatGPT image generation in November 2026; shows no real person. Pack made for Heliox. See README.md in this folder.",
+  "kind": "photo",
+  "size": [
+    512,
+    512
+  ],
+  "idle": {
+    "frames": [
+      "idle-00.webp"
+    ],
+    "fps": 1
+  },
+  "mouth": {
+    "rect": [
+      144,
+      307,
+      249,
+      139
+    ],
+    "shapes": {
+      "sil": "mouth-sil.webp",
+      "PP": "mouth-PP.webp",
+      "FF": "mouth-FF.webp",
+      "SS": "mouth-SS.webp",
+      "aa": "mouth-aa.webp",
+      "E": "mouth-E.webp",
+      "I": "mouth-I.webp",
+      "O": "mouth-O.webp",
+      "U": "mouth-U.webp"
+    }
+  },
+  "states": {
+    "listening": {
+      "lift": -2
+    },
+    "thinking": {
+      "lift": -3
+    }
+  },
+  "breathe": {
+    "amount": 0.004,
+    "seconds": 4.5
+  },
+  "eyes": {
+    "rect": [
+      134,
+      158,
+      244,
+      114
+    ],
+    "blink": [
+      "blink-half.webp",
+      "blink-closed.webp",
+      "blink-half.webp"
+    ],
+    "blink_fps": 24,
+    "blink_every": [
+      2.5,
+      6.0
+    ],
+    "thinking": "eyes-thinking.webp",
+    "glance": [
+      "eyes-glance-1.webp",
+      "eyes-glance-2.webp"
+    ]
+  },
+  "mouth_steps": {
+    "PP": [
+      "mouth-PP-1.webp"
+    ],
+    "SS": [
+      "mouth-SS-1.webp"
+    ],
+    "aa": [
+      "mouth-aa-1.webp",
+      "mouth-aa-2.webp"
+    ],
+    "E": [
+      "mouth-E-1.webp"
+    ],
+    "I": [
+      "mouth-I-1.webp"
+    ],
+    "O": [
+      "mouth-O-1.webp",
+      "mouth-O-2.webp"
+    ],
+    "U": [
+      "mouth-U-1.webp"
+    ]
+  }
+}

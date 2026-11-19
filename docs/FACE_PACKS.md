@@ -118,3 +118,11 @@ be used.
 `public/faces/placeholder` is a line drawing in SVG (curves and ellipses written for Heliox, no source image),
 released under CC0 1.0. It is plainly a
 drawing and draws in the window's own colours (`tint`). It exists to prove the timing until a realistic pack ships.
+
+## The portraits
+
+`public/faces/portrait-woman` ("Portrait, woman") and `public/faces/portrait-man` ("Portrait, man") are photographic
+packs made from generated portraits of people who do not exist: one still idle frame, a blink, thinking eyes and the
+mouth shapes their makers had stills for (the others are drawn with stand-ins). Each folder's `README.md` records how
+every picture was made and states the terms: the pack is distributed with Heliox OS under the project's MIT License.
+A pack may be rebuilt in place (same folder, same id) with more pictures; nothing in the code names its files.
