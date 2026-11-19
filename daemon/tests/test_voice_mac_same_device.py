@@ -1,7 +1,7 @@
 """macOS, with the microphone on the default output's Core Audio device: the output line opens before the microphone
 and stays open, and every later open of the line (another rate, a new default output) reopens the microphone at once.
 Windows, Linux and a Mac with separate devices run today's order. Stand-in PortAudio streams; the checks count events
-in order, never the clock."""
+in order, and the microphone check runs on a clock the test drives (MicClock), never the real one."""
 
 from __future__ import annotations
 
@@ -18,11 +18,13 @@ from pilot.system.platform_detect import Platform
 
 IN_AND_OUT = 3  # one Core Audio device, inputs and outputs together (BlackHole 2ch, a USB headset)
 SPEAKERS = 1
+BLOCK_SECONDS = 0.05  # 800 frames at 16 kHz, the recorder's block
 
 
 class FakeSD:
     """Stand-in PortAudio. An output stream's callback runs once when it starts (the device asked for audio). An
-    input stream keeps delivering blocks from its own thread until it is stopped, unless ``input_plan`` says the next
+    input stream delivers a block when it starts and one per 50 ms of the check's clock (MicClock) until it is
+    stopped, unless ``input_plan`` says the next
     attempt "fails" (raises, like PaMacCore err -50), is "silent" (opens and delivers nothing) or "bursts" (one block,
     then nothing: what run 43419901063 saw)."""
 
@@ -44,6 +46,8 @@ class FakeSD:
         # ``close_gate`` when one is given.
         self.release = threading.Event()
         self.close_gate: threading.Event | None = None
+        self.hangs = 0  # starts that hung so far
+        self.delivering: list = []  # input streams that deliver a block per 50 ms of the check's clock
         sd = self
 
         class Stream:
@@ -66,6 +70,7 @@ class FakeSD:
                 if plan.startswith("hangs"):
                     self.hung = True
                     sd.events.append(f"hung {self.kind} {where}")
+                    sd.hangs += 1
                     sd.release.wait(10)
                     self.active = True
                     if plan == "hangs-then-delivers":
@@ -80,13 +85,17 @@ class FakeSD:
                 elif plan == "bursts":
                     self.callback(np.zeros((800, 1), dtype=np.int16) + 100, 800, None, None)
                 elif plan == "works":
+                    # One block at once, then one per 50 ms of the check's clock (MicClock): the blocks come when
+                    # the check's time passes, however the threads are scheduled.
+                    self.owed = 0.0
+                    self.callback(np.zeros((800, 1), dtype=np.int16) + 100, 800, None, None)
+                    sd.delivering.append(self)
 
-                    def deliver() -> None:
-                        while self.active:
-                            self.callback(np.zeros((800, 1), dtype=np.int16) + 100, 800, None, None)
-                            time.sleep(0.005)
-
-                    threading.Thread(target=deliver, daemon=True).start()
+            def deliver_for(self, seconds: float) -> None:
+                self.owed += seconds
+                while self.active and self.owed >= BLOCK_SECONDS - 1e-9:
+                    self.owed -= BLOCK_SECONDS
+                    self.callback(np.zeros((800, 1), dtype=np.int16) + 100, 800, None, None)
 
             def stop(self) -> None:
                 self.active = False
@@ -130,6 +139,49 @@ class FakeSD:
         self.plugged_in = []
 
 
+class MicClock:
+    """The microphone check's clock (voice._mic_clock), driven by the test. Its time moves only when the check sleeps
+    or gives up on an open, and each sleep has the working stand-in inputs deliver the blocks that time covers, so the
+    verdict never depends on how far another thread got. A sleep still lasts its length in real time: a test that
+    races another thread against the check keeps its window. ``held_up``: extra seconds the next sleep takes, the
+    computer stalled and the inputs with it, so no block comes in them."""
+
+    def __init__(self, sd: FakeSD) -> None:
+        self.sd = sd
+        self.now = 1000.0
+        self.held_up = 0.0
+        self.given_up = 0  # hung opens the check has given up on
+        self._lock = threading.Lock()
+
+    def monotonic(self) -> float:
+        with self._lock:
+            return self.now
+
+    def sleep(self, seconds: float) -> None:
+        with self._lock:
+            stalled, self.held_up = self.held_up, 0.0
+            self.now += seconds + stalled
+            streams = list(self.sd.delivering)
+        if not stalled:
+            for stream in streams:
+                stream.deliver_for(seconds)
+        time.sleep(seconds)
+
+    def wait(self, event: threading.Event, seconds: float) -> bool:
+        """True once the open returns; False, at the first frame's time, once a start has hung (sd.hangs counts them
+        in order, one attempt at a time)."""
+        for _ in range(2000):  # a safety stop after about 10 s, never a verdict
+            if event.is_set():
+                return True
+            with self._lock:
+                if self.sd.hangs > self.given_up:
+                    self.given_up += 1
+                    self.now += seconds
+                    return False
+            time.sleep(0.005)
+        return event.is_set()
+
+
 def setup(
     monkeypatch, platform: Platform, default_in: int, default_out: int
 ) -> tuple[FakeSD, voice._ContinuousRecorder]:
@@ -145,6 +197,7 @@ def setup(
     monkeypatch.setattr(voice, "MIC_CLOSE_WAIT_SECONDS", 5.0)  # stand-in closes return at once: keep the order
     monkeypatch.setattr(voice, "MIC_SUSTAIN_SECONDS", 0.1)
     monkeypatch.setattr(voice, "_portaudio_inputs_open", 0)
+    monkeypatch.setattr(voice, "_mic_clock", MicClock(sd))
     recorder = voice._ContinuousRecorder()
     monkeypatch.setattr(recorder, "_start_windows_wasapi", lambda: False)  # the PortAudio path on every system
     return sd, recorder
@@ -175,6 +228,30 @@ def test_macos_with_one_device_opens_the_output_line_before_the_microphone_and_k
     line.last_used -= voice.OUTPUT_LINE_IDLE_SECONDS + 1
     line._close_if_idle()
     assert line.stream is not None  # no idle close while the microphone shares the device
+    finish(recorder)
+
+
+@pytest.mark.parametrize("window", [0, 1])
+def test_a_check_held_up_by_a_busy_computer_keeps_the_working_microphone(monkeypatch, caplog, window):
+    """CI run 44530473647: a check that woke late read a stream held up with it as "stopped" and reopened a working
+    microphone, which loses the start of what the person says. A window the check overslept is measured again."""
+    caplog.set_level("INFO", logger=voice.logger.name)
+    sd, recorder = setup(monkeypatch, Platform.MACOS, IN_AND_OUT, IN_AND_OUT)
+    clock = voice._mic_clock
+    real_sleep = clock.sleep
+    sleeps = []
+
+    def sleep(seconds: float) -> None:
+        if len(sleeps) == window:
+            clock.held_up = 0.6  # this window's sleep wakes 0.6 s late, and no block came in it
+        sleeps.append(seconds)
+        real_sleep(seconds)
+
+    monkeypatch.setattr(clock, "sleep", sleep)
+    assert recorder._open_capture()
+    assert sd.events == [f"open output {IN_AND_OUT} 24000", f"open input {IN_AND_OUT} 16000"]
+    said = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Microphone check held up")]
+    assert said == ["Microphone check held up 0.60 s: measuring the window again"]
     finish(recorder)
 
 

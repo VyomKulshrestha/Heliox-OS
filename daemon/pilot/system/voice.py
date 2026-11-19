@@ -824,6 +824,29 @@ MIC_FRAMES_WITHIN_SECONDS = 0.5
 # enough: on run 43419901063 an input delivered 0.09 s after its open and stalled for good a second later.
 MIC_SUSTAIN_SECONDS = 1.0
 MIC_SUSTAIN_SHARE = 0.8
+# The check can be held up itself: the computer busy, the daemon not scheduled, the interpreter held by another thread.
+# The stream's callback is held up with it, so a window the check woke from late counts no frames for a microphone
+# that works, and the microphone would be closed and opened again, losing what the person was saying. A window that
+# ran more than MIC_CHECK_LATE_SECONDS past its length is measured again, up to MIC_CHECK_REMEASURES times.
+MIC_CHECK_LATE_SECONDS = 0.1
+MIC_CHECK_REMEASURES = 3
+
+
+class _MicCheckClock:
+    """The clock the microphone check beside the output line reads, sleeps and waits on. Tests replace it with one
+    they drive, so a verdict never depends on how far another thread got in real time."""
+
+    def monotonic(self) -> float:
+        return time.monotonic()
+
+    def sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
+
+    def wait(self, event: threading.Event, seconds: float) -> bool:
+        return event.wait(seconds)
+
+
+_mic_clock = _MicCheckClock()
 # The output line's latency on macOS while the microphone shares its device: PortAudio's default for an output
 # ("high"). Round 4d (run 43422532624): a "low" output stopped a 16 kHz input opened beside it 0.1 to 5 s later (err
 # -50, no frames); at the default latency the same input kept delivering.
@@ -2674,21 +2697,23 @@ class _ContinuousRecorder:
         listener's start, the line is closed and the microphone opened first, as before the fix (it may then stop while
         Heliox speaks, until the watchdog reopens it). After a later open of the line, a last plain open is made and
         the watchdog does the rest, as before."""
+        clock = _mic_clock
         attempts = (0.0, *MIC_RETRY_PAUSES)
         for number, pause in enumerate(attempts, 1):
             if pause:
-                time.sleep(pause)
+                clock.sleep(pause)
             before = self.frames_received
-            started = time.monotonic()
+            started = clock.monotonic()
             first_frame_by = started + MIC_FRAMES_WITHIN_SECONDS  # the open's own time counts against the first frame
             attempt = _InputAttempt(open_input)
-            if not attempt.done.wait(MIC_FRAMES_WITHIN_SECONDS):
+            opened, first_frame_by = self._wait_for_open(attempt, first_frame_by)
+            if not opened:
                 verdict = "the open did not return"
             elif attempt.error is not None:
                 verdict = f"failed ({attempt.error})"
             else:
                 verdict = self._sustained(before, first_frame_by)
-            took = time.monotonic() - started
+            took = clock.monotonic() - started
             if verdict == "sustained":
                 logger.info(
                     "Microphone delivering beside the output line at attempt %d (sustained, %.1f s)", number, took
@@ -2703,26 +2728,62 @@ class _ContinuousRecorder:
         self._release_output_line()
         return open_input()
 
+    def _wait_for_open(self, attempt: _InputAttempt, first_frame_by: float) -> tuple[bool, float]:
+        """Wait for an attempt's open to return, until ``first_frame_by``. A wait that ended late (the check was held
+        up, see MIC_CHECK_LATE_SECONDS) is waited again, and the first frame's time moves with it. Returns whether
+        the open returned, and the first frame's time."""
+        clock = _mic_clock
+        for remeasure in range(MIC_CHECK_REMEASURES + 1):
+            began = clock.monotonic()
+            seconds = max(0.0, first_frame_by - began)
+            if clock.wait(attempt.done, seconds):
+                return True, first_frame_by
+            late = clock.monotonic() - began - seconds
+            if late <= MIC_CHECK_LATE_SECONDS or remeasure == MIC_CHECK_REMEASURES:
+                break
+            logger.info("Microphone check held up %.2f s while the open ran: waiting again", late)
+            first_frame_by += late
+        return attempt.done.is_set(), first_frame_by
+
+    def _frames_over(self, seconds: float) -> tuple[int, int]:
+        """The frame count at the start and the end of a window of ``seconds`` on the check's clock. A window the
+        check woke from late is measured again (MIC_CHECK_LATE_SECONDS): the stream was held up with it."""
+        clock = _mic_clock
+        for remeasure in range(MIC_CHECK_REMEASURES + 1):
+            first = self.frames_received
+            began = clock.monotonic()
+            clock.sleep(seconds)
+            late = clock.monotonic() - began - seconds
+            if late <= MIC_CHECK_LATE_SECONDS or remeasure == MIC_CHECK_REMEASURES:
+                break
+            logger.info("Microphone check held up %.2f s: measuring the window again", late)
+        return first, self.frames_received
+
     def _sustained(self, before: int, first_frame_by: float | None = None) -> str:
         """Whether frames keep arriving after an open: "sustained", or why not ("no audio", "stopped after a first
-        burst", "too few frames: N of M"). The first frame must come by ``first_frame_by`` (time.monotonic())."""
+        burst", "too few frames: N of M"). The first frame must come by ``first_frame_by`` (on _mic_clock)."""
+        clock = _mic_clock
         block_seconds = self.frame_size / float(self.sample_rate)
         expected = MIC_SUSTAIN_SECONDS / block_seconds
         if first_frame_by is None:
-            first_frame_by = time.monotonic() + MIC_FRAMES_WITHIN_SECONDS
-        while self.frames_received == before and time.monotonic() < first_frame_by:
-            time.sleep(0.02)
+            first_frame_by = clock.monotonic() + MIC_FRAMES_WITHIN_SECONDS
+        remeasures = 0
+        while self.frames_received == before and clock.monotonic() < first_frame_by:
+            began = clock.monotonic()
+            clock.sleep(0.02)
+            late = clock.monotonic() - began - 0.02
+            if late > MIC_CHECK_LATE_SECONDS and remeasures < MIC_CHECK_REMEASURES:
+                remeasures += 1
+                first_frame_by += late  # the time the check was held up does not count against the microphone
         if self.frames_received == before:
             return "no audio"
-        start = self.frames_received
-        time.sleep(MIC_SUSTAIN_SECONDS / 2)
-        middle = self.frames_received
-        time.sleep(MIC_SUSTAIN_SECONDS / 2)
-        end = self.frames_received
-        if end == middle:
+        start, middle = self._frames_over(MIC_SUSTAIN_SECONDS / 2)
+        second, end = self._frames_over(MIC_SUSTAIN_SECONDS / 2)
+        if end == second:
             return "stopped after a first burst"
-        if end - start < MIC_SUSTAIN_SHARE * expected:
-            return f"too few frames: {end - start} of {expected:.0f}"
+        counted = (middle - start) + (end - second)
+        if counted < MIC_SUSTAIN_SHARE * expected:
+            return f"too few frames: {counted} of {expected:.0f}"
         return "sustained"
 
     def _release_output_line(self) -> None:
