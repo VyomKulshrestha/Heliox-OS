@@ -354,10 +354,21 @@ def mouth_for(audio_path: Path | str | None, audio: Any, rate: int) -> dict[str,
                         [str(w), max(0, round((float(a) - early) * 1000)), round((float(b) - early) * 1000)]
                         for w, a, b in timing.get("words") or []
                     ]
-                    return {"mouth": "visemes", "visemes": shapes, "words": words, "onset_ms": round(early * 1000)}
+                    made = {"mouth": "visemes", "visemes": shapes, "words": words, "onset_ms": round(early * 1000)}
+                    # The loudness too: the face closes toward rest where the sound has died away inside a phoneme
+                    # (a drawn-out last vowel), which the phoneme times alone cannot show. About 3 bytes per 40 ms.
+                    loudness = _envelope(audio, rate)
+                    if loudness is not None:
+                        made["envelope"] = loudness["envelope"]
+                        made["envelope_rate"] = loudness["envelope_rate"]
+                    return made
+    return _envelope(audio, rate) or {"mouth": "none"}
+
+
+def _envelope(audio: Any, rate: int) -> dict[str, Any] | None:
     try:
         values = mouth_shapes.envelope(audio, rate)
     except Exception:
         logger.debug("Could not measure a piece's loudness for the face", exc_info=True)
-        return {"mouth": "none"}
+        return None
     return {"mouth": "envelope", "envelope": values, "envelope_rate": mouth_shapes.ENVELOPE_RATE}

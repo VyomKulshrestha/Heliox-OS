@@ -3843,6 +3843,8 @@ A reply is one spoken text (one `speak`); it plays as one or more pieces.
   "mouth": "visemes",
   "visemes": [["sil", 0, 30], ["PP", 30, 95], ["aa", 95, 260]],
   "words": [["Siobhan", 30, 540]],
+  "envelope": [0, 6, 14, 15, 11, 9, 13],
+  "envelope_rate": 25,
   "sent_ms": 1795400000123.4
 }
 ```
@@ -3856,7 +3858,9 @@ A reply is one spoken text (one `speak`); it plays as one or more pieces.
   - `"visemes"`: `visemes` is a list of `[shape, start_ms, end_ms]` from 0 to the
     end of the piece with no gaps. Shapes: `sil`, `PP`, `FF`, `TH`, `DD`, `kk`,
     `CH`, `SS`, `nn`, `RR`, `aa`, `E`, `I`, `O`, `U` (docs/FACE_PACKS.md).
-    `words` (English only) is `[text, start_ms, end_ms]`.
+    `words` (English only) is `[text, start_ms, end_ms]`. `envelope` and
+    `envelope_rate` (below) come with it, so a face can close where the sound has
+    died away inside a phoneme.
   - `"envelope"`: no phoneme timing for this audio (another engine, a piece kept
     from earlier). `envelope` is loudness from 0 to 15, `envelope_rate` (25)
     values a second.

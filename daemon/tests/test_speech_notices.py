@@ -283,6 +283,8 @@ async def test_mouth_data_is_the_timeline_when_timing_matches_and_the_envelope_o
     mouth = speech_notices.mouth_for(wav, audio, 24000)
     assert mouth["mouth"] == "visemes"
     assert mouth["visemes"] == [["PP", 0, 200], ["aa", 200, 900], ["sil", 900, 1000]]
+    # The loudness goes with the timeline, so the face can close where the sound has died inside a phoneme.
+    assert mouth["envelope_rate"] == 25 and len(mouth["envelope"]) == 25 and max(mouth["envelope"]) == 15
     write_timing(wav, [["m", 0.0, 0.2]], 48000)  # made for other audio: not trusted
     assert speech_notices.mouth_for(wav, audio, 24000)["mouth"] == "envelope"
     other = speech_notices.mouth_for(tmp_path / "store.wav", audio, 24000)  # a kept piece has no timing file

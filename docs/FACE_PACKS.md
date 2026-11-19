@@ -8,9 +8,36 @@ make one. No code changes are needed to add a pack.
 
 The window draws the pack on a 2D canvas: an idle picture (one frame or a short loop), the eyes on top of it, and a
 mouth on top of that. For every piece of speech the daemon sends a timeline of mouth shapes taken from the voice's own
-phoneme timing, and the window shows the right mouth image at each moment, blending into the next one over about
-70 ms. When the voice gives no phoneme timing, the mouth opens and closes with the loudness of the audio instead
-(closed, `E`, `aa`). With the system voice there is no audio to time a mouth by, so the face stays still.
+phoneme timing, with the loudness of the audio (25 values a second). When the voice gives no phoneme timing, the
+loudness alone moves the mouth (half open `E`, open `aa`). With the system voice there is no audio to time a mouth by,
+so the face stays still.
+
+The mouth is a weight for each shape, from 0 (at rest) to 1 (fully formed), and the window moves the weights the way
+a mouth moves in running speech:
+
+- each moment of the timeline asks for one shape, as strongly as the sound is loud: a quiet syllable opens the mouth
+  less (about half at the quietest), and the mouth relaxes as the sound dies;
+- every weight moves toward what is asked like a lightly damped spring with a time constant of about 30 ms (a
+  little faster when a shape gives way), so a short sound pulls the mouth only part of the way and never reaches a
+  wide shape, and one shape gives way to the next without a jump;
+- a lip closure (p, b, m) moves about three times faster and always closes fully, on time: it is what the eye checks
+  sync against; the lips stay pressed (`PP`) for at most 140 ms, then rest closed, so a held m does not look pursed;
+- the targets run about 50 ms ahead of the sound, the spring's own delay plus half a frame, so the picture lands on
+  the sound;
+- wherever the sound is quiet (3 or less on the 0 to 15 loudness scale) for 80 ms or more, such as a pause or a
+  drawn-out last vowel that has faded, the mouth closes as the sound stops and opens as it returns; a shorter quiet
+  (a stop inside a word) changes nothing;
+- a shape the pack has no picture of stays calm: a lip closure (`PP`) shows the closed mouth; t, d and th use the
+  pack's `nn` (a small calm opening) and ch its `SS` when it has them; other consonants keep the opening of the vowel
+  before them a little smaller (or a small neutral opening); a vowel uses the nearest vowel the pack has. A consonant
+  is formed at most 70 % of the way, so the vowels carry the opening;
+- a cut closes the mouth on the next frame.
+
+The rest of the face moves with the speech, by a pixel or so at the size the face is shown: the loudest syllables
+bring a small nod just before them and a slight lean that changes side every second stressed syllable; a blink never
+starts while a word sounds, and the end of a phrase brings one more often; a long pause may bring a short glance
+through the pack's `eyes.glance` pictures and back; and at rest the face breathes (`breathe`). Under reduced motion the head and the eyes
+stay still and the mouth only opens and closes.
 
 Nothing is generated while Heliox runs: every picture comes from the pack. The face needs no graphics card.
 

@@ -9,7 +9,7 @@
   import { session } from "../stores/session";
   import { MouthPlayer, type VoicePieceNotice } from "../face/mouthPlayer";
   import { FaceRenderer, type FaceMode } from "../face/faceRenderer";
-  import { readManifest, type FaceManifest } from "../face/pack";
+  import { packShapes, readManifest, type FaceManifest } from "../face/pack";
 
   let { pack }: { pack: string } = $props();
 
@@ -150,6 +150,7 @@
         const loaded = await readManifest(pack);
         if (destroyed || !canvas) return;
         manifest = loaded;
+        player.setShapes(packShapes(loaded)); // a shape without a picture is drawn calmly
         sizeCanvas();
         const made = new FaceRenderer(canvas, loaded);
         made.reducedMotion = reducedMotion;
