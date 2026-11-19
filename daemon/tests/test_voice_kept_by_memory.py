@@ -120,18 +120,96 @@ def test_the_setting_chooses_the_rule(monkeypatch):
     assert PilotConfig().voice.tts_release == "memory"
 
 
-@pytest.mark.asyncio
-async def test_a_voice_holding_the_gpu_lease_is_released_by_the_clock_so_the_card_is_free_for_others():
-    """The GPU lease is one process at a time and the arbiter does not take it from its holder: a local model or the
-    reference model's worker that wants the card is sent to the CPU while the voice holds it. So a voice on the card
-    is not kept by memory: it goes after keep_loaded_seconds, and the lease with it."""
+def on_the_card(memory: dict, wants: dict):
+    """A manager whose worker started on the card holding the lease, with the arbiter's count of components that
+    found the card held (GpuArbiter.wants) and the memory rule as the test sets them."""
     clock, process = Clock(), worker()
     manager = LocalTTSWorkerManager(
         spawn=lambda engine, device, gpu_lease=False: process, clock=clock, sleep=clock.sleep
     )
-    manager.keep_while = lambda: True  # plenty of system memory
+    manager.keep_while = lambda: memory["enough"]
+    manager.lease_wants = lambda: wants["count"]
+    manager.choose_device = lambda configured: ("auto", True)
+    return clock, manager
+
+
+@pytest.fixture
+def cuda_torch(monkeypatch):
+    from pilot.system import gpu_paths
+
+    monkeypatch.setattr(gpu_paths, "torch_build", lambda platform=None: "cuda")
+    monkeypatch.setattr(local_tts_worker, "cuda_hidden", lambda environ=None: False)  # the suite hides every card
+
+
+@pytest.mark.asyncio
+async def test_a_voice_on_the_card_stays_loaded_while_idle_until_another_component_asks_for_the_card(cuda_torch):
+    """19 November, one development laptop: released by the clock after 300 s, the next reply waited for a 15 s reload
+    in the system voice. Now it stays, and gives the lease up once Gnomon, Whisper or screen reading finds the card
+    held by it (the lease is not taken from its holder)."""
+    memory, wants = {"enough": True}, {"count": 4}  # four asked before this voice took the card: they do not count
+    clock, manager = on_the_card(memory, wants)
     await manager.speak("kokoro_tts", "Okay.", "af_heart", None, AsyncMock())
-    manager.gpu_lease = True  # it started on the card, holding the lease
+    assert manager.gpu_lease
     await clock.advance(301)
+    await clock.advance(60 * 30)  # half an hour idle, nobody asked: still loaded
+    assert manager.running
+    wants["count"] += 1  # Gnomon found the card held by the voice
+    await clock.advance(local_tts_worker.MEMORY_RECHECK_SECONDS + 1)
     await clock.advance(1)
     assert not manager.running
+    assert [kind for kind, _detail, _at in manager.reload_log].count("released") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_voice_on_the_card_goes_when_memory_runs_short_as_on_the_processor(cuda_torch):
+    memory, wants = {"enough": True}, {"count": 0}
+    clock, manager = on_the_card(memory, wants)
+    await manager.speak("kokoro_tts", "Okay.", "af_heart", None, AsyncMock())
+    await clock.advance(301)
+    assert manager.running
+    memory["enough"] = False
+    await clock.advance(local_tts_worker.MEMORY_RECHECK_SECONDS + 1)
+    await clock.advance(1)
+    assert not manager.running
+
+
+@pytest.mark.asyncio
+async def test_a_request_for_the_card_mid_conversation_waits_for_the_idle_time(cuda_torch):
+    memory, wants = {"enough": True}, {"count": 0}
+    clock, manager = on_the_card(memory, wants)
+    await manager.speak("kokoro_tts", "Okay.", "af_heart", None, AsyncMock())
+    wants["count"] += 1
+    await clock.advance(200)
+    assert manager.running  # mid-conversation: the voice is not taken away
+    await clock.advance(101)
+    await clock.advance(1)
+    assert not manager.running
+
+
+def test_the_arbiter_counts_each_component_that_finds_the_card_held_by_another():
+    from pilot.system import gpu_arbiter
+
+    holder = {"value": None}
+    shared = gpu_arbiter.GpuArbiter(
+        read=lambda: gpu_arbiter.MachineReading(
+            "nvidia", gpus=(gpu_arbiter.GpuInfo(0, "card", 60.0, 6 * gpu_arbiter.GIB, 8 * gpu_arbiter.GIB),)
+        ),
+        holder=lambda: holder["value"],
+        environ={},  # the suite hides every card; this arbiter sees the made-up one
+    )
+    assert shared.check("gnomon").code == "ok" and shared.wants() == 0
+    holder["value"] = {"component": "voice", "pid": 1}
+    assert shared.check("voice").code == "ok" and shared.wants() == 0  # the holder itself
+    assert shared.check("gnomon").code == "busy"
+    assert shared.check("whisper").code == "busy"
+    assert shared.wants() == 2 and shared.last_wanted_by == "whisper"
+
+
+def test_the_daemon_wires_the_arbiter_s_count_to_the_voice(monkeypatch):
+    from pilot.system import gpu_arbiter
+
+    shared = local_tts_worker.manager()
+    for name in ("keep_while", "light_reason", "choose_device", "on_gpu_fault", "free_memory", "lease_wants"):
+        monkeypatch.setattr(shared, name, getattr(shared, name))
+    local_tts_worker.configure_local_voice(VoiceConfig(tts_engine="os_native"))
+    assert shared.lease_wants == gpu_arbiter.arbiter().wants

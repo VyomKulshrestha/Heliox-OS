@@ -715,6 +715,10 @@ class LocalTTSWorkerManager:
         self.last_reply: ReplyVoice | None = None  # which voice spoke the last reply (record_reply_voice)
         self._spoken_sequence = 0
         self.gpu_lease = False  # the running worker holds Heliox's GPU lease (the arbiter said the card is usable)
+        # How many times another component has found the card held (GpuArbiter.wants), and the count when this
+        # worker took the lease: a voice on the card is kept while idle only until the count grows (_kept_by_memory).
+        self.lease_wants: Callable[[], int] | None = None
+        self._wants_at_lease = 0
         # Free system memory now, or None: the worker is not started when less than VOICE_HOST_RAM_BYTES is free
         # (on an 8 GB machine the model's 1.6-1.9 GB can push everything into swap); the system voice speaks.
         self.free_memory: Callable[[], int | None] | None = None
@@ -860,6 +864,7 @@ class LocalTTSWorkerManager:
             self.process_device = self.device
             self.effective_device = device
             self.gpu_lease = gpu_lease
+            self._wants_at_lease = self._wants_now()
             self.loaded = False
             self._load_task = None
             self.note_activity()
@@ -935,12 +940,26 @@ class LocalTTSWorkerManager:
         await self._release_now(reason)
         return True
 
+    def _wants_now(self) -> int:
+        try:
+            return int(self.lease_wants()) if self.lease_wants is not None else 0
+        except Exception:
+            return 0
+
     def _kept_by_memory(self) -> bool:
-        """Whether the idle voice stays loaded past keep_loaded_seconds. Never while it holds Heliox's GPU lease: the
-        lease is one process at a time and is not taken from its holder, so a voice kept on the card would keep a
-        local model or the reference model's worker off it for as long as it stayed. On the card it is released by the
-        clock, as before; on the CPU (or on a Mac, where it takes no lease) the memory decides."""
-        if self.gpu_lease:
+        """Whether the idle voice stays loaded past keep_loaded_seconds: while the computer has the memory
+        (keep_while), on the CPU and on the card alike. On the card, also only until another component (Gnomon,
+        Whisper, screen text reading) has found the card held by the voice since it took the lease: the lease is one
+        process at a time and is not taken from its holder, so the idle voice gives it up then.
+
+        Measured on one development laptop (19 November): released by the clock after 300 s, the next reply waited for
+        a 15 s reload and was spoken by the system voice meanwhile. The worker process itself (the launcher's child)
+        held 1.86 to 1.90 GB resident on the card, 0.8 GB of graphics memory besides, against 1.54 to 1.57 GB on the
+        CPU: about 0.3 GB more of the computer's memory. So the floor that releases an idle voice on the CPU
+        (speech_budget.RELEASE_BELOW_FREE_BYTES, 1 GB free) is the floor here too: below it, releasing gives other
+        programs about 1.9 GB back."""
+        if self.gpu_lease and self._wants_now() > self._wants_at_lease:
+            logger.info("Another component asked for the graphics card; the idle voice gives it up")
             return False
         try:
             return bool(self.keep_while())  # type: ignore[misc]
@@ -1451,6 +1470,7 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
 
     _manager.choose_device = gpu_arbiter.voice_device
     _manager.on_gpu_fault = gpu_arbiter.arbiter().record_fault
+    _manager.lease_wants = gpu_arbiter.arbiter().wants
     _manager.free_memory = lambda: gpu_arbiter.probe_host_memory()[0]
     # Released when idle only when the computer needs the memory, unless the person chose the clock (voice.tts_release).
     from pilot.system import speech_budget

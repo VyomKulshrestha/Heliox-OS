@@ -486,6 +486,10 @@ class GpuArbiter:
     cache_seconds: float = READING_CACHE_SECONDS
     speech_despite_driver_errors: bool = False  # [gpu] setting: Whisper on a card whose driver reported errors
     _faults: deque[GpuFault] = field(default_factory=lambda: deque(maxlen=50))
+    # Times a component was told the card is busy because another Heliox process holds it ("busy" decisions), and
+    # the last one told. A holder that may keep the card while idle (the voice) gives it up when this count grows.
+    _wants: int = 0
+    _last_wanted_by: str = ""
     _disabled_reason: str = ""
     _cached: tuple[float, MachineReading] | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -537,7 +541,24 @@ class GpuArbiter:
         """May ``component`` start now, and where? Takes no lock."""
         reading = self.reading(fresh=fresh)
         holder = self.holder() if reading.kind in {"nvidia", "apple"} else None
-        return decide(component, needs, reading, self.limits(), holder=holder, disabled_reason=self._disabled_reason)
+        decision = decide(
+            component, needs, reading, self.limits(), holder=holder, disabled_reason=self._disabled_reason
+        )
+        if decision.code == "busy":
+            with self._lock:
+                self._wants += 1
+                self._last_wanted_by = component
+        return decision
+
+    def wants(self) -> int:
+        """How many times a component found the card held by another Heliox process (see ``_wants``)."""
+        with self._lock:
+            return self._wants
+
+    @property
+    def last_wanted_by(self) -> str:
+        with self._lock:
+            return self._last_wanted_by
 
     def record_fault(self, component: str, message: str) -> bool:
         """A GPU process faulted (crash, CUDA error, hang). Returns True when the GPU is now off for the session."""
