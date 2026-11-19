@@ -311,9 +311,18 @@ jobs:
         working-directory: tauri-app/src-tauri
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Cargo tests
+      # Built and run in two steps with limits of their own, well under a job limit, so a stall ends as a failed step
+      # whose log is kept: .github/scripts/rust_test_watch.py prints each test as it starts and ends, and on a stall
+      # the tests still running, the process tree and every thread's stack. The tests take about 10 s.
+      - name: Build the tests
+        timeout-minutes: 15
         working-directory: tauri-app/src-tauri
-        run: cargo test --all-targets
+        run: python3 ../../.github/scripts/rust_test_watch.py build --crate . --list "$RUNNER_TEMP/rust-tests.txt" --limit 720 --all-targets
+
+      - name: Cargo tests
+        timeout-minutes: 8
+        working-directory: tauri-app/src-tauri
+        run: python3 ../../.github/scripts/rust_test_watch.py run --crate . --list "$RUNNER_TEMP/rust-tests.txt" --limit 300
 
   # ── Real platform readers (experimental, non-blocking) ──
   # Exercises the focused-text readers against real accessibility stacks on hosted runners: AT-SPI on Linux,
@@ -1161,14 +1170,23 @@ jobs:
         run: npm ci && npx vite build
 
       - name: Cargo check
+        timeout-minutes: 12
         working-directory: tauri-app/src-tauri
         run: cargo check --all-targets
 
       # The whole suite on a Mac: the removal on APFS (app files go, data stays, a link out of Heliox's folders is
-      # not followed), the per-user lock and the bring-forward port of instance.rs, and the rest.
-      - name: Cargo tests
+      # not followed), the per-user lock and the bring-forward port of instance.rs, and the rest. Built and run as in
+      # the Rust job above: a stall fails its own step with the tests still running and their stacks in the log
+      # (sample on macOS), where a job cancelled at its limit used to keep no log at all.
+      - name: Build the tests
+        timeout-minutes: 10
         working-directory: tauri-app/src-tauri
-        run: cargo test --all-targets
+        run: python3 ../../.github/scripts/rust_test_watch.py build --crate . --list "$RUNNER_TEMP/rust-tests.txt" --limit 480 --all-targets
+
+      - name: Cargo tests
+        timeout-minutes: 8
+        working-directory: tauri-app/src-tauri
+        run: python3 ../../.github/scripts/rust_test_watch.py run --crate . --list "$RUNNER_TEMP/rust-tests.txt" --limit 300
 
   # ── Real faults on the runners (non-blocking) ──
   # Each step makes a fault happen for real on this machine and prints CHECK lines (daemon/tests/platform_real):
