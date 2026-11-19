@@ -360,7 +360,7 @@ pub fn probe_in_background(app: AppHandle) {
 
 /// Start the daemon the setup just installed and hand it to the app, as if it had been there at launch.
 fn start_daemon_after_setup(app: &AppHandle) {
-    if std::net::TcpStream::connect((crate::DAEMON_HOST, crate::DAEMON_PORT)).is_ok() {
+    if crate::daemon_port_answers() {
         // A group added later from Settings: the daemon is already running and picks the new parts up on restart.
         return;
     }

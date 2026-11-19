@@ -16,11 +16,14 @@
 
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const CREDENTIAL_SERVICES: &str = include_str!("../setup/credential_services.json");
 const CREDENTIAL_TIMEOUT: Duration = Duration::from_secs(30);
+/// After the cleanup has ended, how long its output may still take to arrive. A process it started can hold the
+/// pipe open after it ends; the output is then taken as it is.
+const OUTPUT_AFTER_EXIT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -619,29 +622,56 @@ fn remove_credentials(home: &Path, os: &str) -> Credentials {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
-    let Ok(mut child) = command.spawn() else {
+    let Ok(child) = command.spawn() else {
         return credentials_listed(os);
     };
+    match output_within(child, CREDENTIAL_TIMEOUT, OUTPUT_AFTER_EXIT) {
+        Some(output) => parse_credentials(&output, os),
+        None => credentials_listed(os),
+    }
+}
+
+/// Wait up to `limit` for `child` to end, reading its stdout meanwhile, and return what it printed; `None` when it
+/// did not end in time (it is then killed). Its stdout is read on a thread of its own: a child that prints more than
+/// a pipe holds is not blocked, and a process it left running with the pipe open cannot keep the caller waiting, as
+/// reading to the end after the exit did (the removal then never finished).
+fn output_within(mut child: Child, limit: Duration, after_exit: Duration) -> Option<String> {
+    use std::sync::{mpsc, Arc, Mutex};
+    let printed = Arc::new(Mutex::new(Vec::new()));
+    let (ended, read_to_end) = mpsc::channel::<()>();
+    if let Some(mut stdout) = child.stdout.take() {
+        let printed = printed.clone();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut chunk = [0u8; 4096];
+            while let Ok(count) = stdout.read(&mut chunk) {
+                if count == 0 {
+                    break;
+                }
+                if let Ok(mut all) = printed.lock() {
+                    all.extend_from_slice(&chunk[..count]);
+                }
+            }
+            let _ = ended.send(());
+        });
+    } else {
+        drop(ended);
+    }
     let started = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() < CREDENTIAL_TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(100))
-            }
+            Ok(None) if started.elapsed() < limit => std::thread::sleep(Duration::from_millis(100)),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return credentials_listed(os);
+                return None;
             }
         }
     }
-    let mut output = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        use std::io::Read;
-        let _ = stdout.read_to_string(&mut output);
-    }
-    parse_credentials(&output, os)
+    let _ = read_to_end.recv_timeout(after_exit);
+    let bytes = printed.lock().map(|all| all.clone()).unwrap_or_default();
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -1364,6 +1394,57 @@ mod tests {
             .any(|s| s.starts_with("pilot-ai-command-center")));
         assert!(listed.how.contains("Credential Manager"));
         assert_eq!(credential_services().len(), 4);
+    }
+
+    #[cfg(unix)]
+    fn sh(script: &str) -> Child {
+        Command::new("sh")
+            .args(["-c", script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("sh")
+    }
+
+    /// The credential cleanup's output is taken when it ends, even when something it started still holds the pipe,
+    /// whatever its size; a cleanup that does not end is cut off at the limit.
+    #[cfg(unix)]
+    #[test]
+    fn the_cleanups_output_never_waits_on_what_it_left_running() {
+        let started = Instant::now();
+        let left_running = sh("echo printed; sleep 20 &");
+        let output = output_within(
+            left_running,
+            Duration::from_secs(20),
+            Duration::from_millis(500),
+        );
+        assert_eq!(output.as_deref(), Some("printed\n"));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+
+        let large = sh("head -c 200000 /dev/zero");
+        let output = output_within(large, Duration::from_secs(20), Duration::from_secs(2));
+        assert_eq!(output.map(|text| text.len()), Some(200000));
+
+        let started = Instant::now();
+        let never_ends = sh("sleep 20");
+        assert_eq!(
+            output_within(
+                never_ends,
+                Duration::from_millis(300),
+                Duration::from_secs(2)
+            ),
+            None
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

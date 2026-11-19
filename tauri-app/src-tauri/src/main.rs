@@ -259,7 +259,7 @@ fn get_temperature_stats() -> Result<serde_json::Value, String> {
     Err("Hardware temperature sensors are unavailable in this build".into())
 }
 fn spawn_daemon() -> Option<Child> {
-    if TcpStream::connect((DAEMON_HOST, DAEMON_PORT)).is_ok() {
+    if daemon_port_answers() {
         println!(
             "[Heliox OS] Reusing daemon already listening on ws://{}:{}",
             DAEMON_HOST, DAEMON_PORT
@@ -350,7 +350,10 @@ fn exited_as_another_copy(child: &mut Child) -> bool {
 }
 
 /// Is anything answering on the daemon's port? In borrowed mode that is the only question: the other copy's own
-/// supervisor (or the person who ran it) deals with its start-up and hangs.
+/// supervisor (or the person who ran it) deals with its start-up and hangs. Every check of the port in the app comes
+/// here, with one second per address: a connect without a limit to a daemon that has stopped taking connections
+/// (its queue full) waits until the system gives up, about 75 s on macOS, on the window's own thread for the
+/// dashboard.
 fn daemon_port_answers() -> bool {
     use std::net::{SocketAddr, ToSocketAddrs};
     let addresses: Vec<SocketAddr> = (DAEMON_HOST, DAEMON_PORT)
@@ -421,7 +424,7 @@ impl supervisor::Host for AppHost {
     }
 
     fn port_taken(&self) -> bool {
-        TcpStream::connect((DAEMON_HOST, DAEMON_PORT)).is_ok()
+        daemon_port_answers()
     }
 
     fn launch(&self) -> Option<Child> {

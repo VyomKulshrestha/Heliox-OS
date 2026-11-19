@@ -723,7 +723,7 @@ pub fn get_dashboard_status() -> serde_json::Value {
     let mut sys = System::new_all();
     sys.refresh_all();
     serde_json::json!({
-        "connected": std::net::TcpStream::connect(("127.0.0.1", 8785)).is_ok(),
+        "connected": crate::daemon_port_answers(),
         "agents": serde_json::Value::Null,
         "cpu": format!(
             "{:.0}%",

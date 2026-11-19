@@ -696,10 +696,27 @@ mod tests {
         assert!(descendants(&links, 99).is_empty());
     }
 
+    /// Stop the whole group the test's shell leads (own_group), never a process outside it.
     #[cfg(unix)]
-    fn suspend(pid: u32) {
-        // SAFETY: a plain signal to a process this test started.
-        unsafe { libc::kill(pid as libc::pid_t, libc::SIGSTOP) };
+    fn suspend_tree(root: u32, _tree: &[u32]) {
+        let leader = root as libc::pid_t;
+        // SAFETY: getpgid and killpg take plain ids; the group is signalled only when the shell this test started
+        // leads it, so the test binary's own group (and whatever else is in it) is never stopped.
+        unsafe {
+            assert_eq!(
+                libc::getpgid(leader),
+                leader,
+                "the shell leads a group of its own"
+            );
+            libc::killpg(leader, libc::SIGSTOP);
+        }
+    }
+
+    #[cfg(windows)]
+    fn suspend_tree(root: u32, tree: &[u32]) {
+        for pid in tree.iter().copied().chain([root]) {
+            suspend(pid);
+        }
     }
 
     /// NtSuspendProcess, as psutil's suspend() (the real check's wrapper) does it.
@@ -728,6 +745,14 @@ mod tests {
 
     /// A real tree three levels deep, every level suspended (as a frozen daemon's tree is): kill_tree ends all of
     /// it. Before 13 November 2026 the grandchild outlived it.
+    ///
+    /// The shell leads a process group of its own, as the app's daemon does (own_group), and only that group is
+    /// stopped. Until 19 November 2026 the test stopped each process of the tree by its id while the tree sat in the
+    /// test binary's own group. Under `cargo test` on GitHub's macOS runner that group is the runner's: its agent,
+    /// Runner.Listener, Runner.Worker and the step's shell are all in it. In about one run in fifty the runner then
+    /// stopped working in the middle of the test step: the step and job limits never fired, no log was kept, and the
+    /// job ended only when GitHub gave up on the runner. Nothing of that kind happened with the tests in a session of
+    /// their own.
     #[test]
     fn kill_tree_ends_a_real_tree_three_levels_deep() {
         use sysinfo::{Pid, ProcessesToUpdate, System};
@@ -743,6 +768,7 @@ mod tests {
             command.args(["-c", "sh -c 'sleep 120; :' & sleep 120; :"]);
             command
         };
+        own_group(&mut command);
         let mut child = command
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -780,9 +806,7 @@ mod tests {
         }
         assert!(tree.len() >= 2, "the tree under the shell: {tree:?}");
         // Every level suspended, as the real check's wrapper freezes a hung daemon's tree.
-        for pid in tree.iter().copied().chain([child.id()]) {
-            suspend(pid);
-        }
+        suspend_tree(child.id(), &tree);
 
         kill_tree(&mut child);
 
