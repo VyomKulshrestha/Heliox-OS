@@ -143,6 +143,50 @@ PAGE_CONTENT_TYPES = frozenset({"text/html", "application/xhtml+xml"})
 SLOW_PAUSES = (0.0, 5.0, 15.0, 30.0)
 
 
+# A sentence end with a new sentence starting right after it, no space between: "Canberra.Canberra.". OpenAI's
+# open-weight models (gpt-oss) answer in messages, and some hosts join a second final message onto the first with
+# nothing between them. In the 19 November runs every such join, 7 in 271 replies and all of them gpt-oss through
+# Groq or Cerebras, was a second answer: the same words again, the same sentence reworded ("25 minutes" then
+# "twenty-five minutes"), or remarks such as "Okay.Sorry, I should not add extra.". No reply had one in words meant
+# to be heard. A repetition a person should hear ("No, no.", "No. No.") has a space and is never touched.
+_GLUE = re.compile(r"(?<=[a-z0-9\"'”’)])[.!?][\"'”’)]?(?=[A-Z][a-z'’ ,.!?])")
+# A capital letter right after a sentence end, at the very end of the text so far: whether it starts a joined answer
+# shows in the next piece. Only that letter waits; the sentence end itself goes on at once.
+_GLUE_TAIL = re.compile(r"[a-z0-9\"'”’)][.!?][\"'”’)]?[A-Z]$")
+
+
+class GluedMessages:
+    """Keeps the first answer of a streamed reply and leaves out anything joined onto it with no space (_GLUE).
+
+    ``feed`` gives back the text to pass on, unchanged except that a capital letter straight after a sentence end, as
+    the last character so far, waits for the next piece; ``finish`` gives back what waited."""
+
+    def __init__(self) -> None:
+        self._text = ""
+        self._sent = 0
+        self.cut = False
+
+    def feed(self, fragment: str) -> str:
+        if self.cut or not fragment:
+            return ""
+        self._text += fragment
+        start = max(0, self._sent - 4)  # the letter and the stop before the new text, and a closing quote
+        join = _GLUE.search(self._text, start)
+        if join is not None:
+            self.cut = True
+            return self._take(join.end())
+        tail = _GLUE_TAIL.search(self._text, start)
+        return self._take(len(self._text) - 1 if tail is not None else len(self._text))
+
+    def finish(self) -> str:
+        return "" if self.cut else self._take(len(self._text))
+
+    def _take(self, end: int) -> str:
+        end = max(end, self._sent)
+        out, self._sent = self._text[self._sent : end], end
+        return out
+
+
 class _StreamingBase:
     """Budget gate, offline hold, timing and usage recording shared by every streamed provider."""
 
@@ -670,18 +714,29 @@ class HttpFastModel(_StreamingBase):
                     self.hold(OFFLINE_HOLD_SECONDS, "not_api")
                     raise FastModelUnavailable("not_api", f"not from the API ({kind})")
                 blank = ""  # spaces and line breaks before the first word: no text yet (the deadline still runs)
-                async for line in resp.aiter_lines():
-                    text = self.parse(line, usage)
-                    if not text:
-                        continue
-                    if record.first_text_at is None:
+                glued = GluedMessages() if self.provider in OPENAI_COMPATIBLE or self.local else None
+                lines = aiter(resp.aiter_lines())
+                while True:
+                    line = await anext(lines, None)
+                    if line is None:
+                        text = glued.finish() if glued is not None else ""
+                    else:
+                        text = self.parse(line, usage)
+                        if glued is not None:
+                            text = glued.feed(text)
+                    if text and record.first_text_at is None:
                         if not text.strip():
-                            blank += text
-                            continue
-                        text, blank = blank + text, ""
-                        record.first_text_at = self.clock()
-                    record.chars += len(text)
-                    yield text
+                            blank, text = blank + text, ""
+                        else:
+                            text, blank = blank + text, ""
+                            record.first_text_at = self.clock()
+                    if text:
+                        record.chars += len(text)
+                        yield text
+                    if line is None:
+                        break
+                if glued is not None and glued.cut:
+                    logger.info("Left out a second answer the host ran onto the reply with no space between")
             finished = True
             record.reasoned = usage.reasoned
             if not record.chars:
