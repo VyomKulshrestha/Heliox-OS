@@ -231,8 +231,11 @@ def assemble(
     budget: int = CONTEXT_CHARS,
     screen: Any = _UNSET,
     text: str = "",
+    stance: str = "",
 ) -> tuple[str, list[dict[str, str]]]:
-    """The context block and the earlier turns as Messages API turns (alternating, starting with the person)."""
+    """The context block and the earlier turns as Messages API turns (alternating, starting with the person).
+    ``stance``: the disagreement held in this conversation (pilot.conversation.debate), kept even when the block is
+    tight."""
     now = _safe(sources.now, datetime.now())
     sections: list[str] = [f"Now: {now.strftime('%A %d %B %Y, %H:%M')}."]
     task = _safe(sources.task_state, {})
@@ -256,6 +259,8 @@ def assemble(
         sections.append("About the person: " + " ".join(profile))
     if text and SAVE_OR_CHANGE.search(text.strip()):
         sections.insert(1, NOTHING_SAVED)  # kept even when the block is tight: it goes right after the time
+    if stance:
+        sections.insert(1, stance)  # a disagreement's state: kept even when the block is tight
     length = LENGTH_LINES.get(str(_safe(sources.answer_length, ""))) if personal else None
     if length:
         sections.append(length)
@@ -312,9 +317,10 @@ def build_messages(
     *,
     budget: int = CONTEXT_CHARS,
     screen: Any = _UNSET,
+    stance: str = "",
 ) -> list[dict[str, str]]:
     """Messages for one fast-model call: earlier turns, then the context and the new words as the last user turn."""
-    block, history = assemble(sources, memory, budget=budget, screen=screen, text=text)
+    block, history = assemble(sources, memory, budget=budget, screen=screen, text=text, stance=stance)
     final = f"[Context, not said by the person]\n{block}\n\n[The person said]\n{text.strip()}"
     if history and history[-1]["role"] == "user":
         history[-1]["content"] += "\n\n" + final

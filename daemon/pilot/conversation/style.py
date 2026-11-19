@@ -408,6 +408,10 @@ class ActRequest:
     request: str
     say: str
     action: dict | None = None  # one action in the planner's schema, when the model proposed one
+    # The model's reason against the step, in one spoken sentence, and whether it cannot be undone, costs money or
+    # affects other people (pilot.conversation.debate). Neither changes what is handed over or how it is reviewed.
+    concern: str = ""
+    risk: str = ""
 
 
 def looks_like_act(prefix: str) -> bool | None:
@@ -441,7 +445,13 @@ def parse_act(text: str) -> ActRequest | None:
     if claims_an_action(say):
         say = ""
     action = data.get("action") if isinstance(data.get("action"), dict) else None
+    concern = clean_for_speech(str(data.get("concern") or ""), first=True)
+    if claims_an_action(concern) or promised_action(concern):
+        concern = ""  # a reason, never a claim or a promise
+    risk = str(data.get("risk") or "").strip().casefold()
     return ActRequest(
+        concern=concern[:200],
+        risk=risk if risk in ("cannot_undo", "costs_money", "affects_others") else "",
         action=action,
         verb=verb[:30],
         object=" ".join(str(data.get("object") or "").split())[:200],

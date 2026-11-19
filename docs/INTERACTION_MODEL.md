@@ -146,6 +146,40 @@ while the setting is off (it gathers every fixed literal), so the first use afte
 11 model turns of the 13 November bench run (every answer at 2.05 to 3.75 s) it would have spoken on six, every other
 turn. Their first sound would have come at about 0.5 s, and the answers no later.
 
+**Pushing back on a decision** (`pilot.conversation.debate`, `conversation.disagree`, in Settings at the end of
+Voice as "Push back on decisions"). Heliox says so when it has a reason against what the person decided or asked
+for, holds that point for a moment, and then gives way. It needs a reason it can name: the person's own calendar,
+to-dos, habits, files or earlier words, a named risk (it cannot be undone, it costs money, it affects other people),
+or a trade-off it states. No reason, no disagreement.
+
+- `when_it_matters` (the default): only real clashes and risks the person may not have seen. `often`: smaller
+  trade-offs too; a model on this computer is asked for `when_it_matters` even then, since a small local model told
+  to speak up often argues on weak grounds. `off`: the talk prompt is what it was before this setting existed.
+- No extra model call and nothing before the first sound: the rules ride in the talk prompt, and the state of a
+  disagreement reaches the model as one context line. A reply that disagrees ends with a line `STANCE: <topic>`,
+  which is taken out of the stream and never said; it comes after the words.
+- The layer keeps the topic, what Heliox said and a count. The first reply that disagrees counts one, a reply that
+  holds the point counts two, and the next reply on it is told to give way; after it the topic is settled whatever
+  the model wrote, so a topic takes at most three exchanges. A new reason the model accepts ("Fair, that changes
+  it."), "do it anyway" or "I'll go anyway", or a reply about something else settles it at once. A settled topic is
+  not raised again in that conversation, and a new conversation forgets them all.
+- A request to act is never refused. A small step that can be undone is done, and the reason is said after the
+  acknowledgement ("I'll mute it. Your call with Dana starts in two minutes, though."). A step that cannot be
+  undone, costs money or affects other people gets its reason first, once, and "Do you still want me to ...?"; a
+  yes or "do it anyway" hands it over through the usual road, with every review and approval as before. A direct
+  request the router hands to the planner gets no debate at all.
+- Stop, wait, cancel and no never reach the debate, and a "do it anyway" while an approval waits on the screen is
+  neither an approval nor a request. Waiting for the STANCE line after a reply cut at a question (at most 1 s, with
+  nothing said) ends at once when the person speaks.
+
+Checked with Claude Haiku on 12 scripted decisions (40 calls, under one US cent): it disagreed with a reason on
+each clash in the person's calendar or to-dos and on emptying a recycle bin that held the only copy of a file, said
+nothing against five decisions with no grounds (pasta, a shirt, music, a call, a report after a free lunch), gave
+way on a new reason, on "I'll go anyway" and by the third exchange. Spoken disagreements were 25 words or fewer
+(median 22), three of them cut there by the spoken word cap. Its STANCE line was missing from one reply under
+`often`. A statement gets one spoken sentence
+(the statement rule), so a held point is sometimes cut to its first sentence.
+
 Provisional answers (`pilot.conversation.provisional`) have no caller in the product: the listener never calls
 `provisional_voice_turn`, so they do nothing today. Starting them from the early final pass was measured at about
 0.05 s (0.15 s at most) and dropped.

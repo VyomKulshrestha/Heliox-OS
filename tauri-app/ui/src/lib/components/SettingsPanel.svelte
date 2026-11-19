@@ -6,6 +6,7 @@
   import WakeTeach from "./WakeTeach.svelte";
   import FollowUpCounts from "./FollowUpCounts.svelte";
   import Acknowledge from "./Acknowledge.svelte";
+  import Disagree from "./Disagree.svelte";
   import ProfileSharing from "./ProfileSharing.svelte";
   import TalkModel from "./TalkModel.svelte";
   import PlannerModel from "./PlannerModel.svelte";
@@ -1828,6 +1829,7 @@
     <WakeTeach />
     <FollowUpCounts />
     <Acknowledge />
+    <Disagree />
   </section>
 
   <section class="settings-group">

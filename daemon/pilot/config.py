@@ -647,6 +647,11 @@ class ConversationConfig:
     # is on its way, and never when the answer is already ready (pilot.conversation.acknowledge). Off until the sounds
     # have been heard in the local voice; a person can turn it on in Settings, Voice.
     acknowledge: bool = False
+    # Heliox says so when it has a reason against a decision or a request: the person's own calendar, to-dos, habits,
+    # files or earlier words, a named risk, or a stated trade-off; holds the point for at most three exchanges, then
+    # gives way (pilot.conversation.debate). "when_it_matters" speaks up on real clashes and risks only, "often" on
+    # smaller trade-offs too, "off" never. It never refuses, delays a stop, approves or changes a safety decision.
+    disagree: str = "when_it_matters"  # "off" | "when_it_matters" | "often"
 
 
 @dataclass
@@ -1445,6 +1450,7 @@ def _validate_config_types(raw: dict) -> None:
             "second_voice_guard": bool,
             "second_voice_threshold": int,
             "acknowledge": bool,
+            "disagree": str,
         },
         "supervision": {
             "enabled": bool,
@@ -1875,6 +1881,9 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         acknowledge = c_raw.get("acknowledge")
         if isinstance(acknowledge, bool):
             config.conversation.acknowledge = acknowledge
+        disagree = c_raw.get("disagree")
+        if isinstance(disagree, str) and disagree.strip().casefold() in ("off", "when_it_matters", "often"):
+            config.conversation.disagree = disagree.strip().casefold()
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]

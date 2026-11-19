@@ -151,6 +151,8 @@ export interface PilotSettings {
     share_profile?: "auto" | "off";
     // A short "Mm." while a spoken answer is on its way (Acknowledge.svelte); on unless turned off.
     acknowledge?: boolean;
+    // When Heliox says it has a reason against a decision (Disagree.svelte); "when_it_matters" unless set.
+    disagree?: "off" | "when_it_matters" | "often";
     // The model that talks for each cloud provider ("" = its fast default; TalkModel.svelte).
     claude_model?: string;
     openai_model?: string;

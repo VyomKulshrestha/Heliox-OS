@@ -28,6 +28,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from pilot.conversation import debate as dbt
 from pilot.conversation import provisional as prov
 from pilot.conversation import trace
 from pilot.conversation.acknowledge import ACK_AFTER_SECONDS, next_acknowledgement, wants_acknowledgement
@@ -64,6 +65,7 @@ from pilot.conversation.style import (
     looks_like_act,
     parse_act,
 )
+from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.conversation")
 
@@ -322,6 +324,8 @@ class TurnResult:
     _sink: Any = None  # the sink for this turn when it is not the layer's own (typed chat)
     quick: QuickPlan | None = None  # the one-action plan for the quick road, when there is one
     route: Route | None = None
+    # Heliox's reason against a small step it does anyway, said after the acknowledgement (pilot.conversation.debate).
+    concern: str = ""
     timings: dict[str, float] = field(default_factory=dict)
     trace: list[tuple[str, float]] = field(default_factory=list)  # (name, monotonic) stamps (pilot.conversation.trace)
     spoken: list[str] = field(default_factory=list)
@@ -383,6 +387,7 @@ class ConversationLayer:
         screen_text_ok: Callable[[], bool] = lambda: False,
         provisional_setting: Callable[[], str] = lambda: "off",
         acknowledge: Callable[[], bool] = lambda: False,
+        disagree: Callable[[], str] = lambda: "off",
     ) -> None:
         self._sink = sink
         self._model = model
@@ -436,6 +441,8 @@ class ConversationLayer:
         self._acked_last_turn = False
         self._last_ack = ""
         self.provisional = prov.ProvisionalAnswers(clock=clock)
+        # Disagreeing with a decision, then giving way (conversation.disagree, pilot.conversation.debate).
+        self.debate = dbt.Debate(disagree)
 
     # ── the server's hooks ──
 
@@ -557,12 +564,17 @@ class ConversationLayer:
             before=self.memory.recent(),
         )
 
+        stance = self.debate.context_line(normalize(text))
+
         async def build() -> tuple[list[dict[str, str]], Any]:
             screen = await self._read_screen(model)
-            return build_messages(text, self.sources, self.memory, budget=self._context_chars, screen=screen), screen
+            messages = build_messages(
+                text, self.sources, self.memory, budget=self._context_chars, screen=screen, stance=stance
+            )
+            return messages, screen
 
         self.provisional.add(held)
-        held.task = asyncio.ensure_future(prov.pump(held, SYSTEM_PROMPT, build))
+        held.task = asyncio.ensure_future(prov.pump(held, self._talk_prompt(model, typed=False), build))
         self._background.add(held.task)
         held.task.add_done_callback(self._background.discard)
         try:
@@ -620,6 +632,7 @@ class ConversationLayer:
         """The "new conversation" call: earlier turns no longer frame the next question."""
         self.interrupt()
         self.memory.clear()
+        self.debate.reset()
         self._sorry_said = False
         self._saw_screen_text = False
         self.last_result = ""
@@ -638,6 +651,7 @@ class ConversationLayer:
         result = TurnResult(done=False, planner_input=text, route=decided, _layer=self, source=source, _sink=sink)
         if not self.memory.open:
             self._saw_screen_text = False
+            self.debate.reset()  # a disagreement belongs to its conversation
         result._before = self.memory.recent()  # the turns before this one, for the planner's context
         result.timings["routed_ms"] = (self._clock() - started) * 1000
         result.trace = trace.current() or []
@@ -653,10 +667,17 @@ class ConversationLayer:
         logger.info("Conversation turn routed as %s (%s)", decided.kind.value, decided.reason)
 
         offer, self._offer = self._offer, None
-        if offer is not None and normalize(text) in YES and self._clock() - offer[0] <= OFFER_SECONDS:
+        words = normalize(text)
+        stance = self.debate.stance
+        # After Heliox said its concern about a costly step and asked once, "do it anyway" is a yes too; never while
+        # an approval waits on the screen (voice does not approve, and the person may mean that dialog).
+        kept_decision = stance is not None and stance.offered and dbt.go_ahead(words) and not self._approval_waiting()
+        if offer is not None and (words in YES or kept_decision) and self._clock() - offer[0] <= OFFER_SECONDS:
             # The person's yes to "Do you want me to ...?": their request, taken through the normal road with all
             # its reviews and approvals. It is never an approval of a pending plan: with one pending, the server
             # refuses a spoken yes before this layer is asked.
+            if stance is not None and stance.offered:
+                self.debate.close(settle=True)  # Heliox gives way: the step is done, and not argued again
             self.memory.add_user(text)
             result._before = self.memory.recent()  # with Heliox's offer and this yes; the request is the person's own
             return self._hand_over(result, offer[1], quick=offer[2])
@@ -676,6 +697,17 @@ class ConversationLayer:
             except Exception:
                 logger.debug("Could not tell the listener the turn was not understood", exc_info=True)
             return result
+        if (
+            self.debate.stance is not None
+            and decided.kind is TurnKind.ACTION
+            and decided.verb in ("go", "do", "carry", "proceed")
+            and dbt.go_ahead(words)
+            and not self._approval_waiting()
+        ):
+            # "Go ahead anyway" after a disagreement reads as a request to "go": it is the person keeping their
+            # decision, answered by the model, which gives way and hands over what was asked.
+            decided = Route(TurnKind.CONVERSATION, "kept their decision after a disagreement")
+            result.route = decided
         done, self._last_done = self._last_done, None
         settled = self._kept_or_changed(text, done)
         if settled is not None:
@@ -721,14 +753,18 @@ class ConversationLayer:
             return result
         if decided.kind is TurnKind.ACTION:
             self.memory.add_user(text)
+            self.debate.close(settle=True)  # a direct request: done as asked, nothing argued first
             return self._hand_over(result, intent_from_route(decided, text))
         # LOCAL here means the server's own handlers had no answer ("why did you say that?" with no card to
         # explain): it is talk, and the fast model answers from the conversation, as for any question.
         if decided.kind is TurnKind.CONTROL:
             self.memory.add_user(text)
+            self.debate.close(settle=True)  # a stop or a no ends any disagreement; nothing waits for it
             await self._say_one(result, "Okay.", started)
             result.done = True
             return result
+
+        self.debate.start_turn(words)
 
         held = self._adoptable(text, decided, source)
         if held is not None:
@@ -772,7 +808,14 @@ class ConversationLayer:
         if _reach_limited():
             # A follow-up in a room that is not quiet: no profile, people or personal lines go with it.
             sources = dataclasses.replace(sources, profile_lines=list, extra=[], people=dict)
-        messages = build_messages(text, sources, self.memory, budget=self._context_chars, screen=screen)
+        messages = build_messages(
+            text,
+            sources,
+            self.memory,
+            budget=self._context_chars,
+            screen=screen,
+            stance=self.debate.context_line(normalize(text)),
+        )
         trace.mark("context ready", screen_ms=round((self._clock() - reading) * 1000, 1))
         self.memory.add_user(text)
         return await self._answer_from(text, decided, result, started, model, messages)
@@ -813,6 +856,8 @@ class ConversationLayer:
         late_act: list[
             bool
         ] = []  # an ACT line came after words: never spoken, and it hands over only if nothing held back
+        stance_line = dbt.StanceFilter()  # the reply's last line when it disagrees: read, never spoken
+        stance_topics: list[str] = []  # the same line written in another case, as a sentence of its own
 
         async def put(sentence: str) -> None:
             trace.mark_once("first sentence complete")
@@ -829,7 +874,7 @@ class ConversationLayer:
             stream = (
                 adopted.replay()
                 if adopted is not None
-                else model.stream(TYPED_SYSTEM_PROMPT if typed else SYSTEM_PROMPT, messages)
+                else model.stream(self._talk_prompt(model, typed=typed), messages)
             )
             # A cloud model that has said nothing by the deadline is not answering; a local one may be loading.
             deadline = LOCAL_FIRST_TEXT_DEADLINE if getattr(model, "local", False) else self._first_text_deadline
@@ -845,6 +890,9 @@ class ConversationLayer:
                             answered = getattr(model, "note_answered", None)
                             if callable(answered):
                                 answered()
+                        fragment = stance_line.feed(fragment)
+                        if not fragment:
+                            continue
                         if mode is None:
                             head += fragment
                             mode = looks_like_act(head)
@@ -869,6 +917,14 @@ class ConversationLayer:
                             await put(sentence)
                         if count >= limit_sentences:
                             break
+                rest = stance_line.finish()  # held as a possible STANCE line, and it was words
+                if rest:
+                    if mode is None:
+                        head += rest
+                    elif mode:
+                        act_text.append(rest)
+                    else:
+                        tail += rest
                 if mode is None and head:
                     if looks_like_act(head + " "):
                         act_text.append(head)
@@ -949,6 +1005,10 @@ class ConversationLayer:
                     sentence = await queue.get()
                 if sentence is None:
                     break
+                found = dbt.stance_sentence(str(sentence))
+                if found is not None:
+                    stance_topics.append(found)  # "Stance: ..." in another case: read like the line, never said
+                    continue
                 continues = bool(getattr(sentence, "continues", False))
                 if skipping and continues:
                     skipping = not getattr(sentence, "ends", True)
@@ -1016,6 +1076,12 @@ class ConversationLayer:
                     break
             if not capped:
                 await producer  # (when capped, the finally below closes the stream, so it stops costing tokens)
+            elif self.debate.on and not producer.done():
+                # Cut at a question or the word cap: a disagreement's STANCE line comes at the end of the stream, and
+                # by the time the last sentence has been said the stream has usually ended. Nothing more is said; a
+                # new utterance or a stop cancels this wait like any other.
+                with contextlib.suppress(TimeoutError):
+                    await bounded(producer, dbt.STANCE_WAIT_SECONDS)
         except asyncio.CancelledError:
             # A new utterance arrived: what was heard is remembered, the sentence being spoken as cut off.
             self._remember_said(said, current or None, _waiting(queue))
@@ -1030,9 +1096,22 @@ class ConversationLayer:
                 ack_task.cancel()  # the turn is over: an acknowledgement not yet said never is
         if said:
             self.memory.add_heliox(" ".join(said))
+        # The reply's STANCE line: it disagreed, on this topic (pilot.conversation.debate). Read even when the reply
+        # was capped at a question, since the stream has usually ended by the time that question has been said.
+        topic = stance_line.topic or next((found for found in stance_topics if found), "")
 
         if act_text:
             act = parse_act("".join(act_text))
+            if act is not None and topic and self.debate.concern_allowed(act.object or act.request) and declined(said):
+                # The reply said its disagreement in words ("I'd hold off, that's your only copy") and wrote the ACT
+                # line too. Disagreeing never refuses: the words were the concern, and the step is asked about once.
+                intent = HandoverIntent(
+                    verb=act.verb, object=act.object, words=text, request=act.request, source="model", say=act.say
+                )
+                quick = from_model(act.action, words=text) if act.action is not None else None
+                self.debate.note_concern(act.object or act.request, " ".join(said), offered=True)
+                await self._offer_to(result, intent, quick, started, still=True)
+                return result
             if act is not None and declined(said, say=act.say):
                 # The reply held back ("I can't tell which ones you mean") and wrote an ACT line anyway: the decline
                 # wins and nothing is handed over. What it said stands; if it said nothing, its own sentence or a
@@ -1047,10 +1126,25 @@ class ConversationLayer:
                     verb=act.verb, object=act.object, words=text, request=act.request, source="model", say=act.say
                 )
                 quick = from_model(act.action, words=text) if act.action is not None else None
+                about = act.object or act.request
+                if act.concern and self.debate.concern_allowed(about):
+                    if dbt.costly(act.verb, act.risk):
+                        # Cannot be undone, costs money or reaches other people: the concern first, once, and the
+                        # step waits for a yes or "do it anyway", which hands it over through the usual road.
+                        if await self._say_one(result, act.concern, started) in STOPPED:
+                            result.done = True  # talked over: nothing more is said, as for any reply cut off
+                            return result
+                        self.debate.note_concern(about, act.concern, offered=True)
+                        await self._offer_to(result, intent, quick, started, still=True)
+                        return result
+                    # A small step that can be undone: done, and the concern said after the acknowledgement.
+                    result.concern = act.concern
+                    self.debate.note_concern(about, act.concern, offered=False)
                 if self._only_asked(text):
                     # "How do I open the registry editor?" asks how, not for it to be done: offer first.
                     await self._offer_to(result, intent, quick, started)
                     return result
+                self.debate.close(settle=True)  # what was asked is being done: the topic is not argued again
                 return self._hand_over(result, intent, quick=quick)
             failure.append("unparsed_act")
         elif promised and not failure and declined(said):
@@ -1070,7 +1164,10 @@ class ConversationLayer:
                 return result
             if said:
                 self.memory.add_heliox(" ".join(said))
+            self.debate.close(settle=True)
             return self._hand_over(result, intent)
+        if said and not failure:
+            self.debate.after_reply(topic, " ".join(said))
         if failure and not said:
             reason = failure[0]
             if reason == "unknown_model" and getattr(model, "chosen", True) is False:
@@ -1129,6 +1226,17 @@ class ConversationLayer:
             return ""
         self._unsaid = None
         return rest
+
+    def _talk_prompt(self, model: Any, *, typed: bool) -> str:
+        """The talk prompt with the disagreement rules of conversation.disagree (none when it is off)."""
+        base = TYPED_SYSTEM_PROMPT if typed else SYSTEM_PROMPT
+        return dbt.system_prompt(
+            base, self.debate.setting(), local=bool(getattr(model, "local", False)), spoken=not typed
+        )
+
+    def _approval_waiting(self) -> bool:
+        state = _safe_call(self.sources.task_state, {})
+        return isinstance(state, dict) and bool(state.get("approval_waiting"))
 
     def _nothing_open(self, offer: Any) -> bool:
         """No offer of Heliox's, approval, running task or question of Heliox's waiting for the person."""
@@ -1242,10 +1350,14 @@ class ConversationLayer:
         words = normalize(text)
         return bool(_QUESTION_WORDS.match(words)) and not _ASKS_TO_ACT.match(words)
 
-    async def _offer_to(self, result: TurnResult, intent: HandoverIntent, quick: Any, started: float) -> None:
-        """Ask "Do you want me to ...?" and keep the request for a yes in the next minute."""
+    async def _offer_to(
+        self, result: TurnResult, intent: HandoverIntent, quick: Any, started: float, *, still: bool = False
+    ) -> None:
+        """Ask "Do you want me to ...?" and keep the request for a yes in the next minute. ``still``: after Heliox
+        said why it would not ("Do you still want me to ...?")."""
         request = intent.request.strip().rstrip(".?!")
-        sentence = f"Do you want me to {request[:1].lower()}{request[1:]}?" if request else "Do you want me to do that?"
+        ask = "Do you still want me to" if still else "Do you want me to"
+        sentence = f"{ask} {request[:1].lower()}{request[1:]}?" if request else f"{ask} do that?"
         await self._say_one(result, clean_for_speech(sentence), started)
         self._offer = (self._clock(), intent, quick)
         result.done = True
@@ -1406,13 +1518,13 @@ class ConversationLayer:
         will do, or "" when the plan will need an approval first (pilot.conversation.action_talk)."""
         assert result.intent is not None
         if result.quick is not None:
-            return quick_acknowledgement(result.quick, result.intent.words)
+            return _with_concern(quick_acknowledgement(result.quick, result.intent.words), result.concern)
         if not self._has_model():
             return ""  # no model to plan with: promising "I'll ..." would be followed by why it can't
         ack = acknowledgement(result.intent, last=self._last_ack) if result.intent.verb or result.intent.say else ""
         if not ack and needs_approval_first(result.intent.verb):
-            return ""
-        return ack or "Working on it."
+            return result.concern  # the approval sentence follows; the reason is said before it
+        return _with_concern(ack or "Working on it.", result.concern)
 
     def _has_model(self) -> bool:
         try:
@@ -1493,6 +1605,16 @@ class ConversationLayer:
         summary = " ".join(str(text).split())[:240]
         self.last_result = f"{status}: {summary}" if summary else status
         self.memory.add_heliox(f"{spoken} {said or summary}".strip())
+
+
+def _with_concern(ack: str, concern: str) -> str:
+    """The acknowledgement, then the reason Heliox would not have done it ("I'll mute it. Your call starts in two
+    minutes, though.")."""
+    if not concern:
+        return ack
+    if not ack:
+        return concern
+    return f"{ack.rstrip()} {concern.strip()}"
 
 
 def _current_task_cancelling() -> bool:

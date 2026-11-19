@@ -482,6 +482,7 @@ def layer_for(server: Any) -> Any:
         screen_text_ok=lambda: screen_text_ok_for_planner(server.config),
         provisional_setting=lambda: str(getattr(settings(), "provisional_answers", "auto") or "auto"),
         acknowledge=lambda: bool(getattr(settings(), "acknowledge", False)),
+        disagree=lambda: str(getattr(settings(), "disagree", "when_it_matters") or "when_it_matters"),
     )
     server._conversation = layer
     return layer

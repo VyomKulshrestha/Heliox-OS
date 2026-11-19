@@ -15,10 +15,10 @@
 import { test, expect } from "@playwright/test";
 import { gotoApp, clickTab } from "./helpers";
 
-// Rows Settings shows with everyPanel on 0fb22f4 and the Settings rows fix; more is fine, fewer means a panel went
-// missing from the page or from the mock.
-// The speech switch for a card with driver errors (SpeechDriverErrorsRow) added one to each.
-const AT_LEAST: Record<string, number> = { cloud: 120, ollama: 122 };
+// Rows Settings shows with everyPanel on 0fb22f4 and the Settings rows fix, plus two rows added since: "Push back on
+// decisions" (Disagree.svelte, at the end of Voice) and the speech switch for a card with driver errors
+// (SpeechDriverErrorsRow). More is fine; fewer means a panel went missing from the page or from the mock.
+const AT_LEAST: Record<string, number> = { cloud: 121, ollama: 123 };
 
 test.describe("Settings rows", () => {
   for (const provider of ["cloud", "ollama"]) {
@@ -36,6 +36,7 @@ test.describe("Settings rows", () => {
       await expect(page.locator(".settings-panel .lazy-failed")).toHaveCount(0);
       // Panels whose rows show only with the daemon's answers are there to be checked.
       await expect(page.getByTestId("profile-sharing")).toBeVisible();
+      await expect(page.getByTestId("disagree")).toBeVisible();
       await expect(page.getByTestId("planner-model")).toBeVisible();
       if (provider === "cloud") await expect(page.getByTestId("talk-model")).toBeVisible();
       await expect(page.locator(".settings-panel .profile-card")).toHaveCount(27);
