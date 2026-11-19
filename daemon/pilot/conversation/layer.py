@@ -34,7 +34,7 @@ from pilot.conversation import trace
 from pilot.conversation.acknowledge import ACK_AFTER_SECONDS, next_acknowledgement, wants_acknowledgement
 from pilot.conversation.action_talk import needs_approval_first, result_sentence, said_again
 from pilot.conversation.context import SAVE_OR_CHANGE, ContextSources, ConversationMemory, build_messages
-from pilot.conversation.fast_model import FastModel, FastModelUnavailable
+from pilot.conversation.fast_model import FastModel, FastModelUnavailable, stream_with_retry
 from pilot.conversation.handover import (
     HandoverIntent,
     HandoverTarget,
@@ -112,11 +112,15 @@ FALLBACK_AGAIN = {
     "unknown_default": "The default model still isn't available to your account.",
     "slow": "The language model is still slow. Ask me again in a moment.",
     "refused": "I can't help with that one.",
+    "empty": "Nothing came back that time either. Ask me again?",
 }
 FALLBACK_AGAIN_DEFAULT = "I can't answer that without a language model."
 AGAIN_ALTERNATE = "Not without the language model, sorry."
 # A model that is only slow is there: its second plain line does not say it is missing.
-AGAIN_ALTERNATES = {"slow": "Still slow, sorry. Try again in a few seconds."}
+AGAIN_ALTERNATES = {
+    "slow": "Still slow, sorry. Try again in a few seconds.",
+    "empty": "The language model sent back nothing again. Try once more?",
+}
 UNCLEAR_OFFLINE = "Sorry, I didn't catch that. Could you say it again?"
 # Asked after Heliox pushed back on a costly step the person asked for and the reply asked nothing (debate).
 STILL_GO_AHEAD = "Do you still want me to go ahead?"
@@ -911,7 +915,7 @@ class ConversationLayer:
             stream = (
                 adopted.replay()
                 if adopted is not None
-                else model.stream(self._talk_prompt(model, typed=typed), messages)
+                else stream_with_retry(model, self._talk_prompt(model, typed=typed), messages)
             )
             # A cloud model that has said nothing by the deadline is not answering; a local one may be loading.
             deadline = LOCAL_FIRST_TEXT_DEADLINE if getattr(model, "local", False) else self._first_text_deadline
@@ -1230,6 +1234,11 @@ class ConversationLayer:
                 self.memory.add_heliox(" ".join(said))
             self.debate.close(settle=True)
             return self._hand_over(result, intent)
+        if not (failure or said or dropped or act_text or promised or held_back):
+            # Nothing to say came back (only spaces, only a STANCE line, or nothing left once cleaned for the ear):
+            # said as an empty reply, never silence. A reply held back on a turn that gives way had words: its
+            # "Okay, your call." was said or talked over above.
+            failure.append("empty")
         if said and not failure:
             before = self.debate.stance
             pending = before.request if before is not None else ""

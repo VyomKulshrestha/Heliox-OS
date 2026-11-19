@@ -23,6 +23,8 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from pilot.conversation.fast_model import stream_with_retry
+
 logger = logging.getLogger("pilot.conversation")
 
 # How the utterance was known to be addressed before its end. Nothing else ever starts a provisional call: a follow-up
@@ -349,7 +351,7 @@ async def pump(provisional: Provisional, system: str, build: Callable[[], Any]) 
     try:
         p.messages, p.screen = await build()
         p._calls_before = len(getattr(p.model, "calls", []) or [])
-        stream = p.model.stream(system, p.messages)
+        stream = stream_with_retry(p.model, system, p.messages)
         try:
             async for piece in stream:
                 if p.first_text_at is None:

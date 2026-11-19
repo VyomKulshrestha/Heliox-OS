@@ -97,6 +97,16 @@ def unchecked_note(provider: str) -> str:
 # reject it, so this is per model, not per family). Talk sends it; the planner does not.
 REASONING_OFF: frozenset[str] = frozenset({"gpt-6-luna", "openai/gpt-6-luna", "anthropic/claude-haiku-5.5"})
 
+# OpenRouter talk models that reason unless told otherwise, with the least effort each one's entry in OpenRouter's
+# model list (https://openrouter.ai/api/v1/models, "reasoning.supported_efforts", read 19 November 2026) allows.
+# Talk sends it with require_parameters, so only hosts that take it answer. gpt-oss cannot switch reasoning off
+# ("mandatory"); Qwen 3.8 defaults to "xhigh", which can spend a short reply's whole token allowance on reasoning.
+TALK_REASONING: dict[str, str] = {
+    "openai/gpt-oss-120b": "low",
+    "openai/gpt-oss-20b": "low",
+    "qwen/qwen3.8-27b": "none",
+}
+
 
 def openai_reasoning(model: str) -> bool:
     """An OpenAI reasoning model, also through OpenRouter ("openai/gpt-6-luna"): the GPT-5 and GPT-6 families and the

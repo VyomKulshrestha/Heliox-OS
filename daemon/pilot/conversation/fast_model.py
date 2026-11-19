@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import logging
 import math
@@ -36,7 +37,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from pilot.models.catalog import REASONING_OFF, TALK_DEFAULTS
+from pilot.models.catalog import REASONING_OFF, TALK_DEFAULTS, TALK_REASONING, openai_reasoning
 
 logger = logging.getLogger("pilot.conversation.fast_model")
 
@@ -63,6 +64,10 @@ KEEPALIVE_SECONDS = 120.0
 LOCAL_PROVIDERS = frozenset({"ollama", "local"})
 LOCAL_CONNECT_TIMEOUT = 0.5
 OPENAI_COMPATIBLE = frozenset({"openai", "openrouter", "meta"})
+# A reply with no text is asked for once more, with the stricter request (HttpFastModel.stricter), only when it came
+# back this soon after the request: the second call then fits inside the layer's first-text deadline (4.5 s), so the
+# retry never holds a turn open longer than a slow model already could.
+EMPTY_RETRY_WITHIN = 2.5
 
 
 class FastModelUnavailable(RuntimeError):
@@ -87,6 +92,7 @@ class CallRecord:
     usage_source: str = ""
     chars: int = 0
     cut_off: bool = False
+    reasoned: bool = False  # the stream carried thinking or reasoning (a thinking block, delta.reasoning, a thought)
 
 
 class FastModel(Protocol):
@@ -122,6 +128,7 @@ class _Usage:
     cache_read: int = 0
     cache_write: int = 0
     reported: bool = False
+    reasoned: bool = False  # thinking or reasoning arrived in the stream (never spoken)
 
 
 # What a provider's streamed answer is sent as: server-sent events, or JSON lines (Ollama). A web page is never an
@@ -233,13 +240,36 @@ def gemini_thinking_off(name: str) -> dict[str, Any] | None:
 
     Gemini 2.x flash takes thinkingBudget 0. Gemini 3 and later reject it ("Request contains an invalid argument",
     gemini-3.5-flash-lite, 14 November) and take thinkingLevel instead; "minimal" is the lowest, and no thought tokens
-    were reported with it. An alias without a version ("gemini-flash-latest") points at a current model."""
+    were reported with it. An alias without a version ("gemini-flash-latest") points at a current model.
+
+    Google's thinking page (read 19 November 2026) lists "minimal" for gemini-3.5-flash-lite, 3.6-flash, 3.1-flash-lite
+    and 3-flash-preview, and says it is not supported on gemini-3.8-flash or any Gemini 4 model, whose lowest level is
+    "low"; it also says thought tokens count against maxOutputTokens."""
     if "flash" not in name:
         return None  # a Pro model cannot turn thinking off
-    version = re.match(r"gemini-(\d+)", name)
-    if version is not None and int(version.group(1)) < 3:
-        return {"thinkingBudget": 0}
+    version = re.match(r"gemini-(\d+)(?:\.(\d+))?", name)
+    if version is not None:
+        major, minor = int(version.group(1)), int(version.group(2) or 0)
+        if major < 3:
+            return {"thinkingBudget": 0}
+        if major >= 4 or (major == 3 and minor >= 8):
+            return {"thinkingLevel": "low"}
     return {"thinkingLevel": "minimal"}
+
+
+def claude_thinking_off(model: str) -> dict[str, Any] | None:
+    """The ``thinking`` field that asks a Claude model for the least thinking it allows, or None to leave it out.
+
+    From Anthropic's per-model table (the claude-api reference, cached 3 November 2026): Haiku 5.5, Sonnet 5, Opus 5
+    and the 4.x models accept ``{"type": "disabled"}`` at effort low; Sonnet 5.5 rejects it with a 400 and turns
+    thinking off with ``{"type": "between_tools"}``; Opus 5.5, Fable and Mythos reject any switch-off with a 400, so
+    the field is left out and effort low keeps their thinking short (it still counts against max_tokens)."""
+    name = model.strip().casefold()
+    if name.startswith(("claude-opus-5-5", "claude-fable", "claude-mythos")):
+        return None
+    if name.startswith("claude-sonnet-5-5"):
+        return {"type": "between_tools"}
+    return {"type": "disabled"}
 
 
 def claude_payload(
@@ -256,7 +286,9 @@ def claude_payload(
         # Older models reject output_config.effort (see pilot.models.cloud.claude_supports_effort).
         payload["output_config"] = {"effort": effort}
     if thinking_off:
-        payload["thinking"] = {"type": "disabled"}  # Haiku 5.5 accepts it at effort low, medium and high
+        thinking = claude_thinking_off(model)
+        if thinking is not None:
+            payload["thinking"] = thinking
     return payload
 
 
@@ -364,10 +396,17 @@ class HttpFastModel(_StreamingBase):
     _warm_done_at: float = float("-inf")
     chosen: bool = True  # the person named this model; False for the provider's default (catalog.TALK_DEFAULTS)
     _warming: Any = None  # the warm-up under way (an asyncio task), joined by a request that starts during it
+    strict: bool = False  # the one retry after a reply with no text (stricter)
 
     @property
     def local(self) -> bool:
         return self.provider in LOCAL_PROVIDERS
+
+    def stricter(self) -> HttpFastModel:
+        """The same model for one more try after a reply with no text: twice the output allowance (thinking and
+        reasoning count against it on every provider), and the lowest reasoning effort for a model that reasons and
+        has no known setting. The same connection, budget and call records."""
+        return dataclasses.replace(self, strict=True, max_tokens=self.max_tokens * 2)
 
     def connection_warm(self) -> bool:
         """A connection to the provider was likely open for the next call: the client exists and a warm-up or a call
@@ -438,6 +477,18 @@ class HttpFastModel(_StreamingBase):
                 body["provider"] = {"require_parameters": True, "order": [self.name.split("/", 1)[0]]}
             else:
                 body["reasoning_effort"] = "none"
+        elif self.provider == "openrouter" and self.name in TALK_REASONING:
+            # A model that reasons by default, sent the least its OpenRouter listing allows (catalog.TALK_REASONING),
+            # only to hosts that take the parameter: Qwen 3.8 reasons at "xhigh" when nothing is sent.
+            body["reasoning"] = {"effort": TALK_REASONING[self.name]}
+            body["provider"] = {"require_parameters": True}
+        elif self.strict and self.provider == "openrouter":
+            # The retry after a reply with no text from a model with no known setting: "low" is the lowest effort
+            # most of OpenRouter's reasoning models list. Not required of the host, so a model that does not reason
+            # answers as before.
+            body["reasoning"] = {"effort": "low"}
+        elif self.strict and self.provider == "openai" and openai_reasoning(self.name):
+            body["reasoning_effort"] = "low"  # every GPT-5 and GPT-6 model takes "low"; some reject "none"
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
         if self.provider == "openrouter":
             headers["HTTP-Referer"] = "https://www.helioxos.dev/"
@@ -468,6 +519,8 @@ class HttpFastModel(_StreamingBase):
                 usage.reported = True
             if data.get("error"):
                 raise FastModelUnavailable("error", str(data["error"])[:120])
+            if (data.get("message") or {}).get("thinking"):
+                usage.reasoned = True
             return str((data.get("message") or {}).get("content") or "")
         if self.provider == "claude":
             kind = data.get("type")
@@ -482,6 +535,9 @@ class HttpFastModel(_StreamingBase):
             elif kind == "error":
                 error_type = str((data.get("error") or {}).get("type") or "")
                 raise FastModelUnavailable("busy" if "overloaded" in error_type else "error", error_type)
+            elif kind == "content_block_start":
+                if str((data.get("content_block") or {}).get("type") or "") in ("thinking", "redacted_thinking"):
+                    usage.reasoned = True
             elif kind == "content_block_delta":
                 delta = data.get("delta") or {}
                 if delta.get("type") == "text_delta":
@@ -495,7 +551,11 @@ class HttpFastModel(_StreamingBase):
                     meta.get("thoughtsTokenCount") or 0
                 )
                 usage.reported = True
+                if int(meta.get("thoughtsTokenCount") or 0):
+                    usage.reasoned = True
             parts = ((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+            if any(part.get("thought") for part in parts):
+                usage.reasoned = True
             return "".join(str(part.get("text") or "") for part in parts if not part.get("thought"))
         failed = data.get("error")
         if failed:
@@ -511,7 +571,10 @@ class HttpFastModel(_StreamingBase):
         choices = data.get("choices") or []
         if not choices:
             return ""
-        return str((choices[0].get("delta") or {}).get("content") or "")
+        delta = choices[0].get("delta") or {}
+        if delta.get("reasoning") or delta.get("reasoning_details") or delta.get("reasoning_content"):
+            usage.reasoned = True  # OpenRouter's reasoning fields; reasoning_content from some compatible servers
+        return str(delta.get("content") or "")
 
     def warm_request(self) -> tuple[str, str]:
         """(method, URL) of the warm-up: a HEAD to the provider API's own address. It opens and secures the
@@ -606,22 +669,32 @@ class HttpFastModel(_StreamingBase):
                     refused = True  # the provider never saw the request
                     self.hold(OFFLINE_HOLD_SECONDS, "not_api")
                     raise FastModelUnavailable("not_api", f"not from the API ({kind})")
+                blank = ""  # spaces and line breaks before the first word: no text yet (the deadline still runs)
                 async for line in resp.aiter_lines():
                     text = self.parse(line, usage)
                     if not text:
                         continue
                     if record.first_text_at is None:
+                        if not text.strip():
+                            blank += text
+                            continue
+                        text, blank = blank + text, ""
                         record.first_text_at = self.clock()
                     record.chars += len(text)
                     yield text
             finished = True
+            record.reasoned = usage.reasoned
             if not record.chars:
                 if kind and kind not in API_CONTENT_TYPES:
                     # A type of its own and nothing in it parsed: not the provider's answer.
                     self.hold(OFFLINE_HOLD_SECONDS, "not_api")
                     raise FastModelUnavailable("not_api", f"not from the API ({kind})")
-                # A provider's stream (or one with no type) that carried no text: said, never silence.
-                raise FastModelUnavailable("empty", "the reply held no text")
+                # A provider's stream (or one with no type) that carried no words: said, never silence. When it
+                # carried thinking or reasoning instead, that used the output allowance (stream_with_retry asks once
+                # more with the stricter request).
+                raise FastModelUnavailable(
+                    "empty", "only reasoning, no text" if usage.reasoned else "the reply held no text"
+                )
         except FastModelUnavailable:
             raise
         except BaseException as error:
@@ -646,6 +719,37 @@ class HttpFastModel(_StreamingBase):
             elif usage.reported or record.chars:
                 # A local model costs nothing, but its calls are counted like any other (at zero).
                 await self._record(record, usage, body, True)
+
+
+async def stream_with_retry(model: Any, system: str, messages: list[dict[str, str]]) -> AsyncIterator[str]:
+    """``model.stream``, asked once more when the reply came back with no text soon enough (EMPTY_RETRY_WITHIN) and
+    the model has a stricter request (HttpFastModel.stricter). A second reply with no text, or any other failure,
+    goes to the caller as it came. The caller's first-text deadline covers both calls."""
+    clock = getattr(model, "clock", time.monotonic)
+    started = clock()
+    first = model.stream(system, messages)
+    try:
+        async for piece in first:
+            yield piece
+        return
+    except FastModelUnavailable as error:
+        stricter = getattr(model, "stricter", None)
+        if error.reason != "empty" or not callable(stricter) or clock() - started > EMPTY_RETRY_WITHIN:
+            raise
+    finally:
+        with contextlib.suppress(Exception):
+            await first.aclose()
+    from pilot.conversation import trace
+
+    trace.mark("empty reply, asked again")
+    logger.info("The talk model sent no text; asking once more with the stricter request")
+    second = stricter().stream(system, messages)
+    try:
+        async for piece in second:
+            yield piece
+    finally:
+        with contextlib.suppress(Exception):
+            await second.aclose()
 
 
 # ── Any other backend: the router's ordinary call ──

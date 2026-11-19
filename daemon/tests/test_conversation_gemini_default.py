@@ -23,7 +23,8 @@ from pilot.models import catalog
         ("gemini-2.5-flash", {"thinkingBudget": 0}),
         ("gemini-2.5-flash-lite", {"thinkingBudget": 0}),
         ("gemini-3.5-flash-lite", {"thinkingLevel": "minimal"}),
-        ("gemini-3.8-flash", {"thinkingLevel": "minimal"}),
+        # Google's thinking page (19 November): "minimal" is not supported on gemini-3.8-flash; "low" is its least.
+        ("gemini-3.8-flash", {"thinkingLevel": "low"}),
         ("gemini-flash-latest", {"thinkingLevel": "minimal"}),
         ("gemini-2.5-pro", None),
         ("gemini-4-carbon", None),
