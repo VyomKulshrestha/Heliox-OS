@@ -2359,6 +2359,7 @@ class PilotServer:
             "voice_new_conversation": self._handle_voice_new_conversation,
             "speech_models_list": self._handle_speech_models_list,
             "voice_for_language_apply": self._handle_voice_for_language_apply,
+            "face_voice": self._handle_face_voice,
             "speech_model_download": self._handle_speech_model_download,
             "speech_model_cancel": self._handle_speech_model_cancel,
             "speech_model_remove": self._handle_speech_model_remove,
@@ -10581,30 +10582,9 @@ class PilotServer:
                             "message": "voice.tts_engine must be kokoro_tts, pocket_tts, or os_native",
                         }
                 if section == "voice" and k == "tts_voice":
-                    if v not in {
-                        "af_heart",
-                        "af_bella",
-                        "af_nicole",
-                        "af_sarah",
-                        "af_sky",
-                        "am_adam",
-                        "am_michael",
-                        "bf_emma",
-                        "bf_isabella",
-                        "bm_george",
-                        "bm_lewis",
-                        "alba",
-                        "giovanni",
-                        "lola",
-                        # the voices of other languages (pilot.system.voice_by_language.KOKORO_VOICES)
-                        "ef_dora",
-                        "ff_siwis",
-                        "hf_alpha",
-                        "if_sara",
-                        "jf_alpha",
-                        "pf_dora",
-                        "zf_xiaobei",
-                    }:
+                    from pilot.system.voice_by_language import TTS_VOICES
+
+                    if v not in TTS_VOICES:
                         return {
                             "status": "error",
                             "message": "voice.tts_voice must be a supported Kokoro or Pocket TTS voice",
@@ -10725,6 +10705,10 @@ class PilotServer:
                     "status": "error",
                     "message": "typed_decision artifact_dir and report_path must be absolute local paths",
                 }
+        if section == "voice" and "tts_voice" in normalized_values and "tts_voice_chosen" not in values:
+            # The person picked a voice: from now on a face offers its voice instead of switching to it.
+            previous_values["tts_voice_chosen"] = target.tts_voice_chosen
+            normalized_values["tts_voice_chosen"] = True
         for key, value in normalized_values.items():
             setattr(target, key, value)
         try:
@@ -15835,6 +15819,7 @@ def handle_tool(tool_name, params):
             voice = self.config.voice
             if plan.engine == "kokoro_tts":
                 voice.tts_engine, voice.tts_voice = "kokoro_tts", plan.voice
+                voice.tts_voice_chosen = True  # the person accepted it: a face no longer switches it
             else:
                 voice.tts_engine, voice.system_voice = "os_native", plan.voice
             self.config.save()
@@ -15844,6 +15829,61 @@ def handle_tool(tool_name, params):
             with contextlib.suppress(Exception):
                 configure_local_voice(voice)
         return {"status": "ok", **(await self._voice_for_language()).as_dict()}
+
+    async def _face_voice_plan(self, voice: str, hint: str) -> Any:
+        """What the Face row offers for a face pack that names ``voice`` (pilot.system.face_voice)."""
+        from pilot.system import kokoro_tts
+        from pilot.system.face_voice import plan_face_voice
+        from pilot.system.voice_by_language import reader_missing
+
+        settings = self.config.voice
+        return await asyncio.to_thread(
+            plan_face_voice,
+            voice,
+            hint,
+            engine=str(settings.tts_engine),
+            current=str(settings.tts_voice),
+            chosen=bool(settings.tts_voice_chosen),
+            language=self._spoken_language(),
+            on_disk=kokoro_tts.voice_on_disk,
+            reader_ok=lambda language: not reader_missing(language),
+        )
+
+    async def _handle_face_voice(self, params: dict, ws: ServerConnection) -> dict:
+        """The voice the chosen face's pack names, for Settings' Face row. ``apply``: "" only says what fits;
+        "auto" (the person just chose the face) switches to the face's voice when they never chose a voice and it
+        is on disk; "accept" (they pressed the row's one control) uses the voice offered, fetched by Kokoro the
+        first time it speaks when it is not on disk. Nothing is ever downloaded by this call."""
+        voice, hint, apply = params.get("voice", ""), params.get("hint", ""), params.get("apply", "")
+        if not isinstance(voice, str) or not isinstance(hint, str) or apply not in {"", "auto", "accept"}:
+            return {"status": "error", "message": 'face_voice takes voice, hint and apply ("", "auto" or "accept")'}
+        from pilot.system.face_voice import switched_say
+
+        async with self._config_lock:
+            plan = await self._face_voice_plan(voice, hint)
+            settings = self.config.voice
+            by_face = apply == "auto" and plan.action == "offer" and not settings.tts_voice_chosen
+            by_person = apply == "accept" and plan.action in {"offer", "fetch"}
+            if not (by_face or by_person):
+                return {"status": "ok", "switched": False, **plan.as_dict()}
+            previous = (settings.tts_voice, settings.tts_voice_chosen)
+            settings.tts_voice = plan.voice
+            settings.tts_voice_chosen = settings.tts_voice_chosen or by_person
+            try:
+                self.config.save()
+            except Exception as exc:
+                settings.tts_voice, settings.tts_voice_chosen = previous
+                return {"status": "error", "message": f"The voice was not changed: {exc}"}
+        await self._broadcast_notification("config_updated", {"method": "face_voice", "section": "voice"})
+        from pilot.system.local_tts_worker import configure_local_voice
+
+        with contextlib.suppress(Exception):
+            configure_local_voice(settings)
+        after = await self._face_voice_plan(voice, hint)
+        say = switched_say(plan.voice, by_face=by_face)
+        if plan.action == "fetch":
+            say += " About half a megabyte is fetched the first time it speaks."
+        return {"status": "ok", "switched": True, **after.as_dict(), "voice": plan.voice, "say": say}
 
     async def _handle_speech_model_download(self, params: dict, ws: ServerConnection) -> dict:
         """Start (or resume) downloading one speech model; progress arrives as speech_model_progress."""

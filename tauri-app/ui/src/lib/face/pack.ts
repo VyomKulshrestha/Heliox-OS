@@ -48,7 +48,21 @@ export interface FaceManifest {
    * shape's own picture (the last step, the full shape, is that picture; sil is step zero). Optional.
    */
   mouth_steps?: Partial<Record<Shape, string[]>>;
+  /**
+   * The voice that suits the face: a Kokoro voice id, and a plain hint ("feminine" or "masculine") for when that
+   * voice cannot speak on the computer. Optional; Settings switches to it with the face only while the person has
+   * never chosen a voice.
+   */
+  voice?: FaceVoice;
 }
+
+export interface FaceVoice {
+  kokoro?: string;
+  hint?: "feminine" | "masculine";
+}
+
+const VOICE_HINTS = ["feminine", "masculine"];
+const KOKORO_VOICE = /^[a-z][fm]_[a-z]{1,20}$/;
 
 export const STATE_NAMES = ["idle", "listening", "thinking", "speaking"] as const;
 
@@ -154,6 +168,16 @@ export function manifestProblems(raw: unknown, id: string): string[] {
           problems.push(`mouth_steps.${name}: the shape has no picture`);
       }
   }
+  if (m.voice !== undefined) {
+    const voice = m.voice as Record<string, unknown>;
+    if (!voice || typeof voice !== "object" || Array.isArray(voice)) problems.push("voice: an object");
+    else {
+      if (voice.kokoro !== undefined && (typeof voice.kokoro !== "string" || !KOKORO_VOICE.test(voice.kokoro)))
+        problems.push("voice.kokoro: a Kokoro voice id, such as af_heart");
+      if (voice.hint !== undefined && !VOICE_HINTS.includes(voice.hint as string))
+        problems.push("voice.hint: feminine or masculine");
+    }
+  }
   const tint = (m.tint ?? {}) as Record<string, unknown>;
   if (!isToken(tint.idle) || !isToken(tint.eyes) || !isToken(tint.mouth))
     problems.push("tint: names of the window's colour tokens, such as --text-primary");
@@ -209,6 +233,8 @@ export interface PackEntry {
   id: string;
   name: string;
   credit: string;
+  /** The voice the pack names, if any. */
+  voice?: FaceVoice;
 }
 
 type Fetcher = (url: string) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
@@ -239,7 +265,9 @@ export async function installedPacks(fetcher: Fetcher = fetch): Promise<PackEntr
   for (const id of ids.filter(validPackId)) {
     try {
       const manifest = await readManifest(id, fetcher);
-      entries.push({ id, name: manifest.name.trim(), credit: manifest.credit.trim() });
+      const entry: PackEntry = { id, name: manifest.name.trim(), credit: manifest.credit.trim() };
+      if (manifest.voice?.kokoro) entry.voice = { kokoro: manifest.voice.kokoro, hint: manifest.voice.hint };
+      entries.push(entry);
     } catch {
       // A pack that cannot be read is not offered.
     }

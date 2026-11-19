@@ -92,5 +92,9 @@
     "U": [
       "mouth-U-1.webp"
     ]
+  },
+  "voice": {
+    "kokoro": "am_michael",
+    "hint": "masculine"
   }
 }

@@ -263,6 +263,11 @@ class VoiceConfig:
     # model engines fall back to os_native on import/model/audio failure.
     tts_engine: str = "kokoro_tts"  # "kokoro_tts" | "pocket_tts" | "os_native"
     tts_voice: str = "af_heart"  # model voice preset; ignored when tts_engine == "os_native"
+    # True once the person picked tts_voice themselves (Settings, a spoken setting, the voice for their language, or
+    # a face's offered voice). Until then, choosing a face whose pack names a voice switches to that voice
+    # (pilot.system.face_voice). A config file saved before this field existed and naming tts_voice reads as True:
+    # the default voice there may have been chosen on purpose.
+    tts_voice_chosen: bool = False
     # The system voice by name when tts_engine == "os_native" ("" = the system's default): a voice of the person's
     # language when Kokoro has none (pilot.system.voice_by_language).
     system_voice: str = ""
@@ -863,7 +868,9 @@ class GpuConfig:
 class FaceConfig:
     """The talking face in the conversation view (docs/FACE_PACKS.md). "off" (the default) or the id of a face pack
     the window has installed, picked in Settings, Appearance. While it is off the daemon makes no mouth data for the
-    window (pilot.system.speech_notices). The face is never tied to the voice: any face goes with any voice."""
+    window (pilot.system.speech_notices). A pack may name the voice that suits the face; choosing it switches to that
+    voice only while the person has never chosen one (voice.tts_voice_chosen, pilot.system.face_voice), and any
+    voice can still be set by hand."""
 
     pack: str = "off"
 
@@ -1351,6 +1358,7 @@ def _validate_config_types(raw: dict) -> None:
             "follow_up_window_seconds": (int, float),
             "tts_engine": str,
             "tts_voice": str,
+            "tts_voice_chosen": bool,
             "system_voice": str,
             "tts_keep_loaded_seconds": (int, float),
             "tts_release": str,
@@ -1673,6 +1681,10 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["voice"].items():
             if hasattr(config.voice, k):
                 setattr(config.voice, k, v)
+        if isinstance(raw["voice"], dict) and "tts_voice_chosen" not in raw["voice"]:
+            # Written before the field existed: every save wrote tts_voice, so whether the person chose it is not
+            # known. Keep their voice rather than let a face change it.
+            config.voice.tts_voice_chosen = "tts_voice" in raw["voice"]
 
     if "screen_vision" in raw:
         for k, v in raw["screen_vision"].items():

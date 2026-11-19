@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **338 WebSocket RPC methods**. That is the API
+The daemon currently registers **339 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -2070,6 +2070,23 @@ time it speaks. Broadcasts `config_updated`.
 **Params:** `{}`
 **Result:** `{ "status": "ok", "language", "engine", "voice", "change", "download_bytes", "say" }` (the plan after
 the change, so `change` is false)
+
+Accepting sets `voice.tts_voice_chosen`, so a face chosen later offers its voice instead of switching to it.
+
+#### `face_voice`
+The voice a face pack names (`"voice": {"kokoro", "hint"}` in its manifest, `docs/FACE_PACKS.md`), for Settings'
+Face row (`pilot/system/face_voice.py`). `apply` `""` only says what fits. `"auto"`, sent as the person chooses
+the face, switches `voice.tts_voice` to the face's voice when `voice.tts_voice_chosen` is false (the person never
+picked a voice) and the voice file is on disk; it leaves `tts_voice_chosen` false. `"accept"`, the row's one
+control, uses the voice offered and sets `tts_voice_chosen`. Nothing is downloaded by this call: a voice file not
+on disk is fetched by Kokoro the first time it speaks (about 0.5 MB). With another engine, or a voice language the
+face's voice does not speak, nothing changes (in another language a Kokoro voice of it matching `hint` may be
+offered). Broadcasts `config_updated` when the voice changed. `update_config` with `voice.tts_voice` also sets
+`tts_voice_chosen`; a config file written before that field existed reads it as true.
+
+**Params:** `{ "voice": string, "hint"?: "feminine" | "masculine", "apply"?: "" | "auto" | "accept" }`
+**Result:** `{ "status": "ok", "switched": boolean, "voice", "action": "none" | "same" | "offer" | "fetch" |
+"unavailable", "download_bytes", "say" }` (`say`: one sentence for the row; after a switch, what changed)
 
 #### `speech_model_download`
 Start or resume downloading one model (HTTP Range into `.part` files; SHA-256 checked before it counts) into

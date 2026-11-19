@@ -95,5 +95,9 @@
       "mouth-U-1.webp",
       "mouth-U-2.webp"
     ]
+  },
+  "voice": {
+    "kokoro": "af_heart",
+    "hint": "feminine"
   }
 }

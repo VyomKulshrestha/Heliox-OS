@@ -55,6 +55,19 @@ def use_cached_weights_offline(voice: str) -> bool:
     return True
 
 
+def voice_on_disk(voice: str) -> bool:
+    """Whether Kokoro's file for ``voice`` is in the Hugging Face cache, so speaking with it fetches nothing. Reads
+    the cache only; False when huggingface_hub is not installed."""
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError:
+        return False
+    try:
+        return isinstance(try_to_load_from_cache(REPO_ID, f"voices/{voice}.pt"), str)
+    except Exception:
+        return False
+
+
 def _allow_fetching_missing_voice(voice: str) -> None:
     """A voice picked after the worker went offline is fetched once, as it was before offline mode."""
     global _offline_by_us

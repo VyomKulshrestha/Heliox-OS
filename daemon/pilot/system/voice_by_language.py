@@ -47,6 +47,15 @@ KOKORO_NEEDS = {"zh": ("jieba", "pypinyin", "cn2an"), "ja": ("pyopenjtalk", "fug
 # character instead (the same run). Latin-script languages come out with English sounds.
 NOT_LATIN = frozenset({"zh", "ja", "ko", "ru", "ar", "hi"})
 KOKORO_VOICE_BYTES = 523_000  # a voice file is about half a megabyte
+# Every voice voice.tts_voice may name: Kokoro's English voices, Pocket TTS's, and KOKORO_VOICES of other languages.
+TTS_VOICES = frozenset(
+    {
+        "af_heart", "af_bella", "af_nicole", "af_sarah", "af_sky", "am_adam", "am_michael",
+        "bf_emma", "bf_isabella", "bm_george", "bm_lewis",
+        "alba", "giovanni", "lola",
+        *KOKORO_VOICES.values(),
+    }
+)  # fmt: skip
 
 LANGUAGE_NAMES = {
     "en": "English", "es": "Spanish", "fr": "French", "hi": "Hindi", "it": "Italian", "ja": "Japanese",

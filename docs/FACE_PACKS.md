@@ -53,7 +53,8 @@ tauri-app/ui/public/faces/
 ```
 
 The folder name is the pack's id: lower-case letters, digits and dashes, at most 40 characters. Add the id to
-`packs.json` and the pack appears in Settings under the name its manifest gives. Any face can be used with any voice.
+`packs.json` and the pack appears in Settings under the name its manifest gives. Any face can be used with any voice;
+a pack may name the voice that suits it (`voice`, below).
 
 ## manifest.json
 
@@ -71,7 +72,8 @@ The folder name is the pack's id: lower-case letters, digits and dashes, at most
             "rect": [150, 170, 212, 80] },
   "mouth": { "rect": [176, 300, 160, 112], "shapes": { "sil": "mouth-sil.webp", "aa": "mouth-aa.webp" } },
   "states": { "listening": { "tilt": -2, "mouth": "mouth-smile.webp" }, "thinking": { "tilt": 1.5, "lift": -2 } },
-  "breathe": { "amount": 0.004, "seconds": 4.5 }
+  "breathe": { "amount": 0.004, "seconds": 4.5 },
+  "voice": { "kokoro": "af_heart", "hint": "feminine" }
 }
 ```
 
@@ -95,10 +97,28 @@ The folder name is the pack's id: lower-case letters, digits and dashes, at most
 | `states` | no | How the face rests in `idle`, `listening`, `thinking` and `speaking`: `tilt` in degrees, `lift` in pixels (up is negative), `scale` (0.5 to 2) for a small turn of the whole head, and `mouth`, an image drawn in `mouth.rect` in place of `sil` while the face rests in that state (a closed-lip smile while listening, for example; missing means `sil`). Every one of them eases in over about 160 ms when the state changes. While Heliox speaks, the closed moments of speech show the `speaking` state's `mouth` (normally left out, so `sil`). |
 | `mouth_steps` | no | In-between pictures for a shape: `{"aa": ["mouth-aa-1.webp", "mouth-aa-2.webp"]}`, ordered from nearly closed to nearly full, made with the same crop and alpha as the shape's own picture (morphed offline). The shape's own picture is the last step and the resting mouth is step zero. A shape formed part of the way shows the two neighbouring steps at that point blended, so the mouth opens through real in-between shapes instead of fading a full one in. A shape without steps fades its full picture in over the rest. Each listed shape must have its own picture in `mouth.shapes`; 1 to 8 steps. |
 | `overscan` | no | How much larger than its card the picture is drawn, from 0 to 0.25 (0.04 is 4 %), about its centre. Left out, a `"photo"` pack gets exactly enough that no `tilt`, `lift` or `scale` in `states`, with breathing, ever shows the card behind the picture (about 2 % for a 3 px lift, about 10 % for a 3 degree tilt), and a drawing gets none. Give `0` to turn it off, or a number to fix it. |
+| `voice` | no | The voice that suits the face: `kokoro`, a Kokoro voice id (`af_heart`, `am_michael`, `bm_lewis`; the first letter is the language, the second `f` or `m`), and `hint`, `"feminine"` or `"masculine"`, for when that exact voice cannot speak on the computer. See "The face's voice" below. |
 | `breathe` | no | A slow scale of the whole picture: `amount` (0.004 is 0.4 %) over `seconds`. Leave it out for a filmed loop. |
 | `tint` | no | For drawings only: `{"idle": "--text-secondary", "eyes": "--text-primary", "mouth": "--text-primary"}`. Each layer's image is used as a mask and filled with that colour from the window's theme, so a line drawing follows light and dark mode. Leave it out for a photo. |
 
 Image files may be WebP, PNG, JPEG, AVIF or SVG. File names: letters, digits, dots, dashes and underscores.
+
+## The face's voice
+
+When a person chooses a face in Settings whose pack names a voice:
+
+- if they have never chosen a voice themselves, Heliox switches to the face's voice with the face, and the Face row
+  says so in one sentence. Heliox knows a voice was never chosen from `voice.tts_voice_chosen`, which becomes true the
+  first time the person picks a voice (Settings, Voice; a spoken setting; the voice for their language; the Face
+  row's offer). A config file saved before that field existed counts as chosen, since every save wrote the voice and
+  the default may have been picked on purpose;
+- if they have chosen one, it is kept, and the row offers the face's voice with one button;
+- if the face's voice cannot speak here, nothing is switched: with Pocket TTS or the system voice the row says to
+  choose Kokoro TTS under Voice; when the voice file is not on disk yet the row offers it, and Kokoro fetches it
+  (about half a megabyte) the first time it speaks, the way the voice for another language is added; when Heliox
+  speaks another language, a Kokoro voice of that language matching `hint` is offered if there is one.
+
+Choosing "Off" changes no voice, and a voice set by hand afterwards stays.
 
 ## The fifteen mouth shapes
 
@@ -164,6 +184,7 @@ drawing and draws in the window's own colours (`tint`). It exists to prove the t
 
 `public/faces/portrait-woman` ("Portrait, woman") and `public/faces/portrait-man` ("Portrait, man") are photographic
 packs made from generated portraits of people who do not exist: one still idle frame, a blink, thinking eyes and the
-mouth shapes their makers had stills for (the others are drawn with stand-ins). Each folder's `README.md` records how
+mouth shapes their makers had stills for (the others are drawn with stand-ins). The woman names the voice `af_heart`,
+the man `am_michael`. Each folder's `README.md` records how
 every picture was made and states the terms: the pack is distributed with Heliox OS under the project's MIT License.
 A pack may be rebuilt in place (same folder, same id) with more pictures; nothing in the code names its files.

@@ -115,5 +115,24 @@ describe("face packs", () => {
       return { ok: key !== undefined, json: async () => (key ? files[key] : null) };
     };
     expect(await installedPacks(fetcher)).toEqual([{ id: "ana", name: "Ana", credit: "Made for Heliox. CC BY 4.0." }]);
+    files["faces/ana/manifest.json"] = { ...GOOD, voice: { kokoro: "af_heart", hint: "feminine" } };
+    expect((await installedPacks(fetcher))[0].voice).toEqual({ kokoro: "af_heart", hint: "feminine" });
+  });
+
+  it("takes the voice a pack names, and the portraits name theirs", () => {
+    expect(manifestProblems({ ...GOOD, voice: { kokoro: "am_michael", hint: "masculine" } }, "ana")).toEqual([]);
+    expect(manifestProblems({ ...GOOD, voice: { hint: "feminine" } }, "ana")).toEqual([]);
+    expect(manifestProblems({ ...GOOD, voice: { kokoro: "Michael" } }, "ana")).toContain(
+      "voice.kokoro: a Kokoro voice id, such as af_heart",
+    );
+    expect(manifestProblems({ ...GOOD, voice: { kokoro: "af_heart", hint: "deep" } }, "ana")).toContain(
+      "voice.hint: feminine or masculine",
+    );
+    expect(manifestProblems({ ...GOOD, voice: "af_heart" }, "ana")).toContain("voice: an object");
+    const faces = join(process.cwd(), "public", "faces");
+    const voiceOf = (id: string) => JSON.parse(readFileSync(join(faces, id, "manifest.json"), "utf-8")).voice;
+    expect(voiceOf("portrait-woman")).toEqual({ kokoro: "af_heart", hint: "feminine" });
+    expect(voiceOf("portrait-man")).toEqual({ kokoro: "am_michael", hint: "masculine" });
+    expect(voiceOf("placeholder")).toBeUndefined();
   });
 });
