@@ -18,6 +18,7 @@ from pilot.config import PilotConfig, VoiceConfig
 from pilot.system import local_tts_worker, voice
 from pilot.system.local_tts_worker import LocalTTSWorkerManager, LocalVoiceNotReady, SpeechStore
 from pilot.system.platform_detect import Platform
+from pilot.timeouts import bounded
 
 
 class SlowWorker:
@@ -255,6 +256,6 @@ async def test_waiting_for_the_load_speaks_in_the_local_voice_once_it_is_loaded(
     await asyncio.sleep(local_tts_worker.LOAD_GRACE_SECONDS + 0.2)
     assert not speaking.done() and played == []  # past the grace: still waiting, not dropped
     worker.loaded.set()
-    await asyncio.wait_for(speaking, 5)
+    await bounded(speaking, 5)
     assert played == [b"RIFF-It's 10:42."] and statuses == ["voice_loading", "voice_ready"]
     await manager.shutdown()
