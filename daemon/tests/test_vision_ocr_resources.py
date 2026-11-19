@@ -84,8 +84,13 @@ async def test_windows_ocr_passes_the_image_path_as_an_argument(monkeypatch):
     assert image not in script and "$imgPath = $args[0]" in script
 
 
-def _arbiter_reading(monkeypatch, tmp_path, temperature: float) -> object:
-    """The shared GPU arbiter sees one NVIDIA card at ``temperature`` with 8 GB free; the lease lives in tmp_path."""
+def _arbiter_reading(monkeypatch, tmp_path, temperature: float, environ: dict | None = None) -> object:
+    """The shared GPU arbiter sees one NVIDIA card at ``temperature`` with 8 GB free; the lease lives in tmp_path.
+
+    The made-up machine has its own environment (``environ``, empty by default: every card visible). The test
+    process keeps the suite's CUDA_VISIBLE_DEVICES=-1 (conftest), so the real card stays hidden from it, and the
+    result is the same on a machine with an NVIDIA card and on one without.
+    """
     from pilot.system import gpu_arbiter
 
     monkeypatch.setenv("HELIOX_GPU_LOCK_DIR", str(tmp_path))
@@ -93,17 +98,24 @@ def _arbiter_reading(monkeypatch, tmp_path, temperature: float) -> object:
     fake = gpu_arbiter.GpuArbiter(
         read=lambda: gpu_arbiter.MachineReading("nvidia", (card,), 8 * 1024**3, 16 * 1024**3),
         holder=lambda: gpu_arbiter.lease_holder(tmp_path),
+        environ={} if environ is None else environ,
     )
     monkeypatch.setattr(gpu_arbiter, "_shared", fake)
     return fake
 
 
-async def test_on_demand_gpu_read_releases_the_cuda_cache(screen, monkeypatch, tmp_path):
+def _fake_torch(monkeypatch) -> list[bool]:
+    """A torch whose CUDA is a stand-in, so the GPU path never reaches the real card; returns the cache releases."""
     released: list[bool] = []
     fake_torch = SimpleNamespace(
         cuda=SimpleNamespace(is_initialized=lambda: True, empty_cache=lambda: released.append(True))
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    return released
+
+
+async def test_on_demand_gpu_read_releases_the_cuda_cache(screen, monkeypatch, tmp_path):
+    released = _fake_torch(monkeypatch)
     _arbiter_reading(monkeypatch, tmp_path, 60.0)
 
     result = await vision.screen_find_text("Delete")
@@ -125,7 +137,17 @@ async def test_on_demand_read_uses_the_cpu_when_the_card_is_hot(screen, monkeypa
     assert screen.gpu_requests == [False]
 
 
+async def test_on_demand_read_uses_the_cpu_when_every_card_is_hidden(screen, monkeypatch, tmp_path):
+    released = _fake_torch(monkeypatch)
+    _arbiter_reading(monkeypatch, tmp_path, 60.0, environ={"CUDA_VISIBLE_DEVICES": "-1"})
+
+    assert "Delete files" in await vision.screen_find_text("Delete")
+    assert screen.gpu_requests == [False]
+    assert released == []
+
+
 async def test_a_cuda_error_on_the_gpu_read_is_a_fault_and_the_read_repeats_on_the_cpu(screen, monkeypatch, tmp_path):
+    released = _fake_torch(monkeypatch)
     arbiter = _arbiter_reading(monkeypatch, tmp_path, 60.0)
     reader = screen.Reader
 
@@ -144,3 +166,4 @@ async def test_a_cuda_error_on_the_gpu_read_is_a_fault_and_the_read_repeats_on_t
     assert "Delete files" in await vision.screen_find_text("Delete")
     assert screen.gpu_requests == [True, False]
     assert arbiter.last_fault("ocr").message.startswith("CUDA error")
+    assert released == [True]  # the cache is handed back after the failed GPU read too
