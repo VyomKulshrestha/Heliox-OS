@@ -123,6 +123,26 @@ async def test_a_reply_that_is_all_in_the_store_plays_with_the_worker_released(m
 
 
 @pytest.mark.asyncio
+async def test_shutting_down_while_the_voice_loads_ends_every_task_it_started(monkeypatch):
+    """A reply did not wait for the load, and Heliox stops (or the voice setting changes) while the load is still
+    held: shutdown ends the load, the announcement waiting for it and the pipe exchange, so none is left pending
+    when the event loop closes ("Task was destroyed but it is pending"), and the cut-short load is no failure."""
+    worker, statuses = SlowWorker(), []
+    manager = manager_for(worker, statuses)
+    with pytest.raises(LocalVoiceNotReady):
+        await manager.speak("kokoro_tts", "It's 10:42.", "af_heart", None, AsyncMock())
+    started = [task for task in manager._background if not task.done()]
+    assert len(started) == 3  # the announcement, the load and its exchange on the pipe, all still waiting
+
+    await manager.shutdown()
+
+    assert [task for task in started if not task.done()] == []
+    assert not manager.running and not manager.failing
+    assert statuses == ["voice_loading"]  # not "voice_unavailable": the voice did not fail
+    worker.loaded.set()  # the fake worker's pipe thread, still parked in its read, ends
+
+
+@pytest.mark.asyncio
 async def test_the_system_voice_speaks_the_whole_reply_without_logging_a_failure(monkeypatch, caplog):
     config = PilotConfig()
     config.voice = VoiceConfig(tts_engine="kokoro_tts", tts_voice="af_heart")

@@ -55,6 +55,7 @@ MAX_KEEP_LOADED_SECONDS = 4 * 3600.0
 RETRY_AFTER_SECONDS = 120.0
 LOAD_TIMEOUT_SECONDS = 180.0
 REQUEST_TIMEOUT_SECONDS = 120.0
+SHUTDOWN_WAIT_SECONDS = 2.0  # shutdown(): the longest it waits for the manager's cancelled tasks to end
 LOADING_MESSAGE = "Getting my voice ready…"
 # How long a reply waits for a local voice that is not loaded before the system voice speaks it instead. A cold load
 # takes 20 to 25 s on a laptop CPU, and no reply should wait for it; this only lets a load that is about to finish
@@ -956,10 +957,25 @@ class LocalTTSWorkerManager:
         await asyncio.to_thread(_close_process, process)
 
     async def shutdown(self) -> None:
+        """Stop the worker and every task the manager started: a load under way, the announcement waiting for it,
+        a pipe exchange, a prewarm, sentences made ahead and the idle watch. They are cancelled and waited for
+        (at most SHUTDOWN_WAIT_SECONDS) before the worker is closed, so a load the closing cuts short is not taken
+        for a failure of the voice or of the graphics card, and none is left pending when the event loop closes."""
+        current = asyncio.current_task()
         idle = self._idle_task
         self._idle_task = None
-        if idle is not None and idle is not asyncio.current_task() and not idle.done():
-            idle.cancel()
+        started = [*self._background, *self._prepared.values()]
+        if idle is not None:
+            started.append(idle)
+        self._prepared.clear()
+        left = [task for task in started if task is not current and not task.done()]
+        for task in left:
+            task.cancel()
+        if left:
+            await asyncio.wait(left, timeout=SHUTDOWN_WAIT_SECONDS)
+            for task in left:
+                if task.done() and not task.cancelled():
+                    task.exception()  # retrieved: an error of a cancelled load is not reported again at exit
         if self.process is not None:
             await self._close(self.process)
 
