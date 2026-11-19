@@ -1,17 +1,19 @@
 """From process start to every late part started, how much of Heliox's own work any one step of the event loop does:
-a real start-up (initialize, ready, the learner's replay and the late parts). After ready no step of Heliox's may use
-more than AFTER_READY_BOUND of the processor: those first seconds are when a person speaks first, and imports of the
-learner's and neural input's libraries used to hold the loop for over a second. Steps before ready are printed, not
-asserted: while starting, ping and startup_status wait for them (docs/RELIABILITY.md).
+a real start-up (initialize, ready, the learner's replay and the late parts). After ready no step of Heliox's may run
+more than AFTER_READY_CALLS Python function calls: those first seconds are when a person speaks first, and imports of
+the learner's and neural input's libraries used to hold the loop for over a second. Steps before ready are printed,
+not asserted: while starting, ping and startup_status wait for them (docs/RELIABILITY.md).
 
-What is measured, and why: every callback and task step the loop runs is timed with time.thread_time (the processor
-time of the loop's own thread) as well as wall time. Wall time alone failed whenever the machine was busy: a process
-that is not scheduled for 0.28 s makes any step, even asyncio's own self-reading handle, look slow. Only steps that
-run Heliox's code count: a task whose coroutines are in the pilot package, or a callback defined there. Each is named
-by where its coroutines stopped after the step (the step's code is what ran just before that) and by the late part
-that was starting, so a failure says whose code it was. Waiting on a disk inside a step uses no processor time and is
-not caught here; the non-blocking CI step "Event-loop steps over 100 ms" (tests/loop_watch.py, wall time) still
-prints those.
+What is measured, and why: the work of each callback and task step the loop runs is counted, as the number of Python
+function calls the loop's thread makes inside it (sys.setprofile, for that thread and that step only). A count is the
+same on a fast machine, a slow one and a busy one. Time is not: wall time failed whenever the machine was busy (a
+process that is not scheduled for 0.28 s makes any step look slow), and processor time (time.thread_time) failed in
+a whole-suite run, where a step that runs about a thousand calls was charged 0.28 s; it also moves in 15.6 ms steps
+on Windows. Wall time is still printed for each reported step, never asserted. Only steps that run Heliox's code
+count: a task whose coroutines are in the pilot package, or a callback defined there. Each is named by where its
+coroutines stopped after the step (the step's code is what ran just before that) and by the late part that was
+starting, so a failure says whose code it was. Waiting on a disk inside a step makes few calls and is not caught
+here; the non-blocking CI step "Event-loop steps over 100 ms" (tests/loop_watch.py, wall time) still prints those.
 
 The learner replays a ledger of SEEDED_EVENTS made for the test (two full pages and a part page), so its replay runs
 on every machine. Every folder Heliox writes to is a temporary one: each path constant under the real config, data,
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import asyncio.events
+import contextlib
 import importlib.util
 import sqlite3
 import sys
@@ -37,9 +40,10 @@ import pilot
 import pilot.config as config_module
 from pilot.config import PilotConfig
 from pilot.server import PilotServer
+from pilot.timeouts import bounded
 
-AFTER_READY_BOUND = 0.1  # seconds of the loop thread's processor time in one step of Heliox's
-REPORT = 0.05  # steps over this (processor or wall time) are printed
+AFTER_READY_CALLS = 20_000  # Python function calls in one step of Heliox's after ready (the most seen: 3,400)
+REPORT_CALLS = 2_000  # steps with more calls than this are printed
 LIMIT = 600.0  # failure limit only
 SEEDED_EVENTS = 2_500
 PILOT = str(Path(pilot.__file__).resolve().parent)
@@ -56,14 +60,14 @@ def _load(name: str, folder: Path):
 
 @dataclass
 class Step:
-    cpu: float
-    wall: float
+    calls: int
+    wall: float  # printed, never asserted
     code: str  # "" when the step ran no code of Heliox's
     part: str
     after_ready: bool
 
     def line(self) -> str:
-        return f"{self.cpu:.3f} s processor, {self.wall:.3f} s wall [{self.part or '-'}] {self.code or 'not Heliox'}"
+        return f"{self.calls} calls, {self.wall:.3f} s wall [{self.part or '-'}] {self.code or 'not Heliox'}"
 
 
 def _chain(coro) -> list[str]:
@@ -106,14 +110,24 @@ class StepMeter:
         def run(handle):
             if not meter.active:
                 return original(handle)
-            cpu, wall = time.thread_time(), time.perf_counter()
+            calls = 0
+
+            def count(_frame, event, _arg):
+                nonlocal calls
+                if event == "call":
+                    calls += 1
+
+            previous = sys.getprofile()
+            wall = time.perf_counter()
+            sys.setprofile(count)  # this thread only: work the step hands to a worker thread is not counted
             try:
                 return original(handle)
             finally:
-                cpu, wall = time.thread_time() - cpu, time.perf_counter() - wall
-                if cpu >= REPORT or wall >= REPORT:
+                sys.setprofile(previous)
+                wall = time.perf_counter() - wall
+                if calls > REPORT_CALLS:
                     meter.steps.append(
-                        Step(cpu, wall, heliox_code(handle), meter.part() if meter.ready else "", meter.ready)
+                        Step(calls, wall, heliox_code(handle), meter.part() if meter.ready else "", meter.ready)
                     )
 
         monkeypatch.setattr(asyncio.events.Handle, "_run", run)
@@ -193,13 +207,15 @@ async def test_after_ready_no_step_holds_the_loop_for_long(unused_tcp_port, tmp_
         late = server._late_parts()
         meter.part = lambda: next((name for name, state in late.snapshot().items() if state == "starting"), "")
         meter.active = True
-        try:
-            await asyncio.wait_for(server.start(), LIMIT)
-            deadline = time.monotonic() + LIMIT
-            while time.monotonic() < deadline and any(
-                state not in ("ready", "failed") for state in late.snapshot().values()
-            ):
+
+        async def every_late_part_started() -> None:
+            while any(state not in ("ready", "failed") for state in late.snapshot().values()):
                 await asyncio.sleep(0.1)
+
+        try:
+            await bounded(server.start(), LIMIT)
+            with contextlib.suppress(TimeoutError):  # the assertion below says which part never started
+                await bounded(every_late_part_started(), LIMIT)
         finally:
             meter.active = False  # the stop is not part of what is measured
         assert all(state in ("ready", "failed") for state in late.snapshot().values()), late.snapshot()
@@ -208,9 +224,9 @@ async def test_after_ready_no_step_holds_the_loop_for_long(unused_tcp_port, tmp_
 
     assert replayed is not None and replayed >= SEEDED_EVENTS, replayed  # the replay this test is about ran
     assert meter.ready, "never reached ready"
-    for step in sorted(meter.steps, key=lambda step: step.cpu, reverse=True):
+    for step in sorted(meter.steps, key=lambda step: step.calls, reverse=True):
         print(f"{'after' if step.after_ready else 'before'} ready: {step.line()}")
-    heavy = [step for step in meter.steps if step.after_ready and step.code and step.cpu > AFTER_READY_BOUND]
+    heavy = [step for step in meter.steps if step.after_ready and step.code and step.calls > AFTER_READY_CALLS]
     assert not heavy, [step.line() for step in heavy]
 
 
