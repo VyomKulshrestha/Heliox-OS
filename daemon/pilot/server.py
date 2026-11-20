@@ -1273,6 +1273,19 @@ class PilotServer:
         # independently in security.rpc_identity.
         self._mcp_auth_token = secrets.token_urlsafe(32)
 
+    def _set_up_voice(self) -> None:
+        """The voice's set-up as start() runs it: the GPU arbiter's limits from [gpu] (temperature, free graphics
+        memory, faults), then the local voice's rules (_start_tts_warmup: the device chosen through the arbiter, the
+        free-memory and small-machine checks, the release rule and the store of audio made ahead).
+
+        initialize() applies the same [gpu] limits earlier, before anything that can use the card; applied again here
+        they are the same values. The Conversation Bench calls this function too, so the voice it measures is set up
+        exactly as the daemon's (benchmarks/conversation_bench/driver.py)."""
+        from pilot.system.gpu_arbiter import arbiter as gpu_arbiter
+
+        gpu_arbiter().configure(self.config.gpu)
+        self._start_tts_warmup()
+
     def _start_tts_warmup(self) -> None:
         """Keep heavyweight local TTS outside the long-lived daemon.
 
@@ -14553,7 +14566,7 @@ def handle_tool(tool_name, params):
             self._run_recorded_workflow_scheduler(), name="recorded_workflow_scheduler"
         )
         progress.begin("preparing the voice")
-        self._start_tts_warmup()
+        self._set_up_voice()
 
         # Wayland: the app's own shortcut cannot grab keys there, so the daemon binds it through the desktop portal.
         from pilot.system.wayland_shortcut import start_if_wayland

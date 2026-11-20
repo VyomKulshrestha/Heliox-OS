@@ -151,8 +151,9 @@ def measure(events: list[Event]) -> Measures:
         m.under_way = (markers[0].t - m.last_word) if markers else None
         m.silent_gap = _silent_gap(events, m.last_word)
 
-    # Heliox's voice stopped: cancelled, or ended by the barge-in path (which can return normally).
-    cut = first(events, CUT_OFF)
+    # Heliox's voice stopped: cancelled, or ended by the barge-in path (which can return normally). An
+    # acknowledgement hum cut by the answer (data "ack") is the answer taking over, not a stop.
+    cut = next((e for e in all_of(events, CUT_OFF) if not e.data.get("ack")), None)
     barge = first(events, BARGE_IN)
     if barge is not None:
         ended = next((e for e in events if e.event in (CUT_OFF, DONE) and e.t >= barge.t), None)

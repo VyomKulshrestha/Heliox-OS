@@ -84,6 +84,7 @@ from typing import Any
 from . import audio as audio_refs
 from . import bench_root, machine, stack, wavio
 from . import timeline as tl
+from .driver import acknowledgement, acknowledgement_text, is_hum
 
 MODEL_FIRST = "model first text"
 MODEL_WARM = "model warm-up done"
@@ -163,7 +164,10 @@ def stages(events: list[tl.Event]) -> dict[str, Any] | None:
         # The layer's holding phrase ("One moment.") after 2 s without a first sentence is its own stamp: the first
         # sentence is the answer's, and "first sound" is whatever the person hears first (the holding phrase too).
         "holding phrase": first(tl.SPEAKS, where=lambda e: not e.data.get("setup") and _holding(e.detail)),
-        "first sentence": first(tl.SPEAKS, where=lambda e: not e.data.get("setup") and not _holding(e.detail)),
+        # An acknowledgement hum ("Mm.") is not the answer's first sentence either; it is its own field (``ack``).
+        "first sentence": first(
+            tl.SPEAKS, where=lambda e: not e.data.get("setup") and not _holding(e.detail) and not is_hum(e.detail)
+        ),
         "first sound": first(tl.AUDIO_STARTS, where=lambda e: not e.data.get("setup")),
     }
     answer = picked["first sentence"]
@@ -178,10 +182,13 @@ def stages(events: list[tl.Event]) -> dict[str, Any] | None:
     out: dict[str, Any] = {name: None if e is None else stamp(e) for name, e in picked.items()}
     out["deferred"] = started is not None and not started.data.get("speculative")
     sound = picked["first sound"]
+    # Read at the answer's own sound when there is one: a hum or a holding phrase can sound before the model's text.
+    heard = picked["answer sound"] or sound
     out["route"] = (
-        "model answer" if sound is not None and any(e.event == MODEL_FIRST and e.t <= sound.t for e in after)
+        "model answer" if heard is not None and any(e.event == MODEL_FIRST and e.t <= heard.t for e in after)
         else "local answer"
     )  # fmt: skip
+    out["ack"] = acknowledgement(events)
     limit = sound.t if sound is not None else float("inf")
     out["trace"] = [{"name": e.event[len(TRACE):], **stamp(e)} for e in after
                     if e.event.startswith(TRACE) and e.t <= limit]  # fmt: skip
@@ -319,7 +326,8 @@ def drop_reason(events: list[tl.Event], expected_silent: bool) -> str | None:
 
 def reply_voice(events: list[tl.Event]) -> dict[str, Any]:
     """The first spoken sentence's voice record in a turn (voice, branch, reason), or {}."""
-    found = next((e for e in events if e.event == tl.VOICE_REPLY and not e.data.get("setup")), None)
+    found = next((e for e in events if e.event == tl.VOICE_REPLY and not e.data.get("setup")
+                  and not e.data.get("ack")), None)  # fmt: skip
     return {} if found is None else {"spoke_with": found.data.get("voice"), "branch": found.data.get("branch"),
                                      "reason": found.data.get("reason")}  # fmt: skip
 
@@ -653,6 +661,17 @@ def summary(rows: list[dict[str, Any]], threshold: float) -> dict[str, Any]:
     return out
 
 
+def hums_line(rows: list[dict[str, Any]]) -> str:
+    """How many turns said a hum, and from which voice (pure)."""
+    voices: dict[str, int] = {}
+    for row in rows:
+        said = row.get("ack") or {}
+        if said.get("said"):
+            voices[str(said.get("voice"))] = voices.get(str(said.get("voice")), 0) + 1
+    shown = ", ".join(f"from {voice}: {n}" for voice, n in sorted(voices.items())) or "none"
+    return f"hums said: {sum(voices.values())} of {len(rows)} turns ({shown})"
+
+
 def _median(values: list[float]) -> float | None:
     return round(statistics.median(values), 3) if values else None
 
@@ -709,7 +728,8 @@ async def _main(args: argparse.Namespace) -> int:
     root = Path(args.root)
     loading = args.mode == "first-utterance" and args.during_loading
     harness = Harness(audio_root=args.audio, data_dir=root, model=KINDS["cloud"], configure=configure,
-                      owner_settings=True, wait_until_ready=not loading)  # fmt: skip
+                      owner_settings=True, wait_until_ready=not loading,
+                      made_ahead_wait_s=args.made_ahead_wait)  # fmt: skip
     own = [s for s in load_all() if not s.pending and any(s.id.startswith(p) for p in args.only.split(",") if p)]
     synthetic = model_turn_scenarios(args.model_turns)
     if args.mode == "first-utterance":
@@ -820,6 +840,7 @@ async def _main(args: argparse.Namespace) -> int:
             print(f"{row['case']}{label}{state}: {shown}, CPU {worst} %{mark}", flush=True)
             if found:
                 print("   " + stage_line(found, worst, args.threshold), flush=True)
+                print("   " + acknowledgement_text(found.get("ack") or {}), flush=True)
             if row.get("hearing") is not None:
                 print("   hearing: " + (", ".join(row["hearing"]) or "no status"), flush=True)
             if args.mode == "voice-released":
@@ -839,14 +860,18 @@ async def _main(args: argparse.Namespace) -> int:
             print(f"no sound, why: {row['case']}: {row['dropped']}")
     recognisers = recogniser_summary(session)
     recognisers["kokoro (first sentence to first sound)"] = synthesis_summary(session)
-    result = {"mode": args.mode, "model": args.model, "threshold": args.threshold, "rows": rows,
+    at_start = harness.setup.get("lines", [])
+    for line in at_start:  # again, beside the figures they qualify
+        print(line)
+    print(hums_line(rows))
+    result = {"setup": at_start, "mode": args.mode, "model": args.model, "threshold": args.threshold, "rows": rows,
               "summary": summary(rows, args.threshold), "recognisers": recognisers,
               "warm_up": warm_up_table(rows), "synthesis_by_length": synthesis_table(rows, args.threshold),
               "voice_released": released_table(rows),
               "calls": None if cap is None else {"made": cap.calls, "refused": cap.refused}}  # fmt: skip
-    shown = {"full": ("summary", "recognisers", "warm_up", "synthesis_by_length", "calls"),
-             "first-utterance": ("recognisers",), "warm-up": ("warm_up", "calls"),
-             "synthesis": ("synthesis_by_length",), "voice-released": ("voice_released",)}[args.mode]  # fmt: skip
+    shown = ("setup",) + {"full": ("summary", "recognisers", "warm_up", "synthesis_by_length", "calls"),
+                          "first-utterance": ("recognisers",), "warm-up": ("warm_up", "calls"),
+                          "synthesis": ("synthesis_by_length",), "voice-released": ("voice_released",)}[args.mode]  # fmt: skip
     print(json.dumps({k: result[k] for k in shown}, indent=1))
     if args.out:
         Path(args.out).write_text(json.dumps(result, indent=1), encoding="utf-8")
@@ -899,8 +924,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wait-quiet", type=float, default=0.0, help="minutes to wait for a quiet machine")
     parser.add_argument("--allow-busy", action="store_true", help="run on a busy machine, every number under load")
     parser.add_argument("--threshold", type=float, default=machine.BUSY_PERCENT)
+    parser.add_argument("--made-ahead-wait", type=float, default=None,
+                        help="seconds to wait after the voice loads for the hum's audio to be made ahead "
+                             "(default: the bench's MADE_AHEAD_WAIT_S; 0: not waited for)")  # fmt: skip
     parser.add_argument("--out", default=None)
     args = parser.parse_args(argv)
+    if args.made_ahead_wait is None:
+        from .driver import MADE_AHEAD_WAIT_S
+
+        args.made_ahead_wait = MADE_AHEAD_WAIT_S
     args.root = args.root or os.environ.get(bench_root.ROOT_VARIABLE, "").strip()
     if not args.root:
         raise SystemExit(f"name the bench root with --root or {bench_root.ROOT_VARIABLE}")

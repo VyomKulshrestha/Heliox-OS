@@ -50,6 +50,25 @@ be withdrawn and joined). Scenarios are independent: one server runs them all, a
 makes the new-conversation call, as a person starting over would, which drops what Live holds, clears the
 conversation layer and closes the follow-up windows.
 
+The voice is set up by the daemon's own function, `PilotServer._set_up_voice()`, the one `start()` runs: the GPU
+arbiter's limits, the device chosen through the arbiter (with every card hidden, the processor, by the product's own
+`cuda_hidden` rule), the free-memory and small-machine checks, the release rule (`voice.tts_release`) and the store of
+audio made ahead. The bench does not call `start()` itself, which also claims the port, writes the token files, runs
+`initialize()` and starts the scheduler and the watches. As the server does once its listener runs, the bench then
+loads the voice and starts making the fixed sentences ahead (`_prewarm_voice`), and waits up to `MADE_AHEAD_WAIT_S`
+(150 s; `voice_latency --made-ahead-wait`) for the two acknowledgement hums to be in the store, since a hum is only
+ever said from there. Before 20 November none of this ran in a bench run: no hum could be said, no fixed sentence or
+kept head played from the store, the device was set to the processor by the bench, and the idle voice was released
+by the clock alone.
+
+Every run prints its set-up first, and puts the same lines at the top of the timing summary and in
+`voice_setup.json`: a first line that says whether the set-up differs from the daemon's default (each setting under
+`[voice]`, `[conversation]`, `[gpu]` and `[live]` that is not the default, cards hidden by the bench, a voice load
+past the daemon's 180 s limit, or the daemon's voice set-up not wired), then the voice's device and why, how many
+pieces the store holds and whether each hum is among them, and the release rule in force. Each turn says whether a
+hum was said and from which voice, or why not (the store was never asked, the hum was not made ahead, or it was made
+ahead and the answer came first).
+
 ## Audio
 
 Scenario files hold only text and expectations. Audio is referenced as a path inside a private folder

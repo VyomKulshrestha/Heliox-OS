@@ -30,6 +30,14 @@ from .scenarios import Scenario
 
 STUB_SUCCESS = "All set."
 VOICE_LOAD_WAIT_S = 900.0
+# How long a run waits, after the voice has loaded, for the store of audio made ahead to hold the hum's pieces (the
+# daemon makes them after 30 s of quiet with the voice loaded; a few seconds more on a 4-core CPU).
+MADE_AHEAD_WAIT_S = 150.0
+HUM_CHECK = "hum made-ahead check"  # the conversation layer asked whether a hum's audio is made ahead (data: ready)
+# The sections of the settings a run reports when they differ from a fresh PilotConfig(): the voice, the conversation
+# layer (the hum is conversation.acknowledge), the GPU arbiter's limits and Heliox Live.
+SETUP_SECTIONS = ("voice", "conversation", "gpu", "live")
+_PRODUCT_LOAD_LIMIT: dict[str, float] = {}  # the voice manager's LOAD_TIMEOUT_SECONDS as the product ships it
 WORDS_WAIT_S = 20.0
 OUTCOME_WAIT_S = 6.0
 ROOM_NOISE = 40  # int16 standard deviation of the quiet room between utterances (about -58 dBFS)
@@ -133,6 +141,81 @@ def voice_replies(events: list[tl.Event]) -> dict[str, Any]:
     groups["waited behind a piece made ahead"] = group(lambda r: r["behind"])
     groups["no piece made ahead in the way"] = group(lambda r: not r["behind"])
     return groups
+
+
+def is_hum(text: str) -> bool:
+    """One of the acknowledgement hums (pilot.conversation.acknowledge.ACKNOWLEDGEMENTS)."""
+    try:
+        from pilot.conversation.acknowledge import ACKNOWLEDGEMENTS
+    except ImportError:  # an older tree without the hums
+        return False
+    return text.strip() in ACKNOWLEDGEMENTS
+
+
+def acknowledgement(events: list[tl.Event]) -> dict[str, Any]:
+    """Whether a turn said a hum and from where, read from its events (pure): ``said`` (the hum, or None), ``voice``
+    (store, local or system, from the voice manager's record) and ``after_last_word_s``; with no hum, ``why`` says
+    how far the layer got: never asked the store, asked and the audio was not made ahead, or made ahead and not said
+    (the answer was ready first, or the spacing rule left it out)."""
+    last = tl.all_of(events, tl.LAST_WORD)
+    for i, e in enumerate(events):
+        if e.event != tl.SPEAKS or e.data.get("setup") or not is_hum(e.detail):
+            continue
+        later = events[i + 1 :]
+        until = next((j for j, x in enumerate(later) if x.event == tl.SPEAKS), len(later))
+        record = next((x for x in later[:until] if x.event == tl.VOICE_REPLY), None)
+        sound = next((x for x in later[:until] if x.event == tl.AUDIO_STARTS), None)
+        after = None
+        if sound is not None and last:
+            after = round(
+                float(sound.data.get("audio_t", sound.t)) - float(last[-1].data.get("audio_t", last[-1].t)), 3
+            )
+        return {"said": e.detail.strip(), "voice": None if record is None else record.data.get("voice"),
+                "cut": record is not None and bool(record.data.get("cut")), "after_last_word_s": after}  # fmt: skip
+    checks = tl.all_of(events, HUM_CHECK)
+    if not checks:
+        why = "not asked (the layer's rules left this turn out before the store was asked)"
+    elif not any(c.data.get("ready") for c in checks):
+        why = "the hum's audio was not made ahead"
+    else:
+        why = "made ahead, not said (the answer was ready first, or the spacing rule)"
+    return {"said": None, "why": why}
+
+
+def acknowledgement_text(found: dict[str, Any]) -> str:
+    """One line for a turn's acknowledgement (pure)."""
+    if not found.get("said"):
+        return f"no hum: {found.get('why', 'not recorded')}"
+    at = found.get("after_last_word_s")
+    when = f" at {at:.2f} s after the last word" if isinstance(at, float | int) else ""
+    cut = ", cut by the answer" if found.get("cut") else ""
+    return f"hum {found['said']!r} from {found.get('voice') or 'an unrecorded voice'}{when}{cut}"
+
+
+def _shown(value: Any) -> str:
+    """A setting's value for a report line: numbers, flags and short words; never a path or a long text."""
+    if value is None or isinstance(value, bool | int | float):
+        return repr(value)
+    if isinstance(value, str) and len(value) <= 40 and "/" not in value and "\\" not in value:
+        return repr(value)
+    return "(a different value)"
+
+
+def settings_differences(run: Any, default: Any, sections: tuple[str, ...] = SETUP_SECTIONS) -> list[str]:
+    """Every field of ``sections`` whose value in ``run`` is not the one in ``default`` (pure): "section.field
+    default -> run"."""
+    import dataclasses
+
+    out = []
+    for section in sections:
+        mine, base = getattr(run, section, None), getattr(default, section, None)
+        if mine is None or base is None or not dataclasses.is_dataclass(base):
+            continue
+        for item in dataclasses.fields(base):
+            before, now = getattr(base, item.name), getattr(mine, item.name, None)
+            if before != now:
+                out.append(f"{section}.{item.name} {_shown(before)} -> {_shown(now)}")
+    return out
 
 
 def voiced_span(x: Any) -> tuple[float, float]:
@@ -354,7 +437,16 @@ class Harness:
         configure: Callable[[Any], None] | None = None,
         owner_settings: bool = False,
         wait_until_ready: bool = True,
+        made_ahead_wait_s: float = MADE_AHEAD_WAIT_S,
     ) -> None:
+        # After the voice has loaded: how long to wait for the store to hold the hum's pieces (0: not waited for; the
+        # set-up lines say what the store held either way).
+        self.made_ahead_wait_s = made_ahead_wait_s
+        self.made_ahead_waited: dict[str, Any] = {}
+        self.cards_hidden_by = ""  # "bench" or "environment" when CUDA_VISIBLE_DEVICES hides every card
+        self.setup: dict[str, Any] = {}  # voice_setup(): what this run measured, for the start of every report
+        # The daemon's own limit for a voice load (LOAD_TIMEOUT_SECONDS before the bench raises it in build()).
+        self.product_load_limit_s = float("inf")
         self.configure = configure  # adjusts the loaded settings before the server is built (CI: models it fetched)
         # A local run: the person's [model] and named [voice] settings copied, the speech models read in place
         # (bench_root). Off on a runner, which has neither.
@@ -387,6 +479,7 @@ class Harness:
         # files under data_dir, before pilot.config loads: never the person's. Raises if something imported
         # pilot.config first, or if any folder resolves outside data_dir.
         root = enter(self.data_dir)
+        cards_set_before = "CUDA_VISIBLE_DEVICES" in os.environ
         os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")  # CPU only, for this process and the voice worker
         os.environ.setdefault("HF_HUB_OFFLINE", "1")  # never download: every model must already be on disk
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -400,6 +493,8 @@ class Harness:
         from pilot.system.voice import ContinuousVoiceListener
 
         log = self.log
+        if tts_worker.cuda_hidden():
+            self.cards_hidden_by = "environment" if cards_set_before else "bench"
         config = PilotConfig.load()
         config.save = MagicMock()
         if self.owner_settings:
@@ -407,9 +502,10 @@ class Harness:
             self.copied_settings = copy_owner_settings(config)
         config.live.enabled = True
         config.live.grounded_checks = False  # the local model takes minutes on a CPU
-        # CPU only, said in the setting itself: the voice worker's GPU choice does not read CUDA_VISIBLE_DEVICES=""
-        # as "no card" (on 12 November it put Kokoro on the failing GPU and fell back to the system voice).
-        config.voice.tts_device = "cpu"
+        # The voice's device is left to the product's rules (tts_device as configured, then the GPU arbiter and
+        # cuda_hidden in the voice manager). Until 20 November the bench set tts_device = "cpu" here, because the
+        # worker's GPU choice once read CUDA_VISIBLE_DEVICES="" as "no rule" (12 November); cuda_hidden() now reads
+        # it, so with every card hidden the voice starts on the processor by the product's own rule.
         if self.configure is not None:
             self.configure(config)
         if self.owner_settings:
@@ -460,16 +556,19 @@ class Harness:
 
         async def speaker(text: str, recorder: Any) -> Any:
             setup = bool(self._setup_text) and text == self._setup_text
-            log(tl.SPEAKS, text[:300], setup=setup, stub=text == STUB_SUCCESS)
+            hum = {"ack": True} if is_hum(text) else {}  # an acknowledgement hum: its cut-off is not a stop
+            log(tl.SPEAKS, text[:300], setup=setup, stub=text == STUB_SUCCESS, **hum)
             self._speaking_setup = setup
             mark = voice_marks()
             try:
                 result = await original_speaker(text, recorder)
-                log(tl.VOICE_REPLY, "", setup=setup, **voice_evidence(mark))
-                log(tl.DONE, "", setup=setup)
+                log(tl.VOICE_REPLY, "", setup=setup, **hum, **voice_evidence(mark))
+                log(tl.DONE, "", setup=setup, **hum)
                 return result
             except asyncio.CancelledError:
-                log(tl.CUT_OFF, "", setup=setup)
+                if hum:  # which voice had started it (a hum is usually cut by the answer)
+                    log(tl.VOICE_REPLY, "", setup=setup, cut=True, **hum, **voice_evidence(mark))
+                log(tl.CUT_OFF, "", setup=setup, **hum)
                 raise
 
         server._speech_coordinator._speaker = speaker
@@ -506,6 +605,8 @@ class Harness:
         # The product gives the voice worker 180 s to load and then falls back to the system voice. On a loaded
         # machine the load can take longer; the bench waits for it (and records how long it took), because
         # timings measured with a fallback voice say nothing about the real one.
+        _PRODUCT_LOAD_LIMIT.setdefault("s", tts_worker.LOAD_TIMEOUT_SECONDS)  # before any harness raised it
+        self.product_load_limit_s = _PRODUCT_LOAD_LIMIT["s"]
         tts_worker.LOAD_TIMEOUT_SECONDS = max(tts_worker.LOAD_TIMEOUT_SECONDS, VOICE_LOAD_WAIT_S)
         manager = tts_worker.manager()
         original_spawn = manager._spawn
@@ -516,6 +617,14 @@ class Harness:
             return original_spawn(*args)
 
         manager._spawn = counted_spawn
+        # The voice set up by the daemon's own function, the one start() runs: the GPU arbiter's limits, the device
+        # chosen through the arbiter, the free-memory and small-machine checks, the release rule and the store of
+        # audio made ahead. Until 20 November the bench built the server without start() (which also claims the port and
+        # listens, writes the token files, runs initialize() and starts the scheduler, the wake and data-size watches,
+        # the LAN mesh and Air Handoff), so none of this ran: no hum could be said, the device was not chosen by the
+        # product's rules and the idle voice was released by the clock alone.
+        server._set_up_voice()
+        self._log_hum_checks(server)
 
         observed = self._observed
 
@@ -610,6 +719,9 @@ class Harness:
         recorder.stop = pump.stop_event.set
         server._voice_listener = listener
         log("listener start", str(await listener.start()))
+        # What the server does once its listener runs (_handle_voice_listener_start): load the local voice and start
+        # making the fixed sentences ahead (make_fixed_speech_ahead, the store the hum is said from).
+        server._prewarm_voice()
 
         async def watch_voice_activity() -> None:
             state = {"speaking": False, "heard": listener.transcripts_received}
@@ -649,6 +761,7 @@ class Harness:
         self._vad_watch = asyncio.ensure_future(watch_voice_activity())
         if not self.wait_until_ready:
             log("ready", "not waited for")
+            self.report_setup()
             return
         for _ in range(900):
             if listener._streaming is not None and listener._streaming.ready and listener._turn_detector is not None:
@@ -656,14 +769,156 @@ class Harness:
             await asyncio.sleep(0.1)
         log("ready", f"streaming={listener._streaming is not None and listener._streaming.ready}")
         started = log.now()
-        await server._speak_voice_response("Ready.")  # loads the voice worker, as a running daemon has
-        await self._wait(lambda: bool(manager.loaded), VOICE_LOAD_WAIT_S)
+        if server.config.voice.tts_engine in tts_worker.LOCAL_ENGINES:
+            # Loaded by the prewarm above, as a running daemon's is; a voice that cannot load (too little memory, a
+            # small machine, a failure) ends the wait at once and the set-up lines say why.
+            await self._wait(lambda: bool(manager.loaded) or manager.failing, VOICE_LOAD_WAIT_S)
         self.voice_load_s = log.now() - started
         log("voice warm", f"{log.now() - started:.1f} s", loaded=bool(manager.loaded))
         print(f"local voice ready after {log.now() - started:.0f} s (loaded={manager.loaded})", flush=True)
+        await self.wait_for_made_ahead(self.made_ahead_wait_s)
+        self.report_setup()
         babble = Path(self.audio_root) / "synthetic" / "babble.wav"
         if babble.exists():
             self.babble = wavio.read(babble)
+
+    def _log_hum_checks(self, server: Any) -> None:
+        """Every time the conversation layer asks whether a hum's audio is made ahead, the answer on the timeline."""
+        from pilot.conversation.adapters import layer_for
+
+        layer = layer_for(server)
+        check = getattr(layer, "_ready_made", None)
+        if check is None:  # an older tree without the hum
+            return
+
+        def logged(text: str) -> bool:
+            ready = check(text)
+            self.log(HUM_CHECK, text, ready=ready is True)
+            return ready
+
+        layer._ready_made = logged
+
+    def hums_made_ahead(self) -> dict[str, bool]:
+        """Each hum: whether its audio is in the store, asked exactly as the conversation layer asks."""
+        try:
+            from pilot.conversation.acknowledge import ACKNOWLEDGEMENTS
+            from pilot.conversation.adapters import _ready_made
+        except ImportError:
+            return {}
+        return {hum: bool(_ready_made(self.server, hum)) for hum in ACKNOWLEDGEMENTS}
+
+    async def wait_for_made_ahead(self, limit_s: float) -> dict[str, Any]:
+        """Wait at most ``limit_s`` for the store to hold every hum's audio, made by the daemon's own making ahead
+        (started by the prewarm). Records what was waited and found in ``made_ahead_waited``."""
+        from pilot.system import local_tts_worker as tts_worker
+
+        started = time.perf_counter()
+        local = self.server.config.voice.tts_engine in tts_worker.LOCAL_ENGINES
+        ready = all(self.hums_made_ahead().values()) if local else False
+        if local and not ready and limit_s > 0 and tts_worker.manager().loaded:
+            ready = await self._wait(lambda: all(self.hums_made_ahead().values()), limit_s)
+        waited = round(time.perf_counter() - started, 1)
+        self.made_ahead_waited = {"limit_s": limit_s, "waited_s": waited, "ready": ready}
+        self.log("made-ahead wait", f"{waited:.0f} s", **self.made_ahead_waited)
+        return self.made_ahead_waited
+
+    def voice_setup(self) -> dict[str, Any]:
+        """What this run measured, for the first lines of every report: whether its set-up differs from the daemon's
+        default, the voice's device and why, the store of audio made ahead and the hum's pieces, the release rule."""
+        from pilot.config import PilotConfig
+        from pilot.system import gpu_arbiter
+        from pilot.system import local_tts_worker as tts_worker
+
+        manager = tts_worker.manager()
+        config = self.server.config
+        voice = config.voice
+        engine, name = str(voice.tts_engine), str(voice.tts_voice)
+        local = engine in tts_worker.LOCAL_ENGINES
+        differs = settings_differences(config, PilotConfig())
+        if self.cards_hidden_by == "bench":
+            differs.append("every graphics card hidden by the bench (CUDA_VISIBLE_DEVICES set empty)")
+        missing = []
+        if manager.choose_device is not gpu_arbiter.voice_device:
+            missing.append("the device is not chosen through the GPU arbiter")
+        if local and manager.head_cache is None:
+            missing.append("no store of audio made ahead")
+        if (manager.keep_while is None) != (str(voice.tts_release) == "time"):
+            missing.append("the release rule is not the one voice.tts_release names")
+        if missing:
+            differs.append("the daemon's voice set-up did not run: " + ", ".join(missing))
+        load_limit = tts_worker.LOAD_TIMEOUT_SECONDS
+        product_limit = self.product_load_limit_s
+        if self.voice_load_s is not None and self.voice_load_s > product_limit:
+            differs.append(f"the voice took {self.voice_load_s:.0f} s to load; the daemon gives it {product_limit:.0f} s "
+                           f"and then speaks with the system voice (the bench waited up to {load_limit:.0f} s)")  # fmt: skip
+
+        if not local:
+            device = f"voice: the system voice ({engine}); no local voice, no store of audio made ahead, no hum"
+        elif manager.effective_device is not None:
+            lease = " with the GPU lease" if manager.gpu_lease else ""
+            why = manager.device_reason or f"tts_device {manager.device!r}, not moved by the GPU arbiter"
+            device = f"voice: {engine} {name} on {manager.effective_device}{lease}: {why}"
+        elif manager.failing:
+            device = f"voice: {engine} {name} not in use: {manager.unavailable_reason}; the system voice speaks"
+        else:
+            device = f"voice: {engine} {name} not started yet; tts_device {manager.device!r}, decided when it starts"
+        if self.cards_hidden_by == "environment":
+            device += " (CUDA_VISIBLE_DEVICES hides every card in this environment)"
+
+        hums = self.hums_made_ahead() if local else {}
+        store = manager.head_cache
+        if not local:
+            made = "made-ahead store: not used by the system voice"
+        elif store is None:
+            made = "made-ahead store: none (the daemon's store was not set up); no hum can be said"
+        else:
+            signature = tts_worker.SpeechStore.signature(engine, name)
+            entries = [e for e in store._load().values() if isinstance(e, dict) and e.get("signature") == signature]
+            fixed = sum(bool(e.get("fixed") and e.get("kept")) for e in entries)
+            heads = sum(bool(e.get("kept") and not e.get("fixed")) for e in entries)
+            shown = ", ".join(f"{hum} {'in' if ok else 'missing'}" for hum, ok in hums.items()) or "none in this tree"
+            waited = self.made_ahead_waited
+            if not waited:
+                wait = "not waited for"
+            elif waited.get("ready"):
+                wait = f"there after {waited['waited_s']:.0f} s"
+            elif not waited.get("limit_s"):
+                wait = "not waited for (wait 0)"
+            else:
+                wait = f"not there after {waited['waited_s']:.0f} s: no turn of this run can say a hum"
+            made = (
+                f"made-ahead store: {fixed} fixed pieces and {heads} kept heads for this voice; hums: {shown} ({wait})"
+            )
+
+        keep = float(manager.keep_loaded_seconds)
+        if not local:
+            release = "release rule: none (the system voice loads nothing)"
+        elif manager.keep_while is None:
+            source = "voice.tts_release = 'time'" if str(voice.tts_release) == "time" else "the daemon's rule not wired"
+            release = f"release rule: by the clock alone, {keep:.0f} s after the last use ({source})"
+        else:
+            release = (f"release rule: after {keep:.0f} s idle, kept while the computer has the memory to spare "
+                       "(voice.tts_release = 'memory'); a voice on the graphics card gives it up when another "
+                       "component asks for the card")  # fmt: skip
+        first = (
+            "SET-UP DIFFERS from the daemon's default; a figure from this run is not how the product behaves "
+            "unless these are named with it:"
+            if differs
+            else "SET-UP: the daemon's voice set-up and default settings."
+        )
+        lines = [first, *(f"  differs: {d}" for d in differs), device, made, release]
+        return {"lines": lines, "differs": differs, "device": manager.effective_device,
+                "device_reason": manager.device_reason, "hums_made_ahead": hums,
+                "made_ahead_wait": dict(self.made_ahead_waited), "release_by_memory": manager.keep_while is not None,
+                "keep_loaded_seconds": keep}  # fmt: skip
+
+    def report_setup(self) -> list[str]:
+        """Work out voice_setup() now, print its lines and put them on the timeline; returns the lines."""
+        self.setup = self.voice_setup()
+        for line in self.setup["lines"]:
+            print(line, flush=True)
+        self.log("voice set-up", "\n".join(self.setup["lines"]))
+        return self.setup["lines"]
 
     def voice_store_counts(self) -> dict[str, int]:
         """The store of ready-made audio at the end of the run: how many entries, fixed, kept (counts only)."""
@@ -716,6 +971,12 @@ class Harness:
                 events = list(self.log.events)
             evidence = {"store": self.voice_store_counts(), "replies": voice_replies(events)}
             (session_to / "voice_store.json").write_text(json.dumps(evidence, indent=1), encoding="utf-8")
+            # The set-up as reported at the start, and as it stood at the end (a voice started later, a store that
+            # filled during the run).
+            at_end = self.voice_setup() if self.server is not None else {}
+            (session_to / "voice_setup.json").write_text(
+                json.dumps({"at_start": self.setup, "at_end": at_end}, indent=1), encoding="utf-8"
+            )
         if getattr(self, "_vad_watch", None) is not None:
             self._vad_watch.cancel()
         if self.pump:

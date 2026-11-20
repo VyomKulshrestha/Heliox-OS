@@ -134,13 +134,15 @@ async def run(
 ) -> tuple[list[scoring.Outcome], dict[str, list], set[str], dict[str, dict], str, dict[str, dict[str, list[int]]]]:
     """Every chosen scenario once per setting and repeat. ``on_repeat(outcomes, groups, owed, compared,
     calibration, repeats_done)`` runs after every repeat, so a run stopped part way still leaves what it finished."""
-    from .driver import Harness
+    from .driver import Harness, acknowledgement, acknowledgement_text
 
     harness = Harness(
         audio_root=args.audio, data_dir=bench_root_for(results), model=KINDS["cloud"], configure=configure
     )
     harness.keep_voice_log(results)  # the voice worker's INFO lines, uploaded with the results
     await harness.build()
+    args.voice_setup = harness.setup.get("lines", [])  # the summary's first lines (save)
+    args.hums = hums = {"turns": 0, "said": 0, "voices": {}}
     stack.enable(harness)
     name, values, repeats, _wanted, todo = plan(args)
     outcomes: list[scoring.Outcome] = []
@@ -179,6 +181,12 @@ async def run(
                                 scenario, tl.measure(heard), condition=condition, model=model))  # fmt: skip
                     events = await harness.run(scenario, "as-recorded")
                     outcome = scoring.score(scenario, tl.measure(events), condition="as-recorded", model=model)
+                    ack = acknowledgement(events)
+                    hums["turns"] += 1
+                    if ack.get("said"):
+                        hums["said"] += 1
+                        voice = str(ack.get("voice"))
+                        hums["voices"][voice] = hums["voices"].get(voice, 0) + 1
                     if words:
                         tally(words, value, "as-recorded", scenario, outcome)
                     first = value == values[0]
@@ -193,10 +201,19 @@ async def run(
                             compared[group][value].setdefault(repeat, []).append(breakdown)
                     shown = f" {name}={value}" if name else ""
                     print(f"[{i}/{total}] {scenario.id} ({model}){shown} load {load}% "
-                          f"reply={outcome.measures.reply_start} stop={outcome.measures.stop_time}", flush=True)  # fmt: skip
+                          f"reply={outcome.measures.reply_start} stop={outcome.measures.stop_time}; "
+                          f"{acknowledgement_text(ack)}", flush=True)  # fmt: skip
     finally:
         await harness.close(session_to=results)
     return outcomes, groups, owed, (compared if name else {}), calibration, words
+
+
+def hums_line(hums: dict[str, Any] | None) -> str:
+    """How many scenario passes said an acknowledgement hum, and from which voice (pure)."""
+    if not hums:
+        return "hums: not counted"
+    voices = ", ".join(f"from {voice}: {n}" for voice, n in sorted(hums["voices"].items())) or "none"
+    return f"hums said: {hums['said']} of {hums['turns']} scenario passes ({voices})"
 
 
 def tally(words: dict[str, dict[str, list[int]]], value: str, condition: str, scenario: Scenario, outcome: Any) -> None:
@@ -329,8 +346,11 @@ def save(
         if done < repeats
         else f"Finished all {repeats} repeat(s)."
     )
+    setup = list(getattr(args, "voice_setup", None) or ["SET-UP: not reported (the harness was not built)."])
     text = "\n".join([
         f"### Conversation Bench timing lines: {note}",
+        "",
+        "```", *setup, hums_line(getattr(args, "hums", None)), "```",
         "",
         *comparison_note(name, compare_settings.parse(args.settings)[1]),
         "These numbers are for a small CPU-only machine with nothing else running and synthetic voices. They say "
