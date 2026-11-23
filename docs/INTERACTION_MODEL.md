@@ -354,6 +354,37 @@ folders added the way the daemon adds them):
   80 °C; Whisper small was not measured on it, because the card reached 83 °C before its turn. On a laptop like this
   one the arbiter will often keep Whisper on the processor, and that is the intended result.
 
+### The wake check and the final words (24 November)
+
+The first end-to-end run (24 live turns, Parakeet final pass, Whisper base wake check on the processor) put the final
+words 0.83 s after the last word, 0.22 s after Smart Turn ended the turn (0.61 s). On 20 of 26 turns the final words
+waited for Whisper reading the whole utterance (about 0.5 s a call) beside Parakeet (about 0.2 s). The reading of the
+opening, which should have settled the wake phrase while the person was still talking, had not run on those turns:
+- people pause after "Hey Heliox,", and that pause (200 ms of quiet) starts a speculative pass on 1.3 s of audio;
+- the person goes on, the pass is dropped, but its Whisper and Parakeet threads run to their end;
+- the opening came due at 1.6 s while they ran, and `_start_early_wake` gave up when any recogniser was running.
+
+On the run's 27 clips, read again one at a time: 20 of the 26 usable clips had that pause; the 1.6 s
+opening held the wake phrase on all 26, but on 9 it held only "Hey Heliox." with nothing after it, which cannot agree
+with the final words; read at 2.4 s, all 22 long enough agreed.
+
+Now:
+- The opening reading waits for a running recogniser (at most `OPENING_WAIT_SECONDS`, only while the person talks)
+  and then reads everything said by then.
+- A reading that ends at the wake phrase is made once more when the person has said 0.4 s more and is still talking
+  (`OPENING_REREAD_SECONDS`).
+- The final pass does not wait for a reading that cannot confirm the phrase: one still waiting for the processor, or
+  one that ended with nothing after the phrase. The whole-utterance check then starts beside Parakeet; a reading that
+  ends unable to confirm while Parakeet runs starts it at that moment, not after Parakeet.
+- A reading of the opening does not hold back the speculative pass; a dropped pass's thread still does.
+- Inside a conversation, or after the microphone button, an utterance of 1.6 s or more is read by Parakeet alone
+  first (`ALONE_FIRST_SECONDS`): a reply needs no wake check, and the check runs only when Parakeet's words show it
+  is needed. Shorter ones keep Whisper beside Parakeet, which drops a lone word heard on noise.
+
+The guarantee is unchanged: words that are not addressed to Heliox are never handed to a model or sent anywhere. The
+wake phrase is accepted on the same two proofs as before (the opening reading agreeing with Parakeet's words, or the
+whole-utterance check), and a follow-up is judged on its final words by the same rule.
+
 ### Starting the answer before the turn is confirmed (`conversation.provisional_answers`)
 
 A cloud model's first word takes about 1.0 s (Claude Haiku 5.5: median 1.04 to 1.18 s over three paid runs). Before
