@@ -5114,11 +5114,15 @@ class ContinuousVoiceListener:
                 # Whisper reads the utterance for the wake phrase at the same moment Parakeet reads it for the
                 # words: the two run side by side instead of one after the other.
                 opening = _write_wav([_to_int16(samples[: int(WAKE_OPENING_SECONDS * 16000)])], 16000)
+                parakeet_done: list[bool] = []  # empty while Parakeet reads (for the stamp only)
 
                 def whole_utterance_check() -> asyncio.Task[str]:
                     # English, not detected: on the owner's desk microphone automatic detection read "Hey Heliox,
                     # what can I say?" as Dutch ("Heliox.com, nice video.") in 2 of 5 cuts, and English hit 9 of 9,
                     # twice as fast. Parakeet, whose words are used, is English-only anyway.
+                    from pilot.system import speech_trace
+
+                    speech_trace.emit("wake check started", at=time.monotonic(), beside=not parakeet_done)
                     task = asyncio.ensure_future(self._transcribe_whisper_text(opening, language="en"))
                     task.add_done_callback(lambda done: done.cancelled() or done.exception())
                     return task
@@ -5150,6 +5154,7 @@ class ContinuousVoiceListener:
                     early_wake.add_done_callback(start_if_needed)
                 try:
                     said = await asyncio.to_thread(_counted, parakeet.transcribe, samples)
+                    parakeet_done.append(True)
                 except MemoryError:
                     _cancel(checks[0] if checks else None)
                     checks.append(asyncio.ensure_future(asyncio.sleep(0, "")))  # nothing more starts for this pass
@@ -5553,15 +5558,21 @@ class ContinuousVoiceListener:
             return ""  # still taken: nothing read, and the whole-utterance check decides
         if waited:
             frames = list(recorder.current_frames) or frames  # what has been said by now, longer than the opening
-        text = await self._read_frames(frames, limit)
-        if opening_can_confirm(text) or not loose_wake_prefix(text):
-            return text
+        from pilot.system import speech_trace
+
         read = sum(len(frame) for frame in frames)
-        while recorder.user_is_speaking:
-            now = list(recorder.current_frames)
-            if sum(len(frame) for frame in now) - read >= OPENING_REREAD_SECONDS * rate:
-                return await self._read_frames(now, limit)
-            await asyncio.sleep(0.02)
+        speech_trace.emit("opening read started", at=time.monotonic(), waited_s=round(waited, 2), audio_s=read / rate)
+        text = await self._read_frames(frames, limit)
+        reread = False
+        if not opening_can_confirm(text) and loose_wake_prefix(text):
+            while recorder.user_is_speaking:
+                now = list(recorder.current_frames)
+                if sum(len(frame) for frame in now) - read >= OPENING_REREAD_SECONDS * rate:
+                    reread = True
+                    text = await self._read_frames(now, limit)
+                    break
+                await asyncio.sleep(0.02)
+        speech_trace.emit("opening read done", at=time.monotonic(), confirms=opening_can_confirm(text), reread=reread)
         return text
 
     async def _read_frames(self, frames: list[Any], limit: int) -> str:
@@ -5712,8 +5723,17 @@ class ContinuousVoiceListener:
             logger.debug("Could not start an early request", exc_info=True)
             return
         if started:
+            from pilot.system import speech_trace
+
             self._early_count += 1
             self._early_turn, self._early_words = turn_id, words
+            speech_trace.emit(
+                "early request started",
+                turn=turn_id,
+                at=time.monotonic(),
+                n=self._early_count,
+                words=len(words.split()),
+            )
 
     def _hum_at_turn_end(self, kept: asyncio.Future[str], proof: dict[str, str]) -> None:
         """The turn has ended at the candidate whose pass is ``kept``: when that pass's words are known to be addressed
@@ -5731,6 +5751,9 @@ class ContinuousVoiceListener:
             found = self.early_request_words(str(done.result() or ""), proof)
             if found is None:
                 return
+            from pilot.system import speech_trace
+
+            speech_trace.emit("turn end reported", turn=turn_id, at=time.monotonic())
             try:
                 hook(turn_id, found[0], found[1], ended)
             except Exception:

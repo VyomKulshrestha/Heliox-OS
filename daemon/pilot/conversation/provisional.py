@@ -318,6 +318,9 @@ class ProvisionalAnswers:
             task.cancel()  # closes the stream: the reply stops costing output tokens
         self._count_drop(provisional)
         logger.info("Provisional answer for %s dropped (%s)", turn_id, provisional.dropped)
+        from pilot.system import speech_trace
+
+        speech_trace.emit("early request dropped", turn=turn_id, at=time.monotonic(), reason=provisional.dropped)
         return True
 
     def expire(self, provisional: Provisional) -> None:
@@ -338,8 +341,17 @@ class ProvisionalAnswers:
         self.drop(turn_id, "not_used")
 
     def note_adopted(self, provisional: Provisional) -> None:
+        from pilot.system import speech_trace
+
         provisional.adopted = True
         self.adopted += 1
+        speech_trace.emit(
+            "early request kept",
+            turn=provisional.turn_id,
+            at=time.monotonic(),
+            started=provisional.started,
+            first_text_at=provisional.first_text_at or 0.0,
+        )
 
     def not_adopted(self, provisional: Provisional, reason: str) -> None:
         """Claimed by its turn, which could not use it (other words, another road)."""
@@ -371,7 +383,10 @@ async def pump(provisional: Provisional, system: str, build: Callable[[], Any]) 
         try:
             async for piece in stream:
                 if p.first_text_at is None:
+                    from pilot.system import speech_trace
+
                     p.first_text_at = time.monotonic()
+                    speech_trace.emit("early request first text", turn=p.turn_id, at=p.first_text_at)
                 p.pieces.append(piece)
                 p._changed.set()
         finally:

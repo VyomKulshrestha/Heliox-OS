@@ -13,6 +13,18 @@ Events:
     "final pass done"          {id, speculative, started, done, audio_s, failed}
     "speculative pass kept"    {id, at}: the turn ended at that pass's candidate; its words are the turn's
     "speculative pass dropped" {id, at, running}: the person went on (or the listener stopped)
+    "opening read started"     {at, waited_s, audio_s}: Whisper reads the opening for the wake phrase (waited_s: how
+                               long it waited for another recogniser to finish)
+    "opening read done"        {at, confirms, reread}: confirms: the phrase with a word after it; reread: read twice
+    "wake check started"       {at, beside}: Whisper on the whole utterance; beside: Parakeet had not returned yet
+    "early request started"    {turn, at, n, words}: the talk model asked on a pass's words before the turn settled
+                               (n: the how-manyth of this utterance)
+    "early request first text" {turn, at}
+    "early request kept"       {turn, at, started, first_text_at}: the settled words were its words (0: no text yet)
+    "early request dropped"    {turn, at, reason}: carried_on, words_changed, not_addressed, other_words, ...
+    "turn end reported"        {turn, at}: the listener told the server the turn ended on addressed words
+    "hum decided"              {turn, at, path, hum, reason}: path "turn end" or "hand-over"; hum "" when none
+    "hum to the voice"         {turn, at}: a hum decided at the turn end handed to the voice
     "piece synthesized"        {words, kind, requested, worker_started, done, took, process_ready, text_written,
                                in_memory}: the voice worker made a piece. took: the worker's own seconds per step
                                (read_s, synth_s, trim_s, total_s; write_s and timing_s for a file); in_memory: the

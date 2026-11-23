@@ -379,6 +379,13 @@ class TurnResult:
             self._layer._finished(self, status, result, said)
 
 
+def _hum_stamp(turn: str, path: str, hum: str, reason: str) -> None:
+    """The hum's decision on the speech trace (pilot.system.speech_trace), for the end-to-end measurement."""
+    from pilot.system import speech_trace
+
+    speech_trace.emit("hum decided", turn=turn, at=time.monotonic(), path=path, hum=hum, reason=reason)
+
+
 @dataclass
 class _EarlyHum:
     """A hum decided when the listener's turn ended (ConversationLayer.hum_at_turn_end), before the turn reached the
@@ -651,6 +658,7 @@ class ConversationLayer:
             return False  # an action's own acknowledgement, a stop, or words nobody can answer: not this road
         held = self.provisional.get(turn_id)
         if held is not None and held.first_text_at is not None:
+            _hum_stamp(turn_id, "turn end", "", "answer ready")
             return False  # the answer's first text is already there: it goes first
         hum = next_acknowledgement(self._last_hum)
         if not (
@@ -660,7 +668,9 @@ class ConversationLayer:
             and _safe_call(lambda: self._ready_made(hum), False) is True
             and hum_allowed(self._hum_run, self._ack_draw)
         ):
+            _hum_stamp(turn_id, "turn end", "", "rules")
             return False
+        _hum_stamp(turn_id, "turn end", hum, "")
         record = _EarlyHum(turn_id=turn_id, phrase=hum)
         self._early_hums = {turn_id: record}  # one at a time: an older one that never reached a turn is gone
         record.task = asyncio.ensure_future(self._hum_when_due(record, ended))
@@ -690,6 +700,9 @@ class ConversationLayer:
         ):
             return  # the answer is ready: it goes first, and nothing is said before it
         self._last_ack = self._last_hum = record.phrase
+        from pilot.system import speech_trace
+
+        speech_trace.emit("hum to the voice", turn=record.turn_id, at=time.monotonic())
         record.playing = True
         try:
             outcome = await self._sink(record.phrase, "task_narration", f"conv-ack:{record.turn_id}")
@@ -1137,6 +1150,8 @@ class ConversationLayer:
                 ack_task = asyncio.ensure_future(
                     self._acknowledge_when_due(result, float(ended), queue, content_handed, acked, hum)
                 )
+            if not typed:
+                _hum_stamp(prov.dispatch_turn.get(), "hand-over", hum if ack_task is not None else "", "")
         repeat_asked = self._asked_again(text)
         dropped = False
         said: list[str] = []
