@@ -33,7 +33,8 @@ a mouth moves in running speech:
   before them at 40 % (or a small neutral opening); a vowel uses the nearest vowel the pack has. A consonant with a
   picture of its own is formed at most 45 % of the way, so the vowels carry the opening: at 70 % a consonant picture
   that opens nearly as far as a vowel (the woman's `nn`) left her stressed vowels hardly more open than her n and t;
-- a cut closes the mouth on the next frame;
+- a cut closes the mouth at once: the face draws a frame at rest as the cut notice arrives, without waiting for its
+  next frame, and keeps the mouth at rest for whatever the reply would still have said;
 - one picture is always dominant: between two steps of a shape the blend stays on one step until a quarter of the
   way and is on the next from three quarters (a lip closure's steps cross between 40 and 60 %), and of two shapes
   drawn at once the less formed one fades in only as the two near each other, half and half only where they swap.
