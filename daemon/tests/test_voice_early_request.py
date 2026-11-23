@@ -203,3 +203,29 @@ def test_known_addressed_speech_moves_the_request_point_to_100_ms():
     item.early_request = None  # no early requests: the pass keeps its own timing
     item._request_point_if_addressed(confirmed)
     assert item._recorder.speculate_frames == 4
+
+
+@pytest.mark.asyncio
+async def test_the_turn_end_is_reported_on_addressed_words_as_soon_as_the_kept_pass_returns():
+    item = listener()
+    ended: list[tuple] = []
+    item.turn_ended = lambda *args: ended.append(args) or True
+    item._recorder.last_turn_ended_at = 50.0
+    kept = asyncio.get_running_loop().create_future()
+    item._hum_at_turn_end(kept, dict(WAKE))
+    assert ended == []  # the pass is still running: reported when it returns
+    kept.set_result("Hey Heliox, what's the capital of Peru?")
+    await asyncio.sleep(0)
+    assert ended == [("v1", "what's the capital of Peru", "wake", 50.0)]
+
+
+@pytest.mark.asyncio
+async def test_words_not_known_to_be_addressed_report_nothing():
+    item = listener()
+    ended: list[tuple] = []
+    item.turn_ended = lambda *args: ended.append(args) or True
+    item._recorder.last_turn_ended_at = 50.0
+    kept = asyncio.get_running_loop().create_future()
+    kept.set_result("so I told her the meeting moved to Monday")
+    item._hum_at_turn_end(kept, {})
+    assert ended == []

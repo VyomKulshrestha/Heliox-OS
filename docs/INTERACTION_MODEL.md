@@ -141,22 +141,34 @@ system voice, before the local voice has made it, or with no local voice at all,
 it; turning the setting on by default changes nothing for those people. The two hums are the first sentences the store
 makes, so a new local voice has them within its first minute of making ahead.
 
-So that it does not become a habit:
+When it is decided (24 November). In the live run the hum was heard on 9 of 24 turns, at 0.90 s: it was decided
+only after the hand-over (0.84 s), and the spacing kept it off every turn after one that had it, a rule written when
+most answers were expected in time (none came before 1.38 s). Now:
+- When the listener's turn ends on words already known to be addressed (the wake phrase confirmed, or the
+  microphone button), it tells the server (`PilotServer.voice_turn_ended`) and the layer decides the hum then
+  (`ConversationLayer.hum_at_turn_end`), by the same rules, before the dispatch reaches it. It is said
+  `ACK_AFTER_SECONDS` after the last word at the earliest, so at the turn's end (about 0.6 s in the run) on most turns.
+- The dispatch of the same turn does not stop its own hum (`hum_playing`), takes it over instead of deciding again,
+  and a turn that goes elsewhere, or speech found not addressed, drops a hum not yet said.
+- Other turns (a follow-up judged on its final words) decide it at the hand-over, as before.
+- Never when the answer's first text is there: the early request's text counts, at the decision and again when due.
+
+So that it does not become a habit (`acknowledge.hum_allowed`):
 - the two take turns, so the same hum is never heard twice running (an action's own acknowledgement in between does
   not reset this);
-- never on the turn after one that had it; on the turn after that, half the time (`SECOND_TURN_CHANCE`); from the
-  third turn on, whenever the answer is late. A run of late answers hears one every second or third turn, at no fixed
-  rhythm.
+- after a turn with no hum, a late turn always hums; after one with a hum, 80 % of the time; after two in a row,
+  50 %; never a fourth in a row. Over a run of late answers that is about 69 % of turns ((1 + 0.8 + 0.4) / (2 + 0.8 +
+  0.4)), the quiet turns falling two, three or four turns apart with no fixed beat; a quiet late turn still gets the
+  holding phrase at about 2 s. Counted over 300 scripted late turns in `tests/test_conversation_acknowledge.py`.
 
 When it is not said:
 - on a typed turn, or a turn whose last word's time is unknown;
 - on control words, a turn of fewer than three words, a thanks or an acknowledgement;
 - on a statement;
-- on the turn after one that had it, and on half of the turns after that.
+- when the answer's first text is already there;
+- on a fourth late turn in a row, and by the draw above.
 
-A turn that had one gets no holding phrase. On the 11 model turns of the 13 November bench run (every answer at 2.05
-to 3.75 s) the old rule would have spoken on six, every other turn; with the spacing above on four to six of
-them. Their first sound would have come at about 0.5 s, and the answers no later.
+A turn that had one gets no holding phrase.
 
 **Pushing back on a decision** (`pilot.conversation.debate`, `conversation.disagree`, in Settings at the end of
 Voice as "Push back on decisions"). Heliox says so when it has a reason against what the person decided or asked

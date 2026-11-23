@@ -3812,6 +3812,9 @@ class ContinuousVoiceListener:
         # utterance (_begin_early_request).
         self.early_request: Any = None  # callable(turn_id, words, addressed) -> bool
         self.cancel_early_request: Any = None  # callable(turn_id, reason) -> None
+        # Set by the server (PilotServer.voice_turn_ended): callable(turn_id, words, addressed, ended) -> bool, called
+        # when the turn ends on words already known to be addressed, so the hum is decided then.
+        self.turn_ended: Any = None
         self._early_turn = ""  # the turn id of the early request running for the utterance being heard
         self._early_words = ""  # its words, normalised as the conversation layer compares them
         self._early_count = 0  # early requests started for this utterance (EARLY_REQUESTS_PER_TURN at most)
@@ -5339,6 +5342,8 @@ class ContinuousVoiceListener:
             self._asr_started_at, self._asr_done_at = time.monotonic(), None
             self._last_parakeet_text = self._last_wake_text = ""
             early = speculation.take() if self._recorder.is_active else None
+            if early is not None and self.turn_ended is not None:
+                self._hum_at_turn_end(early, speculation.proof)
             heard = await streaming.finish() if streaming is not None else ""
             if self._cutting_off(final=True) and not loose_wake_prefix(heard):
                 # A short cut-off over Heliox is a stop whatever it says (is_cut_off_stop): no recogniser is waited
@@ -5709,6 +5714,32 @@ class ContinuousVoiceListener:
         if started:
             self._early_count += 1
             self._early_turn, self._early_words = turn_id, words
+
+    def _hum_at_turn_end(self, kept: asyncio.Future[str], proof: dict[str, str]) -> None:
+        """The turn has ended at the candidate whose pass is ``kept``: when that pass's words are known to be addressed
+        (the same rule as an early request), tell the server now, so the hum is decided as the turn ends instead of
+        after the hand-over. If the pass is still running, as soon as it returns."""
+        hook = self.turn_ended
+        turn_id = f"v{self._turns + 1}"
+        ended = getattr(self._recorder, "last_turn_ended_at", None)
+        if hook is None or not isinstance(ended, float):
+            return
+
+        def decide(done: asyncio.Future[str]) -> None:
+            if done.cancelled() or done.exception() is not None:
+                return
+            found = self.early_request_words(str(done.result() or ""), proof)
+            if found is None:
+                return
+            try:
+                hook(turn_id, found[0], found[1], ended)
+            except Exception:
+                logger.debug("Could not report the end of the turn", exc_info=True)
+
+        if kept.done():
+            decide(kept)
+        else:
+            kept.add_done_callback(decide)
 
     def _drop_early_request(self, reason: str) -> None:
         """Drop the early request of the utterance being heard, if one is running."""

@@ -491,6 +491,7 @@ def test_the_bench_wires_its_listener_exactly_as_the_server_does():
     # Words already known to be addressed ask the model before the turn settles (held, kept or dropped).
     assert attrs["early_request"] == "provisional_voice_turn"
     assert attrs["cancel_early_request"] == "cancel_provisional_voice_turn"
+    assert attrs["turn_ended"] == "voice_turn_ended"  # the hum is decided as the turn ends
 
     class Server:
         def withdraw_voice_turn(self):
@@ -501,6 +502,9 @@ def test_the_bench_wires_its_listener_exactly_as_the_server_does():
 
         def cancel_provisional_voice_turn(self, turn_id, reason):
             return None
+
+        def voice_turn_ended(self, turn_id, words, addressed, ended):
+            return False
 
         def _voice_task_open(self):
             return True

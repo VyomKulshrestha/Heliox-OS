@@ -3114,6 +3114,22 @@ class PilotServer:
         if conversation is not None:
             conversation.cancel_provisional(turn_id, reason)
 
+    def voice_turn_ended(self, turn_id: str, words: str, addressed: str, ended: float) -> bool:
+        """The listener's turn ended on words already known to be addressed ("wake" or "button"): the conversation
+        layer decides its hum now instead of at the hand-over (pilot.conversation.acknowledge). True if one is due."""
+        if addressed not in ("wake", "button") or self._voice_task_open():
+            return False
+        quick = getattr(self, "_quick_answers", None)
+        try:
+            if quick is not None and quick.answer(words) is not None:
+                return False  # answered in code at once: no hum before it
+            from pilot.conversation import layer_for
+
+            return bool(layer_for(self).hum_at_turn_end(turn_id, words, ended))
+        except Exception:
+            logger.debug("Could not decide the hum at the end of the turn", exc_info=True)
+            return False
+
     async def _settle_voice_turn(self, turn_id: str, *, window: bool) -> float:
         """Wait while the person may be going on with voice turn ``turn_id`` (pilot.conversation.turns.settle)."""
         from pilot.conversation.turns import settle
@@ -16088,8 +16104,14 @@ def handle_tool(tool_name, params):
             self._last_turn_kind,
         )
         conversation.interrupt()  # a new utterance ends a reply still being written or spoken
+        from pilot.system.voice import voice_turn_id
 
-        if self.config.voice.barge_in_enabled and self._speech_coordinator.status()["active"]:
+        if (
+            self.config.voice.barge_in_enabled
+            and self._speech_coordinator.status()["active"]
+            # This turn's own hum, said as its turn ended, is not a reply to stop.
+            and not getattr(conversation, "hum_playing", lambda _turn: False)(voice_turn_id.get())
+        ):
             await self._speech_coordinator.stop_all()
             await self._broadcast_notification(
                 "voice_status",
@@ -16788,6 +16810,7 @@ def handle_tool(tool_name, params):
         replacement.warm_model = self.warm_for_speech  # speech said to Heliox: open the fast model's connection
         replacement.early_request = self.provisional_voice_turn  # ask the model before the turn settles, held
         replacement.cancel_early_request = self.cancel_provisional_voice_turn
+        replacement.turn_ended = self.voice_turn_ended  # the hum is decided as the turn ends
         self._voice_listener = replacement
         result = await replacement.start()
         if not replacement.is_running:
@@ -16835,6 +16858,7 @@ def handle_tool(tool_name, params):
         # Words already known to be addressed: the talk model is asked before the turn settles, everything held.
         self._voice_listener.early_request = self.provisional_voice_turn
         self._voice_listener.cancel_early_request = self.cancel_provisional_voice_turn
+        self._voice_listener.turn_ended = self.voice_turn_ended  # the hum is decided as the turn ends
         result = await self._voice_listener.start()
         if not self._voice_listener.is_running:
             self._voice_listener = None

@@ -15,9 +15,11 @@ from pilot.conversation import trace
 from pilot.conversation.acknowledge import (
     ACK_AFTER_SECONDS,
     ACKNOWLEDGEMENTS,
-    SECOND_TURN_CHANCE,
+    AFTER_ONE_CHANCE,
+    AFTER_TWO_CHANCE,
+    MAX_RUN,
+    hum_allowed,
     next_acknowledgement,
-    spaced_out,
     wants_acknowledgement,
 )
 from pilot.conversation.layer import HOLD_PHRASES, ConversationLayer
@@ -105,7 +107,7 @@ async def test_never_when_the_answer_is_ready_by_then():
     assert ear.heard == [("Mostly the processor working hard.", "final_answer")]
 
 
-async def test_never_twice_in_a_row_and_never_the_same_sound_twice_running():
+async def test_late_turns_in_a_row_hum_and_never_the_same_sound_twice_running():
     ear = Ear()
     current = [Gate()]
     layer = layer_for(None, ear)
@@ -119,8 +121,7 @@ async def test_never_twice_in_a_row_and_never_the_same_sound_twice_running():
         current[0].release.set()
         await turn
     layer_sounds = [text for text, _ch in ear.heard if text in ACKNOWLEDGEMENTS]
-    assert len(layer_sounds) == 2  # turns one and three (the draw passes); never the turn after one
-    assert layer_sounds[0] != layer_sounds[1]  # and never the same sound twice running
+    assert layer_sounds == ["Mm.", "Hmm.", "Mm."]  # late every time and the draw passes: three, alternating
 
 
 async def test_a_turn_with_an_acknowledgement_gets_no_holding_phrase_as_well():
@@ -147,7 +148,6 @@ async def test_a_turn_with_an_acknowledgement_gets_no_holding_phrase_as_well():
         (QUESTION, {"typed": True}),
         (QUESTION, {"ended": None}),  # the last word's time is unknown: it cannot be timed
         (QUESTION, {"statement": True}),
-        (QUESTION, {"acked_last_turn": True}),
         (QUESTION, {"enabled": False}),
         ("Why?", {}),
         ("And tomorrow?", {}),
@@ -158,12 +158,12 @@ async def test_a_turn_with_an_acknowledgement_gets_no_holding_phrase_as_well():
     ],
 )
 def test_never_on_these(text, kwargs):
-    base = {"typed": False, "ended": 1.0, "statement": False, "acked_last_turn": False, "enabled": True}
+    base = {"typed": False, "ended": 1.0, "statement": False, "enabled": True}
     assert not wants_acknowledgement(text, **{**base, **kwargs})
 
 
 def test_a_question_of_a_few_words_qualifies():
-    assert wants_acknowledgement(QUESTION, typed=False, ended=1.0, statement=False, acked_last_turn=False, enabled=True)
+    assert wants_acknowledgement(QUESTION, typed=False, ended=1.0, statement=False, enabled=True)
 
 
 def test_the_words_commit_to_nothing_and_rotate():
@@ -274,36 +274,61 @@ class Turns:
         self.marks.append(hums[0] if hums else "-")
 
 
-def test_spaced_out_never_next_turn_half_the_turn_after_always_later():
+def test_hum_allowed_after_none_always_after_one_mostly_after_two_half_never_a_fourth():
     draws: list[float] = []
 
     def draw() -> float:
         draws.append(0.0)
         return 0.0
 
-    assert spaced_out(None, draw) and spaced_out(3, draw) and spaced_out(9, draw)
-    assert not spaced_out(1, draw)
-    assert draws == []  # only the second turn after one asks for a draw
-    assert spaced_out(2, lambda: SECOND_TURN_CHANCE - 0.01)
-    assert not spaced_out(2, lambda: SECOND_TURN_CHANCE)
+    assert hum_allowed(0, draw) and draws == []  # after a quiet turn: no draw, always
+    assert not hum_allowed(MAX_RUN, draw) and not hum_allowed(MAX_RUN + 2, draw) and draws == []
+    assert hum_allowed(1, lambda: AFTER_ONE_CHANCE - 0.01) and not hum_allowed(1, lambda: AFTER_ONE_CHANCE)
+    assert hum_allowed(2, lambda: AFTER_TWO_CHANCE - 0.01) and not hum_allowed(2, lambda: AFTER_TWO_CHANCE)
 
 
-async def test_a_run_of_slow_answers_hears_a_hum_every_second_or_third_turn_never_the_same_twice_running():
-    # Twelve slow turns. A draw is asked only on the second turn after a hum: pass, fail, pass, fail.
-    turns = Turns(draws=[0.1, 0.9, 0.1, 0.9])
+async def test_a_run_of_slow_answers_hears_a_hum_on_most_turns_never_the_same_twice_running():
+    # Twelve slow turns, scripted draws: after one hum pass, fail; after two in a row the second draw fails.
+    turns = Turns(draws=[0.1, 0.6, 0.9, 0.1, 0.1, 0.9])
     for n in range(12):
         await turns.turn(n)
-    assert turns.marks == ["Mm.", "-", "Hmm.", "-", "-", "Mm.", "-", "Hmm.", "-", "-", "Mm.", "-"]
-    assert turns.drawn == 4 and turns.draws == []
+    # 0: none before, hum. 1: after one, 0.1 passes. 2: after two, 0.6 fails (needs < 0.5). 3: hum. 4: after one,
+    # 0.9 fails. 5: hum. 6: after one, 0.1. 7: after two, 0.1. 8: never a fourth. 9: hum. 10: after one, 0.9 fails.
+    # 11: hum.
+    assert turns.marks == ["Mm.", "Hmm.", "-", "Mm.", "-", "Hmm.", "Mm.", "Hmm.", "-", "Mm.", "-", "Hmm."]
+    assert turns.drawn == 6 and turns.draws == []
     said = [mark for mark in turns.marks if mark != "-"]
     assert all(a != b for a, b in zip(said, said[1:], strict=False))  # never the same hum twice running
-    at = [i for i, mark in enumerate(turns.marks) if mark != "-"]
-    assert {b - a for a, b in zip(at, at[1:], strict=False)} == {2, 3}  # every second or third turn
-    assert all(turns.marks[i] == "-" for i in range(1, 12) if turns.marks[i - 1] != "-")  # never the next turn
+
+
+def test_counted_over_three_hundred_late_turns_about_two_in_three_and_no_fixed_beat():
+    """The rule alone, over a scripted run of late turns with a seeded draw: how often, how long the runs, where the
+    quiet turns fall."""
+    import random
+
+    rng = random.Random(24)
+    run, last, marks = 0, "", []
+    for _ in range(300):
+        if hum_allowed(run, rng.random):
+            last = next_acknowledgement(last)
+            marks.append(last)
+            run += 1
+        else:
+            marks.append("-")
+            run = 0
+    hums = [m for m in marks if m != "-"]
+    assert 0.64 * 300 <= len(hums) <= 0.74 * 300  # about 69 % in expectation
+    assert all(a != b for a, b in zip(hums, hums[1:], strict=False))  # never the same sound twice running
+    longest = max(len(part) for part in "".join("x" if m != "-" else " " for m in marks).split())
+    assert longest == MAX_RUN  # runs of up to three, never four
+    quiet = [i for i, m in enumerate(marks) if m == "-"]
+    gaps = {b - a for a, b in zip(quiet, quiet[1:], strict=False)}
+    assert len(gaps) >= 3  # quiet turns at irregular places: two, three and four turns apart, not a fixed beat
+    assert "--" not in "".join("-" if m == "-" else "h" for m in marks)  # never two late turns in a row without one
 
 
 async def test_an_action_s_own_words_between_two_hums_do_not_bring_the_same_hum_back():
-    turns = Turns(draws=[0.0])  # the third turn is the second after a hum: its draw passes
+    turns = Turns(draws=[0.9])  # the second turn's draw fails: the third comes after a quiet turn
     await turns.turn(0)
     turns.layer._last_ack = "Working on it."  # a hand-over's acknowledgement on a turn of its own
     await turns.turn(1)
@@ -363,3 +388,84 @@ def test_ready_made_reads_the_store_of_the_chosen_local_voice_only(tmp_path, mon
     assert _ready_made(server("os_native"), "Mm.") is False  # the system voice never says it
     monkeypatch.setattr(local_tts_worker._manager, "head_cache", None)
     assert _ready_made(server("kokoro_tts"), "Mm.") is False  # no local voice set up yet
+
+
+# ── decided when the listener's turn ends, before the turn reaches the layer ──
+
+
+async def test_a_hum_decided_at_the_turn_end_is_said_before_the_hand_over_and_only_once():
+    from pilot.conversation import provisional as prov
+
+    model, ear = Gate(), Ear()
+    layer = layer_for(model, ear)  # the clock is at the due time: said at once
+    assert layer.hum_at_turn_end("v1", QUESTION, 100.0)
+    await settle()
+    assert ear.heard == [("Mm.", "task_narration")]  # before take(): the dispatch has not reached the layer yet
+    prov.dispatch_turn.set("v1")
+    turn = asyncio.ensure_future(layer.take(QUESTION))
+    await settle()
+    model.release.set()
+    await turn
+    said = [text for text, _ch in ear.heard]
+    assert said == ["Mm.", "Mostly the processor working hard."]  # one hum, then the answer, and no second hum
+    assert layer._hum_run == 1
+
+
+async def test_no_hum_at_the_turn_end_when_the_early_request_already_has_text():
+    from pilot.conversation import provisional as prov
+
+    layer = layer_for(Gate(), Ear())
+    held = prov.Provisional(turn_id="v1", words=QUESTION, addressed="wake", started=100.0, model=None, before=[])
+    held.first_text_at = 100.3
+    layer.provisional.add(held)
+    assert not layer.hum_at_turn_end("v1", QUESTION, 100.0)
+
+
+async def test_text_arriving_before_the_hum_is_due_keeps_it_unsaid():
+    from pilot.conversation import provisional as prov
+
+    ear = Ear()
+    layer = layer_for(Gate(), ear, now=[100.0])  # due 0.45 s from now
+    held = prov.Provisional(turn_id="v1", words=QUESTION, addressed="wake", started=100.0, model=None, before=[])
+    layer.provisional.add(held)
+    assert layer.hum_at_turn_end("v1", QUESTION, 100.0)
+    held.first_text_at = 100.2  # the early request's first text came first
+    await layer._early_hums["v1"].task
+    assert ear.heard == []
+
+
+@pytest.mark.parametrize("ending", ["done", "not_addressed"])
+async def test_a_turn_that_goes_nowhere_drops_a_hum_not_yet_said(ending):
+    ear = Ear()
+    layer = layer_for(Gate(), ear, now=[100.0])
+    assert layer.hum_at_turn_end("v1", QUESTION, 100.0)
+    task = layer._early_hums["v1"].task
+    if ending == "done":
+        layer.provisional_done("v1")  # the dispatch ended on another road
+    else:
+        layer.cancel_provisional("v1", "not_addressed")
+    await settle()
+    assert task.cancelled() and ear.heard == []
+
+
+async def test_the_dispatch_of_the_same_turn_sees_its_hum_playing():
+    release = asyncio.Event()
+    heard: list[str] = []
+
+    async def slow_ear(text: str, channel: str, key: str) -> str:
+        heard.append(text)
+        await release.wait()
+        return "spoken"
+
+    layer = layer_for(Gate(), slow_ear)
+    assert layer.hum_at_turn_end("v1", QUESTION, 100.0)
+    await settle()
+    assert heard == ["Mm."] and layer.hum_playing("v1") and not layer.hum_playing("v2")
+    release.set()
+    await settle()
+    assert not layer.hum_playing("v1")
+
+
+@pytest.mark.parametrize("words", ["Open Notepad for me please", "Stop that right now", "Thank you so much"])
+def test_no_hum_at_the_turn_end_for_actions_control_words_or_thanks(words):
+    assert not layer_for(Gate(), Ear()).hum_at_turn_end("v1", words, 100.0)

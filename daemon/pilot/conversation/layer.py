@@ -34,8 +34,8 @@ from pilot.conversation import provisional as prov
 from pilot.conversation import trace
 from pilot.conversation.acknowledge import (
     ACK_AFTER_SECONDS,
+    hum_allowed,
     next_acknowledgement,
-    spaced_out,
     wants_acknowledgement,
 )
 from pilot.conversation.action_talk import needs_approval_first, result_sentence, said_again
@@ -379,6 +379,20 @@ class TurnResult:
             self._layer._finished(self, status, result, said)
 
 
+@dataclass
+class _EarlyHum:
+    """A hum decided when the listener's turn ended (ConversationLayer.hum_at_turn_end), before the turn reached the
+    layer; the turn's own answer takes it over (_answer_from) instead of deciding again."""
+
+    turn_id: str
+    phrase: str
+    acked: asyncio.Event = field(default_factory=asyncio.Event)
+    content_handed: list[bool] = field(default_factory=lambda: [False])
+    queue: asyncio.Queue[Any] | None = None
+    task: asyncio.Future[Any] | None = None
+    playing: bool = False
+
+
 class ConversationLayer:
     def __init__(
         self,
@@ -457,9 +471,12 @@ class ConversationLayer:
         self._acknowledge = acknowledge  # conversation.acknowledge (pilot.conversation.acknowledge)
         # Whether the voice has the audio of a sentence made ahead: an acknowledgement is said only from that audio.
         self._ready_made = ready_made
-        self._ack_draw = ack_draw  # a number in [0, 1) for acknowledge.spaced_out
+        self._ack_draw = ack_draw  # a number in [0, 1) for acknowledge.hum_allowed
         self._model_turns = 0  # spoken and typed turns that went to the model
         self._ack_turn: int | None = None  # the model turn that last had an acknowledgement heard
+        self._hum_run = 0  # spoken model turns in a row, up to the last one, that had a hum heard
+        # Hums decided when the listener's turn ended, before the turn reached this layer: turn id -> its record.
+        self._early_hums: dict[str, _EarlyHum] = {}
         self._last_hum = ""  # the last acknowledgement said (an action's own words in _last_ack do not count)
         self._last_ack = ""
         self.provisional = prov.ProvisionalAnswers(clock=clock, drops_per_day=provisional_drops_per_day)
@@ -615,6 +632,72 @@ class ConversationLayer:
         """The listener: the person carried on, the addressing rule did not take the utterance, or it was dropped."""
         self.provisional.drop(turn_id, reason or "dropped")
         self._provisional_lines.pop(turn_id, None)
+        if reason != "words_changed":
+            self._drop_early_hum(turn_id)  # not for Heliox after all, or the person went on: no hum
+
+    # ── the hum, decided when the turn ends (pilot.conversation.acknowledge) ──
+
+    def hum_at_turn_end(self, turn_id: str, words: str, ended: float) -> bool:
+        """The listener's turn has just ended on words already known to be addressed (the wake phrase or the button):
+        decide the hum now, by the same rules as at the hand-over, instead of when the turn reaches this layer. Said
+        ACK_AFTER_SECONDS after the last word at the earliest, and never once the answer's first text is there. True
+        if one is due."""
+        if not turn_id or turn_id in self._early_hums or not self._enabled():
+            return False
+        if not isinstance(ended, float) or not bool(_safe_call(self._acknowledge, False)):
+            return False
+        decided = route(words, conversation_open=self.memory.open)
+        if decided.kind in (TurnKind.ACTION, TurnKind.CONTROL, TurnKind.UNCLEAR):
+            return False  # an action's own acknowledgement, a stop, or words nobody can answer: not this road
+        held = self.provisional.get(turn_id)
+        if held is not None and held.first_text_at is not None:
+            return False  # the answer's first text is already there: it goes first
+        hum = next_acknowledgement(self._last_hum)
+        if not (
+            wants_acknowledgement(
+                words, typed=False, ended=ended, statement=decided.reason == "statement", enabled=True
+            )
+            and _safe_call(lambda: self._ready_made(hum), False) is True
+            and hum_allowed(self._hum_run, self._ack_draw)
+        ):
+            return False
+        record = _EarlyHum(turn_id=turn_id, phrase=hum)
+        self._early_hums = {turn_id: record}  # one at a time: an older one that never reached a turn is gone
+        record.task = asyncio.ensure_future(self._hum_when_due(record, ended))
+        self._background.add(record.task)
+        record.task.add_done_callback(self._background.discard)
+        return True
+
+    def hum_playing(self, turn_id: str) -> bool:
+        """This turn's own hum is being said: the dispatch of the same turn does not stop it."""
+        record = self._early_hums.get(turn_id)
+        return bool(record is not None and record.playing)
+
+    def _drop_early_hum(self, turn_id: str) -> None:
+        record = self._early_hums.pop(turn_id, None)
+        if record is not None and record.task is not None and not record.task.done() and not record.playing:
+            record.task.cancel()
+
+    async def _hum_when_due(self, record: _EarlyHum, ended: float) -> None:
+        due = ended + ACK_AFTER_SECONDS - self._clock()
+        if due > 0:
+            await asyncio.sleep(due)
+        held = self.provisional.get(record.turn_id)
+        if (
+            record.content_handed[0]
+            or (record.queue is not None and not record.queue.empty())
+            or (held is not None and held.first_text_at is not None)
+        ):
+            return  # the answer is ready: it goes first, and nothing is said before it
+        self._last_ack = self._last_hum = record.phrase
+        record.playing = True
+        try:
+            outcome = await self._sink(record.phrase, "task_narration", f"conv-ack:{record.turn_id}")
+        finally:
+            record.playing = False
+        if outcome in HEARD:
+            self._ack_turn = self._model_turns + 1
+            record.acked.set()
 
     def provisional_dispatch(self, turn_id: str) -> None:
         """A voice dispatch starts: every provisional answer for another turn is dropped (a stop, a new request), and
@@ -626,6 +709,7 @@ class ConversationLayer:
         """The voice dispatch for ``turn_id`` has ended: a provisional answer it did not adopt is dropped."""
         self.provisional.finish(turn_id)
         self._provisional_lines.pop(turn_id, None)
+        self._drop_early_hum(turn_id)  # the turn never reached the model's road: a hum not yet said never is
 
     async def _screen_for_early(self, model: Any) -> Any:
         """The screen for an answer started before the turn settled: the read started at the wake phrase when it is
@@ -1021,29 +1105,38 @@ class ConversationLayer:
         self._held_last_turn = False
         statement = decided.reason == "statement"
         # "I heard you, I'm thinking" while the answer is on its way (pilot.conversation.acknowledge).
-        content_handed = [False]
-        acked = asyncio.Event()
-        ended = _safe_call(self._turn_ended, None)
-        ack_task: asyncio.Future[Any] | None = None
         self._model_turns += 1
-        since = None if self._ack_turn is None else self._model_turns - self._ack_turn
-        hum = next_acknowledgement(self._last_hum)
-        if (
-            wants_acknowledgement(
-                text,
-                typed=typed,
-                ended=ended if isinstance(ended, float) else None,
-                statement=statement,
-                acked_last_turn=since == 1,
-                enabled=bool(_safe_call(self._acknowledge, False)),
-            )
-            and _safe_call(lambda: self._ready_made(hum), False) is True
-            and spaced_out(since, self._ack_draw)
-        ):
-            # Only from audio made ahead: with the system voice, or before the local voice made it, nothing is said.
-            ack_task = asyncio.ensure_future(
-                self._acknowledge_when_due(result, float(ended), queue, content_handed, acked, hum)
-            )
+        early_hum = self._early_hums.pop(prov.dispatch_turn.get(), None) if not typed else None
+        ack_task: asyncio.Future[Any] | None = None
+        if early_hum is not None:
+            # Decided when the turn ended (hum_at_turn_end): said or still due, it is this turn's, and not decided again.
+            content_handed, acked, ack_task = early_hum.content_handed, early_hum.acked, early_hum.task
+            early_hum.queue = queue
+            if adopted is not None and adopted.first_text_at is not None and not early_hum.playing:
+                content_handed[0] = True  # the early request's text is here: the answer goes first
+        else:
+            content_handed = [False]
+            acked = asyncio.Event()
+            ended = _safe_call(self._turn_ended, None)
+            hum = next_acknowledgement(self._last_hum)
+            answer_ready = adopted is not None and adopted.first_text_at is not None
+            if (
+                not answer_ready
+                and wants_acknowledgement(
+                    text,
+                    typed=typed,
+                    ended=ended if isinstance(ended, float) else None,
+                    statement=statement,
+                    enabled=bool(_safe_call(self._acknowledge, False)),
+                )
+                and _safe_call(lambda: self._ready_made(hum), False) is True
+                and hum_allowed(self._hum_run, self._ack_draw)
+            ):
+                # Only from audio made ahead: with the system voice, or before the local voice made it, nothing is
+                # said.
+                ack_task = asyncio.ensure_future(
+                    self._acknowledge_when_due(result, float(ended), queue, content_handed, acked, hum)
+                )
         repeat_asked = self._asked_again(text)
         dropped = False
         said: list[str] = []
@@ -1175,6 +1268,8 @@ class ConversationLayer:
                     await producer
             if ack_task is not None and not ack_task.done():
                 ack_task.cancel()  # the turn is over: an acknowledgement not yet said never is
+            if not typed:
+                self._hum_run = self._hum_run + 1 if acked.is_set() else 0
         if said:
             self.memory.add_heliox(" ".join(said))
         # The reply's STANCE line: it disagreed, on this topic (pilot.conversation.debate). Read even when the reply
