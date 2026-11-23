@@ -400,6 +400,7 @@ class ConversationLayer:
         turn_ended: Callable[[], float | None] = lambda: None,
         screen_text_ok: Callable[[], bool] = lambda: False,
         provisional_setting: Callable[[], str] = lambda: "off",
+        provisional_drops_per_day: Callable[[], int] = lambda: prov.DROPS_PER_DAY,
         acknowledge: Callable[[], bool] = lambda: False,
         disagree: Callable[[], str] = lambda: "off",
         ready_made: Callable[[str], bool] = lambda _text: True,
@@ -461,7 +462,7 @@ class ConversationLayer:
         self._ack_turn: int | None = None  # the model turn that last had an acknowledgement heard
         self._last_hum = ""  # the last acknowledgement said (an action's own words in _last_ack do not count)
         self._last_ack = ""
-        self.provisional = prov.ProvisionalAnswers(clock=clock)
+        self.provisional = prov.ProvisionalAnswers(clock=clock, drops_per_day=provisional_drops_per_day)
         # Disagreeing with a decision, then giving way (conversation.disagree, pilot.conversation.debate).
         self.debate = dbt.Debate(disagree)
         # A costly step Heliox pushed back on while the reply asked its own question: "do it anyway" hands it over.
@@ -593,7 +594,7 @@ class ConversationLayer:
         self._provisional_lines[turn_id] = stance
 
         async def build() -> tuple[list[dict[str, str]], Any]:
-            screen = await self._read_screen(model)
+            screen = await self._screen_for_early(model)
             messages = build_messages(
                 text, self.sources, self.memory, budget=self._context_chars, screen=screen, stance=stance
             )
@@ -625,6 +626,19 @@ class ConversationLayer:
         """The voice dispatch for ``turn_id`` has ended: a provisional answer it did not adopt is dropped."""
         self.provisional.finish(turn_id)
         self._provisional_lines.pop(turn_id, None)
+
+    async def _screen_for_early(self, model: Any) -> Any:
+        """The screen for an answer started before the turn settled: the read started at the wake phrase when it is
+        fresh (left in place for the turn itself, if it asks the model afresh), else a new read."""
+        started = self._screen_read
+        if self.sources.screen_async is not None and started is not None:
+            if self._clock() - started[0] <= SCREEN_FRESH_SECONDS:
+                try:
+                    async with asyncio.timeout(SCREEN_WAIT_SECONDS):
+                        return await asyncio.shield(started[1])
+                except Exception:
+                    return None
+        return await self._read_screen(model)
 
     async def _read_screen(self, model: Any) -> Any:
         """What the screen shows, for the fast model's context, as _answer reads it."""

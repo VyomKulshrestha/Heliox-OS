@@ -490,6 +490,7 @@ def layer_for(server: Any) -> Any:
         not_understood=lambda: _not_understood(server),
         screen_text_ok=lambda: screen_text_ok_for_planner(server.config),
         provisional_setting=lambda: str(getattr(settings(), "provisional_answers", "auto") or "auto"),
+        provisional_drops_per_day=lambda: int(getattr(settings(), "early_request_drops_per_day", 200)),
         acknowledge=lambda: bool(getattr(settings(), "acknowledge", True)),
         ready_made=lambda text: _ready_made(server, text),
         disagree=lambda: str(getattr(settings(), "disagree", "when_it_matters") or "when_it_matters"),

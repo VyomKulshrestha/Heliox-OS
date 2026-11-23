@@ -33,14 +33,17 @@ ADDRESSED = frozenset({"wake", "button"})
 MIN_WORDS = 3
 FINAL_WITHIN_SECONDS = 8.0  # no final words by then: dropped
 DROPS_PER_MINUTE = 6
+DROPS_PER_DAY = 200  # dropped calls in any 24 hours before none start (conversation.early_request_drops_per_day)
 DROP_USD_PER_HOUR = 0.05  # what dropped provisional calls may cost in an hour, whatever the model
 DROP_SHARE = 0.10  # ... and at most this share of the session's other conversation calls
 DROP_SHARE_AFTER_CALLS = 10  # once the session has made this many calls
 BUDGET_NEAR = 0.90  # off for the session once the month's spend reaches this share of the monthly limit
-# "auto" turns provisional answers on for a cloud model only when the measured adoption rate (the streaming words at
-# the last pause equal to the final words, normalised as below) on the recorded corpus reaches AUTO_ADOPTION_RATE.
-# Not measured yet: "auto" is off until the listener's measurement is in (docs/INTERACTION_MODEL.md).
-MEASURED_ADOPTION_RATE: float | None = None
+# "auto" turns provisional answers on for a cloud model only when the measured adoption rate reaches
+# AUTO_ADOPTION_RATE. The listener starts one on the speculative final pass's words at the candidate end of the turn
+# (pilot.system.voice, ContinuousVoiceListener._begin_early_request), so the rate is how often those words equal the
+# settled turn's, normalised as below: 19 of 21 recorded addressed lines (12 November) and 26 of 26 requests on the 24
+# November run's synthetic clips (the 6 raw differences were spellings of the name, which is not sent). Taken as 0.9.
+MEASURED_ADOPTION_RATE: float | None = 0.9
 AUTO_ADOPTION_RATE = 0.80
 TAG = "conversation.provisional"  # the budget tracker's agent id for every provisional call
 
@@ -207,10 +210,14 @@ class _Replay:
 class ProvisionalAnswers:
     """The provisional answers of one conversation layer, and the limits on them."""
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self, *, clock: Callable[[], float] = time.monotonic, drops_per_day: Callable[[], int] = lambda: DROPS_PER_DAY
+    ) -> None:
         self._clock = clock
+        self._drops_per_day = drops_per_day
         self._live: dict[str, Provisional] = {}
         self._drops: deque[float] = deque()  # when each dropped call was dropped (the per-minute cap)
+        self._day_drops: deque[float] = deque()  # the same over the last 24 hours (the daily ceiling)
         self._hour = -1
         self._hour_dropped_usd = 0.0
         self._hour_closed = False  # a money cap was reached in this hour: none start until the next one
@@ -237,6 +244,14 @@ class ProvisionalAnswers:
             self._drops.popleft()
         if len(self._drops) >= DROPS_PER_MINUTE:
             return "drops_per_minute"
+        while self._day_drops and now - self._day_drops[0] > 86_400.0:
+            self._day_drops.popleft()
+        try:
+            ceiling = int(self._drops_per_day())
+        except Exception:
+            ceiling = DROPS_PER_DAY
+        if len(self._day_drops) >= max(0, ceiling):
+            return "drops_per_day"
         budget = getattr(model, "budget", None)
         limit = float(getattr(budget, "_monthly_limit", 0.0) or 0.0)
         spent = float(getattr(budget, "_monthly_cost", 0.0) or 0.0)
@@ -263,6 +278,7 @@ class ProvisionalAnswers:
         """A dropped call: counted for the per-minute cap now, and its cost once the call has ended."""
         self.dropped += 1
         self._drops.append(self._clock())
+        self._day_drops.append(self._clock())
 
         def costed(_task: Any = None) -> None:
             record = provisional.record or _find_record(provisional)

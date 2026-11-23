@@ -488,10 +488,19 @@ def test_the_bench_wires_its_listener_exactly_as_the_server_does():
     assert entry == "_voice_turn"
     assert attrs["withdraw_turn"] == "withdraw_voice_turn" and attrs["task_open"] == "_voice_task_open"
     assert attrs["warm_model"] == "warm_for_speech"  # speech said to Heliox warms the fast model's connection
+    # Words already known to be addressed ask the model before the turn settles (held, kept or dropped).
+    assert attrs["early_request"] == "provisional_voice_turn"
+    assert attrs["cancel_early_request"] == "cancel_provisional_voice_turn"
 
     class Server:
         def withdraw_voice_turn(self):
             return "withdrawn"
+
+        def provisional_voice_turn(self, turn_id, words, addressed):
+            return False
+
+        def cancel_provisional_voice_turn(self, turn_id, reason):
+            return None
 
         def _voice_task_open(self):
             return True

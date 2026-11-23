@@ -294,6 +294,7 @@ async def test_at_most_six_dropped_starts_a_minute():
 
 async def test_auto_waits_for_the_measured_adoption_rate(monkeypatch):
     rig = Rig(setting="auto")
+    monkeypatch.setattr(prov, "MEASURED_ADOPTION_RATE", None)  # not measured: off
     assert not rig.provisional("v1", "what's the capital of peru")
     monkeypatch.setattr(prov, "MEASURED_ADOPTION_RATE", 0.79)
     assert not rig.provisional("v1", "what's the capital of peru")
@@ -301,6 +302,13 @@ async def test_auto_waits_for_the_measured_adoption_rate(monkeypatch):
     assert rig.provisional("v1", "what's the capital of peru")
     assert not rig.layer.provisional_on(SimpleNamespace(local=True))  # a model on this computer: off under "auto"
     assert not Rig(setting="off").provisional("v1", "what's the capital of peru")
+
+
+def test_the_measured_rate_turns_auto_on_for_a_cloud_model():
+    assert prov.MEASURED_ADOPTION_RATE is not None and prov.MEASURED_ADOPTION_RATE >= prov.AUTO_ADOPTION_RATE
+    rig = Rig(setting="auto")
+    assert rig.layer.provisional_on(SimpleNamespace(local=False))
+    assert not rig.layer.provisional_on(SimpleNamespace(local=True))
 
 
 # ── the money caps, on the registry itself ──
@@ -336,6 +344,18 @@ def test_dropped_starts_may_cost_at_most_five_cents_an_hour_whatever_the_model(m
     assert answers.refusal(model) == "money_this_hour"
     clock.t = 3600.0 * 6 + 1  # the hour turns
     assert answers.refusal(model) == ""
+
+
+def test_a_daily_ceiling_on_dropped_starts_from_the_setting(monkeypatch):
+    monkeypatch.setattr(prov, "call_cost", lambda provider, model, record: 0.0)
+    clock = Clock()
+    answers = prov.ProvisionalAnswers(clock=clock, drops_per_day=lambda: 3)
+    model = SimpleNamespace(provider="claude", name="m", calls=[], budget=None)
+    _dropped(answers, model, clock, 3)
+    assert answers.refusal(model) == "drops_per_day"
+    clock.t += 86_400.0  # a day after the first: those drops no longer count
+    assert answers.refusal(model) == ""
+    assert prov.ProvisionalAnswers(clock=clock, drops_per_day=lambda: 0).refusal(model) == "drops_per_day"
 
 
 def test_dropped_starts_never_cost_more_than_a_tenth_of_the_rest_once_ten_calls_old(monkeypatch):

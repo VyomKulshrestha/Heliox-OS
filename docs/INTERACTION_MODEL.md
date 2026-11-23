@@ -230,9 +230,11 @@ a concern or a costly verb is neither handed over nor offered, and only the conc
 exactly that reply on 19 November, and the person heard the concern twice and "Do you still want me to delete the
 only copy of the thesis?". "I'm going to need you to delete it" asks Heliox, and is a request.
 
-Provisional answers (`pilot.conversation.provisional`) have no caller in the product: the listener never calls
-`provisional_voice_turn`, so they do nothing today. Starting them from the early final pass was measured at about
-0.05 s (0.15 s at most) and dropped.
+Provisional answers (`pilot.conversation.provisional`) are started by the listener since 24 November (the early
+request, below). The earlier "about 0.05 s" gain assumed the dispatch waits only for the same speculative Parakeet
+pass the provisional answer starts from, with the turn ending about 0.4 s after the last word on the audio clock. In
+the live run the hand-over came at 0.84 s: it also waited for Smart Turn's decision on the wall clock (0.61 s) and,
+on 20 of 26 turns, for the Whisper wake check, which that figure left out.
 
 **The voice's first sound comes from the first clause.** Whatever hands it text, the local voice
 (`local_tts_worker.split_for_speech`) cuts a first sentence of more than 11 words at its first natural pause within
@@ -387,6 +389,43 @@ whole-utterance check), and a follow-up is judged on its final words by the same
 
 ### Starting the answer before the turn is confirmed (`conversation.provisional_answers`)
 
+**The early request (24 November).** A dropped request is never heard, so the moment the talk model is first asked
+no longer has to be the moment Heliox would dare to speak:
+- Once the utterance is known to be addressed (the opening reading can confirm the wake phrase, or the microphone
+  button), its speculative pass starts at 100 ms of quiet (`REQUEST_POINT_FRAMES`) instead of 200 ms.
+- When a pass returns words on one of the final rule's proofs (the opening reading agreeing with Parakeet, the
+  whole-utterance check, or the button), the listener asks the server to start the model on the command
+  (`ContinuousVoiceListener._begin_early_request` -> `PilotServer.provisional_voice_turn`), as the turn id the dispatch
+  will carry. Not in a call, not while Heliox talks, not over Heliox, not for fewer than three words or words that
+  stop mid-sentence.
+- A later pass with the same words keeps it; other words drop it and ask again, at most
+  `conversation.early_requests_per_turn` (3) times an utterance. The person going on drops it, and so does anything
+  but a dispatch with its turn id (speech not addressed after all, a call, a workflow word).
+- The dispatch adopts it only if the settled words are the same under `provisional.normalise` (strict). Nothing is
+  spoken, shown, kept or handed over before then.
+- Dropped calls are booked like any other (`conversation.provisional`), at most 6 a minute, $0.05 an hour,
+  `conversation.early_request_drops_per_day` (200) a day, and none once the month's spend is at 90 % of its limit.
+  `provisional_answers = "off"` turns it off.
+
+What the request point buys, on the 24 November run's 26 clips replayed through the recorder (audio clock after the
+last loud sample; "live" adds the run's 0.05 s between this replay's candidate and the live one; Parakeet about 0.2 s):
+
+| Request point | Candidate (median) | Words ready, live | First text, live (+1.12 s) | Last request had the settled words | Dropped calls per kept turn |
+|---|---|---|---|---|---|
+| 200 ms of quiet | 0.27 s | about 0.53 s | about 1.65 s | 26 of 26 | 0.00 |
+| 100 ms (chosen) | 0.17 s | about 0.43 s | about 1.55 s | 25 of 26 | 0.16 |
+| 50 ms | 0.12 s | about 0.38 s | about 1.50 s | 25 of 26 | 0.96, with 2.7 more passes a turn |
+
+At 50 ms the extra passes come at pauses inside the sentence ("what's the capital of Austria?", "a good name for a
+great kid?") and each takes the processor for about 0.2 s, which can hold back the pass the turn really ends on.
+Parakeet's words where the sound drops (0 ms) already equalled the settled words on 26 of 26, so the accurate pass
+on the audio so far is what makes the words trustworthy. The streaming recogniser, flushed at the 100 ms candidate,
+equalled them on 9 of 26 (16 differ by a real word, mostly a clipped last word: "sky blu", "a gray ca"), so it
+cannot serve.
+
+Looser matching was considered and not taken: ignoring articles kept no extra turn, and the one decisive difference
+at 100 ms was a spelling ("focussed"/"focused"). Names, numbers and negations stay exact.
+
 A cloud model's first word takes about 1.0 s (Claude Haiku 5.5: median 1.04 to 1.18 s over three paid runs). Before
 this, that second began only after the endpoint and the accurate recognition pass had decided. With a provisional
 answer it runs while they decide.
@@ -434,8 +473,9 @@ $0.03 an hour; the 6-a-minute limit holds the most it can waste to about $0.05 a
   recognition pass. With a cloud model, on only when the measured adoption rate on the recorded corpus is at least
   80%. The adoption rate is how often the streaming words at the last pause equal the final words after the
   normalising above.
-- Measured adoption rate: none that buys time, so "auto" is off and `provisional.MEASURED_ADOPTION_RATE` stays
-  `None`. What was measured (12 November, the replay corpus's 981 unaddressed lines, the owner's 13 addressed
+- Measured adoption rate: 0.9 since 24 November (`provisional.MEASURED_ADOPTION_RATE`), so "auto" is on for a cloud
+  model: the speculative Parakeet pass's words equalled the final words on 19 of 21 recorded addressed lines and on
+  26 of 26 requests of the run's synthetic clips (see the early request above). Until then it was off. What was measured (12 November, the replay corpus's 981 unaddressed lines, the owner's 13 addressed
   recordings and 35 synthetic "Hey Heliox ..." clips; the listener's side is not built):
 
   | Words the listener could hand over at the last pause | Same as the final words | Head start before the final dispatch | Unaddressed lines that would start one |

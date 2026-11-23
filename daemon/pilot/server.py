@@ -16786,6 +16786,8 @@ def handle_tool(tool_name, params):
         replacement.reply_cut_at = self._reply_cut_at
         replacement.withdraw_turn = self.withdraw_voice_turn  # a sentence it split at a pause (conv_interfaces.md b)
         replacement.warm_model = self.warm_for_speech  # speech said to Heliox: open the fast model's connection
+        replacement.early_request = self.provisional_voice_turn  # ask the model before the turn settles, held
+        replacement.cancel_early_request = self.cancel_provisional_voice_turn
         self._voice_listener = replacement
         result = await replacement.start()
         if not replacement.is_running:
@@ -16830,6 +16832,9 @@ def handle_tool(tool_name, params):
         self._voice_listener.warm_model = (
             self.warm_for_speech
         )  # speech said to Heliox: open the fast model's connection
+        # Words already known to be addressed: the talk model is asked before the turn settles, everything held.
+        self._voice_listener.early_request = self.provisional_voice_turn
+        self._voice_listener.cancel_early_request = self.cancel_provisional_voice_turn
         result = await self._voice_listener.start()
         if not self._voice_listener.is_running:
             self._voice_listener = None

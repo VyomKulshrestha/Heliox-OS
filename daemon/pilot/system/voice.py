@@ -50,6 +50,9 @@ voice_turn_continues: ContextVar[str] = ContextVar("voice_turn_continues", defau
 voice_turn_id: ContextVar[str] = ContextVar("voice_turn_id", default="")  # this dispatch's id ("v1", "v2", ...)
 voice_turn_continues_id: ContextVar[str] = ContextVar("voice_turn_continues_id", default="")  # the one it continues
 voice_turn_tail: ContextVar[str] = ContextVar("voice_turn_tail", default="")  # a continuation's own words
+# Set by a speculative pass for its own run of _transcribe_path: how the words it returns are known to be addressed
+# before the turn ends ({"addressed": "wake" | "button", "said": Parakeet's words, "wake_text": the opening reading}).
+_pass_proof: ContextVar[dict[str, str] | None] = ContextVar("heliox_pass_proof", default=None)
 # The person goes on within CONTINUATION_SECONDS of the end of their own turn (when the listener declared it over),
 # while Heliox, if it is talking, began at most JUST_BEGUN_SECONDS before: the turn was ended too early. On the
 # bench's pause scenarios (0.6 to 2.0 s pauses inside one sentence) the second half began 1.1 to 2.6 s after the
@@ -3613,6 +3616,16 @@ OPENING_REREAD_SECONDS = 0.4
 # and Whisper beside it only took the processor (Parakeet ran 0.15 s alone and 0.25 s beside Whisper in the live run).
 # Shorter ones keep Whisper beside Parakeet: it rates a lone word on noise as not speech (merge_wake).
 ALONE_FIRST_SECONDS = 1.6
+# Once an utterance is known to be addressed (the wake phrase read from its opening, or the microphone button), the
+# speculative pass starts at this many 50 ms frames of quiet instead of four, so the talk model can be asked sooner
+# (_begin_early_request). Nothing is said before Smart Turn ends the turn, so an early start that proves wrong is only
+# a dropped call. On the 24 November run's 26 clips: at 100 ms the request's words were ready about 0.1 s sooner than at
+# 200 ms, the last request of 25 turns had the settled words, and 0.16 calls were dropped per kept turn; at 50 ms, 0.05
+# s sooner again for 0.96 dropped calls per kept turn and two to three passes more per turn on the processor.
+REQUEST_POINT_FRAMES = 2
+# Early requests a turn may start when its words change between passes ("what's the capital of" then "... of
+# Australia"); each is booked, and a dropped one is closed at once. conversation.early_requests_per_turn overrides it.
+EARLY_REQUESTS_PER_TURN = 3
 
 
 def _to_int16(samples: Any) -> Any:
@@ -3682,6 +3695,7 @@ class _Speculation:
         self.listener = listener
         self.task: asyncio.Task[str] | None = None
         self.pass_id = 0  # the running pass's number in the trace (speech_trace)
+        self.proof: dict[str, str] = {}  # the last pass's proof that its words are addressed (_pass_proof)
 
     def start(self, frames: list[Any]) -> None:
         from pilot.system import speech_trace
@@ -3702,12 +3716,15 @@ class _Speculation:
 
         speculative = self.listener._transcribe_path(path, speculative=True)  # a pass that cannot start raises here
         pass_id = self.pass_id = speech_trace.next_id()
+        proof: dict[str, str] = {}
+        self.proof = proof
 
         async def timed() -> str:
             started = time.perf_counter()
             began = time.monotonic()
             speech_trace.emit("final pass started", id=pass_id, speculative=True, at=began, audio_s=audio_seconds)
             failed = True
+            _pass_proof.set(proof)  # this task's own context: the pass says how its words are known to be addressed
             try:
                 text = await speculative
                 failed = False
@@ -3722,6 +3739,10 @@ class _Speculation:
                     failed=failed,
                 )
             self.listener.note_pass(time.perf_counter() - started, audio_seconds)
+            if proof.get("addressed"):
+                begin = getattr(self.listener, "_begin_early_request", None)
+                if callable(begin):
+                    begin(text, proof)  # the request may start now, held until the turn settles
             return text
 
         self.task = asyncio.ensure_future(timed())
@@ -3785,6 +3806,15 @@ class ContinuousVoiceListener:
         # for Heliox ("wake", "button", "follow_up"; _warm_if_for_heliox), never awaited; it returns at once
         # (it schedules its own work) and does nothing for a local model.
         self.warm_model: Any = None
+        # Set by the server (PilotServer.provisional_voice_turn / cancel_provisional_voice_turn): start the talk model
+        # on the words of a candidate end of turn already known to be addressed, held until the turn settles
+        # (pilot.conversation.provisional); and drop one. At most conversation.early_requests_per_turn are started per
+        # utterance (_begin_early_request).
+        self.early_request: Any = None  # callable(turn_id, words, addressed) -> bool
+        self.cancel_early_request: Any = None  # callable(turn_id, reason) -> None
+        self._early_turn = ""  # the turn id of the early request running for the utterance being heard
+        self._early_words = ""  # its words, normalised as the conversation layer compares them
+        self._early_count = 0  # early requests started for this utterance (EARLY_REQUESTS_PER_TURN at most)
         self._interrupted_until = 0.0
         # The microphone button addresses the next sentence whatever it says; talking over Heliox does not.
         self._button_until = 0.0
@@ -4379,6 +4409,7 @@ class ContinuousVoiceListener:
         )
         recorder.turn_hold_frames = max(1, int(getattr(voice, "turn_hold_ms", 2500.0) / recorder.frame_ms))
         recorder.speculate_frames = self.speculation_frames()
+        self._request_point_if_addressed()  # after the microphone button: sooner from the start
         recorder.on_hold = (lambda: self._schedule(self._on_turn_hold)) if self._on_turn_hold else None
         streaming = self._streaming if voice.transcription_engine == "streaming" else None
         if streaming is not None and streaming.ready:
@@ -4775,6 +4806,7 @@ class ContinuousVoiceListener:
                     # In a call, what is said is for the people in the call: not a command, not for Live, and
                     # not even a wake phrase, which nothing shows to be safe from meeting speech.
                     logger.debug("Ignored speech during a call (%s)", self.in_call)
+                    self._drop_early_request("in_call")
                     self.end_interruption()
                     continue
 
@@ -4804,6 +4836,8 @@ class ContinuousVoiceListener:
                 decision, heard = self._decide_addressed(transcript, interruption, wake_free_allowed)
                 await self._report_transcript(transcript, decision)
                 self._busy = False
+                if decision is None or not decision.act or decision.say_sorry:
+                    self._drop_early_request("not_addressed")  # nothing of it may reach a model
                 if decision is None or not (decision.act or decision.say_sorry):
                     if decision is not None and decision.hint:
                         await self._capture_status("not_addressed", "no conversation", decision.hint)
@@ -4887,6 +4921,7 @@ class ContinuousVoiceListener:
                         logger.warning("Workflow control-phrase check failed (non-fatal)", exc_info=True)
                         consumed = False
                     if consumed:
+                        self._drop_early_request("workflow")
                         continue
 
                 logger.info(
@@ -4918,6 +4953,11 @@ class ContinuousVoiceListener:
                     if not cut_off and isinstance(turn_end, float):
                         self._last_turn = (turn_end, command_text, turn_id)
                         self._last_turn_word_end = ended  # the first half's last word, for the withdraw gap
+                    if self._early_turn == turn_id:
+                        # Handed to this dispatch: the layer keeps it if the settled words are its words, else drops it.
+                        self._early_turn, self._early_words = "", ""
+                    else:
+                        self._drop_early_request("other_turn")
                     task = asyncio.create_task(
                         self._dispatch_command(command_text, ended, addressed_as, continues=continues, turn=turn_id)
                     )
@@ -5123,9 +5163,12 @@ class ContinuousVoiceListener:
                     if not checks:
                         checks.append(asyncio.ensure_future(asyncio.sleep(0, "")))  # the callback starts nothing now
 
+                proof = _pass_proof.get()
                 if addressed and self._button_until and len(said.split()) > 2:
                     # The button was pressed for this sentence: no wake phrase to look for, nothing to wait for.
                     stop_checks()
+                    if proof is not None:
+                        proof.update(addressed="button", said=said, wake_text="")
                     return said
                 if addressed and self._is_short_cut_off():
                     # A word or two said over Heliox: what it does next does not depend on a wake phrase.
@@ -5144,6 +5187,8 @@ class ContinuousVoiceListener:
                         self.last_wake_source = "opening"
                         self._last_wake_text = heard_early
                         stop_checks()
+                        if proof is not None:
+                            proof.update(addressed="wake", said=said, wake_text=heard_early)
                         return merge_wake(heard_early, said, loose_wake_prefix)
                 if not checks:
                     checks.append(whole_utterance_check())  # needed after all: Parakeet's words decided it
@@ -5165,6 +5210,8 @@ class ContinuousVoiceListener:
                 self._last_wake_text = heard
                 if not said and not heard:
                     return ""
+                if proof is not None and loose_wake_prefix(heard):
+                    proof.update(addressed="wake", said=said, wake_text=heard)
                 return merge_wake(heard, said, loose_wake_prefix)
         return await self._transcribe_whisper_text(audio_path)
 
@@ -5265,6 +5312,8 @@ class ContinuousVoiceListener:
                 # they are picked up when the person starts talking.
                 self._recorder.on_speech_start = self._configure_turn_taking
                 speculation = self._speculate_final_pass()
+                self._drop_early_request("another_utterance")  # left over from one never dispatched
+                self._early_count = 0
                 self._early_wake = None
                 self._recorder.on_opening = self._start_early_wake if self.early_wake_enabled else None
                 try:
@@ -5458,7 +5507,21 @@ class ContinuousVoiceListener:
         task = asyncio.ensure_future(self._read_opening(list(frames)))
         task.add_done_callback(lambda done: done.cancelled() or done.exception())
         task.add_done_callback(lambda _done: self._warm_if_for_heliox(only="wake"))  # the wake phrase is known
+        task.add_done_callback(lambda done: self._request_point_if_addressed(done))
         self._early_wake = task
+
+    def _request_point_if_addressed(self, reading: Any = None) -> None:
+        """The utterance is known to be addressed (the opening reading can confirm the wake phrase, or the button
+        started it): its speculative pass starts at REQUEST_POINT_FRAMES of quiet, so an early request can go sooner."""
+        if self.early_request is None:
+            return
+        if reading is not None:
+            if reading.cancelled() or reading.exception() is not None or not opening_can_confirm(reading.result()):
+                return
+        elif not (self._button_until and self._addressed()):
+            return
+        recorder = self._recorder
+        recorder.speculate_frames = min(int(recorder.speculate_frames), REQUEST_POINT_FRAMES)
 
     async def _read_opening(self, frames: list[Any]) -> str:
         """Whisper's reading of the opening, made while the person is still speaking.
@@ -5535,6 +5598,7 @@ class ContinuousVoiceListener:
         def candidate_cancel() -> None:
             speech_trace.emit("candidate cancel", at=time.monotonic())
             speculation.cancel()
+            self._drop_early_request("carried_on")  # the person went on: those words are not the question
 
         self._recorder.on_candidate_end = candidate_end
         self._recorder.on_candidate_cancel = candidate_cancel
@@ -5575,6 +5639,86 @@ class ContinuousVoiceListener:
             loop.call_soon_threadsafe(self._call_warm, warm, addressed)
         except Exception:
             logger.debug("Could not ask for the model connection to be warmed", exc_info=True)
+
+    def early_request_words(self, text: str, proof: dict[str, str]) -> tuple[str, str] | None:
+        """(command, addressed) an early request may be started on, or None.
+
+        Only for words already known to be addressed: the microphone button, or the wake phrase on one of the final
+        rule's own proofs (the opening reading agreeing with Parakeet, or the whole-utterance check), judged by the same
+        vocative rule. Never in a call, while Heliox is talking, or for a cut-off; never for fewer than three words or
+        words that stop mid-sentence (the listener would wait for the rest and dispatch other words)."""
+        from pilot.system.addressing import vocative_wake
+
+        addressed = proof.get("addressed", "")
+        if addressed not in {"wake", "button"} or self.in_call or self._wake_free_suppression_depth:
+            return None
+        if self._diagnostic_waiter is not None and not self._diagnostic_waiter.done():
+            return None
+        if addressed == "button":
+            if not (self._button_until and self._addressed()):
+                return None
+            command = text.strip(" \t,.:;!?-")
+        else:
+            if self._addressed() and not self._button_until:
+                return None  # said over Heliox: the cut-off rule decides on the final words
+            wake = vocative_wake(self._canonical_wake(proof.get("wake_text", "")), proof.get("said", ""))
+            if wake is None:
+                return None
+            spoken = vocative_wake(self._canonical_wake(text))
+            command = spoken.command if spoken is not None else wake.command
+        mark = text.rstrip()[-1:] if text.rstrip().endswith(tuple(_PAUSE_MARKS.strip())) else ""
+        judged = command.rstrip(" .") + mark if mark and mark != "." else command
+        if len(command.split()) < 3 or sounds_unfinished(judged):
+            return None
+        return command, addressed
+
+    def _early_requests_per_turn(self) -> int:
+        try:
+            return max(0, int(getattr(self.config.conversation, "early_requests_per_turn", EARLY_REQUESTS_PER_TURN)))
+        except Exception:
+            return EARLY_REQUESTS_PER_TURN
+
+    def _begin_early_request(self, text: str, proof: dict[str, str]) -> None:
+        """A speculative pass has words known to be addressed: start the talk model on them now, as turn ``v<n>``,
+        the id the dispatch will carry. Everything it says is held until that dispatch takes it, and dropped if the
+        person carries on, the words settle differently or nothing is dispatched. A later pass with the same words
+        keeps the running one; with other words it is dropped and the model asked again, at most
+        conversation.early_requests_per_turn times an utterance."""
+        hook = self.early_request
+        if hook is None:
+            return
+        found = self.early_request_words(text, proof)
+        if found is None:
+            return
+        command, addressed = found
+        from pilot.conversation.provisional import normalise
+
+        words = normalise(command)
+        if self._early_turn and words == self._early_words:
+            return  # the same question: the running request goes on
+        if self._early_count >= self._early_requests_per_turn():
+            self._drop_early_request("words_changed")
+            return
+        self._drop_early_request("words_changed")
+        turn_id = f"v{self._turns + 1}"
+        try:
+            started = bool(hook(turn_id, command, addressed))
+        except Exception:
+            logger.debug("Could not start an early request", exc_info=True)
+            return
+        if started:
+            self._early_count += 1
+            self._early_turn, self._early_words = turn_id, words
+
+    def _drop_early_request(self, reason: str) -> None:
+        """Drop the early request of the utterance being heard, if one is running."""
+        turn_id, self._early_turn, self._early_words = self._early_turn, "", ""
+        if not turn_id or self.cancel_early_request is None:
+            return
+        try:
+            self.cancel_early_request(turn_id, reason)
+        except Exception:
+            logger.debug("Could not drop an early request", exc_info=True)
 
     @staticmethod
     def _call_warm(warm: Any, addressed: str) -> None:

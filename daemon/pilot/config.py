@@ -639,6 +639,10 @@ class ConversationConfig:
     # The web search the quick road opens for "search the web for ...": an http(s) address with {query}.
     search_url: str = "https://www.google.com/search?q={query}"
     provisional_answers: str = "auto"  # "auto" | "on" | "off"
+    # Early requests one utterance may start as its words change (0 to 5; 0 is off), and the dropped ones a day may
+    # cost before none start until the next day (pilot.conversation.provisional).
+    early_requests_per_turn: int = 3
+    early_request_drops_per_day: int = 200
     # A follow-up without the wake phrase loses its reach for the person's own data once the listener heard this many
     # utterances it did not take since Heliox last spoke (pilot.conversation.reach). Off until it is measured on
     # recordings of a person alone; the count is logged on every follow-up either way.
@@ -1473,6 +1477,8 @@ def _validate_config_types(raw: dict) -> None:
             "ollama_model": str,
             "search_url": str,
             "provisional_answers": str,
+            "early_requests_per_turn": int,
+            "early_request_drops_per_day": int,
             "share_profile": str,
             "second_voice_guard": bool,
             "second_voice_threshold": int,
@@ -1903,6 +1909,12 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         early = c_raw.get("provisional_answers")
         if isinstance(early, str) and early.strip().casefold() in ("auto", "on", "off"):
             config.conversation.provisional_answers = early.strip().casefold()
+        per_turn = c_raw.get("early_requests_per_turn")
+        if isinstance(per_turn, int) and not isinstance(per_turn, bool) and 0 <= per_turn <= 5:
+            config.conversation.early_requests_per_turn = per_turn
+        per_day = c_raw.get("early_request_drops_per_day")
+        if isinstance(per_day, int) and not isinstance(per_day, bool) and 0 <= per_day <= 10_000:
+            config.conversation.early_request_drops_per_day = per_day
         share = c_raw.get("share_profile")
         if isinstance(share, str) and share.strip().casefold() in ("auto", "off"):
             config.conversation.share_profile = share.strip().casefold()
