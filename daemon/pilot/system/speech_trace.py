@@ -21,8 +21,13 @@ Events:
     "piece ready"              {index, words, source, at}: source "made", "ahead" or "store"
     "piece plays"              {index, words, at}: handed to playback
     "piece read"               {asked, done, in_memory}: the player has the samples (read from a file when not)
+    "stream first chunk"       {id, at}: a streamed piece's first chunk arrived from the worker (reader thread)
+    "stream started"           {words, requested, worker_started, first_chunk}: the stream is handed to playback
+    "stream end"               {at, id, chunks, cut, audio_s, made_s, first_s, error?}: the worker's end frame
+    "stream played"            {at, underruns, samples, position, cut}: a streamed piece left the line; underruns:
+                               how often the next chunk was late and the line played silence meanwhile
     "output line open"         {started, opened, latency_setting, latency_s, rate, device}
-    "playback start"           {at, rate, seconds}
+    "playback start"           {at, rate, seconds, streamed?}: seconds is None for a streamed piece
     "first sample"             {handed, first_block_at, dac_delay_s, fitted, attached}: the first block of a piece
                                went to the device; dac_delay_s is PortAudio's own estimate of when it reaches the
                                speaker (None if unknown); fitted: brought to the line's rate; attached: on the line

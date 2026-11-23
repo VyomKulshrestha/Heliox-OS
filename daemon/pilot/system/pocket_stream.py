@@ -16,7 +16,8 @@ at speech level a median 0.15 s in, 0.45 s at worst), which ``stream`` drops ins
   chunk (about 80 ms of audio, made in about 30 ms here).
 
 The model is loaded once per PocketStream (``load``), offline when the files are on disk. Nothing here plays sound
-or touches the output line: the playback path that starts on the first chunk is a separate piece of work.
+or touches the output line: the voice worker sends the chunks to the daemon as they are made (``pocket_tts.stream_here``,
+local_tts_worker's "stream" op) and the daemon plays from the first one (voice._StreamedPlayback).
 """
 
 from __future__ import annotations

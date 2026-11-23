@@ -3847,6 +3847,11 @@ Heliox's own speech, as it happens (`pilot.system.speech_notices`). The daemon
 plays every sound itself, so these are how the window knows when Heliox speaks.
 They are put on a queue and sent by their own task: speech never waits for them.
 A reply is one spoken text (one `speak`); it plays as one or more pieces.
+A voice that streams (Pocket TTS) starts playing a sentence on its first
+chunk: that sentence arrives as several `voice_piece` notices in a row, the
+first as soon as its first chunk is on the line and then one for about every
+0.4 s of audio as it is made, each with its own `seconds`, `lead_ms` (the
+audio still ahead of it plus the line's latency) and `envelope`.
 
 `voice_piece`, sent when a piece is handed to the output line:
 

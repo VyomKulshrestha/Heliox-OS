@@ -1265,7 +1265,11 @@ async def _play_local_tts_file(piece: Any) -> None:
     runtime. Samples made for this reply are played as they are, and the face's mouth data is made after they are on
     the output line; a WAV (a piece from the store) is read first. Cancelling it (barge-in) cuts it at once."""
     from pilot.system import speech_notices, speech_trace
+    from pilot.system.local_tts_worker import StreamedPiece
 
+    if isinstance(piece, StreamedPiece):
+        await _play_stream(piece)
+        return
     asked = time.monotonic()
     audio = getattr(piece, "audio", None)
     in_memory = audio is not None
@@ -1295,6 +1299,235 @@ async def _play_local_tts_file(piece: Any) -> None:
             await asyncio.to_thread(playback.play)
         except asyncio.CancelledError:
             speech_notices.cut_now()  # the window stops the mouth as the fade starts
+            await asyncio.to_thread(playback.cut)
+            raise
+
+
+# A streamed piece is announced to the window in parts of about this length (the first part as soon as the first
+# chunk is on the line): each is a voice_piece of its own, with its length, loudness and the time until it is heard.
+STREAM_PART_SECONDS = 0.4
+STREAM_TAKE_SECONDS = 0.05  # how long the player waits for the next chunk before looking at the line again
+
+
+class _StreamedPlayback:
+    """Plays a streamed piece (local_tts_worker.StreamedPiece) on the shared output line, starting on its first chunk
+    and appending each later one as it arrives. Cut as _Playback is (a fade over the next block, then silence). When
+    the next chunk is late the line plays silence and the dry spell is counted (``underruns``)."""
+
+    def __init__(self, piece: Any) -> None:
+        self.piece = piece
+        self.sample_rate = 0
+        self.channels = 1
+        self.received = 0  # samples (at the line's rate) handed to the line so far
+        self.position = 0
+        self.complete = False  # every sample of the piece is on the line
+        self.fade_left: int | None = None
+        self.finished = threading.Event()
+        self.faded = threading.Event()
+        self.first_block = threading.Event()
+        self.first_block_at: float | None = None
+        self.first_dac_delay: float | None = None
+        self.underruns = 0
+        self.stream: Any = None
+        self._queue: collections.deque[Any] = collections.deque()
+        self._offset = 0
+        self._lock = threading.Lock()
+        self._dry = False
+
+    def callback(self, outdata: Any, frames: int, time_info: Any, _status: Any) -> None:
+        if self.first_block_at is None:
+            self.first_block_at = time.monotonic()
+            try:
+                self.first_dac_delay = float(time_info.outputBufferDacTime) - float(time_info.currentTime)
+            except (AttributeError, TypeError, ValueError):
+                self.first_dac_delay = None
+            self.first_block.set()
+        written = 0
+        with self._lock:
+            while written < frames and self._queue:
+                head = self._queue[0]
+                take = min(frames - written, len(head) - self._offset)
+                outdata[written : written + take] = head[self._offset : self._offset + take]
+                written += take
+                self._offset += take
+                if self._offset >= len(head):
+                    self._queue.popleft()
+                    self._offset = 0
+            complete = self.complete
+        outdata[written:] = 0
+        self.position += written
+        if written < frames and not complete and self.fade_left is None:
+            if not self._dry:
+                self.underruns += 1  # the next chunk is late: silence until it comes
+            self._dry = True
+        elif written:
+            self._dry = False
+        if self.fade_left is not None:
+            outdata[:] = fade_block(outdata, self.fade_left, int(self.sample_rate * FADE_SECONDS))
+            self.fade_left = max(0, self.fade_left - frames)
+            if self.fade_left == 0:
+                self.faded.set()
+        if complete and self.position >= self.received and not self.finished.is_set():
+            self.finished.set()
+
+    def _fit(self, chunk: Any) -> Any:
+        """A chunk at the line's rate and channels (frames x channels)."""
+        import numpy as np
+
+        audio = np.asarray(chunk, dtype=np.float32).reshape(-1, 1)
+        if self.sample_rate != self.piece.rate:
+            # Only on a pinned line at another rate (macOS, the microphone on its device): each chunk on its own,
+            # which can leave a faint seam between chunks; a line at the voice's own rate (24 kHz) never does this.
+            audio = resample_for_line(audio, self.piece.rate, self.sample_rate)
+        if self.channels != 1:
+            audio = audio.repeat(self.channels, axis=1)
+        return audio
+
+    def _append(self, fitted: Any) -> None:
+        with self._lock:
+            self._queue.append(fitted)
+            self.received += len(fitted)
+
+    def play(self) -> None:
+        from pilot.system import speech_trace
+
+        handed = time.monotonic()
+        speech_trace.emit("playback start", at=handed, rate=self.piece.rate, seconds=None, streamed=True)
+        try:
+            self._play()
+        finally:
+            speech_trace.emit(
+                "first sample", handed=handed, first_block_at=self.first_block_at, dac_delay_s=self.first_dac_delay,
+                fitted=None, attached=self.attached_at, streamed=True,
+            )  # fmt: skip
+            speech_trace.emit(
+                "stream played", at=time.monotonic(), underruns=self.underruns, samples=self.received,
+                position=self.position, cut=self.fade_left is not None,
+            )  # fmt: skip
+
+    attached_at: float | None = None
+
+    def _play(self) -> None:
+        self.sample_rate = _output_line.rate_for(self.piece.rate)
+        self.channels = _output_line.channels_for(1)
+        chunks, ended = self.piece.take(0, 0.0)
+        if not chunks:
+            # The manager hands a stream over once its first chunk is in, or once it has ended: so it ended with no
+            # sound at all (a text with nothing to say). The line is not touched.
+            self.finished.set()
+            return
+        part: list[Any] = []
+        part_start = 0
+        for chunk in chunks:
+            fitted = self._fit(chunk)
+            self._append(fitted)
+            part.append(fitted)
+        taken = len(chunks)
+        self.stream = _output_line.ensure(self.sample_rate, self.channels)
+        _output_line.attach(self)
+        self.attached_at = time.monotonic()
+        first = True
+        stalled_since: float | None = None
+        last_position = -1
+        while True:
+            if self.fade_left is not None:
+                return  # cut: the line's callback finishes the fade and then plays silence
+            if part and (first or ended or sum(len(p) for p in part) >= STREAM_PART_SECONDS * self.sample_rate):
+                self._announce(part, part_start, first)
+                part_start += sum(len(p) for p in part)
+                part = []
+                first = False
+            if ended:
+                with self._lock:
+                    self.complete = True
+                break
+            chunks, ended = self.piece.take(taken, STREAM_TAKE_SECONDS)
+            for chunk in chunks:
+                fitted = self._fit(chunk)
+                self._append(fitted)
+                part.append(fitted)
+            taken += len(chunks)
+            # The device can disappear mid-sentence: its callbacks stop while audio waits to be played.
+            if self.position != last_position or self.position >= self.received:
+                last_position, stalled_since = self.position, None
+            elif stalled_since is None:
+                stalled_since = time.monotonic()
+            elif time.monotonic() - stalled_since > 2.0:
+                _output_line.device_lost("no audio played for two seconds of a streamed sentence")
+                return
+        left = max(0, self.received - self.position) / max(1, self.sample_rate)
+        if self.received and not self.finished.wait(left + 2.0):
+            _output_line.device_lost("no audio played for longer than the sentence")
+            return
+        if self.fade_left is not None:
+            return
+        time.sleep(max(0.0, float(getattr(self.stream, "latency", 0.0) or 0.0)))
+        _output_line.detach(self)
+
+    def _announce(self, part: list[Any], start: int, first: bool) -> None:
+        """Tell the window about one part of the piece: its length, its loudness (a face is shown) and how long until
+        its first sample is heard (the audio still ahead of it on the line, plus the line's own latency)."""
+        import numpy as np
+
+        from pilot.system import speech_notices
+
+        samples = np.concatenate(part)[:, 0] if len(part) > 1 else part[0][:, 0]
+        rate = self.sample_rate
+        mouth = None
+        if speech_notices.face_on():
+
+            def make_mouth() -> Any:
+                return speech_notices.mouth_for(None, samples, rate)
+
+            mouth = make_mouth
+        hook = speech_notices.handed(mouth, len(samples) / max(1, rate))
+        if hook is None:
+            return
+
+        def latency() -> float:
+            try:
+                return float(getattr(self.stream, "latency", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def call(lead: float | None) -> None:
+            try:
+                hook(lead)
+            except Exception:
+                logger.debug("The piece notice failed", exc_info=True)
+
+        if first and not _output_line.running.is_set():
+            # A line that has just opened: the first block says when the sound starts (as _Playback does).
+            def after_first_block() -> None:
+                if self.first_block.wait(len(samples) / max(1, rate) + 2.0):
+                    call(self.first_dac_delay if self.first_dac_delay is not None else latency())
+
+            threading.Thread(target=after_first_block, name="heliox-piece-notice", daemon=True).start()
+            return
+        ahead = max(0, start - self.position) / max(1, rate)
+        call(latency() + ahead)
+
+    def cut(self) -> None:
+        self.fade_left = int(max(1, self.sample_rate) * FADE_SECONDS)
+        self.finished.set()
+
+
+async def _play_stream(piece: Any) -> None:
+    """Play a streamed piece from its first chunk (see _StreamedPlayback). Cancelling it (barge-in) fades it out at
+    once and has the worker stop making it."""
+    from pilot.system import speech_notices
+    from pilot.system.local_tts_worker import speech_progress
+
+    with speech_notices.reply():
+        playback = _StreamedPlayback(piece)
+        progress = speech_progress.get()
+        if progress is not None:
+            progress.playing = playback  # its position says how much of this piece was heard if it is cut
+        try:
+            await asyncio.to_thread(playback.play)
+        except asyncio.CancelledError:
+            speech_notices.cut_now()  # the window stops the mouth as the fade starts
+            piece.stop()
             await asyncio.to_thread(playback.cut)
             raise
 
@@ -1428,9 +1661,9 @@ async def _speak_impl(
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            spoken_text = getattr(e, "unspoken", "") or spoken_text  # stopped partway: only what was not said yet
             if isinstance(e, LocalVoiceNotReady):
                 loading = "kokoro_tts"  # the system voice speaks this reply while Heliox's own voice loads
-                spoken_text = e.unspoken or spoken_text  # stopped partway: only what was not said yet
             elif not getattr(e, "already_logged", False):
                 logger.warning("Kokoro TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
             local_unavailable = str(e) or type(e).__name__
@@ -1449,9 +1682,9 @@ async def _speak_impl(
             # do not fall back to them mid-interruption.
             raise
         except Exception as e:
+            spoken_text = getattr(e, "unspoken", "") or spoken_text  # stopped partway: only what was not said yet
             if isinstance(e, LocalVoiceNotReady):
                 loading = "pocket_tts"  # the system voice speaks this reply while Heliox's own voice loads
-                spoken_text = e.unspoken or spoken_text  # stopped partway: only what was not said yet
             elif not getattr(e, "already_logged", False):
                 logger.warning("Pocket TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
             local_unavailable = str(e) or type(e).__name__

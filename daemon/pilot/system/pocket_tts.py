@@ -101,12 +101,41 @@ async def synthesize_to_file(text: str, voice: str, output_file: str) -> None:
     await asyncio.to_thread(synthesize_to_file_here, text, voice, output_file)
 
 
+# The voice worker's one model, made into streams (pocket_stream: the quiet lead dropped, numbers said as words).
+_streams: Any = None
+
+
+def _stream_model() -> Any:
+    global _streams
+    if _streams is None:
+        from pilot.system.pocket_stream import PocketStream
+
+        _streams = PocketStream(_get_model)
+    return _streams
+
+
+def prepare(voice: str) -> None:
+    """Load the model and ``voice`` and make one throwaway stream, so the first real one is warm (worker side)."""
+    _stream_model().prepare(voice)
+
+
+def stream_here(text: str, voice: str, stop: Any) -> tuple[int, Any]:
+    """The voice worker's stream of ``text``: the sample rate, and the chunks as the model makes them (stopped before
+    the next one once ``stop`` is set)."""
+    streams = _stream_model()
+    return streams.sample_rate, streams.stream(text, stop, voice=voice)
+
+
 def generate_here(text: str, voice: str, *, timing: bool = False) -> tuple[Any, int, None]:
-    """The voice worker's piece in memory, on the calling thread. Pocket gives no phoneme timing."""
+    """The voice worker's whole piece in memory, on the calling thread: the stream's chunks joined, so a piece made
+    ahead for the store sounds as the same sentence streamed. Pocket gives no phoneme timing."""
     import numpy as np
 
-    audio, sample_rate = _generate(text, voice)
-    return np.asarray(audio, dtype=np.float32).reshape(-1), int(sample_rate), None
+    rate, chunks = stream_here(text, voice, None)
+    parts = [np.asarray(chunk, dtype=np.float32).reshape(-1) for chunk in chunks]
+    if not parts:
+        raise RuntimeError("Pocket TTS produced no audio")
+    return np.concatenate(parts), int(rate), None
 
 
 def synthesize_to_file_here(text: str, voice: str, output_file: str) -> None:

@@ -16,6 +16,7 @@ worker says a short sentence in 0.1 s and a long one in 0.25 s on the GPU. So th
 * speaks a long reply sentence by sentence, synthesising the next sentence while the current one plays; a piece's
   samples come back on the worker's pipe, already trimmed, and play from memory (nothing is written to disk before
   the person hears it);
+* plays a voice that streams (STREAM_ENGINES: Pocket TTS) from its first chunk, the rest appended as it is made;
 * keeps the worker when speech is cut off mid-synthesis (the worker finishes that request unheard);
 * after the worker fails to start or crashes, reports it once and lets the caller use the system voice at once,
   retrying the local voice in the background after ``RETRY_AFTER_SECONDS``;
@@ -31,6 +32,7 @@ import contextlib
 import json
 import logging
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -50,6 +52,10 @@ from pilot.timeouts import bounded
 logger = logging.getLogger("pilot.system.local_tts_worker")
 
 LOCAL_ENGINES = frozenset({"kokoro_tts", "pocket_tts"})
+# Engines whose worker streams a sentence chunk by chunk ("stream" op): playback starts on the first chunk. Pocket's
+# first chunk came 0.074 to 0.136 s after the request on one development laptop's processor, against 0.40 to 1.68 s
+# for Kokoro there making a whole piece. Kokoro gives its audio once per line of text, so it stays on whole pieces.
+STREAM_ENGINES = frozenset({"pocket_tts"})
 PREPARED_LIMIT = 6  # sentences synthesised ahead and not yet spoken
 DEVICES = ("auto", "cpu", "cuda")
 MAX_TEXT_CHARACTERS = 20_000
@@ -210,6 +216,133 @@ def _take_gpu_lease(device: str) -> tuple[str, Any]:
     return "cpu", None
 
 
+def _own_stdin(stdin: Any) -> Any:
+    """The worker's request pipe, moved off the process's standard input before a thread blocks reading it.
+
+    On Windows a read waiting on a pipe blocks every other call on that pipe, and a DLL loaded meanwhile asks the
+    standard input for its type while it starts (loading numpy's core, and so torch, waited for ever while the
+    request reader waited for the next line). So the pipe is read through a private copy, and the standard input
+    becomes the null device. Elsewhere, and for a stdin that is not a file, it is used as it is."""
+    if os.name != "nt":
+        return stdin
+    try:
+        fd = stdin.fileno()
+    except (AttributeError, OSError, ValueError):
+        return stdin  # not a real pipe (a test's)
+    try:
+        import ctypes
+        import msvcrt
+
+        private = os.dup(fd)
+        null = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(null, fd)
+        os.close(null)
+        ctypes.windll.kernel32.SetStdHandle(-10, msvcrt.get_osfhandle(fd))  # STD_INPUT_HANDLE
+        return open(private, encoding=getattr(stdin, "encoding", None) or "utf-8", closefd=True)
+    except Exception:
+        logger.debug("Could not move the worker's requests off its standard input", exc_info=True)
+        return stdin
+
+
+class _Requests:
+    """The worker's stdin, read on a thread of its own so that a stop reaches a stream while it is being made: the
+    requests in their order, and each ``{"op": "stop", "id": n}`` sets stream n's stop at once (a stop that comes
+    before its stream has started stops it before its first chunk)."""
+
+    def __init__(self, stdin: Any) -> None:
+        self._queue: queue.Queue[str | None] = queue.Queue()
+        self._lock = threading.Lock()
+        self._stops: dict[int, threading.Event] = {}
+        self._early: set[int] = set()  # stops for streams not started yet
+        self._finished = 0  # the highest stream id that has ended: later stops for it are ignored
+        threading.Thread(target=self._read, args=(stdin,), name="heliox-voice-requests", daemon=True).start()
+
+    def _read(self, stdin: Any) -> None:
+        try:
+            for line in stdin:
+                try:
+                    request = json.loads(line)
+                except ValueError:
+                    request = None
+                if isinstance(request, dict) and request.get("op") == "stop":
+                    with contextlib.suppress(TypeError, ValueError):
+                        self._stop(int(request.get("id") or 0))
+                    continue
+                self._queue.put(line)
+        finally:
+            self._queue.put(None)
+
+    def next(self) -> str | None:
+        """The next request, or None when the daemon closed the pipe."""
+        return self._queue.get()
+
+    def _stop(self, stream_id: int) -> None:
+        with self._lock:
+            event = self._stops.get(stream_id)
+            if event is not None:
+                event.set()
+            elif stream_id > self._finished:
+                self._early.add(stream_id)
+
+    def stop_event(self, stream_id: int) -> threading.Event:
+        with self._lock:
+            event = threading.Event()
+            if stream_id in self._early:
+                self._early.discard(stream_id)
+                event.set()
+            self._stops[stream_id] = event
+            return event
+
+    def done(self, stream_id: int) -> None:
+        with self._lock:
+            self._stops.pop(stream_id, None)
+            self._finished = max(self._finished, stream_id)
+            self._early = {early for early in self._early if early > self._finished}
+
+
+def _stream(engine: str, request: dict[str, Any], requests: _Requests) -> None:
+    """Speak one piece as a stream: an "audio" frame (a JSON line, then its float32 samples) for each chunk as the
+    engine makes it, then one "end" frame. A stop for this stream ends it before the next chunk is made."""
+    import numpy as np
+
+    stream_id = int(request.get("id") or 0)
+    stop = requests.stop_event(stream_id)
+    started = time.perf_counter()
+    chunks = samples = 0
+    rate = 0
+    first_s: float | None = None
+    error = ""
+    try:
+        text = _request_text(request)
+        if not text or len(text) > MAX_TEXT_CHARACTERS:
+            raise ValueError("Speech text must contain between 1 and 20,000 characters")
+        module = _engine_module(engine)
+        stream_here = getattr(module, "stream_here", None)
+        if stream_here is None:
+            raise ValueError(f"{engine} does not stream")
+        _use_voice_threads()
+        rate, made = stream_here(text, str(request.get("voice") or ""), stop)
+        for chunk in made:
+            data = np.ascontiguousarray(np.asarray(chunk, dtype=np.float32).reshape(-1))
+            payload = data.tobytes()
+            _send({"frame": "audio", "id": stream_id, "seq": chunks, "rate": int(rate), "bytes": len(payload)}, payload)
+            if first_s is None:
+                first_s = time.perf_counter() - started
+            chunks += 1
+            samples += len(data)
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    finally:
+        requests.done(stream_id)
+    end: dict[str, Any] = {"frame": "end", "id": stream_id, "chunks": chunks, "cut": stop.is_set(),
+                           "audio_s": round(samples / rate, 4) if rate else 0.0,
+                           "made_s": round(time.perf_counter() - started, 4),
+                           "first_s": None if first_s is None else round(first_s, 4)}  # fmt: skip
+    if error:
+        end["error"] = error
+    _send(end)
+
+
 def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
     lease = None
     if device != "cpu" and cuda_hidden():
@@ -220,10 +353,17 @@ def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
         from pilot.system import kokoro_tts
 
         kokoro_tts.configure(device=device)
-    for line in sys.stdin:
+    requests = _Requests(_own_stdin(sys.stdin))
+    while True:
+        line = requests.next()
+        if line is None:
+            break
         payload = b""
         try:
             request = json.loads(line)
+            if request.get("op") == "stream":
+                _stream(engine, request, requests)
+                continue
             if request.get("op") == "load":
                 _load(engine, str(request.get("voice") or ""))
                 _send({"status": "ok", "op": "load"})
@@ -293,9 +433,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 class LocalTTSUnavailable(RuntimeError):
-    """The local voice cannot speak right now; the failure has already been logged once."""
+    """The local voice cannot speak right now; the failure has already been logged once. ``unspoken``: the part of the
+    reply it had not said when it stopped partway; "" means the whole reply."""
 
     already_logged = True
+    unspoken: str = ""
 
 
 # Which voice spoke a reply, and by which branch of the rule (data for the bench and the speech result; nothing is
@@ -344,8 +486,10 @@ _ABBREVIATION = re.compile(r"(?:\b(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|vs|etc|No)|(?:\b[A-Za
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?…])[\"'”’)\]]*\s+|\n+")
 
 
-def split_for_speech(text: str) -> list[str]:
-    """Sentences to synthesise one at a time, so the first one can play while the rest are made."""
+def split_for_speech(text: str, *, clauses: bool = True) -> list[str]:
+    """Sentences to synthesise one at a time, so the first one can play while the rest are made. ``clauses``: the
+    first sentence is cut at a pause (clause_pieces), to hide a whole-piece engine's wait; a streamed engine
+    (STREAM_ENGINES) starts sounding after its first chunk, so its sentences stay whole."""
     pieces: list[str] = []
     position = 0
     for match in _SENTENCE_BREAK.finditer(text):
@@ -364,7 +508,7 @@ def split_for_speech(text: str) -> list[str]:
             merged[-1] = f"{merged[-1]} {piece}"
         else:
             merged.append(piece)
-    if merged:
+    if merged and clauses:
         merged[:1] = clause_pieces(merged[0])  # the first sound comes from the first few words
     return merged or ([text] if text.strip() else [])
 
@@ -721,12 +865,22 @@ def _read_exactly(stream: Any, size: int) -> bytes:
     return b"".join(parts)
 
 
+_stdin_lock = threading.Lock()  # a stop line (any thread) never lands inside a request line
+
+
+def _write_line(process: Any, request: dict[str, Any]) -> None:
+    if process.stdin is None:
+        raise RuntimeError("Local TTS worker streams are unavailable")
+    with _stdin_lock:
+        process.stdin.write((json.dumps(request) + "\n").encode("utf-8"))
+        process.stdin.flush()
+
+
 def _exchange(process: Any, request: dict[str, Any]) -> tuple[bytes, bytes]:
     """Send one request; its answer line, and the bytes that follow it when the line announces them ("bytes")."""
     if process.stdin is None or process.stdout is None:
         raise RuntimeError("Local TTS worker streams are unavailable")
-    process.stdin.write((json.dumps(request) + "\n").encode("utf-8"))
-    process.stdin.flush()
+    _write_line(process, request)
     line = process.stdout.readline()
     size = 0
     if line and b'"bytes"' in line:
@@ -817,13 +971,137 @@ def _piece_from_answer(text: str, answer: dict[str, Any]) -> Piece | None:
     return Piece(text, audio=audio, rate=int(answer.get("rate") or 24000), timing=timing if timing else None)
 
 
-PlayFile = Callable[[Any], Awaitable[None]]  # takes a Piece (or a Path), plays it, returns when it has played
+class StreamedPiece:
+    """One sentence a streaming worker is making (STREAM_ENGINES): its chunks as they arrive, until its end frame.
+
+    The manager's reader thread adds the chunks; the player takes them as they come (``take``) and plays from the
+    first; ``stop()`` asks the worker to stop making it (a cut), which it does before its next chunk. Once it has
+    ended, ``audio`` is the whole piece (for the store) and ``error`` says why it ended early ("" when it did not)."""
+
+    def __init__(self, text: str, stream_id: int = 0, stopper: Callable[[int], None] | None = None) -> None:
+        self.text = text
+        self.id = stream_id
+        self.rate = 0
+        self.source = "made"
+        self.path: Path | None = None
+        self.timing: dict[str, Any] | None = None
+        self.received = 0  # samples arrived so far
+        self.complete = False  # the end frame arrived (or the stream broke off)
+        self.cut = False  # the worker stopped it on a stop
+        self.error = ""
+        self.end: dict[str, Any] = {}
+        self._chunks: list[Any] = []
+        self._cond = threading.Condition()
+        self._stopper = stopper
+        self._stop_sent = False
+        self._joined: Any = None
+
+    def add(self, chunk: Any, rate: int) -> None:
+        with self._cond:
+            self._chunks.append(chunk)
+            self.received += len(chunk)
+            self.rate = int(rate) or self.rate
+            self._cond.notify_all()
+
+    def finish(self, end: dict[str, Any]) -> None:
+        with self._cond:
+            if self.complete:
+                return
+            self.end = dict(end)
+            self.cut = bool(end.get("cut"))
+            self.error = str(end.get("error") or "")
+            self.complete = True
+            self._cond.notify_all()
+
+    def take(self, start: int, timeout: float) -> tuple[list[Any], bool]:
+        """The chunks from index ``start`` on (waiting at most ``timeout`` s for one), and whether the stream ended."""
+        with self._cond:
+            if len(self._chunks) <= start and not self.complete and timeout > 0:
+                self._cond.wait(timeout)
+            return self._chunks[start:], self.complete
+
+    def stop(self) -> None:
+        """Ask the worker to stop making this piece (at most once, never after its end)."""
+        with self._cond:
+            if self.complete or self._stop_sent or self._stopper is None:
+                return
+            self._stop_sent = True
+        try:
+            self._stopper(self.id)
+        except Exception:
+            logger.debug("Could not ask the voice worker to stop a stream", exc_info=True)
+
+    @property
+    def audio(self) -> Any:
+        """Every sample arrived so far, as one float32 array."""
+        import numpy as np
+
+        with self._cond:
+            chunks = list(self._chunks)
+        if self._joined is None or len(self._joined) != self.received:
+            self._joined = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
+        return self._joined
+
+
+def _stream_exchange(
+    process: Any,
+    request: dict[str, Any],
+    piece: StreamedPiece,
+    on_first: Callable[[], None],
+    on_end: Callable[[], None],
+) -> None:
+    """On a thread of its own: send a stream request and read its frames into ``piece`` until the end frame (or the
+    worker going away). ``on_first`` when the first chunk (or the end) has arrived, ``on_end`` after the end."""
+    import numpy as np
+
+    first = False
+    try:
+        _write_line(process, request)
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                piece.finish({"error": "the worker exited"})
+                return
+            head = json.loads(line)
+            if head.get("frame") == "audio":
+                data = _read_exactly(process.stdout, int(head.get("bytes") or 0))
+                piece.add(np.frombuffer(data, dtype="<f4"), int(head.get("rate") or 0))
+                if not first:
+                    first = True
+                    speech_trace.emit("stream first chunk", id=piece.id, at=time.monotonic())
+                    on_first()
+            elif head.get("frame") == "end":
+                piece.finish(head)
+                speech_trace.emit("stream end", at=time.monotonic(), **{k: v for k, v in head.items() if k != "frame"})
+                return
+            else:
+                piece.finish({"error": str(head.get("error") or "an answer the stream did not expect")})
+                return
+    except Exception as exc:
+        piece.finish({"error": f"{type(exc).__name__}: {exc}"})
+    finally:
+        if not first:
+            on_first()
+        on_end()
+
+
+PlayFile = Callable[[Any], Awaitable[None]]  # takes a Piece, a StreamedPiece (or a Path), returns once it has played
 
 # What of a sentence the person heard when Heliox was cut off. A word counts only if it had finished playing this
 # long before the voice stopped: from the person's first sound to silence takes 0.45 to 0.65 s (the barge-in
 # decision, then an 8 ms fade and the device's buffered block), and what Heliox believes it said must never be more
 # than the person heard, so the longer end is taken.
 HEARD_MARGIN_SECONDS = 0.65
+# The slowest pace a voice says a sentence at, in seconds per letter (spaces counted): English speech runs at about
+# 14 to 16 letters a second, so 10 a second is longer than any sentence takes. Used for a streamed piece whose length
+# is not known yet (SpeechProgress.heard_words).
+SLOW_SECONDS_PER_LETTER = 0.1
+
+
+def playback_samples(playback: Any) -> int:
+    """How many samples a playback has to play so far: a streamed one's ``received``, a whole one's ``audio``."""
+    received = getattr(playback, "received", None)
+    return int(received) if received is not None else len(playback.audio)
 
 
 @dataclass
@@ -844,8 +1122,9 @@ class SpeechProgress:
         current = self.playing
         if current is not None and len(self.durations) < len(self.pieces):
             rate = max(1, int(getattr(current, "sample_rate", 1)))
-            played += min(int(getattr(current, "position", 0)), len(current.audio)) / rate
-            total += len(current.audio) / rate
+            made = playback_samples(current)
+            played += min(int(getattr(current, "position", 0)), made) / rate
+            total += made / rate
         return played, total
 
     def heard_words(self, margin: float = HEARD_MARGIN_SECONDS) -> int:
@@ -860,7 +1139,14 @@ class SpeechProgress:
         lengths = [*self.durations]
         current = self.playing
         if current is not None and len(lengths) < len(self.pieces):
-            lengths.append(len(current.audio) / max(1, int(getattr(current, "sample_rate", 1))))
+            seconds = playback_samples(current) / max(1, int(getattr(current, "sample_rate", 1)))
+            if getattr(current, "complete", True) is False:
+                # A streamed piece still arriving: its length is not known yet. Placing its words over the audio
+                # received so far would put them too early (more heard than was); placing them over the longest the
+                # sentence can take puts them late, so what Heliox believes it said is never more than was heard.
+                letters = sum(len(word) + 1 for word in self.pieces[len(lengths)].split())
+                seconds = max(seconds, letters * SLOW_SECONDS_PER_LETTER)
+            lengths.append(seconds)
         for piece, seconds in zip(self.pieces, lengths, strict=False):
             piece_words = piece.split()
             if left >= seconds:
@@ -951,6 +1237,7 @@ class LocalTTSWorkerManager:
         self.synth_log: deque[tuple[str, int, float, float, float]] = deque(maxlen=200)
         self._making_ahead = False
         self._request_started_at = 0.0
+        self._stream_ids = 0  # numbers the streams sent to the worker (their stop names them)
         # Whether an idle voice may stay loaded past keep_loaded_seconds (voice.tts_release = "memory": the computer
         # has the memory to spare); None: released after keep_loaded_seconds, by the clock alone.
         self.keep_while: Callable[[], bool] | None = None
@@ -1044,7 +1331,9 @@ class LocalTTSWorkerManager:
                 self._mark_failed(engine, reason)
                 raise LocalTTSUnavailable(f"{engine}: {reason}")
             device, gpu_lease = self.device, False
-            if device != "cpu" and (self.cpu_for_session or cuda_hidden(self.environ)):
+            if engine == "pocket_tts":
+                device = "cpu"  # Pocket runs on the processor: it never holds the card's lease another part may need
+            elif device != "cpu" and (self.cpu_for_session or cuda_hidden(self.environ)):
                 device = "cpu"  # a GPU error earlier this session, or every card hidden
             elif self.choose_device is not None:
                 try:
@@ -1058,7 +1347,10 @@ class LocalTTSWorkerManager:
                     # A card the arbiter would give the voice, and a PyTorch that cannot use it: not installed.
                     gpu_paths.note_not_installed("voice", "a CUDA build of PyTorch")
                     device, gpu_lease = "cpu", False
-            self.device_reason = self._describe(device, gpu_lease)
+            self.device_reason = (
+                "On the processor: this voice is made to run there." if engine == "pocket_tts" else
+                self._describe(device, gpu_lease)
+            )  # fmt: skip
             spawning = _Spawning(self._spawn, (engine, device, True) if gpu_lease else (engine, device))
             try:
                 process = await asyncio.to_thread(spawning.run)
@@ -1396,6 +1688,71 @@ class LocalTTSWorkerManager:
             raise LocalTTSUnavailable(f"{engine} worker is not running")
         return self.process
 
+    async def stream(self, engine: str, text: str, voice: str, request_dir: Path) -> StreamedPiece:
+        """Start streaming ``text`` (a STREAM_ENGINES worker) and return once its first chunk has arrived, the chunks
+        after it arriving on a thread of their own. The pipe is the stream's until its end frame: the next request
+        waits for it, at most one chunk after a stop. Cancelled while it waits for the first chunk: the stream is
+        stopped."""
+        if not text or len(text) > MAX_TEXT_CHARACTERS:
+            raise ValueError("Speech text must contain between 1 and 20,000 characters")
+        requested = time.monotonic()
+        process = await self._usable_process(engine, voice)
+        self._stream_ids += 1
+        stream_id = self._stream_ids
+        request_path = request_dir / f"stream-{stream_id}.txt"
+        request_path.write_text(text, encoding="utf-8")
+
+        def write_stop(which: int) -> None:
+            try:
+                _write_line(process, {"op": "stop", "id": which})
+            except Exception:
+                logger.debug("Could not send the voice worker a stop", exc_info=True)
+
+        def send_stop(which: int) -> None:
+            # Off the event loop: a pipe the worker is slow to read must not hold the loop.
+            threading.Thread(target=write_stop, args=(which,), name="heliox-voice-stop", daemon=True).start()
+
+        piece = StreamedPiece(text, stream_id, send_stop)
+        loop = asyncio.get_running_loop()
+        first: asyncio.Future[None] = loop.create_future()
+        ended: asyncio.Future[None] = loop.create_future()
+
+        def settle(future: asyncio.Future[None]) -> None:
+            with contextlib.suppress(RuntimeError):  # the loop has closed
+                loop.call_soon_threadsafe(lambda: future.done() or future.set_result(None))
+
+        await self._io_lock.acquire()
+        ended.add_done_callback(lambda _done: self._io_lock.release())
+        self._background.add(ended)
+        ended.add_done_callback(self._background.discard)
+        self._request_started_at = time.monotonic()
+        request = {"op": "stream", "id": stream_id, "text_file": str(request_path), "text": text, "voice": voice}
+        threading.Thread(
+            target=_stream_exchange,
+            args=(process, request, piece, lambda: settle(first), lambda: settle(ended)),
+            name="heliox-voice-stream",
+            daemon=True,
+        ).start()
+        try:
+            await bounded(asyncio.shield(first), REQUEST_TIMEOUT_SECONDS)
+        except TimeoutError:
+            piece.stop()
+            raise await self._fail(process, engine, f"no answer within {REQUEST_TIMEOUT_SECONDS:.0f} s") from None
+        except asyncio.CancelledError:
+            piece.stop()  # cut before the first sound: the worker stops it before its next chunk
+            raise
+        if piece.received == 0 and piece.error:
+            raise await self._fail(process, engine, piece.error)
+        if self._failed_until is not None:
+            logger.info("Local voice %s recovered", engine)
+            self._failed_until = None
+            self.unavailable_reason = ""
+        speech_trace.emit(
+            "stream started", words=len(text.split()), requested=requested,
+            worker_started=self._request_started_at, first_chunk=time.monotonic(),
+        )  # fmt: skip
+        return piece
+
     async def speak(
         self,
         engine: str,
@@ -1420,7 +1777,7 @@ class LocalTTSWorkerManager:
         self._busy += 1
         self.note_activity()
         try:
-            sentences = [] if output_file else split_for_speech(text)
+            sentences = [] if output_file else split_for_speech(text, clauses=engine not in STREAM_ENGINES)
             was_ready = self.loaded and self.running and self.engine == engine
             if output_file or wait_for_load:
                 await self._announce_loading(engine, voice)  # a file, or no other voice: waited for
@@ -1527,19 +1884,25 @@ class LocalTTSWorkerManager:
                 sources[index] = "ahead"
                 return ahead  # synthesised while the sentence before it played
             sources[index] = "made"
+            if engine in STREAM_ENGINES:
+                # Streamed: ready on its first chunk. The one after the sentence playing starts as soon as that one's
+                # end frame frees the pipe, so its first chunk is in before this one has finished playing.
+                return asyncio.ensure_future(self.stream(engine, sentences[index], voice, folder))
             target = folder / f"sentence-{index}.wav"
             return asyncio.ensure_future(self._make(engine, sentences[index], voice, target, folder))
 
-        upcoming: asyncio.Future[Piece] | None = make(0)
+        upcoming: asyncio.Future[Any] | None = make(0)
+        playing: Any = None
         try:
             for index in range(len(sentences)):
                 assert upcoming is not None
                 try:
                     piece = await upcoming
-                except LocalVoiceNotReady as not_ready:
+                except LocalTTSUnavailable as not_ready:
                     # What was said stays said: the system voice takes over from this sentence on.
                     not_ready.unspoken = " ".join(sentences[index:]) if index else ""
                     raise
+                playing = piece
                 words = len(sentences[index].split())
                 speech_trace.emit(
                     "piece ready", index=index, words=words, source=sources.get(index, ""), at=time.monotonic()
@@ -1550,9 +1913,18 @@ class LocalTTSWorkerManager:
                 progress = speech_progress.get()
                 if progress is not None and progress.playing is not None:
                     current = progress.playing
-                    progress.durations.append(len(current.audio) / max(1, int(current.sample_rate)))
+                    progress.durations.append(playback_samples(current) / max(1, int(current.sample_rate)))
                     progress.playing = None
                 self.note_activity()
+                if isinstance(piece, StreamedPiece) and piece.error:
+                    # The worker failed partway through the sentence: what arrived was played, the rest of the reply
+                    # goes to the system voice from the next sentence on (a partial sentence is not said twice).
+                    failure = await self._fail(self.process, engine, piece.error) if self.process else None
+                    unavailable = failure or LocalTTSUnavailable(f"{engine}: {piece.error}")
+                    unavailable.unspoken = " ".join(sentences[index + 1 :])
+                    if not unavailable.unspoken:
+                        return
+                    raise unavailable
                 if index == 0 and heads is not None and cached_head is None:
                     # Counted, and its audio kept once said HEAD_CACHE_AFTER times: written after it was heard.
                     with contextlib.suppress(Exception):
@@ -1564,10 +1936,16 @@ class LocalTTSWorkerManager:
                     with contextlib.suppress(OSError):
                         path.with_name(path.name + ".timing.json").unlink(missing_ok=True)
         finally:
+            if isinstance(playing, StreamedPiece):
+                playing.stop()  # cut or failed mid-sentence: the worker stops making it (nothing once it has ended)
             if upcoming is not None and not upcoming.done():
                 upcoming.cancel()
                 with contextlib.suppress(BaseException):
                     await upcoming
+            elif upcoming is not None and not upcoming.cancelled() and upcoming.exception() is None:
+                ahead = upcoming.result()
+                if isinstance(ahead, StreamedPiece):
+                    ahead.stop()  # the next sentence had started streaming: never heard, so not made on
 
     def prepare(self, engine: str, text: str, voice: str) -> None:
         """Start synthesising ``text`` now, so that a later speak() of it plays at once. Never blocks.
@@ -1575,8 +1953,8 @@ class LocalTTSWorkerManager:
         For a reply streamed sentence by sentence: prepare the next sentence while the current one plays, and
         there is no gap between them. Unused preparations are dropped (the oldest after PREPARED_LIMIT).
         """
-        if engine not in LOCAL_ENGINES or self._failed_until is not None:
-            return
+        if engine not in LOCAL_ENGINES or engine in STREAM_ENGINES or self._failed_until is not None:
+            return  # a streamed engine starts sounding within a chunk: nothing made ahead to hold the pipe
         for sentence in split_for_speech(text):
             key = (engine, voice, sentence)
             if key in self._prepared:
@@ -1779,7 +2157,7 @@ def made_ahead(voice_config: Any, text: str) -> bool:
     store = _manager.head_cache
     if engine not in LOCAL_ENGINES or store is None:
         return False
-    pieces = split_for_speech(text)
+    pieces = split_for_speech(text, clauses=engine not in STREAM_ENGINES)
     signature = SpeechStore.signature(engine, voice)
     return bool(pieces) and all(store.has(piece, signature) for piece in pieces)
 
