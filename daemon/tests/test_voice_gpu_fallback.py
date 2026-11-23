@@ -158,6 +158,7 @@ async def test_an_empty_cuda_visible_devices_keeps_the_voice_off_the_card(monkey
 
 @pytest.mark.asyncio
 async def test_without_an_environment_of_its_own_the_voice_reads_the_daemon_s(monkeypatch):
+    monkeypatch.setattr(local_tts_worker, "LOAD_GRACE_SECONDS", 60.0)  # the grace is not what is tested here
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")  # as the suite sets it (conftest): every card hidden
     manager, started, leases, asked, _faults, said = manager_on_a_failing_card("speak")
     manager.environ = None  # what the daemon runs with

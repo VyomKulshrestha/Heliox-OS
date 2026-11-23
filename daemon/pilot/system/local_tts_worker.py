@@ -68,10 +68,17 @@ LOAD_TIMEOUT_SECONDS = 180.0
 REQUEST_TIMEOUT_SECONDS = 120.0
 SHUTDOWN_WAIT_SECONDS = 2.0  # shutdown(): the longest it waits for the manager's cancelled tasks to end
 LOADING_MESSAGE = "Getting my voice ready…"
-# How long a reply waits for a local voice that is not loaded before the system voice speaks it instead. A cold load
-# takes 20 to 25 s on a laptop CPU, and no reply should wait for it; this only lets a load that is about to finish
-# (one already under way for a while) speak the reply in Heliox's own voice.
-LOAD_GRACE_SECONDS = 0.3
+# The longest a reply waits for Heliox's own voice to finish loading; past it the system voice speaks the reply. A
+# reply waits only for a load expected to end within it (expected_load_left: how long loads of this voice have taken
+# on this computer, less how long this one has run), so a reply that comes with no load under way, or early in one,
+# goes to the system voice at once while the load goes on behind it. A cold load takes 15 to 25 s (one development
+# laptop: 15.4 s reloading on the card, 19.9 s on the processor, 27 s from a cold start), so it is never waited for.
+LOAD_GRACE_SECONDS = 0.5
+LOAD_WAIT_MARGIN_SECONDS = 0.15  # added to the time a load is expected to take still: loads vary by about this much
+# A load of this voice with nothing recorded yet is taken to last this long (the middle of 15 to 25 s): with no record
+# of this computer, only a load that has run about that long is waited for.
+DEFAULT_LOAD_SECONDS = 20.0
+LOAD_RECORDS = 10  # the latest loads kept per voice and device; their median is the expected length
 VOICE_HOST_RAM_BYTES = 2 * 1024**3  # Kokoro's worker holds 1.6-1.9 GB once loaded
 ON_CPU_MESSAGE = (
     "My voice hit a graphics card error, so it runs on the processor for the rest of this session. "
@@ -1258,6 +1265,12 @@ class LocalTTSWorkerManager:
         # finished speaking in any voice (note_spoken): see REPLY_GAP_SECONDS.
         self._reply_voice = ""
         self._spoke_until = clock()
+        # How long each completed load took, [engine, "card" | "cpu", seconds], oldest first (loads.json in the
+        # store's folder when there is a store, so a restart still knows this computer); and when the load under way
+        # started (the manager's clock).
+        self.load_times: list[list[Any]] = []
+        self._load_times_read = False
+        self._loading_since = clock()
         self._last_activity = clock()
         self._failed_until: float | None = None
         self._background: set[asyncio.Future[Any]] = set()
@@ -1356,18 +1369,10 @@ class LocalTTSWorkerManager:
                 return self.process
             if self.process is not None:
                 await self._close(self.process)
-            light = self.light_reason() if self.light_reason is not None else ""
-            if light:
-                self._mark_failed(engine, light)
-                raise LocalTTSUnavailable(f"{engine}: {light}")
-            free = self.free_memory() if self.free_memory is not None else None
-            if free is not None and free < VOICE_HOST_RAM_BYTES:
-                reason = (
-                    f"not enough free memory for the local voice ({free / 1024**3:.1f} GB free, "
-                    f"{VOICE_HOST_RAM_BYTES / 1024**3:.0f} GB needed)"
-                )
-                self._mark_failed(engine, reason)
-                raise LocalTTSUnavailable(f"{engine}: {reason}")
+            blocked = self._start_blocked()
+            if blocked:
+                self._mark_failed(engine, blocked)
+                raise LocalTTSUnavailable(f"{engine}: {blocked}")
             device, gpu_lease = self.device, False
             if engine == "pocket_tts":
                 device = "cpu"  # Pocket runs on the processor: it never holds the card's lease another part may need
@@ -1389,6 +1394,8 @@ class LocalTTSWorkerManager:
                 "On the processor: this voice is made to run there." if engine == "pocket_tts" else
                 self._describe(device, gpu_lease)
             )  # fmt: skip
+            if preload:
+                self._loading_since = self._clock()
             spawning = _Spawning(self._spawn, (engine, device, True) if gpu_lease else (engine, device))
             try:
                 process = await asyncio.to_thread(spawning.run)
@@ -1415,6 +1422,19 @@ class LocalTTSWorkerManager:
                 self._load_task.add_done_callback(self._background.discard)
             return process
 
+    def _start_blocked(self) -> str:
+        """Why the worker may not start now ("" when it may): the small-machine rule, or too little free memory."""
+        light = self.light_reason() if self.light_reason is not None else ""
+        if light:
+            return light
+        free = self.free_memory() if self.free_memory is not None else None
+        if free is not None and free < VOICE_HOST_RAM_BYTES:
+            return (
+                f"not enough free memory for the local voice ({free / 1024**3:.1f} GB free, "
+                f"{VOICE_HOST_RAM_BYTES / 1024**3:.0f} GB needed)"
+            )
+        return ""
+
     async def _load(self, process: Any, engine: str, voice: str) -> None:
         started = self._clock()
         try:
@@ -1427,6 +1447,7 @@ class LocalTTSWorkerManager:
             self.reload_log.append(("load_failed", type(error).__name__, time.monotonic()))
             raise
         self.reload_log.append(("load_ended", engine, time.monotonic()))
+        self._note_load_time(engine, self._clock() - self._loading_since)
         logger.info("Local voice %s loaded in %.1f s", engine, self._clock() - started)
 
     def _start_idle_watch(self) -> None:
@@ -1802,8 +1823,9 @@ class LocalTTSWorkerManager:
         wait_for_load: bool = False,
     ) -> None:
         """Say ``text`` with the local voice, or write it to ``output_file``. A voice that is not loaded is waited for
-        at most LOAD_GRACE_SECONDS (LocalVoiceNotReady after that), unless ``wait_for_load``: then the reply waits for
-        the load, as when this computer has no system voice to speak it meanwhile.
+        only when its load is nearly done (_ready_within_grace; LocalVoiceNotReady otherwise, and the system voice
+        speaks), unless ``wait_for_load``: then the reply waits for the load, as when this computer has no system voice
+        to speak it meanwhile. One voice per reply (_voice_for_reply).
 
         Playback starts after the first sentence is synthesised; later sentences are made while earlier ones play.
         Cancelling stops at once: ``play`` stops the audio, and a sentence still being made is finished unheard.
@@ -1886,16 +1908,69 @@ class LocalTTSWorkerManager:
         self._reply_voice = "local"
         record_reply_voice("local", "loaded_within_grace")
 
-    def _load_behind(self, engine: str, voice: str) -> None:
-        """Start loading the local voice for the next reply when no load is under way; never waits."""
+    def _loading_now(self) -> bool:
+        """A load of the local voice is under way: its worker is starting, or started and loading."""
+        return bool(
+            self._spawn_lock.locked()
+            or (self._announcing is not None and not self._announcing.done())
+            or (self._load_task is not None and not self._load_task.done())
+        )
+
+    def _load_behind(self, engine: str, voice: str) -> asyncio.Future[None]:
+        """Start loading the local voice when no load is under way; never waits. The load (announced) under way."""
         loading = self._announcing
         if loading is not None and not loading.done():
-            return
+            return loading
+        if not self._loading_now():
+            self._loading_since = self._clock()  # a new load starts now
         loading = asyncio.ensure_future(self._announce_loading(engine, voice))
         self._announcing = loading
         self._background.add(loading)
         loading.add_done_callback(self._background.discard)
         loading.add_done_callback(lambda done: done.cancelled() or done.exception())
+        return loading
+
+    def _read_load_times(self) -> None:
+        if self._load_times_read or self.head_cache is None:
+            return
+        self._load_times_read = True
+        try:
+            kept = json.loads((self.head_cache.folder / "loads.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if isinstance(kept, list):
+            ok = [r for r in kept if isinstance(r, list) and len(r) == 3 and isinstance(r[2], (int, float))]
+            self.load_times = ok + self.load_times
+
+    def _note_load_time(self, engine: str, seconds: float) -> None:
+        """Keep how long a load just took (the latest LOAD_RECORDS per voice and device), and save them."""
+        self._read_load_times()
+        where = "cpu" if self.effective_device == "cpu" else "card"
+        self.load_times.append([engine, where, round(max(0.0, seconds), 2)])
+        mine = [r for r in self.load_times if r[0] == engine and r[1] == where]
+        for old in mine[: max(0, len(mine) - LOAD_RECORDS)]:
+            self.load_times.remove(old)
+        if self.head_cache is not None:
+            try:
+                self.head_cache.folder.mkdir(parents=True, exist_ok=True)
+                (self.head_cache.folder / "loads.json").write_text(json.dumps(self.load_times), encoding="utf-8")
+            except OSError:
+                logger.debug("Could not save how long the voice took to load", exc_info=True)
+
+    def expected_load_left(self, engine: str) -> float:
+        """How long the load under way (or one starting now) is expected to take still: the median of this voice's
+        recorded loads on the device it is starting on (any device before the worker has started), less how long it
+        has run; DEFAULT_LOAD_SECONDS with nothing recorded."""
+        self._read_load_times()
+        where = None if self.process is None else ("cpu" if self.effective_device == "cpu" else "card")
+        seconds = [r[2] for r in self.load_times if r[0] == engine and (where is None or r[1] == where)]
+        if not seconds and where is not None:
+            seconds = [r[2] for r in self.load_times if r[0] == engine]
+        import statistics
+
+        expected = statistics.median(seconds) if seconds else DEFAULT_LOAD_SECONDS
+        ran = self._clock() - self._loading_since if self._loading_now() else 0.0
+        return max(0.0, expected - ran)
 
     def _all_kept(self, engine: str, voice: str, pieces: list[str]) -> bool:
         """Every piece of the reply is in the store of made audio: it plays without the worker, loaded or not."""
@@ -1906,23 +1981,40 @@ class LocalTTSWorkerManager:
         return all(store.has(piece, signature) for piece in pieces)
 
     async def _ready_within_grace(self, engine: str, voice: str) -> None:
-        """Return when the local voice can speak this reply: at once when it is loaded, else after waiting at most
-        LOAD_GRACE_SECONDS for a load (started now when none is under way, and left running). Still loading after
-        that: LocalVoiceNotReady, and the system voice speaks this reply whole. A voice that cannot load (too little
-        memory, a small computer, a failure) raises LocalTTSUnavailable as before."""
+        """Return when the local voice can speak this reply: at once when it is loaded; else the load is started (when
+        none is under way) and left running, and the reply waits for it only when it is expected to end within
+        LOAD_GRACE_SECONDS (expected_load_left, plus LOAD_WAIT_MARGIN_SECONDS). Otherwise, or still loading after
+        that wait: LocalVoiceNotReady at once, and the system voice speaks this reply whole. A voice that cannot load
+        (too little memory, a small computer, a failure) raises LocalTTSUnavailable as before."""
         if self.loaded and self.running and self.engine == engine:
             return
         if self._failed_until is not None:
             return  # the caller's synthesis falls back as before, without a new announcement
-        loading = self._announcing
-        if loading is None or loading.done():
-            loading = asyncio.ensure_future(self._announce_loading(engine, voice))
-            self._announcing = loading
-            self._background.add(loading)
-            loading.add_done_callback(self._background.discard)
-            loading.add_done_callback(lambda done: done.cancelled() or done.exception())
+        started = not self._loading_now()
+        if started and not (self.running and self.engine == engine):
+            blocked = self._start_blocked()
+            if blocked:
+                # This computer should not load it now: said once, in plain words, and the system voice speaks.
+                from pilot.system.speech_budget import unavailable_sentence
+
+                self._mark_failed(engine, blocked)
+                await self._notify("voice_unavailable", {"message": unavailable_sentence(self.unavailable_reason)})
+                raise LocalTTSUnavailable(f"{engine}: {blocked}")
+        loading = self._load_behind(engine, voice)
+        if started:
+            # The load's first step runs now: "Getting my voice ready" goes out as the system voice speaks.
+            await asyncio.sleep(0)
+        left = self.expected_load_left(engine)
+        wait = left + LOAD_WAIT_MARGIN_SECONDS
+        if wait > LOAD_GRACE_SECONDS:
+            logger.info(
+                "Heliox's own voice is %s (about %.0f s to go); this reply is spoken with the system voice",
+                "starting to load" if started else "still loading",
+                left,
+            )
+            raise LocalVoiceNotReady(f"{engine}: still loading")
         try:
-            await bounded(asyncio.shield(loading), timeout=LOAD_GRACE_SECONDS)
+            await bounded(asyncio.shield(loading), timeout=wait)
         except TimeoutError:
             logger.info("The local voice is still loading; this reply is spoken with the system voice")
             raise LocalVoiceNotReady(f"{engine}: still loading") from None
