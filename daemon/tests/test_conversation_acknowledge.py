@@ -353,6 +353,9 @@ def test_ready_made_reads_the_store_of_the_chosen_local_voice_only(tmp_path, mon
     def server(engine: str, voice: str = "af_heart"):
         return SimpleNamespace(config=SimpleNamespace(voice=SimpleNamespace(tts_engine=engine, tts_voice=voice)))
 
+    monkeypatch.setattr(local_tts_worker._manager, "speaks_locally_now", lambda engine: False)
+    assert _ready_made(server("kokoro_tts"), "Mm.") is False  # Heliox's voice is not speaking now: not ready-made
+    monkeypatch.setattr(local_tts_worker._manager, "speaks_locally_now", lambda engine: True)
     assert _ready_made(server("kokoro_tts"), "Mm.") is True
     assert _ready_made(server("kokoro_tts"), "Hmm.") is False  # not made yet
     assert _ready_made(server("kokoro_tts", "am_adam"), "Mm.") is False  # made with another voice

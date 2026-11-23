@@ -1,6 +1,7 @@
 """No reply waits for the local voice to load: when it is not ready within LOAD_GRACE_SECONDS the system voice speaks
 that reply whole and the local voice takes over from the next one; a reply whose every piece is in the store of made
-audio plays from it with the worker released. Fake workers only: no model, no audio device."""
+audio plays from it once Heliox's own voice speaks, and in the system voice while it does not (one voice per reply).
+Fake workers only: no model, no audio device."""
 
 from __future__ import annotations
 
@@ -92,15 +93,20 @@ async def test_a_reply_does_not_wait_for_a_cold_load_and_the_next_one_is_in_heli
     worker.loaded.set()  # the load finishes in the background
     await settle(lambda: manager.loaded and "voice_ready" in statuses)
     assert statuses == ["voice_loading", "voice_ready"]
+    with pytest.raises(LocalVoiceNotReady) as same:  # the same reply goes on: it began in the system voice
+        await manager.speak("kokoro_tts", "And the rest.", "af_heart", None, play)
+    assert same.value.branch == "system_same_reply" and worker.texts == []
+    manager.begin_reply()  # the person speaks: the next reply decides its voice afresh
     await manager.speak("kokoro_tts", "Done.", "af_heart", None, play)
     assert worker.texts == ["Done."]  # the next reply in Heliox's own voice
     await manager.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_a_reply_that_is_all_in_the_store_plays_with_the_worker_released(monkeypatch, tmp_path):
-    spawned: list[str] = []
-    manager = LocalTTSWorkerManager(spawn=lambda engine, device: spawned.append(engine))
+async def test_a_reply_all_in_the_store_waits_for_heliox_s_voice_to_speak_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_tts_worker, "trim_silence", lambda path, lead, tail: None)
+    worker = SlowWorker()
+    manager = LocalTTSWorkerManager(spawn=lambda engine, device: worker)
     manager.head_cache = SpeechStore(tmp_path / "voice_heads")
     sig = SpeechStore.signature("kokoro_tts", "af_heart")
     for text in ("Okay.", "Still on the plan."):
@@ -112,16 +118,18 @@ async def test_a_reply_that_is_all_in_the_store_plays_with_the_worker_released(m
     async def play(path: Path) -> None:
         played.append(path.path.read_bytes())
 
-    await manager.speak("kokoro_tts", "Okay. Still on the plan.", "af_heart", None, play)
-    assert played == [b"RIFF-Okay.", b"RIFF-Still on the plan."] and spawned == []  # no worker, no load
-
-    # One piece not kept: one voice per reply, so the whole reply goes to the system voice while the voice loads.
-    worker = SlowWorker()
-    manager._spawn = lambda engine, device: worker
+    # Heliox's voice is not loaded: the system voice says the whole reply, kept pieces too (no switch inside it),
+    # and the load starts behind it.
     with pytest.raises(LocalVoiceNotReady):
-        await manager.speak("kokoro_tts", "Okay. Your files are in Downloads.", "af_heart", None, play)
-    assert played == [b"RIFF-Okay.", b"RIFF-Still on the plan."]  # nothing of it in the local voice
+        await manager.speak("kokoro_tts", "Okay. Still on the plan.", "af_heart", None, play)
+    assert played == [] and worker.texts == []
+    await settle(lambda: worker.load_asked.is_set())
+    assert worker.load_asked.is_set()
     worker.loaded.set()
+    await settle(lambda: manager.loaded)
+    manager.begin_reply()  # the next reply
+    await manager.speak("kokoro_tts", "Okay. Still on the plan.", "af_heart", None, play)
+    assert played == [b"RIFF-Okay.", b"RIFF-Still on the plan."] and worker.texts == []  # from the store, unsynthesised
     await manager.shutdown()
 
 

@@ -1651,6 +1651,7 @@ async def _speak_impl(
     from pilot.system.local_tts_worker import LocalVoiceNotReady
 
     loading = ""  # the local voice that was still loading when this reply was ready ("" when none)
+    loading_branch = ""  # why the system voice speaks while the local one is not used (LocalVoiceNotReady.branch)
     local_unavailable = ""  # why the local voice did not speak it, when it did not
     if config.voice.tts_engine == "kokoro_tts":
         try:
@@ -1664,6 +1665,7 @@ async def _speak_impl(
             spoken_text = getattr(e, "unspoken", "") or spoken_text  # stopped partway: only what was not said yet
             if isinstance(e, LocalVoiceNotReady):
                 loading = "kokoro_tts"  # the system voice speaks this reply while Heliox's own voice loads
+                loading_branch = e.branch
             elif not getattr(e, "already_logged", False):
                 logger.warning("Kokoro TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
             local_unavailable = str(e) or type(e).__name__
@@ -1685,6 +1687,7 @@ async def _speak_impl(
             spoken_text = getattr(e, "unspoken", "") or spoken_text  # stopped partway: only what was not said yet
             if isinstance(e, LocalVoiceNotReady):
                 loading = "pocket_tts"  # the system voice speaks this reply while Heliox's own voice loads
+                loading_branch = e.branch
             elif not getattr(e, "already_logged", False):
                 logger.warning("Pocket TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
             local_unavailable = str(e) or type(e).__name__
@@ -1695,7 +1698,10 @@ async def _speak_impl(
     from pilot.system.local_tts_worker import record_reply_voice
 
     if loading:
-        record_reply_voice("system", "system_still_loading", "Heliox's own voice was still loading")
+        if loading_branch == "system_same_reply":
+            record_reply_voice("system", loading_branch, "the reply began in the system voice")
+        else:
+            record_reply_voice("system", "system_still_loading", "Heliox's own voice was still loading")
     elif local_unavailable:
         record_reply_voice("system", "system_local_unavailable", local_unavailable[:200])
     else:
@@ -1710,6 +1716,10 @@ async def _speak_impl(
         result = await _tts_macos(spoken_text, system_voice, rate, output_file)
     else:
         result = await _tts_linux(spoken_text, system_voice, rate, output_file)
+    if not output_file:
+        from pilot.system.local_tts_worker import manager
+
+        manager().note_spoken()  # the system voice has finished: a reply's next sentence keeps it (REPLY_GAP_SECONDS)
     if loading and unheard_reason(result):
         # No system voice on this computer (or it failed): the reply waits for Heliox's own voice rather than being
         # lost. The bar says "Getting my voice ready…" meanwhile.

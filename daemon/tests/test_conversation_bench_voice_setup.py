@@ -166,6 +166,8 @@ def _wire_like_the_daemon(monkeypatch: pytest.MonkeyPatch, store: tts_worker.Spe
     monkeypatch.setattr(manager, "effective_device", "cpu")
     monkeypatch.setattr(manager, "device_reason", "On the processor: CUDA_VISIBLE_DEVICES hides every graphics card.")
     monkeypatch.setattr(manager, "keep_loaded_seconds", 300.0)
+    # Heliox's own voice is loaded and speaking: audio made ahead in it counts as ready (local_tts_worker.made_ahead).
+    monkeypatch.setattr(manager, "speaks_locally_now", lambda engine: True)
 
 
 def test_the_first_lines_say_the_device_the_store_with_the_hums_and_the_release_rule(tmp_path, monkeypatch):

@@ -223,6 +223,7 @@ async def test_a_worker_that_fails_to_load_is_reported_once_and_retried_later(mo
     await _settle()
     assert len(spawner.calls) == 2 and manager.loaded
 
+    manager.begin_reply()  # the next reply (that one was said in the system voice)
     await manager.speak("kokoro_tts", "Back.", "af_heart", None, play)
     play.assert_awaited_once()
     assert any("recovered" in r.getMessage() for r in caplog.records)

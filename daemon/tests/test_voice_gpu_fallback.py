@@ -132,6 +132,10 @@ async def test_after_a_gpu_error_the_same_voice_goes_on_on_the_cpu_for_the_sessi
     assert [s for s, _ in said].count("voice_on_cpu") == 1
     assert "processor" in dict(said)["voice_on_cpu"]["message"]
     assert not manager.failing  # no system-voice fallback
+    if fail_on != "load":
+        with pytest.raises(local_tts_worker.LocalVoiceNotReady):  # the rest of that reply: still the system voice
+            await speak(manager, "And the rest of it.")
+        manager.begin_reply()  # the person speaks: the next reply is in Heliox's voice, now on the processor
     assert len(await speak(manager, "And the next one.")) == 1
     await manager.shutdown()
     assert len(await speak(manager, "After a restart of the worker.")) == 1

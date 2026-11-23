@@ -17,6 +17,7 @@ worker says a short sentence in 0.1 s and a long one in 0.25 s on the GPU. So th
   samples come back on the worker's pipe, already trimmed, and play from memory (nothing is written to disk before
   the person hears it);
 * plays a voice that streams (STREAM_ENGINES: Pocket TTS) from its first chunk, the rest appended as it is made;
+* keeps one voice per reply (REPLY_GAP_SECONDS): a reply that began in the system voice ends in it;
 * keeps the worker when speech is cut off mid-synthesis (the worker finishes that request unheard);
 * after the worker fails to start or crashes, reports it once and lets the caller use the system voice at once,
   retrying the local voice in the background after ``RETRY_AFTER_SECONDS``;
@@ -445,7 +446,7 @@ class LocalTTSUnavailable(RuntimeError):
 # "system" (the system voice). Branches: "ready" (the local voice was loaded), "loaded_within_grace",
 # "store" (every piece kept), "waited_no_system_voice", "file" (written to a file), "system_still_loading" (the local
 # voice was loading past the grace), "system_local_unavailable" (it cannot load or failed), "system_chosen" (the
-# person's engine is the system voice).
+# person's engine is the system voice), "system_same_reply" (the reply began in the system voice: it ends in it).
 REPLY_VOICES = ("local", "store", "system")
 REPLY_BRANCHES = (
     "ready",
@@ -456,6 +457,7 @@ REPLY_BRANCHES = (
     "system_still_loading",
     "system_local_unavailable",
     "system_chosen",
+    "system_same_reply",
 )
 
 
@@ -473,9 +475,19 @@ class LocalVoiceNotReady(LocalTTSUnavailable):
     and the local voice takes over from the next one. Not a failure: nothing is marked failed.
 
     ``unspoken``: the part of the reply the local voice has not said, when it stopped partway (its worker moved from
-    the graphics card to the processor after a fault and is loading again); "" means the whole reply."""
+    the graphics card to the processor after a fault and is loading again); "" means the whole reply. ``branch``: why,
+    for record_reply_voice."""
 
     unspoken: str = ""
+    branch: str = "system_still_loading"
+
+
+# One voice per reply. A reply is often several speak() calls (the conversation layer says each sentence as it comes,
+# after a hum or a holding phrase), so the voice the first of them used is kept for the rest: the person never hears
+# the voice change inside a reply, and Heliox's own voice, once ready, takes over at the next reply. A reply ends when
+# the person is heard again (prewarm) or when Heliox has said nothing for REPLY_GAP_SECONDS: inside a reply the gaps
+# are the model's (a hum ends about 1.3 s before the answer; the layer stops waiting for a model after about 4.5 s).
+REPLY_GAP_SECONDS = 6.0
 
 
 class _MovedToCpu(LocalTTSUnavailable):
@@ -1242,6 +1254,10 @@ class LocalTTSWorkerManager:
         # has the memory to spare); None: released after keep_loaded_seconds, by the clock alone.
         self.keep_while: Callable[[], bool] | None = None
         self._announcing: asyncio.Future[None] | None = None  # a load started for a reply (_ready_within_grace)
+        # The voice of the reply being spoken ("local" or "system"; "" before it is decided) and when Heliox last
+        # finished speaking in any voice (note_spoken): see REPLY_GAP_SECONDS.
+        self._reply_voice = ""
+        self._spoke_until = clock()
         self._last_activity = clock()
         self._failed_until: float | None = None
         self._background: set[asyncio.Future[Any]] = set()
@@ -1280,10 +1296,32 @@ class LocalTTSWorkerManager:
     def failing(self) -> bool:
         return self._failed_until is not None
 
+    def begin_reply(self) -> None:
+        """A new reply starts (the person was heard): its voice is decided afresh when it is first spoken."""
+        self._reply_voice = ""
+
+    def note_spoken(self) -> None:
+        """Heliox has just finished saying something, in any voice (the system voice's speech is timed by the caller)."""
+        self._spoke_until = self._clock()
+
+    def reply_voice(self) -> str:
+        """The voice the reply being spoken keeps ("local", "system", or "" when a new reply decides afresh)."""
+        if self._reply_voice and self._busy <= 1 and self._clock() - self._spoke_until > REPLY_GAP_SECONDS:
+            self._reply_voice = ""  # Heliox has been quiet long enough: the next speech is a new reply
+        return self._reply_voice
+
+    def speaks_locally_now(self, engine: str) -> bool:
+        """Whether speech started now would be in Heliox's own voice without waiting: loaded, not failed, and not in a
+        reply that began in the system voice."""
+        loaded = self.loaded and self.running and self.engine == engine and self._failed_until is None
+        return loaded and self.reply_voice() != "system"
+
     def prewarm(self, engine: str, voice: str) -> None:
-        """Start the worker now, without waiting, so it is ready by the time there is something to say."""
+        """Start the worker now, without waiting, so it is ready by the time there is something to say. The person is
+        talking to Heliox: what is said next is a new reply (begin_reply)."""
         if engine not in LOCAL_ENGINES:
             return
+        self.begin_reply()
         self.note_activity()
         if self._failed_until is not None and self._clock() < self._failed_until:
             return
@@ -1778,16 +1816,19 @@ class LocalTTSWorkerManager:
         self.note_activity()
         try:
             sentences = [] if output_file else split_for_speech(text, clauses=engine not in STREAM_ENGINES)
-            was_ready = self.loaded and self.running and self.engine == engine
-            if output_file or wait_for_load:
-                await self._announce_loading(engine, voice)  # a file, or no other voice: waited for
-                branch = "file" if output_file else "waited_no_system_voice"
-                record_reply_voice("local", branch)
-            elif not self._all_kept(engine, voice, sentences):
-                await self._ready_within_grace(engine, voice)
-                record_reply_voice("local", "ready" if was_ready else "loaded_within_grace")
+            if output_file:
+                await self._announce_loading(engine, voice)  # a file: waited for
+                record_reply_voice("local", "file")
+            elif wait_for_load:
+                # No system voice on this computer: Heliox's own voice is the only one, so there is no switch to avoid.
+                if self._all_kept(engine, voice, sentences):
+                    record_reply_voice("store", "store")  # played as kept, without waiting for the load
+                else:
+                    await self._announce_loading(engine, voice)
+                    record_reply_voice("local", "waited_no_system_voice")
+                self._reply_voice = "local"
             else:
-                record_reply_voice("store", "store")
+                await self._voice_for_reply(engine, voice, sentences)
             with tempfile.TemporaryDirectory(prefix="heliox-tts-", ignore_cleanup_errors=True) as temp_dir:
                 folder = Path(temp_dir)
                 if output_file:
@@ -1802,11 +1843,59 @@ class LocalTTSWorkerManager:
                 try:
                     await self._speak_sentences(engine, sentences, voice, folder, play)
                     progress.finished = True
+                except LocalTTSUnavailable:
+                    self._reply_voice = "system"  # stopped partway (a fault): the system voice says the rest of it
+                    raise
                 finally:
                     speech_progress.reset(token)
         finally:
             self._busy -= 1
             self.note_activity()
+            if not output_file:
+                self.note_spoken()
+
+    async def _voice_for_reply(self, engine: str, voice: str, sentences: list[str]) -> None:
+        """Decide (or keep) the voice of the reply this speech belongs to, and return when it is Heliox's own voice.
+        Raises LocalVoiceNotReady (or LocalTTSUnavailable for a voice that failed) when it is the system voice:
+
+        * the reply began in the system voice: it ends in it, even when Heliox's voice has loaded meanwhile, and even
+          for sentences the store could play (the load goes on behind it, for the next reply);
+        * Heliox's voice is loaded: it speaks, from the store where every piece is kept;
+        * it is not loaded: the system voice speaks this whole reply (_ready_within_grace decides how long a load
+          that is nearly done is waited for), and the reply keeps it."""
+        ready = self.loaded and self.running and self.engine == engine
+        if self.reply_voice() == "system":
+            if not ready and self._failed_until is None:
+                self._load_behind(engine, voice)
+            same = LocalVoiceNotReady(f"{engine}: this reply began in the system voice")
+            same.branch = "system_same_reply"
+            raise same
+        if ready:
+            self._reply_voice = "local"
+            if self._all_kept(engine, voice, sentences):
+                record_reply_voice("store", "store")
+            else:
+                record_reply_voice("local", "ready")
+            return
+        self._reply_voice = "system"  # decided now; kept unless the load ends within the wait just below
+        if self._failed_until is not None:
+            await self._usable_process(engine, voice)  # failed: retried behind (raises LocalTTSUnavailable)
+        await self._ready_within_grace(engine, voice)
+        if not (self.loaded and self.running and self.engine == engine):
+            raise LocalTTSUnavailable(f"{engine} is unavailable")
+        self._reply_voice = "local"
+        record_reply_voice("local", "loaded_within_grace")
+
+    def _load_behind(self, engine: str, voice: str) -> None:
+        """Start loading the local voice for the next reply when no load is under way; never waits."""
+        loading = self._announcing
+        if loading is not None and not loading.done():
+            return
+        loading = asyncio.ensure_future(self._announce_loading(engine, voice))
+        self._announcing = loading
+        self._background.add(loading)
+        loading.add_done_callback(self._background.discard)
+        loading.add_done_callback(lambda done: done.cancelled() or done.exception())
 
     def _all_kept(self, engine: str, voice: str, pieces: list[str]) -> bool:
         """Every piece of the reply is in the store of made audio: it plays without the worker, loaded or not."""
@@ -2149,13 +2238,19 @@ def local_voice_state(voice_config: Any) -> dict[str, bool]:
 
 
 def made_ahead(voice_config: Any, text: str) -> bool:
-    """Whether every piece of ``text`` (as the worker is given it) is in the store of audio made with the configured
-    local voice, so saying it plays that audio and needs neither the worker nor a load. False for the system voice,
-    with no store, or when a piece has not been made yet. Reads the store's index (kept in memory after the first
-    read); never synthesises."""
+    """Whether saying ``text`` now plays audio made ahead in Heliox's own voice: every piece of it (as the worker is
+    given it) is in the store, made with the configured local voice, and that voice speaks now (loaded, and the reply
+    under way did not begin in the system voice: speaks_locally_now). False for the system voice, with no store,
+    while Heliox's voice is not loaded, or when a piece has not been made yet. Reads the store's index (kept in
+    memory after the first read); never synthesises."""
     engine, voice = str(getattr(voice_config, "tts_engine", "")), str(getattr(voice_config, "tts_voice", ""))
     store = _manager.head_cache
     if engine not in LOCAL_ENGINES or store is None:
+        return False
+    if not _manager.speaks_locally_now(engine):
+        # Heliox's own voice is not loaded, or this reply began in the system voice: what is said now is said in the
+        # system voice, so audio made ahead in Heliox's voice is not "ready" (no hum in one voice before an answer in
+        # another).
         return False
     pieces = split_for_speech(text, clauses=engine not in STREAM_ENGINES)
     signature = SpeechStore.signature(engine, voice)
