@@ -55,9 +55,13 @@ BUSY_HOLD_SECONDS = 20.0  # a rate limit without a Retry-After header
 # A warm-up opens the connection while the person is still talking; it is sent again at most this often (the
 # listener asks at the wake word and again at the end of the sentence).
 WARM_EVERY_SECONDS = 3.0
-# A request that finds a warm-up still opening the connection waits this long for it before opening another: the
-# warm-up is the connection only (a HEAD to the API's address), so its rest is shorter than a second handshake.
-WARM_JOIN_SECONDS = 0.3
+# No warm-up when a call or a warm-up used the connection this recently: it is still open, and a warm-up would only
+# hold it. The warm-up's HEAD is answered by the API's own servers, not the edge in front of them (0.25 to 0.42 s
+# from a connection in India, 24 November), and over HTTP/1.1 nothing else can use the connection until it is
+# answered. A warm-up started as the person finished speaking made the request wait for it: the first text came
+# 0.5 s later than with no warm-up (1.31 s against 0.79 s median, 12 calls each, interleaved). The API's edge kept
+# an idle connection open for at least 120 s; this is half of that, for servers that close sooner.
+WARM_SKIP_SECONDS = 60.0
 # How long an idle connection to a provider is kept for the next turn. httpx's default is 5 s, which made every
 # sentence longer than a few seconds, and every first question after a pause, start on a new connection (the
 # provider keeps an idle one at least 120 s: measured 13 November). Only connections a request opened are kept;
@@ -456,7 +460,7 @@ class HttpFastModel(_StreamingBase):
     _warmed_at: float = float("-inf")
     _warm_done_at: float = float("-inf")
     chosen: bool = True  # the person named this model; False for the provider's default (catalog.TALK_DEFAULTS)
-    _warming: Any = None  # the warm-up under way (an asyncio task), joined by a request that starts during it
+    _warming: Any = None  # the warm-up under way (an asyncio task); a request never waits for it
     strict: bool = False  # the one retry after a reply with no text (stricter)
 
     @property
@@ -472,12 +476,16 @@ class HttpFastModel(_StreamingBase):
     def connection_warm(self) -> bool:
         """A connection to the provider was likely open for the next call: the client exists and a warm-up or a call
         used it within KEEPALIVE_SECONDS (for the turn trace; nothing depends on it)."""
+        return self._used_within(KEEPALIVE_SECONDS)
+
+    def _used_within(self, seconds: float) -> bool:
+        """A warm-up or a call used the connection less than ``seconds`` ago."""
         if self.local or self._client is None:
             return False
         last = self._warm_done_at
         if self.calls:
             last = max(last, self.calls[-1].ended_at or self.calls[-1].started)
-        return self.clock() - last < KEEPALIVE_SECONDS
+        return self.clock() - last < seconds
 
     def request(self, system: str, messages: list[dict[str, str]], key: str) -> tuple[str, dict, dict]:
         """URL, headers and JSON body for one streamed call."""
@@ -658,11 +666,14 @@ class HttpFastModel(_StreamingBase):
         """Open the connection to a cloud provider before the turn ends, at most every WARM_EVERY_SECONDS.
 
         Never for a model on this computer (no connection to open, nothing to gain), nor with no key stored (no
-        request will follow). In the background: it never holds the turn, and a warm-up that fails (no network, a
-        slow provider) is silent and is not a provider fault. A request that starts while it runs joins it for at
-        most WARM_JOIN_SECONDS (stream)."""
+        request will follow), nor when the connection was used within WARM_SKIP_SECONDS (it is open already). In
+        the background: it never holds the turn, and a warm-up that fails (no network, a slow provider) is silent
+        and is not a provider fault. A request that starts while it runs does not wait for it: it opens its own
+        connection, which is quicker than waiting for the warm-up's answer."""
         now = self.clock()
         if self.local or now - self._warmed_at < WARM_EVERY_SECONDS or now < self._offline_until:
+            return
+        if self._used_within(WARM_SKIP_SECONDS):
             return
         self._warmed_at = now
         try:
@@ -702,13 +713,6 @@ class HttpFastModel(_StreamingBase):
             # Building the client loads certificates and a TLS context: about 0.1 s of blocking work, done off the
             # event loop so nothing else (hearing the person, stopping a reply) waits for it.
             self._client = await asyncio.to_thread(self.client_factory)
-        warming = self._warming
-        if warming is not None and not warming.done():
-            # The warm-up is opening the connection this request would use: finishing it is quicker than opening a
-            # second one beside it, but never worth more than WARM_JOIN_SECONDS.
-            with contextlib.suppress(Exception):
-                async with asyncio.timeout(WARM_JOIN_SECONDS):  # not wait_for: it can lose a cancellation before 3.12
-                    await asyncio.shield(warming)
         url, headers, body = self.request(system, messages, key)
         record = CallRecord(model=self.name, started=self.clock())
         self.calls.append(record)

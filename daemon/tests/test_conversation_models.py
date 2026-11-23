@@ -477,6 +477,9 @@ def test_warming_opens_the_connection_only_at_most_every_few_seconds():
     assert not hasattr(client, "posted")  # no token count, no billed or keyed call
     now[0] += 5
     asyncio.run(model.warm())
+    assert len(client.requested) == 1  # the connection it opened 5 s ago is still open
+    now[0] += 60
+    asyncio.run(model.warm())
     assert len(client.requested) == 2
 
 

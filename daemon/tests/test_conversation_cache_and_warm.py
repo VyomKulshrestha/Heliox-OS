@@ -113,12 +113,11 @@ async def test_no_warm_up_without_a_key():
     assert sent == []
 
 
-async def test_a_request_during_the_warm_up_waits_for_its_connection_briefly(monkeypatch):
-    """The request joins the warm-up under way instead of opening a second connection beside it, for at most
-    WARM_JOIN_SECONDS."""
+async def test_a_request_never_waits_for_a_warm_up_under_way():
+    """The warm-up's HEAD is answered by the API's servers, a full round trip; over HTTP/1.1 the request could use
+    that connection only after it. The request goes at once instead."""
     import httpx
 
-    from pilot.conversation import fast_model
     from pilot.conversation.fast_model import HttpFastModel
 
     order: list[str] = []
@@ -144,27 +143,33 @@ async def test_a_request_during_the_warm_up_waits_for_its_connection_briefly(mon
     )
     warming = asyncio.ensure_future(model.warm())
     await asyncio.sleep(0.01)
-    asyncio.get_running_loop().call_later(0.05, release.set)
     text = [piece async for piece in model.stream("s", [{"role": "user", "content": "hi"}])]
-    await warming
-    assert text == ["Hi."] and order == ["warm-up done", "request"]
-
-    # A warm-up that never finishes holds the request no longer than the bound.
-    monkeypatch.setattr(fast_model, "WARM_JOIN_SECONDS", 0.05)
-    stuck = HttpFastModel(
-        provider="claude",
-        name="m",
-        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-        api_key=key,
-    )
-    release.clear()
-    order.clear()
-    pending = asyncio.ensure_future(stuck.warm())
-    await asyncio.sleep(0.01)
-    text = [piece async for piece in stuck.stream("s", [{"role": "user", "content": "hi"}])]
     assert text == ["Hi."] and order == ["request"]
     release.set()
-    await pending
+    await warming
+    assert order == ["request", "warm-up done"]
+
+
+async def test_no_warm_up_while_the_connection_is_still_open():
+    """A call or a warm-up less than WARM_SKIP_SECONDS ago left the connection open: a warm-up would only hold it."""
+    from pilot.conversation import fast_model
+    from pilot.conversation.fast_model import CallRecord
+
+    sent: list = []
+    now = [100.0]
+    model = _model("claude", sent, clock=lambda: now[0])
+    await model.warm()
+    assert len(sent) == 1
+    now[0] += fast_model.WARM_SKIP_SECONDS - 1
+    await model.warm()
+    assert len(sent) == 1
+    model.calls.append(CallRecord(model="m", started=now[0], ended_at=now[0]))  # a call just now
+    now[0] += 30
+    await model.warm()
+    assert len(sent) == 1
+    now[0] += fast_model.WARM_SKIP_SECONDS
+    await model.warm()
+    assert len(sent) == 2
 
 
 async def test_the_warm_up_is_stamped_on_the_trace(monkeypatch):
@@ -196,6 +201,8 @@ async def test_warm_ups_are_at_most_one_every_few_seconds():
     await model.warm()
     now[0] += 1.0
     await model.warm()
+    assert len(sent) == 1
+    model._warm_done_at = float("-inf")  # as if the connection had not answered: only the spacing holds it back
     now[0] += 3.0
     await model.warm()
     assert len(sent) == 2
