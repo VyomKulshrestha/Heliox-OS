@@ -132,7 +132,6 @@ export class FaceRenderer {
   private restTo = "";
   private restFrom = "";
   private restMix = 1;
-  private shapeCanvases: HTMLCanvasElement[] = [];
   private lastDraw = 0;
   private blinkAt = 0;
   private blinkUntil = 0;
@@ -310,7 +309,7 @@ export class FaceRenderer {
    * The resting mouth (the state's own, or sil), then the spoken shape over it as far as it is formed. A shape's
    * pictures run from closed to full: the rest, its in-between steps (mouth_steps), its own picture. A weight picks a
    * place on that line and only the two neighbouring pictures there are blended. Two shapes at once (one giving way
-   * to the next) are each drawn over the rest on a canvas of their own, and the second laid over the first.
+   * to the next): the more formed one is drawn as if alone, and the other laid over it once it shows (see `over`).
    */
   private drawMouth(ctx: CanvasRenderingContext2D, at: Rect, mouth: MouthFrame): void {
     const fading = this.restMix < 1 && this.restFrom !== this.restTo;
@@ -328,30 +327,14 @@ export class FaceRenderer {
     // mix is at most a half (the more formed shape is `shape`): the second shape shows only as it nears the first,
     // and the two are half and half only where they swap, so one jaw is seen at a time.
     const over = 0.5 * dominant(Math.min(0.5, mouth.mix) * 2, 0.4, 1);
-    const a = this.shapeCanvas(0, at);
-    const b = this.shapeCanvas(1, at);
-    const actx = a?.getContext("2d");
-    const bctx = b?.getContext("2d");
-    if (!a || !b || !actx || !bctx) {
-      this.drawShape(ctx, mouth.shape, first, at, 1);
-      this.drawShape(ctx, mouth.next, second, at, over);
-      return;
-    }
-    const local: Rect = [0, 0, a.width, a.height];
-    const parts: [HTMLCanvasElement, CanvasRenderingContext2D, MouthFrame["shape"], number][] = [
-      [a, actx, mouth.shape, first],
-      [b, bctx, mouth.next, second],
-    ];
-    for (const [target, tctx, shape, weight] of parts) {
-      tctx.setTransform(1, 0, 0, 1, 0, 0);
-      tctx.clearRect(0, 0, target.width, target.height);
-      this.layer(tctx, "mouth", this.restTo, local, 1, at);
-      this.drawShape(tctx, shape, weight, local, 1, at);
-    }
-    ctx.drawImage(a, at[0], at[1], at[2], at[3]);
-    ctx.globalAlpha = over;
-    ctx.drawImage(b, at[0], at[1], at[2], at[3]);
-    ctx.globalAlpha = 1;
+    // Both straight onto the face: the more formed shape exactly as when it is alone, the other over it at `over`
+    // (a mouth picture is opaque inside its soft edge, so inside it the two blend as pictures of one mouth). Each
+    // used to be drawn over the rest on a canvas of its own and laid back: the copies were resampled and carried the
+    // rest's soft edge a second time, so the whole mouth rectangle changed while the mouth itself did not. In replays
+    // of the live run that read as the woman's mouth still open some 60 ms after it had closed, and as a faint box
+    // around her jaw whenever two shapes met.
+    this.drawShape(ctx, mouth.shape, first, at, 1);
+    if (over > 0.01) this.drawShape(ctx, mouth.next, second, at, over);
   }
 
   /**
@@ -381,7 +364,6 @@ export class FaceRenderer {
     weight: number,
     rect: Rect,
     alpha: number,
-    packRect: Rect = rect,
   ): void {
     if (shape === "sil") return;
     const steps = stepsOf(this.manifest, shape);
@@ -392,25 +374,8 @@ export class FaceRenderer {
     // Between two pictures one stays dominant (dominant); a shape with its full picture alone fades it in as it is.
     const raw = position - below;
     const toward = steps.length < 2 ? raw : shape === "PP" ? dominant(raw, CLOSURE_FROM, CLOSURE_TO) : dominant(raw);
-    if (below >= 1 && toward < 0.99) this.layer(ctx, "mouth", steps[below - 1], rect, alpha, packRect);
-    if (below < steps.length && toward > 0.01) this.layer(ctx, "mouth", steps[below], rect, alpha * toward, packRect);
-  }
-
-  private shapeCanvas(which: number, rect: Rect): HTMLCanvasElement | null {
-    if (typeof document === "undefined") return null;
-    const pixels = (this.canvas.width / this.manifest.size[0]) * this.overscan;
-    const width = Math.max(1, Math.round(rect[2] * pixels));
-    const height = Math.max(1, Math.round(rect[3] * pixels));
-    let canvas = this.shapeCanvases[which];
-    if (!canvas) {
-      canvas = document.createElement("canvas");
-      this.shapeCanvases[which] = canvas;
-    }
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-    }
-    return canvas;
+    if (below >= 1 && toward < 0.99) this.layer(ctx, "mouth", steps[below - 1], rect, alpha);
+    if (below < steps.length && toward > 0.01) this.layer(ctx, "mouth", steps[below], rect, alpha * toward);
   }
 
   /**
@@ -515,12 +480,11 @@ export class FaceRenderer {
     file: string | undefined,
     rect: Rect,
     alpha: number,
-    packRect: Rect = rect,
   ): void {
     if (!file || alpha <= 0) return;
     const image = this.images.get(file);
     if (!image) return;
-    const source = this.tintedImage(layer, file, image, packRect);
+    const source = this.tintedImage(layer, file, image, rect);
     ctx.globalAlpha = Math.min(1, alpha);
     ctx.drawImage(source, rect[0], rect[1], rect[2], rect[3]);
     ctx.globalAlpha = 1;

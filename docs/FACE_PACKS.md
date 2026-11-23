@@ -38,8 +38,10 @@ a mouth moves in running speech:
 - one picture is always dominant: between two steps of a shape the blend stays on one step until a quarter of the
   way and is on the next from three quarters (a lip closure's steps cross between 40 and 60 %), and of two shapes
   drawn at once the less formed one fades in only as the two near each other, half and half only where they swap.
-  Two pictures with the chin at different heights blended half and half show two soft chins; with `mouth.chin` the
-  less formed shape is also drawn at the step whose chin matches the other's, as far as it reaches.
+  Both are drawn straight onto the face, the more formed one exactly as when it is alone, so a closing mouth looks
+  closed as soon as its shapes are. Two pictures with the chin at different heights blended half and half show two
+  soft chins; with `mouth.chin` the less formed shape is also drawn at the step whose chin matches the other's, as
+  far as it reaches.
 
 The rest of the face moves with the speech: the strongest syllables, at most one every 600 ms, bring a nod of
 about 2.5 px at the 132 px the face is shown at (1.9 % of the picture's height), rising and falling over about

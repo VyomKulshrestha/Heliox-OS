@@ -173,6 +173,38 @@ describe("face renderer", () => {
     expect(swapping[0].alpha).toBeCloseTo(0.45, 5);
   });
 
+  it("draws two shapes straight onto the face, the more formed one exactly as when it is alone", () => {
+    // A document that can make canvases, as the window has: none may be made, nothing is laid back from a copy.
+    const made2d: unknown[] = [];
+    const saved = globalThis.document;
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: { createElement: () => made2d.push(fakeCanvas()) && fakeCanvas().canvas },
+    });
+    try {
+      const { made, drawn } = renderer(photo({ mouth_steps: { aa: ["aa-1.webp", "aa-2.webp"] } }));
+      drawFor(made, "speaking", 0, 300);
+      const frame = (extra: Partial<MouthFrame>) => {
+        drawn.length = 0;
+        made.draw(400, "speaking", { ...SPEAKING, weight: 0.5, ...extra });
+        return drawn.slice(2);
+      };
+      const alone = frame({});
+      // O beside aa but not yet showing (mix under a fifth): the very pictures of aa alone. Each shape used to be
+      // drawn on a canvas of its own and laid back, which changed the whole mouth rectangle (resampled, the rest's
+      // soft edge twice) while the mouth did not: measured as a mouth still open after it had closed.
+      expect(frame({ next: "O", nextWeight: 0.06, mix: 0.1 })).toEqual(alone);
+      // Where they swap: aa as alone, then O over it at half strength (O has no steps: its picture as far as formed).
+      expect(frame({ next: "O", nextWeight: 0.5, mix: 0.5 })).toEqual([...alone, { file: "o.webp", alpha: 0.25 }]);
+      // Both nearly closed: almost nothing but the rest, however the two are mixed.
+      const closing = frame({ weight: 0.04, next: "O", nextWeight: 0.04, mix: 0.5 });
+      expect(closing.every((d) => d.alpha <= 0.02)).toBe(true);
+      expect(made2d).toHaveLength(0);
+    } finally {
+      Object.defineProperty(globalThis, "document", { configurable: true, value: saved });
+    }
+  });
+
   it("draws the less formed of two shapes at the chin height of the other, where the pack gives chins", () => {
     const frame = { ...SPEAKING, next: "O" as const, weight: 0.4, nextWeight: 0.1, mix: 0.5 };
     const oOf = (manifest: FaceManifest) => {
