@@ -58,6 +58,7 @@ def test_a_request_is_made_on_the_worker_s_own_thread_without_an_event_loop(fake
 
     assert local_tts_worker._serve("pocket_tts") == 0
 
-    assert json.loads(capsys.readouterr().out) == {"status": "ok"}
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["status"] == "ok" and answer["took"]["read_s"] >= 0  # each step's seconds, for the trace
     assert made == [("Volume is at 30.", "af_heart", str(tmp_path / "o.wav"), True, False)]
     assert len(fake_torch) == 1

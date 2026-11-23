@@ -101,6 +101,14 @@ async def synthesize_to_file(text: str, voice: str, output_file: str) -> None:
     await asyncio.to_thread(synthesize_to_file_here, text, voice, output_file)
 
 
+def generate_here(text: str, voice: str, *, timing: bool = False) -> tuple[Any, int, None]:
+    """The voice worker's piece in memory, on the calling thread. Pocket gives no phoneme timing."""
+    import numpy as np
+
+    audio, sample_rate = _generate(text, voice)
+    return np.asarray(audio, dtype=np.float32).reshape(-1), int(sample_rate), None
+
+
 def synthesize_to_file_here(text: str, voice: str, output_file: str) -> None:
     """The same on the calling thread (the voice worker's own: no event loop, no thread hop)."""
     from scipy.io import wavfile

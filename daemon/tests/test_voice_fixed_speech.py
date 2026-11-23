@@ -200,7 +200,7 @@ async def test_made_ahead_only_while_idle_and_quiet_then_played_without_synthesi
     played: list[bytes] = []
 
     async def play(path: Path) -> None:
-        played.append(path.read_bytes())
+        played.append(path.path.read_bytes())
 
     await manager.speak("kokoro_tts", "Next track.", "af_heart", None, play)
     await manager.speak("kokoro_tts", "Okay. Still on the plan.", "af_heart", None, play)

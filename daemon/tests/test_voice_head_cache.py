@@ -123,7 +123,7 @@ async def say(manager, text):
     played: list[bytes] = []
 
     async def play(path: Path) -> None:
-        played.append(path.read_bytes())
+        played.append(path.path.read_bytes())
 
     await manager.speak("kokoro_tts", text, "af_heart", None, play)
     return played

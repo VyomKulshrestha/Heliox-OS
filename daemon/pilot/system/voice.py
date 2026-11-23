@@ -1128,13 +1128,23 @@ class _Playback:
             self._play()
         finally:
             speech_trace.emit(
-                "first sample", handed=handed, first_block_at=self.first_block_at, dac_delay_s=self.first_dac_delay
+                "first sample",
+                handed=handed,
+                first_block_at=self.first_block_at,
+                dac_delay_s=self.first_dac_delay,
+                fitted=self.fitted_at,
+                attached=self.attached_at,
             )
+
+    fitted_at: float | None = None
+    attached_at: float | None = None
 
     def _play(self) -> None:
         self.fit_to_line()
+        self.fitted_at = time.monotonic()
         self.stream = _output_line.ensure(self.sample_rate, self.audio.shape[1])
         _output_line.attach(self)
+        self.attached_at = time.monotonic()
         if self.on_handed is not None:
             self._report_handed()
         # The device can disappear mid-sentence (headphones unplugged): its callbacks stop, and without a limit
@@ -1250,11 +1260,29 @@ def _read_piece(path: Path) -> tuple[Any, int, Any]:
     return audio, sample_rate, speech_notices.mouth_for(path, audio, sample_rate)
 
 
-async def _play_local_tts_file(path: Path) -> None:
-    """Play a synthesized WAV without importing the model runtime. Cancelling it (barge-in) cuts it at once."""
-    from pilot.system import speech_notices
+async def _play_local_tts_file(piece: Any) -> None:
+    """Play one piece of the local voice (a local_tts_worker.Piece, or a WAV's Path) without importing the model
+    runtime. Samples made for this reply are played as they are, and the face's mouth data is made after they are on
+    the output line; a WAV (a piece from the store) is read first. Cancelling it (barge-in) cuts it at once."""
+    from pilot.system import speech_notices, speech_trace
 
-    audio, sample_rate, mouth = await asyncio.to_thread(_read_piece, path)
+    asked = time.monotonic()
+    audio = getattr(piece, "audio", None)
+    in_memory = audio is not None
+    mouth: Any = None
+    if in_memory:
+        sample_rate = int(piece.rate)
+        if speech_notices.face_on():
+            timing = piece.timing
+
+            def make_mouth() -> Any:
+                return speech_notices.mouth_for(None, audio, sample_rate, timing)
+
+            mouth = make_mouth  # made once the samples are on the line (speech_notices.handed)
+    else:
+        path = piece if isinstance(piece, Path) else piece.path
+        audio, sample_rate, mouth = await asyncio.to_thread(_read_piece, path)
+    speech_trace.emit("piece read", asked=asked, done=time.monotonic(), in_memory=in_memory)
     with speech_notices.reply():
         playback = _Playback(audio, sample_rate)
         playback.on_handed = speech_notices.handed(mouth, len(playback.audio) / max(1, sample_rate))

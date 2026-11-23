@@ -110,7 +110,7 @@ async def test_a_reply_that_is_all_in_the_store_plays_with_the_worker_released(m
     played: list[bytes] = []
 
     async def play(path: Path) -> None:
-        played.append(path.read_bytes())
+        played.append(path.path.read_bytes())
 
     await manager.speak("kokoro_tts", "Okay. Still on the plan.", "af_heart", None, play)
     assert played == [b"RIFF-Okay.", b"RIFF-Still on the plan."] and spawned == []  # no worker, no load
@@ -248,7 +248,7 @@ async def test_waiting_for_the_load_speaks_in_the_local_voice_once_it_is_loaded(
     played: list[bytes] = []
 
     async def play(path: Path) -> None:
-        played.append(path.read_bytes())
+        played.append(path.path.read_bytes())
 
     speaking = asyncio.ensure_future(
         manager.speak("kokoro_tts", "It's 10:42.", "af_heart", None, play, wait_for_load=True)

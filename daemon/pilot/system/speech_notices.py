@@ -242,22 +242,37 @@ def unvoiced_piece() -> None:
     made.piece({"index": made.take_index(), "seconds": None, "lead_ms": None, "voice": "system", "mouth": "none"})
 
 
-def handed(mouth: dict[str, Any] | None, seconds: float) -> Callable[[float | None], None] | None:
+def handed(
+    mouth: dict[str, Any] | Callable[[], dict[str, Any] | None] | None, seconds: float
+) -> Callable[[float | None], None] | None:
     """For one piece about to play: the call the player makes when the piece is on the output line, with its
-    estimate of the seconds until the first sample is heard. None when nobody listens."""
+    estimate of the seconds until the first sample is heard. None when nobody listens.
+
+    ``mouth`` may be a call that makes the mouth data: it is made then, after the samples are on the line, so the first
+    sound never waits for it, and the time it took comes off the lead (the notice still says when the sound starts)."""
     made = _current.get()
     if made is None or not installed():
         return None
     index = made.take_index()
 
     def on_handed(lead: float | None) -> None:
+        shape = mouth
+        if callable(shape):
+            began = time.monotonic()
+            try:
+                shape = shape()
+            except Exception:
+                logger.debug("Could not make a piece's mouth data", exc_info=True)
+                shape = None
+            if lead is not None:
+                lead -= time.monotonic() - began
         params: dict[str, Any] = {
             "index": index,
             "seconds": round(seconds, 3),
             "lead_ms": None if lead is None else round(max(0.0, lead) * 1000, 1),
             "voice": made.voice or "local",
         }
-        params.update(mouth or {"mouth": "off"})
+        params.update(shape or {"mouth": "off"})
         made.piece(params)
 
     return on_handed
@@ -287,7 +302,21 @@ def shift_timing(audio_path: Path | str, start: int, stop: int) -> None:
         timing = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
+    moved = shifted_timing(timing, start, stop)
     try:
+        if moved is None:
+            raise ValueError("timing that does not describe the audio")
+        path.write_text(json.dumps(moved, ensure_ascii=False), encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        with contextlib.suppress(OSError):
+            path.unlink()
+
+
+def shifted_timing(timing: dict[str, Any], start: int, stop: int) -> dict[str, Any] | None:
+    """``timing`` for the samples [start, stop) of the audio it was made for: every time counted from the first sample
+    kept, and what was cut dropped. None when it cannot be read."""
+    try:
+        moved_timing = dict(timing)
         rate = int(timing.get("rate") or 24000)
         lead, length = start / rate, max(0, stop - start) / rate
         for key in ("phonemes", "words"):
@@ -296,12 +325,11 @@ def shift_timing(audio_path: Path | str, start: int, stop: int) -> None:
                 begin, end = max(0.0, float(begin) - lead), min(length, float(end) - lead)
                 if end > begin:
                     moved.append([name, round(begin, 4), round(end, 4)])
-            timing[key] = moved
-        timing["samples"] = max(0, stop - start)
-        path.write_text(json.dumps(timing, ensure_ascii=False), encoding="utf-8")
-    except (OSError, TypeError, ValueError):
-        with contextlib.suppress(OSError):
-            path.unlink()
+            moved_timing[key] = moved
+        moved_timing["samples"] = max(0, stop - start)
+        return moved_timing
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 # Kokoro's predicted durations place every phoneme about 0.1 s after the sound it names: on the real model the first
@@ -328,9 +356,12 @@ def _onset_offset(phonemes: list[Any], audio: Any, rate: int) -> float:
     return offset if abs(offset) <= ONSET_LIMIT_SECONDS else 0.0
 
 
-def mouth_for(audio_path: Path | str | None, audio: Any, rate: int) -> dict[str, Any] | None:
-    """The mouth data for one piece, when a face is shown (None otherwise): the shape timeline when the voice wrote
-    phoneme timing that matches this audio, else the loudness envelope of the samples."""
+def mouth_for(
+    audio_path: Path | str | None, audio: Any, rate: int, timing: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """The mouth data for one piece, when a face is shown (None otherwise): the shape timeline when the voice gave
+    phoneme timing that matches this audio (``timing``, or a file beside ``audio_path``), else the loudness envelope
+    of the samples."""
     if not face_on():
         return None
     try:
@@ -338,11 +369,12 @@ def mouth_for(audio_path: Path | str | None, audio: Any, rate: int) -> dict[str,
     except TypeError:
         return None
     length = samples / max(1, int(rate))
-    if audio_path is not None:
+    if timing is None and audio_path is not None:
         try:
             timing = json.loads(timing_path(audio_path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             timing = None
+    if timing is not None:
         if isinstance(timing, dict) and timing.get("phonemes"):
             made = int(timing.get("samples") or 0) / max(1, int(timing.get("rate") or rate))
             if abs(made - length) <= TIMING_TOLERANCE_SECONDS:

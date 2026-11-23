@@ -312,7 +312,7 @@ async def test_a_sentence_prepared_while_the_last_one_plays_is_not_synthesised_a
         made_before = len(_spoken(worker))
         await voice._run_local_tts_worker("kokoro_tts", "And here is the second.", "af_heart", None)
         assert len(_spoken(worker)) == made_before  # played from the prepared audio, no second synthesis
-        assert len(played) == 2 and not played[1].exists()  # the prepared file is removed once spoken
+        assert len(played) == 2 and not played[1].path.exists()  # the prepared file is removed once spoken
         local_tts_worker.prepare_local_speech(SimpleNamespace(tts_engine="os_native", tts_voice=""), "Hi.")  # no-op
         await voice._shutdown_local_tts_worker()
 

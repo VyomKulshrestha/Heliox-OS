@@ -13,14 +13,19 @@ Events:
     "final pass done"          {id, speculative, started, done, audio_s, failed}
     "speculative pass kept"    {id, at}: the turn ended at that pass's candidate; its words are the turn's
     "speculative pass dropped" {id, at, running}: the person went on (or the listener stopped)
-    "piece synthesized"        {words, kind, requested, worker_started, done}: the voice worker made a piece
+    "piece synthesized"        {words, kind, requested, worker_started, done, took, process_ready, text_written,
+                               in_memory}: the voice worker made a piece. took: the worker's own seconds per step
+                               (read_s, synth_s, trim_s, total_s; write_s and timing_s for a file); in_memory: the
+                               samples came back on the pipe (False: a file the daemon reads and trims)
     "piece trimmed"            {words, done}
     "piece ready"              {index, words, source, at}: source "made", "ahead" or "store"
     "piece plays"              {index, words, at}: handed to playback
+    "piece read"               {asked, done, in_memory}: the player has the samples (read from a file when not)
     "output line open"         {started, opened, latency_setting, latency_s, rate, device}
     "playback start"           {at, rate, seconds}
-    "first sample"             {handed, first_block_at, dac_delay_s}: the first block of a piece went to the device;
-                               dac_delay_s is PortAudio's own estimate of when it reaches the speaker (None if unknown)
+    "first sample"             {handed, first_block_at, dac_delay_s, fitted, attached}: the first block of a piece
+                               went to the device; dac_delay_s is PortAudio's own estimate of when it reaches the
+                               speaker (None if unknown); fitted: brought to the line's rate; attached: on the line
 """
 
 from __future__ import annotations

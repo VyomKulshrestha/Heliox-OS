@@ -131,7 +131,7 @@ async def test_the_head_plays_first_and_each_piece_is_trimmed_for_its_place(monk
     played: list[str] = []
 
     async def play(path: Path) -> None:
-        played.append(path.name)
+        played.append(path.path.name)
 
     reply = "Your next meeting is the launch call at ten, then the design review at two, and you are free after four."
     await manager.speak("kokoro_tts", reply, "af_heart", None, play)

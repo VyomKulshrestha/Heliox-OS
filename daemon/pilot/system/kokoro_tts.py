@@ -203,27 +203,49 @@ async def synthesize_and_play(text: str, voice: str) -> None:
     await play(audio, sample_rate)
 
 
+def generate_here(text: str, voice: str, *, timing: bool = False) -> tuple[Any, int, dict[str, Any] | None]:
+    """The voice worker's piece in memory, on the calling thread: samples, rate and (with ``timing``) when each
+    phoneme is said (see _generate_timed)."""
+    return _generate_timed(text, voice, timing=timing)
+
+
+# Seconds the last piece made here took in each step ("synth_s", "write_s", "timing_s"), for the worker's answer.
+last_took: dict[str, float] = {}
+
+
 def synthesize_to_file_here(text: str, voice: str, output_file: str) -> None:
     """Make ``text`` and write it as a WAV, on the calling thread (the voice worker's own: no event loop, no thread
     hop)."""
+    import time
+
     import soundfile
 
+    started = time.perf_counter()
     audio, sample_rate = _generate(text, voice)
+    made = time.perf_counter()
     soundfile.write(output_file, audio, sample_rate)
+    last_took.clear()
+    last_took.update(synth_s=made - started, write_s=time.perf_counter() - made)
 
 
 def synthesize_with_timing_here(text: str, voice: str, output_file: str, timing_file: str) -> None:
     """As synthesize_to_file_here, and write when each phoneme is said to ``timing_file`` (JSON, see
     _generate_timed); no file when the reader gave no durations. Asked for only while a face is shown."""
     import json
+    import time
 
     import soundfile
 
+    started = time.perf_counter()
     audio, sample_rate, timing = _generate_timed(text, voice)
+    made = time.perf_counter()
     soundfile.write(output_file, audio, sample_rate)
+    written = time.perf_counter()
     if timing is not None:
         with open(timing_file, "w", encoding="utf-8") as handle:
             json.dump(timing, handle, ensure_ascii=False)
+    last_took.clear()
+    last_took.update(synth_s=made - started, write_s=written - made, timing_s=time.perf_counter() - written)
 
 
 async def synthesize_to_file(text: str, voice: str, output_file: str) -> None:

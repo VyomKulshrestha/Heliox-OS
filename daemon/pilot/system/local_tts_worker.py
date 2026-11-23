@@ -2,7 +2,8 @@
 
 The worker (``python -m pilot.system.local_tts_worker --engine kokoro_tts --serve``) keeps the model runtime out of
 the daemon: importing Kokoro pulls in torch and transformers, about 1.6-1.9 GB resident plus about 840 MB of GPU
-memory on CUDA. It answers one JSON line per request on stdout.
+memory on CUDA. It answers one JSON line per request on stdout, followed by the raw samples the line announces
+("bytes") for speech.
 
 ``LocalTTSWorkerManager`` is the daemon side. Measured on the owner's machine (scripts/measure_kokoro_startup.py), a
 cold worker needs about 20-25 s before its first word: 0.25 s process start, 3.3 s importing torch, 12-13 s importing
@@ -12,7 +13,9 @@ worker says a short sentence in 0.1 s and a long one in 0.25 s on the GPU. So th
 * keeps the worker loaded while a conversation is plausible: until ``keep_loaded_seconds`` (default 300) pass with
   nobody speaking to Heliox and Heliox saying nothing, then releases it;
 * starts it ahead of need (``prewarm_local_voice``) as soon as the person is heard;
-* speaks a long reply sentence by sentence, synthesising the next sentence while the current one plays;
+* speaks a long reply sentence by sentence, synthesising the next sentence while the current one plays; a piece's
+  samples come back on the worker's pipe, already trimmed, and play from memory (nothing is written to disk before
+  the person hears it);
 * keeps the worker when speech is cut off mid-synthesis (the worker finishes that request unheard);
 * after the worker fails to start or crashes, reports it once and lets the caller use the system voice at once,
   retrying the local voice in the background after ``RETRY_AFTER_SECONDS``;
@@ -137,6 +140,53 @@ def _synthesize(engine: str, text: str, voice: str, output_file: str, timing_fil
         module.synthesize_to_file_here(text, voice, output_file)
 
 
+def _make_samples(
+    engine: str, text: str, voice: str, keep_lead: float, keep_tail: float | None, timing: bool
+) -> tuple[Any, int, dict[str, Any] | None, dict[str, float]]:
+    """Make one piece in memory on the worker's own thread, with its quiet lead and tail cut (as trim_silence does to a
+    file): float32 mono samples, their rate, the phoneme timing counted from the first sample kept (``timing``, when
+    the engine knows it), and the seconds each step took."""
+    import numpy as np
+
+    from pilot.system import speech_notices
+
+    _use_voice_threads()
+    module = _engine_module(engine)
+    started = time.perf_counter()
+    audio, rate, found = module.generate_here(text, voice, timing=timing)
+    made = time.perf_counter()
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    start, stop = silence_edges(audio, int(rate), keep_lead, keep_tail)
+    audio = np.ascontiguousarray(audio[start:stop])
+    if found is not None:
+        found = speech_notices.shifted_timing(found, start, stop)
+    return audio, int(rate), found, {"synth_s": made - started, "trim_s": time.perf_counter() - made}
+
+
+def _request_text(request: dict[str, Any]) -> str:
+    """The text a request asks to be spoken: given inline ("text"), or in its file. Opening a just-written file took
+    5 to 17 ms on one development laptop (a virus scanner reads it first); the daemon sends both, so a worker of either
+    age understands it."""
+    text = request.get("text")
+    if isinstance(text, str):
+        return text
+    return Path(request["text_file"]).read_text(encoding="utf-8")
+
+
+def _send(response: dict[str, Any], payload: bytes = b"") -> None:
+    """One answer on stdout: a JSON line, then ``payload`` (the raw bytes its "bytes" field announces)."""
+    out = sys.stdout
+    out.flush()
+    data = (json.dumps(response) + "\n").encode("utf-8") + payload
+    buffer = getattr(out, "buffer", None)
+    if buffer is None:  # a text-only stream (a test's): no payload can go there
+        out.write(data.decode("utf-8", errors="replace"))
+        out.flush()
+        return
+    buffer.write(data)
+    buffer.flush()
+
+
 def _load(engine: str, voice: str) -> None:
     """Load the model and voice, and run one throwaway synthesis so the first real sentence is warm."""
     _use_voice_threads()
@@ -171,22 +221,51 @@ def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
 
         kokoro_tts.configure(device=device)
     for line in sys.stdin:
+        payload = b""
         try:
             request = json.loads(line)
             if request.get("op") == "load":
                 _load(engine, str(request.get("voice") or ""))
-                print(json.dumps({"status": "ok", "op": "load"}), flush=True)
+                _send({"status": "ok", "op": "load"})
                 continue
-            text = Path(request["text_file"]).read_text(encoding="utf-8")
+            started = time.perf_counter()
+            text = _request_text(request)
             if not text or len(text) > MAX_TEXT_CHARACTERS:
                 raise ValueError("Speech text must contain between 1 and 20,000 characters")
-            _synthesize(
-                engine, text, str(request["voice"]), str(request["output_file"]), str(request.get("timing_file") or "")
-            )
-            response = {"status": "ok"}
+            read = time.perf_counter()
+            took = {"read_s": read - started}
+            if request.get("reply") == "samples":
+                # Speech: the samples go back on this pipe, trimmed, with the phoneme timing in the answer. Nothing is
+                # written to disk (the file, its trim and the daemon reading it back cost 25 to 45 ms a piece).
+                tail = request.get("keep_tail")
+                audio, rate, timing, steps = _make_samples(
+                    engine,
+                    text,
+                    str(request["voice"]),
+                    float(request.get("keep_lead", KEEP_LEAD_SECONDS)),
+                    None if tail is None else float(tail),
+                    bool(request.get("timing") or request.get("timing_file")),
+                )
+                payload = audio.tobytes()
+                took.update(steps, total_s=time.perf_counter() - started)
+                response = {"status": "ok", "rate": rate, "samples": len(audio), "format": "f32le",
+                            "bytes": len(payload), "timing": timing}  # fmt: skip
+            else:
+                _synthesize(
+                    engine,
+                    text,
+                    str(request["voice"]),
+                    str(request["output_file"]),
+                    str(request.get("timing_file") or ""),
+                )
+                took["total_s"] = time.perf_counter() - started
+                took.update(getattr(_engine_module(engine), "last_took", None) or {})
+                response = {"status": "ok"}
+            response["took"] = {k: round(v, 5) for k, v in took.items()}
         except Exception as exc:
+            payload = b""
             response = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
-        print(json.dumps(response), flush=True)
+        _send(response, payload)
     if lease is not None:
         lease.release()
     return 0
@@ -442,10 +521,48 @@ class SpeechStore:
         entry["last"] = time.time()
         return path
 
-    def said(self, text: str, signature: str, audio: Path) -> bool:
-        """``text`` was just spoken from ``audio`` (made for a reply). Counts it, and keeps a copy of the audio once it
-        has been said HEAD_CACHE_AFTER times. True when it was kept now."""
-        if len(text.split()) > HEAD_CACHE_WORDS or not audio.is_file():
+    @staticmethod
+    def _audio_bytes(audio: Any) -> int:
+        """About how many bytes ``audio`` takes as a kept WAV (16-bit samples), or 0 when there is none."""
+        if isinstance(audio, Path):
+            return audio.stat().st_size if audio.is_file() else 0
+        if getattr(audio, "audio", None) is not None:
+            return 2 * len(audio.audio) + 44 if len(audio.audio) else 0  # a piece with no sound is never kept
+        path = getattr(audio, "path", None)
+        return path.stat().st_size if isinstance(path, Path) and path.is_file() else 0
+
+    @staticmethod
+    def _write(audio: Any, target: Path) -> None:
+        """Keep ``audio`` (a WAV file, or a Piece with samples in memory) as the WAV ``target``, with the phoneme timing
+        that came with it beside it (speech_notices.timing_path, already shifted for the trim), so a kept piece gives
+        the face the same mouth timeline as a freshly made one. Audio without timing keeps none (the face then moves by
+        its loudness, as before)."""
+        import shutil
+
+        from pilot.system import speech_notices
+
+        source = audio if isinstance(audio, Path) else getattr(audio, "path", None)
+        samples = None if isinstance(audio, Path) else getattr(audio, "audio", None)
+        timing = None if isinstance(audio, Path) else getattr(audio, "timing", None)
+        kept_timing = speech_notices.timing_path(target)
+        if samples is None:
+            shutil.copyfile(source, target)
+            if timing is None and source is not None and speech_notices.timing_path(source).is_file():
+                shutil.copyfile(speech_notices.timing_path(source), kept_timing)
+                return
+        else:
+            import soundfile
+
+            soundfile.write(str(target), samples, int(audio.rate))
+        if timing:
+            kept_timing.write_text(json.dumps(timing, ensure_ascii=False), encoding="utf-8")
+        else:
+            kept_timing.unlink(missing_ok=True)
+
+    def said(self, text: str, signature: str, audio: Any) -> bool:
+        """``text`` was just spoken from ``audio`` (made for a reply: a WAV, or a Piece with its samples). Counts it,
+        and keeps a copy of the audio once it has been said HEAD_CACHE_AFTER times. True when it was kept now."""
+        if len(text.split()) > HEAD_CACHE_WORDS or not self._audio_bytes(audio):
             return False
         index = self._load()
         key = self.key(text, signature)
@@ -455,12 +572,10 @@ class SpeechStore:
         kept = False
         if entry["count"] >= HEAD_CACHE_AFTER and not entry["kept"]:
             try:
-                import shutil
-
                 self.folder.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(audio, self.folder / f"{key}.wav")
+                self._write(audio, self.folder / f"{key}.wav")
                 entry["kept"] = kept = True
-            except OSError:
+            except Exception:
                 logger.debug("Could not keep a head's audio", exc_info=True)
         self._prune()
         self._save()
@@ -485,17 +600,17 @@ class SpeechStore:
                     total += (self.folder / f"{key}.wav").stat().st_size
         return total
 
-    def add_fixed(self, text: str, signature: str, audio: Path) -> bool:
-        """Keep ``audio``, made ahead for the fixed piece ``text``. False when the store is full or it cannot be kept."""
-        if not audio.is_file() or self.fixed_bytes() + audio.stat().st_size > FIXED_SPEECH_BYTES:
+    def add_fixed(self, text: str, signature: str, audio: Any) -> bool:
+        """Keep ``audio`` (a WAV, or a Piece with its samples), made ahead for the fixed piece ``text``. False when the
+        store is full or it cannot be kept."""
+        size = self._audio_bytes(audio)
+        if not size or self.fixed_bytes() + size > FIXED_SPEECH_BYTES:
             return False
         key = self.key(text, signature)
         try:
-            import shutil
-
             self.folder.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(audio, self.folder / f"{key}.wav")
-        except OSError:
+            self._write(audio, self.folder / f"{key}.wav")
+        except Exception:
             logger.debug("Could not keep a fixed sentence's audio", exc_info=True)
             return False
         self._load()[key] = {"text": text, "signature": signature, "count": 0, "kept": True, "fixed": True,
@@ -514,6 +629,8 @@ class SpeechStore:
         self._load().pop(key, None)
         with contextlib.suppress(OSError):
             (self.folder / f"{key}.wav").unlink()
+        with contextlib.suppress(OSError):
+            (self.folder / f"{key}.wav.timing.json").unlink()
 
     def _prune(self) -> None:
         index = self._load()
@@ -592,12 +709,30 @@ def _default_spawn(engine: str, device: str, gpu_lease: bool = False) -> Any:
     )
 
 
-def _exchange(process: Any, request: dict[str, str]) -> bytes:
+def _read_exactly(stream: Any, size: int) -> bytes:
+    parts: list[bytes] = []
+    left = size
+    while left > 0:
+        part = stream.read(left)
+        if not part:
+            raise EOFError(f"the worker's answer ended {left} bytes short")
+        parts.append(part)
+        left -= len(part)
+    return b"".join(parts)
+
+
+def _exchange(process: Any, request: dict[str, Any]) -> tuple[bytes, bytes]:
+    """Send one request; its answer line, and the bytes that follow it when the line announces them ("bytes")."""
     if process.stdin is None or process.stdout is None:
         raise RuntimeError("Local TTS worker streams are unavailable")
     process.stdin.write((json.dumps(request) + "\n").encode("utf-8"))
     process.stdin.flush()
-    return process.stdout.readline()
+    line = process.stdout.readline()
+    size = 0
+    if line and b'"bytes"' in line:
+        with contextlib.suppress(ValueError, TypeError, AttributeError):
+            size = int(json.loads(line).get("bytes") or 0)
+    return line, (_read_exactly(process.stdout, size) if size > 0 else b"")
 
 
 def _close_process(worker: Any) -> None:
@@ -654,7 +789,35 @@ class _Spawning:
 
 
 StatusCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
-PlayFile = Callable[[Path], Awaitable[None]]
+
+
+@dataclass
+class Piece:
+    """One piece of speech ready to play: its samples in memory (made for this reply, already trimmed), or a WAV on
+    disk (``path``: a piece from the store, or one a worker wrote because it could not send samples)."""
+
+    text: str
+    audio: Any = None  # float32 mono samples; None: read them from ``path``
+    rate: int = 0
+    timing: dict[str, Any] | None = None  # when each phoneme is said, counted from the first sample (a face is shown)
+    path: Path | None = None
+    trimmed: bool = True  # False: a file as the worker wrote it, its quiet lead and tail not cut yet
+    source: str = "made"  # "made", "ahead" or "store"
+
+
+def _piece_from_answer(text: str, answer: dict[str, Any]) -> Piece | None:
+    """The samples an answer carried, or None when it carried none (a worker that wrote the file instead)."""
+    payload = answer.get("_payload") or b""
+    if not payload or answer.get("format", "f32le") != "f32le":
+        return None
+    import numpy as np
+
+    audio = np.frombuffer(payload, dtype="<f4")
+    timing = answer.get("timing")
+    return Piece(text, audio=audio, rate=int(answer.get("rate") or 24000), timing=timing if timing else None)
+
+
+PlayFile = Callable[[Any], Awaitable[None]]  # takes a Piece (or a Path), plays it, returns when it has played
 
 # What of a sentence the person heard when Heliox was cut off. A word counts only if it had finished playing this
 # long before the voice stopped: from the person's first sound to silence takes 0.45 to 0.65 s (the barge-in
@@ -796,7 +959,7 @@ class LocalTTSWorkerManager:
         self._failed_until: float | None = None
         self._background: set[asyncio.Future[Any]] = set()
         # Sentences synthesised ahead of their turn (prepare()), keyed by (engine, voice, sentence).
-        self._prepared: dict[tuple[str, str, str], asyncio.Task[Path]] = {}
+        self._prepared: dict[tuple[str, str, str], asyncio.Task[Piece]] = {}
         self._prepared_dir: Path | None = None
 
     # Settings and activity -------------------------------------------------
@@ -1105,8 +1268,9 @@ class LocalTTSWorkerManager:
             await self._close(process)
         return LocalTTSUnavailable(f"{engine} worker failed: {reason}")
 
-    async def _request(self, process: Any, engine: str, request: dict[str, str], *, timeout: float) -> None:
-        """One request/response on the pipe. Cancelling the caller lets the worker finish it unheard."""
+    async def _request(self, process: Any, engine: str, request: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+        """One request/response on the pipe: the worker's answer, with the bytes that came after it (the samples) as
+        "_payload". Cancelling the caller lets the worker finish it unheard."""
         await self._io_lock.acquire()
         self._request_started_at = time.monotonic()
         exchange = asyncio.ensure_future(asyncio.to_thread(_exchange, process, request))
@@ -1114,7 +1278,7 @@ class LocalTTSWorkerManager:
         self._background.add(exchange)
         exchange.add_done_callback(self._background.discard)
         try:
-            line = await bounded(asyncio.shield(exchange), timeout)
+            line, payload = await bounded(asyncio.shield(exchange), timeout)
         except TimeoutError:
             raise await self._fail(process, engine, f"no answer within {timeout:.0f} s") from None
         except asyncio.CancelledError:
@@ -1135,6 +1299,8 @@ class LocalTTSWorkerManager:
             self._failed_until = None
             self.unavailable_reason = ""
             self.loaded = True
+        response["_payload"] = payload
+        return response
 
     # Speaking ----------------------------------------------------------------
 
@@ -1147,11 +1313,16 @@ class LocalTTSWorkerManager:
         request_dir: Path,
         *,
         wait_after_gpu_fault: bool = True,
-    ) -> None:
-        """Make ``text`` into ``output_file``. After a GPU fault the voice moves to the CPU: with
-        ``wait_after_gpu_fault`` (a file someone asked for) this piece waits for the CPU worker; without it (speech)
-        the CPU worker loads in the background and LocalVoiceNotReady says so at once, so no sentence waits the
-        5 to 12 s of a load (the system voice speaks it meanwhile)."""
+        samples: bool = False,
+        keep_tail: float | None = None,
+    ) -> Piece | None:
+        """Make ``text`` into ``output_file``, or with ``samples`` into memory: the worker sends the samples back on
+        its pipe, trimmed (KEEP_LEAD_SECONDS before the first sound, ``keep_tail`` after the last, the whole end when
+        None), and the Piece holds them; ``output_file`` is then written only by a worker that cannot send samples
+        (the Piece names it, untrimmed). After a GPU fault the voice moves to the CPU: with ``wait_after_gpu_fault``
+        (a file someone asked for) this piece waits for the CPU worker; without it (speech) the CPU worker loads in
+        the background and LocalVoiceNotReady says so at once, so no sentence waits the 5 to 12 s of a load (the
+        system voice speaks it meanwhile)."""
         if engine not in LOCAL_ENGINES:
             raise ValueError(f"Unsupported local TTS engine: {engine}")
         if not text or len(text) > MAX_TEXT_CHARACTERS:
@@ -1159,18 +1330,26 @@ class LocalTTSWorkerManager:
         requested = time.monotonic()
         kind = "ahead" if self._making_ahead else "reply"
         process = await self._usable_process(engine, voice)
+        process_ready = time.monotonic()
         request_path = request_dir / f"{output_file.stem}-{id(output_file):x}.txt"
-        request_path.write_text(text, encoding="utf-8")
-        request = {"text_file": str(request_path), "voice": voice, "output_file": str(output_file)}
+        request_path.write_text(text, encoding="utf-8")  # 0.4 ms (measured): for a worker that reads the file
+        text_written = time.monotonic()
+        request: dict[str, Any] = {
+            "text_file": str(request_path), "text": text, "voice": voice, "output_file": str(output_file)
+        }  # fmt: skip
+        if samples:
+            # The phoneme timing always comes with samples (a few hundred bytes, made with the audio): a piece kept in
+            # the store then has it for the face later, whether or not a face is shown now.
+            request.update(reply="samples", keep_lead=KEEP_LEAD_SECONDS, keep_tail=keep_tail, timing=True)
         from pilot.system import speech_notices
 
         if speech_notices.face_on():
-            # A face is shown: the worker also writes when each phoneme is said, beside the audio.
+            # A face is shown: the worker also gives when each phoneme is said (in its answer, or beside the file).
             request["timing_file"] = str(speech_notices.timing_path(output_file))
         try:
-            await self._request(
+            answer = await self._request(
                 process, engine, request, timeout=LOAD_TIMEOUT_SECONDS if not self.loaded else REQUEST_TIMEOUT_SECONDS
-            )
+            ) or {}  # fmt: skip
         except _MovedToCpu:
             if not wait_after_gpu_fault:
                 self._start_prewarm(engine, voice)  # the same voice on the CPU, for the next sentence
@@ -1180,8 +1359,9 @@ class LocalTTSWorkerManager:
                 raise LocalVoiceNotReady(f"{engine}: loading on the CPU after a GPU fault") from None
             # The same sentence, once, from the same voice started on the CPU.
             process = await self._usable_process(engine, voice)
-            await self._request(process, engine, request, timeout=LOAD_TIMEOUT_SECONDS)
-        if not output_file.is_file() or output_file.stat().st_size == 0:
+            answer = await self._request(process, engine, request, timeout=LOAD_TIMEOUT_SECONDS) or {}
+        piece = _piece_from_answer(text, answer) if samples else None
+        if piece is None and (not output_file.is_file() or output_file.stat().st_size == 0):
             raise await self._fail(process, engine, "the worker produced no audio")
         done = time.monotonic()
         self.synth_log.append((kind, len(text.split()), requested, self._request_started_at, done))
@@ -1192,7 +1372,14 @@ class LocalTTSWorkerManager:
             requested=requested,
             worker_started=self._request_started_at,
             done=done,
+            took=dict(answer.get("took") or {}),
+            process_ready=process_ready,
+            text_written=text_written,
+            in_memory=piece is not None,
         )
+        if samples and piece is None:
+            return Piece(text, path=output_file, trimmed=False)
+        return piece
 
     async def _usable_process(self, engine: str, voice: str) -> Any:
         if self._failed_until is not None:
@@ -1328,12 +1515,12 @@ class LocalTTSWorkerManager:
 
         sources: dict[int, str] = {}
 
-        def make(index: int) -> asyncio.Future[Path]:
+        def make(index: int) -> asyncio.Future[Piece]:
             kept = cached_head if index == 0 else (heads.lookup(sentences[index], signature) if heads else None)
             if kept is not None:
                 sources[index] = "store"
-                done: asyncio.Future[Path] = asyncio.get_running_loop().create_future()
-                done.set_result(kept)  # exactly this text, made this way: played as kept
+                done: asyncio.Future[Piece] = asyncio.get_running_loop().create_future()
+                done.set_result(Piece(sentences[index], path=kept, source="store"))  # exactly this text, made this way
                 return done
             ahead = self._prepared.pop((engine, voice, sentences[index]), None)
             if ahead is not None and not ahead.cancelled():
@@ -1343,12 +1530,12 @@ class LocalTTSWorkerManager:
             target = folder / f"sentence-{index}.wav"
             return asyncio.ensure_future(self._make(engine, sentences[index], voice, target, folder))
 
-        upcoming: asyncio.Future[Path] | None = make(0)
+        upcoming: asyncio.Future[Piece] | None = make(0)
         try:
             for index in range(len(sentences)):
                 assert upcoming is not None
                 try:
-                    path = await upcoming
+                    piece = await upcoming
                 except LocalVoiceNotReady as not_ready:
                     # What was said stays said: the system voice takes over from this sentence on.
                     not_ready.unspoken = " ".join(sentences[index:]) if index else ""
@@ -1359,7 +1546,7 @@ class LocalTTSWorkerManager:
                 )
                 upcoming = make(index + 1) if index + 1 < len(sentences) else None
                 speech_trace.emit("piece plays", index=index, words=words, at=time.monotonic())
-                await play(path)
+                await play(piece)
                 progress = speech_progress.get()
                 if progress is not None and progress.playing is not None:
                     current = progress.playing
@@ -1367,9 +1554,11 @@ class LocalTTSWorkerManager:
                     progress.playing = None
                 self.note_activity()
                 if index == 0 and heads is not None and cached_head is None:
+                    # Counted, and its audio kept once said HEAD_CACHE_AFTER times: written after it was heard.
                     with contextlib.suppress(Exception):
-                        await asyncio.to_thread(heads.said, sentences[0], signature, path)
-                if self._prepared_dir is not None and path.parent == self._prepared_dir:
+                        await asyncio.to_thread(heads.said, sentences[0], signature, piece)
+                path = piece if isinstance(piece, Path) else getattr(piece, "path", None)
+                if path is not None and self._prepared_dir is not None and path.parent == self._prepared_dir:
                     with contextlib.suppress(OSError):
                         path.unlink()
                     with contextlib.suppress(OSError):
@@ -1449,35 +1638,43 @@ class LocalTTSWorkerManager:
                 started = self._clock()
                 self._making_ahead = True
                 try:
-                    path = await self._make(engine, text, voice, folder / f"fixed-{index}.wav", folder)
+                    piece = await self._make(engine, text, voice, folder / f"fixed-{index}.wav", folder)
                 except LocalTTSUnavailable:
                     return made
                 finally:
                     self._making_ahead = False
-                if not store.add_fixed(text, signature, path):
+                if not store.add_fixed(text, signature, piece):
                     return made  # full
                 made += 1
-                with contextlib.suppress(OSError):
-                    path.unlink()
+                if piece.path is not None:
+                    with contextlib.suppress(OSError):
+                        piece.path.unlink()
                 await self._sleep(max(poll_seconds, rest_factor * (self._clock() - started)))
         logger.info("Made %d fixed sentences of the local voice ahead", made)
         return made
 
-    async def _make(self, engine: str, text: str, voice: str, target: Path, folder: Path) -> Path:
-        await self.synthesize(engine, text, voice, target, folder, wait_after_gpu_fault=False)
+    async def _make(self, engine: str, text: str, voice: str, target: Path, folder: Path) -> Piece:
+        """One piece made for speech, in memory and trimmed by the worker. A worker that wrote the file instead (one
+        that cannot send samples) has it trimmed here, as before."""
         keep_tail = None if ends_sentence(text) else KEEP_CLAUSE_SECONDS
-        try:
-            kept = await asyncio.to_thread(trim_silence, target, KEEP_LEAD_SECONDS, keep_tail)
-        except Exception:
-            kept = None
-            logger.debug("Could not trim the silence around a synthesised piece; playing it as made", exc_info=True)
-        if kept is not None:
-            from pilot.system import speech_notices
+        piece = await self.synthesize(
+            engine, text, voice, target, folder, wait_after_gpu_fault=False, samples=True, keep_tail=keep_tail
+        )
+        assert piece is not None
+        if not piece.trimmed:
+            try:
+                kept = await asyncio.to_thread(trim_silence, target, KEEP_LEAD_SECONDS, keep_tail)
+            except Exception:
+                kept = None
+                logger.debug("Could not trim the silence around a synthesised piece; playing it as made", exc_info=True)
+            if kept is not None:
+                from pilot.system import speech_notices
 
-            # The phoneme times count from the first sample made: from the first one kept after the trim.
-            await asyncio.to_thread(speech_notices.shift_timing, target, kept[0], kept[1])
+                # The phoneme times count from the first sample made: from the first one kept after the trim.
+                await asyncio.to_thread(speech_notices.shift_timing, target, kept[0], kept[1])
+            piece.trimmed = True
         speech_trace.emit("piece trimmed", words=len(text.split()), done=time.monotonic())
-        return target
+        return piece
 
     async def _notify(self, status: str, data: dict[str, Any]) -> None:
         callback = self.on_status
