@@ -2075,9 +2075,13 @@ Accepting sets `voice.tts_voice_chosen`, so a face chosen later offers its voice
 
 #### `face_voice`
 The voice a face pack names (`"voice": {"kokoro", "hint"}` in its manifest, `docs/FACE_PACKS.md`), for Settings'
-Face row (`pilot/system/face_voice.py`). `apply` `""` only says what fits. `"auto"`, sent as the person chooses
-the face, switches `voice.tts_voice` to the face's voice when `voice.tts_voice_chosen` is false (the person never
-picked a voice) and the voice file is on disk; it leaves `tts_voice_chosen` false. `"accept"`, the row's one
+Face row (`pilot/system/face_voice.py`). The daemon itself applies the face's voice whenever `face.pack` is set, by
+any route (`update_config` from any client, a spoken setting, `config.toml` read at start or reloaded after a hand
+edit): it switches `voice.tts_voice` to the face's voice when `voice.tts_voice_chosen` is false (the person never
+picked a voice) and the voice file is on disk, and leaves `tts_voice_chosen` false. `update_config` for
+`face.pack` then answers with `"face_voice"`, this call's result for that face. `apply` `""` says what fits, and
+while that switch holds it answers `switched: true` with the sentence saying so. `"auto"` applies the same rule on
+request (for windows that still send it). `"accept"`, the row's one
 control, uses the voice offered and sets `tts_voice_chosen`. Nothing is downloaded by this call: a voice file not
 on disk is fetched by Kokoro the first time it speaks (about 0.5 MB). With another engine, or a voice language the
 face's voice does not speak, nothing changes (in another language a Kokoro voice of it matching `hint` may be

@@ -14,6 +14,11 @@ the product's default voice, a woman's, because nothing paired a face with a voi
   adds a voice ("fetch");
 - Heliox speaks with another engine, or in a language the face's voice does not speak: nothing changes. In another
   language, a Kokoro voice of that language matching the hint is offered when there is one ("unavailable").
+
+The daemon applies that rule itself whenever ``face.pack`` changes, by any route: Settings' Face row, the general
+settings update from any client, a spoken setting, or a config file edited by hand (read at start and when the file is
+reloaded). It knows each pack's voice from ``PACK_VOICES``, a copy of the ``voice`` field of every pack the window
+ships; a test checks the two agree, so a pack that names a voice is added there too.
 """
 
 from __future__ import annotations
@@ -24,6 +29,18 @@ from dataclasses import asdict, dataclass
 from pilot.system.voice_by_language import KOKORO_VOICE_BYTES, LANGUAGE_NAMES, TTS_VOICES, kokoro_language
 
 HINTS = {"feminine": "f", "masculine": "m"}
+
+# The voice and hint each pack in tauri-app/ui/public/faces names (its manifest's "voice"); packs naming none are left
+# out. tests/test_face_voice.py reads every manifest and fails when this differs.
+PACK_VOICES: dict[str, tuple[str, str]] = {
+    "portrait-man": ("am_michael", "masculine"),
+    "portrait-woman": ("af_heart", "feminine"),
+}
+
+
+def pack_voice(pack: str) -> tuple[str, str] | None:
+    """(voice, hint) the face pack ``pack`` names, or None for "off" and a pack without a voice."""
+    return PACK_VOICES.get(pack)
 
 
 @dataclass(frozen=True)

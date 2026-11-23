@@ -6,8 +6,10 @@ const mocks = vi.hoisted(() => ({
   sent: [] as unknown[],
   reply: "ok" as "ok" | "refuse" | "never",
   faceVoice: [] as unknown[],
-  // The daemon's face_voice: what it answers for each apply ("" plan only, "auto", "accept").
+  // The daemon's face_voice: what it answers for each apply ("" plan only, "accept").
   plans: {} as Record<string, Record<string, unknown>>,
+  // What the daemon does by itself when face.pack is set (it applies the face's voice).
+  onFace: null as ((pack: string) => void) | null,
 }));
 
 vi.mock("../api/daemon", () => ({
@@ -16,6 +18,9 @@ vi.mock("../api/daemon", () => ({
       mocks.sent.push(params);
       if (mocks.reply === "never") return new Promise(() => {});
       if (mocks.reply === "refuse") return { status: "error", message: 'face.pack must be "off" or a face pack id' };
+      const { section, values } = params as { section: string; values: Record<string, unknown> };
+      mocks.config = { ...mocks.config, [section]: { ...(mocks.config[section] as object), ...values } };
+      if (typeof values.pack === "string") mocks.onFace?.(values.pack);
       return { status: "ok" };
     }
     if (method === "get_config") return mocks.config;
@@ -70,6 +75,7 @@ describe("Face (Settings, Appearance)", () => {
     mocks.sent.length = 0;
     mocks.faceVoice.length = 0;
     mocks.plans = {};
+    mocks.onFace = null;
     mocks.reply = "ok";
     serve({
       "faces/packs.json": { packs: ["placeholder", "Bad/Id", "portrait-man"] },
@@ -149,8 +155,22 @@ describe("Face (Settings, Appearance)", () => {
     expect(screen.queryByTestId("face-voice")).toBeNull();
   });
 
-  it("switches a voice never chosen to the face's voice and says so in one sentence", async () => {
+  it("shows the switch the daemon made itself when the face was set, without asking for one", async () => {
     mocks.config = { face: { pack: "off" }, voice: { tts_engine: "kokoro_tts", tts_voice: "af_heart" } };
+    // The daemon applies the face's voice wherever face.pack is set; face_voice "" then reports it.
+    mocks.onFace = (pack) => {
+      if (pack !== "portrait-man") return;
+      mocks.config = { face: { pack }, voice: { tts_engine: "kokoro_tts", tts_voice: "am_michael" } };
+      mocks.plans = {
+        "": {
+          status: "ok",
+          switched: true,
+          voice: "am_michael",
+          action: "same",
+          say: "Heliox now speaks with am_michael, this face's voice. Any other voice can be picked under Voice.",
+        },
+      };
+    };
     mocks.plans = {
       "": {
         status: "ok",
@@ -158,13 +178,6 @@ describe("Face (Settings, Appearance)", () => {
         voice: "am_michael",
         action: "offer",
         say: "This face's voice is am_michael.",
-      },
-      auto: {
-        status: "ok",
-        switched: true,
-        voice: "am_michael",
-        action: "same",
-        say: "Heliox now speaks with am_michael, this face's voice. Any other voice can be picked under Voice.",
       },
     };
     await settings.reloadFromDaemon();
@@ -174,7 +187,12 @@ describe("Face (Settings, Appearance)", () => {
         /Heliox now speaks with am_michael, this face's voice/,
       ),
     );
-    expect(mocks.faceVoice).toContainEqual({ voice: "am_michael", hint: "masculine", apply: "auto" });
+    await waitFor(() => {
+      let voice = "";
+      settings.subscribe((s) => (voice = s.voice?.tts_voice ?? ""))();
+      expect(voice).toBe("am_michael"); // the Voice rows show the new voice at once
+    });
+    expect(mocks.faceVoice.every((asked) => (asked as { apply: string }).apply === "")).toBe(true);
     expect(screen.queryByRole("button", { name: /Use am_michael/ })).toBeNull();
   });
 
@@ -189,7 +207,6 @@ describe("Face (Settings, Appearance)", () => {
     };
     mocks.plans = {
       "": offer,
-      auto: offer,
       accept: {
         status: "ok",
         switched: true,
@@ -219,7 +236,7 @@ describe("Face (Settings, Appearance)", () => {
       action: "fetch",
       say: "This face's voice, am_michael, is not on this computer yet; using it fetches about half a megabyte the first time it speaks.",
     };
-    mocks.plans = { "": missing, auto: missing };
+    mocks.plans = { "": missing };
     await settings.reloadFromDaemon();
     await chooseMan();
     await screen.findByRole("button", { name: "Use am_michael" });

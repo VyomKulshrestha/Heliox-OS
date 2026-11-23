@@ -3,6 +3,9 @@ or fetched into a real cache, no model loads, nothing is saved to disk."""
 
 from __future__ import annotations
 
+import inspect
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,7 +13,7 @@ import pytest
 from pilot.config import PilotConfig, _merge_config, _validate_config_types
 from pilot.server import PilotServer
 from pilot.system import kokoro_tts, local_tts_worker
-from pilot.system.face_voice import plan_face_voice
+from pilot.system.face_voice import PACK_VOICES, pack_voice, plan_face_voice
 
 HERE = lambda _voice: True  # noqa: E731
 NOT_HERE = lambda _voice: False  # noqa: E731
@@ -169,3 +172,137 @@ async def test_accepting_the_voice_for_the_language_counts_as_a_choice(monkeypat
     server._system_voices = []
     await server._handle_voice_for_language_apply({}, None)
     assert config.voice.tts_voice == "ef_dora" and config.voice.tts_voice_chosen is True
+
+
+# The daemon applies the rule wherever face.pack changes: no client has to ask (face_voice with apply "auto").
+
+FACES = Path(__file__).resolve().parents[2] / "tauri-app" / "ui" / "public" / "faces"
+
+
+def test_the_daemon_knows_the_voice_every_shipped_pack_names():
+    listed = json.loads((FACES / "packs.json").read_text(encoding="utf-8"))["packs"]
+    named = {}
+    for pack in listed:
+        manifest = json.loads((FACES / pack / "manifest.json").read_text(encoding="utf-8"))
+        voice = manifest.get("voice") or {}
+        if voice.get("kokoro"):
+            named[pack] = (voice["kokoro"], voice.get("hint", ""))
+    assert named == PACK_VOICES
+    assert pack_voice("off") is None and pack_voice("placeholder") is None
+
+
+async def _set_face(server, pack):
+    return await server._handle_update_config({"section": "face", "values": {"pack": pack}}, MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_setting_the_face_by_the_settings_update_brings_its_voice(monkeypatch):
+    server, config, configured = _server(monkeypatch)
+    result = await _set_face(server, "portrait-man")
+    assert result["status"] == "ok" and result["face_voice"]["switched"] is True
+    assert config.face.pack == "portrait-man" and config.voice.tts_voice == "am_michael"
+    assert config.voice.tts_voice_chosen is False and configured == ["am_michael"]
+    # The Face row asks only what fits ("") and is told what happened, whoever set the face.
+    told = await server._handle_face_voice({"voice": "am_michael", "hint": "masculine", "apply": ""}, None)
+    assert told["switched"] is True and told["say"].startswith("Heliox now speaks with am_michael, this face's voice.")
+    # The woman's face next: the voice was never the person's, so it follows the face again.
+    back = await _set_face(server, "portrait-woman")
+    assert back["face_voice"]["switched"] is True and config.voice.tts_voice == "af_heart"
+    # Off changes no voice; a face without a voice of its own neither.
+    for pack in ("off", "placeholder"):
+        same = await _set_face(server, pack)
+        assert "face_voice" not in same and config.voice.tts_voice == "af_heart"
+
+
+@pytest.mark.asyncio
+async def test_a_chosen_voice_is_kept_whatever_route_sets_the_face(monkeypatch):
+    server, config, configured = _server(monkeypatch, chosen=True, voice="bf_emma")
+    result = await _set_face(server, "portrait-man")
+    assert result["face_voice"] == {**result["face_voice"], "switched": False, "action": "offer", "voice": "am_michael"}
+    assert result["face_voice"]["say"].startswith("Your voice, bf_emma, is kept.")
+    assert config.voice.tts_voice == "bf_emma" and not configured and config.save.call_count == 1  # the face only
+    told = await server._handle_face_voice({"voice": "am_michael", "hint": "masculine", "apply": ""}, None)
+    assert told["switched"] is False and told["action"] == "offer"
+
+
+@pytest.mark.asyncio
+async def test_a_switch_said_by_the_face_ends_when_the_person_picks_a_voice(monkeypatch):
+    server, config, _configured = _server(monkeypatch)
+    await _set_face(server, "portrait-man")
+    await server._handle_update_config({"section": "voice", "values": {"tts_voice": "bm_lewis"}}, MagicMock())
+    told = await server._handle_face_voice({"voice": "am_michael", "hint": "masculine", "apply": ""}, None)
+    assert told["switched"] is False and told["action"] == "offer" and "Your voice, bm_lewis, is kept." in told["say"]
+    again = await _set_face(server, "portrait-woman")
+    assert again["face_voice"]["switched"] is False and config.voice.tts_voice == "bm_lewis"
+
+
+@pytest.mark.asyncio
+async def test_the_face_s_voice_is_not_switched_when_it_cannot_speak_or_cannot_be_saved(monkeypatch):
+    server, config, _configured = _server(monkeypatch, on_disk=NOT_HERE)
+    missing = await _set_face(server, "portrait-man")
+    assert missing["face_voice"]["switched"] is False and missing["face_voice"]["action"] == "fetch"
+    assert config.voice.tts_voice == "af_heart"
+    server, config, configured = _server(monkeypatch, engine="pocket_tts", voice="alba")
+    other = await _set_face(server, "portrait-man")
+    assert other["face_voice"]["action"] == "unavailable" and config.voice.tts_voice == "alba"
+    server, config, configured = _server(monkeypatch)
+    saves = iter([None, OSError("disk full")])
+
+    def save():
+        failure = next(saves)
+        if failure:
+            raise failure
+
+    config.save.side_effect = save
+    kept = await _set_face(server, "portrait-man")
+    assert kept["status"] == "ok" and kept["face_voice"]["switched"] is False
+    assert config.face.pack == "portrait-man" and config.voice.tts_voice == "af_heart" and not configured
+
+
+@pytest.mark.asyncio
+async def test_a_face_set_by_a_spoken_setting_brings_its_voice(monkeypatch):
+    server, config, _configured = _server(monkeypatch)
+    from pilot import server as server_module
+    from pilot.personal.spoken_settings import SpokenSetting
+
+    # No phrase in the spoken-settings table changes the face today; any that does goes through the same update.
+    monkeypatch.setattr(
+        server_module,
+        "spoken_setting",
+        lambda _said, _config: SpokenSetting("face", {"pack": "portrait-man"}, "Okay, the man's face."),
+    )
+    assert await server._settings_request("show the man's face") == "Okay, the man's face."
+    assert config.face.pack == "portrait-man" and config.voice.tts_voice == "am_michael"
+
+
+def test_a_face_in_the_config_file_brings_its_voice_at_start(monkeypatch):
+    server, config, configured = _server(monkeypatch)
+    edited = _merge_config(PilotConfig(), {"face": {"pack": "portrait-man"}, "voice": {"tts_voice_chosen": False}})
+    config.face, config.voice.tts_voice_chosen = edited.face, edited.voice.tts_voice_chosen
+    brought = server._face_brings_its_voice(configure=False)
+    assert brought["switched"] is True and config.voice.tts_voice == "am_michael" and not configured
+    # start() checks it before the voice is set up, so the first reply is in the face's voice.
+    source = inspect.getsource(PilotServer.start)
+    assert 0 < source.index("_face_brings_its_voice(configure=False)") < source.index("self._set_up_voice()")
+    # A file whose voice was chosen keeps it.
+    server, config, _configured = _server(monkeypatch, chosen=True, voice="bf_emma")
+    config.face.pack = "portrait-man"
+    assert server._face_brings_its_voice(configure=False)["switched"] is False and config.voice.tts_voice == "bf_emma"
+
+
+def test_a_face_chosen_by_editing_the_file_while_heliox_runs_brings_its_voice(monkeypatch):
+    server, config, configured = _server(monkeypatch)
+    edits = iter([True, True, False])
+
+    def reload_if_edited():
+        edited = next(edits)
+        if edited:
+            config.face.pack = "portrait-man"
+        return edited
+
+    config.reload_if_edited = reload_if_edited
+    assert server._adopt_edited_config() is True
+    assert config.voice.tts_voice == "am_michael" and configured == ["am_michael"]
+    config.voice.tts_voice = "af_heart"  # the same face reloaded again: the face did not change, nothing is applied
+    assert server._adopt_edited_config() is True and config.voice.tts_voice == "af_heart"
+    assert server._adopt_edited_config() is False

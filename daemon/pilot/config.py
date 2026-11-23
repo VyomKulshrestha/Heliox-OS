@@ -872,9 +872,9 @@ class GpuConfig:
 class FaceConfig:
     """The talking face in the conversation view (docs/FACE_PACKS.md). "off" (the default) or the id of a face pack
     the window has installed, picked in Settings, Appearance. While it is off the daemon makes no mouth data for the
-    window (pilot.system.speech_notices). A pack may name the voice that suits the face; choosing it switches to that
-    voice only while the person has never chosen one (voice.tts_voice_chosen, pilot.system.face_voice), and any
-    voice can still be set by hand."""
+    window (pilot.system.speech_notices). A pack may name the voice that suits the face; setting the pack, by any
+    route, switches to that voice only while the person has never chosen one (voice.tts_voice_chosen,
+    pilot.system.face_voice), and any voice can still be set by hand."""
 
     pack: str = "off"
 

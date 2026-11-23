@@ -1,8 +1,9 @@
 <script lang="ts">
   // Settings, Appearance: which face the conversation view shows (face.pack), off by default. The choices are the
   // installed face packs by the names their manifests give. Choosing reads only the packs' small manifest files: no
-  // face image loads until a face is shown. A pack may name the voice that suits the face: the daemon switches to it
-  // with the face while the person has never chosen a voice, and otherwise this row offers it (face_voice).
+  // face image loads until a face is shown. A pack may name the voice that suits the face: the daemon itself switches
+  // to it whenever face.pack is set (here, by another client, by voice or in the config file) while the person has
+  // never chosen a voice. This row only shows what happened and otherwise offers the voice (face_voice).
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
   import { settings } from "../stores/settings";
@@ -49,7 +50,7 @@
     void installedPacks().then((found) => (packs = found));
   });
 
-  async function askFaceVoice(apply: "" | "auto" | "accept"): Promise<FaceVoicePlan | null> {
+  async function askFaceVoice(apply: "" | "accept"): Promise<FaceVoicePlan | null> {
     const voice = entry?.voice?.kokoro;
     const mine = ++asked;
     if (chosen === OFF || !voice) {
@@ -92,11 +93,11 @@
         return;
       }
       if (select.value === OFF) return; // turning the face off changes no voice
-      const answer = await askFaceVoice("auto");
-      if (answer?.switched) {
-        switched = { voice: answer.voice ?? "", say: answer.say ?? "" };
-        await settings.reloadFromDaemon(); // the Voice rows and this one show the new voice at once
-      }
+      // The daemon has already applied the face's voice if it should; the Voice rows and this one show it at once,
+      // and the plan asked again below says what happened.
+      await settings.reloadFromDaemon();
+      const answer = await askFaceVoice("");
+      if (answer?.switched) switched = { voice: answer.voice ?? "", say: answer.say ?? "" };
     } finally {
       busy = false;
     }

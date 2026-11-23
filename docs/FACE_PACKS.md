@@ -2,7 +2,8 @@
 
 Heliox can show a face beside the conversation that moves its mouth while Heliox speaks (Settings, Appearance, Face;
 off by default). The face is a *pack*: a folder of images and a `manifest.json`. This page is everything needed to
-make one. No code changes are needed to add a pack.
+make one. No code changes are needed to add a pack; one that names a voice also adds a line to the daemon's table
+of pack voices ("The face's voice").
 
 ## How the face works
 
@@ -63,7 +64,7 @@ tauri-app/ui/public/faces/
 
 The folder name is the pack's id: lower-case letters, digits and dashes, at most 40 characters. Add the id to
 `packs.json` and the pack appears in Settings under the name its manifest gives. Any face can be used with any voice;
-a pack may name the voice that suits it (`voice`, below).
+a pack may name the voice that suits it (`voice`, below, and "The face's voice" for the one line the daemon needs).
 
 ## manifest.json
 
@@ -129,6 +130,13 @@ When a person chooses a face in Settings whose pack names a voice:
   speaks another language, a Kokoro voice of that language matching `hint` is offered if there is one.
 
 Choosing "Off" changes no voice, and a voice set by hand afterwards stays.
+
+The daemon applies this rule itself whenever `face.pack` is set, whatever set it: the Face row, another window or
+client through the settings update, a spoken setting, or `config.toml` edited by hand (read when Heliox starts, or
+when the edited file is picked up while it runs). The Face row only shows what happened and offers the voice. The
+daemon cannot read the window's packs, so it keeps a copy of each pack's `voice` in `PACK_VOICES`
+(`daemon/pilot/system/face_voice.py`); a pack that names a voice is added there too, and a test fails until the two
+agree.
 
 ## The fifteen mouth shapes
 

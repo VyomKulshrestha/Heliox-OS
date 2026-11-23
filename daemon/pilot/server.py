@@ -2841,13 +2841,26 @@ class PilotServer:
         token = _APPROVED_WIDENINGS.set(approved)
         try:
             async with self._config_lock:
-                reload_if_edited = getattr(self.config, "reload_if_edited", None)
-                if reload_if_edited is not None and reload_if_edited():
+                if self._adopt_edited_config():
                     await self._broadcast_notification("config_updated", {"method": "reload", "section": ""})
                 result = await handler(request.params, ws)
         finally:
             _APPROVED_WIDENINGS.reset(token)
         return _success_response(request.id, result)
+
+    def _adopt_edited_config(self) -> bool:
+        """The config files were edited while Heliox runs: adopt them (PilotConfig.reload_if_edited). A face chosen in
+        the file brings its voice as one chosen in Settings does. True when something was reloaded."""
+        reload_if_edited = getattr(self.config, "reload_if_edited", None)
+        face_before = getattr(getattr(self.config, "face", None), "pack", None)
+        if reload_if_edited is None or not reload_if_edited():
+            return False
+        if getattr(getattr(self.config, "face", None), "pack", None) != face_before:
+            try:
+                self._face_brings_its_voice()
+            except Exception:
+                logger.warning("Could not check the chosen face's voice", exc_info=True)
+        return True
 
     async def _announce_config_change(self, request: JsonRpcRequest, response: str | None) -> None:
         """Tell every open window that settings changed, after the caller has its reply."""
@@ -10844,6 +10857,12 @@ class PilotServer:
         reply: dict[str, Any] = {"status": "ok"}
         if section in RESTART_REQUIRED_SECTIONS or restart_keys & set(normalized_values):
             reply["restart_required"] = True
+        if section == "face" and "pack" in normalized_values:
+            # Whoever set the face (Settings, another client, a spoken setting), its voice comes with it by the
+            # face_voice rule; no client has to ask. The window hears config_updated and reads the new voice.
+            brought = self._face_brings_its_voice()
+            if brought is not None:
+                reply["face_voice"] = brought
         if section == "semantic_search" and isinstance(values.get("folders"), list):
             kept = {str(folder) for folder in values["folders"]}
             dropped = [str(f) for f in previous_values.get("folders", []) or [] if str(f) not in kept]
@@ -14582,6 +14601,12 @@ def handle_tool(tool_name, params):
             self._run_recorded_workflow_scheduler(), name="recorded_workflow_scheduler"
         )
         progress.begin("preparing the voice")
+        # A face set in the config file (by hand, or saved before the daemon applied this rule) brings its voice
+        # before the voice is set up, so the first reply is already in the face's voice.
+        try:
+            self._face_brings_its_voice(configure=False)
+        except Exception:
+            logger.warning("Could not check the chosen face's voice", exc_info=True)
         self._set_up_voice()
 
         # Wayland: the app's own shortcut cannot grab keys there, so the daemon binds it through the desktop portal.
@@ -15859,15 +15884,15 @@ def handle_tool(tool_name, params):
                 configure_local_voice(voice)
         return {"status": "ok", **(await self._voice_for_language()).as_dict()}
 
-    async def _face_voice_plan(self, voice: str, hint: str) -> Any:
-        """What the Face row offers for a face pack that names ``voice`` (pilot.system.face_voice)."""
+    def _face_voice_plan_now(self, voice: str, hint: str) -> Any:
+        """What the Face row offers for a face pack that names ``voice`` (pilot.system.face_voice). Reads whether the
+        voice file is on disk, nothing more."""
         from pilot.system import kokoro_tts
         from pilot.system.face_voice import plan_face_voice
         from pilot.system.voice_by_language import reader_missing
 
         settings = self.config.voice
-        return await asyncio.to_thread(
-            plan_face_voice,
+        return plan_face_voice(
             voice,
             hint,
             engine=str(settings.tts_engine),
@@ -15878,11 +15903,67 @@ def handle_tool(tool_name, params):
             reader_ok=lambda language: not reader_missing(language),
         )
 
+    async def _face_voice_plan(self, voice: str, hint: str) -> Any:
+        return await asyncio.to_thread(self._face_voice_plan_now, voice, hint)
+
+    def _face_brings_its_voice(self, *, configure: bool = True) -> dict[str, Any] | None:
+        """face.pack was set, by whatever route (the settings update from any client, a spoken setting, the config
+        file read at start or reloaded after a hand edit): the face's voice comes with it while the person never
+        chose a voice and the voice can speak here, and is otherwise left for the Face row to offer. The rule is
+        face_voice's with apply "auto" (pilot.system.face_voice). Returns what happened in face_voice's shape, or
+        None for "off" and a face that names no voice. A failed save changes nothing."""
+        from pilot.system.face_voice import pack_voice, switched_say
+
+        pack = str(getattr(self.config.face, "pack", "off") or "off")
+        known = pack_voice(pack)
+        if known is None:
+            return None
+        plan = self._face_voice_plan_now(*known)
+        settings = self.config.voice
+        if plan.action != "offer" or settings.tts_voice_chosen:
+            return {"switched": False, **plan.as_dict()}
+        previous = settings.tts_voice
+        settings.tts_voice = plan.voice
+        try:
+            self.config.save()
+        except Exception:
+            settings.tts_voice = previous
+            logger.warning("The face's voice was not switched: the settings could not be saved", exc_info=True)
+            return {"switched": False, **plan.as_dict()}
+        say = switched_say(plan.voice, by_face=True)
+        self._face_voice_switched = (pack, plan.voice, say)
+        if configure:
+            from pilot.system.local_tts_worker import configure_local_voice
+
+            with contextlib.suppress(Exception):
+                configure_local_voice(settings)
+        return {"switched": True, **self._face_voice_plan_now(*known).as_dict(), "voice": plan.voice, "say": say}
+
+    def _face_voice_just_switched(self, voice: str) -> str:
+        """The sentence for the face's own switch to ``voice`` while it still holds (the same face, that voice, never
+        chosen by the person); "" otherwise. The Face row shows it whichever route changed the face."""
+        from pilot.system.face_voice import pack_voice
+
+        note = getattr(self, "_face_voice_switched", None)
+        if not note:
+            return ""
+        pack, switched_to, say = note
+        settings = self.config.voice
+        holds = (
+            pack == str(getattr(self.config.face, "pack", "off"))
+            and switched_to == settings.tts_voice
+            and not settings.tts_voice_chosen
+            and voice in {switched_to, (pack_voice(pack) or ("",))[0]}
+        )
+        return say if holds else ""
+
     async def _handle_face_voice(self, params: dict, ws: ServerConnection) -> dict:
-        """The voice the chosen face's pack names, for Settings' Face row. ``apply``: "" only says what fits;
-        "auto" (the person just chose the face) switches to the face's voice when they never chose a voice and it
-        is on disk; "accept" (they pressed the row's one control) uses the voice offered, fetched by Kokoro the
-        first time it speaks when it is not on disk. Nothing is ever downloaded by this call."""
+        """The voice the chosen face's pack names, for Settings' Face row. ``apply``: "" says what fits, and what the
+        daemon switched by itself when the face was set (_face_brings_its_voice); "auto" switches to the face's voice
+        when the person never chose a voice and it is on disk (the daemon now does this itself wherever face.pack
+        changes; kept for windows that still ask); "accept" (they pressed the row's one control) uses the voice
+        offered, fetched by Kokoro the first time it speaks when it is not on disk. Nothing is ever downloaded by
+        this call."""
         voice, hint, apply = params.get("voice", ""), params.get("hint", ""), params.get("apply", "")
         if not isinstance(voice, str) or not isinstance(hint, str) or apply not in {"", "auto", "accept"}:
             return {"status": "error", "message": 'face_voice takes voice, hint and apply ("", "auto" or "accept")'}
@@ -15890,6 +15971,8 @@ def handle_tool(tool_name, params):
 
         async with self._config_lock:
             plan = await self._face_voice_plan(voice, hint)
+            if apply != "accept" and (said := self._face_voice_just_switched(voice)):
+                return {"status": "ok", "switched": True, **plan.as_dict(), "voice": plan.voice, "say": said}
             settings = self.config.voice
             by_face = apply == "auto" and plan.action == "offer" and not settings.tts_voice_chosen
             by_person = apply == "accept" and plan.action in {"offer", "fetch"}
