@@ -129,6 +129,10 @@ AGAIN_ALTERNATES = {
     "empty": "The language model sent back nothing again. Try once more?",
 }
 UNCLEAR_OFFLINE = "Sorry, I didn't catch that. Could you say it again?"
+# A request to do something with a PIN, password or code said aloud (pilot.conversation.withheld): nothing runs.
+SECRET_NOT_USED = (
+    "I don't use a PIN, password or code said aloud, so I left it out. Type it in yourself where it's needed."
+)
 # Asked after Heliox pushed back on a costly step the person asked for and the reply asked nothing (debate).
 STILL_GO_AHEAD = "Do you still want me to go ahead?"
 # Said on a turn that gives way when every sentence the model wrote still pushed back (debate.pushes_back).
@@ -352,6 +356,7 @@ class TurnResult:
     route: Route | None = None
     # Heliox's reason against a small step it does anyway, said after the acknowledgement (pilot.conversation.debate).
     concern: str = ""
+    withheld: bool = False  # the words held a secret, taken out before anything else saw them (withheld)
     timings: dict[str, float] = field(default_factory=dict)
     trace: list[tuple[str, float]] = field(default_factory=list)  # (name, monotonic) stamps (pilot.conversation.trace)
     spoken: list[str] = field(default_factory=list)
@@ -600,6 +605,8 @@ class ConversationLayer:
             return False
         if len(prov.normalise(words).split()) < prov.MIN_WORDS:
             return False
+        if self.memory.kept_form(words) != words:
+            return False  # a secret said aloud: the turn itself takes it out before any model sees the words
         fixed = misheard_command(words, addressed=addressed)
         text = fixed if fixed is not None else words
         decided = route(text, conversation_open=self.memory.open)
@@ -798,6 +805,17 @@ class ConversationLayer:
 
     async def take(self, text: str, *, source: str = "voice", sink: Sink | None = None) -> TurnResult | None:
         """Handle one addressed utterance that no control or local handler took. None: the layer is off."""
+        result = await self._take(text, source=source, sink=sink)
+        if result is not None and result.withheld and not result.done:
+            # Asked to do something with a secret said aloud: nothing is handed over (the planner would get the
+            # words, and may run in the cloud). One fixed sentence says so.
+            logger.info("A request holding a secret was not handed over")
+            result.intent, result.quick, result.context = None, None, None
+            await self._say_one(result, SECRET_NOT_USED, self._clock())
+            result.done = True
+        return result
+
+    async def _take(self, text: str, *, source: str = "voice", sink: Sink | None = None) -> TurnResult | None:
         if not self._enabled():
             return None
         started = self._clock()
@@ -806,8 +824,14 @@ class ConversationLayer:
             if fixed is not None:
                 logger.info("Read %r, said right after the wake phrase, as the command %r", text, fixed)
                 text = fixed
+        # A secret said aloud (a PIN, a password, a card number): from here on the turn holds it only as
+        # "[left out: a PIN]". No model, store or planner gets it (pilot.conversation.withheld).
+        kept = self.memory.kept_form(text)
+        withheld = kept != text
+        text = kept
         decided = route(text, conversation_open=self.memory.open)
         result = TurnResult(done=False, planner_input=text, route=decided, _layer=self, source=source, _sink=sink)
+        result.withheld = withheld
         if not self.memory.open:
             self._saw_screen_text = False
             self.debate.reset()  # a disagreement belongs to its conversation

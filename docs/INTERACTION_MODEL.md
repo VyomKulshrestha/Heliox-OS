@@ -674,6 +674,24 @@ and removed from it and from long-term memory the next time a profile phrase is 
 me" says once how many things were dropped and of which kind, without repeating them. **Fakes only**
 (`tests/test_never_kept.py`, and the "not learned: things never kept" personal session).
 
+**A secret said aloud** (`pilot.conversation.withheld`). A sentence that names a secret of the never-kept kinds (a
+PIN, a password or passcode, a key or token, a door, alarm, security or recovery code, a login, a card or account
+number, a CVV, a sort code, an IBAN, a social security, passport or licence number) together with something that can
+be its value, or anything that looks like a key, token or card number on its own, is taken apart before anything else
+reads it. The value becomes `[left out: a PIN]`; the rest of the sentence stays, so "oh, and my bank PIN is 4471"
+reaches the model as "oh, and my bank PIN is [left out: a PIN]", with one context line saying what the marker means.
+That is all any model gets, one on this computer too: Heliox does nothing with a secret said aloud, and a talk model
+on this computer can hand a request to a planner in the cloud. The conversation keeps only that form, and takes the
+value out of anything added later (Heliox repeating it, the person saying the number again without naming it); the
+values are held in the conversation's memory only, to recognise them, and go with "new conversation". In the turn it
+is said, no code handler that keeps things (notes, to-dos, reminders, the profile) and no running task gets the
+words, an early request never starts on them, and the daemon's log line shows the left-out form. A request to do
+something with it ("type my PIN into the form"), routed as a request or written as an ACT line, is not handed over:
+"I don't use a PIN, password or code said aloud, so I left it out. Type it in yourself where it's needed."
+**Fakes only** for the request bodies (`tests/test_conversation_secrets.py`: Claude, OpenAI, OpenRouter, Gemini,
+Ollama and the model router, the exact body each would be sent). The listener's own transcript notices to the window
+are not changed by this.
+
 A correction replaces the old fact: "no, call me Sam", "actually, my name is Sam", "not Alex, Sam", and "it's Sam"
 said within ten minutes of giving a name all rename, and the greeting, the context lines and "what's my name" use the
 new name. "Stay quiet unless I ask" (also "be quiet", "don't interrupt me", "stop interrupting me", "no more interruptions",

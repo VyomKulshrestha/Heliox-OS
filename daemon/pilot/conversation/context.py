@@ -49,13 +49,26 @@ class ConversationMemory:
         self._turns: deque[Turn] = deque(maxlen=max_turns * 2)
         self._max_turns = max_turns
         self._clock = clock
+        # Secrets said in this conversation (pilot.conversation.withheld): held here only to take them out of anything
+        # added later. Never in a turn, never sent, gone with clear().
+        self._withheld: set[str] = set()
+
+    def kept_form(self, text: str) -> str:
+        """``text`` as this conversation may keep it and a model may read it: every secret taken out."""
+        from pilot.conversation.withheld import withhold, without_values
+
+        found = withhold(text)
+        if found is not None:
+            self._withheld.update(found.values)
+            text = found.text
+        return without_values(text, self._withheld) if self._withheld else text
 
     def add_user(self, text: str) -> None:
-        self._add(Turn("user", " ".join(text.split())[:TURN_CHARS], self._clock()))
+        self._add(Turn("user", " ".join(self.kept_form(text).split())[:TURN_CHARS], self._clock()))
 
     def add_heliox(self, text: str, *, cut_off: bool = False, source: str = "") -> None:
         """Something Heliox said. ``source="live"`` for a remark Heliox Live made on its own."""
-        clean = " ".join(text.split())[:TURN_CHARS]
+        clean = " ".join(self.kept_form(text).split())[:TURN_CHARS]
         if clean:
             self._add(Turn("assistant", clean, self._clock(), cut_off=cut_off, source=source))
 
@@ -66,6 +79,7 @@ class ConversationMemory:
 
     def clear(self) -> None:
         self._turns.clear()
+        self._withheld.clear()
 
     def snapshot(self) -> tuple[Turn, ...]:
         """The conversation now, to go back to if what follows is withdrawn."""
@@ -197,6 +211,12 @@ NOTHING_SAVED = (
     'say plainly you couldn\'t, and that they can say "remember that ..." or "call me ..." on its own, or use Settings.'
 )
 
+MARK_START = "[left out: "  # pilot.conversation.withheld.MARK_START
+LEFT_OUT = (
+    "Where their words show [left out: ...], they said a secret (a PIN, a password, a code or a number like that). "
+    "Heliox kept it on this computer and does not keep or use secrets said aloud. Never ask for it or guess it."
+)
+
 LENGTH_LINES = {
     "short": "They asked for short answers: at most about 12 words.",
     "detailed": "They asked for more detail: up to about 50 words is fine, still spoken, no lists.",
@@ -259,6 +279,8 @@ def assemble(
         sections.append("About the person: " + " ".join(profile))
     if text and SAVE_OR_CHANGE.search(text.strip()):
         sections.insert(1, NOTHING_SAVED)  # kept even when the block is tight: it goes right after the time
+    if MARK_START in text or any(MARK_START in turn.text for turn in memory.recent()):
+        sections.insert(1, LEFT_OUT)
     if stance:
         sections.insert(1, stance)  # a disagreement's state: kept even when the block is tight
     length = LENGTH_LINES.get(str(_safe(sources.answer_length, ""))) if personal else None
@@ -269,7 +291,7 @@ def assemble(
             continue  # goals, habits and profile lines matched to the words: about the person
         line = _without(_call_extra(extra, text), profile)
         if line:
-            sections.append(str(line))
+            sections.append(memory.kept_form(str(line)))  # a Live card quoting a secret said aloud: taken out too
     block = ""
     for section in sections:
         if len(block) + len(section) + 1 > budget:
@@ -319,7 +341,9 @@ def build_messages(
     screen: Any = _UNSET,
     stance: str = "",
 ) -> list[dict[str, str]]:
-    """Messages for one fast-model call: earlier turns, then the context and the new words as the last user turn."""
+    """Messages for one fast-model call: earlier turns, then the context and the new words as the last user turn.
+    A secret in the words never goes: the model gets them with it taken out (pilot.conversation.withheld)."""
+    text = memory.kept_form(text)
     block, history = assemble(sources, memory, budget=budget, screen=screen, text=text, stance=stance)
     final = f"[Context, not said by the person]\n{block}\n\n[The person said]\n{text.strip()}"
     if history and history[-1]["role"] == "user":

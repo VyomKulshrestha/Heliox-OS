@@ -16156,7 +16156,10 @@ def handle_tool(tool_name, params):
 
         trace.begin()  # where this turn's time goes (pilot.conversation.trace): times only
         trace.mark("words received")
-        logger.info("Voice command received: '%s'", command_text)
+        from pilot.conversation.withheld import withhold
+
+        logged = withhold(command_text)  # the daemon's log never holds a secret said aloud
+        logger.info("Voice command received: '%s'", logged.text if logged is not None else command_text)
         await self._reminder_heard()  # anything said to Heliox right after a reminder: it was heard
         from pilot.conversation import layer_for
 
@@ -16305,6 +16308,28 @@ def handle_tool(tool_name, params):
                     return  # waiting for the person's answer, or dropped: nothing runs
                 command_text = held.proceed
                 normalized_command = _normalize_spoken_phrase(command_text)
+
+        from pilot.conversation.withheld import withhold
+
+        secret = withhold(command_text)
+        if secret is not None:
+            # A PIN, password, code or card number said aloud: no handler that keeps things (notes, to-dos, the
+            # profile), no planner and no running task gets the words. The conversation layer takes the secret out
+            # and answers what is left; a request to do something with it is not handed over.
+            turn = await conversation.take(command_text) if not self._interactive_request_active else None
+            said = " ".join(turn.spoken) if turn is not None else ""
+            if turn is None or not turn.done:
+                from pilot.conversation.layer import SECRET_NOT_USED
+
+                said = SECRET_NOT_USED
+                await self._speak_voice_response(
+                    said, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-secret:{uuid.uuid4()}"
+                )
+            self._last_turn_kind = "answer"
+            await self._broadcast_notification(
+                "voice_result", {"command": secret.text, "status": "answered", "message": said}
+            )
+            return
 
         from pilot.conversation.followups import repeat_meaning
 
