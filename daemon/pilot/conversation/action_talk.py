@@ -153,6 +153,26 @@ def wont_sentence(request: str) -> str:
     return f"Okay, I won't {said[:1].lower() + said[1:]}."
 
 
+_CHANGE_LEAD = re.compile(
+    r"^(?:(?:no|actually|sorry|wait|rather|i mean|instead|then|ok|okay)[,\s]+)*"
+    r"(?:(?:make|change|switch|turn) (?:it|that|them) (?:to |into )?|(?:use|do|take|pick) |(?:let'?s )?go with )?",
+    re.IGNORECASE,
+)
+_FILLER = frozenset({"instead", "then", "please", "now", "rather", "actually", "no", "okay", "ok", "it", "that"})
+_CHANGE_TAIL = re.compile(r"(?:[,\s]+(?:instead|then|please|now|after all|rather))+$", re.IGNORECASE)
+
+
+def wont_change_sentence(change: str) -> str:
+    """A changed request dropped before it ran, said in a few words with what it was changed to, never the
+    person's filler read back: "Actually, make it the all draft instead" -> "Okay, I won't change it to the all
+    draft." Nothing named: "Okay, I won't change it." """
+    words = _CHANGE_TAIL.sub("", _CHANGE_LEAD.sub("", " ".join(str(change or "").split()).rstrip(".!?"))).split()
+    if all(word.casefold().strip(",") in _FILLER for word in words):
+        words = []  # nothing but filler ("instead"): nothing named
+    named = " ".join(_YOURS.get(word.casefold(), word) for word in words[:8])
+    return f"Okay, I won't change it to {named}." if named else "Okay, I won't change it."
+
+
 _UNVERIFIED = re.compile(
     r"\s*Note: \d+ action effects? (?:was|were) reported successful but not independently verified\.\s*$"
 )

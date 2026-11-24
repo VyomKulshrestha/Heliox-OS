@@ -580,18 +580,21 @@ claims an action ("I've opened...") is dropped, since the fast model cannot have
 
 Each turn the model gets, in this order, dropping from the end when the block passes about 1,400 characters:
 
-1. the time and day, on the 24-hour clock with the part of the day in words, so no model takes a morning for a
-   night in any locale ("Now: Tuesday 24 November 2026, 11:21 in the morning."; `context.clock_words`);
+1. the time and day the way a person says them, the twelve-hour clock with the part of the day in words, so no
+   model takes a morning for a night or says "seventeen-forty" ("Now: Tuesday 24 November 2026, 5:40 in the
+   afternoon."; "noon", "midnight"; `context.clock_words`);
 2. what Heliox is doing: a running task and its phase, an approval waiting (with the reminder that voice cannot
    approve), the last task result;
    then what is due on the to-do list and reminders and bears on the words (`pilot.conversation.due`): an item that
    shares a word of four letters or more with what was just said, whatever its date; otherwise, when the words speak
    of a time, a reminder in the next 24 hours or a to-do whose words name a time in the next 36 hours. A to-do's time
    is read as people say it ("by 9 tomorrow morning", "four this afternoon", "half past eight tonight", "noon"), and
-   a to-do with a time and no day is given as "by 09:00 in the morning, day not said", never as tomorrow. A to-do
+   a to-do with a time and no day is given as "by 9:00 in the morning, day not said (never give it a day; ask which
+   day if it matters)", and a day it never carried that the person never said is taken out of the reply
+   (`due.without_invented_day`). Timers, reminders that have gone off and done to-dos are never given. A to-do
    added by voice keeps all of what was said about when ("by nine on Friday morning"); at
    most two of each, in one line of at most 300 characters. A model on this computer gets each item in its words; a cloud model gets only
-   the words the person has just said themselves and the time ("a to-do about "report", due tomorrow at 09:00 in the morning"), or
+   the words the person has just said themselves and the time ("a to-do about "report", due tomorrow at 9:00 in the morning"), or
    only that something is due then, since to-dos and reminders read out in code stay on this computer; with
    `share_profile` off a cloud model gets nothing from here;
 3. the focused app (see the table below), given as context the model mentions only when the person asks or it bears

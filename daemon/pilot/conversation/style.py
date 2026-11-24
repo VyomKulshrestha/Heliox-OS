@@ -23,7 +23,12 @@ Never say you can't.
 character by character.
 - About the person's own things (their files, backups, dates, plans, people), name only what you were told in \
 this conversation or its context; if you need one you were not given, ask plainly, never offering a guess as a \
-choice. General knowledge you answer plainly, with no caveat about how current it is.
+choice. General knowledge you answer plainly: no "as of", "recent estimates", "from memory" or "may be out \
+of date", unless they ask how sure you are.
+- Use only the times and days you were given. Never assume when they will start, or that something happens on \
+a day they did not name.
+- Asked for an idea or a suggestion (what to cook, what to watch), give one first; at most one short question \
+after it.
 - When Heliox Live spoke up on its own (marked in the conversation), it was pointing out something in what \
 the person wrote or said. If they ask why, explain that evidence; Heliox did not make the mistake.
 - Answer in the language the person spoke to you in, even when their words reached you in Latin letters or mixed with English; keep names as they are.
@@ -208,6 +213,48 @@ def say_numbers(text: str) -> str:
     out = _GROUPED.sub(grouped, out)
     out = _ZERO_CENTS.sub(lambda m: cardinal_words(int(m.group(1))), out)
     return _PERCENT_NUMBER.sub(lambda m: f"{number_words(m.group(1))} percent", out)
+
+
+# A trailing hedge on a plain fact ("..., as of recent estimates.", "..., though that's from memory and may be a bit
+# out of date.", "..., and a bit over that in recent years."): the person asked for the fact, not for how current it
+# is. Only a clause at the end of the sentence, after a comma, a dash or "and"/"but"/"though".
+_HEDGE_TAIL = re.compile(
+    r"(?:\s*[,;\u2013\u2014-]\s*|\s+)(?:(?:and|but|though|although)\s+)?(?:"
+    r"(?:as of|according to|based on) [^,.;!?]*"
+    r"|(?:that'?s|this is|it'?s|that is) (?:from memory|approximate|an estimate|a rough figure)[^.;!?]*"
+    r"|(?:that|this|it|the figure|those figures)? ?(?:may|might|could) (?:be (?:a bit |slightly |somewhat )?out of date"
+    r"|have changed|be (?:a little |a bit )?(?:off|higher|lower))[^.;!?]*"
+    r"|(?:the )?(?:recent|latest|most recent) (?:estimates?|figures?|count|census)[^.;!?]*"
+    r"|(?:a bit|slightly|somewhat|a little) (?:over|under|more|less|higher|lower)(?: than)? (?:that|this)[^.;!?]*"
+    r"|in recent years|give or take[^.;!?]*|at last count|last i (?:checked|heard)"
+    r"|if i (?:remember|recall)(?: (?:right|correctly))?|from what i (?:know|remember)|roughly speaking"
+    r")\s*(?=[.!?]?$)",
+    re.IGNORECASE,
+)
+_ASKS_HOW_SURE = re.compile(
+    r"\b(?:how sure|exactly|precise(?:ly)?|latest|current(?:ly)?|right now|today|this year|still|these days|up to date)\b",
+    re.IGNORECASE,
+)
+
+
+def hedge_only(piece: str, asked: str) -> bool:
+    """A piece of a reply that is nothing but a hedge (", as of recent estimates."): the sentence it ends was cut at
+    its comma for the voice, so the tail arrives on its own."""
+    if _ASKS_HOW_SURE.search(asked or ""):
+        return False
+    return bool(_HEDGE_TAIL.fullmatch(" " + " ".join(piece.split()).rstrip(".!?")))
+
+
+def without_hedge_tail(sentence: str, asked: str) -> str:
+    """A short factual answer without a trailing hedge clause, unless the person asked how current or sure it is."""
+    whole = sentence.rstrip()
+    if _ASKS_HOW_SURE.search(asked or "") or whole[-1:] not in (".", "!", "?"):
+        return sentence  # a piece cut at a comma goes on: only a whole sentence's end is a tail
+    kept = _HEDGE_TAIL.sub("", whole)
+    if kept == whole:
+        return sentence
+    kept = kept.rstrip(" ,;-.!?")
+    return kept + whole[-1] if len(kept.split()) >= 3 else sentence
 
 
 def clean_for_speech(text: str, *, first: bool = False) -> str:

@@ -433,7 +433,7 @@ def test_context_carries_turns_task_profile_time_and_never_the_window_title():
     assert "rest was not said" in messages[1]["content"]
     final = messages[-1]["content"]
     for expected in (
-        "Thursday 12 November 2026, 15:04",
+        "Thursday 12 November 2026, 3:04 in the afternoon",
         "Call them Sam.",
         "Voice cannot approve",
         "VS Code",

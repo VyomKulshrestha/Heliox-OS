@@ -45,6 +45,15 @@ CLEAR_DONE_REQUEST = re.compile(
 )
 
 
+# How a recogniser writes "to-do": "my2do list", "2do", "2-do" (Whisper, spoken run of 24 November).
+_SPELLED = re.compile(r"\b(my|the)?\s?2[ -]?do(s)?\b", re.IGNORECASE)
+
+
+def spelled_out(text: str) -> str:
+    """The words with a recogniser's spelling of \"to-do\" written out (\"my2do list\" -> \"my to-do list\")."""
+    return _SPELLED.sub(lambda m: f"{(m[1] + ' ') if m[1] else ''}to-do{m[2] or ''}", text)
+
+
 def _normalize(text: str) -> str:
     return " ".join(re.sub(r"[^\w\s]", " ", text.casefold()).split())
 
@@ -132,6 +141,7 @@ class TodoStore:
 
     def answer(self, text: str) -> str | None:
         """Add, read, finish or remove to-dos from a sentence; None when it is not about the list."""
+        text = spelled_out(text)
         normalized = _normalize(text)
         if READ_REQUEST.match(normalized):
             items = self.open_items()

@@ -181,7 +181,8 @@ def progress_sentence(phase: str, message: str) -> str:
 
 
 # After the approval sentence, the phases that mean something changed: the approved plan runs.
-MOVED_ON_AFTER_APPROVAL = frozenset({"acting", "verifying", "correcting"})
+# ("correcting" is not one: a change during an approval already has its own line, handover.CHANGING.)
+MOVED_ON_AFTER_APPROVAL = frozenset({"acting", "verifying"})
 APPROVAL_SENTENCE = "This one needs your approval. It's on the screen; press Approve if you want it to go ahead."
 # The person changed a request while its dialog was open: that dialog was closed (never approved), and then a new one.
 CHANGING = "Okay, I've closed that one and I'm changing it."

@@ -157,7 +157,7 @@ async def test_the_prompt_asks_for_a_short_version_and_leaves_general_knowledge_
     await layer.take("Tell me the story of how the Eiffel Tower was built.")
     system = json.dumps(sent[0]["system"])
     assert "give a short version in those few words" in system and "Never say you can't" in system
-    assert "General knowledge you answer plainly, with no caveat about how current it is" in system
+    assert "General knowledge you answer plainly: no" in system
     assert "Name a file, date, number, person or fact only when" not in system
 
 

@@ -73,7 +73,7 @@ async def test_a_spoken_to_do_with_its_time_in_words_is_grounds_for_a_morning_fo
     assert say(rule, clock, DECISION, 1.0).act  # said back without the wake phrase, and taken
     voice_turn_addressed.set("follow_up")  # a quiet room: the follow-up keeps its reach
     await server._voice_command_dispatch(DECISION)
-    assert 'a to-do about \\"report\\", due tomorrow at 09:00 in the morning' in sent[-1]
+    assert 'a to-do about \\"report\\", due tomorrow at 9:00 in the morning' in sent[-1]
 
 
 # ── (b2) "No." while an approval waits, after a costly request that got its concern ──

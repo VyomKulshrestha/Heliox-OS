@@ -209,12 +209,50 @@ def _when(moment: datetime, now: datetime, *, day_known: bool = True) -> str:
     from pilot.conversation.context import clock_words
 
     if not day_known:
-        return f"by {clock_words(moment)}, day not said"  # never a day the to-do does not carry
+        # Never a day the to-do does not carry, and the model is told what to do about it.
+        return f"by {clock_words(moment)}, day not said (never give it a day; ask which day if it matters)"
     days = (moment.date() - now.date()).days
     day = "today" if days == 0 else "tomorrow" if days == 1 else moment.strftime("%A %d %B")
     if moment.hour == 23 and moment.minute == 59:
         return day
     return f"{day} at {clock_words(moment)}"
+
+
+_TIMER_TEXT = re.compile(r"^your .+ timer is done$", re.IGNORECASE)
+
+
+def _not_grounds(item: dict[str, Any]) -> bool:
+    """A timer (a countdown the person set, not a thing to do), or a reminder that has already gone off and waits
+    only to be shown, or was dismissed: never grounds for the conversation."""
+    text = " ".join(str(item.get("text") or "").split())
+    return (
+        item.get("kind") == "timer"
+        or bool(_TIMER_TEXT.match(text))
+        or bool(item.get("pending") or item.get("said_at") or item.get("dismissed"))
+    )
+
+
+_DAY_PHRASE = re.compile(
+    r"\s*\b(?:(?:on|by|for|this|next)\s+)?(?:today|tonight|tomorrow(?:'s)?|this (?:morning|afternoon|evening)"
+    r"|(?:mon|tues|wednes|thurs|fri|satur|sun)day)(?:\s+(?:morning|afternoon|evening|night))?\b",
+    re.IGNORECASE,
+)
+
+
+def without_invented_day(sentence: str, given: str) -> str:
+    """A reply sentence without a day the to-do never carried and the person never said ("Your report is due at nine
+    tomorrow morning" -> "Your report is due at nine"), for a turn whose grounds hold a to-do with a time and no day.
+    A day the person said ("I'll watch it tonight") stays."""
+    said = given.casefold()
+
+    def keep(match: re.Match[str]) -> str:
+        words = match.group(0).strip().casefold()
+        core = re.sub(r"^(?:on|by|for|this|next)\s+", "", words).removesuffix("'s")
+        core = re.sub(r"\s+(?:morning|afternoon|evening|night)$", "", core)
+        return match.group(0) if core in said else ""
+
+    out = _DAY_PHRASE.sub(keep, sentence)
+    return re.sub(r"\s+([,.!?])", r"\1", " ".join(out.split()))
 
 
 def _never_sent(text: str) -> bool:
@@ -251,7 +289,7 @@ def due_line(
             due = datetime.fromtimestamp(float(item.get("due")))
         except (TypeError, ValueError, OSError):
             continue
-        if not text or _never_sent(text) or due < now:
+        if not text or _never_sent(text) or due < now or _not_grounds(item):
             continue
         if asked & _words(text) or (timely and due <= now + timedelta(hours=REMINDER_HOURS)):
             reminders_picked.append((due, "reminder", item))

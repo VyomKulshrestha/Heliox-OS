@@ -49,7 +49,7 @@ async def test_a_weekday_to_do_is_grounds_with_its_own_day_for_a_follow_up_days_
     voice_turn_addressed.set("follow_up")
     await server._voice_command_dispatch(DECISION)
     body = sent[-1]
-    assert "due Friday 27 November at 09:00 in the morning" in body
+    assert "due Friday 27 November at 9:00 in the morning" in body
     grounds = body[body.index("to-do about") :][:160]
     assert "tomorrow" not in grounds and "today" not in grounds  # never a day the to-do does not carry
 

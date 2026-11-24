@@ -314,4 +314,4 @@ def test_the_model_is_told_the_sessions_time_not_the_machines():
     record, failures = asyncio.run(run_session(session, "claude"))
     assert failures == [], failures
     sent = record.requests[0][0]
-    assert "Thursday 12 November 2026, 09:00" in sent, sent[:400]
+    assert "Thursday 12 November 2026, 9:00 in the morning" in sent, sent[:400]

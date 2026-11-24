@@ -45,7 +45,7 @@ def test_the_spoken_to_do_is_grounds_at_every_hour(hour, minute):
     now = datetime(2026, 11, 24, hour, minute)
     assert todo_due(SPOKEN_TODO["text"], now) == datetime(2026, 11, 25, 9, 0)
     line = due_line(DECISION, todos=[SPOKEN_TODO], reminders=[], now=now, local=False)
-    assert 'a to-do about "report", due tomorrow at 09:00 in the morning' in line
+    assert 'a to-do about "report", due tomorrow at 9:00 in the morning' in line
 
 
 def test_a_shared_word_counts_whatever_the_date():
@@ -62,14 +62,14 @@ def test_a_shared_word_counts_whatever_the_date():
 @pytest.mark.parametrize(
     ("hour", "minute", "said"),
     [
-        (8, 5, "08:05 in the morning"),
+        (8, 5, "8:05 in the morning"),
         (11, 21, "11:21 in the morning"),
-        (12, 0, "12:00, noon"),
-        (15, 10, "15:10 in the afternoon"),
-        (19, 45, "19:45 in the evening"),
-        (23, 40, "23:40 at night"),
-        (0, 0, "00:00, midnight"),
-        (2, 15, "02:15 at night"),
+        (12, 0, "noon"),
+        (15, 10, "3:10 in the afternoon"),
+        (19, 45, "7:45 in the evening"),
+        (23, 40, "11:40 at night"),
+        (0, 0, "midnight"),
+        (2, 15, "2:15 at night"),
     ],
 )
 def test_the_time_in_front_of_the_model_says_the_part_of_the_day(hour, minute, said):

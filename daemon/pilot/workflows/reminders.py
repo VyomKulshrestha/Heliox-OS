@@ -498,7 +498,7 @@ class ReminderStore:
         tmp.write_text(json.dumps(items, indent=1, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, self._path)
 
-    def add(self, due: float, text: str, repeat: dict[str, Any] | None = None) -> dict[str, Any]:
+    def add(self, due: float, text: str, repeat: dict[str, Any] | None = None, kind: str = "") -> dict[str, Any]:
         text = " ".join(str(text).split())
         if not 1 <= len(text) <= MAX_TEXT:
             raise ValueError(f"A reminder must be 1 to {MAX_TEXT} characters")
@@ -510,6 +510,8 @@ class ReminderStore:
         entry = {"id": uuid.uuid4().hex[:10], "due": float(due), "text": text, "created_at": self._clock()}
         if repeat:
             entry["repeat"] = repeat
+        if kind:
+            entry["kind"] = kind  # "timer": a countdown, never grounds for the conversation
         items.append(entry)
         self._save(items + self.held())
         return entry
@@ -673,7 +675,7 @@ class ReminderStore:
             label = f"{amount} {unit.rstrip('s') if amount == 1 else unit if unit.endswith('s') else unit + 's'}"
             label = label.replace("min ", "minute ").replace("mins", "minutes").replace("secs", "seconds")
             try:
-                self.add(now.timestamp() + seconds, f"Your {label} timer is done")
+                self.add(now.timestamp() + seconds, f"Your {label} timer is done", kind="timer")
             except ValueError as exc:
                 return str(exc)
             return f"Timer set for {label}."

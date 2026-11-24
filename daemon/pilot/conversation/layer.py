@@ -47,6 +47,7 @@ from pilot.conversation.context import (
     ConversationMemory,
     build_messages,
 )
+from pilot.conversation.due import without_invented_day
 from pilot.conversation.fast_model import FastModel, FastModelUnavailable, stream_with_retry
 from pilot.conversation.handover import (
     HandoverIntent,
@@ -75,8 +76,10 @@ from pilot.conversation.style import (
     claims_an_action,
     clean_for_speech,
     drop_action_claims,
+    hedge_only,
     looks_like_act,
     parse_act,
+    without_hedge_tail,
 )
 from pilot.timeouts import bounded
 
@@ -1120,6 +1123,15 @@ class ConversationLayer:
         """Speak the model's answer as it streams (``adopted``: a provisional answer taken over, already running)."""
         typed = result.source == "typed"
         sink = result._sink or self._sink
+        # The grounds hold a to-do with a time and no day: a day it never carried, and the person never said, is not
+        # said (due.without_invented_day). What the person said in this conversation counts as said.
+        sent_context = str(messages[-1].get("content", "")) if messages else ""
+        no_day_item = "day not said" in sent_context
+        said_before = " ".join([text, *(t.text for t in self.memory.recent() if t.role == "user")])
+        # A question asking for a plain fact: a hedge at the end of a short answer is not said (style.without_hedge_tail).
+        asked_a_fact = decided.kind is TurnKind.CONVERSATION and (
+            ends_with_question(text) or bool(_QUESTION_WORDS.match(normalize(text)))
+        )
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         act_text: list[str] = []
         failure: list[str] = []
@@ -1324,6 +1336,12 @@ class ConversationLayer:
                 # Spoken text is cleaned for the ear; typed text keeps its markdown for the chat view.
                 clean = drop_action_claims(sentence) if typed else clean_for_speech(sentence, first=first)
                 clean = _without_embedded_offer(clean)  # "Do you have a backup, or should I look ...?"
+                if not typed and no_day_item:
+                    clean = without_invented_day(clean, said_before)  # "due by 9, day not said" stays dayless
+                if not typed and asked_a_fact and len(said) < 2 and continues and hedge_only(clean, text):
+                    continue  # the sentence's hedge, cut off at its comma: not said
+                if not typed and asked_a_fact and len(said) < 2:
+                    clean = without_hedge_tail(clean, text)  # "..., as of recent estimates."
                 if not typed and result.own_plan and dbt.proposes_heliox_act(clean):
                     # Their own plan: they asked Heliox to do nothing ("Could we free up space another way?").
                     logger.info("Dropped a proposal for Heliox to act on the person's own plan: %r", clean)

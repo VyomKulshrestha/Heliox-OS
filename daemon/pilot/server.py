@@ -3180,16 +3180,13 @@ class PilotServer:
         # Turned to the listener's side in a few words ("I won't delete your only copy of the thesis."), not read
         # back word for word ("...: delete my only copy of the thesis for me."). It was changed before it was
         # dropped: what is dropped is the change.
-        from pilot.conversation.action_talk import wont_sentence
+        from pilot.conversation.action_talk import wont_change_sentence, wont_sentence
 
-        said = wont_sentence(change or words)
-        if said:
-            return said
         if change:
-            # A change that is not a request of its own ("the screenshots"): which one was dropped still matters.
-            short = " ".join(change.split()[:10])
-            return f"Okay, I've dropped the changed one: {short[:1].lower() + short[1:]}. Nothing ran."
-        return "Okay, I've dropped that. Nothing ran."
+            # Which one was dropped still matters, said as what it was changed to, without "make it" or "instead":
+            # "Okay, I won't change it to the all draft."
+            return wont_change_sentence(change)
+        return wont_sentence(words) or "Okay, I've dropped that. Nothing ran."
 
     def provisional_voice_turn(self, turn_id: str, words: str, addressed: str) -> bool:
         """The listener has words for an utterance already known to be addressed to Heliox ("wake" on the same proof

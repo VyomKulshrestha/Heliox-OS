@@ -163,23 +163,23 @@ def _safe(call: Callable[[], Any], default: Any) -> Any:
 
 
 def clock_words(moment: Any) -> str:
-    """A time no reader can take for its twelve-hour twin, in every locale: the 24-hour clock with the part of the day
-    in words ("11:21 in the morning", "23:40 at night", "12:00, noon", "00:00, midnight")."""
+    """A time the way a person says it and no reader can take for another: the twelve-hour clock with the part of
+    the day in words ("5:40 in the afternoon", "11:21 in the morning", "12:30 at night", "noon", "midnight"). A model
+    given "17:40" said "seventeen-forty" aloud; given "11:21" alone it took a morning for a night."""
     hour, minute = moment.hour, moment.minute
-    stamp = f"{hour:02d}:{minute:02d}"
     if (hour, minute) == (0, 0):
-        return f"{stamp}, midnight"
+        return "midnight"
     if (hour, minute) == (12, 0):
-        return f"{stamp}, noon"
+        return "noon"
     if 5 <= hour < 12:
         part = "in the morning"
-    elif 12 <= hour < 17:
+    elif 12 <= hour < 18:
         part = "in the afternoon"
-    elif 17 <= hour < 21:
+    elif 18 <= hour < 21:
         part = "in the evening"
     else:
         part = "at night"
-    return f"{stamp} {part}"
+    return f"{hour % 12 or 12}:{minute:02d} {part}"
 
 
 def describe_task(state: dict[str, Any]) -> list[str]:

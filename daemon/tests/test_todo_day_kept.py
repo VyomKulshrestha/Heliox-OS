@@ -42,8 +42,8 @@ def test_the_grounds_never_state_a_day_the_to_do_does_not_carry():
     decision = "I'm going to watch a series tonight and do the report in the morning"
     no_day = {"text": "finish the quarterly report by 9", "done": False}
     line = due_line(decision, todos=[no_day], reminders=[], now=NOW, local=False)
-    assert "by 09:00 in the morning, day not said" in line and "tomorrow" not in line and "today" not in line
+    assert "by 9:00 in the morning, day not said" in line and "tomorrow" not in line and "today" not in line
     friday = {"text": "finish the quarterly report by nine on Friday morning", "done": False}
-    assert "due Friday 27 November at 09:00 in the morning" in due_line(
+    assert "due Friday 27 November at 9:00 in the morning" in due_line(
         decision, todos=[friday], reminders=[], now=NOW, local=False
     )

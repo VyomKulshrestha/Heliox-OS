@@ -35,12 +35,12 @@ def test_a_to_do_names_its_own_time():
 
 def test_a_model_on_this_computer_gets_the_to_do_in_its_words():
     line = due_line(DECISION, todos=[REPORT], reminders=[], now=NOW, local=True)
-    assert REPORT["text"] in line and "due tomorrow at 09:00" in line
+    assert REPORT["text"] in line and "due tomorrow at 9:00 in the morning" in line
 
 
 def test_a_cloud_model_gets_only_the_words_the_person_just_said_and_the_time():
     line = due_line(DECISION, todos=[REPORT], reminders=[], now=NOW, local=False)
-    assert 'a to-do about "report", due tomorrow at 09:00' in line
+    assert 'a to-do about "report", due tomorrow at 9:00 in the morning' in line
     assert "quarterly" not in line and "four hours" not in line
 
 
@@ -51,7 +51,7 @@ def test_only_what_bears_on_the_words():
     call = _reminder("call mum", datetime(2026, 11, 24, 20, 0))
     assert "call mum" in due_line("I'll go to the gym tonight", todos=[], reminders=[call], now=NOW, local=True)
     cloud = due_line("I'll go to the gym tonight", todos=[], reminders=[call], now=NOW, local=False)
-    assert "a reminder, due today at 20:00" in cloud and "mum" not in cloud
+    assert "a reminder, due today at 8:00 in the evening" in cloud and "mum" not in cloud
     assert due_line("why is the sky blue?", todos=[], reminders=[call], now=NOW, local=True) == ""
 
 
@@ -129,7 +129,7 @@ async def _say(server: PilotServer, words: str) -> None:
 
 
 @pytest.mark.parametrize(("provider", "share", "expected"), [
-    ("claude", "auto", 'a to-do about \\"report\\", due tomorrow at 09:00'),
+    ("claude", "auto", 'a to-do about \\"report\\", due tomorrow at 9:00 in the morning'),
     ("ollama", "auto", "four hours of work left"),
     ("claude", "off", None),
 ])  # fmt: skip
