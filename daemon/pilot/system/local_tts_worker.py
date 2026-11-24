@@ -743,11 +743,12 @@ class SpeechStore:
         return path.stat().st_size if isinstance(path, Path) and path.is_file() else 0
 
     @staticmethod
-    def _write(audio: Any, target: Path) -> None:
+    def _write(audio: Any, target: Path) -> bool:
         """Keep ``audio`` (a WAV file, or a Piece with samples in memory) as the WAV ``target``, with the phoneme timing
         that came with it beside it (speech_notices.timing_path, already shifted for the trim), so a kept piece gives
         the face the same mouth timeline as a freshly made one. Audio without timing keeps none (the face then moves by
-        its loudness, as before)."""
+        its loudness, as before). False, with nothing written, for samples in memory when soundfile (an optional
+        audio package) is not installed: the piece is simply not kept, as trim_silence leaves a file as made."""
         import shutil
 
         from pilot.system import speech_notices
@@ -760,15 +761,18 @@ class SpeechStore:
             shutil.copyfile(source, target)
             if timing is None and source is not None and speech_notices.timing_path(source).is_file():
                 shutil.copyfile(speech_notices.timing_path(source), kept_timing)
-                return
+                return True
         else:
-            import soundfile
-
+            try:
+                import soundfile
+            except ImportError:
+                return False
             soundfile.write(str(target), samples, int(audio.rate))
         if timing:
             kept_timing.write_text(json.dumps(timing, ensure_ascii=False), encoding="utf-8")
         else:
             kept_timing.unlink(missing_ok=True)
+        return True
 
     def said(self, text: str, signature: str, audio: Any) -> bool:
         """``text`` was just spoken from ``audio`` (made for a reply: a WAV, or a Piece with its samples). Counts it,
@@ -784,8 +788,7 @@ class SpeechStore:
         if entry["count"] >= HEAD_CACHE_AFTER and not entry["kept"]:
             try:
                 self.folder.mkdir(parents=True, exist_ok=True)
-                self._write(audio, self.folder / f"{key}.wav")
-                entry["kept"] = kept = True
+                entry["kept"] = kept = self._write(audio, self.folder / f"{key}.wav")
             except Exception:
                 logger.debug("Could not keep a head's audio", exc_info=True)
         self._prune()
@@ -821,7 +824,8 @@ class SpeechStore:
         key = self.key(text, signature)
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
-            self._write(audio, self.folder / f"{key}.wav")
+            if not self._write(audio, self.folder / f"{key}.wav"):
+                return False  # no way to write it here: nothing kept
         except Exception:
             logger.debug("Could not keep a fixed sentence's audio", exc_info=True)
             return False
@@ -850,6 +854,8 @@ class SpeechStore:
             except Exception:
                 logger.debug("Could not cut a kept hum's quiet tail", exc_info=True)
                 continue
+            if kept is None and path.is_file():
+                continue  # not read (soundfile is not installed): left as it is, and cut once it can be
             if kept is not None:
                 speech_notices.shift_timing(path, kept[0], kept[1])
                 trimmed += 1
