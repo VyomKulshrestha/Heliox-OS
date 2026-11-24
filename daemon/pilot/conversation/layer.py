@@ -40,7 +40,13 @@ from pilot.conversation.acknowledge import (
     wants_acknowledgement,
 )
 from pilot.conversation.action_talk import needs_approval_first, result_sentence, said_again
-from pilot.conversation.context import SAVE_OR_CHANGE, ContextSources, ConversationMemory, build_messages
+from pilot.conversation.context import (
+    MARK_START,
+    SAVE_OR_CHANGE,
+    ContextSources,
+    ConversationMemory,
+    build_messages,
+)
 from pilot.conversation.fast_model import FastModel, FastModelUnavailable, stream_with_retry
 from pilot.conversation.handover import (
     HandoverIntent,
@@ -810,6 +816,9 @@ class ConversationLayer:
         """The "new conversation" call: earlier turns no longer frame the next question."""
         self.interrupt()
         self.memory.clear()
+        from pilot.conversation.withheld import forget_recent
+
+        forget_recent()  # values taken out where the words began are no longer looked for either
         self.debate.reset()
         self._pending_step = None
         self._sorry_said = False
@@ -840,7 +849,7 @@ class ConversationLayer:
         # A secret said aloud (a PIN, a password, a card number): from here on the turn holds it only as
         # "[left out: a PIN]". No model, store or planner gets it (pilot.conversation.withheld).
         kept = self.memory.kept_form(text)
-        withheld = kept != text
+        withheld = kept != text or MARK_START in kept  # also when the listener took it out where the words began
         text = kept
         decided = route(text, conversation_open=self.memory.open)
         result = TurnResult(done=False, planner_input=text, route=decided, _layer=self, source=source, _sink=sink)

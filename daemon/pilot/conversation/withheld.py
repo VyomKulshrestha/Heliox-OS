@@ -44,7 +44,12 @@ _NUMBER_WORD = (
 _NUMBER_WORDS = re.compile(rf"\b{_NUMBER_WORD}(?:[\s-]+{_NUMBER_WORD}){{2,}}\b", re.I)
 # "my wifi password is swordfish": the one word after the secret's name and "is", when it ends the clause and is not
 # an ordinary word ("my password is wrong", "my PIN is on a card").
-_AFTER_IS = re.compile(r"\b(?:is|was|=|:)\s+(?P<value>[^\s,;.!?]+)(?=\s*(?:$|[,;.!?]|\s+(?:and|but|so|then)\b))", re.I)
+# Up to three words ("hunter two", "blue horse seven") when they end the clause.
+_AFTER_IS = re.compile(
+    r"\b(?:is|was|=|:)\s+(?P<value>[^\s,;.!?]+(?:\s+[^\s,;.!?]+){0,2}?)"
+    r"(?=\s*(?:$|[,;.!?]|\s+(?:and|but|so|then|don'?t|do not)\b))",
+    re.IGNORECASE,
+)
 _ORDINARY = frozenset(
     [
         "wrong",
@@ -178,7 +183,7 @@ def _values(text: str, named: bool) -> list[tuple[int, int]]:
         spans += [match.span() for match in _NUMBER_WORDS.finditer(text)]
         for match in _AFTER_IS.finditer(text):
             value = match.group("value")
-            if value.casefold() not in _ORDINARY and not value.startswith(MARK_START):
+            if value.split()[0].casefold() not in _ORDINARY and not value.startswith(MARK_START):
                 spans.append(match.span("value"))
     return spans
 
@@ -228,4 +233,49 @@ def holds_secret(text: str) -> bool:
     return withhold(text) is not None
 
 
-__all__ = ["MARK_START", "Withheld", "holds_secret", "withhold", "without_values"]
+def holds_left_out(text: str) -> bool:
+    """Words a secret was already taken out of (``left_out`` ran on them where they were first written)."""
+    return MARK_START in (text or "")
+
+
+# Values taken out at the first point the words existed, held in this process's memory for RECENT_SECONDS so the same
+# number said again on its own ("was it 4471?") is taken out too. Never written anywhere.
+RECENT_SECONDS = 600.0
+_recent: dict[str, float] = {}
+
+
+def left_out(text: str, *, now: float | None = None) -> str:
+    """The words as everything after the recogniser (or a typed box, or a phone) may see them: each secret replaced by
+    "[left out: a PIN]", and any value taken out in the last RECENT_SECONDS too. Called once, where the words first
+    exist, so logs, notices, stores, Live and every model read only this form."""
+    import time
+
+    if not text:
+        return text
+    moment = time.monotonic() if now is None else now
+    for value, at in list(_recent.items()):
+        if moment - at > RECENT_SECONDS:
+            _recent.pop(value, None)
+    found = withhold(text)
+    if found is not None:
+        for value in found.values:
+            _recent[value] = moment
+        text = found.text
+    return without_values(text, set(_recent)) if _recent else text
+
+
+def forget_recent() -> None:
+    """A new conversation: values taken out earlier are no longer looked for."""
+    _recent.clear()
+
+
+__all__ = [
+    "MARK_START",
+    "Withheld",
+    "forget_recent",
+    "holds_left_out",
+    "holds_secret",
+    "left_out",
+    "withhold",
+    "without_values",
+]

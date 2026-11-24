@@ -3414,6 +3414,9 @@ class PilotServer:
 
     async def _handle_execute(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Run one interactive request while exposing an out-of-band control slot."""
+        params, kept_here = await self._secret_left_out(params, ws)
+        if kept_here is not None:
+            return kept_here
         requested_task_id = str(params.get("task_id") or uuid.uuid4())
         if self._interactive_request_active:
             return {
@@ -3448,6 +3451,50 @@ class PilotServer:
         finally:
             self._interactive_request_active = False
             self._start_queued_execute_worker()
+
+    async def _secret_left_out(self, params: dict[str, Any], ws: Any) -> tuple[dict[str, Any], dict | None]:
+        """A request whose words hold a secret (pilot.conversation.withheld), before anything stores or sends them.
+
+        The words go on as "[left out: a password]": the task store, the history, the code handlers, Live and every
+        model see only that. One exception, for a typed message: when the person asked one of the stores that keep
+        things on this computer to keep it ("take a note: the wifi password is ...", "add ... to my list", "remind
+        me ..."), that store keeps it as typed, and the reply says so with the secret left out; nothing else sees
+        it. A secret merely mentioned is left out everywhere. Returns the request to go on with and, when a store
+        kept it, the reply that ends it."""
+        from pilot.conversation.adapters import TYPED_SOURCES
+        from pilot.conversation.withheld import left_out, withhold
+
+        text = params.get("input")
+        if not isinstance(text, str) or not text.strip():
+            return params, None
+        found = withhold(text)
+        if found is None:
+            return params, None
+        if str(params.get("source") or "text").strip().lower() in TYPED_SOURCES:
+            for store in (self._notes, self._todos, self._reminders):
+                if store is None:
+                    continue
+                try:
+                    answer = await store.answer_async(text)
+                except Exception:
+                    logger.warning("A store could not keep the typed note", exc_info=True)
+                    continue
+                if answer is None:
+                    continue
+                said = left_out(answer)
+                if ws is not None:
+                    with contextlib.suppress(Exception):
+                        await ws.send(_notification("conversation_response", {"explanation": said}))
+                logger.info("A typed request holding a secret was kept on this computer, as asked (%s)", found.kind)
+                return params, {
+                    "status": "success",
+                    "conversational": True,
+                    "dry_run": False,
+                    "results": [],
+                    "message": said,
+                    "explanation": said,
+                }
+        return {**params, "input": left_out(text)}, None
 
     async def _handle_execute_reserved(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         requested_task_id = str(params.get("task_id") or uuid.uuid4())
@@ -15794,7 +15841,10 @@ def handle_tool(tool_name, params):
     async def _voice_partial(self, text: str) -> None:
         """A live caption of the words so far, while the person is still talking (streaming engine)."""
         self._prewarm_voice()  # load the voice while they talk, so the reply is not silent
-        await self._broadcast_notification("voice_partial", {"text": text})
+        from pilot.conversation.withheld import left_out
+
+        # The caption too shows a secret said aloud only as "[left out: a PIN]"; captions are never logged or kept.
+        await self._broadcast_notification("voice_partial", {"text": left_out(text)})
 
     async def _voice_turn_hold(self) -> None:
         """The person paused mid-thought; Heliox keeps listening instead of answering."""
@@ -16309,10 +16359,10 @@ def handle_tool(tool_name, params):
                 command_text = held.proceed
                 normalized_command = _normalize_spoken_phrase(command_text)
 
-        from pilot.conversation.withheld import withhold
+        from pilot.conversation.withheld import holds_left_out, withhold
 
         secret = withhold(command_text)
-        if secret is not None:
+        if secret is not None or holds_left_out(command_text):
             # A PIN, password, code or card number said aloud: no handler that keeps things (notes, to-dos, the
             # profile), no planner and no running task gets the words. The conversation layer takes the secret out
             # and answers what is left; a request to do something with it is not handed over.
@@ -16327,7 +16377,12 @@ def handle_tool(tool_name, params):
                 )
             self._last_turn_kind = "answer"
             await self._broadcast_notification(
-                "voice_result", {"command": secret.text, "status": "answered", "message": said}
+                "voice_result",
+                {
+                    "command": secret.text if secret is not None else command_text,
+                    "status": "answered",
+                    "message": said,
+                },
             )
             return
 

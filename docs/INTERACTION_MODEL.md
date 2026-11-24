@@ -717,8 +717,21 @@ words, an early request never starts on them, and the daemon's log line shows th
 something with it ("type my PIN into the form"), routed as a request or written as an ACT line, is not handed over:
 "I don't use a PIN, password or code said aloud, so I left it out. Type it in yourself where it's needed."
 **Fakes only** for the request bodies (`tests/test_conversation_secrets.py`: Claude, OpenAI, OpenRouter, Gemini,
-Ollama and the model router, the exact body each would be sent). The listener's own transcript notices to the window
-are not changed by this.
+Ollama and the model router, the exact body each would be sent).
+
+The secret is taken out where the words first exist (`withheld.left_out`), so nothing after that point holds it:
+- spoken: the listener's final words (`ContinuousVoiceListener._final_words`, the one place every final pass is handed
+  on), so its log lines, the notices to the window, the bench's transcript hook, Live, the server's dispatch, its log,
+  the task store and every model see "[left out: a PIN]"; the live caption (`voice_partial`) is shown in the same form.
+  The fast recogniser's interim words are held in memory for the caption and turn-taking only, never logged or kept;
+- typed: before anything else in `execute` (`PilotServer._secret_left_out`). A typed message that asks a store which
+  keeps things on this computer to keep it ("take a note: the wifi password is ...", a to-do, a reminder) is kept by
+  that store as typed, and the reply leaves it out; nothing else sees it. A secret merely mentioned is left out
+  everywhere. Said aloud, the same note keeps only the left-out form: what is typed is what the person sees, while
+  speech can be recognised wrongly and is first written down by the listener;
+- a phone's request (`AirHandoffManager.submit_request`): kept, listed and planned in the left-out form.
+A value taken out is also taken out when said again on its own within ten minutes, until "new conversation".
+**Fakes only** (`tests/test_secret_everywhere.py`, including a follow-up said without the wake phrase).
 
 A correction replaces the old fact: "no, call me Sam", "actually, my name is Sam", "not Alex, Sam", and "it's Sam"
 said within ten minutes of giving a name all rename, and the greeting, the context lines and "what's my name" use the

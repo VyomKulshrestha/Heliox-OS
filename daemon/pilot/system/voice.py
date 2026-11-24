@@ -4242,6 +4242,16 @@ class ContinuousVoiceListener:
         except Exception:
             logger.debug("on_transcript callback failed", exc_info=True)
 
+    async def _final_words(self, **kwargs: Any) -> str:
+        """The recogniser's final words for one utterance (``_record_and_transcribe``), with any secret said aloud
+        already taken out (pilot.conversation.withheld.left_out): from here on, every log line, notice to the window,
+        the bench's transcript hook, Live, the server and any model see only "[left out: a PIN]". The live captions
+        before this point (on_partial) are only shown, never logged or kept."""
+        from pilot.conversation.withheld import left_out
+
+        text = await self._record_and_transcribe(**kwargs)
+        return left_out(text) if isinstance(text, str) and text else text
+
     def note_live_spoke(self) -> None:
         """Heliox Live finished a spoken remark (pilot.personal.wiring.live_speak): for a few seconds its own replies
         ("why?", "not now", "fix it") are taken without the wake phrase, with no conversation open, and open nothing
@@ -4906,7 +4916,7 @@ class ContinuousVoiceListener:
                 capture_generation = self._wake_free_suppression_generation
                 # Keep what was said while the last utterance was being transcribed: the accurate pass takes
                 # about a second, and a turn that ended at a pause ("Hey Heliox, ...") is usually still going.
-                transcript = await self._record_and_transcribe(duration=3, timeout=None, keep_backlog=True)
+                transcript = await self._final_words(duration=3, timeout=None, keep_backlog=True)
 
                 if not transcript or transcript.strip() == "No speech detected":
                     await asyncio.sleep(0.2)
@@ -5001,7 +5011,7 @@ class ContinuousVoiceListener:
                         except Exception:
                             pass
 
-                    command_text = await self._record_and_transcribe(duration=8, timeout=8.0, keep_backlog=True)
+                    command_text = await self._final_words(duration=8, timeout=8.0, keep_backlog=True)
 
                     if not command_text or command_text.strip() == "No speech detected":
                         if self._on_status:
@@ -5103,7 +5113,7 @@ class ContinuousVoiceListener:
 
         if self._on_turn_hold is not None:
             self._schedule(self._on_turn_hold)  # still listening, as for a pause the turn detector held
-        rest = await self._record_and_transcribe(duration=8, timeout=UNFINISHED_WAIT_SECONDS, keep_backlog=True)
+        rest = await self._final_words(duration=8, timeout=UNFINISHED_WAIT_SECONDS, keep_backlog=True)
         rest = (rest or "").strip()
         if not rest or rest == "No speech detected" or looks_hallucinated(rest):
             logger.info("Dispatching an unfinished sentence as it was: no more came (%r)", first)

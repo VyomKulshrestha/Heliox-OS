@@ -748,6 +748,10 @@ class AirHandoffManager:
         text = " ".join(str(payload.get("text", "")).split()) if isinstance(payload, dict) else ""
         if not text:
             raise AirHandoffError("The request is empty")
+        from pilot.conversation.withheld import left_out
+
+        # A PIN or password dictated on the phone: kept, listed, planned and logged only as "[left out: a PIN]".
+        text = left_out(text)
         if len(text) > MAX_REQUEST_CHARS:
             raise AirHandoffError(f"Requests are limited to {MAX_REQUEST_CHARS} characters")
         async with self._lock:
