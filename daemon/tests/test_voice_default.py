@@ -32,6 +32,7 @@ def test_the_table_is_data_and_reads_as_decided():
     rows = [(rule.machine, rule.languages, rule.engine) for rule in voice_default.RULES]
     assert rows == [
         ("nvidia_card", ("*",), "kokoro_tts"),
+        ("apple_silicon", ("en",), "pocket_tts"),
         ("apple_silicon", ("*",), "kokoro_tts"),
         ("processor", ("en",), "pocket_tts"),
         ("processor", ("es", "fr", "it", "pt", "hi", "ja", "zh"), "kokoro_tts"),
@@ -43,7 +44,7 @@ def test_the_table_is_data_and_reads_as_decided():
 @pytest.mark.parametrize("language", EVERY_LANGUAGE)
 def test_each_language_on_each_kind_of_computer(language):
     assert pick("nvidia_card", language).engine == "kokoro_tts"
-    assert pick("apple_silicon", language).engine == "kokoro_tts"
+    assert pick("apple_silicon", language).engine == ("pocket_tts" if language == "en" else "kokoro_tts")
     assert pick("processor", language).engine == ("pocket_tts" if language == "en" else "kokoro_tts")
 
 
@@ -54,16 +55,16 @@ def test_a_regional_code_reads_as_its_language():
 
 def test_changing_one_row_is_the_whole_change(tmp_path):
     data = json.loads(voice_default.MANIFEST.read_text(encoding="utf-8"))
-    data["voice_rules"]["rows"][3]["languages"] = ["fr", "it", "pt", "hi", "ja", "zh"]
-    data["voice_rules"]["rows"].insert(3, {"machine": "processor", "languages": ["es"], "engine": "pocket_tts"})
-    data["voice_rules"]["rows"][1]["engine"] = "pocket_tts"  # say a Mac run comes back in Pocket's favour
+    data["voice_rules"]["rows"][4]["languages"] = ["fr", "it", "pt", "hi", "ja", "zh"]
+    data["voice_rules"]["rows"].insert(4, {"machine": "processor", "languages": ["es"], "engine": "pocket_tts"})
+    data["voice_rules"]["rows"][2]["engine"] = "pocket_tts"  # say Pocket passes French on a Mac too
     manifest = tmp_path / "speech_models.json"
     manifest.write_text(json.dumps(data), encoding="utf-8")
     rules = voice_default.load_rules(manifest)
     assert (
         pick("processor", "es", rules).engine == "pocket_tts" and pick("processor", "fr", rules).engine == "kokoro_tts"
     )
-    assert pick("apple_silicon", "en", rules).engine == "pocket_tts"
+    assert pick("apple_silicon", "fr", rules).engine == "pocket_tts"
     data["voice_rules"]["rows"][0]["engine"] = "piper"
     manifest.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError):
@@ -183,9 +184,15 @@ def test_a_new_english_install_without_a_card_starts_with_pocket():
 @pytest.mark.parametrize("language", EVERY_LANGUAGE)
 def test_every_other_new_install_keeps_kokoro(language):
     assert fresh(machine="nvidia_card", language=language) is None
-    assert fresh(machine="apple_silicon", language=language) is None
     if language != "en":
         assert fresh(language=language) is None
+        assert fresh(machine="apple_silicon", language=language) is None
+
+
+def test_a_new_english_install_on_apple_silicon_starts_with_pocket():
+    choice = fresh(machine="apple_silicon")
+    assert (choice.engine, choice.voice, choice.machine) == ("pocket_tts", "alba", "apple_silicon")
+    assert "Apple M1 runner" in choice.why and "Kokoro has not been measured on a Mac" in choice.why
 
 
 def test_an_install_with_a_voice_of_its_own_is_never_switched():
@@ -282,7 +289,7 @@ def test_the_daemon_writes_the_first_voice_once_and_saves_it(monkeypatch):
     assert server._choose_first_voice(**probes) is None and config.save.call_count == 1
 
 
-@pytest.mark.parametrize(("kind", "language"), [("nvidia_card", "en"), ("apple_silicon", "en"), ("processor", "es"),
+@pytest.mark.parametrize(("kind", "language"), [("nvidia_card", "en"), ("apple_silicon", "fr"), ("processor", "es"),
                                                 ("processor", "de"), ("processor", "ja")])  # fmt: skip
 def test_the_daemon_leaves_kokoro_where_the_table_says_so(monkeypatch, kind, language):
     server, config = _server(monkeypatch, language=language)

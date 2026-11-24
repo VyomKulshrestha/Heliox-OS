@@ -490,10 +490,18 @@
       {
         "machine": "apple_silicon",
         "languages": [
+          "en"
+        ],
+        "engine": "pocket_tts",
+        "why": "On GitHub's Apple M1 runner Pocket TTS streamed without gaps, its first chunk in about 0.2 s (measured); Kokoro has not been measured on a Mac."
+      },
+      {
+        "machine": "apple_silicon",
+        "languages": [
           "*"
         ],
         "engine": "kokoro_tts",
-        "why": "Neither voice has been measured on a Mac yet, so a Mac keeps Kokoro, as before."
+        "why": "Pocket TTS has passed the read-back check in English only, so a Mac keeps Kokoro for other languages, as before."
       },
       {
         "machine": "processor",

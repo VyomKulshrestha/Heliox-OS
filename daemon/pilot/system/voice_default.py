@@ -7,7 +7,10 @@ On a graphics card the two were about even. So the voice a new install starts wi
 anything is downloaded. The first row that matches the computer and the voice language wins:
 
 - ``nvidia_card``: an NVIDIA card the voice can use and PyTorch built with CUDA. Kokoro, on the card.
-- ``apple_silicon``: Kokoro, as before. Neither voice has been measured on a Mac yet.
+- ``apple_silicon``: Pocket TTS for English, Kokoro for every other language. On GitHub's Apple M1 runner
+  (arm64, 3 cores, 7 GB) Pocket streamed without gaps at every thread count, its first chunk in 0.17 to
+  0.19 s (median; worst 0.27 s), real-time factor 0.45 to 0.50 (worst 0.62). Kokoro has not been measured
+  on a Mac, on the processor or with Metal.
 - ``processor`` (every other computer): Pocket TTS for English; Kokoro for the languages Pocket has not passed the
   read-back check in; Kokoro, as before, for every other language.
 
@@ -269,8 +272,9 @@ def suggestion(
     the table would start a new install on Pocket TTS, someone hearing Kokoro is told Pocket would answer sooner and
     what it downloads. Nothing is switched or downloaded unless they press it. None when it does not apply (another
     engine, a card, a Mac, a language Pocket has not passed, a small computer that speaks with the system voice
-    anyway, or Pocket not installed)."""
-    if engine != "kokoro_tts" or small_machine or not pocket_installed:
+    anyway, or Pocket not installed). A Mac gets none: the suggestion says Pocket answers sooner than Kokoro, and
+    Kokoro has not been measured on a Mac."""
+    if engine != "kokoro_tts" or small_machine or not pocket_installed or machine == "apple_silicon":
         return None
     if pick(machine, language, rules).engine != "pocket_tts":
         return None

@@ -1159,8 +1159,11 @@ the machine had too little free memory to load Kokoro for the run, so the model 
 **Which voice a new install speaks with.** From these runs, a new install picks its voice by the computer and the
 language, from one small table in `daemon/pilot/system/speech_models.json` ("voice_rules") that the daemon
 (`pilot/system/voice_default.py`) and the first-run screen both read: Kokoro on an NVIDIA card with PyTorch's CUDA
-build, Kokoro on Apple Silicon (neither voice has been measured on a Mac; `pocket-speed.yml` now runs there), and on
-every other computer Pocket TTS for English and Kokoro for every other language. It applies only to an install with
+build; on Apple Silicon and on every other computer, Pocket TTS for English and Kokoro for every other language.
+On a Mac that rests on GitHub's Apple M1 runner (`pocket-speed.yml`: arm64, 3 cores, 7 GB): Pocket streamed
+without gaps at every thread count, its first chunk in 0.17 to 0.19 s median (worst 0.27 s), real-time factor
+0.45 to 0.50 (worst 0.62). Kokoro has not been measured on a Mac, on the processor or with Metal, so a Mac gets
+no suggestion to switch. It applies only to an install with
 no voice of its own: never chosen, no voice model on disk and no voice ever loaded. An install whose voice has spoken
 keeps it; Settings, Voice may show it one suggestion with Pocket's download, and changes nothing unless pressed. The
 first screen shows the pick with its size, licence and source, and the other voice for that language can be picked

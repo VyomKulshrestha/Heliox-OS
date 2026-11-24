@@ -409,10 +409,12 @@ describe("Heliox's voice at first run", () => {
       expect(voicePick("processor", language).voice.engine).toBe("kokoro_tts");
       expect(voiceOptions("processor", language).map((v) => v.engine)).not.toContain("pocket_tts"); // English only
     }
-    for (const machine of ["nvidia_card", "apple_silicon"] as const) {
-      expect(voicePick(machine, "en").voice.engine).toBe("kokoro_tts");
-      expect(voiceOptions(machine, "en").map((v) => v.engine)).toEqual(["kokoro_tts", "pocket_tts"]);
-    }
+    expect(voicePick("nvidia_card", "en").voice.engine).toBe("kokoro_tts");
+    expect(voiceOptions("nvidia_card", "en").map((v) => v.engine)).toEqual(["kokoro_tts", "pocket_tts"]);
+    // Apple Silicon: Pocket for English (measured on GitHub's Apple M1 runner), Kokoro for the other languages.
+    expect(voicePick("apple_silicon", "en").voice.engine).toBe("pocket_tts");
+    expect(voiceOptions("apple_silicon", "en").map((v) => v.engine)).toEqual(["pocket_tts", "kokoro_tts"]);
+    expect(voicePick("apple_silicon", "fr").voice.engine).toBe("kokoro_tts");
     expect(voiceOptions("processor", "en").map((v) => v.engine)).toEqual(["pocket_tts", "kokoro_tts"]);
     expect(voicePick("processor", "en").why).toContain("0.6 s sooner");
   });
