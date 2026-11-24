@@ -2121,12 +2121,30 @@ class LocalTTSWorkerManager:
                     raise
                 finally:
                     speech_progress.reset(token)
+        except asyncio.CancelledError:
+            if speech:
+                self._drop_prepared(before=speech)  # cut off: the sentences prepared for this reply are never said
+            raise
         finally:
             self._busy -= 1
             self.note_activity()
             if not output_file:
                 self._speech_made(speech)  # ended (said, cut, failed or handed to the system voice)
                 self.note_spoken()
+
+    def _drop_prepared(self, *, before: int) -> None:
+        """Speech number ``before`` was cut off, and its reply ends there. A sentence prepare() was asked for before
+        that speech started, and that no reply waits for, is never said: it is cancelled, so it does not take the
+        worker's pipe behind the next reply's pieces. One asked for after it started is kept (the answer's next
+        sentence, prepared just before its first sentence cut a hum). A request already on the pipe is finished
+        unheard by the worker, as for any cancelled request."""
+        for key, state in list(self._next_state.items()):
+            if state.wanted or state.after >= before:
+                continue
+            self._next_state.pop(key, None)
+            task = self._prepared.pop(key, None)
+            if task is not None and not task.done():
+                task.cancel()
 
     def _speech_made(self, speech: int) -> None:
         """Every piece of speech number ``speech`` is made (or it ended): sentences prepared before it may be made."""
