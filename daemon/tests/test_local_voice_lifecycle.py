@@ -263,17 +263,29 @@ async def test_speak_impl_uses_the_system_voice_without_logging_the_failure_agai
 
 @pytest.mark.asyncio
 async def test_changing_engine_or_device_releases_the_running_worker(monkeypatch) -> None:
+    # configure_local_voice reads the computer's memory: under 10 GB in all (GitHub's Apple M1 runner has 7 GB) Heliox
+    # speaks with the system voice and releases the worker at once (speech_budget.light_voice_reason), and with
+    # little free memory an idle worker is released too. Here the computer is a 16 GB one with 8 GB free, whatever
+    # runs the test.
+    from pilot.system import speech_budget
+
+    monkeypatch.setattr(speech_budget, "total_memory", lambda: 16 * 1024**3)
+    monkeypatch.setattr(speech_budget, "free_memory", lambda: 8 * 1024**3)
     clock, worker = FakeClock(), FakeWorker()
     manager = _manager(Spawner(worker), clock)
     monkeypatch.setattr(local_tts_worker, "_manager", manager)
     await manager.ensure_ready("kokoro_tts", "af_heart")
 
     local_tts_worker.configure_local_voice(VoiceConfig(tts_engine="kokoro_tts", tts_keep_loaded_seconds=60))
-    await _settle()
+    for _ in range(50):  # anything the call started has its turns: none of it may release the worker
+        await asyncio.sleep(0)
     assert manager.running and manager.keep_loaded_seconds == 60
 
     local_tts_worker.configure_local_voice(VoiceConfig(tts_engine="kokoro_tts", tts_device="cpu"))
-    await _settle()
+    for _ in range(500):  # the old worker is closed once nothing is said or made on it (close_when_free)
+        if not manager.running:
+            break
+        await asyncio.sleep(0)
     assert not manager.running
 
 
