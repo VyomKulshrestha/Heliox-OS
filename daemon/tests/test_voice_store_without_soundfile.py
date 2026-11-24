@@ -42,13 +42,13 @@ def test_a_hum_is_marked_cut_only_once_the_cut_has_run(tmp_path, no_soundfile, m
     assert "tail" not in store._load()[key]  # nothing was cut: not marked, so it is cut when it can be
     assert "tail" not in SpeechStore(store.folder)._load()[key]
 
-    cuts: list[float | None] = []
+    cuts: list[str] = []
 
-    def trim(path, lead, tail):
-        cuts.append(tail)
+    def shape(path):
+        cuts.append(path.name)
         return 0, 100
 
-    monkeypatch.setattr(local_tts_worker, "trim_silence", trim)  # the package is there now
-    assert store.trim_short_tails() == 1 and cuts == [ACK_TAIL_SECONDS]
-    assert store._load()[key]["tail"] == ACK_TAIL_SECONDS
-    assert store.trim_short_tails() == 0 and cuts == [ACK_TAIL_SECONDS]  # once
+    monkeypatch.setattr(local_tts_worker, "shape_hum_file", shape)  # the package is there now
+    assert store.trim_short_tails() == 1 and cuts == [f"{key}.wav"]
+    assert store._load()[key]["tail"] == ACK_TAIL_SECONDS and store._load()[key]["hum"] == local_tts_worker.HUM_SHAPE
+    assert store.trim_short_tails() == 0 and len(cuts) == 1  # once

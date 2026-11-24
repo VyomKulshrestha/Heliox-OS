@@ -617,9 +617,12 @@ _current_speech_task: asyncio.Task[str] | None = None
 # The local voice (Kokoro/Pocket) runs in a worker process whose lifecycle lives in local_tts_worker: it stays
 # loaded while a conversation is plausible, starts when the person is heard, and speaks sentence by sentence.
 FADE_SECONDS = 0.008  # a cut-off voice ramps down this fast: no click, and nothing left to drain
-# The longest the next piece waits for a cut one's fade to be played (the fade takes one block of the line, 10 to
-# 20 ms, plus FADE_SECONDS at most): a line whose device has stopped asking for audio never holds the next piece longer.
-CUT_FADE_WAIT_SECONDS = 0.05
+# A hum (pilot.conversation.acknowledge) cut by the answer fades over this long: 8 ms down from a loud vowel can be
+# heard as a click, and the answer waits at most this much longer for it (it is never a barge-in, which keeps 8 ms).
+HUM_CUT_FADE_SECONDS = 0.03
+# The longest the next piece waits for a cut one's fade to be played (one or two blocks of the line, 10 to 20 ms each,
+# plus the fade): a line whose device has stopped asking for audio never holds the next piece longer.
+CUT_FADE_WAIT_SECONDS = 0.08
 
 
 OUTPUT_LINE_IDLE_SECONDS = 300.0  # as long as the local voice stays loaded (tts_keep_loaded_seconds' default)
@@ -1185,6 +1188,7 @@ class _Playback:
         self.sample_rate = sample_rate
         self.position = 0
         self.fade_left: int | None = None
+        self.fade_seconds = FADE_SECONDS  # how long a cut fades (HUM_CUT_FADE_SECONDS for a hum)
         self.finished = threading.Event()
         self.faded = threading.Event()
         self.stream: Any = None
@@ -1209,7 +1213,7 @@ class _Playback:
         outdata[: len(chunk)] = chunk
         outdata[len(chunk) :] = 0
         if self.fade_left is not None:
-            outdata[:] = fade_block(outdata, self.fade_left, int(self.sample_rate * FADE_SECONDS))
+            outdata[:] = fade_block(outdata, self.fade_left, max(1, int(self.sample_rate * self.fade_seconds)))
             self.fade_left = max(0, self.fade_left - frames)
             if self.fade_left == 0:
                 self.faded.set()
@@ -1301,7 +1305,7 @@ class _Playback:
     def cut(self) -> None:
         """Fade out over the next block; the line plays silence after it. Returns at once: nothing here waits on
         the audio device, so a slow machine cannot turn the fade into a click."""
-        self.fade_left = int(self.sample_rate * FADE_SECONDS)
+        self.fade_left = max(1, int(self.sample_rate * self.fade_seconds))
         self.finished.set()
 
 
@@ -1401,6 +1405,10 @@ async def _play_local_tts_file(piece: Any) -> None:
     speech_trace.emit("piece read", asked=asked, done=time.monotonic(), in_memory=in_memory)
     with speech_notices.reply():
         playback = _Playback(audio, sample_rate)
+        from pilot.system.local_tts_worker import keeps_short_tail
+
+        if keeps_short_tail(str(getattr(piece, "text", "") or "")):
+            playback.fade_seconds = HUM_CUT_FADE_SECONDS  # a hum the answer cuts fades out, never chops
         playback.on_handed = speech_notices.handed(mouth, len(playback.audio) / max(1, sample_rate))
         from pilot.system.local_tts_worker import speech_progress
 

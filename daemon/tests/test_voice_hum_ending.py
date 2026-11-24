@@ -58,7 +58,7 @@ def _hum(seconds_of_sound: float, seconds_long: float) -> np.ndarray:
 
 
 def test_hums_kept_with_their_whole_tail_are_cut_once_and_other_pieces_are_left_alone(tmp_path):
-    # The cut itself (trim_silence) reads and writes the WAV with soundfile, an optional audio package; without it
+    # The cut itself (shape_hum_file) reads and writes the WAV with soundfile, an optional audio package; without it
     # the store leaves kept audio as it was. Skipped where it is not installed (CI's test install).
     soundfile = pytest.importorskip("soundfile")
     store = SpeechStore(tmp_path / "voice_heads")
@@ -69,7 +69,8 @@ def test_hums_kept_with_their_whole_tail_are_cut_once_and_other_pieces_are_left_
     assert store.add_fixed("Okay.", sig, sentence)
     assert store.add_fixed("Hmm.", sig, hum)
     key = SpeechStore.key("Hmm.", sig)
-    store._load()[key].pop("tail")  # an entry from before hums were made with the short tail
+    store._load()[key].pop("tail")  # an entry from before hums were made short
+    store._load()[key].pop("hum")
     timing = {"rate": RATE, "samples": int(0.95 * RATE), "phonemes": [["h", 0.03, 0.2], ["m", 0.2, 0.47]], "words": []}
     (store.folder / f"{key}.wav.timing.json").write_text(json.dumps(timing), encoding="utf-8")
 

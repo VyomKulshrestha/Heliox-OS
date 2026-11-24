@@ -832,25 +832,27 @@ class SpeechStore:
         self._load()[key] = {"text": text, "signature": signature, "count": 0, "kept": True, "fixed": True,
                              "last": time.time()}  # fmt: skip
         if keeps_short_tail(text):
-            self._load()[key]["tail"] = ACK_TAIL_SECONDS  # made with the hum's short tail (LocalTTSWorkerManager._make)
+            # Made short, with the hum's tail (LocalTTSWorkerManager._make): nothing for trim_short_tails to do.
+            self._load()[key].update(tail=ACK_TAIL_SECONDS, hum=HUM_SHAPE)
         self._save()
         return True
 
     def trim_short_tails(self) -> int:
-        """Cut the quiet tail of every hum kept before hums were made with ACK_TAIL_SECONDS (and its phoneme timing
-        with it), once: a hum already in the store is not made again. Returns how many were cut."""
+        """Shape every hum kept before hums were made short (shape_hum: its sound to HUM_SOUND_SECONDS with a fade,
+        then ACK_TAIL_SECONDS), its phoneme timing with it, once: a hum already in the store is not made again.
+        Returns how many were shaped."""
         from pilot.system import speech_notices
 
         trimmed = 0
         changed = False
         for key, entry in list(self._load().items()):
-            if not entry.get("kept") or entry.get("tail") == ACK_TAIL_SECONDS:
+            if not entry.get("kept") or entry.get("hum") == HUM_SHAPE:
                 continue
             if not keeps_short_tail(str(entry.get("text") or "")):
                 continue
             path = self.folder / f"{key}.wav"
             try:
-                kept = trim_silence(path, KEEP_LEAD_SECONDS, ACK_TAIL_SECONDS) if path.is_file() else None
+                kept = shape_hum_file(path) if path.is_file() else None
             except Exception:
                 logger.debug("Could not cut a kept hum's quiet tail", exc_info=True)
                 continue
@@ -860,6 +862,7 @@ class SpeechStore:
                 speech_notices.shift_timing(path, kept[0], kept[1])
                 trimmed += 1
             entry["tail"] = ACK_TAIL_SECONDS
+            entry["hum"] = HUM_SHAPE
             changed = True
         if changed:
             self._save()
@@ -976,6 +979,52 @@ def keeps_short_tail(text: str) -> bool:
     from pilot.conversation.acknowledge import ACKNOWLEDGEMENTS
 
     return text in ACKNOWLEDGEMENTS
+
+
+# A hum sounds at most this long, and its sound ends in a smooth fade over HUM_FADE_SECONDS (shape_hum), whatever the
+# engine made of its text. Pocket TTS (alba) made "Hmm." loud for its whole 880 ms with a burst in its last 30 ms, and
+# in a live run on 24 November the answer cut it 623 to 854 ms in on 10 of 21 turns; Kokoro af_heart's "Hmm." sounds
+# for 0.44 s.
+HUM_SOUND_SECONDS = 0.45
+HUM_FADE_SECONDS = 0.06
+HUM_SHAPE = 1  # the version of shape_hum, recorded beside a hum kept in the store
+
+
+def shape_hum(audio: Any, rate: int) -> Any:
+    """A hum's samples (its quiet lead already cut) with its sound kept to HUM_SOUND_SECONDS from the first sound, the
+    last HUM_FADE_SECONDS of it faded out (a raised cosine: no click, and a burst after it is gone), then
+    ACK_TAIL_SECONDS of silence."""
+    import numpy as np
+
+    samples = np.array(audio, dtype=np.float32).reshape(-1)
+    loud = np.flatnonzero(np.abs(samples) > SILENCE_LEVEL)
+    if loud.size == 0:
+        return samples
+    first = int(loud[0])
+    end = min(int(loud[-1]) + 1, first + int(HUM_SOUND_SECONDS * rate))
+    fade = min(int(HUM_FADE_SECONDS * rate), end - first)
+    if fade > 0:
+        samples[end - fade : end] *= (0.5 * (1.0 + np.cos(np.linspace(0.0, np.pi, fade)))).astype(np.float32)
+    samples[end:] = 0.0
+    return np.ascontiguousarray(samples[: min(len(samples), end + int(ACK_TAIL_SECONDS * rate))])
+
+
+def shape_hum_file(path: Path) -> tuple[int, int] | None:
+    """Shape a hum kept as a WAV in place: its quiet lead cut (KEEP_LEAD_SECONDS), then shape_hum. The sample range of
+    the audio as it was that the shaped one starts at and covers, or None when it was not read (soundfile, an optional
+    audio package, is not installed)."""
+    try:
+        import soundfile
+    except ImportError:
+        return None
+    info = soundfile.info(str(path))
+    audio, rate = soundfile.read(str(path), dtype="float32")
+    if getattr(audio, "ndim", 1) > 1:
+        audio = audio.mean(axis=1)
+    start, _stop = silence_edges(audio, rate, KEEP_LEAD_SECONDS, None)
+    shaped = shape_hum(audio[start:], rate)
+    soundfile.write(str(path), shaped, rate, subtype=info.subtype)
+    return start, start + len(shaped)
 
 
 def tail_for(text: str) -> float | None:
@@ -2673,8 +2722,29 @@ class LocalTTSWorkerManager:
                 # The phoneme times count from the first sample made: from the first one kept after the trim.
                 await asyncio.to_thread(speech_notices.shift_timing, target, kept[0], kept[1])
             piece.trimmed = True
+        if keeps_short_tail(text):
+            await asyncio.to_thread(self._shape_hum, piece, target)
         speech_trace.emit("piece trimmed", words=len(text.split()), done=time.monotonic())
         return piece
+
+    @staticmethod
+    def _shape_hum(piece: Piece, target: Path) -> None:
+        """A hum just made: short, ending in a fade (shape_hum), in memory or in its file, its phoneme timing with it."""
+        from pilot.system import speech_notices
+
+        if piece.audio is not None:
+            piece.audio = shape_hum(piece.audio, piece.rate)
+            if piece.timing:
+                piece.timing = speech_notices.shifted_timing(piece.timing, 0, len(piece.audio))
+            return
+        path = piece.path or target
+        try:
+            kept = shape_hum_file(path)
+        except Exception:
+            logger.debug("Could not shape a hum's audio; it plays as made", exc_info=True)
+            return
+        if kept is not None:
+            speech_notices.shift_timing(path, kept[0], kept[1])
 
     async def _notify(self, status: str, data: dict[str, Any]) -> None:
         callback = self.on_status
