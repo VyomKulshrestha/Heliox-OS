@@ -23,6 +23,12 @@ MAX_TEXT = 200
 
 _LIST = r"(?:my |the )?(?:to do |todo |todos |task )?list"
 ADD_REQUEST = re.compile(r"^(?:please )?(?:add|put) (?P<text>.+?) (?:to|on|onto) " + _LIST + "$")
+# The same request in the person's own wording, ending at the list: greedy, so "on" or "to" inside the to-do
+# ("by 9 on Friday morning", "talk to Sam") stays in it.
+_RAW_ADD = re.compile(
+    r"^(?:please )?(?:add|put) (?P<text>.+) (?:to|on|onto) (?:my |the )?(?:to[- ]?do |todo |todos |task )?list\W*$",
+    re.IGNORECASE,
+)
 READ_REQUEST = re.compile(
     r"^(?:what s|what is|whats) (?:left )?on " + _LIST + "$"
     r"|^(?:read|show|list) (?:me )?my (?:to do |todo )?(?:list|to dos|todos)$"
@@ -163,7 +169,8 @@ class TodoStore:
         add = ADD_REQUEST.match(normalized)
         if add:
             # Keep the person's own wording and capitals; the normalized match only locates it.
-            raw = re.match(r"^(?:please )?(?:add|put) (?P<text>.+?) (?:to|on|onto) ", text.strip(), re.IGNORECASE)
+            # Up to the list itself, not the first "on" or "to": "by 9 on Friday morning" stays in the to-do.
+            raw = _RAW_ADD.match(text.strip())
             item_text = raw.group("text") if raw else add.group("text")
             try:
                 entry = self.add(item_text)

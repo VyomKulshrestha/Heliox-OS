@@ -194,9 +194,22 @@ def todo_due(text: str, now: datetime) -> datetime | None:
     return datetime.combine(day, at or time(23, 59))
 
 
-def _when(moment: datetime, now: datetime) -> str:
+def day_said(text: str, now: datetime) -> bool:
+    """Whether a to-do's own words name its day (a date, a weekday, today, tonight, tomorrow, next week)."""
+    from pilot.live.grounded import stated_day
+
+    try:
+        day, _ = stated_day(text, now.date())
+    except Exception:
+        day = None
+    return day is not None or bool(_TODAY_PART.search(text) or re.search(r"\bnext week\b", text, re.I))
+
+
+def _when(moment: datetime, now: datetime, *, day_known: bool = True) -> str:
     from pilot.conversation.context import clock_words
 
+    if not day_known:
+        return f"by {clock_words(moment)}, day not said"  # never a day the to-do does not carry
     days = (moment.date() - now.date()).days
     day = "today" if days == 0 else "tomorrow" if days == 1 else moment.strftime("%A %d %B")
     if moment.hour == 23 and moment.minute == 59:
@@ -252,7 +265,8 @@ def due_line(
     parts = []
     for due, kind, item in chosen:
         text = " ".join(str(item.get("text") or "").split())
-        when = f", due {_when(due, now)}" if due is not None else ""
+        known = kind != "to-do" or day_said(str(item.get("text") or ""), now)
+        when = f", due {_when(due, now, day_known=known)}" if due is not None else ""
         if local:
             parts.append(f'{kind} "{text[:120]}"{when}')
             continue

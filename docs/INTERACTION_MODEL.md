@@ -581,7 +581,9 @@ Each turn the model gets, in this order, dropping from the end when the block pa
    then what is due on the to-do list and reminders and bears on the words (`pilot.conversation.due`): an item that
    shares a word of four letters or more with what was just said, whatever its date; otherwise, when the words speak
    of a time, a reminder in the next 24 hours or a to-do whose words name a time in the next 36 hours. A to-do's time
-   is read as people say it ("by 9 tomorrow morning", "four this afternoon", "half past eight tonight", "noon"); at
+   is read as people say it ("by 9 tomorrow morning", "four this afternoon", "half past eight tonight", "noon"), and
+   a to-do with a time and no day is given as "by 09:00 in the morning, day not said", never as tomorrow. A to-do
+   added by voice keeps all of what was said about when ("by nine on Friday morning"); at
    most two of each, in one line of at most 300 characters. A model on this computer gets each item in its words; a cloud model gets only
    the words the person has just said themselves and the time ("a to-do about "report", due tomorrow at 09:00 in the morning"), or
    only that something is due then, since to-dos and reminders read out in code stay on this computer; with
