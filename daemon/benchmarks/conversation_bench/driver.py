@@ -456,10 +456,16 @@ class Harness:
         owner_settings: bool = False,
         wait_until_ready: bool = True,
         made_ahead_wait_s: float = MADE_AHEAD_WAIT_S,
+        real_foreground: bool = False,
     ) -> None:
         # After the voice has loaded: how long to wait for the store to hold the hum's pieces (0: not waited for; the
         # set-up lines say what the store held either way).
         self.made_ahead_wait_s = made_ahead_wait_s
+        # The app name the talk model is told the person is in: a made-up one (stubs.BENCH_APP) unless a run asks for
+        # the real foreground app.
+        self.real_foreground = real_foreground
+        self.foreground = ""
+        self.stores_made: list[str] = []
         self.made_ahead_waited: dict[str, Any] = {}
         self.cards_hidden_by = ""  # "bench" or "environment" when CUDA_VISIBLE_DEVICES hides every card
         self.setup: dict[str, Any] = {}  # voice_setup(): what this run measured, for the start of every report
@@ -532,6 +538,11 @@ class Harness:
         check_inside(root)  # once more, right before anything that can save is built
         server = PilotServer(config)
         self.server = server
+        from .stubs import give_stores, stub_foreground
+
+        self.foreground = stub_foreground(real=self.real_foreground)
+        self.stores_made = give_stores(server, self.data_dir)  # to-dos, reminders, profile: in the scratch folder
+        log("bench stubs", f"foreground app: {self.foreground}; stores made: {', '.join(self.stores_made) or 'none'}")
 
         async def broadcast(method: str, params: Any) -> None:
             params = params or {}

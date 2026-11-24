@@ -254,6 +254,10 @@ async def _main(args: argparse.Namespace) -> int:
     config.voice.tts_engine = "os_native"
     bench_root.check_inside(root)
     server = PilotServer(config)
+    from .stubs import give_stores, stub_foreground
+
+    foreground = stub_foreground(real=bool(getattr(args, "real_foreground", False)))
+    print("foreground app:", foreground, "| stores made:", ", ".join(give_stores(server, Path(root))) or "none")
 
     async def broadcast(method: str, params: Any) -> None:
         return None
@@ -414,6 +418,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--compare", default="", help='"warm", or "section.field=a,b" set per turn, interleaved')
     parser.add_argument("--model", choices=("stub", "configured"), default="stub")
     parser.add_argument("--paid", action="store_true")
+    parser.add_argument(
+        "--real-foreground",
+        action="store_true",
+        help="tell the model the real foreground app's name (default: made up)",
+    )
     parser.add_argument("--max-calls", type=int, default=24)
     parser.add_argument("--start-free-gb", type=float, default=1.0, help="refuse to start under this much free")
     parser.add_argument("--min-free-gb", type=float, default=1.0, help="stop when free memory falls under this")
