@@ -325,9 +325,46 @@ def sounds_unfinished(text: str) -> bool:
     if len(words) <= 3 and (CONTROL.match(core.casefold()) or is_short_decision(core) or is_safe_fast_phrase(core)):
         return False
     ends_badly = words[-1] in _UNFINISHED_LAST or bool(_UNFINISHED_TOO.search(" ".join(words)))
+    if stripped.endswith((",", ";", ":")) and not ends_badly and _whole_request(words):
+        # "suggest a quick lunch idea,": Parakeet ends a finished request on a comma where Whisper wrote a full stop
+        # (live measurement of 6ea1149, 24 November: held 2.5 s for a rest that never came). A request or question
+        # whose last word can end one is whole; a statement or an opening clause ("when I was at school during
+        # exams,") still waits, as does a dash or an ellipsis, where the voice itself trailed off.
+        return False
     if stripped.endswith((",", ";", ":", "-", "\u2013", "\u2014", "...", "\u2026")):
         return ends_badly or len(words) > 2
     return len(words) >= 2 and ends_badly
+
+
+_SUBORDINATE = frozenset(
+    {"if", "because", "while", "after", "before", "since", "although", "though", "once", "until", "unless", "whenever"}
+)
+_ASKING = frozenset(
+    {"is", "are", "was", "were", "do", "does", "did", "can", "could", "will", "would", "should", "shall"}
+)
+
+
+def _whole_request(words: list[str]) -> bool:
+    """The words are a request or a question in themselves ("suggest a quick lunch idea", "what time is it"), not
+    the opening clause of a longer sentence ("when I was at school", "if it rains")."""
+    from pilot.system.addressing import IMPERATIVE_START, QUESTION_START, SOFTENER
+
+    said = SOFTENER.sub("", " ".join(words)).strip()
+    if not said:
+        return False
+    first, _, rest = said.partition(" ")
+    if first in _SUBORDINATE:
+        return False
+    if first == "when":
+        return rest.split()[:1] != [] and rest.split()[0] in _ASKING  # "when is ..." asks; "when I was ..." opens
+    return bool(IMPERATIVE_START.match(said) or QUESTION_START.match(said) or first in _MORE_REQUEST_VERBS)
+
+
+# Verbs a spoken request starts with that the addressing rule's list does not hold (it is about who is addressed).
+_MORE_REQUEST_VERBS = frozenset(
+    {"suggest", "recommend", "plan", "describe", "compare", "calculate", "convert", "define", "name", "list", "find",
+     "pick", "choose", "think", "teach", "spell", "count", "estimate"}
+)  # fmt: skip
 
 
 # A reply to something Heliox asked or said is whole whatever it ends on ("No,", "The blue one,"), as is "stop".

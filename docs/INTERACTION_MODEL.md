@@ -1820,7 +1820,11 @@ whole. Nothing is acknowledged or answered for half a sentence, so there is noth
 go as they were. A stop word or a new "Hey Heliox, ..." in place of the rest is taken alone. Words that are
 already whole never wait, whatever mark ends them: a control word, a short decision or a safe fast phrase of up
 to three words ("Stop,", "No,", "Cancel that,"), anything of one or two words, and any reply to Heliox's question
-or a Live remark. The cost is a finished request that ends on such a word ("Tell me what this is about."), which
+or a Live remark. A request or question that ends on a comma, semicolon or colon after a word a request can end
+on is whole too ("suggest a quick lunch idea,"): since the final words come from Parakeet, which writes a comma where
+Whisper wrote a full stop, that request waited 2.5 s and got no early request (live measurement of 6ea1149, 24
+November). An opening clause ("when I was at school during exams,"), a statement, a dash or an ellipsis still waits.
+The cost is a finished request that ends on such a word ("Tell me what this is about."), which
 waits the full 2.5 s; none of the corpus's 994 transcripts or the 92 of the owner's own recordings ends that way. A wait for speech to
 begin no longer cuts off speech that began in time (a long request after "Hey Heliox" alone was lost at the eighth
 second). After the server joined a split sentence, that joined turn ("v1+") is the one a third piece continues;
