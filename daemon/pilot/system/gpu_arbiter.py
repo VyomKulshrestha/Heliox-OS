@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -171,6 +172,85 @@ def probe_nvidia(
         detail = (getattr(completed, "stderr", "") or getattr(completed, "stdout", "") or "").strip()
         return (), f"nvidia-smi failed: {detail[:160] or completed.returncode}"
     return parse_nvidia_smi(getattr(completed, "stdout", "") or "")
+
+
+# Work no one waits for (the voice's fixed sentences made ahead, the next sentence before its turn) pauses this many
+# degrees below the card's limit and goes on once the card is BACKGROUND_RESUME_C cooler again. The limit is the lowest
+# of the [gpu] max_temperature_c setting and the card's own slowdown and maximum operating temperatures less
+# CARD_MARGIN_C, where the driver reports them (nvidia-smi -q -d TEMPERATURE): a laptop card that slows itself at 87 °C
+# and a desktop card that does so at 95 °C are each judged by their own figure. On one development laptop an idle
+# card at 77 °C reached 82 °C within 40 s while the voice made 202 fixed sentences ahead on it.
+BACKGROUND_MARGIN_C = 6.0
+BACKGROUND_RESUME_C = 4.0
+CARD_MARGIN_C = 5.0
+
+
+@dataclass(frozen=True)
+class CardTemperatures:
+    """The temperatures a card's driver gives for it (None: not reported)."""
+
+    slowdown_c: float | None = None
+    max_operating_c: float | None = None
+    shutdown_c: float | None = None
+
+
+_CARD_HEADER = re.compile(r"^GPU [0-9A-Fa-f]+:[0-9A-Fa-f]+:[0-9A-Fa-f]+\.[0-9A-Fa-f]+$")  # "GPU 00000000:01:00.0"
+_TEMPERATURE_LINES = {
+    "gpu slowdown temp": "slowdown_c",
+    "gpu max operating temp": "max_operating_c",
+    "gpu shutdown temp": "shutdown_c",
+}
+
+
+def parse_card_temperatures(text: str) -> tuple[CardTemperatures, ...]:
+    """The thresholds of each card in ``nvidia-smi -q -d TEMPERATURE``'s output, in the order of its "GPU" sections.
+    A value the driver gives as "N/A" (or not at all) is None."""
+    cards: list[dict[str, float | None]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if _CARD_HEADER.match(stripped):
+            cards.append({})  # "GPU 00000000:01:00.0": a new card
+            continue
+        if ":" not in stripped or not cards:
+            continue
+        name, value = (part.strip() for part in stripped.split(":", 1))
+        field_name = _TEMPERATURE_LINES.get(name.casefold())
+        if field_name:
+            cards[-1][field_name] = _number(value.replace("C", "").strip())
+    return tuple(CardTemperatures(**card) for card in cards)  # type: ignore[arg-type]
+
+
+def probe_card_temperatures(
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    run: Callable[..., Any] = subprocess.run,
+    timeout: float = NVIDIA_SMI_TIMEOUT_SECONDS,
+) -> tuple[CardTemperatures, ...]:
+    """Each card's own thresholds from nvidia-smi (a separate program: no CUDA context here); () when unknown."""
+    executable = which("nvidia-smi")
+    if not executable:
+        return ()
+    options: dict[str, Any] = {"capture_output": True, "text": True, "timeout": timeout}
+    if os.name == "nt":
+        options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        completed = run([executable, "-q", "-d", "TEMPERATURE"], **options)
+    except (subprocess.TimeoutExpired, OSError):
+        return ()
+    if getattr(completed, "returncode", 0) != 0:
+        return ()
+    return parse_card_temperatures(getattr(completed, "stdout", "") or "")
+
+
+def background_limit_c(configured_max_c: float, card: CardTemperatures | None) -> float:
+    """The temperature at which work no one waits for pauses on this card: the lowest of the configured maximum and
+    the card's own slowdown and maximum operating temperatures less CARD_MARGIN_C, then BACKGROUND_MARGIN_C below."""
+    limit = configured_max_c
+    if card is not None:
+        for own in (card.slowdown_c, card.max_operating_c):
+            if own is not None and own > 40.0:  # a figure below 40 °C is not a real threshold
+                limit = min(limit, own - CARD_MARGIN_C)
+    return limit - BACKGROUND_MARGIN_C
 
 
 def is_apple_silicon(system: str | None = None, machine: str | None = None) -> bool:
@@ -492,6 +572,10 @@ class GpuArbiter:
     _last_wanted_by: str = ""
     _disabled_reason: str = ""
     _cached: tuple[float, MachineReading] | None = None
+    # Each card's own thresholds, read once (they do not change), and whether work no one waits for is paused now.
+    temperatures: Callable[[], tuple[CardTemperatures, ...]] = probe_card_temperatures
+    _card_temperatures: tuple[CardTemperatures, ...] | None = None
+    _background_paused: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def configure(self, settings: Any) -> None:
@@ -553,6 +637,37 @@ class GpuArbiter:
                 self._wants += 1
                 self._last_wanted_by = component
         return decision
+
+    def background_heat(self) -> str:
+        """Why work no one waits for should pause on the card now ("" when it may go on): the hottest card is at or
+        above background_limit_c, and once paused, until it is BACKGROUND_RESUME_C below it. Never blocks for long:
+        the reading is the arbiter's cached one; the thresholds are read once."""
+        reading = self.reading()
+        if reading.kind != "nvidia" or not reading.gpus:
+            return ""
+        if self._card_temperatures is None:
+            try:
+                self._card_temperatures = tuple(self.temperatures())
+            except Exception:
+                self._card_temperatures = ()
+        worst = ""
+        hottest = 0.0
+        for index, card in enumerate(reading.gpus):
+            if card.temperature_c is None:
+                continue
+            own = self._card_temperatures[index] if index < len(self._card_temperatures) else None
+            limit = background_limit_c(self.max_temperature_c, own)
+            threshold = limit - BACKGROUND_RESUME_C if self._background_paused else limit
+            if card.temperature_c >= threshold and card.temperature_c >= hottest:
+                hottest = card.temperature_c
+                worst = (
+                    f"The graphics card is at {card.temperature_c:.0f} °C (work made ahead waits below {limit:.0f} °C)."
+                )
+        changed = bool(worst) != self._background_paused
+        self._background_paused = bool(worst)
+        if changed:
+            logger.info("%s", worst or "The graphics card has cooled: work made ahead goes on")
+        return worst
 
     def wants(self) -> int:
         """How many times a component found the card held by another Heliox process (see ``_wants``)."""

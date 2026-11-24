@@ -651,6 +651,7 @@ MAKE_AHEAD_IDLE_SECONDS = 30.0
 # arrives ends soon: 8 words took 0.75 s on a 16-core laptop CPU (13 November), and the request's own speech and the
 # end of its turn take longer than that. Longer fixed pieces are synthesised when they are said, as before.
 MAKE_AHEAD_MAX_WORDS = 8
+HEAT_POLL_SECONDS = 2.0  # how often work made ahead that waits for a warm card looks again
 # The fixed sentences made ahead (pilot.system.fixed_speech) may hold at most this much audio on disk; past it, no more
 # are made (none is dropped to make room: each was made once, when the machine was idle). About 220 pieces of 1 to 3 s
 # of 24 kHz float audio, about 40 MB in all, fit.
@@ -1526,6 +1527,9 @@ class LocalTTSWorkerManager:
         # worker took the lease: a voice on the card is kept while idle only until the count grows (_kept_by_memory).
         self.lease_wants: Callable[[], int] | None = None
         self._wants_at_lease = 0
+        # Why work no one waits for should pause now because the card is warm ("" when it may go on), or None: read
+        # only while this worker holds the card (GpuArbiter.background_heat). A reply a person waits for never waits.
+        self.heat_reason: Callable[[], str] | None = None
         # Free system memory now, or None: the worker is not started when less than VOICE_HOST_RAM_BYTES is free
         # (on an 8 GB machine the model's 1.6-1.9 GB can push everything into swap); the system voice speaks.
         self.free_memory: Callable[[], int | None] | None = None
@@ -1850,6 +1854,18 @@ class LocalTTSWorkerManager:
         logger.info("Released the local voice (%s)", reason)
         await self._release_now(reason)
         return True
+
+    async def too_warm_now(self) -> str:
+        """Why work made ahead waits now: the worker holds the card and the card is near its limit ("" otherwise).
+        The card is read off the event loop (nvidia-smi can take a moment)."""
+        check = self.heat_reason
+        if not self.gpu_lease or check is None:
+            return ""
+        try:
+            return str(await asyncio.to_thread(check) or "")
+        except Exception:
+            logger.debug("Could not read the card's heat for work made ahead", exc_info=True)
+            return ""
 
     def _wants_now(self) -> int:
         try:
@@ -2637,6 +2653,8 @@ class LocalTTSWorkerManager:
         """A sentence prepared ahead (prepare): made once its turn comes (_next_turn), behind any piece a reply waits
         for unless a reply waits for this one."""
         await self._next_turn(state)
+        while not state.wanted and await self.too_warm_now():
+            await self._sleep(HEAT_POLL_SECONDS)  # the card is near its limit: made when it cools, or when wanted
         return await self._make(
             engine, text, voice, target, folder, rank=lambda: PIPE_NOW if state.wanted else PIPE_NEXT, kind="next",
             start_voice=lambda: state.wanted,
@@ -2678,6 +2696,7 @@ class LocalTTSWorkerManager:
                     and self._clock() - self._last_activity >= MAKE_AHEAD_IDLE_SECONDS
                     and quiet()
                     and not battery()
+                    and not await self.too_warm_now()
                 ):
                     if self.head_cache is not store or self._failed_until is not None:
                         return made
@@ -2815,6 +2834,7 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
     _manager.on_gpu_fault = gpu_arbiter.arbiter().record_fault
     _manager.lease_wants = gpu_arbiter.arbiter().wants
     _manager.free_memory = lambda: gpu_arbiter.probe_host_memory()[0]
+    _manager.heat_reason = gpu_arbiter.arbiter().background_heat
     # Released when idle only when the computer needs the memory, unless the person chose the clock (voice.tts_release).
     from pilot.system import speech_budget
 
