@@ -19,6 +19,7 @@ instead of the speaker; nothing in it is voice-specific except the channel names
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import dataclasses
 import logging
@@ -147,6 +148,11 @@ HOLD_PHRASES = ("One moment.", "Let me think.", "Give me a second.", "Just a sec
 # of the last one, and never once the answer's first sentence is ready (it would only delay it).
 HOLD_NO_TEXT_SECONDS = 1.2
 HOLD_GAP_SECONDS = 60.0
+# In the companion acceptance run (24 November) 11 of 11 holding phrases heard were cut by the answer 0 to 0.6 s after
+# they began: HOLD_NO_TEXT_SECONDS is about the median wait for the model's first text. A holding phrase now starts only
+# once the wait is this much longer than the median of the last HOLD_HISTORY spoken turns' waits for a first sentence.
+HOLD_LATE_SECONDS = 1.0
+HOLD_HISTORY = 8
 LOCAL_LOADING = "Loading the local model, one moment."
 SPOKEN_WORD_CAP = (
     25  # about 10 seconds of speech: a sentence that would go past it is not started (the prompt asks for 20)
@@ -202,6 +208,12 @@ THANKS = re.compile(
     r"(?:thanks|thank you|thank you so much|thanks a lot|thanks so much|many thanks|cheers|ta)"
     r"(?: (?:heliox|very much|again|mate))?$"
 )
+
+
+def hold_due(limit: float, usual: float) -> float:
+    """Seconds into the wait at which the holding phrase may start: its own limit, or HOLD_LATE_SECONDS past the
+    usual wait for a first sentence (``usual``, 0 when there is no history yet), whichever is later."""
+    return max(limit, usual + HOLD_LATE_SECONDS) if usual > 0 else limit
 
 
 def ends_with_question(sentence: str) -> bool:
@@ -446,6 +458,9 @@ class ConversationLayer:
         self._hold_no_text = min(HOLD_NO_TEXT_SECONDS, hold_after)
         self._held_last_turn = False  # the turn before had a holding phrase: this one does not
         self._last_hold_at = float("-inf")
+        # How long the last spoken turns waited for their first sentence (seconds, the layer's clock): the holding
+        # phrase waits past the usual wait (_usual_first_sentence), so the answer does not cut it a moment later.
+        self._first_sentence_waits: collections.deque[float] = collections.deque(maxlen=HOLD_HISTORY)
         self._screen_read: tuple[float, Any] | None = None  # (started, task) of the screen read under way
         self._first_text_deadline = first_text_deadline
         self._said_loading = False
@@ -1168,6 +1183,10 @@ class ConversationLayer:
                     # holding phrase (when _may_hold allowed it for this turn), said alongside the wait.
                     no_text = "first_token_ms" not in result.timings
                     limit = self._hold_no_text if no_text else self._hold_after
+                    # Not a holding phrase the answer would cut a moment later: only once the answer is
+                    # HOLD_LATE_SECONDS later than this model's usual first sentence.
+                    if not getattr(model, "local", False):  # a local model's wait is its loading, not a habit
+                        limit = hold_due(limit, self._usual_first_sentence())
                     try:
                         # asyncio.timeout, not wait_for: before Python 3.12 an interrupt arriving as the first
                         # sentence is dequeued could be lost, and Heliox would go on talking after being stopped.
@@ -1243,6 +1262,8 @@ class ConversationLayer:
                     return result
                 if first:
                     result.timings["first_sentence_ms"] = (self._clock() - started) * 1000
+                    if not typed:
+                        self._first_sentence_waits.append(self._clock() - waited_from)
                     trace.mark("sentence to voice", hold=False, kind="content")
                     content_handed[0] = True  # an acknowledgement not yet started is never said now
                 first = False
@@ -1743,6 +1764,11 @@ class ConversationLayer:
         if outcome in HEARD:
             self._ack_turn = turn
             acked.set()
+
+    def _usual_first_sentence(self) -> float:
+        """The median wait for a first sentence over the last HOLD_HISTORY spoken turns, or 0 before any."""
+        waits = sorted(self._first_sentence_waits)
+        return waits[len(waits) // 2] if waits else 0.0
 
     def _may_hold(self) -> bool:
         """Whether this turn may have a holding phrase at all: not when the turn before had one, nor within

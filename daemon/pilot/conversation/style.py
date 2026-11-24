@@ -242,6 +242,10 @@ _NARRATION = re.compile(
 _ABBREVIATIONS = frozenset(
     {"mr", "mrs", "ms", "dr", "st", "vs", "etc", "e.g", "i.e", "eg", "ie", "approx", "no", "fig", "inc", "ltd"}
 )
+# "9 a.m." and "7 p.m." in the middle of a sentence. Splitting there ended a reply on "and a nine a m" (companion
+# acceptance run, 24 November): the rest of the sentence became a sentence of its own, which a statement's one-sentence
+# rule then left out.
+_TIME_OF_DAY = frozenset({"a.m", "p.m"})
 # A sentence ends at . ! ? followed by a space, and at the full stops of languages that put no space after them:
 # Japanese and Chinese 。！？ and the Hindi danda । ॥ (without these a reply in those languages was not cut until 240
 # characters or its end, so its first sound waited for most of the answer).
@@ -368,8 +372,12 @@ class SentenceSplitter:
             end = match.end()
             before = self._buffer[start : match.start()].rsplit(None, 1)
             last_word = before[-1].casefold().rstrip(".") if before else ""
+            following = self._buffer[end:].lstrip()[:1]
             if match.group(0).startswith(".") and (
-                last_word in _ABBREVIATIONS or (last_word[-1:].isdigit() and self._buffer[end:].lstrip()[:1].isdigit())
+                last_word in _ABBREVIATIONS
+                or (last_word[-1:].isdigit() and following.isdigit())
+                # "a 9 a.m. deadline": the sentence goes on unless a capital starts the next one ("at 9 a.m. Then")
+                or (last_word in _TIME_OF_DAY and not following.isupper())
             ):
                 continue
             return self._cut(end, ends=True)

@@ -132,6 +132,10 @@ store, so it costs no synthesis) is said when no model text at all has come 1.2 
 no sentence by 2 s. It is never said on the turn after one that had it, nor within 60 s of the last. On the 12 model
 turns of the 13 November bench run it would have fired twice, on the two slowest. Their first sound would have come
 1.5 and 1.85 s sooner, and the answer itself no later. A local model's first load always says its loading line once.
+In the 24 November acceptance run 11 of 11 holding phrases heard were cut by the answer 0 to 0.6 s after they began:
+1.2 s is about Haiku's usual wait. With a cloud model the phrase now starts only once the wait is 1 s longer than the
+median of the last 8 spoken turns' waits for a first sentence (`hold_due`). A "9 a.m." or "7 p.m." no longer ends a
+sentence unless a capital follows; splitting there ended a statement's one-sentence reply on "and a nine a m".
 
 **An acknowledgement while the answer is on its way** (`pilot.conversation.acknowledge`, `conversation.acknowledge`,
 in Settings under Voice; on by default). 0.45 s after the person's last word, on the model's road, Heliox says "Mm."

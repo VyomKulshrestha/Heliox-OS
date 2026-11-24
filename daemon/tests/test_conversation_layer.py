@@ -185,6 +185,8 @@ async def test_a_slow_first_sentence_gets_a_short_holding_phrase_once():
     # A minute later, after a turn without one, it may come again, and never the same phrase twice running.
     clock = layer._clock
     layer._clock = lambda: clock() + 61.0
+    # A wait as long as the usual one gets no holding phrase now (layer.hold_due): this one is taken as the first.
+    layer._first_sentence_waits.clear()
     before = len(sink.texts)
     await layer.take("And later?")
     held = [text for text in sink.texts[before:] if text in HOLD_PHRASES]
