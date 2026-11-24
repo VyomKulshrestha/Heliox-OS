@@ -111,16 +111,18 @@ def _gpu_paths_forgotten():
     gpu_paths.reset()
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def kokoro_module_restored():
-    """For a test that runs the worker's loop (local_tts_worker._serve("kokoro_tts")): the loop configures the Kokoro
-    module for its process (kokoro_tts._device becomes "cpu" when no card is visible), and in a test that process is
-    the test run, so the module is put back as it was for the tests that follow."""
-    from pilot.system import kokoro_tts
+    """Every test leaves the voice's process-wide settings as it found them. The worker's loop
+    (local_tts_worker._serve("kokoro_tts")) and kokoro_tts.configure set the Kokoro module's device for their process
+    ("cpu" when no card is visible), and a daemon started in a test hands the voice its settings object
+    (voice.use_daemon_config). In a test that process is the test run, so a later test_kokoro_tts.py or a later reply
+    would see them. Autouse: a new test that runs the loop or configures the voice cannot forget it."""
+    from pilot.system import kokoro_tts, voice
 
-    saved = (kokoro_tts._device, kokoro_tts._offline_by_us)
+    saved = (kokoro_tts._device, kokoro_tts._offline_by_us, voice._daemon_config)
     yield
-    kokoro_tts._device, kokoro_tts._offline_by_us = saved
+    kokoro_tts._device, kokoro_tts._offline_by_us, voice._daemon_config = saved
 
 
 @pytest.fixture
