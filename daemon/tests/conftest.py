@@ -112,6 +112,18 @@ def _gpu_paths_forgotten():
 
 
 @pytest.fixture
+def kokoro_module_restored():
+    """For a test that runs the worker's loop (local_tts_worker._serve("kokoro_tts")): the loop configures the Kokoro
+    module for its process (kokoro_tts._device becomes "cpu" when no card is visible), and in a test that process is
+    the test run, so the module is put back as it was for the tests that follow."""
+    from pilot.system import kokoro_tts
+
+    saved = (kokoro_tts._device, kokoro_tts._offline_by_us)
+    yield
+    kokoro_tts._device, kokoro_tts._offline_by_us = saved
+
+
+@pytest.fixture
 def smtp_mock(monkeypatch):
     """Mocks smtplib.SMTP for testing without real network calls."""
     sent = []

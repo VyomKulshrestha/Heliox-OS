@@ -20,6 +20,8 @@ import pytest
 from pilot.system import local_tts_worker, speech_trace
 
 RATE = 24000
+# The worker's loop configures the Kokoro module in this process; it is put back after each test (conftest).
+pytestmark = pytest.mark.usefixtures("kokoro_module_restored")
 
 
 class _Bytes(io.StringIO):
