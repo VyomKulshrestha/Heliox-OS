@@ -778,8 +778,37 @@ class SpeechStore:
             return False
         self._load()[key] = {"text": text, "signature": signature, "count": 0, "kept": True, "fixed": True,
                              "last": time.time()}  # fmt: skip
+        if keeps_short_tail(text):
+            self._load()[key]["tail"] = ACK_TAIL_SECONDS  # made with the hum's short tail (LocalTTSWorkerManager._make)
         self._save()
         return True
+
+    def trim_short_tails(self) -> int:
+        """Cut the quiet tail of every hum kept before hums were made with ACK_TAIL_SECONDS (and its phoneme timing
+        with it), once: a hum already in the store is not made again. Returns how many were cut."""
+        from pilot.system import speech_notices
+
+        trimmed = 0
+        changed = False
+        for key, entry in list(self._load().items()):
+            if not entry.get("kept") or entry.get("tail") == ACK_TAIL_SECONDS:
+                continue
+            if not keeps_short_tail(str(entry.get("text") or "")):
+                continue
+            path = self.folder / f"{key}.wav"
+            try:
+                kept = trim_silence(path, KEEP_LEAD_SECONDS, ACK_TAIL_SECONDS) if path.is_file() else None
+            except Exception:
+                logger.debug("Could not cut a kept hum's quiet tail", exc_info=True)
+                continue
+            if kept is not None:
+                speech_notices.shift_timing(path, kept[0], kept[1])
+                trimmed += 1
+            entry["tail"] = ACK_TAIL_SECONDS
+            changed = True
+        if changed:
+            self._save()
+        return trimmed
 
     def keep_only(self, signature: str) -> None:
         """Drop every entry made another way (the voice or its settings changed): they would never be played."""
@@ -814,6 +843,26 @@ class SpeechStore:
 KEEP_LEAD_SECONDS = 0.03
 KEEP_CLAUSE_SECONDS = 0.25
 SILENCE_LEVEL = 0.002
+# A hum (pilot.conversation.acknowledge) is said alone, before an answer that cuts it when it comes: its pause after
+# the sound is not a pause between sentences, so it keeps only this much. Kept whole, Kokoro af_heart's "Hmm." was
+# 0.95 s with its sound over at 0.47 s; in the 24 November live run the answer cut 5 of 18 hums 0.70 to 0.95 s in, all
+# inside that quiet tail (the hums' sound lasted 35 to 405 ms).
+ACK_TAIL_SECONDS = 0.1
+
+
+def keeps_short_tail(text: str) -> bool:
+    """Whether ``text`` is one of the hums, made with ACK_TAIL_SECONDS after its sound."""
+    from pilot.conversation.acknowledge import ACKNOWLEDGEMENTS
+
+    return text in ACKNOWLEDGEMENTS
+
+
+def tail_for(text: str) -> float | None:
+    """What a piece keeps after its last sound: ACK_TAIL_SECONDS for a hum, KEEP_CLAUSE_SECONDS for a piece that ends
+    mid-sentence, its own pause (None: all of it) for one that ends a sentence."""
+    if keeps_short_tail(text):
+        return ACK_TAIL_SECONDS
+    return None if ends_sentence(text) else KEEP_CLAUSE_SECONDS
 
 
 def silence_edges(audio: Any, rate: int, keep_lead: float, keep_tail: float | None) -> tuple[int, int]:
@@ -2371,7 +2420,7 @@ class LocalTTSWorkerManager:
     ) -> Piece:
         """One piece made for speech, in memory and trimmed by the worker. A worker that wrote the file instead (one
         that cannot send samples) has it trimmed here, as before. ``rank`` and ``kind``: see _Pipe and synth_log."""
-        keep_tail = None if ends_sentence(text) else KEEP_CLAUSE_SECONDS
+        keep_tail = tail_for(text)
         piece = await self.synthesize(
             engine, text, voice, target, folder, wait_after_gpu_fault=False, samples=True, keep_tail=keep_tail,
             rank=rank, kind=kind,
@@ -2463,6 +2512,8 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
             _manager.head_cache = SpeechStore()
         with contextlib.suppress(Exception):
             _manager.head_cache.keep_only(SpeechStore.signature(engine, str(getattr(voice_config, "tts_voice", ""))))
+        with contextlib.suppress(Exception):
+            _manager.head_cache.trim_short_tails()  # hums kept with their whole quiet tail, from before
     if _manager.running and (_manager.engine != engine or _manager.process_device != _manager.device):
         with contextlib.suppress(RuntimeError):
             task = asyncio.get_running_loop().create_task(_manager.shutdown())

@@ -532,6 +532,9 @@ _current_speech_task: asyncio.Task[str] | None = None
 # The local voice (Kokoro/Pocket) runs in a worker process whose lifecycle lives in local_tts_worker: it stays
 # loaded while a conversation is plausible, starts when the person is heard, and speaks sentence by sentence.
 FADE_SECONDS = 0.008  # a cut-off voice ramps down this fast: no click, and nothing left to drain
+# The longest the next piece waits for a cut one's fade to be played (the fade takes one block of the line, 10 to
+# 20 ms, plus FADE_SECONDS at most): a line whose device has stopped asking for audio never holds the next piece longer.
+CUT_FADE_WAIT_SECONDS = 0.05
 
 
 OUTPUT_LINE_IDLE_SECONDS = 300.0  # as long as the local voice stays loaded (tts_keep_loaded_seconds' default)
@@ -703,6 +706,19 @@ class _OutputLine:
             return self.channels if self.stream is not None and self.channels else 1
 
     def attach(self, playback: _Playback) -> None:
+        """Put ``playback`` on the line. A piece cut a moment ago (an answer cut a hum) still fading is let finish its
+        fade first, at most CUT_FADE_WAIT_SECONDS: taking the line from it mid-fade would stop it mid-sample, which
+        clicks. The cut returns before the device has asked for the next block, so the next piece can come that fast."""
+        with self._current_lock:
+            previous = self.current
+        if (
+            previous is not None
+            and previous is not playback
+            and previous.fade_left is not None
+            and self.running.is_set()
+            and not previous.faded.is_set()
+        ):
+            previous.faded.wait(CUT_FADE_WAIT_SECONDS)
         with self._current_lock:
             self.current = playback
 
