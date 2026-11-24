@@ -7,11 +7,11 @@ back, no hum and no fixed sentence was ready until they had been made again. Fil
 
 from __future__ import annotations
 
+import wave
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
-import soundfile
 
 from pilot.system import local_tts_worker
 from pilot.system.local_tts_worker import LocalTTSWorkerManager, SpeechStore
@@ -21,10 +21,19 @@ BELLA = SpeechStore.signature("kokoro_tts", "af_bella")
 POCKET = SpeechStore.signature("pocket_tts", "alba")
 
 
+def _write_wav(path, samples: np.ndarray, rate: int) -> None:
+    """A 16-bit mono WAV with the standard library (soundfile, an optional audio package, is not needed here)."""
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes((np.clip(samples, -1.0, 1.0) * 32767).astype("<i2").tobytes())
+
+
 def _fill(store: SpeechStore, tmp_path, signature: str, texts: list[str], seconds: float = 0.3) -> None:
     for number, text in enumerate(texts):
         made = tmp_path / f"{abs(hash((signature, text)))}-{number}.wav"
-        soundfile.write(str(made), np.full(int(seconds * 24000), 0.1, dtype=np.float32), 24000)
+        _write_wav(made, np.full(int(seconds * 24000), 0.1, dtype=np.float32), 24000)
         assert store.add_fixed(text, signature, made)
 
 

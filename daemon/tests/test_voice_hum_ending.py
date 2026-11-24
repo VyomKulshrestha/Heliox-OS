@@ -13,7 +13,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import soundfile
 
 from pilot.conversation.acknowledge import ACKNOWLEDGEMENTS
 from pilot.system import local_tts_worker, voice
@@ -59,6 +58,9 @@ def _hum(seconds_of_sound: float, seconds_long: float) -> np.ndarray:
 
 
 def test_hums_kept_with_their_whole_tail_are_cut_once_and_other_pieces_are_left_alone(tmp_path):
+    # The cut itself (trim_silence) reads and writes the WAV with soundfile, an optional audio package; without it
+    # the store leaves kept audio as it was. Skipped where it is not installed (CI's test install).
+    soundfile = pytest.importorskip("soundfile")
     store = SpeechStore(tmp_path / "voice_heads")
     sig = SpeechStore.signature("kokoro_tts", "af_heart")
     hum, sentence = tmp_path / "hum.wav", tmp_path / "sentence.wav"
