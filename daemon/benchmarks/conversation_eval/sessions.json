@@ -1272,7 +1272,7 @@
       "taken": true,
       "runs_nothing": true,
       "has": [
-       "dropped"
+       "won't change it"
       ],
       "not": [
        "stopped before planning",
@@ -2665,7 +2665,7 @@
      },
      "expect_model": {
       "has": [
-       "dropped the changed one: the screenshots"
+       "won't change it to the screenshots"
       ]
      }
     },
