@@ -14,6 +14,7 @@
   import BudgetSpent from "./BudgetSpent.svelte";
   import SpeechDriverErrorsRow from "./SpeechDriverErrorsRow.svelte";
   import LocalVoices from "./LocalVoices.svelte";
+  import { pocketVoicesOffered } from "../firstRun";
   import { _, locale } from "svelte-i18n";
   import { session } from "../stores/session";
   import { call, requireOkResult, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
@@ -501,7 +502,11 @@
     }
   }
 
-  const pocketTtsVoices = ["alba", "giovanni", "lola"];
+  // Only Pocket voices whose terms allow any use and that were listened to (speech_models.json, voice_terms), plus the
+  // one already speaking.
+  const pocketTtsVoices = $derived(
+    pocketVoicesOffered($settings.voice?.tts_engine === "pocket_tts" ? ($settings.voice?.tts_voice ?? "") : ""),
+  );
   const kokoroTtsVoices = [
     "af_heart",
     "af_bella",

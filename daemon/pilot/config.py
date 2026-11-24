@@ -271,6 +271,9 @@ class VoiceConfig:
     # The system voice by name when tts_engine == "os_native" ("" = the system's default): a voice of the person's
     # language when Kokoro has none (pilot.system.voice_by_language).
     system_voice: str = ""
+    # The person pressed "Not now" on Settings, Voice's suggestion of a quicker voice (pilot.system.voice_default
+    # .suggestion): it is not shown again.
+    engine_suggestion_dismissed: bool = False
     # The local voice runs in its own process: about 1.6-1.9 GB of RAM (plus about 840 MB of GPU memory on CUDA)
     # while loaded, and 20-25 s to load from cold. It stays loaded at least this many seconds after the last
     # conversation, then as long as the computer has the memory to spare (tts_release), and loads again at the first
@@ -877,6 +880,9 @@ class FaceConfig:
     pilot.system.face_voice), and any voice can still be set by hand."""
 
     pack: str = "off"
+    # Faces the person chose to use with the voice they have ("Use this face with the voice I have" in the face
+    # picker): nothing offers or switches that face's own voice again.
+    kept_voice: list[str] = field(default_factory=list)
 
 
 FACE_PACK_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
@@ -1363,6 +1369,7 @@ def _validate_config_types(raw: dict) -> None:
             "tts_engine": str,
             "tts_voice": str,
             "tts_voice_chosen": bool,
+            "engine_suggestion_dismissed": bool,
             "system_voice": str,
             "tts_keep_loaded_seconds": (int, float),
             "tts_release": str,
@@ -1602,6 +1609,7 @@ def _validate_config_types(raw: dict) -> None:
         },
         "face": {
             "pack": str,
+            "kept_voice": list,
         },
         "proxy": {
             "http": str,
@@ -2067,6 +2075,9 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         pack = raw["face"].get("pack")
         if isinstance(pack, str) and face_pack_valid(pack):
             config.face.pack = pack
+        kept = raw["face"].get("kept_voice")
+        if isinstance(kept, list):
+            config.face.kept_voice = [p for p in kept if isinstance(p, str) and face_pack_valid(p) and p != "off"]
 
     if "proxy" in raw and isinstance(raw["proxy"], dict):
         for k, v in raw["proxy"].items():

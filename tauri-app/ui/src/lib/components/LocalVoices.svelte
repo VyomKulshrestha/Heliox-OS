@@ -7,7 +7,7 @@
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
   import { settings } from "../stores/settings";
-  import { licenceName, localVoices } from "../firstRun";
+  import { licenceName, localVoices, pocketVoiceCredit } from "../firstRun";
 
   type Suggestion = { engine: string; voice: string; download_bytes: number; say: string };
 
@@ -16,6 +16,8 @@
   let busy = $state(false);
   let note = $state("");
   const engine = $derived($settings.voice?.tts_engine ?? "");
+  // The credit follows the voice speaking: Pocket's model and its selected voice each have their own line.
+  const voiceCredit = $derived(engine === "pocket_tts" ? pocketVoiceCredit($settings.voice?.tts_voice ?? "") : "");
 
   onMount(() => {
     void (async () => {
@@ -47,15 +49,31 @@
       busy = false;
     }
   }
+
+  // "Not now": hidden for good (voice.engine_suggestion_dismissed); the daemon stops suggesting it too.
+  async function notNow() {
+    busy = true;
+    note = "";
+    try {
+      const result = await settings.updateSectionDetailed("voice", { engine_suggestion_dismissed: true });
+      if (result.ok) suggestion = null;
+      else note = result.message || "Not changed.";
+    } finally {
+      busy = false;
+    }
+  }
 </script>
 
-{#if suggestion && engine === "kokoro_tts"}
+{#if suggestion && engine === "kokoro_tts" && !$settings.voice?.engine_suggestion_dismissed}
   <div class="setting-row" data-testid="voice-suggestion">
     <div class="setting-info">
       <span class="setting-label">A quicker voice for this computer</span>
       <span class="setting-desc">{suggestion.say}</span>
     </div>
-    <button type="button" class="btn-secondary" disabled={busy} onclick={useSuggested}>Use Pocket TTS</button>
+    <div class="suggestion-actions">
+      <button type="button" class="btn-secondary" disabled={busy} onclick={notNow}>Not now</button>
+      <button type="button" class="btn-secondary" disabled={busy} onclick={useSuggested}>Use Pocket TTS</button>
+    </div>
   </div>
 {/if}
 {#if note}
@@ -75,5 +93,13 @@
           : ""} Fetched the first time it speaks, about {Math.round(voice.download_bytes / 1_000_000)} MB.</span
       >
     {/each}
+    {#if voiceCredit}<span class="setting-desc" data-testid="voice-credit">{voiceCredit}</span>{/if}
   </div>
 </div>
+
+<style>
+  .suggestion-actions {
+    display: flex;
+    gap: 6px;
+  }
+</style>

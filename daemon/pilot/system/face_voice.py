@@ -29,8 +29,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from typing import Any
 
 from pilot.system.voice_by_language import KOKORO_VOICE_BYTES, LANGUAGE_NAMES, TTS_VOICES, kokoro_language
+from pilot.system.voice_default import VOICES
 
 HINTS = {"feminine": "f", "masculine": "m"}
 
@@ -39,7 +41,8 @@ HINTS = {"feminine": "f", "masculine": "m"}
 # no masculine Pocket voice has been listened to or read back yet (michael and george, among kyutai/tts-voices, are
 # the first candidates). Until one passes, a man's face with Pocket TTS brings its Kokoro voice (am_michael).
 POCKET_BY_KIND: dict[str, str] = {"feminine": "alba", "masculine": ""}
-POCKET_VOICE_BYTES = 6_000_000  # a Pocket voice is about 6 MB, fetched by Pocket TTS the first time it speaks
+# A Pocket voice is about 6 MB, fetched by Pocket TTS the first time it speaks (speech_models.json, "voice_bytes").
+POCKET_VOICE_BYTES = int(VOICES.get("pocket_tts", {}).get("voice_bytes", 6_000_000))
 
 
 @dataclass(frozen=True)
@@ -73,10 +76,11 @@ def pack_voice(pack: str) -> tuple[str, str] | None:
 def pocket_voice(pack: str, voice: str, hint: str) -> str:
     """The approved Pocket voice for a face naming Kokoro ``voice`` with ``hint``: the pack's own column when ``pack``
     is that face, else the one approved for its kind; "" when none is approved."""
+    from pilot.system.voice_default import pocket_voice_allowed
+
     found = PACK_VOICES.get(pack)
-    if found is not None and found.kokoro == voice:
-        return found.pocket
-    return POCKET_BY_KIND.get(hint, "")
+    chosen = found.pocket if found is not None and found.kokoro == voice else POCKET_BY_KIND.get(hint, "")
+    return chosen if chosen and pocket_voice_allowed(chosen) else ""  # only voices whose terms allow any use
 
 
 def face_voices(pack: str) -> dict[str, str] | None:
@@ -88,10 +92,13 @@ def face_voices(pack: str) -> dict[str, str] | None:
 @dataclass(frozen=True)
 class FaceVoicePlan:
     voice: str  # the voice offered or in use; "" when the face names none Heliox knows
-    action: str  # "none" | "same" | "offer" | "fetch" | "unavailable"
+    action: str  # "none" | "same" | "offer" | "fetch" | "unavailable" | "kept" | "downloading"
     download_bytes: int  # what using ``voice`` fetches the first time it speaks
     say: str  # one plain sentence for the Face row; "" for none
     engine: str = "kokoro_tts"  # the engine ``voice`` belongs to: using it switches Heliox to that engine
+    # For "fetch": whether the download can start now, and why not in a few words (the daemon fills these).
+    download_ok: bool = True
+    download_reason: str = ""
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -117,7 +124,19 @@ def _megabytes(size: int) -> str:
     return "about half a megabyte" if size < 1_000_000 else f"about {round(size / 1_000_000)} MB"
 
 
-def plan_face_voice(
+def plan_face_voice(voice: str, hint: str, *, kept: bool = False, **given: Any) -> FaceVoicePlan:
+    """What the Face row says and offers for a face whose pack names Kokoro ``voice`` (and ``hint``); see _plan.
+    ``kept``: the person chose to keep their own voice with this face ("Use this face with the voice I have"), so
+    nothing is offered or switched for it again ("kept")."""
+    plan = _plan(voice, hint, **given)
+    if kept and plan.action in {"offer", "fetch"}:
+        current = given.get("current", "")
+        return FaceVoicePlan(plan.voice, "kept", 0, f"You chose to keep your voice, {current}, with this face.",
+                             plan.engine)  # fmt: skip
+    return plan
+
+
+def _plan(
     voice: str,
     hint: str,
     *,

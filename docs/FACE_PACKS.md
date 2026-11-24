@@ -130,9 +130,14 @@ When a person chooses a face in Settings whose pack names a voice:
 - with Pocket TTS, the face uses the Pocket voice approved for its kind (`POCKET_BY_KIND` in
   `pilot/system/face_voice.py`, one column per engine in `PACK_VOICES`): alba for a feminine face. No masculine Pocket
   voice is approved yet, so a masculine face brings its Kokoro voice instead of keeping a voice of the wrong kind:
-  switched with the face when Kokoro and the voice are on disk and the person never chose a voice, otherwise offered
-  with what it downloads (about 330 MB the first time, when Kokoro is not on the computer). Until the person accepts
-  that download, the voice that was speaking stays;
+  switched with the face when Kokoro and the voice are on disk and the person never chose a voice. Only Pocket voices
+  whose terms allow any use are ever used with a face (`voice_terms` in `speech_models.json`);
+- a face whose voice is not on the computer says so in the list before it is chosen ("Portrait, man (its voice needs a
+  download of about 330 MB)"), and choosing it asks in place, the same way for any face and engine, before anything
+  is saved: "Use this face and download its voice" (the consent: Heliox fetches the files while the current voice
+  keeps speaking, and switches between two replies, never inside one, as a voice the person chose) or "Use this face
+  with the voice I have" (recorded in `face.kept_voice`, so nothing asks or swaps that face's voice again). Without a
+  network the first is disabled with the reason and the second still works;
 - if the face's voice cannot speak here, nothing is switched: with the system voice the row says to
   choose Kokoro TTS under Voice; when the voice file is not on disk yet the row offers it, and Kokoro fetches it
   (about half a megabyte) the first time it speaks, the way the voice for another language is added; when Heliox

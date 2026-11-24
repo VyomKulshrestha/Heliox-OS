@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   plans: {} as Record<string, Record<string, unknown>>,
   // What the daemon does by itself when face.pack is set (it applies the face's voice).
   onFace: null as ((pack: string) => void) | null,
+  // The handler FaceChoice gives onNotification (face_voice_ready).
+  handler: null as ((method: string, params: unknown) => void) | null,
 }));
 
 vi.mock("../api/daemon", () => ({
@@ -34,7 +36,7 @@ vi.mock("../api/daemon", () => ({
     }
     return { status: "ok" };
   }),
-  onNotification: vi.fn(),
+  onNotification: vi.fn((handler: (method: string, params: unknown) => void) => (mocks.handler = handler)),
   offNotification: vi.fn(),
 }));
 
@@ -151,7 +153,7 @@ describe("Face (Settings, Appearance)", () => {
     await waitFor(() => screen.getByRole("option", { name: "Line drawing" }));
     await fireEvent.change(screen.getByRole("combobox", { name: "Face" }), { target: { value: "placeholder" } });
     await waitFor(() => expect(mocks.sent).toHaveLength(1));
-    expect(mocks.faceVoice).toEqual([]);
+    expect(mocks.faceVoice.filter((asked) => (asked as { pack: string }).pack === "placeholder")).toEqual([]);
     expect(screen.queryByTestId("face-voice")).toBeNull();
   });
 
@@ -223,25 +225,119 @@ describe("Face (Settings, Appearance)", () => {
     await waitFor(() =>
       expect(screen.getByTestId("face-voice").textContent).toMatch(/Heliox now speaks with am_michael[.]/),
     );
-    expect(mocks.faceVoice).toContainEqual({ voice: "am_michael", hint: "masculine", apply: "accept" });
+    expect(mocks.faceVoice).toContainEqual({
+      voice: "am_michael",
+      hint: "masculine",
+      pack: "portrait-man",
+      apply: "accept",
+    });
     expect(screen.queryByRole("button", { name: /Use am_michael/ })).toBeNull();
   });
 
-  it("says a voice not on the computer can be added, and switches nothing by itself", async () => {
-    mocks.config = { face: { pack: "off" }, voice: { tts_engine: "kokoro_tts", tts_voice: "af_heart" } };
-    const missing = {
-      status: "ok",
-      switched: false,
-      voice: "am_michael",
-      action: "fetch",
-      say: "This face's voice, am_michael, is not on this computer yet; using it fetches about half a megabyte the first time it speaks.",
+  const MISSING = {
+    status: "ok",
+    switched: false,
+    voice: "am_michael",
+    action: "fetch",
+    engine: "kokoro_tts",
+    download_bytes: 330_000_000,
+    download_ok: true,
+    download_reason: "",
+    say: "Pocket TTS has no approved voice for this face yet, so the face brings its Kokoro voice. Kokoro is not on this computer yet; using am_michael fetches about 330 MB the first time it speaks.",
+  };
+  const KEPT = {
+    status: "ok",
+    switched: false,
+    voice: "am_michael",
+    action: "kept",
+    say: "You chose to keep your voice, alba, with this face.",
+  };
+  const ASKED = (apply: string) => ({ voice: "am_michael", hint: "masculine", pack: "portrait-man", apply });
+
+  it("says in the list which face needs a download for its voice, and asks in place before saving anything", async () => {
+    mocks.config = { face: { pack: "off" }, voice: { tts_engine: "pocket_tts", tts_voice: "alba" } };
+    mocks.plans = { "": MISSING };
+    await settings.reloadFromDaemon();
+    render(FaceChoice);
+    await screen.findByRole("option", { name: "Portrait, man (its voice needs a download of about 330 MB)" });
+    await fireEvent.change(screen.getByRole("combobox", { name: "Face" }), { target: { value: "portrait-man" } });
+    const question = await screen.findByTestId("face-voice-question");
+    expect(question.textContent).toMatch(/Portrait, man's voice, am_michael, is not on this computer/);
+    expect(question.textContent).toMatch(/needs a download of\s+about 330 MB/);
+    expect(question.textContent).toMatch(/alba keeps speaking/);
+    expect(screen.getByRole("button", { name: "Use this face and download its voice" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Use this face with the voice I have" })).toBeTruthy();
+    expect(mocks.sent).toEqual([]); // nothing saved, nothing fetched until a button is pressed
+    expect(mocks.faceVoice.some((asked) => (asked as { apply: string }).apply !== "")).toBe(false);
+  });
+
+  it("downloads the voice only when asked, and shows the switch once it is ready", async () => {
+    mocks.config = { face: { pack: "off" }, voice: { tts_engine: "pocket_tts", tts_voice: "alba" } };
+    mocks.plans = {
+      "": MISSING,
+      download: {
+        ...MISSING,
+        action: "downloading",
+        say: "Downloading am_michael (about 330 MB). alba keeps speaking until it is ready; the switch comes between two replies.",
+      },
     };
-    mocks.plans = { "": missing };
+    // While it downloads, the daemon's plan for the chosen face says so.
+    mocks.onFace = () => (mocks.plans = { ...mocks.plans, "": mocks.plans.download });
     await settings.reloadFromDaemon();
     await chooseMan();
-    await screen.findByRole("button", { name: "Use am_michael" });
-    expect(screen.getByTestId("face-voice").textContent).toMatch(/not on this computer yet/);
-    expect(mocks.faceVoice.some((asked) => (asked as { apply: string }).apply === "accept")).toBe(false);
+    await fireEvent.click(await screen.findByRole("button", { name: "Use this face and download its voice" }));
+    await waitFor(() => expect(mocks.sent).toEqual([{ section: "face", values: { pack: "portrait-man" } }]));
+    await waitFor(() => expect(screen.getByTestId("face-voice").textContent).toMatch(/Downloading am_michael/));
+    expect(mocks.faceVoice).toContainEqual(ASKED("download"));
+    expect(screen.queryByRole("button", { name: "Use this face and download its voice" })).toBeNull();
+    // The daemon says the voice is ready (it switched between two replies).
+    mocks.config = { face: { pack: "portrait-man" }, voice: { tts_engine: "kokoro_tts", tts_voice: "am_michael" } };
+    mocks.plans = { "": { status: "ok", switched: false, voice: "am_michael", action: "same", say: "" } };
+    mocks.handler?.("face_voice_ready", {
+      status: "ok",
+      pack: "portrait-man",
+      voice: "am_michael",
+      say: "Heliox now speaks with am_michael, this face's voice.",
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("face-voice").textContent).toMatch(
+        /Heliox now speaks with am_michael, this face's voice/,
+      ),
+    );
+  });
+
+  it("uses the face with the voice the person has, and asks nothing more", async () => {
+    mocks.config = { face: { pack: "off" }, voice: { tts_engine: "pocket_tts", tts_voice: "alba" } };
+    mocks.plans = { "": MISSING, keep: KEPT };
+    mocks.onFace = () => (mocks.plans = { ...mocks.plans, "": KEPT }); // recorded by the keep that follows
+    await settings.reloadFromDaemon();
+    await chooseMan();
+    await fireEvent.click(await screen.findByRole("button", { name: "Use this face with the voice I have" }));
+    await waitFor(() => expect(mocks.sent).toEqual([{ section: "face", values: { pack: "portrait-man" } }]));
+    expect(mocks.faceVoice).toContainEqual(ASKED("keep"));
+    await waitFor(() =>
+      expect(screen.getByTestId("face-voice").textContent).toMatch(/You chose to keep your voice, alba/),
+    );
+    expect(screen.queryByTestId("face-voice-question")).toBeNull();
+  });
+
+  it("without a network the download is not offered, says why, and the face can still be used", async () => {
+    mocks.config = { face: { pack: "off" }, voice: { tts_engine: "pocket_tts", tts_voice: "alba" } };
+    mocks.plans = {
+      "": { ...MISSING, download_ok: false, download_reason: "No connection to huggingface.co right now." },
+      keep: KEPT,
+    };
+    await settings.reloadFromDaemon();
+    await chooseMan();
+    const download = (await screen.findByRole("button", {
+      name: "Use this face and download its voice",
+    })) as HTMLButtonElement;
+    expect(download.disabled).toBe(true);
+    expect(screen.getByText("Cannot download now: No connection to huggingface.co right now.")).toBeTruthy();
+    const keep = screen.getByRole("button", { name: "Use this face with the voice I have" }) as HTMLButtonElement;
+    expect(keep.disabled).toBe(false);
+    await fireEvent.click(keep);
+    await waitFor(() => expect(mocks.sent).toEqual([{ section: "face", values: { pack: "portrait-man" } }]));
   });
 
   it("with another engine says how to hear the face's voice and offers no control", async () => {

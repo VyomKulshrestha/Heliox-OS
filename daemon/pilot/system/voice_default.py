@@ -79,6 +79,23 @@ RULES: tuple[Rule, ...] = load_rules()
 VOICES: dict[str, dict[str, Any]] = load_voices()
 
 
+def pocket_voice_terms(voice: str, voices: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """A built-in Pocket voice's source and terms ("voice_terms" in speech_models.json); {} for a name not listed."""
+    entry = (VOICES if voices is None else voices).get("pocket_tts", {})
+    return dict(entry.get("voice_terms", {}).get(voice, {}))
+
+
+def pocket_voice_allowed(voice: str) -> bool:
+    """Its terms allow any use (CC0 or CC BY): the only Pocket voices Heliox may set, pick or bring with a face."""
+    return pocket_voice_terms(voice).get("use") == "allowed"
+
+
+def pocket_voices_offered() -> list[str]:
+    """Allowed Pocket voices that were also listened to and read back: the ones Settings offers."""
+    terms = VOICES.get("pocket_tts", {}).get("voice_terms", {})
+    return [name for name, term in terms.items() if term.get("use") == "allowed" and term.get("listened")]
+
+
 def default_voice(engine: str) -> str:
     return str(VOICES.get(engine, {}).get("default_voice", "af_heart" if engine == "kokoro_tts" else "alba"))
 
@@ -231,6 +248,10 @@ def first_voice(
     if target == engine:
         return None
     new_voice = (face_voices or {}).get(target) or default_voice(target)
+    if target == "pocket_tts" and not pocket_voice_allowed(new_voice):
+        target, new_voice = "kokoro_tts", (face_voices or {}).get("kokoro_tts") or default_voice("kokoro_tts")
+        if target == engine:
+            return None
     return FirstVoice(target, new_voice, rule.why, machine)
 
 

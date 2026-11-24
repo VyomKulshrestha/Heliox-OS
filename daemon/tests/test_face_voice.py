@@ -62,7 +62,7 @@ def test_with_pocket_the_woman_s_face_uses_its_approved_pocket_voice():
     offered = plan(**woman, current="lola")
     assert (offered.action, offered.voice, offered.engine, offered.download_bytes) == ("offer", "alba", "pocket_tts", 0)
     missing = plan(**woman, current="lola", chosen=True, pocket_on_disk=lambda _voice: False)
-    assert missing.action == "fetch" and missing.engine == "pocket_tts" and missing.download_bytes == 6_000_000
+    assert missing.action == "fetch" and missing.engine == "pocket_tts" and missing.download_bytes == 6_244_152
     assert missing.say.startswith("Your voice, lola, is kept.") and "about 6 MB" in missing.say
 
 
@@ -128,6 +128,7 @@ def _server(monkeypatch, *, on_disk=HERE, chosen=False, engine="kokoro_tts", voi
     config.save = MagicMock()
     server = PilotServer(config)
     server._broadcast_notification = AsyncMock()
+    server._voice_download_check = lambda engine: (True, "")  # no network is asked
     monkeypatch.setattr(kokoro_tts, "voice_on_disk", on_disk)
     configured: list[str] = []
     monkeypatch.setattr(local_tts_worker, "configure_local_voice", lambda v, **_: configured.append(v.tts_voice))

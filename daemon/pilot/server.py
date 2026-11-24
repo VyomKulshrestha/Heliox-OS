@@ -1054,6 +1054,11 @@ GNOMON_REQUEST_TIMEOUT = 4.0  # a review of a request never holds it up longer t
 GNOMON_REQUEST_QUESTION_BUDGET = 3.0
 
 
+def _megabytes_said(size: int) -> str:
+    """ "half a megabyte", "330 MB": a download's size as the face picker says it."""
+    return "half a megabyte" if size < 1_000_000 else f"{round(size / 1_000_000)} MB"
+
+
 class PilotServer:
     """Main daemon server managing WebSocket connections and agent dispatch."""
 
@@ -1349,7 +1354,7 @@ class PilotServer:
         from pilot.system.speech_budget import light_voice_reason, total_memory
 
         settings = self.config.voice
-        if settings.tts_engine != "kokoro_tts":
+        if settings.tts_engine != "kokoro_tts" or settings.engine_suggestion_dismissed:
             return None
         try:
             pocket_installed = importlib.util.find_spec("pocket_tts") is not None
@@ -10879,6 +10884,20 @@ class PilotServer:
                     "status": "error",
                     "message": "typed_decision artifact_dir and report_path must be absolute local paths",
                 }
+        if section == "voice" and {"tts_engine", "tts_voice"} & normalized_values.keys():
+            from pilot.system.voice_default import pocket_voice_allowed
+
+            engine_after = normalized_values.get("tts_engine", target.tts_engine)
+            voice_after = normalized_values.get("tts_voice", target.tts_voice)
+            already = target.tts_engine == "pocket_tts" and target.tts_voice == voice_after
+            if engine_after == "pocket_tts" and not pocket_voice_allowed(str(voice_after)) and not already:
+                # A Pocket voice whose terms do not allow any use (non-commercial) or are not established is never
+                # set; one a person already speaks with keeps working (speech_models.json, voice_terms).
+                return {
+                    "status": "error",
+                    "message": f"Heliox does not offer the Pocket TTS voice {voice_after}: its terms do not allow "
+                    "every use, or they are not established.",
+                }
         if section == "voice" and "tts_voice" in normalized_values and "tts_voice_chosen" not in values:
             # The person picked a voice: from now on a face offers its voice instead of switching to it.
             previous_values["tts_voice_chosen"] = target.tts_voice_chosen
@@ -16038,15 +16057,16 @@ def handle_tool(tool_name, params):
                 configure_local_voice(voice)
         return {"status": "ok", **(await self._voice_for_language()).as_dict()}
 
-    def _face_voice_plan_now(self, voice: str, hint: str) -> Any:
-        """What the Face row offers for a face pack that names ``voice`` (pilot.system.face_voice). Reads whether the
-        voice file is on disk, nothing more."""
+    def _face_voice_plan_now(self, voice: str, hint: str, pack: str = "") -> Any:
+        """What the Face row offers for a face pack that names ``voice`` (pilot.system.face_voice): the chosen face,
+        or ``pack``, a face the picker is about to offer. Reads whether the voice file is on disk, nothing more."""
         from pilot.system import kokoro_tts, voice_default
         from pilot.system.face_voice import plan_face_voice, pocket_voice
         from pilot.system.voice_by_language import reader_missing
 
         settings = self.config.voice
-        pocket = pocket_voice(str(getattr(self.config.face, "pack", "off") or "off"), voice, hint)
+        pack = pack or str(getattr(self.config.face, "pack", "off") or "off")
+        pocket = pocket_voice(pack, voice, hint)
         return plan_face_voice(
             voice,
             hint,
@@ -16060,10 +16080,98 @@ def handle_tool(tool_name, params):
             pocket_on_disk=voice_default.pocket_voice_on_disk,
             kokoro_model_on_disk=lambda: "kokoro_tts" in voice_default.voice_models_on_disk(),
             kokoro_model_bytes=int(voice_default.VOICES.get("kokoro_tts", {}).get("download_bytes", 0)),
+            kept=pack in list(getattr(self.config.face, "kept_voice", []) or []),
         )
 
-    async def _face_voice_plan(self, voice: str, hint: str) -> Any:
-        return await asyncio.to_thread(self._face_voice_plan_now, voice, hint)
+    def _voice_download_check(self, engine: str) -> tuple[bool, str]:
+        """Whether the face picker's "Use this face and download its voice" can start now, and why not: the engine
+        must be installed and huggingface.co reachable (pilot.system.voice_fetch.network_ok)."""
+        import importlib.util
+
+        from pilot.system import voice_fetch
+
+        module = {"kokoro_tts": "kokoro", "pocket_tts": "pocket_tts"}.get(engine, "")
+        try:
+            installed = bool(module) and importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError):
+            installed = False
+        if not installed:
+            name = "Kokoro" if engine == "kokoro_tts" else "Pocket TTS"
+            return False, f"{name} is not installed: add Voice under Settings, Optional parts."
+        return voice_fetch.network_ok()
+
+    async def _face_voice_plan(self, voice: str, hint: str, pack: str = "") -> Any:
+        """The plan, with what the picker needs for a face whose voice is not here: whether its download can start
+        (or is already under way, "downloading")."""
+        from dataclasses import replace
+
+        plan = await asyncio.to_thread(self._face_voice_plan_now, voice, hint, pack)
+        if plan.action != "fetch":
+            return plan
+        fetching = getattr(self, "_face_voice_fetching", None) or {}
+        if fetching.get("state") == "downloading" and fetching.get("voice") == plan.voice:
+            current = self.config.voice.tts_voice
+            return replace(
+                plan,
+                action="downloading",
+                say=f"Downloading {plan.voice} (about {_megabytes_said(plan.download_bytes)}). {current} keeps speaking "
+                "until it is ready; the switch comes between two replies.",
+            )
+        ok, reason = await asyncio.to_thread(self._voice_download_check, plan.engine)
+        failed = fetching.get("error", "") if fetching.get("voice") == plan.voice else ""
+        say = f"The last download stopped: {failed} {plan.say}" if failed else plan.say
+        return replace(plan, download_ok=ok, download_reason=reason, say=say)
+
+    async def _fetch_face_voice(self, pack: str, plan: Any) -> None:
+        """The person agreed to download the face's voice: fetch its files while the current voice keeps speaking,
+        then switch between two replies (LocalTTSWorkerManager.between_replies), as a voice they chose. Nothing
+        switches when the face was changed meanwhile or the fetch failed; the picker is told either way
+        (face_voice_ready)."""
+        from pilot.system import local_tts_worker, voice_default, voice_fetch
+
+        state = {"pack": pack, "voice": plan.voice, "engine": plan.engine, "state": "downloading", "error": ""}
+        self._face_voice_fetching = state
+        files = voice_fetch.files_for(
+            plan.engine, plan.voice, model_on_disk=plan.engine in voice_default.voice_models_on_disk()
+        )
+        fetcher = getattr(self, "_voice_fetcher", None) or voice_fetch.fetch
+        between = getattr(self, "_between_replies", None) or local_tts_worker.manager().between_replies
+        try:
+            await asyncio.to_thread(fetcher, files)
+        except Exception as exc:
+            state.update(state="failed", error=f"{type(exc).__name__}: {str(exc)[:160]}")
+            logger.warning("The face's voice %s could not be downloaded: %s", plan.voice, state["error"])
+            await self._broadcast_notification(
+                "face_voice_ready", {"status": "failed", "pack": pack, "voice": plan.voice, "message": state["error"]}
+            )
+            return
+        while not between():
+            await asyncio.sleep(getattr(self, "_reply_boundary_poll", 0.5))  # a reply is under way: after it
+        async with self._config_lock:
+            settings = self.config.voice
+            if str(getattr(self.config.face, "pack", "off")) != pack:
+                state["state"] = "cancelled"
+                return
+            previous = (settings.tts_engine, settings.tts_voice, settings.tts_voice_chosen)
+            settings.tts_engine, settings.tts_voice, settings.tts_voice_chosen = plan.engine, plan.voice, True
+            try:
+                self.config.save()
+            except Exception as exc:
+                settings.tts_engine, settings.tts_voice, settings.tts_voice_chosen = previous
+                state.update(state="failed", error=f"The settings could not be saved: {exc}")
+                await self._broadcast_notification(
+                    "face_voice_ready",
+                    {"status": "failed", "pack": pack, "voice": plan.voice, "message": state["error"]},
+                )
+                return
+        state["state"] = "done"
+        with contextlib.suppress(Exception):
+            local_tts_worker.configure_local_voice(settings)
+        say = f"Heliox now speaks with {plan.voice}, this face's voice."
+        await self._broadcast_notification("config_updated", {"method": "face_voice", "section": "voice"})
+        await self._broadcast_notification(
+            "face_voice_ready", {"status": "ok", "pack": pack, "voice": plan.voice, "say": say}
+        )
 
     def _face_brings_its_voice(self, *, configure: bool = True) -> dict[str, Any] | None:
         """face.pack was set, by whatever route (the settings update from any client, a spoken setting, the config
@@ -16126,12 +16234,57 @@ def handle_tool(tool_name, params):
         offered, fetched by Kokoro the first time it speaks when it is not on disk. Nothing is ever downloaded by
         this call."""
         voice, hint, apply = params.get("voice", ""), params.get("hint", ""), params.get("apply", "")
-        if not isinstance(voice, str) or not isinstance(hint, str) or apply not in {"", "auto", "accept"}:
-            return {"status": "error", "message": 'face_voice takes voice, hint and apply ("", "auto" or "accept")'}
+        pack = params.get("pack", "")
+        from pilot.config import face_pack_valid
+
+        if (
+            not isinstance(voice, str)
+            or not isinstance(hint, str)
+            or apply not in {"", "auto", "accept", "download", "keep"}
+            or not isinstance(pack, str)
+            or (pack and not face_pack_valid(pack))
+        ):
+            return {
+                "status": "error",
+                "message": 'face_voice takes voice, hint, pack and apply ("", "auto", "accept", "download" or "keep")',
+            }
         from pilot.system.face_voice import switched_say
 
+        if apply == "keep":
+            # "Use this face with the voice I have": recorded, so nothing asks again or swaps the voice later.
+            chosen_pack = pack or str(getattr(self.config.face, "pack", "off") or "off")
+            if chosen_pack == "off":
+                return {"status": "error", "message": "No face is chosen."}
+            async with self._config_lock:
+                face, settings = self.config.face, self.config.voice
+                previous = (list(face.kept_voice), settings.tts_voice_chosen)
+                if chosen_pack not in face.kept_voice:
+                    face.kept_voice = [*face.kept_voice, chosen_pack]
+                settings.tts_voice_chosen = True
+                try:
+                    self.config.save()
+                except Exception as exc:
+                    face.kept_voice, settings.tts_voice_chosen = previous
+                    return {"status": "error", "message": f"Not changed: {exc}"}
+            await self._broadcast_notification("config_updated", {"method": "face_voice", "section": "face"})
+            kept = await self._face_voice_plan(voice, hint, chosen_pack)
+            return {"status": "ok", "switched": False, **kept.as_dict()}
+        if apply == "download":
+            plan = await self._face_voice_plan(voice, hint, pack)
+            if plan.action == "fetch":
+                if not plan.download_ok:
+                    return {"status": "error", "message": plan.download_reason, **plan.as_dict()}
+                chosen_pack = pack or str(getattr(self.config.face, "pack", "off") or "off")
+                self._face_voice_fetch_task = asyncio.create_task(self._fetch_face_voice(chosen_pack, plan))
+                await asyncio.sleep(0)  # the task records that it is downloading
+                started = await self._face_voice_plan(voice, hint, pack)
+                return {"status": "ok", "switched": False, **started.as_dict()}
+            if plan.action != "offer":
+                return {"status": "ok", "switched": False, **plan.as_dict()}
+            apply = "accept"  # already on the computer: nothing to fetch, it is used at once
+
         async with self._config_lock:
-            plan = await self._face_voice_plan(voice, hint)
+            plan = await self._face_voice_plan(voice, hint, pack)
             if apply != "accept" and (said := self._face_voice_just_switched(voice)):
                 return {"status": "ok", "switched": True, **plan.as_dict(), "voice": plan.voice, "say": said}
             settings = self.config.voice

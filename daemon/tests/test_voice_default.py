@@ -73,7 +73,8 @@ def test_changing_one_row_is_the_whole_change(tmp_path):
 def test_the_voices_say_what_they_are_their_size_licence_and_source():
     pocket, kokoro = voice_default.VOICES["pocket_tts"], voice_default.VOICES["kokoro_tts"]
     assert pocket["licence"] == "CC-BY-4.0" and "kyutai/pocket-tts-without-voice-cloning" in pocket["source"]
-    assert "kyutai/tts-voices" in pocket["source"] and "CC BY 4.0" in pocket["attribution"]
+    assert "kyutai/tts-voices" not in pocket["source"] and "CC BY 4.0" in pocket["attribution"]
+    assert pocket["voice_terms"]["alba"]["source"] == "kyutai/tts-voices alba-mackenna/casual.wav"
     assert 219_000_000 <= pocket["download_bytes"] <= 230_000_000 and pocket["default_voice"] == "alba"
     assert kokoro["licence"] == "Apache-2.0" and "hexgrad/Kokoro-82M" in kokoro["source"]
     assert kokoro["default_voice"] == "af_heart" and pocket["languages"] == ["en"]

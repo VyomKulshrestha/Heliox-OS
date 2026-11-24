@@ -244,7 +244,22 @@
         "ja",
         "pt",
         "zh"
-      ]
+      ],
+      "voice_bytes": 523000,
+      "files": [
+        {
+          "repo": "hexgrad/Kokoro-82M",
+          "path": "config.json"
+        },
+        {
+          "repo": "hexgrad/Kokoro-82M",
+          "path": "kokoro-v1_0.pth"
+        }
+      ],
+      "voice_file": {
+        "repo": "hexgrad/Kokoro-82M",
+        "path": "voices/{voice}.pt"
+      }
     },
     {
       "engine": "pocket_tts",
@@ -253,14 +268,212 @@
       "voice_kind": "feminine",
       "model": "Pocket TTS, English, without voice cloning",
       "download_bytes": 225000000,
-      "size_note": "About 219 MB of model, 0.25 MB of tokenizer and about 6 MB for the voice, fetched by Pocket TTS the first time it speaks.",
+      "size_note": "About 219 MB of model, 0.3 MB of tokenizer and 3.6 to 7.1 MB for each voice (alba 6.2 MB), fetched by Pocket TTS the first time it speaks.",
       "licence": "CC-BY-4.0",
-      "source": "kyutai/pocket-tts-without-voice-cloning on Hugging Face; voices from kyutai/tts-voices",
+      "source": "kyutai/pocket-tts-without-voice-cloning on Hugging Face",
       "url": "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning",
-      "attribution": "Pocket TTS by Kyutai, licensed under CC BY 4.0 (huggingface.co/kyutai/pocket-tts-without-voice-cloning). Voices from huggingface.co/kyutai/tts-voices.",
+      "attribution": "Pocket TTS model by Kyutai (huggingface.co/kyutai/pocket-tts-without-voice-cloning), licensed under CC BY 4.0 (creativecommons.org/licenses/by/4.0). The pocket-tts code: MIT, as its repository states.",
       "languages": [
         "en"
-      ]
+      ],
+      "voice_bytes": 6244152,
+      "files": [],
+      "voice_file": {
+        "repo": "kyutai/pocket-tts-without-voice-cloning",
+        "path": "languages/english_2026-10/embeddings/{voice}.safetensors"
+      },
+      "voice_terms_note": "Every built-in Pocket voice by name, with its source and terms (kyutai/tts-voices README; kyutai-labs/pocket-tts 4.0.1). use: allowed (CC0 or CC BY: any use), never (non-commercial), unknown (terms not established). Only allowed voices can be set, picked by a rule or brought by a face; only allowed voices that were listened to and read back are offered in Settings. A voice a person already speaks with keeps working.",
+      "voice_terms": {
+        "alba": {
+          "source": "kyutai/tts-voices alba-mackenna/casual.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice acted by Alba MacKenna (kyutai/tts-voices, alba-mackenna), CC BY 4.0.",
+          "use": "allowed",
+          "listened": true
+        },
+        "anna": {
+          "source": "kyutai/tts-voices vctk/p228_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "azelma": {
+          "source": "kyutai/tts-voices vctk/p303_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "charles": {
+          "source": "kyutai/tts-voices vctk/p254_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "eponine": {
+          "source": "kyutai/tts-voices vctk/p262_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "eve": {
+          "source": "kyutai/tts-voices vctk/p361_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "fantine": {
+          "source": "kyutai/tts-voices vctk/p244_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "george": {
+          "source": "kyutai/tts-voices vctk/p315_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "jane": {
+          "source": "kyutai/tts-voices vctk/p339_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "mary": {
+          "source": "kyutai/tts-voices vctk/p333_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "michael": {
+          "source": "kyutai/tts-voices vctk/p360_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "paul": {
+          "source": "kyutai/tts-voices vctk/p259_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "vera": {
+          "source": "kyutai/tts-voices vctk/p229_023_enhanced.wav",
+          "licence": "CC-BY-4.0",
+          "attribution": "Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+          "use": "allowed",
+          "listened": false
+        },
+        "javert": {
+          "source": "kyutai/tts-voices voice-donations/Butter.wav",
+          "licence": "CC0-1.0",
+          "attribution": "",
+          "use": "allowed",
+          "listened": false
+        },
+        "marius": {
+          "source": "kyutai/tts-voices voice-donations/Selfie.wav",
+          "licence": "CC0-1.0",
+          "attribution": "",
+          "use": "allowed",
+          "listened": false
+        },
+        "bill_boerst": {
+          "source": "kyutai/tts-voices voice-zero/bill_boerst.wav",
+          "licence": "CC0-1.0",
+          "attribution": "",
+          "use": "allowed",
+          "listened": false
+        },
+        "caro_davy": {
+          "source": "kyutai/tts-voices voice-zero/caro_davy.wav",
+          "licence": "CC0-1.0",
+          "attribution": "",
+          "use": "allowed",
+          "listened": false
+        },
+        "peter_yearsley": {
+          "source": "kyutai/tts-voices voice-zero/peter_yearsley.wav",
+          "licence": "CC0-1.0",
+          "attribution": "",
+          "use": "allowed",
+          "listened": false
+        },
+        "stuart_bell": {
+          "source": "kyutai/tts-voices voice-zero/stuart_bell.wav",
+          "licence": "CC0-1.0",
+          "attribution": "",
+          "use": "allowed",
+          "listened": false
+        },
+        "estelle": {
+          "source": "kyutai/tts-voices unmute-prod-website/developpeuse-3.wav",
+          "licence": "CC0-1.0",
+          "attribution": "",
+          "use": "allowed",
+          "listened": false
+        },
+        "cosette": {
+          "source": "kyutai/tts-voices expresso/ex04-ex02_confused_001_channel1_499s.wav",
+          "licence": "CC-BY-NC-4.0",
+          "attribution": "",
+          "use": "never",
+          "listened": false
+        },
+        "jean": {
+          "source": "kyutai/tts-voices ears/p010/freeform_speech_01_enhanced.wav",
+          "licence": "CC-BY-NC-4.0",
+          "attribution": "",
+          "use": "never",
+          "listened": false
+        },
+        "giovanni": {
+          "source": "kyutai/pocket-tts common_voice_it_36520747-enhanced-v2.mp3",
+          "licence": "unknown",
+          "attribution": "",
+          "use": "unknown",
+          "listened": false
+        },
+        "lola": {
+          "source": "kyutai/pocket-tts common_voice_es_19762977-enhanced-v2.mp3",
+          "licence": "unknown",
+          "attribution": "",
+          "use": "unknown",
+          "listened": false
+        },
+        "juergen": {
+          "source": "kyutai/pocket-tts de-DE-juergen.mp3",
+          "licence": "unknown",
+          "attribution": "",
+          "use": "unknown",
+          "listened": false
+        },
+        "rafael": {
+          "source": "kyutai/pocket-tts g-Vi8PgmSY0-enhanced-v2.wav",
+          "licence": "unknown",
+          "attribution": "",
+          "use": "unknown",
+          "listened": false
+        },
+        "daan": {
+          "source": "kyutai/pocket-tts cml_tts_nl_11290_9412_000030_0001.flac",
+          "licence": "unknown",
+          "attribution": "",
+          "use": "unknown",
+          "listened": false
+        }
+      }
     }
   ],
   "voice_rules": {
@@ -313,5 +526,6 @@
         "why": "As before: Kokoro, with a system voice of the language offered in Settings, Voice when Kokoro has none."
       }
     ]
-  }
+  },
+  "voices_note": "Sizes and the attribution are written here only (about-figures from the model pages); everything else reads them from here."
 }

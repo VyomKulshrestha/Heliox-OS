@@ -1651,6 +1651,11 @@ class LocalTTSWorkerManager:
         """Heliox has just finished saying something, in any voice (the system voice's speech is timed by the caller)."""
         self._spoke_until = self._clock()
 
+    def between_replies(self) -> bool:
+        """No reply is being spoken: nothing is being synthesised or played by this manager and Heliox has said
+        nothing for REPLY_GAP_SECONDS (the gap that ends a reply). A voice switched now never changes inside a reply."""
+        return self._busy == 0 and self._clock() - self._spoke_until > REPLY_GAP_SECONDS
+
     def reply_voice(self) -> str:
         """The voice the reply being spoken keeps ("local", "system", or "" when a new reply decides afresh): the one
         named by ``speech_reply``, or with no name the last unnamed one, until REPLY_GAP_SECONDS of silence."""

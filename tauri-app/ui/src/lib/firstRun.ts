@@ -357,6 +357,16 @@ export interface LocalVoice {
   url: string;
   attribution: string;
   languages: string[];
+  voice_terms?: Record<string, VoiceTerms>;
+}
+
+/** A built-in voice's source and terms (speech_models.json, voice_terms). */
+export interface VoiceTerms {
+  source: string;
+  licence: string;
+  attribution: string;
+  use: "allowed" | "never" | "unknown";
+  listened: boolean;
 }
 
 interface VoiceRule {
@@ -417,9 +427,33 @@ export function voiceWhere(voice: LocalVoice, machine: VoiceMachine): string {
   return voice.engine === "pocket_tts" ? "on the processor, streaming" : "on the processor";
 }
 
-/** "CC-BY-4.0" as people write it: "CC BY 4.0". */
+/** A Pocket voice's terms; undefined for a name the list does not know. */
+export function pocketVoiceTerms(name: string): VoiceTerms | undefined {
+  return localVoices().find((v) => v.engine === "pocket_tts")?.voice_terms?.[name];
+}
+
+/**
+ * The Pocket voices Settings offers: those whose terms allow any use and that were listened to and read back. A voice
+ * the person already speaks with stays in the list (``current``), so a choice made before is never broken.
+ */
+export function pocketVoicesOffered(current = ""): string[] {
+  const terms = localVoices().find((v) => v.engine === "pocket_tts")?.voice_terms ?? {};
+  const offered = Object.keys(terms).filter((name) => terms[name].use === "allowed" && terms[name].listened);
+  return current && !offered.includes(current) ? [...offered, current] : offered;
+}
+
+/** The credit line for a Pocket voice: its own attribution, CC0 said plainly, or why Heliox does not offer it. */
+export function pocketVoiceCredit(name: string): string {
+  const terms = pocketVoiceTerms(name);
+  if (!terms || terms.use !== "allowed")
+    return `Voice ${name}: its terms do not allow every use or are not established, so Heliox does not offer it; it stays because it was chosen here.`;
+  if (terms.attribution) return `Voice ${name}: ${terms.attribution}`;
+  return `Voice ${name}: ${licenceName(terms.licence)}, from ${terms.source}.`;
+}
+
+/** "CC-BY-4.0" and "CC0-1.0" as people write them: "CC BY 4.0", "CC0 1.0". */
 export function licenceName(licence: string): string {
-  return licence.startsWith("CC-") ? licence.replace(/-/g, " ") : licence;
+  return licence.startsWith("CC") ? licence.replace(/-/g, " ") : licence;
 }
 
 export const VOICE_KEY = "heliox_first_run_voice";

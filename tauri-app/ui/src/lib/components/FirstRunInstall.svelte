@@ -16,6 +16,7 @@
     languageNote,
     licenceName,
     pendingModels,
+    pocketVoiceCredit,
     pendingVoice,
     pythonSentence,
     savePendingModels,
@@ -272,6 +273,8 @@
                           <span class="group-source"
                             >From {voice.source}. Licence {licenceName(voice.licence)}.{voice.attribution
                               ? ` ${voice.attribution}`
+                              : ""}{voice.engine === "pocket_tts"
+                              ? ` ${pocketVoiceCredit(voice.default_voice)}`
                               : ""}</span
                           >
                         </span>
