@@ -55,12 +55,14 @@ def test_only_what_bears_on_the_words():
     assert due_line("why is the sky blue?", todos=[], reminders=[call], now=NOW, local=True) == ""
 
 
-def test_far_off_done_or_private_items_are_left_out():
-    far = {"text": "finish the report by Friday 4 December", "done": False}
+def test_far_off_items_count_only_by_a_shared_word_and_done_or_private_items_never():
+    far = {"text": "walk the dog by Friday 4 December", "done": False}
     done = {**REPORT, "done": True}
     health = {"text": "take the medication for the report deadline stress tomorrow", "done": False}
-    later = _reminder("report review", datetime(2026, 11, 27, 9, 0))
+    later = _reminder("dentist review", datetime(2026, 11, 27, 9, 0))
     assert due_line(DECISION, todos=[far, done, health], reminders=[later], now=NOW, local=True) == ""
+    shared = {"text": "finish the report by Friday 4 December", "done": False}
+    assert "Friday 04 December" in due_line(DECISION, todos=[shared], reminders=[], now=NOW, local=True)
 
 
 def test_bounded():

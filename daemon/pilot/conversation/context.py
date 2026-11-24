@@ -162,6 +162,26 @@ def _safe(call: Callable[[], Any], default: Any) -> Any:
     return default if value is None else value
 
 
+def clock_words(moment: Any) -> str:
+    """A time no reader can take for its twelve-hour twin, in every locale: the 24-hour clock with the part of the day
+    in words ("11:21 in the morning", "23:40 at night", "12:00, noon", "00:00, midnight")."""
+    hour, minute = moment.hour, moment.minute
+    stamp = f"{hour:02d}:{minute:02d}"
+    if (hour, minute) == (0, 0):
+        return f"{stamp}, midnight"
+    if (hour, minute) == (12, 0):
+        return f"{stamp}, noon"
+    if 5 <= hour < 12:
+        part = "in the morning"
+    elif 12 <= hour < 17:
+        part = "in the afternoon"
+    elif 17 <= hour < 21:
+        part = "in the evening"
+    else:
+        part = "at night"
+    return f"{stamp} {part}"
+
+
 def describe_task(state: dict[str, Any]) -> list[str]:
     lines = []
     if state.get("approval_waiting"):
@@ -260,7 +280,7 @@ def assemble(
     ``stance``: the disagreement held in this conversation (pilot.conversation.debate), kept even when the block is
     tight."""
     now = _safe(sources.now, datetime.now())
-    sections: list[str] = [f"Now: {now.strftime('%A %d %B %Y, %H:%M')}."]
+    sections: list[str] = [f"Now: {now.strftime('%A %d %B %Y')}, {clock_words(now)}."]
     task = _safe(sources.task_state, {})
     sections += describe_task(task) if isinstance(task, dict) else []
     personal = bool(_safe(sources.personal, True))

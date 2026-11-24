@@ -4,10 +4,10 @@ Without it a disagreement had no grounds but words said earlier in the same conv
 quarterly report by 9 am tomorrow" never reached the model, so "I'll watch a series tonight and do the report in the
 morning" was met with "Okay" or with a wrong reason. The line is small and chosen in code, with no model call:
 
-- a reminder counts when it is due in the next 24 hours; a to-do when its own words name a time in the next 36 hours
-  ("by 9 am tomorrow", "tonight", "on Friday"), or, with no time named, when it shares a word with what was said;
-- an item is given only when it bears on what was said: it shares a word of four letters or more with it, or the
-  words speak of a time ("tonight", "tomorrow morning", "at four") and the item is due within that day or so;
+- an item that shares a word of four letters or more with what was just said is given, whatever its date;
+- otherwise only when the words speak of a time ("tonight", "tomorrow morning", "at four") and the item is due soon:
+  a reminder in the next 24 hours, a to-do whose own words name a time in the next 36 hours. A to-do's time is read
+  as people say it ("by 9 tomorrow morning", "four this afternoon", "half past eight tonight", "noon": spoken_clock);
 - at most two to-dos and two reminders, newest due first, in at most 300 characters;
 - never anything ``never_sent`` holds back (health, money, a secret, someone else's private details).
 
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import Any
 
 REMINDER_HOURS = 24
@@ -106,28 +106,102 @@ def speaks_of_time(text: str) -> bool:
     return bool(_TIME_WORDS.search(text or ""))
 
 
-def todo_due(text: str, now: datetime) -> datetime | None:
-    """When a to-do's own words say it is due ("by 9 am tomorrow", "tonight"), or None."""
-    from pilot.live.commitments import _find_deadline, deadline_of
+_HOURS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12,
+}  # fmt: skip
+_HOUR = r"(?P<h>\d{1,2}|" + "|".join(_HOURS) + ")"
+_CLOCK_SAID = re.compile(
+    r"\b(?:(?P<frac>half past|quarter past|quarter to)\s+)?" + _HOUR + r"(?:[:.](?P<m>\d{2}))?(?:\s*o'?clock)?"
+    r"(?:\s*(?P<ap>a\.?\s?m\b\.?|p\.?\s?m\b\.?))?",
+    re.IGNORECASE,
+)
+_BEFORE_A_TIME = re.compile(r"\b(?:at|by|before|until|till|from)\s+$", re.IGNORECASE)
+_PART_AFTER = re.compile(
+    r"^\s+(?:(?:tomorrow|today|on \w+day|this|in the)\s+)?(?P<part>morning|afternoon|evening|night|tonight)\b",
+    re.IGNORECASE,
+)
+_NOT_A_TIME = re.compile(
+    r"^\s+(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?|years?|of|people|times|percent)\b", re.IGNORECASE
+)
+_PART = re.compile(r"\b(?P<part>morning|afternoon|evening|tonight|night)\b", re.IGNORECASE)
+_NOON = re.compile(r"\b(?:noon|midday)\b", re.IGNORECASE)
+_MIDNIGHT = re.compile(r"\bmidnight\b", re.IGNORECASE)
+_TODAY_PART = re.compile(r"\b(?:tonight|today|this (?:morning|afternoon|evening))\b", re.IGNORECASE)
+# When a part of the day is named with no hour ("tomorrow morning"): due by its end.
+_PART_ENDS = {"morning": time(12, 0), "afternoon": time(17, 0), "evening": time(21, 0), "tonight": time(23, 59)}
 
-    cut = _find_deadline(" " + text)
-    if cut is None:
-        return None
+
+def spoken_clock(text: str) -> time | None:
+    """The time of day the words name, as people say it: "9 am", "9 tomorrow morning", "four this afternoon", "half
+    past eight tonight", "at 3" (the afternoon, as a plan says it), "noon", "midnight". None when they name none."""
+    if _NOON.search(text):
+        return time(12, 0)
+    if _MIDNIGHT.search(text):
+        return time(23, 59)  # "by midnight" is the end of that day
+    named = _PART.search(text)
+    for match in _CLOCK_SAID.finditer(text):
+        word = match["h"].casefold()
+        hour = int(word) if word.isdigit() else _HOURS[word]
+        minute = int(match["m"] or 0)
+        rest = text[match.end() :]
+        part_after = _PART_AFTER.match(rest)
+        if not (match["ap"] or match["frac"] or part_after or _BEFORE_A_TIME.search(text[: match.start()])):
+            continue  # a number that is not a time ("four hours of work")
+        if _NOT_A_TIME.match(rest) or not 0 <= hour <= 23 or minute > 59:
+            continue
+        if match["frac"]:
+            frac = match["frac"].casefold()
+            minute = {"half past": 30, "quarter past": 15}.get(frac, 45)
+            hour = hour - 1 if frac == "quarter to" else hour
+        part = (part_after["part"] if part_after else named["part"] if named else "").casefold()
+        meridiem = (match["ap"] or "").casefold().replace(".", "").replace(" ", "")
+        if hour > 12:
+            pass  # a 24-hour time says it all
+        elif meridiem == "pm" or (not meridiem and part in ("afternoon", "evening", "tonight")):
+            hour = hour % 12 + 12
+        elif meridiem == "am" or part == "morning":
+            hour = hour % 12
+        elif part == "night":
+            hour = hour % 12 + (12 if hour >= 6 else 0)
+        elif 1 <= hour <= 7:
+            hour += 12  # "at 5" in a plan means the afternoon
+        return time(hour % 24, minute)
+    return None
+
+
+def todo_due(text: str, now: datetime) -> datetime | None:
+    """When a to-do's own words say it is due ("by 9 am tomorrow", "by 9 tomorrow morning", "tonight", "on Friday at
+    four"), or None when they name no day and no time."""
+    from pilot.live.grounded import stated_day
+
     try:
-        deadline, has_time = deadline_of(cut[1], now.date())
+        day, _ = stated_day(text, now.date())
     except Exception:
+        day = None
+    if day is None and _TODAY_PART.search(text):
+        day = now.date()
+    at = spoken_clock(text)
+    part = _PART.search(text)
+    if at is None and part is not None and day is not None:
+        at = _PART_ENDS.get(part["part"].casefold())
+    if day is None and at is None:
         return None
-    if deadline is None:
-        return None
-    return deadline if has_time else deadline.replace(hour=23, minute=59)
+    if day is None:
+        day = now.date()
+        if at is not None and datetime.combine(day, at) < now - timedelta(hours=2):
+            day = day + timedelta(days=1)  # "by four" written after four: the next one
+    return datetime.combine(day, at or time(23, 59))
 
 
 def _when(moment: datetime, now: datetime) -> str:
+    from pilot.conversation.context import clock_words
+
     days = (moment.date() - now.date()).days
-    day = "today" if days == 0 else "tomorrow" if days == 1 else moment.strftime("%A")
+    day = "today" if days == 0 else "tomorrow" if days == 1 else moment.strftime("%A %d %B")
     if moment.hour == 23 and moment.minute == 59:
         return day
-    return f"{day} at {moment:%H:%M}"
+    return f"{day} at {clock_words(moment)}"
 
 
 def _never_sent(text: str) -> bool:
@@ -153,10 +227,9 @@ def due_line(
         if not text or item.get("done") or _never_sent(text):
             continue
         due = todo_due(text, now)
-        shared = bool(asked & _words(text))
-        if due is not None and not (now - timedelta(hours=2) <= due <= now + timedelta(hours=TODO_HOURS)):
-            continue
-        if shared or (timely and due is not None):
+        if asked & _words(text):
+            picked.append((due, "to-do", item))  # it shares a word with what was just said: whatever its date
+        elif timely and due is not None and now - timedelta(hours=2) <= due <= now + timedelta(hours=TODO_HOURS):
             picked.append((due, "to-do", item))
     reminders_picked: list[tuple[datetime | None, str, dict[str, Any]]] = []
     for item in reminders:
@@ -165,9 +238,9 @@ def due_line(
             due = datetime.fromtimestamp(float(item.get("due")))
         except (TypeError, ValueError, OSError):
             continue
-        if not text or _never_sent(text) or not (now <= due <= now + timedelta(hours=REMINDER_HOURS)):
+        if not text or _never_sent(text) or due < now:
             continue
-        if asked & _words(text) or timely:
+        if asked & _words(text) or (timely and due <= now + timedelta(hours=REMINDER_HOURS)):
             reminders_picked.append((due, "reminder", item))
 
     def soonest(entry: tuple[datetime | None, str, dict[str, Any]]) -> datetime:
@@ -196,4 +269,4 @@ def due_line(
     return line[:LINE_CHARS]
 
 
-__all__ = ["due_line", "speaks_of_time", "todo_due"]
+__all__ = ["due_line", "speaks_of_time", "spoken_clock", "todo_due"]

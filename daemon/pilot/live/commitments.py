@@ -62,7 +62,10 @@ _NOT_A_TASK = re.compile(r"^(?:be|need|want|think|know|see if|probably|maybe|let
 _END_OF_DAY = re.compile(r"\b(?:end of (?:the )?day|eod|cob|close of business)\b", re.IGNORECASE)
 _NEXT_WEEK = re.compile(r"\bnext week\b", re.IGNORECASE)
 _TONIGHT = re.compile(r"\btonight\b", re.IGNORECASE)
-_PRONOUNS = {"you": "them", "your": "their", "yours": "theirs"}
+_PART_OF_DAY = re.compile(r"\b(?:this|tomorrow|in the) (?P<part>evening)\b", re.IGNORECASE)
+_PART_TIMES = {"evening": time(19, 0)}  # a morning or an afternoon keeps the day's own reminder time
+# Quoted back to the person: their "my mom" is "your mom", and the "you" they wrote to is "them".
+_PRONOUNS = {"you": "them", "your": "their", "yours": "theirs", "my": "your", "mine": "yours", "myself": "yourself"}
 # A plan earns a reminder offer only when something is lost if it is forgotten: it is owed to someone (sent, paid,
 # handed in, answered, booked), it is work someone waits for, or another person is in it. "I'll have pasta tonight"
 # and "I'll watch a series tonight" have a time and nothing to lose: no offer.
@@ -101,6 +104,10 @@ def deadline_of(phrase: str, today: date) -> tuple[datetime | None, bool]:
     at = stated_time(phrase)
     if at is None and _TONIGHT.search(phrase):
         at = time(20, 0)
+    if at is None:
+        part = _PART_OF_DAY.search(phrase)
+        if part:
+            at = _PART_TIMES[part["part"].casefold()]  # "this evening" is an evening time, not the day's 4 pm
     if day is None:
         day = today if at is not None else None
     if day is None:
