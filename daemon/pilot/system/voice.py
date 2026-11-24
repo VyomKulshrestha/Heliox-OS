@@ -1660,6 +1660,9 @@ async def _speak_impl(
     speak()'s own cancellation-propagates-to-proc.kill() behavior intact:
     cancelling a task that's awaiting another task cancels that inner task
     too, so nothing about the existing barge-in kill path changes."""
+    from pilot.system import speech_trace
+
+    entered = time.monotonic()
     spoken_text = _prepare_spoken_text(text)
     try:
         from pilot.cognitive.cognitive_engine import CognitiveEngine
@@ -1674,7 +1677,11 @@ async def _speak_impl(
     except Exception as e:
         logger.debug(f"Failed to modulate TTS rate by cognitive load: {e}")
 
+    checked = time.monotonic()
     config = PilotConfig.load()
+    speech_trace.emit(
+        "speak started", entered=entered, rate_checked=checked, config_read=time.monotonic(), words=len(text.split())
+    )
     from pilot.system.local_tts_worker import LocalVoiceNotReady
 
     loading = ""  # the local voice that was still loading when this reply was ready ("" when none)

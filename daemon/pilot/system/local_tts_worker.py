@@ -258,7 +258,8 @@ class _Requests:
     before its stream has started stops it before its first chunk)."""
 
     def __init__(self, stdin: Any) -> None:
-        self._queue: queue.Queue[str | None] = queue.Queue()
+        self._queue: queue.Queue[tuple[str, float] | None] = queue.Queue()
+        self.arrived = 0.0  # time.monotonic() when the request next() returned last was read off the pipe
         self._lock = threading.Lock()
         self._stops: dict[int, threading.Event] = {}
         self._early: set[int] = set()  # stops for streams not started yet
@@ -276,13 +277,17 @@ class _Requests:
                     with contextlib.suppress(TypeError, ValueError):
                         self._stop(int(request.get("id") or 0))
                     continue
-                self._queue.put(line)
+                self._queue.put((line, time.monotonic()))
         finally:
             self._queue.put(None)
 
     def next(self) -> str | None:
-        """The next request, or None when the daemon closed the pipe."""
-        return self._queue.get()
+        """The next request, or None when the daemon closed the pipe (``arrived``: when it was read)."""
+        item = self._queue.get()
+        if item is None:
+            return None
+        line, self.arrived = item
+        return line
 
     def _stop(self, stream_id: int) -> None:
         with self._lock:
@@ -376,6 +381,7 @@ def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
                 _load(engine, str(request.get("voice") or ""))
                 _send({"status": "ok", "op": "load"})
                 continue
+            began = time.monotonic()
             started = time.perf_counter()
             text = _request_text(request)
             if not text or len(text) > MAX_TEXT_CHARACTERS:
@@ -410,6 +416,11 @@ def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
                 took.update(getattr(_engine_module(engine), "last_took", None) or {})
                 response = {"status": "ok"}
             response["took"] = {k: round(v, 5) for k, v in took.items()}
+            # When the request was read off the pipe, taken by this loop, and its answer is about to be written, on
+            # time.monotonic() (one clock for every process of the computer, so the daemon can place them): the daemon
+            # sees where the time between its request and the samples went besides synthesis.
+            response["at"] = {"got": round(requests.arrived, 5), "began": round(began, 5),
+                              "sent": round(time.monotonic(), 5)}  # fmt: skip
         except Exception as exc:
             payload = b""
             response = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
@@ -1016,17 +1027,24 @@ def _write_line(process: Any, request: dict[str, Any]) -> None:
         process.stdin.flush()
 
 
-def _exchange(process: Any, request: dict[str, Any]) -> tuple[bytes, bytes]:
-    """Send one request; its answer line, and the bytes that follow it when the line announces them ("bytes")."""
+def _exchange(process: Any, request: dict[str, Any], stamps: dict[str, float] | None = None) -> tuple[bytes, bytes]:
+    """Send one request; its answer line, and the bytes that follow it when the line announces them ("bytes").
+    ``stamps`` gets time.monotonic() when the request was written ("written"), its answer line read ("line") and its
+    bytes read ("read")."""
     if process.stdin is None or process.stdout is None:
         raise RuntimeError("Local TTS worker streams are unavailable")
+    stamps = {} if stamps is None else stamps
     _write_line(process, request)
+    stamps["written"] = time.monotonic()
     line = process.stdout.readline()
+    stamps["line"] = time.monotonic()
     size = 0
     if line and b'"bytes"' in line:
         with contextlib.suppress(ValueError, TypeError, AttributeError):
             size = int(json.loads(line).get("bytes") or 0)
-    return line, (_read_exactly(process.stdout, size) if size > 0 else b"")
+    payload = _read_exactly(process.stdout, size) if size > 0 else b""
+    stamps["read"] = time.monotonic()
+    return line, payload
 
 
 def _close_process(worker: Any) -> None:
@@ -1828,7 +1846,8 @@ class LocalTTSWorkerManager:
         when several wait for the pipe (_Pipe). Cancelling the caller lets the worker finish it unheard."""
         await self._io_lock.acquire(rank)
         started = self._request_started_at = time.monotonic()
-        exchange = asyncio.ensure_future(asyncio.to_thread(_exchange, process, request))
+        stamps: dict[str, float] = {}
+        exchange = asyncio.ensure_future(asyncio.to_thread(_exchange, process, request, stamps))
         exchange.add_done_callback(lambda _done: self._io_lock.release())
         self._background.add(exchange)
         exchange.add_done_callback(self._background.discard)
@@ -1856,6 +1875,7 @@ class LocalTTSWorkerManager:
             self.loaded = True
         response["_payload"] = payload
         response["_started"] = started
+        response["_stamps"] = {**stamps, "resumed": time.monotonic()}
         return response
 
     # Speaking ----------------------------------------------------------------
@@ -1925,6 +1945,9 @@ class LocalTTSWorkerManager:
         # This request's own start on the pipe: the manager's last start may already be the next request's.
         started = float(answer.get("_started") or self._request_started_at)
         self.synth_log.append((kind, len(text.split()), requested, started, done))
+        took = dict(answer.get("took") or {})
+        worker_at = answer.get("at") if isinstance(answer.get("at"), dict) else {}
+        stamps = answer.get("_stamps") or {}
         speech_trace.emit(
             "piece synthesized",
             words=len(text.split()),
@@ -1932,10 +1955,25 @@ class LocalTTSWorkerManager:
             requested=requested,
             worker_started=started,
             done=done,
-            took=dict(answer.get("took") or {}),
+            took=took,
             process_ready=process_ready,
             text_written=text_written,
             in_memory=piece is not None,
+            # The same as plain numbers (a sink that keeps only numbers keeps these), on time.monotonic() but the
+            # worker's own seconds: the request written to the pipe, read by the worker, taken by its loop, the
+            # worker's synthesis and trim, its answer written, the answer line and the samples read here, and the
+            # event loop back on this request. None when a worker does not say.
+            sent_at=stamps.get("written"),
+            worker_got=worker_at.get("got"),
+            worker_began=worker_at.get("began"),
+            worker_synth_s=took.get("synth_s"),
+            worker_trim_s=took.get("trim_s"),
+            worker_total_s=took.get("total_s"),
+            worker_sent=worker_at.get("sent"),
+            answer_line_at=stamps.get("line"),
+            answer_read_at=stamps.get("read"),
+            resumed_at=stamps.get("resumed"),
+            payload_bytes=len(answer.get("_payload") or b""),
         )
         if samples and piece is None:
             return Piece(text, path=output_file, trimmed=False)

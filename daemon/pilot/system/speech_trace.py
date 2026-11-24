@@ -25,10 +25,20 @@ Events:
     "turn end reported"        {turn, at}: the listener told the server the turn ended on addressed words
     "hum decided"              {turn, at, path, hum, reason}: path "turn end" or "hand-over"; hum "" when none
     "hum to the voice"         {turn, at}: a hum decided at the turn end handed to the voice
+    "speak started"            {entered, rate_checked, config_read, words}: voice.speak's work before the voice is
+                               chosen: the spoken text and the cognitive-load rate check, then reading the settings
     "piece synthesized"        {words, kind, requested, worker_started, done, took, process_ready, text_written,
-                               in_memory}: the voice worker made a piece. took: the worker's own seconds per step
-                               (read_s, synth_s, trim_s, total_s; write_s and timing_s for a file); in_memory: the
-                               samples came back on the pipe (False: a file the daemon reads and trims)
+                               in_memory, sent_at, worker_got, worker_began, worker_synth_s, worker_trim_s,
+                               worker_total_s, worker_sent, answer_line_at, answer_read_at, resumed_at,
+                               payload_bytes}: the voice worker made a piece. kind: "reply", "next" (the next sentence,
+                               made while one plays) or "ahead" (for the store); worker_started: when this request got
+                               the pipe. took: the worker's own seconds per step (read_s, synth_s, trim_s, total_s;
+                               write_s and timing_s for a file); in_memory: the samples came back on the pipe (False: a
+                               file the daemon reads and trims). The rest, plain numbers for a sink that keeps only
+                               numbers: request written (sent_at), read by the worker (worker_got), taken by its loop
+                               (worker_began), its synthesis and trim seconds, its answer written (worker_sent), the
+                               answer line and the samples read here, the event loop back on it (resumed_at); None
+                               when a worker does not say
     "piece trimmed"            {words, done}
     "piece ready"              {index, words, source, at}: source "made", "ahead" or "store"
     "piece plays"              {index, words, at}: handed to playback
