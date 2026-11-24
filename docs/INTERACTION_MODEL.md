@@ -1637,7 +1637,7 @@ Measured on text with the rule itself (`Addressing.decide`, voice estimated at 0
 | The same with no conversation open, and in a call | 0 and 0 | 0 and 0 |
 | `test_addressing_overheard` lines as 9 s monologues | 0 of 10 | 0 of 10 |
 | The same lines as 2.5 s sentences, 1.5 s after an answer | 2 of 10 | 7 of 10 |
-| The owner's "The invoice is due on the thirty-first of November." at 5.3, 6.2, 11.4 s | 0 of 3 | 0 of 3 |
+| A recorded room line, "The invoice is due on the thirty-first of November." at 5.3, 6.2, 11.4 s | 0 of 3 | 0 of 3 |
 
 The hard cases are on the corpus side. Right after Heliox answered, a statement said to the room in the first person
 ("I'll send Ken the deck by Monday.", "I think the invoice is due on Monday at half past three."), an instruction to
