@@ -127,7 +127,13 @@ When a person chooses a face in Settings whose pack names a voice:
   row's offer). A config file saved before that field existed counts as chosen, since every save wrote the voice and
   the default may have been picked on purpose;
 - if they have chosen one, it is kept, and the row offers the face's voice with one button;
-- if the face's voice cannot speak here, nothing is switched: with Pocket TTS or the system voice the row says to
+- with Pocket TTS, the face uses the Pocket voice approved for its kind (`POCKET_BY_KIND` in
+  `pilot/system/face_voice.py`, one column per engine in `PACK_VOICES`): alba for a feminine face. No masculine Pocket
+  voice is approved yet, so a masculine face brings its Kokoro voice instead of keeping a voice of the wrong kind:
+  switched with the face when Kokoro and the voice are on disk and the person never chose a voice, otherwise offered
+  with what it downloads (about 330 MB the first time, when Kokoro is not on the computer). Until the person accepts
+  that download, the voice that was speaking stays;
+- if the face's voice cannot speak here, nothing is switched: with the system voice the row says to
   choose Kokoro TTS under Voice; when the voice file is not on disk yet the row offers it, and Kokoro fetches it
   (about half a megabyte) the first time it speaks, the way the voice for another language is added; when Heliox
   speaks another language, a Kokoro voice of that language matching `hint` is offered if there is one.

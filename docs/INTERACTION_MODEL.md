@@ -1156,6 +1156,17 @@ the machine had too little free memory to load Kokoro for the run, so the model 
 | Kokoro on the processor | 2.10 s (worst 3.94 s) |
 | Pocket TTS on the processor, streaming | 1.48 to 1.59 s (worst 2.00 to 4.33 s) |
 
+**Which voice a new install speaks with.** From these runs, a new install picks its voice by the computer and the
+language, from one small table in `daemon/pilot/system/speech_models.json` ("voice_rules") that the daemon
+(`pilot/system/voice_default.py`) and the first-run screen both read: Kokoro on an NVIDIA card with PyTorch's CUDA
+build, Kokoro on Apple Silicon (neither voice has been measured on a Mac; `pocket-speed.yml` now runs there), and on
+every other computer Pocket TTS for English and Kokoro for every other language. It applies only to an install with
+no voice of its own: never chosen, no voice model on disk and no voice ever loaded. An install whose voice has spoken
+keeps it; Settings, Voice may show it one suggestion with Pocket's download, and changes nothing unless pressed. The
+first screen shows the pick with its size, licence and source, and the other voice for that language can be picked
+before anything is downloaded. Pocket streams on one thread: on GitHub's 4-core Linux and Windows runners that was
+fastest (real-time factor 0.31 to 0.39, against 0.42 to 0.49 on four threads, measured).
+
 The hum ("Mm.", "Hmm.") came first at about 0.6 s (0.59 to 0.67 s median) on roughly two thirds to seven eighths of
 the turns (16 to 21 of 24 in the full runs). Every figure includes the talk model's own wait, from the request to
 its first text, and that wait varies by the hour: 0.72 to 1.12 s was seen across that day's runs. These measurements
