@@ -1752,6 +1752,10 @@ class ConversationLayer:
             # A turn answered in code that changed nothing ("what time is it?"): the question is not about a save.
         if not SAVE_OR_CHANGE.search(text.strip()):
             return None
+        if MARK_START in text:
+            # A secret asked to be kept ("note that my door code is ..."): it was left out, and asking for the whole
+            # fact again would ask them to say it again.
+            return SECRET_LEFT_OUT
         if ALREADY_ASKED_TO_KEEP.match(words):
             # They said "remember that ..." already: telling them to say it is no help.
             return NOT_KEPT_AS_SAID
