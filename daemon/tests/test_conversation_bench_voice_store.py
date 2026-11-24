@@ -26,7 +26,7 @@ def test_a_reply_that_waited_behind_a_piece_made_ahead_is_named():
     ]
     got = synth_wait(records, 0)
 
-    assert got == {"synth_wait_s": 0.7, "synth_s": 0.4, "behind_ahead_piece": True}
+    assert got == {"synth_wait_s": 0.7, "synth_s": 0.4, "behind_ahead_piece": True, "behind_next_piece": False}
     assert synth_wait(records[1:], 0)["behind_ahead_piece"] is False
     assert synth_wait(records, 2) == {}  # nothing made since the mark
 

@@ -419,7 +419,7 @@ async def test_the_worker_is_asked_for_timing_only_while_a_face_is_chosen(notice
         async def _usable_process(self, engine, voice):
             return object()
 
-        async def _request(self, process, engine, request, *, timeout):
+        async def _request(self, process, engine, request, *, timeout, rank=0):
             requests.append(dict(request))
             Path(request["output_file"]).write_bytes(b"RIFF")
 

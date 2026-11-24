@@ -63,7 +63,7 @@ class _SuccessfulWorker:
 
 def _spoken(worker: _SuccessfulWorker) -> list[str]:
     return [
-        Path(r["text_file"]).read_text(encoding="utf-8") if Path(r["text_file"]).exists() else "?"
+        r.get("text") or (Path(r["text_file"]).read_text(encoding="utf-8") if Path(r["text_file"]).exists() else "?")
         for r in worker.stdout.requests
         if "text_file" in r
     ]
@@ -219,7 +219,7 @@ async def test_local_tts_worker_preserves_requested_output_file(tmp_path: Path) 
 
     assert output.read_bytes() == b"RIFF-test-audio"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["speech.wav"]  # nothing written beside it
-    assert _spoken(worker) == ["?"]  # one request for the whole text (its temp file is gone now)
+    assert _spoken(worker) == ["hello. There."]  # one request for the whole text
     play.assert_not_awaited()
 
 
@@ -303,12 +303,15 @@ async def test_a_sentence_prepared_while_the_last_one_plays_is_not_synthesised_a
         patch.object(voice.subprocess, "Popen", return_value=worker),
         patch.object(voice, "_play_local_tts_file", new=play),
     ):
+        # The conversation asks for the next sentence just before it hands over the current one: the next one is made
+        # once the current one is, while it plays.
+        local_tts_worker.prepare_local_speech(config, "And here is the second.")
         await voice._run_local_tts_worker("kokoro_tts", "Here is the first part.", "af_heart", None)
-        local_tts_worker.prepare_local_speech(config, "And here is the second.")  # while the first plays
         for _ in range(100):
             if "And here is the second." in _spoken(worker):
                 break
             await asyncio.sleep(0.01)
+        assert _spoken(worker) == ["Here is the first part.", "And here is the second."]
         made_before = len(_spoken(worker))
         await voice._run_local_tts_worker("kokoro_tts", "And here is the second.", "af_heart", None)
         assert len(_spoken(worker)) == made_before  # played from the prepared audio, no second synthesis

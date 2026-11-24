@@ -100,14 +100,16 @@ def voice_evidence(mark: tuple[int, int]) -> dict[str, Any]:
 
 def synth_wait(records: list[tuple[str, int, float, float, float]], since: int) -> dict[str, Any]:
     """The first reply piece made since record ``since``: how long it waited before the worker took it, how long it
-    took, and whether a piece made ahead was being synthesised when it was asked for."""
+    took, and whether a piece made ahead for the store ("ahead") or the reply's next sentence ("next", made while one
+    plays) was being synthesised when it was asked for."""
     replies = [r for r in records[since:] if r[0] == "reply"]
     if not replies:
         return {}
     _kind, _words, requested, started, done = replies[0]
     behind = any(r[0] == "ahead" and r[3] <= requested < r[4] for r in records)
+    behind_next = any(r[0] == "next" and r[3] <= requested < r[4] for r in records)
     return {"synth_wait_s": round(started - requested, 3), "synth_s": round(done - started, 3),
-            "behind_ahead_piece": behind}  # fmt: skip
+            "behind_ahead_piece": behind, "behind_next_piece": behind_next}  # fmt: skip
 
 
 def voice_replies(events: list[tl.Event]) -> dict[str, Any]:

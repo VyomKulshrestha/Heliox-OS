@@ -963,6 +963,74 @@ class _Spawning:
 
 StatusCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 
+# Who goes first on the worker's pipe when several requests wait for it (lower first, in arrival order within one):
+# a piece a reply waits to play now (and the voice's load), then the next sentence of a reply made while this one
+# plays (prepare), then fixed sentences made ahead for the store (make_ahead). The worker makes one piece at a time
+# and cannot drop one it has started, so this decides only who goes next.
+PIPE_NOW = 0
+PIPE_NEXT = 1
+PIPE_AHEAD = 2
+_PIPE_KINDS = {PIPE_NOW: "reply", PIPE_NEXT: "next", PIPE_AHEAD: "ahead"}
+
+
+class _Pipe:
+    """The worker's pipe: one request at a time. A request waiting for it is ranked (PIPE_NOW, PIPE_NEXT, PIPE_AHEAD,
+    or a call that says the rank when the pipe frees up: a sentence made ahead becomes PIPE_NOW once a reply waits for
+    it), and the lowest goes next. A plain lock served whoever asked first: on 24 November the next sentence of a
+    reply, asked for 18 ms before the sentence being spoken, held the pipe for 1.15 s while that sentence waited."""
+
+    def __init__(self) -> None:
+        self._held = False
+        self._order = 0
+        self._waiting: list[tuple[Callable[[], int], int, asyncio.Future[None]]] = []
+
+    def locked(self) -> bool:
+        return self._held
+
+    async def acquire(self, rank: int | Callable[[], int] = PIPE_NOW) -> None:
+        if not self._held and not self._waiting:
+            self._held = True
+            return
+        ranked = rank if callable(rank) else (lambda: rank)
+        self._order += 1
+        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        entry = (ranked, self._order, future)
+        self._waiting.append(entry)
+        try:
+            await future
+        except asyncio.CancelledError:
+            if future.done() and not future.cancelled():
+                self.release()  # it had been given the pipe as it was cancelled: the next one takes it
+            elif entry in self._waiting:
+                self._waiting.remove(entry)
+            raise
+
+    def release(self) -> None:
+        while self._waiting:
+            entry = min(self._waiting, key=lambda item: (_rank_of(item[0]), item[1]))
+            self._waiting.remove(entry)
+            if not entry[2].done():
+                entry[2].set_result(None)  # the pipe stays held: it is that request's now
+                return
+        self._held = False
+
+
+def _rank_of(rank: Callable[[], int]) -> int:
+    try:
+        return int(rank())
+    except Exception:
+        return PIPE_NOW
+
+
+@dataclass
+class _Next:
+    """A sentence prepare() was asked to make while the reply's current sentence is spoken: made once the speech that
+    follows the request has all its own pieces (``after``: how many speeches had started when it was asked for), or
+    at once when a reply is waiting for it (``wanted``)."""
+
+    after: int
+    wanted: bool = False
+
 
 @dataclass
 class Piece:
@@ -1243,7 +1311,7 @@ class LocalTTSWorkerManager:
         self.unavailable_reason = ""
         self.loaded = False
         self._spawn_lock = asyncio.Lock()
-        self._io_lock = asyncio.Lock()
+        self._io_lock = _Pipe()
         self._load_task: asyncio.Future[None] | None = None
         self._idle_task: asyncio.Task[None] | None = None
         self._busy = 0
@@ -1251,11 +1319,17 @@ class LocalTTSWorkerManager:
         # "released", detail, time). Data for the bench; nothing reads it to decide.
         self.reload_log: deque[tuple[str, str, float]] = deque(maxlen=50)
         # Every synthesis request with time.monotonic() stamps: (kind, words, requested, started, done). kind is
-        # "reply" or "ahead" (made ahead for the store); started is when the worker took it (after any request
-        # before it). Data for the bench: it shows a reply waiting behind a piece made ahead.
+        # "reply" (a piece a reply waits for), "next" (the next sentence, made while one plays: prepare) or "ahead"
+        # (made ahead for the store); started is when this request got the worker's pipe (after any request before
+        # it). Data for the bench: it shows a reply waiting behind a piece made ahead.
         self.synth_log: deque[tuple[str, int, float, float, float]] = deque(maxlen=200)
-        self._making_ahead = False
-        self._request_started_at = 0.0
+        self._request_started_at = 0.0  # the last request's start on the pipe (stream() reads its own)
+        # Speeches started (speak(), not a file) and the latest one whose pieces are all made (or that ended): a
+        # sentence prepared ahead waits for the speech after it to be made first (_Next).
+        self._speeches = 0
+        self._speeches_made = 0
+        self._turn_waiters: list[asyncio.Future[None]] = []
+        self._next_state: dict[tuple[str, str, str], _Next] = {}
         self._stream_ids = 0  # numbers the streams sent to the worker (their stop names them)
         # Whether an idle voice may stay loaded past keep_loaded_seconds (voice.tts_release = "memory": the computer
         # has the memory to spare); None: released after keep_loaded_seconds, by the clock alone.
@@ -1619,11 +1693,20 @@ class LocalTTSWorkerManager:
             await self._close(process)
         return LocalTTSUnavailable(f"{engine} worker failed: {reason}")
 
-    async def _request(self, process: Any, engine: str, request: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+    async def _request(
+        self,
+        process: Any,
+        engine: str,
+        request: dict[str, Any],
+        *,
+        timeout: float,
+        rank: int | Callable[[], int] = PIPE_NOW,
+    ) -> dict[str, Any]:
         """One request/response on the pipe: the worker's answer, with the bytes that came after it (the samples) as
-        "_payload". Cancelling the caller lets the worker finish it unheard."""
-        await self._io_lock.acquire()
-        self._request_started_at = time.monotonic()
+        "_payload", and when this request got the pipe as "_started" (time.monotonic()). ``rank``: who goes first
+        when several wait for the pipe (_Pipe). Cancelling the caller lets the worker finish it unheard."""
+        await self._io_lock.acquire(rank)
+        started = self._request_started_at = time.monotonic()
         exchange = asyncio.ensure_future(asyncio.to_thread(_exchange, process, request))
         exchange.add_done_callback(lambda _done: self._io_lock.release())
         self._background.add(exchange)
@@ -1651,6 +1734,7 @@ class LocalTTSWorkerManager:
             self.unavailable_reason = ""
             self.loaded = True
         response["_payload"] = payload
+        response["_started"] = started
         return response
 
     # Speaking ----------------------------------------------------------------
@@ -1666,6 +1750,8 @@ class LocalTTSWorkerManager:
         wait_after_gpu_fault: bool = True,
         samples: bool = False,
         keep_tail: float | None = None,
+        rank: int | Callable[[], int] = PIPE_NOW,
+        kind: str = "reply",
     ) -> Piece | None:
         """Make ``text`` into ``output_file``, or with ``samples`` into memory: the worker sends the samples back on
         its pipe, trimmed (KEEP_LEAD_SECONDS before the first sound, ``keep_tail`` after the last, the whole end when
@@ -1679,7 +1765,6 @@ class LocalTTSWorkerManager:
         if not text or len(text) > MAX_TEXT_CHARACTERS:
             raise ValueError("Speech text must contain between 1 and 20,000 characters")
         requested = time.monotonic()
-        kind = "ahead" if self._making_ahead else "reply"
         process = await self._usable_process(engine, voice)
         process_ready = time.monotonic()
         request_path = request_dir / f"{output_file.stem}-{id(output_file):x}.txt"
@@ -1699,7 +1784,8 @@ class LocalTTSWorkerManager:
             request["timing_file"] = str(speech_notices.timing_path(output_file))
         try:
             answer = await self._request(
-                process, engine, request, timeout=LOAD_TIMEOUT_SECONDS if not self.loaded else REQUEST_TIMEOUT_SECONDS
+                process, engine, request, timeout=LOAD_TIMEOUT_SECONDS if not self.loaded else REQUEST_TIMEOUT_SECONDS,
+                rank=rank,
             ) or {}  # fmt: skip
         except _MovedToCpu:
             if not wait_after_gpu_fault:
@@ -1710,18 +1796,20 @@ class LocalTTSWorkerManager:
                 raise LocalVoiceNotReady(f"{engine}: loading on the CPU after a GPU fault") from None
             # The same sentence, once, from the same voice started on the CPU.
             process = await self._usable_process(engine, voice)
-            answer = await self._request(process, engine, request, timeout=LOAD_TIMEOUT_SECONDS) or {}
+            answer = await self._request(process, engine, request, timeout=LOAD_TIMEOUT_SECONDS, rank=rank) or {}
         piece = _piece_from_answer(text, answer) if samples else None
         if piece is None and (not output_file.is_file() or output_file.stat().st_size == 0):
             raise await self._fail(process, engine, "the worker produced no audio")
         done = time.monotonic()
-        self.synth_log.append((kind, len(text.split()), requested, self._request_started_at, done))
+        # This request's own start on the pipe: the manager's last start may already be the next request's.
+        started = float(answer.get("_started") or self._request_started_at)
+        self.synth_log.append((kind, len(text.split()), requested, started, done))
         speech_trace.emit(
             "piece synthesized",
             words=len(text.split()),
             kind=kind,
             requested=requested,
-            worker_started=self._request_started_at,
+            worker_started=started,
             done=done,
             took=dict(answer.get("took") or {}),
             process_ready=process_ready,
@@ -1836,6 +1924,10 @@ class LocalTTSWorkerManager:
             raise ValueError("Speech text exceeds the 20,000 character limit")
         self._busy += 1
         self.note_activity()
+        speech = 0
+        if not output_file:
+            self._speeches += 1
+            speech = self._speeches
         try:
             sentences = [] if output_file else split_for_speech(text, clauses=engine not in STREAM_ENGINES)
             if output_file:
@@ -1863,7 +1955,7 @@ class LocalTTSWorkerManager:
                 self.last_progress = progress  # read when the speech is cut off (heard_words)
                 token = speech_progress.set(progress)
                 try:
-                    await self._speak_sentences(engine, sentences, voice, folder, play)
+                    await self._speak_sentences(engine, sentences, voice, folder, play, speech=speech)
                     progress.finished = True
                 except LocalTTSUnavailable:
                     self._reply_voice = "system"  # stopped partway (a fault): the system voice says the rest of it
@@ -1874,7 +1966,38 @@ class LocalTTSWorkerManager:
             self._busy -= 1
             self.note_activity()
             if not output_file:
+                self._speech_made(speech)  # ended (said, cut, failed or handed to the system voice)
                 self.note_spoken()
+
+    def _speech_made(self, speech: int) -> None:
+        """Every piece of speech number ``speech`` is made (or it ended): sentences prepared before it may be made."""
+        if speech <= self._speeches_made:
+            return
+        self._speeches_made = speech
+        waiters, self._turn_waiters = self._turn_waiters, []
+        for waiter in waiters:
+            if not waiter.done():
+                with contextlib.suppress(RuntimeError):  # its loop has closed
+                    waiter.set_result(None)
+
+    def _turn_moved(self) -> None:
+        waiters, self._turn_waiters = self._turn_waiters, []
+        for waiter in waiters:
+            if not waiter.done():
+                with contextlib.suppress(RuntimeError):
+                    waiter.set_result(None)
+
+    async def _next_turn(self, state: _Next) -> None:
+        """Return when a sentence prepared ahead may take the worker: the speech after it has all its own pieces (or
+        has ended), or a reply is waiting for this sentence now."""
+        while not (state.wanted or self._speeches_made > state.after):
+            waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+            self._turn_waiters.append(waiter)
+            try:
+                await waiter
+            finally:
+                if waiter in self._turn_waiters:
+                    self._turn_waiters.remove(waiter)
 
     async def _voice_for_reply(self, engine: str, voice: str, sentences: list[str]) -> None:
         """Decide (or keep) the voice of the reply this speech belongs to, and return when it is Heliox's own voice.
@@ -2046,6 +2169,8 @@ class LocalTTSWorkerManager:
         voice: str,
         folder: Path,
         play: PlayFile,
+        *,
+        speech: int = 0,
     ) -> None:
         heads = self.head_cache
         signature = SpeechStore.signature(engine, voice)
@@ -2060,9 +2185,14 @@ class LocalTTSWorkerManager:
                 done: asyncio.Future[Piece] = asyncio.get_running_loop().create_future()
                 done.set_result(Piece(sentences[index], path=kept, source="store"))  # exactly this text, made this way
                 return done
-            ahead = self._prepared.pop((engine, voice, sentences[index]), None)
+            key = (engine, voice, sentences[index])
+            ahead = self._prepared.pop(key, None)
+            state = self._next_state.pop(key, None)
             if ahead is not None and not ahead.cancelled():
                 sources[index] = "ahead"
+                if state is not None and not state.wanted:
+                    state.wanted = True  # this reply waits for it now: it goes first on the pipe
+                    self._turn_moved()
                 return ahead  # synthesised while the sentence before it played
             sources[index] = "made"
             if engine in STREAM_ENGINES:
@@ -2089,6 +2219,8 @@ class LocalTTSWorkerManager:
                     "piece ready", index=index, words=words, source=sources.get(index, ""), at=time.monotonic()
                 )
                 upcoming = make(index + 1) if index + 1 < len(sentences) else None
+                if upcoming is None and speech:
+                    self._speech_made(speech)  # every piece of this speech is made: what was prepared may go now
                 speech_trace.emit("piece plays", index=index, words=words, at=time.monotonic())
                 await play(piece)
                 progress = speech_progress.get()
@@ -2133,6 +2265,10 @@ class LocalTTSWorkerManager:
 
         For a reply streamed sentence by sentence: prepare the next sentence while the current one plays, and
         there is no gap between them. Unused preparations are dropped (the oldest after PREPARED_LIMIT).
+
+        The conversation asks for the next sentence just before it hands over the current one. So a sentence prepared
+        here is not made until the speech that follows this call has all its own pieces (or has ended), and when a
+        reply waits for it, it goes first: the current sentence never waits behind the next one (_Next, _Pipe).
         """
         if engine not in LOCAL_ENGINES or engine in STREAM_ENGINES or self._failed_until is not None:
             return  # a streamed engine starts sounding within a chunk: nothing made ahead to hold the pipe
@@ -2147,12 +2283,23 @@ class LocalTTSWorkerManager:
             if self._prepared_dir is None:
                 self._prepared_dir = Path(tempfile.mkdtemp(prefix="heliox-tts-ahead-"))
             target = self._prepared_dir / f"ahead-{len(self._prepared)}-{id(key):x}.wav"
-            task = loop.create_task(self._make(engine, sentence, voice, target, self._prepared_dir))
+            state = _Next(after=self._speeches)
+            task = loop.create_task(self._make_next(engine, sentence, voice, target, self._prepared_dir, state))
             task.add_done_callback(lambda done: done.cancelled() or done.exception())
             self._prepared[key] = task
+            self._next_state[key] = state
             while len(self._prepared) > PREPARED_LIMIT:
                 oldest = next(iter(self._prepared))
                 self._prepared.pop(oldest).cancel()
+                self._next_state.pop(oldest, None)
+
+    async def _make_next(self, engine: str, text: str, voice: str, target: Path, folder: Path, state: _Next) -> Piece:
+        """A sentence prepared ahead (prepare): made once its turn comes (_next_turn), behind any piece a reply waits
+        for unless a reply waits for this one."""
+        await self._next_turn(state)
+        return await self._make(
+            engine, text, voice, target, folder, rank=lambda: PIPE_NOW if state.wanted else PIPE_NEXT, kind="next"
+        )
 
     async def make_ahead(
         self,
@@ -2195,13 +2342,12 @@ class LocalTTSWorkerManager:
                         return made
                     await self._sleep(poll_seconds)
                 started = self._clock()
-                self._making_ahead = True
                 try:
-                    piece = await self._make(engine, text, voice, folder / f"fixed-{index}.wav", folder)
+                    piece = await self._make(
+                        engine, text, voice, folder / f"fixed-{index}.wav", folder, rank=PIPE_AHEAD, kind="ahead"
+                    )
                 except LocalTTSUnavailable:
                     return made
-                finally:
-                    self._making_ahead = False
                 if not store.add_fixed(text, signature, piece):
                     return made  # full
                 made += 1
@@ -2212,13 +2358,24 @@ class LocalTTSWorkerManager:
         logger.info("Made %d fixed sentences of the local voice ahead", made)
         return made
 
-    async def _make(self, engine: str, text: str, voice: str, target: Path, folder: Path) -> Piece:
+    async def _make(
+        self,
+        engine: str,
+        text: str,
+        voice: str,
+        target: Path,
+        folder: Path,
+        *,
+        rank: int | Callable[[], int] = PIPE_NOW,
+        kind: str = "reply",
+    ) -> Piece:
         """One piece made for speech, in memory and trimmed by the worker. A worker that wrote the file instead (one
-        that cannot send samples) has it trimmed here, as before."""
+        that cannot send samples) has it trimmed here, as before. ``rank`` and ``kind``: see _Pipe and synth_log."""
         keep_tail = None if ends_sentence(text) else KEEP_CLAUSE_SECONDS
         piece = await self.synthesize(
-            engine, text, voice, target, folder, wait_after_gpu_fault=False, samples=True, keep_tail=keep_tail
-        )
+            engine, text, voice, target, folder, wait_after_gpu_fault=False, samples=True, keep_tail=keep_tail,
+            rank=rank, kind=kind,
+        )  # fmt: skip
         assert piece is not None
         if not piece.trimmed:
             try:
