@@ -253,6 +253,14 @@ def _load(engine: str, voice: str) -> dict[str, float]:
     return took
 
 
+def load_steps(took: dict[str, Any]) -> str:
+    """A load's steps for the log line, each with its unit: seconds for the steps ("import_s 1.6 s"), megabytes for
+    what the load read from disk ("read_mb 506.0 MB")."""
+    return ", ".join(
+        f"{k} {v:.1f} {'MB' if k.endswith('_mb') else 's'}" for k, v in took.items() if isinstance(v, (int, float))
+    )
+
+
 def _take_gpu_lease(device: str) -> tuple[str, Any]:
     """The daemon let this worker use the GPU: hold Heliox's GPU lease for the worker's life, or use the CPU."""
     from pilot.system.gpu_arbiter import GpuLease
@@ -1827,7 +1835,7 @@ class LocalTTSWorkerManager:
         took = answer.get("took") if isinstance(answer.get("took"), dict) else {}
         # Where a load's time went, in the worker's own seconds: its start until this request, importing the engine,
         # and the engine's preparation (weights, then a first sentence made and thrown away).
-        steps = ", ".join(f"{k} {v:.1f} s" for k, v in took.items() if isinstance(v, (int, float)))
+        steps = load_steps(took)
         logger.info(
             "Local voice %s loaded in %.1f s%s", engine, self._clock() - started, f" ({steps})" if steps else ""
         )
@@ -2847,6 +2855,170 @@ def reply_sequence() -> int:
     return _reply_sequence
 
 
+# ── A change of voice: load the new one at once, hand over between two replies ──
+#
+# Measured on one development laptop before this: after a change of engine the new voice loaded only when the next
+# reply asked for it, so that reply came in the system voice; the new voice was ready 5.5 to 6.8 s (Pocket) and 11.2
+# to 11.6 s (Kokoro) later. Now the new voice starts loading when the setting changes, in a second manager (the
+# standby), while the voice the person was hearing keeps speaking every reply; the standby takes over at the first
+# boundary between two replies once it is loaded (between_replies). Two workers at once cost memory, so the standby
+# starts only with VOICE_HOST_RAM_BYTES free beyond the running worker; otherwise, and when both would want the card
+# (it holds one voice, by its lease), the old worker is released first (said in the log) and the system voice speaks
+# until the new one is ready, as before. A standby that fails to load takes over anyway, so the usual retry and the
+# system voice follow, never the old voice for good.
+
+HANDOVER_POLL_SECONDS = 0.5
+_STANDBY_SETTINGS = ("keep_loaded_seconds", "device", "choose_device", "on_gpu_fault", "lease_wants", "free_memory",
+                     "heat_reason", "keep_while", "light_reason", "head_cache", "environ")  # fmt: skip
+
+
+@dataclass
+class Handover:
+    """The voice being changed to (``engine``, ``voice``), loading in ``standby``; ``from_engine`` and ``from_voice``
+    keep speaking meanwhile."""
+
+    engine: str
+    voice: str
+    from_engine: str
+    from_voice: str
+    standby: LocalTTSWorkerManager
+    on_status: StatusCallback | None = None
+
+
+_handover: Handover | None = None
+_configured: tuple[str, str] | None = None  # the engine and voice configure_local_voice was last given
+handover_log: list[tuple[str, str, str]] = []  # (what, from, to): "standby", "release_first", "switched"
+
+
+def handover() -> Handover | None:
+    return _handover
+
+
+def _two_voices_fit(old: LocalTTSWorkerManager, engine: str) -> str:
+    """Why the new voice cannot load beside the running one ("" when it can): the card holds one voice, or the
+    computer has less than VOICE_HOST_RAM_BYTES free beyond the running worker (unknown counts as too little)."""
+    if old.gpu_lease and engine != "pocket_tts" and old.device != "cpu" and not cuda_hidden(old.environ):
+        return "the graphics card holds one voice at a time"
+    free = old.free_memory() if old.free_memory is not None else None
+    if free is None:
+        return "the free memory could not be read"
+    if free < VOICE_HOST_RAM_BYTES:
+        return f"{free / 1024**3:.1f} GB of memory is free, and two voices need {VOICE_HOST_RAM_BYTES / 1024**3:.0f} GB more"
+    return ""
+
+
+def _begin_switch(
+    engine: str, voice: str, from_voice: str = "", *, make_standby: Callable[[], LocalTTSWorkerManager] | None = None
+) -> str:
+    """The setting now names ``engine`` and ``voice``: start loading it at once. Returns what was done: "same" (the
+    running worker serves it), "load" (the voice was released while idle: it loads in the manager now), "later" (no
+    local voice has loaded this session), "standby" (it loads beside the running voice, which keeps speaking) or
+    "release_first"."""
+    global _handover
+    current = _handover
+    if current is not None and (current.engine, current.voice) != (engine, voice):
+        _handover = None  # changed again before the last change took over: that standby is not needed
+        _spawn_task(current.standby.shutdown())
+        _manager.on_status = current.on_status or _manager.on_status
+    if _handover is not None:
+        return "standby"
+    old = _manager
+    if old.running and old.engine == engine and old.process_device == old.device:
+        return "same"  # another voice of the same engine: the worker makes any of its voices
+    if not old.running or old.failing:
+        if old.running:
+            _spawn_task(old.close_when_free())
+        if not any(entry[0] == "load_ended" for entry in old.reload_log):
+            return "later"  # no local voice has spoken this session: it loads at the first sign of use, as at start
+        old._start_prewarm(engine, voice)
+        return "load"
+    reason = _two_voices_fit(old, engine) if from_voice else "the voice speaking now is not known"
+    if reason:
+        logger.info("The voice %s loads after %s is released: %s; the system voice speaks meanwhile", engine,
+                    old.engine, reason)  # fmt: skip
+        handover_log.append(("release_first", str(old.engine), engine))
+        _spawn_task(_release_then_load(old, engine, voice))
+        return "release_first"
+    standby = make_standby() if make_standby is not None else LocalTTSWorkerManager(spawn=old._spawn, clock=old._clock)
+    for name in _STANDBY_SETTINGS:
+        setattr(standby, name, getattr(old, name))
+    standby.on_status = None  # the window keeps saying the voice is ready: the old one speaks meanwhile
+    _handover = Handover(engine, voice, str(old.engine), from_voice, standby, old.on_status)
+    handover_log.append(("standby", str(old.engine), engine))
+    logger.info("Loading the voice %s beside %s, which keeps speaking until the new one is ready", engine, old.engine)
+    standby._start_prewarm(engine, voice)
+    _spawn_task(_watch_handover(_handover))
+    return "standby"
+
+
+async def _release_then_load(old: LocalTTSWorkerManager, engine: str, voice: str) -> None:
+    await old.close_when_free()
+    old._start_prewarm(engine, voice)
+
+
+def _spawn_task(coroutine: Any) -> None:
+    try:
+        task = asyncio.get_running_loop().create_task(coroutine)
+    except RuntimeError:
+        coroutine.close()
+        return
+    _manager._background.add(task)
+    task.add_done_callback(_manager._background.discard)
+
+
+def finish_handover_if_due() -> bool:
+    """Take over now when it is due: the standby is loaded and no reply is being spoken, or the old voice cannot
+    speak any more (closed or failing), or the standby failed (the usual retry and the system voice follow). True
+    when it took over."""
+    global _handover, _manager
+    current = _handover
+    if current is None:
+        return False
+    old = _manager
+    old_alive = old.running and old.engine == current.from_engine and not old.failing
+    ready = current.standby.loaded and current.standby.running
+    if not ((ready and old.between_replies()) or not old_alive or current.standby.failing):
+        return False
+    _handover = None
+    current.standby.on_status = current.on_status
+    current.standby.head_cache = old.head_cache
+    _manager = current.standby
+    handover_log.append(("switched", current.from_engine, current.engine))
+    logger.info("Heliox's voice is now %s (%s), taken over between two replies", current.engine, current.voice)
+    _spawn_task(_retire(old))
+    return True
+
+
+async def _retire(old: LocalTTSWorkerManager) -> None:
+    await old.close_when_free()
+    await old.shutdown()
+
+
+async def _watch_handover(current: Handover) -> None:
+    while _handover is current:
+        finish_handover_if_due()
+        await asyncio.sleep(HANDOVER_POLL_SECONDS)
+
+
+def voice_for_reply(engine: str, voice: str) -> tuple[str, str]:
+    """The engine and voice to speak with now for the settings' ``engine`` and ``voice``: while a change is loading
+    beside it, the voice the person was hearing (the switch comes only between two replies); otherwise the settings'
+    own. Never the system voice by itself: that is the caller's when neither can speak."""
+    finish_handover_if_due()
+    current = _handover
+    if current is None or (current.engine, current.voice) != (engine, voice):
+        return engine, voice
+    return current.from_engine, current.from_voice or voice
+
+
+async def shutdown_standby() -> None:
+    """Stop a voice loading for a change that has not taken over yet (the daemon is stopping)."""
+    global _handover
+    current, _handover = _handover, None
+    if current is not None:
+        await current.standby.shutdown()
+
+
 def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = None) -> None:
     """Apply ``[voice]`` settings: how long the voice stays loaded and on which device it runs.
 
@@ -2888,11 +3060,24 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
             _manager.head_cache.keep_voices(SpeechStore.signature(engine, str(getattr(voice_config, "tts_voice", ""))))
         with contextlib.suppress(Exception):
             _manager.head_cache.trim_short_tails()  # hums kept with their whole quiet tail, from before
-    if _manager.running and (_manager.engine != engine or _manager.process_device != _manager.device):
-        with contextlib.suppress(RuntimeError):
-            task = asyncio.get_running_loop().create_task(_manager.close_when_free())
-            _manager._background.add(task)
-            task.add_done_callback(_manager._background.discard)
+    global _configured
+    voice = str(getattr(voice_config, "tts_voice", ""))
+    previous, _configured = _configured, (engine, voice)
+    if engine in LOCAL_ENGINES and _manager.light_reason is not None and _manager.light_reason():
+        engine = ""  # a small computer speaks with the system voice: nothing to load
+    if engine in LOCAL_ENGINES and previous is not None and previous != (engine, voice):
+        # A change of voice: the new one starts loading now, and the one the person hears keeps speaking until it is
+        # ready (_begin_switch). The first settings of a start load nothing, as before: the first sign of use does.
+        _begin_switch(engine, voice, previous[1] if previous[0] == _manager.engine else "")
+    elif _manager.running and (_manager.engine != engine or _manager.process_device != _manager.device):
+        _spawn_task(shutdown_standby())
+        _spawn_task(_manager.close_when_free())
+
+
+def _speaking(voice_config: Any) -> tuple[str, str]:
+    """The engine and voice that speak now for these settings (voice_for_reply: during a change, the old one)."""
+    engine, voice = str(getattr(voice_config, "tts_engine", "")), str(getattr(voice_config, "tts_voice", ""))
+    return voice_for_reply(engine, voice) if engine in LOCAL_ENGINES else (engine, voice)
 
 
 def local_voice_state(voice_config: Any) -> dict[str, bool]:
@@ -2901,7 +3086,7 @@ def local_voice_state(voice_config: Any) -> dict[str, bool]:
     The system voice (``os_native``) needs no load. A local voice that failed counts as not loaded: Heliox would
     speak with the system voice until it recovers.
     """
-    engine = str(getattr(voice_config, "tts_engine", ""))
+    engine = _speaking(voice_config)[0]
     if engine not in LOCAL_ENGINES:
         return {"voice_loaded": True, "voice_loading": False}
     worker = _manager
@@ -2917,7 +3102,7 @@ def made_ahead(voice_config: Any, text: str) -> bool:
     under way did not begin in the system voice: speaks_locally_now). False for the system voice, with no store,
     while Heliox's voice is not loaded, or when a piece has not been made yet. Reads the store's index (kept in
     memory after the first read); never synthesises."""
-    engine, voice = str(getattr(voice_config, "tts_engine", "")), str(getattr(voice_config, "tts_voice", ""))
+    engine, voice = _speaking(voice_config)
     store = _manager.head_cache
     if engine not in LOCAL_ENGINES or store is None:
         return False
@@ -2934,14 +3119,15 @@ def made_ahead(voice_config: Any, text: str) -> bool:
 def prepare_local_speech(voice_config: Any, text: str) -> None:
     """Synthesise ``text`` ahead of time with the configured local voice (no-op for the system voice), so the
     speak() that follows plays it without waiting. Call it for the next sentence while the current one plays."""
-    _manager.prepare(str(getattr(voice_config, "tts_engine", "")), text, str(getattr(voice_config, "tts_voice", "")))
+    engine, voice = _speaking(voice_config)
+    _manager.prepare(engine, text, voice)
 
 
 def make_fixed_speech_ahead(voice_config: Any, quiet: Callable[[], bool] = lambda: True) -> asyncio.Task[int] | None:
     """Start making the configured local voice's audio for every fixed sentence (pilot.system.fixed_speech) in the
     background, while the machine is idle; once per engine and voice. None when there is nothing to start."""
     global _making_ahead
-    engine, voice = str(getattr(voice_config, "tts_engine", "")), str(getattr(voice_config, "tts_voice", ""))
+    engine, voice = _speaking(voice_config)
     if engine not in LOCAL_ENGINES or _manager.head_cache is None:
         return None
     current = _making_ahead
@@ -2969,7 +3155,7 @@ _making_ahead: tuple[tuple[str, str], asyncio.Task[int]] | None = None
 
 def prewarm_local_voice(voice_config: Any) -> None:
     """The person is talking to Heliox: load the configured local voice now. Safe to call often; never blocks."""
-    _manager.prewarm(str(getattr(voice_config, "tts_engine", "")), str(getattr(voice_config, "tts_voice", "")))
+    _manager.prewarm(*_speaking(voice_config))
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through the parent process

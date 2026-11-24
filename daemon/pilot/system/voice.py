@@ -1681,8 +1681,9 @@ async def _play_stream(piece: Any) -> None:
 
 
 async def _shutdown_local_tts_worker() -> None:
-    from pilot.system.local_tts_worker import manager
+    from pilot.system.local_tts_worker import manager, shutdown_standby
 
+    await shutdown_standby()
     await manager().shutdown()
 
 
@@ -1820,14 +1821,16 @@ async def _speak_impl(
     speech_trace.emit(
         "speak started", entered=entered, rate_checked=checked, config_read=time.monotonic(), words=len(text.split())
     )
-    from pilot.system.local_tts_worker import LocalVoiceNotReady
+    from pilot.system.local_tts_worker import LocalVoiceNotReady, voice_for_reply
 
+    # While a newly chosen voice loads, the one the person was hearing speaks; the switch comes between two replies.
+    tts_engine, tts_voice = voice_for_reply(str(config.voice.tts_engine), str(config.voice.tts_voice))
     loading = ""  # the local voice that was still loading when this reply was ready ("" when none)
     loading_branch = ""  # why the system voice speaks while the local one is not used (LocalVoiceNotReady.branch)
     local_unavailable = ""  # why the local voice did not speak it, when it did not
-    if config.voice.tts_engine == "kokoro_tts":
+    if tts_engine == "kokoro_tts":
         try:
-            await _run_local_tts_worker("kokoro_tts", spoken_text, config.voice.tts_voice, output_file)
+            await _run_local_tts_worker("kokoro_tts", spoken_text, tts_voice, output_file)
             if output_file:
                 return f"Speech saved to {output_file}"
             return f"Spoken: {text[:80]}..."
@@ -1842,12 +1845,12 @@ async def _speak_impl(
                 logger.warning("Kokoro TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
             local_unavailable = str(e) or type(e).__name__
 
-    if config.voice.tts_engine == "pocket_tts":
+    if tts_engine == "pocket_tts":
         try:
             # Pocket TTS has no SAPI-style integer rate/volume knob to carry
             # the cognitive-load rate modulation above onto -- out of scope
             # for this pass, see SECURITY.md.
-            await _run_local_tts_worker("pocket_tts", spoken_text, config.voice.tts_voice, output_file)
+            await _run_local_tts_worker("pocket_tts", spoken_text, tts_voice, output_file)
             if output_file:
                 return f"Speech saved to {output_file}"
             return f"Spoken: {text[:80]}..."
@@ -1896,7 +1899,7 @@ async def _speak_impl(
         # No system voice on this computer (or it failed): the reply waits for Heliox's own voice rather than being
         # lost. The bar says "Getting my voice ready…" meanwhile.
         logger.info("No system voice to speak while the local voice loads; the reply waits for it")
-        await _run_local_tts_worker(loading, spoken_text, config.voice.tts_voice, output_file, wait_for_load=True)
+        await _run_local_tts_worker(loading, spoken_text, tts_voice, output_file, wait_for_load=True)
         return f"Speech saved to {output_file}" if output_file else f"Spoken: {text[:80]}..."
     return result
 

@@ -118,11 +118,16 @@ def kokoro_module_restored():
     ("cpu" when no card is visible), and a daemon started in a test hands the voice its settings object
     (voice.use_daemon_config). In a test that process is the test run, so a later test_kokoro_tts.py or a later reply
     would see them. Autouse: a new test that runs the loop or configures the voice cannot forget it."""
-    from pilot.system import kokoro_tts, voice
+    from pilot.system import kokoro_tts, local_tts_worker, voice
 
     saved = (kokoro_tts._device, kokoro_tts._offline_by_us, voice._daemon_config)
+    # A change of voice is told from the voice configured last, and may leave a standby loading (_begin_switch): each
+    # test starts as a daemon does, with neither.
+    voices = (local_tts_worker._configured, local_tts_worker._handover, local_tts_worker._manager)
+    local_tts_worker._configured, local_tts_worker._handover = None, None
     yield
     kokoro_tts._device, kokoro_tts._offline_by_us, voice._daemon_config = saved
+    local_tts_worker._configured, local_tts_worker._handover, local_tts_worker._manager = voices
 
 
 @pytest.fixture
