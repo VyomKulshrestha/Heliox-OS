@@ -108,7 +108,10 @@ def processor_facts(
             name = fallback() or ""
         except Exception:
             name = ""
-    return {"processor": " ".join(name.split()) or "unknown", "architecture": machine or platform.machine() or "unknown"}
+    return {
+        "processor": " ".join(name.split()) or "unknown",
+        "architecture": machine or platform.machine() or "unknown",
+    }
 
 
 def heading(machine: dict) -> str:

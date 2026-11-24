@@ -27,9 +27,11 @@ function respond(suggestion: unknown, update: unknown = { status: "ok" }) {
   const asked: { method: string; params: unknown }[] = [];
   daemonMocks.call.mockImplementation(async (method: string, params: unknown) => {
     asked.push({ method, params });
-    if (method === "speech_models_list") return suggestion instanceof Error ? suggestion : { status: "ok", models: [], engine_suggestion: suggestion };
+    if (method === "speech_models_list")
+      return suggestion instanceof Error ? suggestion : { status: "ok", models: [], engine_suggestion: suggestion };
     if (method === "update_config") return update;
-    if (method === "get_config") return { status: "ok", config: { voice: { tts_engine: "pocket_tts", tts_voice: "alba" } } };
+    if (method === "get_config")
+      return { status: "ok", config: { voice: { tts_engine: "pocket_tts", tts_voice: "alba" } } };
     return { status: "ok" };
   });
   return asked;
@@ -48,8 +50,12 @@ describe("LocalVoices", () => {
     render(LocalVoices);
     await settle();
     const row = screen.getByTestId("voice-licences");
-    expect(row.textContent).toContain("Kokoro (Kokoro-82M): licence Apache-2.0, from hexgrad/Kokoro-82M on Hugging Face.");
-    expect(row.textContent).toContain("licence CC BY 4.0, from kyutai/pocket-tts-without-voice-cloning on Hugging Face");
+    expect(row.textContent).toContain(
+      "Kokoro (Kokoro-82M): licence Apache-2.0, from hexgrad/Kokoro-82M on Hugging Face.",
+    );
+    expect(row.textContent).toContain(
+      "licence CC BY 4.0, from kyutai/pocket-tts-without-voice-cloning on Hugging Face",
+    );
     expect(row.textContent).toContain("Pocket TTS by Kyutai, licensed under CC BY 4.0");
     expect(row.textContent).toContain("about 225 MB");
     expect(screen.queryByTestId("voice-suggestion")).toBeNull();

@@ -60,7 +60,9 @@ def test_changing_one_row_is_the_whole_change(tmp_path):
     manifest = tmp_path / "speech_models.json"
     manifest.write_text(json.dumps(data), encoding="utf-8")
     rules = voice_default.load_rules(manifest)
-    assert pick("processor", "es", rules).engine == "pocket_tts" and pick("processor", "fr", rules).engine == "kokoro_tts"
+    assert (
+        pick("processor", "es", rules).engine == "pocket_tts" and pick("processor", "fr", rules).engine == "kokoro_tts"
+    )
     assert pick("apple_silicon", "en", rules).engine == "pocket_tts"
     data["voice_rules"]["rows"][0]["engine"] = "piper"
     manifest.write_text(json.dumps(data), encoding="utf-8")
@@ -103,7 +105,9 @@ def test_the_kind_of_computer_from_its_card_and_pytorch(reading, torch, extra, k
 
 
 def test_the_voice_reads_the_first_visible_card():
-    small_then_big = MachineReading("nvidia", (GpuInfo(0, "small", None, None, GIB), GpuInfo(1, "big", None, None, 8 * GIB)))
+    small_then_big = MachineReading(
+        "nvidia", (GpuInfo(0, "small", None, None, GIB), GpuInfo(1, "big", None, None, 8 * GIB))
+    )
     assert machine_kind(small_then_big, torch_build="cuda", needs_bytes=NEEDS) == "processor"
     assert machine_kind(small_then_big, torch_build="cuda", needs_bytes=NEEDS, visible=(1, 0)) == "nvidia_card"
     assert machine_kind(small_then_big, torch_build="cuda", needs_bytes=NEEDS, visible=()) == "processor"
@@ -115,7 +119,10 @@ def test_the_voice_reads_the_first_visible_card():
 def test_the_hugging_face_cache_is_found_as_huggingface_hub_finds_it(tmp_path):
     home = tmp_path / "home"
     assert voice_default.hf_cache_dir({}, home) == home / ".cache" / "huggingface" / "hub"
-    assert voice_default.hf_cache_dir({"XDG_CACHE_HOME": str(tmp_path / "x")}, home) == tmp_path / "x" / "huggingface" / "hub"
+    assert (
+        voice_default.hf_cache_dir({"XDG_CACHE_HOME": str(tmp_path / "x")}, home)
+        == tmp_path / "x" / "huggingface" / "hub"
+    )
     assert voice_default.hf_cache_dir({"HF_HOME": str(tmp_path / "h")}, home) == tmp_path / "h" / "hub"
     both = {"HF_HOME": str(tmp_path / "h"), "HF_HUB_CACHE": str(tmp_path / "c")}
     assert voice_default.hf_cache_dir(both, home) == tmp_path / "c"
@@ -138,7 +145,10 @@ def test_a_model_counts_as_on_disk_only_once_its_weights_are_there(tmp_path):
     _put(cache, "models--kyutai--pocket-tts-without-voice-cloning/snapshots/d/languages/english/model.safetensors")
     assert voice_default.voice_models_on_disk(cache) == {"kokoro_tts", "pocket_tts"}
     assert not voice_default.pocket_voice_on_disk("alba", cache)
-    _put(cache, "models--kyutai--pocket-tts-without-voice-cloning/snapshots/d/languages/english/embeddings/alba.safetensors")
+    _put(
+        cache,
+        "models--kyutai--pocket-tts-without-voice-cloning/snapshots/d/languages/english/embeddings/alba.safetensors",
+    )
     assert voice_default.pocket_voice_on_disk("alba", cache) and not voice_default.pocket_voice_on_disk("", cache)
 
 

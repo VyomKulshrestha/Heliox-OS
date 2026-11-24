@@ -13,7 +13,7 @@ import pytest
 from pilot.config import PilotConfig, _merge_config, _validate_config_types
 from pilot.server import PilotServer
 from pilot.system import kokoro_tts, local_tts_worker, voice_default
-from pilot.system.face_voice import POCKET_BY_KIND, PACK_VOICES, face_voices, pack_voice, plan_face_voice, pocket_voice
+from pilot.system.face_voice import PACK_VOICES, POCKET_BY_KIND, face_voices, pack_voice, plan_face_voice, pocket_voice
 
 HERE = lambda _voice: True  # noqa: E731
 NOT_HERE = lambda _voice: False  # noqa: E731
@@ -370,6 +370,9 @@ async def test_with_pocket_the_woman_s_face_keeps_alba_and_accepting_kokoro_for_
     assert woman["face_voice"]["action"] == "same" and config.voice.tts_voice == "alba" and not configured
     await _set_face(server, "portrait-man")
     accepted = await server._handle_face_voice({"voice": "am_michael", "hint": "masculine", "apply": "accept"}, None)
-    assert accepted["switched"] is True and (config.voice.tts_engine, config.voice.tts_voice) == ("kokoro_tts", "am_michael")
+    assert accepted["switched"] is True and (config.voice.tts_engine, config.voice.tts_voice) == (
+        "kokoro_tts",
+        "am_michael",
+    )
     assert config.voice.tts_voice_chosen is True
     assert "About 330 MB is fetched the first time it speaks." in accepted["say"]
