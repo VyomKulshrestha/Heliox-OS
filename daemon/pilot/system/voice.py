@@ -330,6 +330,8 @@ def sounds_unfinished(text: str) -> bool:
     if len(words) <= 3 and (CONTROL.match(core.casefold()) or is_short_decision(core) or is_safe_fast_phrase(core)):
         return False
     ends_badly = words[-1] in _UNFINISHED_LAST or bool(_UNFINISHED_TOO.search(" ".join(words)))
+    if ends_badly and _stranded_preposition(words):
+        return False  # "What am I training for": a whole question that ends on its preposition
     if stripped.endswith((",", ";", ":")) and not ends_badly and _whole_request(words):
         # "suggest a quick lunch idea,": Parakeet ends a finished request on a comma where Whisper wrote a full stop
         # (live measurement of 6ea1149, 24 November: held 2.5 s for a rest that never came). A request or question
@@ -339,6 +341,27 @@ def sounds_unfinished(text: str) -> bool:
     if stripped.endswith((",", ";", ":", "-", "\u2013", "\u2014", "...", "\u2026")):
         return ends_badly or len(words) > 2
     return len(words) >= 2 and ends_badly
+
+
+_WH = frozenset({"what", "what's", "who", "who's", "where", "where's", "which", "whom", "whose"})
+_STRANDED = frozenset({"for", "about", "at", "from", "with", "in", "on", "of", "to", "into", "by"})
+_OBJECT_PRONOUNS = frozenset({"it", "this", "that", "them", "me", "you", "him", "her", "us", "these", "those"})
+
+
+def _stranded_preposition(words: list[str]) -> bool:
+    """A question with a wh-word first that ends on the preposition its wh-word belongs to: "What am I training
+    for", "Who is this from", "What are you looking at". The word before the preposition is a verb ("training",
+    "looking") or a pronoun ("this", "it"); "What is the capital of" (a noun before it) still trails off."""
+    if len(words) < 3 or words[0] not in _WH or words[-1] not in _STRANDED:
+        return False
+    before = words[-2]
+    if before in _OBJECT_PRONOUNS:
+        return words[-1] != "to"  # "Who is this for"; "What do you want me to" may go on
+    return before.endswith(("ing", "ed")) or before in _ASKING_VERBS
+
+
+_ASKING_VERBS = frozenset({"look", "wait", "talk", "ask", "think", "go", "come", "pay", "use", "work", "listen",
+                           "living", "live", "be", "been", "up"})  # fmt: skip
 
 
 _SUBORDINATE = frozenset(
@@ -2904,6 +2927,9 @@ class _ContinuousRecorder:
         # Callable() -> bool: the words so far are a complete short answer, so a short pause ends the turn.
         self.complete_hint: Any = None
         self.short_answer_frames = 8  # 400 ms
+        # Up to how much quiet complete_hint is asked: 2 x short_answer_frames for the fast recogniser's words; the
+        # listener widens it for an answer read by the speculative pass, which comes later (_short_answer_heard).
+        self.complete_hint_frames = 16
         # Called when speech starts: the listener picks up a recogniser that finished loading while it waited.
         self.on_speech_start: Any = None
         # Streaming recognition (pilot.system.streaming_asr) sees each frame as it is captured.
@@ -3655,7 +3681,7 @@ class _ContinuousRecorder:
             if (
                 self.complete_hint is not None
                 # From 400 ms of quiet, checked each frame for another 400 ms: the recogniser's words lag the audio.
-                and self.short_answer_frames <= endpointer.trailing_silence <= 2 * self.short_answer_frames
+                and self.short_answer_frames <= endpointer.trailing_silence <= self.complete_hint_frames
                 and self.complete_hint()
             ):
                 # A one-word answer ("No.", "Stop.") sounds unfinished to Smart Turn, which would hold the turn for
@@ -4007,6 +4033,7 @@ class ContinuousVoiceListener:
         self._wake_free_suppression_depth = 0
         self._wake_free_suppression_generation = 0
         self._heliox_quiet_since = 0.0
+        self._speculation: Any = None  # the final pass started at the current utterance's candidate end
         self._heliox_started_at = 0.0  # when Heliox last began talking (monotonic)
         # (end of the last dispatched turn, its command, its dispatch number)
         self._last_turn: tuple[float, str, str] | None = None
@@ -4567,10 +4594,32 @@ class ContinuousVoiceListener:
             streaming.on_partial = self._caption if self._on_partial else None
             recorder.stream_sink = streaming
             recorder.complete_hint = lambda: is_short_decision(streaming.partial())
+            recorder.complete_hint_frames = 2 * recorder.short_answer_frames
             return streaming
         recorder.stream_sink = None
-        recorder.complete_hint = None
+        # No fast recogniser: while Heliox waits on a yes or no (an approval, its own question), the speculative pass's
+        # words end a short answer's turn instead of Smart Turn's 2 s hold.
+        recorder.complete_hint = self._short_answer_heard
+        recorder.complete_hint_frames = max(2 * recorder.short_answer_frames, recorder.turn_hold_frames)
         return None
+
+    def _short_answer_heard(self) -> bool:
+        """Heliox is waiting on a decision (an approval or a question of its own) and the speculative pass read the
+        utterance so far as a whole short answer: "No.", "Yes.", "Stop.", "Cancel.". A spoken "yes" still never
+        approves anything; it only ends the turn sooner."""
+        try:
+            due = self.question_open or bool(self.task_open and self.task_open())
+        except Exception:
+            due = False
+        speculation = getattr(self, "_speculation", None)
+        task = getattr(speculation, "task", None)
+        if not due or task is None or not task.done() or task.cancelled() or task.exception() is not None:
+            return False
+        text = str(task.result() or "").strip()
+        language = voice_words.voice_language(str(getattr(self.config.voice, "language", "en")))
+        return bool(text) and (
+            is_short_decision(text) or is_safe_fast_phrase(text) or voice_words.is_control_word(text, language)
+        )
 
     async def _warm_turn_taking(self) -> None:
         """Load Smart Turn and, when chosen, the streaming recognizer before the first utterance."""
@@ -5057,6 +5106,8 @@ class ContinuousVoiceListener:
                 # The command with the mark the recogniser ended the utterance on: "Hey Heliox, ... during exams," loses
                 # its comma in the command, and "Hey Heliox, stop," must be judged as "stop,", not by its first words.
                 mark = transcript.rstrip()[-1:] if transcript.rstrip().endswith(tuple(_PAUSE_MARKS.strip())) else ""
+                if transcript.rstrip().endswith(("?", "!")):
+                    mark = transcript.rstrip()[-1]  # "What am I training for?" asks a whole question: it never waits
                 judged = command_text.rstrip(" .") + mark if mark and mark != "." else command_text
                 answer = decision.why in _ANSWER_REASONS
                 if (
@@ -5747,6 +5798,7 @@ class ContinuousVoiceListener:
     def _speculate_final_pass(self) -> _Speculation:
         """Arm the recorder to start the final pass at each candidate end of turn (see _Speculation)."""
         speculation = _Speculation(self)
+        self._speculation = speculation
 
         from pilot.system import speech_trace
 

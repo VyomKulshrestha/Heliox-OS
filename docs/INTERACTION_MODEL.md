@@ -1903,6 +1903,13 @@ or a Live remark. A request or question that ends on a comma, semicolon or colon
 on is whole too ("suggest a quick lunch idea,"): since the final words come from Parakeet, which writes a comma where
 Whisper wrote a full stop, that request waited 2.5 s and got no early request (live measurement of 6ea1149, 24
 November). An opening clause ("when I was at school during exams,"), a statement, a dash or an ellipsis still waits.
+A question that starts with a wh-word and ends on its own preposition after a verb or a pronoun ("What am I
+training for", "Who is this from") is whole too, and a "?" the recogniser wrote is kept for the check (it was dropped
+with the punctuation, so "What am I training for?" waited 2.5 s in the 24 November acceptance run). "What is the
+capital of" and "What do you want me to" still wait. While Heliox waits on a decision (an approval, or a question of
+its own) and no fast recogniser runs, a short answer read by the speculative pass ("No.", "Stop.", "Cancel.") ends the
+turn as soon as that pass has read it, about 1 s into the quiet, instead of Smart Turn's 2 s hold ("No." during an
+approval was taken at +2.3 s); a spoken "yes" ends the turn the same way and still never approves.
 The cost is a finished request that ends on such a word ("Tell me what this is about."), which
 waits the full 2.5 s; none of the corpus's 994 transcripts or the 92 of the owner's own recordings ends that way. A wait for speech to
 begin no longer cuts off speech that began in time (a long request after "Hey Heliox" alone was lost at the eighth
