@@ -221,5 +221,97 @@
       "title": "Recommended for your language: Whisper small",
       "why": "Parakeet hears English only. Whisper small makes clearly fewer mistakes than base outside English and still runs on the processor; medium would be more accurate again but several times slower without a graphics card."
     }
+  },
+  "voices": [
+    {
+      "engine": "kokoro_tts",
+      "title": "Kokoro",
+      "default_voice": "af_heart",
+      "voice_kind": "feminine",
+      "model": "Kokoro-82M",
+      "download_bytes": 330000000,
+      "size_note": "About 330 MB of weights and about 0.5 MB for each voice, fetched by Kokoro the first time it speaks.",
+      "licence": "Apache-2.0",
+      "source": "hexgrad/Kokoro-82M on Hugging Face",
+      "url": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "attribution": "",
+      "languages": [
+        "en",
+        "es",
+        "fr",
+        "hi",
+        "it",
+        "ja",
+        "pt",
+        "zh"
+      ]
+    },
+    {
+      "engine": "pocket_tts",
+      "title": "Pocket TTS",
+      "default_voice": "alba",
+      "voice_kind": "feminine",
+      "model": "Pocket TTS, English, without voice cloning",
+      "download_bytes": 225000000,
+      "size_note": "About 219 MB of model, 0.25 MB of tokenizer and about 6 MB for the voice, fetched by Pocket TTS the first time it speaks.",
+      "licence": "CC-BY-4.0",
+      "source": "kyutai/pocket-tts-without-voice-cloning on Hugging Face; voices from kyutai/tts-voices",
+      "url": "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning",
+      "attribution": "Pocket TTS by Kyutai, licensed under CC BY 4.0 (huggingface.co/kyutai/pocket-tts-without-voice-cloning). Voices from huggingface.co/kyutai/tts-voices.",
+      "languages": [
+        "en"
+      ]
+    }
+  ],
+  "voice_rules": {
+    "about": "Which local voice a new install speaks with: the first row that matches the computer and the voice language. Applied only while no voice was chosen, no local voice model is on the computer and no local voice has loaded there (pilot/system/voice_default.py); the first-run screen shows the same pick. machine: nvidia_card (an NVIDIA card the voice can use, and PyTorch built with CUDA), apple_silicon, or processor (every other computer). languages: two-letter codes, or * for any. Changing a row is the whole change.",
+    "rows": [
+      {
+        "machine": "nvidia_card",
+        "languages": [
+          "*"
+        ],
+        "engine": "kokoro_tts",
+        "why": "On a graphics card Kokoro and Pocket TTS answered about as soon (one development laptop, measured), and Kokoro speaks more languages."
+      },
+      {
+        "machine": "apple_silicon",
+        "languages": [
+          "*"
+        ],
+        "engine": "kokoro_tts",
+        "why": "Neither voice has been measured on a Mac yet, so a Mac keeps Kokoro, as before."
+      },
+      {
+        "machine": "processor",
+        "languages": [
+          "en"
+        ],
+        "engine": "pocket_tts",
+        "why": "Without a graphics card Pocket TTS streams, and the answer's first sound came about 0.6 s sooner than with Kokoro (one development laptop, measured)."
+      },
+      {
+        "machine": "processor",
+        "languages": [
+          "es",
+          "fr",
+          "it",
+          "pt",
+          "hi",
+          "ja",
+          "zh"
+        ],
+        "engine": "kokoro_tts",
+        "why": "Pocket TTS has not passed the read-back check in this language yet, and has no Hindi, Japanese or Chinese voice."
+      },
+      {
+        "machine": "processor",
+        "languages": [
+          "*"
+        ],
+        "engine": "kokoro_tts",
+        "why": "As before: Kokoro, with a system voice of the language offered in Settings, Voice when Kokoro has none."
+      }
+    ]
   }
 }

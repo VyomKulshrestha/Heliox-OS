@@ -12,7 +12,11 @@ the product's default voice, a woman's, because nothing paired a face with a voi
 - the face's voice file is not on disk: nothing is switched or fetched; accepting the offer is the consent, and
   Kokoro fetches the file (about half a megabyte) the first time it speaks, the way ``voice_for_language_apply``
   adds a voice ("fetch");
-- Heliox speaks with another engine, or in a language the face's voice does not speak: nothing changes. In another
+- Heliox speaks with Pocket TTS: the face's approved Pocket voice is used the same way (``PACK_VOICES``' Pocket
+  column, ``POCKET_BY_KIND``). Where Pocket has no approved voice for the face yet (the man's face today), the face
+  brings its Kokoro voice instead of keeping a voice of the wrong kind: switched with the face while the person never
+  chose a voice and Kokoro's model and the voice are on disk, otherwise offered with the download it takes;
+- Heliox speaks with the system voice, or in a language the face's voice does not speak: nothing changes. In another
   language, a Kokoro voice of that language matching the hint is offered when there is one ("unavailable").
 
 The daemon applies that rule itself whenever ``face.pack`` changes, by any route: Settings' Face row, the general
@@ -30,17 +34,55 @@ from pilot.system.voice_by_language import KOKORO_VOICE_BYTES, LANGUAGE_NAMES, T
 
 HINTS = {"feminine": "f", "masculine": "m"}
 
-# The voice and hint each pack in tauri-app/ui/public/faces names (its manifest's "voice"); packs naming none are left
-# out. tests/test_face_voice.py reads every manifest and fails when this differs.
-PACK_VOICES: dict[str, tuple[str, str]] = {
-    "portrait-man": ("am_michael", "masculine"),
-    "portrait-woman": ("af_heart", "feminine"),
+# The Pocket TTS voice approved for each kind of face: listened to and read back (Whisper) before it is used with a
+# face. alba passed (numbers: 0 read wrong in 65 pieces once spoken as words). The masculine slot is EMPTY ON PURPOSE:
+# no masculine Pocket voice has been listened to or read back yet (michael and george, among kyutai/tts-voices, are
+# the first candidates). Until one passes, a man's face with Pocket TTS brings its Kokoro voice (am_michael).
+POCKET_BY_KIND: dict[str, str] = {"feminine": "alba", "masculine": ""}
+POCKET_VOICE_BYTES = 6_000_000  # a Pocket voice is about 6 MB, fetched by Pocket TTS the first time it speaks
+
+
+@dataclass(frozen=True)
+class PackVoices:
+    """One face pack's voice per engine. ``kokoro`` and ``hint`` copy the pack's manifest ("voice"); ``pocket`` is
+    the approved Pocket TTS voice for the face, "" while none is approved."""
+
+    kokoro: str
+    hint: str
+    pocket: str = ""
+
+    def by_engine(self) -> dict[str, str]:
+        return {"kokoro_tts": self.kokoro, "pocket_tts": self.pocket}
+
+
+# The voices of each pack in tauri-app/ui/public/faces that names one (its manifest's "voice"), one column per engine;
+# packs naming none are left out. tests/test_face_voice.py reads every manifest and fails when the Kokoro column or the
+# hint differs.
+PACK_VOICES: dict[str, PackVoices] = {
+    "portrait-man": PackVoices("am_michael", "masculine", pocket=POCKET_BY_KIND["masculine"]),
+    "portrait-woman": PackVoices("af_heart", "feminine", pocket=POCKET_BY_KIND["feminine"]),
 }
 
 
 def pack_voice(pack: str) -> tuple[str, str] | None:
-    """(voice, hint) the face pack ``pack`` names, or None for "off" and a pack without a voice."""
-    return PACK_VOICES.get(pack)
+    """(Kokoro voice, hint) the face pack ``pack`` names, or None for "off" and a pack without a voice."""
+    found = PACK_VOICES.get(pack)
+    return (found.kokoro, found.hint) if found else None
+
+
+def pocket_voice(pack: str, voice: str, hint: str) -> str:
+    """The approved Pocket voice for a face naming Kokoro ``voice`` with ``hint``: the pack's own column when ``pack``
+    is that face, else the one approved for its kind; "" when none is approved."""
+    found = PACK_VOICES.get(pack)
+    if found is not None and found.kokoro == voice:
+        return found.pocket
+    return POCKET_BY_KIND.get(hint, "")
+
+
+def face_voices(pack: str) -> dict[str, str] | None:
+    """The chosen face's voice per engine (for the voice a new install starts with), None for no face or no voice."""
+    found = PACK_VOICES.get(pack)
+    return found.by_engine() if found else None
 
 
 @dataclass(frozen=True)
@@ -49,6 +91,7 @@ class FaceVoicePlan:
     action: str  # "none" | "same" | "offer" | "fetch" | "unavailable"
     download_bytes: int  # what using ``voice`` fetches the first time it speaks
     say: str  # one plain sentence for the Face row; "" for none
+    engine: str = "kokoro_tts"  # the engine ``voice`` belongs to: using it switches Heliox to that engine
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -70,6 +113,10 @@ def _matching(language: str, hint: str, usable: Callable[[str], bool]) -> str:
     return ""
 
 
+def _megabytes(size: int) -> str:
+    return "about half a megabyte" if size < 1_000_000 else f"about {round(size / 1_000_000)} MB"
+
+
 def plan_face_voice(
     voice: str,
     hint: str,
@@ -80,20 +127,68 @@ def plan_face_voice(
     language: str,
     on_disk: Callable[[str], bool],
     reader_ok: Callable[[str], bool] = lambda _language: True,
+    pocket: str = "",
+    pocket_on_disk: Callable[[str], bool] = lambda _voice: True,
+    kokoro_model_on_disk: Callable[[], bool] = lambda: True,
+    kokoro_model_bytes: int = 0,
 ) -> FaceVoicePlan:
-    """What the Face row says and offers for a face whose pack names ``voice`` (and ``hint``)."""
+    """What the Face row says and offers for a face whose pack names Kokoro ``voice`` (and ``hint``). ``pocket``:
+    the face's approved Pocket TTS voice ("" for none yet). With Pocket TTS speaking, that voice is used the way the
+    Kokoro one is with Kokoro; without one, the face brings its Kokoro voice, the Kokoro model's download
+    (``kokoro_model_bytes``) included when it is not on disk."""
     if not face_voice_valid(voice):
         return FaceVoicePlan("", "none", 0, "")
-    if engine == "kokoro_tts" and current == voice:
-        return FaceVoicePlan(voice, "same", 0, "")
+    spoken = language or "en"
+    if engine == "pocket_tts" and pocket and spoken == "en":
+        if current == pocket:
+            return FaceVoicePlan(pocket, "same", 0, "", "pocket_tts")
+        kept = f"Your voice, {current}, is kept. " if chosen else ""
+        if not pocket_on_disk(pocket):
+            return FaceVoicePlan(
+                pocket, "fetch", POCKET_VOICE_BYTES,
+                f"{kept}This face's Pocket TTS voice, {pocket}, is not on this computer yet; using it fetches "
+                f"{_megabytes(POCKET_VOICE_BYTES)} the first time it speaks.", "pocket_tts",
+            )  # fmt: skip
+        return FaceVoicePlan(pocket, "offer", 0, f"{kept}This face's Pocket TTS voice is {pocket}.", "pocket_tts")
+    if engine == "pocket_tts":
+        # No approved Pocket voice for this face: the face brings its Kokoro voice rather than keep one of the wrong kind.
+        brought = _kokoro_plan(voice, hint, current=current, chosen=chosen, spoken=spoken, on_disk=on_disk,
+                               reader_ok=reader_ok)  # fmt: skip
+        if brought.action not in {"offer", "fetch"}:
+            return brought
+        why = "Pocket TTS has no approved voice for this face yet, so the face brings its Kokoro voice. "
+        if kokoro_model_on_disk():
+            return FaceVoicePlan(brought.voice, brought.action, brought.download_bytes, why + brought.say)
+        size = brought.download_bytes + kokoro_model_bytes
+        kept = f"Your voice, {current}, is kept. " if chosen else ""
+        return FaceVoicePlan(
+            brought.voice, "fetch", size,
+            f"{kept}{why}Kokoro is not on this computer yet; using {brought.voice} fetches {_megabytes(size)} the "
+            "first time it speaks.",
+        )  # fmt: skip
     if engine != "kokoro_tts":
-        now = "Pocket TTS" if engine == "pocket_tts" else "the system voice"
         return FaceVoicePlan(
             voice, "unavailable", 0,
-            f"This face's voice is {voice}, a Kokoro voice. Heliox speaks with {now}, so the voice stays as it is; "
-            "to hear this face's voice, choose Kokoro TTS under Voice.",
+            f"This face's voice is {voice}, a Kokoro voice. Heliox speaks with the system voice, so the voice stays as "
+            "it is; to hear this face's voice, choose Kokoro TTS under Voice.",
         )  # fmt: skip
-    spoken = language or "en"
+    if current == voice:
+        return FaceVoicePlan(voice, "same", 0, "")
+    return _kokoro_plan(voice, hint, current=current, chosen=chosen, spoken=spoken, on_disk=on_disk,
+                        reader_ok=reader_ok)  # fmt: skip
+
+
+def _kokoro_plan(
+    voice: str,
+    hint: str,
+    *,
+    current: str,
+    chosen: bool,
+    spoken: str,
+    on_disk: Callable[[str], bool],
+    reader_ok: Callable[[str], bool],
+) -> FaceVoicePlan:
+    """The face's Kokoro voice (or one of the language and kind) offered in place of ``current``."""
     if kokoro_language(voice) != spoken:
         name = LANGUAGE_NAMES.get(spoken, spoken)
         other = _matching(spoken, hint, lambda _voice: reader_ok(spoken))

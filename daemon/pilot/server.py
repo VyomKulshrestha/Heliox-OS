@@ -20,6 +20,7 @@ import time
 import uuid
 import zipfile
 from collections import deque
+from collections.abc import Callable
 from dataclasses import asdict as _dc_asdict
 from dataclasses import dataclass, field
 from dataclasses import replace as _dc_replace
@@ -1285,6 +1286,83 @@ class PilotServer:
 
         gpu_arbiter().configure(self.config.gpu)
         self._start_tts_warmup()
+
+    def _choose_first_voice(
+        self,
+        *,
+        machine: Callable[[str], str] | None = None,
+        models_on_disk: Callable[[], frozenset[str]] | None = None,
+        ever_loaded: Callable[[], bool] | None = None,
+    ) -> dict[str, str] | None:
+        """Write the engine and voice the table in speech_models.json picks for this computer and language
+        (pilot.system.voice_default.first_voice), only for an install with no voice of its own yet: never chosen,
+        a local engine, no local voice model on disk and no local voice ever loaded here. Returns what was written,
+        or None when nothing changed. The cheap checks come first; the card is read (nvidia-smi) only when the rule
+        applies. A failed save changes nothing. The probes are parameters for tests."""
+        from pilot.system import voice_default
+        from pilot.system.face_voice import face_voices
+
+        settings = self.config.voice
+        if settings.tts_voice_chosen or settings.tts_engine not in voice_default.LOCAL_ENGINES:
+            return None
+        on_disk = (models_on_disk or voice_default.voice_models_on_disk)()
+        loaded = (ever_loaded or voice_default.voice_ever_loaded)()
+        if on_disk or loaded:
+            return None
+        kind = (machine or voice_default.machine_now)(str(settings.tts_device))
+        choice = voice_default.first_voice(
+            engine=str(settings.tts_engine),
+            voice=str(settings.tts_voice),
+            chosen=False,
+            machine=kind,
+            language=self._spoken_language(),
+            models_on_disk=on_disk,
+            ever_loaded=loaded,
+            face_voices=face_voices(str(getattr(self.config.face, "pack", "off") or "off")),
+        )
+        if choice is None:
+            return None
+        previous = (settings.tts_engine, settings.tts_voice)
+        settings.tts_engine, settings.tts_voice = choice.engine, choice.voice
+        try:
+            self.config.save()
+        except Exception:
+            settings.tts_engine, settings.tts_voice = previous
+            logger.warning("The voice for this computer was not set: the settings could not be saved", exc_info=True)
+            return None
+        logger.info(
+            "A new install speaks with %s (%s) on this %s computer: %s",
+            choice.engine,
+            choice.voice,
+            kind.replace("_", " "),
+            choice.why,
+        )
+        return choice.as_dict()
+
+    def _voice_suggestion_now(self) -> dict[str, Any] | None:
+        """The one suggestion Settings, Voice shows to a person whose voice already speaks: Pocket TTS on a computer
+        where a new install would start with it (pilot.system.voice_default.suggestion). Reads the card and the
+        caches; changes nothing."""
+        import importlib.util
+
+        from pilot.system import voice_default
+        from pilot.system.speech_budget import light_voice_reason, total_memory
+
+        settings = self.config.voice
+        if settings.tts_engine != "kokoro_tts":
+            return None
+        try:
+            pocket_installed = importlib.util.find_spec("pocket_tts") is not None
+        except (ImportError, ValueError):
+            pocket_installed = False
+        return voice_default.suggestion(
+            engine=str(settings.tts_engine),
+            machine=voice_default.machine_now(str(settings.tts_device)),
+            language=self._spoken_language(),
+            small_machine=bool(light_voice_reason(total_memory(), bool(settings.light_on_small_memory))),
+            pocket_installed=pocket_installed,
+            pocket_on_disk="pocket_tts" in voice_default.voice_models_on_disk(),
+        )
 
     def _start_tts_warmup(self) -> None:
         """Keep heavyweight local TTS outside the long-lived daemon.
@@ -14655,6 +14733,13 @@ def handle_tool(tool_name, params):
             self._run_recorded_workflow_scheduler(), name="recorded_workflow_scheduler"
         )
         progress.begin("preparing the voice")
+        # An install with no voice of its own yet starts with the voice the table picks for this computer and language
+        # (pilot.system.voice_default); one whose voice has spoken before keeps it.
+        try:
+            async with self._config_lock:
+                await asyncio.to_thread(self._choose_first_voice)
+        except Exception:
+            logger.warning("Could not choose the voice for this computer", exc_info=True)
         # A face set in the config file (by hand, or saved before the daemon applied this rule) brings its voice
         # before the voice is set up, so the first reply is already in the face's voice.
         try:
@@ -15909,7 +15994,12 @@ def handle_tool(tool_name, params):
         """The downloadable speech models: what each is for, size, licence, source, what is on disk, and the set
         recommended for the voice language setting."""
         listed = await asyncio.to_thread(self._speech_models().list, str(self.config.voice.language))
-        return {**listed, "voice": (await self._voice_for_language()).as_dict()}
+        try:
+            suggestion = await asyncio.to_thread(self._voice_suggestion_now)
+        except Exception:
+            logger.debug("Could not work out the voice suggestion", exc_info=True)
+            suggestion = None
+        return {**listed, "voice": (await self._voice_for_language()).as_dict(), "engine_suggestion": suggestion}
 
     async def _voice_for_language(self) -> Any:
         """Which voice would speak the person's voice language (pilot.system.voice_by_language.plan_voice)."""
@@ -15951,11 +16041,12 @@ def handle_tool(tool_name, params):
     def _face_voice_plan_now(self, voice: str, hint: str) -> Any:
         """What the Face row offers for a face pack that names ``voice`` (pilot.system.face_voice). Reads whether the
         voice file is on disk, nothing more."""
-        from pilot.system import kokoro_tts
-        from pilot.system.face_voice import plan_face_voice
+        from pilot.system import kokoro_tts, voice_default
+        from pilot.system.face_voice import plan_face_voice, pocket_voice
         from pilot.system.voice_by_language import reader_missing
 
         settings = self.config.voice
+        pocket = pocket_voice(str(getattr(self.config.face, "pack", "off") or "off"), voice, hint)
         return plan_face_voice(
             voice,
             hint,
@@ -15965,6 +16056,10 @@ def handle_tool(tool_name, params):
             language=self._spoken_language(),
             on_disk=kokoro_tts.voice_on_disk,
             reader_ok=lambda language: not reader_missing(language),
+            pocket=pocket,
+            pocket_on_disk=voice_default.pocket_voice_on_disk,
+            kokoro_model_on_disk=lambda: "kokoro_tts" in voice_default.voice_models_on_disk(),
+            kokoro_model_bytes=int(voice_default.VOICES.get("kokoro_tts", {}).get("download_bytes", 0)),
         )
 
     async def _face_voice_plan(self, voice: str, hint: str) -> Any:
@@ -15986,15 +16081,17 @@ def handle_tool(tool_name, params):
         settings = self.config.voice
         if plan.action != "offer" or settings.tts_voice_chosen:
             return {"switched": False, **plan.as_dict()}
-        previous = settings.tts_voice
-        settings.tts_voice = plan.voice
+        previous = (settings.tts_engine, settings.tts_voice)
+        settings.tts_engine, settings.tts_voice = plan.engine, plan.voice
         try:
             self.config.save()
         except Exception:
-            settings.tts_voice = previous
+            settings.tts_engine, settings.tts_voice = previous
             logger.warning("The face's voice was not switched: the settings could not be saved", exc_info=True)
             return {"switched": False, **plan.as_dict()}
         say = switched_say(plan.voice, by_face=True)
+        if plan.engine != previous[0]:
+            say += " Pocket TTS has no approved voice for this face yet, so Heliox speaks with Kokoro."
         self._face_voice_switched = (pack, plan.voice, say)
         if configure:
             from pilot.system.local_tts_worker import configure_local_voice
@@ -16042,13 +16139,13 @@ def handle_tool(tool_name, params):
             by_person = apply == "accept" and plan.action in {"offer", "fetch"}
             if not (by_face or by_person):
                 return {"status": "ok", "switched": False, **plan.as_dict()}
-            previous = (settings.tts_voice, settings.tts_voice_chosen)
-            settings.tts_voice = plan.voice
+            previous = (settings.tts_engine, settings.tts_voice, settings.tts_voice_chosen)
+            settings.tts_engine, settings.tts_voice = plan.engine, plan.voice
             settings.tts_voice_chosen = settings.tts_voice_chosen or by_person
             try:
                 self.config.save()
             except Exception as exc:
-                settings.tts_voice, settings.tts_voice_chosen = previous
+                settings.tts_engine, settings.tts_voice, settings.tts_voice_chosen = previous
                 return {"status": "error", "message": f"The voice was not changed: {exc}"}
         await self._broadcast_notification("config_updated", {"method": "face_voice", "section": "voice"})
         from pilot.system.local_tts_worker import configure_local_voice
@@ -16057,8 +16154,15 @@ def handle_tool(tool_name, params):
             configure_local_voice(settings)
         after = await self._face_voice_plan(voice, hint)
         say = switched_say(plan.voice, by_face=by_face)
+        if plan.engine != previous[0]:
+            say += " Pocket TTS has no approved voice for this face yet, so Heliox speaks with Kokoro."
         if plan.action == "fetch":
-            say += " About half a megabyte is fetched the first time it speaks."
+            size = (
+                "About half a megabyte"
+                if plan.download_bytes < 1_000_000
+                else f"About {round(plan.download_bytes / 1_000_000)} MB"
+            )
+            say += f" {size} is fetched the first time it speaks."
         return {"status": "ok", "switched": True, **after.as_dict(), "voice": plan.voice, "say": say}
 
     async def _handle_speech_model_download(self, params: dict, ws: ServerConnection) -> dict:

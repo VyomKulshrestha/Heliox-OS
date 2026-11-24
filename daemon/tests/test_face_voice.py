@@ -12,8 +12,8 @@ import pytest
 
 from pilot.config import PilotConfig, _merge_config, _validate_config_types
 from pilot.server import PilotServer
-from pilot.system import kokoro_tts, local_tts_worker
-from pilot.system.face_voice import PACK_VOICES, pack_voice, plan_face_voice
+from pilot.system import kokoro_tts, local_tts_worker, voice_default
+from pilot.system.face_voice import POCKET_BY_KIND, PACK_VOICES, face_voices, pack_voice, plan_face_voice, pocket_voice
 
 HERE = lambda _voice: True  # noqa: E731
 NOT_HERE = lambda _voice: False  # noqa: E731
@@ -50,10 +50,47 @@ def test_a_voice_not_on_disk_is_never_fetched_without_the_person():
     assert "not on this computer yet" in missing.say and "half a megabyte" in missing.say
 
 
-@pytest.mark.parametrize(("engine", "named"), [("pocket_tts", "Pocket TTS"), ("os_native", "the system voice")])
-def test_another_engine_keeps_its_voice_and_says_how_to_hear_the_face_s(engine, named):
-    other = plan(engine=engine, current="alba")
-    assert other.action == "unavailable" and named in other.say and "choose Kokoro TTS under Voice" in other.say
+def test_the_system_voice_keeps_its_voice_and_says_how_to_hear_the_face_s():
+    other = plan(engine="os_native", current="")
+    assert other.action == "unavailable" and "the system voice" in other.say
+    assert "choose Kokoro TTS under Voice" in other.say
+
+
+def test_with_pocket_the_woman_s_face_uses_its_approved_pocket_voice():
+    woman = {"voice": "af_heart", "hint": "feminine", "engine": "pocket_tts", "pocket": "alba"}
+    assert plan(**woman, current="alba").action == "same"
+    offered = plan(**woman, current="lola")
+    assert (offered.action, offered.voice, offered.engine, offered.download_bytes) == ("offer", "alba", "pocket_tts", 0)
+    missing = plan(**woman, current="lola", chosen=True, pocket_on_disk=lambda _voice: False)
+    assert missing.action == "fetch" and missing.engine == "pocket_tts" and missing.download_bytes == 6_000_000
+    assert missing.say.startswith("Your voice, lola, is kept.") and "about 6 MB" in missing.say
+
+
+def test_with_pocket_a_face_without_an_approved_pocket_voice_brings_its_kokoro_voice():
+    """The man's face never speaks with alba: its Kokoro voice comes instead, with Kokoro's download when needed."""
+    man = {"engine": "pocket_tts", "current": "alba", "pocket": ""}
+    here = plan(**man)
+    assert (here.action, here.voice, here.engine) == ("offer", "am_michael", "kokoro_tts")
+    assert here.say.startswith("Pocket TTS has no approved voice for this face yet")
+    away = plan(**man, kokoro_model_on_disk=lambda: False, kokoro_model_bytes=330_500_000, on_disk=NOT_HERE)
+    assert (away.action, away.voice, away.engine) == ("fetch", "am_michael", "kokoro_tts")
+    assert away.download_bytes == 330_500_000 + 523_000 and "about 331 MB" in away.say
+    kept = plan(**man, chosen=True)
+    assert kept.action == "offer" and "Your voice, alba, is kept." in kept.say
+    # Another language: Pocket's voice is approved for English only, so the Kokoro rules for that language apply.
+    spanish = plan(voice="af_heart", hint="feminine", engine="pocket_tts", current="lola", pocket="alba", language="es",
+                   on_disk=NOT_HERE)  # fmt: skip
+    assert spanish.voice == "ef_dora" and spanish.engine == "kokoro_tts" and spanish.action == "fetch"
+
+
+def test_the_pocket_column_is_one_approved_voice_per_kind_and_the_masculine_slot_is_empty():
+    assert POCKET_BY_KIND == {"feminine": "alba", "masculine": ""}
+    assert PACK_VOICES["portrait-woman"].pocket == "alba" and PACK_VOICES["portrait-man"].pocket == ""
+    assert face_voices("portrait-man") == {"kokoro_tts": "am_michael", "pocket_tts": ""}
+    assert face_voices("off") is None
+    assert pocket_voice("portrait-woman", "af_heart", "feminine") == "alba"
+    assert pocket_voice("someone-elses-pack", "bf_emma", "feminine") == "alba"  # a pack not shipped: by its kind
+    assert pocket_voice("someone-elses-pack", "bm_lewis", "masculine") == ""
 
 
 def test_another_language_keeps_its_voice_or_offers_one_of_its_own_by_the_hint():
@@ -82,7 +119,9 @@ def test_never_chosen_is_known_and_an_old_file_keeps_its_voice():
     assert _merge_config(PilotConfig(), saved).voice.tts_voice_chosen is False
 
 
-def _server(monkeypatch, *, on_disk=HERE, chosen=False, engine="kokoro_tts", voice="af_heart"):
+def _server(monkeypatch, *, on_disk=HERE, chosen=False, engine="kokoro_tts", voice="af_heart", models=("kokoro_tts",)):
+    monkeypatch.setattr(voice_default, "voice_models_on_disk", lambda cache=None: frozenset(models))
+    monkeypatch.setattr(voice_default, "pocket_voice_on_disk", lambda _voice, cache=None: True)
     config = PilotConfig()
     config.voice.language = "en"
     config.voice.tts_engine, config.voice.tts_voice, config.voice.tts_voice_chosen = engine, voice, chosen
@@ -187,7 +226,7 @@ def test_the_daemon_knows_the_voice_every_shipped_pack_names():
         voice = manifest.get("voice") or {}
         if voice.get("kokoro"):
             named[pack] = (voice["kokoro"], voice.get("hint", ""))
-    assert named == PACK_VOICES
+    assert named == {pack: (voices.kokoro, voices.hint) for pack, voices in PACK_VOICES.items()}
     assert pack_voice("off") is None and pack_voice("placeholder") is None
 
 
@@ -242,9 +281,12 @@ async def test_the_face_s_voice_is_not_switched_when_it_cannot_speak_or_cannot_b
     missing = await _set_face(server, "portrait-man")
     assert missing["face_voice"]["switched"] is False and missing["face_voice"]["action"] == "fetch"
     assert config.voice.tts_voice == "af_heart"
-    server, config, configured = _server(monkeypatch, engine="pocket_tts", voice="alba")
+    # Pocket TTS without Kokoro's model on disk: the man's face offers its Kokoro voice with the download, and
+    # nothing is fetched or switched until the person accepts.
+    server, config, configured = _server(monkeypatch, engine="pocket_tts", voice="alba", models=("pocket_tts",))
     other = await _set_face(server, "portrait-man")
-    assert other["face_voice"]["action"] == "unavailable" and config.voice.tts_voice == "alba"
+    assert other["face_voice"]["action"] == "fetch" and other["face_voice"]["engine"] == "kokoro_tts"
+    assert config.voice.tts_engine == "pocket_tts" and config.voice.tts_voice == "alba"
     server, config, configured = _server(monkeypatch)
     saves = iter([None, OSError("disk full")])
 
@@ -306,3 +348,28 @@ def test_a_face_chosen_by_editing_the_file_while_heliox_runs_brings_its_voice(mo
     config.voice.tts_voice = "af_heart"  # the same face reloaded again: the face did not change, nothing is applied
     assert server._adopt_edited_config() is True and config.voice.tts_voice == "af_heart"
     assert server._adopt_edited_config() is False
+
+
+@pytest.mark.asyncio
+async def test_with_pocket_the_man_s_face_switches_to_kokoro_and_the_woman_s_face_back_to_alba(monkeypatch):
+    server, config, configured = _server(monkeypatch, engine="pocket_tts", voice="alba", models=("kokoro_tts",))
+    man = await _set_face(server, "portrait-man")
+    assert man["face_voice"]["switched"] is True
+    assert (config.voice.tts_engine, config.voice.tts_voice) == ("kokoro_tts", "am_michael")
+    assert "Pocket TTS has no approved voice for this face yet" in man["face_voice"]["say"]
+    assert config.voice.tts_voice_chosen is False and configured == ["am_michael"]
+    # Back on Kokoro, the woman's face brings af_heart, as before.
+    woman = await _set_face(server, "portrait-woman")
+    assert woman["face_voice"]["switched"] is True and config.voice.tts_voice == "af_heart"
+
+
+@pytest.mark.asyncio
+async def test_with_pocket_the_woman_s_face_keeps_alba_and_accepting_kokoro_for_the_man_is_a_choice(monkeypatch):
+    server, config, configured = _server(monkeypatch, engine="pocket_tts", voice="alba", models=("pocket_tts",))
+    woman = await _set_face(server, "portrait-woman")
+    assert woman["face_voice"]["action"] == "same" and config.voice.tts_voice == "alba" and not configured
+    await _set_face(server, "portrait-man")
+    accepted = await server._handle_face_voice({"voice": "am_michael", "hint": "masculine", "apply": "accept"}, None)
+    assert accepted["switched"] is True and (config.voice.tts_engine, config.voice.tts_voice) == ("kokoro_tts", "am_michael")
+    assert config.voice.tts_voice_chosen is True
+    assert "About 330 MB is fetched the first time it speaks." in accepted["say"]
