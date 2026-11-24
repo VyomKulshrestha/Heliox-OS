@@ -201,14 +201,30 @@ def _send(response: dict[str, Any], payload: bytes = b"") -> None:
     buffer.flush()
 
 
-def _load(engine: str, voice: str) -> None:
-    """Load the model and voice, and run one throwaway synthesis so the first real sentence is warm."""
+_PROCESS_STARTED = time.perf_counter()  # this module's import: about when the worker process started
+
+
+def _load(engine: str, voice: str) -> dict[str, float]:
+    """Load the model and voice, and run one throwaway synthesis so the first real sentence is warm. Returns the
+    seconds each step took: from the worker's start to this request ("waited_s"), importing the engine ("import_s"),
+    and its own preparation ("prepare_s", with the engine's own steps when it reports them: last_load)."""
+    began = time.perf_counter()
     _use_voice_threads()
     module = _engine_module(engine)
+    imported = time.perf_counter()
     if hasattr(module, "prepare"):
         module.prepare(voice)
     else:
         asyncio.run(module.warmup(voice))
+    took = {
+        "waited_s": began - _PROCESS_STARTED,
+        "import_s": imported - began,
+        "prepare_s": time.perf_counter() - imported,
+    }
+    steps = getattr(module, "last_load", None)
+    if isinstance(steps, dict):
+        took.update({str(k): float(v) for k, v in steps.items() if isinstance(v, (int, float))})
+    return took
 
 
 def _take_gpu_lease(device: str) -> tuple[str, Any]:
@@ -378,8 +394,11 @@ def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
                 _stream(engine, request, requests)
                 continue
             if request.get("op") == "load":
-                _load(engine, str(request.get("voice") or ""))
-                _send({"status": "ok", "op": "load"})
+                took = _load(engine, str(request.get("voice") or ""))
+                answer: dict[str, Any] = {"status": "ok", "op": "load"}
+                if isinstance(took, dict) and took:
+                    answer["took"] = {k: round(v, 4) for k, v in took.items()}
+                _send(answer)
                 continue
             began = time.monotonic()
             started = time.perf_counter()
@@ -1698,18 +1717,33 @@ class LocalTTSWorkerManager:
 
     async def _load(self, process: Any, engine: str, voice: str) -> None:
         started = self._clock()
+        asked = time.monotonic()
         try:
             try:
-                await self._request(process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS)
+                answer = await self._request(
+                    process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS
+                )
             except _MovedToCpu:
                 process = await self._ensure_process(engine, voice, preload=False)
-                await self._request(process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS)
+                answer = await self._request(
+                    process, engine, {"op": "load", "voice": voice}, timeout=LOAD_TIMEOUT_SECONDS
+                )
         except BaseException as error:
             self.reload_log.append(("load_failed", type(error).__name__, time.monotonic()))
             raise
         self.reload_log.append(("load_ended", engine, time.monotonic()))
         self._note_load_time(engine, self._clock() - self._loading_since)
-        logger.info("Local voice %s loaded in %.1f s", engine, self._clock() - started)
+        took = answer.get("took") if isinstance(answer.get("took"), dict) else {}
+        # Where a load's time went, in the worker's own seconds: its start until this request, importing the engine,
+        # and the engine's preparation (weights, then a first sentence made and thrown away).
+        steps = ", ".join(f"{k} {v:.1f} s" for k, v in took.items() if isinstance(v, (int, float)))
+        logger.info(
+            "Local voice %s loaded in %.1f s%s", engine, self._clock() - started, f" ({steps})" if steps else ""
+        )
+        speech_trace.emit(
+            "voice loaded", engine=engine, asked=asked, done=time.monotonic(), pipe_at=float(answer.get("_started") or 0),
+            **{f"worker_{k}": v for k, v in took.items() if isinstance(v, (int, float))},
+        )  # fmt: skip
 
     def _start_idle_watch(self) -> None:
         if self._idle_task is not None and not self._idle_task.done():
@@ -1941,6 +1975,7 @@ class LocalTTSWorkerManager:
         keep_tail: float | None = None,
         rank: int | Callable[[], int] = PIPE_NOW,
         kind: str = "reply",
+        start_voice: bool = True,
     ) -> Piece | None:
         """Make ``text`` into ``output_file``, or with ``samples`` into memory: the worker sends the samples back on
         its pipe, trimmed (KEEP_LEAD_SECONDS before the first sound, ``keep_tail`` after the last, the whole end when
@@ -1954,7 +1989,7 @@ class LocalTTSWorkerManager:
         if not text or len(text) > MAX_TEXT_CHARACTERS:
             raise ValueError("Speech text must contain between 1 and 20,000 characters")
         requested = time.monotonic()
-        process = await self._usable_process(engine, voice)
+        process = await self._usable_process(engine, voice, start_voice=start_voice)
         process_ready = time.monotonic()
         request_path = request_dir / f"{output_file.stem}-{id(output_file):x}.txt"
         request_path.write_text(text, encoding="utf-8")  # 0.4 ms (measured): for a worker that reads the file
@@ -2027,7 +2062,12 @@ class LocalTTSWorkerManager:
             return Piece(text, path=output_file, trimmed=False)
         return piece
 
-    async def _usable_process(self, engine: str, voice: str) -> Any:
+    async def _usable_process(self, engine: str, voice: str, *, start_voice: bool = True) -> Any:
+        """The worker, started and loaded (waited for). Without ``start_voice`` (work made ahead: fixed sentences, a
+        next sentence no reply waits for yet) only a worker already loaded: such work never starts the voice, so a
+        reload a reply waits for never comes behind it."""
+        if not start_voice and not (self.running and self.engine == engine and self.loaded):
+            raise LocalTTSUnavailable(f"{engine} is not loaded: work made ahead waits for a reply to load it")
         if self._failed_until is not None:
             # After a failure the person hears the system voice at once; the local one is retried in the background.
             if self._clock() >= self._failed_until and not (self.running and self.engine == engine):
@@ -2415,7 +2455,8 @@ class LocalTTSWorkerManager:
             key = (engine, voice, sentences[index])
             ahead = self._prepared.pop(key, None)
             state = self._next_state.pop(key, None)
-            if ahead is not None and not ahead.cancelled():
+            failed = ahead is not None and ahead.done() and not ahead.cancelled() and ahead.exception() is not None
+            if ahead is not None and not ahead.cancelled() and not failed:
                 sources[index] = "ahead"
                 if state is not None and not state.wanted:
                     state.wanted = True  # this reply waits for it now: it goes first on the pipe
@@ -2525,8 +2566,9 @@ class LocalTTSWorkerManager:
         for unless a reply waits for this one."""
         await self._next_turn(state)
         return await self._make(
-            engine, text, voice, target, folder, rank=lambda: PIPE_NOW if state.wanted else PIPE_NEXT, kind="next"
-        )
+            engine, text, voice, target, folder, rank=lambda: PIPE_NOW if state.wanted else PIPE_NEXT, kind="next",
+            start_voice=lambda: state.wanted,
+        )  # fmt: skip
 
     async def make_ahead(
         self,
@@ -2571,7 +2613,14 @@ class LocalTTSWorkerManager:
                 started = self._clock()
                 try:
                     piece = await self._make(
-                        engine, text, voice, folder / f"fixed-{index}.wav", folder, rank=PIPE_AHEAD, kind="ahead"
+                        engine,
+                        text,
+                        voice,
+                        folder / f"fixed-{index}.wav",
+                        folder,
+                        rank=PIPE_AHEAD,
+                        kind="ahead",
+                        start_voice=False,
                     )
                 except LocalTTSUnavailable:
                     return made
@@ -2595,13 +2644,15 @@ class LocalTTSWorkerManager:
         *,
         rank: int | Callable[[], int] = PIPE_NOW,
         kind: str = "reply",
+        start_voice: bool | Callable[[], bool] = True,
     ) -> Piece:
         """One piece made for speech, in memory and trimmed by the worker. A worker that wrote the file instead (one
-        that cannot send samples) has it trimmed here, as before. ``rank`` and ``kind``: see _Pipe and synth_log."""
+        that cannot send samples) has it trimmed here, as before. ``rank``, ``kind`` and ``start_voice``: see _Pipe,
+        synth_log and _usable_process."""
         keep_tail = tail_for(text)
         piece = await self.synthesize(
             engine, text, voice, target, folder, wait_after_gpu_fault=False, samples=True, keep_tail=keep_tail,
-            rank=rank, kind=kind,
+            rank=rank, kind=kind, start_voice=start_voice() if callable(start_voice) else start_voice,
         )  # fmt: skip
         assert piece is not None
         if not piece.trimmed:

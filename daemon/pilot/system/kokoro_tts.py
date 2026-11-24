@@ -172,12 +172,23 @@ def _add_timing(
 
 def prepare(voice: str) -> None:
     """Load weights and the voice, then make one throwaway sentence so the first real one is warm (worker side)."""
+    import time
+
     from pilot.system.voice_by_language import kokoro_lang_code
 
+    started = time.perf_counter()
     use_cached_weights_offline(voice)
     _get_pipeline(kokoro_lang_code(voice))
+    loaded = time.perf_counter()
     if voice:
         _generate("Okay.", voice)
+    last_load.clear()
+    last_load.update(pipeline_s=loaded - started, warm_s=time.perf_counter() - loaded)
+
+
+# Seconds the last prepare() took in each step: reading the model and its weights ("pipeline_s", importing Kokoro and
+# transformers with them) and the first sentence made and thrown away ("warm_s"), for the worker's load answer.
+last_load: dict[str, float] = {}
 
 
 async def warmup(_voice: str) -> None:

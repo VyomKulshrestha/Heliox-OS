@@ -416,7 +416,7 @@ async def test_the_worker_is_asked_for_timing_only_while_a_face_is_chosen(notice
     requests: list[dict[str, str]] = []
 
     class Manager(local_tts_worker.LocalTTSWorkerManager):
-        async def _usable_process(self, engine, voice):
+        async def _usable_process(self, engine, voice, *, start_voice=True):
             return object()
 
         async def _request(self, process, engine, request, *, timeout, rank=0):
