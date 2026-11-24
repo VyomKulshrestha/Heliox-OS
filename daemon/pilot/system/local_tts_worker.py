@@ -119,15 +119,26 @@ def _engine_module(engine: str) -> Any:
     raise ValueError(f"Unsupported local TTS engine: {engine}")  # pragma: no cover - argparse enforces the choices
 
 
-# Threads the voice model computes on. Measured 13 November on the owner's CPU (16 cores, 24 threads), Kokoro on the
-# six sentences of a short reply, 1 to 15 words: 4 threads 449 to 1645 ms; torch's default (16) 507 to 1741 ms; all 24
-# 605 to 1929 ms; 2 threads 654 to 2627 ms. More than four only adds contention, and leaves the recognisers less.
+# Threads the voice model computes on. Measured 13 November on one development laptop's processor (16 cores, 24
+# threads), Kokoro on the six sentences of a short reply, 1 to 15 words: 4 threads 449 to 1645 ms; torch's default (16)
+# 507 to 1741 ms; all 24 605 to 1929 ms; 2 threads 654 to 2627 ms. More than four only adds contention, and leaves the
+# recognisers less.
 VOICE_THREADS = 4
+# Pocket TTS streams on one thread. Measured by pocket-speed.yml on GitHub's 4-core Linux and Windows runners: one
+# thread gave a real-time factor of 0.31 to 0.39 (seconds of making per second of audio), four threads 0.42 to 0.49,
+# and every piece streamed without gaps on either. On one development laptop (24 threads) one to four threads gave 0.31
+# to 0.35. One thread is the fastest measured or as fast, and leaves the other cores to the recognisers.
+ENGINE_THREADS = {"kokoro_tts": VOICE_THREADS, "pocket_tts": 1}
 _threads_set = False
 
 
+def voice_threads(engine: str) -> int:
+    """The threads ``engine``'s model is given (ENGINE_THREADS; VOICE_THREADS for an engine not listed)."""
+    return ENGINE_THREADS.get(engine, VOICE_THREADS)
+
+
 def _use_voice_threads(threads: int = VOICE_THREADS) -> None:
-    """Give the voice model VOICE_THREADS threads (fewer on a smaller machine), once, in the worker."""
+    """Give the voice model ``threads`` threads (voice_threads; fewer on a smaller machine), once, in the worker."""
     global _threads_set
     if _threads_set:
         return
@@ -145,7 +156,7 @@ def _synthesize(engine: str, text: str, voice: str, output_file: str, timing_fil
     (measured 13 November on the owner's CPU, the six sentences of a short reply).
 
     ``timing_file``: also write when each phoneme is said there, when the engine knows (a face is shown)."""
-    _use_voice_threads()
+    _use_voice_threads(voice_threads(engine))
     module = _engine_module(engine)
     timed = getattr(module, "synthesize_with_timing_here", None) if timing_file else None
     if timed is not None:
@@ -164,7 +175,7 @@ def _make_samples(
 
     from pilot.system import speech_notices
 
-    _use_voice_threads()
+    _use_voice_threads(voice_threads(engine))
     module = _engine_module(engine)
     started = time.perf_counter()
     audio, rate, found = module.generate_here(text, voice, timing=timing)
@@ -220,7 +231,7 @@ def _load(engine: str, voice: str) -> dict[str, float]:
     and its own preparation ("prepare_s", with the engine's own steps when it reports them: last_load)."""
     began = time.perf_counter()
     read_before = _bytes_read()
-    _use_voice_threads()  # imports PyTorch
+    _use_voice_threads(voice_threads(engine))  # imports PyTorch
     module = _engine_module(engine)
     imported = time.perf_counter()
     if hasattr(module, "prepare"):
@@ -364,7 +375,7 @@ def _stream(engine: str, request: dict[str, Any], requests: _Requests) -> None:
         stream_here = getattr(module, "stream_here", None)
         if stream_here is None:
             raise ValueError(f"{engine} does not stream")
-        _use_voice_threads()
+        _use_voice_threads(voice_threads(engine))
         rate, made = stream_here(text, str(request.get("voice") or ""), stop)
         for chunk in made:
             data = np.ascontiguousarray(np.asarray(chunk, dtype=np.float32).reshape(-1))

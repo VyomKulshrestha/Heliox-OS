@@ -361,7 +361,7 @@ def test_the_worker_writes_timing_only_when_asked_and_only_for_an_engine_that_ha
         synthesize_with_timing_here=lambda *a: made.append(("timed", *a)),
     )
     plain = SimpleNamespace(synthesize_to_file_here=lambda *a: made.append(("plain", *a)))
-    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda: None)
+    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda *_threads: None)
     monkeypatch.setattr(local_tts_worker, "_engine_module", lambda engine: timed if engine == "kokoro_tts" else plain)
     local_tts_worker._synthesize("kokoro_tts", "Hi.", "af_heart", "a.wav")
     local_tts_worker._synthesize("kokoro_tts", "Hi.", "af_heart", "a.wav", "a.wav.timing.json")

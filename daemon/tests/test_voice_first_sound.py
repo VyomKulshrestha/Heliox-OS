@@ -69,7 +69,7 @@ def test_the_worker_sends_the_samples_trimmed_with_their_timing_and_writes_nothi
     timing_made = timing
     module = SimpleNamespace(generate_here=generate_here)
     monkeypatch.setattr(local_tts_worker, "_engine_module", lambda engine: module)
-    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda: None)
+    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda *_threads: None)
     text_file = tmp_path / "t.txt"
     text_file.write_text("Hi.", encoding="utf-8")
     request = {"text_file": str(text_file), "voice": "af_heart", "output_file": str(tmp_path / "o.wav"),
@@ -97,7 +97,7 @@ def test_the_worker_sends_the_samples_trimmed_with_their_timing_and_writes_nothi
 def test_a_clause_piece_keeps_only_its_short_tail(monkeypatch, tmp_path):
     module = SimpleNamespace(generate_here=lambda text, voice_name, *, timing=False: (_made(), RATE, None))
     monkeypatch.setattr(local_tts_worker, "_engine_module", lambda engine: module)
-    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda: None)
+    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda *_threads: None)
     text_file = tmp_path / "t.txt"
     text_file.write_text("When you are ready", encoding="utf-8")
     request = {"text_file": str(text_file), "voice": "af_heart", "output_file": str(tmp_path / "o.wav"),
@@ -116,7 +116,7 @@ def test_a_failed_piece_sends_no_bytes(monkeypatch, tmp_path):
         raise RuntimeError("CUDA error: an illegal memory access was encountered")
 
     monkeypatch.setattr(local_tts_worker, "_engine_module", lambda engine: SimpleNamespace(generate_here=broken))
-    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda: None)
+    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda *_threads: None)
     text_file = tmp_path / "t.txt"
     text_file.write_text("Hi.", encoding="utf-8")
     request = {"text_file": str(text_file), "voice": "af_heart", "output_file": str(tmp_path / "o.wav"),

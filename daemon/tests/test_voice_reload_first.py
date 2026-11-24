@@ -33,7 +33,7 @@ class _Bytes(io.StringIO):
 def test_the_worker_says_how_long_each_step_of_a_load_took(monkeypatch):
     module = SimpleNamespace(prepare=lambda voice: None, last_load={"pipeline_s": 2.5, "warm_s": 0.4})
     monkeypatch.setattr(local_tts_worker, "_engine_module", lambda engine: module)
-    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda: None)
+    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda *_threads: None)
     monkeypatch.setattr(
         local_tts_worker.sys, "stdin", io.StringIO(json.dumps({"op": "load", "voice": "af_heart"}) + "\n")
     )

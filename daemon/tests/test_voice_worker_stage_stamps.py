@@ -35,7 +35,7 @@ def test_the_worker_says_when_it_read_took_and_answered_each_request(monkeypatch
         generate_here=lambda text, voice, *, timing=False: (np.full(2400, 0.5, np.float32), RATE, None)
     )
     monkeypatch.setattr(local_tts_worker, "_engine_module", lambda engine: module)
-    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda: None)
+    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda *_threads: None)
     request = {"text": "Hi.", "voice": "af_heart", "output_file": str(tmp_path / "o.wav"), "reply": "samples"}
     monkeypatch.setattr(local_tts_worker.sys, "stdin", io.StringIO(json.dumps(request) + "\n"))
     out = _Bytes()

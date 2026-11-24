@@ -1,5 +1,5 @@
-"""The voice worker makes each piece on its own thread, with no event loop started per request, and gives the model
-four threads (fewer on a smaller machine). Fake engine and a fake torch: no model."""
+"""The voice worker makes each piece on its own thread, with no event loop started per request, and gives Kokoro four
+threads and Pocket TTS one (fewer on a smaller machine). Fake engine and a fake torch: no model."""
 
 from __future__ import annotations
 
@@ -36,6 +36,33 @@ def test_loading_the_voice_asks_for_them(fake_torch, monkeypatch):
     monkeypatch.setattr(local_tts_worker, "_engine_module", lambda engine: module)
     local_tts_worker._load("kokoro_tts", "af_heart")
     assert fake_torch == [min(4, local_tts_worker.os.cpu_count() or 4)]
+
+
+@pytest.mark.parametrize(("engine", "threads"), [("kokoro_tts", 4), ("pocket_tts", 1), ("another_engine", 4)])
+def test_each_engine_gets_its_own_thread_count(engine, threads):
+    assert local_tts_worker.voice_threads(engine) == threads
+
+
+@pytest.mark.parametrize(("engine", "cores", "threads"), [("pocket_tts", 24, 1), ("pocket_tts", 4, 1),
+                                                           ("pocket_tts", 1, 1), ("kokoro_tts", 4, 4),
+                                                           ("kokoro_tts", 2, 2)])  # fmt: skip
+def test_loading_gives_the_engine_its_threads(fake_torch, monkeypatch, engine, cores, threads):
+    module = types.SimpleNamespace(prepare=lambda voice: None)
+    monkeypatch.setattr(local_tts_worker, "_engine_module", lambda name: module)
+    monkeypatch.setattr(local_tts_worker.os, "cpu_count", lambda: cores)
+    local_tts_worker._load(engine, "alba")
+    assert fake_torch == [threads]
+
+
+def test_a_pocket_stream_runs_on_one_thread(fake_torch, monkeypatch):
+    """GitHub's 4-core runners streamed Pocket fastest on one thread (pocket-speed.yml): the stream asks for one."""
+    module = types.SimpleNamespace(stream_here=lambda text, voice, stop: (24000, iter([[0.0, 0.1]])))
+    monkeypatch.setattr(local_tts_worker, "_engine_module", lambda name: module)
+    monkeypatch.setattr(local_tts_worker.os, "cpu_count", lambda: 4)
+    monkeypatch.setattr(local_tts_worker, "_send", lambda response, payload=b"": None)
+    requests = types.SimpleNamespace(stop_event=lambda stream_id: threading.Event(), done=lambda stream_id: None)
+    local_tts_worker._stream("pocket_tts", {"id": 1, "text": "Done.", "voice": "alba"}, requests)
+    assert fake_torch == [1]
 
 
 def test_a_request_is_made_on_the_worker_s_own_thread_without_an_event_loop(fake_torch, monkeypatch, tmp_path, capsys):

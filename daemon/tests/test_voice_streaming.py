@@ -64,7 +64,7 @@ class _Lines:
 
 def _serve_with(monkeypatch, engine_module: Any, stdin: Any) -> list[tuple[dict[str, Any], bytes]]:
     monkeypatch.setattr(local_tts_worker, "_engine_module", lambda engine: engine_module)
-    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda: None)
+    monkeypatch.setattr(local_tts_worker, "_use_voice_threads", lambda *_threads: None)
     monkeypatch.setattr(local_tts_worker.sys, "stdin", stdin)
     out = _Bytes()
     monkeypatch.setattr(local_tts_worker.sys, "stdout", out)
