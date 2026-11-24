@@ -178,16 +178,28 @@ def prepare(voice: str) -> None:
 
     started = time.perf_counter()
     use_cached_weights_offline(voice)
+    try:
+        import kokoro  # noqa: F401  (Kokoro and transformers: timed apart from reading the weights)
+    except ImportError:
+        pass  # not installed: _get_pipeline says so as before
+
+    imported = time.perf_counter()
     _get_pipeline(kokoro_lang_code(voice))
     loaded = time.perf_counter()
     if voice:
         _generate("Okay.", voice)
     last_load.clear()
-    last_load.update(pipeline_s=loaded - started, warm_s=time.perf_counter() - loaded)
+    last_load.update(
+        pipeline_s=loaded - started,
+        kokoro_import_s=imported - started,
+        weights_s=loaded - imported,
+        warm_s=time.perf_counter() - loaded,
+    )
 
 
-# Seconds the last prepare() took in each step: reading the model and its weights ("pipeline_s", importing Kokoro and
-# transformers with them) and the first sentence made and thrown away ("warm_s"), for the worker's load answer.
+# Seconds the last prepare() took in each step, for the worker's load answer: the pipeline ("pipeline_s"), made of
+# importing Kokoro and transformers ("kokoro_import_s") and reading the model and voice weights ("weights_s"), then the
+# first sentence made and thrown away ("warm_s").
 last_load: dict[str, float] = {}
 
 

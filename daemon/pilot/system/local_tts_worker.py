@@ -204,12 +204,23 @@ def _send(response: dict[str, Any], payload: bytes = b"") -> None:
 _PROCESS_STARTED = time.perf_counter()  # this module's import: about when the worker process started
 
 
+def _bytes_read() -> int | None:
+    """Bytes this process has read so far (psutil; None where the system does not count them, as on macOS)."""
+    try:
+        import psutil
+
+        return int(psutil.Process().io_counters().read_bytes)
+    except Exception:
+        return None
+
+
 def _load(engine: str, voice: str) -> dict[str, float]:
     """Load the model and voice, and run one throwaway synthesis so the first real sentence is warm. Returns the
     seconds each step took: from the worker's start to this request ("waited_s"), importing the engine ("import_s"),
     and its own preparation ("prepare_s", with the engine's own steps when it reports them: last_load)."""
     began = time.perf_counter()
-    _use_voice_threads()
+    read_before = _bytes_read()
+    _use_voice_threads()  # imports PyTorch
     module = _engine_module(engine)
     imported = time.perf_counter()
     if hasattr(module, "prepare"):
@@ -221,6 +232,10 @@ def _load(engine: str, voice: str) -> dict[str, float]:
         "import_s": imported - began,
         "prepare_s": time.perf_counter() - imported,
     }
+    read_after = _bytes_read()
+    if read_before is not None and read_after is not None:
+        # How much the load read from disk: a load slowed by a cold file cache reads hundreds of MB more.
+        took["read_mb"] = (read_after - read_before) / 1024**2
     steps = getattr(module, "last_load", None)
     if isinstance(steps, dict):
         took.update({str(k): float(v) for k, v in steps.items() if isinstance(v, (int, float))})

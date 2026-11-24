@@ -353,8 +353,12 @@ def test_prepare_loads_and_makes_one_throwaway_sentence(monkeypatch) -> None:
     monkeypatch.setattr(kokoro_tts, "use_cached_weights_offline", lambda v: calls.append("offline") or True)
     monkeypatch.setattr(kokoro_tts, "_get_pipeline", lambda language="a": calls.append(f"load {language}"))
     monkeypatch.setattr(kokoro_tts, "_generate", lambda text, v: calls.append(f"say {text}"))
-    kokoro_tts.prepare("af_heart")
+    with patch.dict(sys.modules, {"kokoro": ModuleType("kokoro")}):  # a stand-in: the import is timed on its own
+        kokoro_tts.prepare("af_heart")
     assert calls == ["offline", "load a", "say Okay."]
+    steps = kokoro_tts.last_load
+    assert set(steps) == {"pipeline_s", "kokoro_import_s", "weights_s", "warm_s"}
+    assert steps["pipeline_s"] == pytest.approx(steps["kokoro_import_s"] + steps["weights_s"])
 
 
 def test_cpu_device_is_passed_to_kokoro(monkeypatch) -> None:
