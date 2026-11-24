@@ -612,6 +612,9 @@ MAKE_AHEAD_MAX_WORDS = 8
 # are made (none is dropped to make room: each was made once, when the machine was idle). About 220 pieces of 1 to 3 s
 # of 24 kHz float audio, about 40 MB in all, fit.
 FIXED_SPEECH_BYTES = 64 * 1024 * 1024
+# The store also keeps the last voice used of each other local engine (Kokoro and Pocket TTS), so switching back finds
+# its hums and fixed sentences ready: at most this much of each, the hums first (SpeechStore.keep_voices).
+OTHER_ENGINE_BYTES = 32 * 1024 * 1024
 
 
 def on_battery() -> bool:
@@ -637,8 +640,10 @@ class SpeechStore:
       idle (``LocalTTSWorkerManager.make_ahead``), bounded by FIXED_SPEECH_BYTES and never evicted.
     - Heads of a reply this Heliox said twice (six words or fewer), copied from audio already made for a reply,
       bounded to HEAD_CACHE_ENTRIES (the least recently used go first).
-    Kept beside Heliox's other caches (``~/.cache/heliox/voice_heads``, which removal deletes on every system) and
-    emptied of every entry made another way when the voice or its settings change (``keep_only``)."""
+    Kept beside Heliox's other caches (``~/.cache/heliox/voice_heads``, which removal deletes on every system). When
+    the voice or its settings change, every entry made another way is dropped except the last voice used of each
+    other local engine, kept to OTHER_ENGINE_BYTES (``keep_voices``); those entries are never played for the chosen
+    voice, whose signature differs."""
 
     def __init__(self, folder: Path | None = None) -> None:
         if folder is None:
@@ -755,10 +760,11 @@ class SpeechStore:
             and (self.folder / f"{self.key(text, signature)}.wav").is_file()
         )
 
-    def fixed_bytes(self) -> int:
+    def fixed_bytes(self, signature: str | None = None) -> int:
+        """Bytes of fixed sentences kept (of one voice and settings when ``signature`` is given)."""
         total = 0
         for key, entry in self._load().items():
-            if entry.get("fixed"):
+            if entry.get("fixed") and (signature is None or entry.get("signature") == signature):
                 with contextlib.suppress(OSError):
                     total += (self.folder / f"{key}.wav").stat().st_size
         return total
@@ -767,7 +773,7 @@ class SpeechStore:
         """Keep ``audio`` (a WAV, or a Piece with its samples), made ahead for the fixed piece ``text``. False when the
         store is full or it cannot be kept."""
         size = self._audio_bytes(audio)
-        if not size or self.fixed_bytes() + size > FIXED_SPEECH_BYTES:
+        if not size or self.fixed_bytes(signature) + size > FIXED_SPEECH_BYTES:
             return False
         key = self.key(text, signature)
         try:
@@ -816,6 +822,72 @@ class SpeechStore:
         for key in [k for k, e in index.items() if e.get("signature") != signature]:
             self._drop(key)
         self._save()
+
+    @staticmethod
+    def engine_of(signature: str) -> str:
+        """The engine a signature was made with ("" when it cannot be read, or it is from another version)."""
+        try:
+            parts = json.loads(signature)
+        except (TypeError, ValueError):
+            return ""
+        if not isinstance(parts, list) or len(parts) < 2 or parts[0] != HEAD_CACHE_VERSION:
+            return ""
+        return str(parts[1])
+
+    def keep_voices(self, signature: str) -> None:
+        """The voice ``signature`` is the chosen one now. Keep its entries and, of each other engine, the entries of
+        the last voice used with it (recorded in voices.json), at most OTHER_ENGINE_BYTES of them, the hums first,
+        then the fixed sentences, then reply heads, most recently used first. Every other entry is dropped (another
+        voice of the same engine, an older version, an unreadable signature). Nothing kept for another engine is ever
+        played for this voice: a lookup matches the exact signature."""
+        engine = self.engine_of(signature)
+        last = self._voices()
+        if engine:
+            last[engine] = signature
+        keep = {signature} | {sig for other, sig in last.items() if other != engine}
+        index = self._load()
+        for key in [k for k, e in index.items() if e.get("signature") not in keep]:
+            self._drop(key)
+        for other, sig in last.items():
+            if other != engine:
+                self._cap(sig, OTHER_ENGINE_BYTES)
+        self._save_voices({k: v for k, v in last.items() if any(e.get("signature") == v for e in index.values())
+                           or k == engine})  # fmt: skip
+        self._save()
+
+    def _cap(self, signature: str, limit: int) -> None:
+        index = self._load()
+
+        def rank(item: tuple[str, dict[str, Any]]) -> tuple[int, float]:
+            entry = item[1]
+            kind = 0 if keeps_short_tail(str(entry.get("text") or "")) else (1 if entry.get("fixed") else 2)
+            return kind, -float(entry.get("last") or 0.0)
+
+        total = 0
+        for key, _entry in sorted([(k, e) for k, e in index.items() if e.get("signature") == signature], key=rank):
+            size = 0
+            with contextlib.suppress(OSError):
+                size = (self.folder / f"{key}.wav").stat().st_size
+            if total + size > limit:
+                self._drop(key)
+                continue
+            total += size
+
+    def _voices(self) -> dict[str, str]:
+        try:
+            found = json.loads((self.folder / "voices.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(found, dict):
+            return {}
+        return {str(k): str(v) for k, v in found.items() if isinstance(v, str)}
+
+    def _save_voices(self, voices: dict[str, str]) -> None:
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            (self.folder / "voices.json").write_text(json.dumps(voices, indent=1), encoding="utf-8")
+        except OSError:
+            logger.debug("Could not save which voices the store keeps", exc_info=True)
 
     def _drop(self, key: str) -> None:
         self._load().pop(key, None)
@@ -2507,11 +2579,12 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
     _manager.light_reason = lambda: speech_budget.light_voice_reason(speech_budget.total_memory(), light)
     engine = str(getattr(voice_config, "tts_engine", ""))
     if engine in LOCAL_ENGINES:
-        # The heads this voice says most, ready to play; entries made with another voice or settings are dropped.
+        # The heads this voice says most, ready to play; entries made with another voice or settings are dropped, but
+        # for the last voice of the other engine (keep_voices), so switching back finds its hums ready.
         if _manager.head_cache is None:
             _manager.head_cache = SpeechStore()
         with contextlib.suppress(Exception):
-            _manager.head_cache.keep_only(SpeechStore.signature(engine, str(getattr(voice_config, "tts_voice", ""))))
+            _manager.head_cache.keep_voices(SpeechStore.signature(engine, str(getattr(voice_config, "tts_voice", ""))))
         with contextlib.suppress(Exception):
             _manager.head_cache.trim_short_tails()  # hums kept with their whole quiet tail, from before
     if _manager.running and (_manager.engine != engine or _manager.process_device != _manager.device):
