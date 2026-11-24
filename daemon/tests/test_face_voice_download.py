@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import re
+import threading
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -104,7 +105,15 @@ def test_the_kept_faces_are_read_back_from_the_file_and_checked():
 async def test_the_download_runs_while_the_current_voice_speaks_and_the_switch_waits_for_a_reply_to_end(monkeypatch):
     server, config, configured = _server(monkeypatch, pack="portrait-man")
     fetched: list[list[voice_fetch.HubFile]] = []
-    server._voice_fetcher = fetched.append
+    # The fetch (on its worker thread) finishes only when the test lets it: otherwise it could finish and switch
+    # before the call's answer was read, and the answer would say "same" instead of "downloading".
+    let_finish = threading.Event()
+
+    def fetcher(files: list[voice_fetch.HubFile]) -> None:
+        fetched.append(files)
+        assert let_finish.wait(30), "the test never let the fetch finish"
+
+    server._voice_fetcher = fetcher
     boundary = iter([False, False, True])  # a reply is being spoken twice when asked, then it has ended
     seen: list[tuple[str, str]] = []
 
@@ -117,6 +126,7 @@ async def test_the_download_runs_while_the_current_voice_speaks_and_the_switch_w
     assert started["status"] == "ok" and started["action"] == "downloading"
     assert "alba keeps speaking until it is ready" in started["say"]
     assert config.voice.tts_engine == "pocket_tts"  # the current voice speaks meanwhile
+    let_finish.set()
     await server._face_voice_fetch_task
     paths = [item.path for item in fetched[0]]
     assert paths == ["config.json", "kokoro-v1_0.pth", "voices/am_michael.pt"]
