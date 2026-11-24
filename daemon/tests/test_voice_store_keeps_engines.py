@@ -1,4 +1,4 @@
-"""Switching the voice engine keeps the other engine's last voice in the store of made speech, bounded, and never
+"""Switching the voice engine keeps the other voices that spoke recently in the store of made speech, bounded, and never
 plays it for the chosen voice.
 
 On 24 November a measurement switched from Kokoro to Pocket TTS and the store kept only Pocket's entries: switching
@@ -54,17 +54,16 @@ def test_switching_engine_and_back_finds_the_hums_ready_and_never_the_other_engi
     assert reopened.has("Okay.", KOKORO) and reopened.has("Mm.", POCKET)
 
 
-def test_another_voice_of_the_same_engine_replaces_it(tmp_path):
+def test_another_voice_of_the_same_engine_is_kept_too(tmp_path):
     store = SpeechStore(tmp_path / "voice_heads")
     store.keep_voices(KOKORO)
     _fill(store, tmp_path, KOKORO, ["Mm."])
     store.keep_voices(POCKET)
     _fill(store, tmp_path, POCKET, ["Mm."])
-    store.keep_voices(BELLA)  # Kokoro again, with a voice no longer af_heart: af_heart's audio goes
-    assert not store.has("Mm.", KOKORO) and store.has("Mm.", POCKET)
-    assert not list(store.folder.glob(f"{SpeechStore.key('Mm.', KOKORO)}*"))  # its files too
-    store.keep_voices("not a signature")  # an unreadable chosen signature drops no engine's last voice
-    assert store.has("Mm.", POCKET)
+    store.keep_voices(BELLA)  # Kokoro again, with another voice: af_heart's audio stays for going back
+    assert store.has("Mm.", KOKORO) and store.has("Mm.", POCKET) and not store.has("Mm.", BELLA)
+    store.keep_voices("not a signature")  # an unreadable chosen signature drops none of the voices kept
+    assert store.has("Mm.", POCKET) and store.has("Mm.", KOKORO)
 
 
 def test_the_other_engine_keeps_its_hums_first_under_the_cap(tmp_path, monkeypatch):

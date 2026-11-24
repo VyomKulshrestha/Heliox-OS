@@ -121,7 +121,11 @@ async def test_the_old_voice_is_released_after_the_switch(machine):
 @pytest.mark.parametrize(
     ("free", "lease", "said"),
     [
-        (1 * GB, False, "1.0 GB of memory is free, and two voices need 2 GB more"),  # tight memory
+        (
+            1 * GB,
+            False,
+            "1.0 GB of memory is free, and loading pocket_tts beside the running voice needs 2.1 GB",
+        ),  # tight memory
         (None, False, "the free memory could not be read"),
     ],
 )

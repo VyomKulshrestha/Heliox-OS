@@ -690,9 +690,12 @@ HEAT_POLL_SECONDS = 2.0  # how often work made ahead that waits for a warm card 
 # are made (none is dropped to make room: each was made once, when the machine was idle). About 220 pieces of 1 to 3 s
 # of 24 kHz float audio, about 40 MB in all, fit.
 FIXED_SPEECH_BYTES = 64 * 1024 * 1024
-# The store also keeps the last voice used of each other local engine (Kokoro and Pocket TTS), so switching back finds
-# its hums and fixed sentences ready: at most this much of each, the hums first (SpeechStore.keep_voices).
+# The store also keeps other voices that spoke recently, of either engine, so switching back finds their hums and
+# fixed sentences ready: at most this much of each, the hums first (SpeechStore.keep_voices).
 OTHER_ENGINE_BYTES = 32 * 1024 * 1024
+# Voices kept besides the chosen one, newest first: the faces' voices and the voice chosen before, so going back to
+# one finds its hums ready (a hum is about 30 KB; the fixed sentences of one voice are up to FIXED_SPEECH_BYTES).
+KEEP_OTHER_VOICES = 6
 
 
 def on_battery() -> bool:
@@ -719,8 +722,8 @@ class SpeechStore:
     - Heads of a reply this Heliox said twice (six words or fewer), copied from audio already made for a reply,
       bounded to HEAD_CACHE_ENTRIES (the least recently used go first).
     Kept beside Heliox's other caches (``~/.cache/heliox/voice_heads``, which removal deletes on every system). When
-    the voice or its settings change, every entry made another way is dropped except the last voice used of each
-    other local engine, kept to OTHER_ENGINE_BYTES (``keep_voices``); those entries are never played for the chosen
+    the voice or its settings change, every entry made another way is dropped except the KEEP_OTHER_VOICES voices that
+    spoke most recently, each kept to OTHER_ENGINE_BYTES (``keep_voices``); those entries are never played for the chosen
     voice, whose signature differs."""
 
     def __init__(self, folder: Path | None = None) -> None:
@@ -922,24 +925,25 @@ class SpeechStore:
         return str(parts[1])
 
     def keep_voices(self, signature: str) -> None:
-        """The voice ``signature`` is the chosen one now. Keep its entries and, of each other engine, the entries of
-        the last voice used with it (recorded in voices.json), at most OTHER_ENGINE_BYTES of them, the hums first,
-        then the fixed sentences, then reply heads, most recently used first. Every other entry is dropped (another
-        voice of the same engine, an older version, an unreadable signature). Nothing kept for another engine is ever
-        played for this voice: a lookup matches the exact signature."""
-        engine = self.engine_of(signature)
-        last = self._voices()
-        if engine:
-            last[engine] = signature
-        keep = {signature} | {sig for other, sig in last.items() if other != engine}
+        """The voice ``signature`` is the chosen one now. Keep its entries and those of the KEEP_OTHER_VOICES voices
+        that spoke most recently before it, of any engine (recorded in voices.json, newest first), each at most
+        OTHER_ENGINE_BYTES: the hums first, then the fixed sentences, then reply heads, most recently used first. So
+        going back to a face's voice, or to the voice chosen before, finds its hums ready. Every other entry is
+        dropped (an older voice, an older version, an unreadable signature). Nothing kept for another voice is ever
+        played for this one: a lookup matches the exact signature."""
+        recent = [sig for sig in self._voices() if sig != signature]
+        if self.engine_of(signature):
+            recent.insert(0, signature)
+        recent = recent[: 1 + KEEP_OTHER_VOICES] if self.engine_of(signature) else recent[:KEEP_OTHER_VOICES]
+        keep = set(recent) | {signature}
         index = self._load()
         for key in [k for k, e in index.items() if e.get("signature") not in keep]:
             self._drop(key)
-        for other, sig in last.items():
-            if other != engine:
+        for sig in recent:
+            if sig != signature:
                 self._cap(sig, OTHER_ENGINE_BYTES)
-        self._save_voices({k: v for k, v in last.items() if any(e.get("signature") == v for e in index.values())
-                           or k == engine})  # fmt: skip
+        present = {e.get("signature") for e in index.values()}
+        self._save_voices([sig for sig in recent if sig in present or sig == signature])
         self._save()
 
     def _cap(self, signature: str, limit: int) -> None:
@@ -960,19 +964,23 @@ class SpeechStore:
                 continue
             total += size
 
-    def _voices(self) -> dict[str, str]:
+    def _voices(self) -> list[str]:
+        """The voices kept, newest first. A file from before (one voice per engine, {engine: signature}) reads as
+        those voices."""
         try:
             found = json.loads((self.folder / "voices.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return {}
-        if not isinstance(found, dict):
-            return {}
-        return {str(k): str(v) for k, v in found.items() if isinstance(v, str)}
+            return []
+        if isinstance(found, dict) and isinstance(found.get("recent"), list):
+            return [str(sig) for sig in found["recent"] if isinstance(sig, str)]
+        if isinstance(found, dict):
+            return [str(v) for v in found.values() if isinstance(v, str)]
+        return []
 
-    def _save_voices(self, voices: dict[str, str]) -> None:
+    def _save_voices(self, voices: list[str]) -> None:
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
-            (self.folder / "voices.json").write_text(json.dumps(voices, indent=1), encoding="utf-8")
+            (self.folder / "voices.json").write_text(json.dumps({"recent": voices}, indent=1), encoding="utf-8")
         except OSError:
             logger.debug("Could not save which voices the store keeps", exc_info=True)
 
@@ -1840,7 +1848,7 @@ class LocalTTSWorkerManager:
             "Local voice %s loaded in %.1f s%s", engine, self._clock() - started, f" ({steps})" if steps else ""
         )
         speech_trace.emit(
-            "voice loaded", engine=engine, asked=asked, done=time.monotonic(), pipe_at=float(answer.get("_started") or 0),
+            "voice loaded", engine=engine, voice=voice, asked=asked, done=time.monotonic(), pipe_at=float(answer.get("_started") or 0),
             **{f"worker_{k}": v for k, v in took.items() if isinstance(v, (int, float))},
         )  # fmt: skip
 
@@ -2160,6 +2168,8 @@ class LocalTTSWorkerManager:
         stamps = answer.get("_stamps") or {}
         speech_trace.emit(
             "piece synthesized",
+            engine=engine,
+            voice=voice,  # which voice made it: a measurement can tell the voices apart from the audio side
             words=len(text.split()),
             kind=kind,
             requested=requested,
@@ -2269,7 +2279,7 @@ class LocalTTSWorkerManager:
             self._failed_until = None
             self.unavailable_reason = ""
         speech_trace.emit(
-            "stream started", words=len(text.split()), requested=requested,
+            "stream started", engine=engine, voice=voice, words=len(text.split()), requested=requested,
             worker_started=self._request_started_at, first_chunk=time.monotonic(),
         )  # fmt: skip
         return piece
@@ -2709,6 +2719,8 @@ class LocalTTSWorkerManager:
         battery: Callable[[], bool] = on_battery,
         rest_factor: float = MAKE_AHEAD_REST_FACTOR,
         poll_seconds: float = 1.0,
+        idle_seconds: float | None = None,
+        until: Callable[[], bool] = lambda: False,
     ) -> int:
         """Make the audio of the fixed ``pieces`` the store lacks (of MAKE_AHEAD_MAX_WORDS words or fewer), in their
         order, one at a time, only while the voice is loaded, nothing has used it for MAKE_AHEAD_IDLE_SECONDS (no
@@ -2716,15 +2728,20 @@ class LocalTTSWorkerManager:
         the computer is not on ``battery()`` power (it waits, and goes on once plugged in), resting ``rest_factor``
         times each piece's synthesis time before the next. A piece already being made when a reply arrives is
         finished first (the worker cannot drop it): at most one short piece's synthesis. Stops when the store is full
-        or the voice changes. Returns how many pieces were made."""
+        or the voice changes, or ``until()``. ``idle_seconds``: how long nothing must have used the voice (MAKE_AHEAD_IDLE_SECONDS by default; 0 for a
+        voice that just took over: its hums are made behind any reply, never in front of one). Returns how many
+        pieces were made."""
         store = self.head_cache
         if store is None or engine not in LOCAL_ENGINES:
             return 0
+        idle = MAKE_AHEAD_IDLE_SECONDS if idle_seconds is None else idle_seconds  # read now: tests set the constant
         signature = SpeechStore.signature(engine, voice)
         made = 0
         with tempfile.TemporaryDirectory(prefix="heliox-tts-fixed-", ignore_cleanup_errors=True) as temp_dir:
             folder = Path(temp_dir)
             for index, text in enumerate(pieces):
+                if until():
+                    return made
                 if store.has(text, signature) or len(text.split()) > MAKE_AHEAD_MAX_WORDS:
                     continue
                 while not (
@@ -2732,12 +2749,12 @@ class LocalTTSWorkerManager:
                     and self.loaded
                     and self.engine == engine
                     and self._busy == 0
-                    and self._clock() - self._last_activity >= MAKE_AHEAD_IDLE_SECONDS
+                    and self._clock() - self._last_activity >= idle
                     and quiet()
                     and not battery()
                     and not await self.too_warm_now()
                 ):
-                    if self.head_cache is not store or self._failed_until is not None:
+                    if self.head_cache is not store or self._failed_until is not None or until():
                         return made
                     await self._sleep(poll_seconds)
                 started = self._clock()
@@ -2883,8 +2900,13 @@ class Handover:
     from_voice: str
     standby: LocalTTSWorkerManager
     on_status: StatusCallback | None = None
+    hums: asyncio.Task[int] | None = None  # the standby making its hums before it takes over
+    hums_since: float = 0.0  # when it started on them (the standby's clock)
 
 
+# The standby waits at most this long for its hums before it takes over anyway (a warm card makes it wait; a reply in
+# the new voice must not wait on its hum).
+HUMS_BEFORE_TAKEOVER_SECONDS = 10.0
 _handover: Handover | None = None
 _configured: tuple[str, str] | None = None  # the engine and voice configure_local_voice was last given
 handover_log: list[tuple[str, str, str]] = []  # (what, from, to): "standby", "release_first", "switched"
@@ -2894,16 +2916,50 @@ def handover() -> Handover | None:
     return _handover
 
 
+# What a loaded voice worker holds in system memory, measured on one development laptop (24 November): Kokoro 1.53 to
+# 1.57 GB on the processor and 1.86 to 1.90 GB on the card (plus about 0.8 GB of graphics memory, which the arbiter
+# checks), Pocket TTS 1.10 to 1.14 GB. Rounded up. A standby loads beside the running voice only when this much is free
+# and OVERLAP_HEADROOM_BYTES is left after it: the 2 GB floor used before let a Kokoro standby take free memory down
+# to 1.18 GB in a live run.
+WORKER_BYTES = {
+    ("kokoro_tts", "cpu"): int(1.6 * 1024**3),
+    ("kokoro_tts", "cuda"): int(1.9 * 1024**3),
+    ("pocket_tts", "cpu"): int(1.15 * 1024**3),
+}
+OVERLAP_HEADROOM_BYTES = 1024**3  # what the idle-release rule keeps free (speech_budget.RELEASE_BELOW_FREE_BYTES)
+
+
+def standby_floor(engine: str, device: str) -> int:
+    """Free memory a standby of ``engine`` on ``device`` ("cpu" or "cuda") needs before it starts: what it holds once
+    loaded and OVERLAP_HEADROOM_BYTES left over. An engine not measured counts as Kokoro on the card."""
+    size = (
+        WORKER_BYTES.get((engine, device)) or WORKER_BYTES.get((engine, "cpu")) or WORKER_BYTES[("kokoro_tts", "cuda")]
+    )
+    return size + OVERLAP_HEADROOM_BYTES
+
+
+def _standby_device(old: LocalTTSWorkerManager, engine: str) -> str:
+    """Where a standby of ``engine`` would run, as far as can be told before it starts: Pocket on the processor;
+    Kokoro on the card unless the voice is set to the processor or every card is hidden (the larger case)."""
+    if engine == "pocket_tts" or old.device == "cpu" or old.cpu_for_session or cuda_hidden(old.environ):
+        return "cpu"
+    return "cuda"
+
+
 def _two_voices_fit(old: LocalTTSWorkerManager, engine: str) -> str:
     """Why the new voice cannot load beside the running one ("" when it can): the card holds one voice, or the
-    computer has less than VOICE_HOST_RAM_BYTES free beyond the running worker (unknown counts as too little)."""
+    computer has less free than standby_floor (unknown counts as too little)."""
     if old.gpu_lease and engine != "pocket_tts" and old.device != "cpu" and not cuda_hidden(old.environ):
         return "the graphics card holds one voice at a time"
     free = old.free_memory() if old.free_memory is not None else None
     if free is None:
         return "the free memory could not be read"
-    if free < VOICE_HOST_RAM_BYTES:
-        return f"{free / 1024**3:.1f} GB of memory is free, and two voices need {VOICE_HOST_RAM_BYTES / 1024**3:.0f} GB more"
+    floor = standby_floor(engine, _standby_device(old, engine))
+    if free < floor:
+        return (
+            f"{free / 1024**3:.1f} GB of memory is free, and loading {engine} beside the running voice needs "
+            f"{floor / 1024**3:.1f} GB (the voice itself and 1 GB left over)"
+        )
     return ""
 
 
@@ -2924,6 +2980,7 @@ def _begin_switch(
         return "standby"
     old = _manager
     if old.running and old.engine == engine and old.process_device == old.device:
+        _make_ready_soon(old, engine, voice)  # its hums first, behind any reply: the next reply has one
         return "same"  # another voice of the same engine: the worker makes any of its voices
     if not old.running or old.failing:
         if old.running:
@@ -2931,6 +2988,7 @@ def _begin_switch(
         if not any(entry[0] == "load_ended" for entry in old.reload_log):
             return "later"  # no local voice has spoken this session: it loads at the first sign of use, as at start
         old._start_prewarm(engine, voice)
+        _make_ready_soon(old, engine, voice)
         return "load"
     reason = _two_voices_fit(old, engine) if from_voice else "the voice speaking now is not known"
     if reason:
@@ -2946,6 +3004,8 @@ def _begin_switch(
     _handover = Handover(engine, voice, str(old.engine), from_voice, standby, old.on_status)
     handover_log.append(("standby", str(old.engine), engine))
     logger.info("Loading the voice %s beside %s, which keeps speaking until the new one is ready", engine, old.engine)
+    speech_trace.emit("voice standby", engine=engine, voice=voice, from_engine=str(old.engine), from_voice=from_voice,
+                      at=time.monotonic())  # fmt: skip
     standby._start_prewarm(engine, voice)
     _spawn_task(_watch_handover(_handover))
     return "standby"
@@ -2954,6 +3014,41 @@ def _begin_switch(
 async def _release_then_load(old: LocalTTSWorkerManager, engine: str, voice: str) -> None:
     await old.close_when_free()
     old._start_prewarm(engine, voice)
+    _make_ready_soon(old, engine, voice)
+
+
+def hum_pieces() -> tuple[str, ...]:
+    """The hums said while an answer is on its way (pilot.conversation.acknowledge), as the worker is given them."""
+    from pilot.conversation.acknowledge import ACKNOWLEDGEMENTS
+
+    return tuple(ACKNOWLEDGEMENTS)
+
+
+def _make_ready_soon(manager: LocalTTSWorkerManager, engine: str, voice: str) -> None:
+    """A voice now speaks (or is about to): make its hums, then its other fixed sentences, at once, at the lowest rank
+    and behind any reply (make_ahead with no idle wait), still yielding to a warm card and never starting a worker.
+    Stops when this manager no longer speaks this voice."""
+    global _making_ahead
+    if engine not in LOCAL_ENGINES or manager.head_cache is None:
+        return
+
+    def gone() -> bool:
+        return _manager is not manager or (_configured is not None and _configured != (engine, voice))
+
+    async def run() -> int:
+        made = await manager.make_ahead(engine, voice, hum_pieces(), quiet=lambda: True, battery=lambda: False,
+                                        rest_factor=0.0, idle_seconds=0.0, until=gone)  # fmt: skip
+        from pilot.system.fixed_speech import gather
+
+        pieces = await asyncio.to_thread(gather)
+        return made + await manager.make_ahead(engine, voice, pieces, idle_seconds=0.0, until=gone)
+
+    try:
+        task = asyncio.get_running_loop().create_task(run())
+    except RuntimeError:
+        return
+    task.add_done_callback(lambda done: done.cancelled() or done.exception())
+    _making_ahead = ((engine, voice), task)
 
 
 def _spawn_task(coroutine: Any) -> None:
@@ -2976,7 +3071,7 @@ def finish_handover_if_due() -> bool:
         return False
     old = _manager
     old_alive = old.running and old.engine == current.from_engine and not old.failing
-    ready = current.standby.loaded and current.standby.running
+    ready = current.standby.loaded and current.standby.running and _hums_done(current)
     if not ((ready and old.between_replies()) or not old_alive or current.standby.failing):
         return False
     _handover = None
@@ -2985,8 +3080,44 @@ def finish_handover_if_due() -> bool:
     _manager = current.standby
     handover_log.append(("switched", current.from_engine, current.engine))
     logger.info("Heliox's voice is now %s (%s), taken over between two replies", current.engine, current.voice)
+    speech_trace.emit("voice takeover", engine=current.engine, voice=current.voice, from_engine=current.from_engine,
+                      from_voice=current.from_voice, at=time.monotonic())  # fmt: skip
     _spawn_task(_retire(old))
+    _make_ready_soon(current.standby, current.engine, current.voice)  # the rest of its fixed sentences
     return True
+
+
+def _hums_done(current: Handover) -> bool:
+    """The standby has its hums (or gave up on them): made, none to make, no store, or HUMS_BEFORE_TAKEOVER_SECONDS
+    passed. Starts them the first time it is loaded."""
+    standby = current.standby
+    store = standby.head_cache
+    if store is None:
+        return True
+    signature = SpeechStore.signature(current.engine, current.voice)
+    if all(store.has(text, signature) for text in hum_pieces()):
+        return True
+    if current.hums is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return True
+        current.hums_since = standby._clock()
+        current.hums = loop.create_task(
+            standby.make_ahead(
+                current.engine,
+                current.voice,
+                hum_pieces(),
+                quiet=lambda: True,
+                battery=lambda: False,
+                rest_factor=0.0,
+                idle_seconds=0.0,
+                until=lambda: _handover is not current,
+            )  # fmt: skip
+        )
+        current.hums.add_done_callback(lambda done: done.cancelled() or done.exception())
+        return False
+    return current.hums.done() or standby._clock() - current.hums_since >= HUMS_BEFORE_TAKEOVER_SECONDS
 
 
 async def _retire(old: LocalTTSWorkerManager) -> None:
