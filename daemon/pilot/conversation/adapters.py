@@ -276,6 +276,34 @@ def _profile_lines(server: Any, text: str = "", local: bool | None = None) -> li
     return [line for line in chosen if not (line in seen or seen.add(line))]
 
 
+def _things_due(server: Any, text: str) -> str:
+    """The to-do and reminder line for this turn (pilot.conversation.due): asked of the stores the server has, under
+    the same rule as every personal line (personal_in_prompt); "" when a store is missing or nothing bears on it."""
+    model = _conversation_model(server)
+    if not text or not personal_in_prompt(server, model):
+        return ""
+    todos = getattr(server, "_todos", None)
+    reminders = getattr(server, "_reminders", None)
+    if todos is None and reminders is None:
+        return ""
+    from datetime import datetime
+
+    from pilot.conversation.due import due_line
+
+    now = getattr(server, "_wall_clock", None)
+    try:
+        return due_line(
+            text,
+            todos=todos.open_items() if todos is not None else [],
+            reminders=reminders.list() if reminders is not None else [],
+            now=now() if callable(now) else datetime.now(),
+            local=_is_local_model(server, model),
+        )
+    except Exception:
+        logger.debug("Could not read the to-dos and reminders for the context", exc_info=True)
+        return ""
+
+
 def _model_local(server: Any) -> bool:
     layer = getattr(server, "_conversation", None)
     try:
@@ -468,6 +496,7 @@ def layer_for(server: Any) -> Any:
         answer_length=lambda: _answer_length(server),
         people=lambda: _people(server),
         personal=lambda: personal_in_prompt(server, _conversation_model(server)),
+        things_due=lambda text: _things_due(server, text),
         offer_in_reply=lambda text, request, why: _offer_in_reply(server, text, request, why),
         heard_of=lambda text: _heard_of(server, text),
         task_state=lambda: _task_state(server, layer),

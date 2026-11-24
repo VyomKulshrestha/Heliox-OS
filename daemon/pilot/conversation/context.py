@@ -149,6 +149,9 @@ class ContextSources:
     heard_of: Callable[[str], str] = lambda text: text
     # Whether anything about the person may go with this turn (pilot.conversation.adapters.personal_in_prompt).
     personal: Callable[[], bool] = lambda: True
+    # What is due soon on their to-do list and reminders and bears on the words (pilot.conversation.due), one line or
+    # "". Given the words being answered; it decides itself what a cloud model may see of each item.
+    things_due: Callable[[str], str] = lambda _text: ""
 
 
 def _safe(call: Callable[[], Any], default: Any) -> Any:
@@ -260,6 +263,10 @@ def assemble(
     sections: list[str] = [f"Now: {now.strftime('%A %d %B %Y, %H:%M')}."]
     task = _safe(sources.task_state, {})
     sections += describe_task(task) if isinstance(task, dict) else []
+    personal = bool(_safe(sources.personal, True))
+    due = str(_safe(lambda: sources.things_due(text), "") or "") if personal else ""
+    if due and not never_sent(due):
+        sections.append(memory.kept_form(due))  # grounds for a disagreement: before the screen and the profile
     if screen is _UNSET:
         screen = _safe(sources.screen, None)
     if isinstance(screen, Screen) and screen.app:
@@ -270,7 +277,6 @@ def assemble(
     opening = " ".join(last.split()[:2]) if last else ""
     if opening and memory.open and not last.startswith("(answered on this computer"):  # a withheld line, not words
         sections.append(f"Your last reply began {opening!r}; begin this one differently.")
-    personal = bool(_safe(sources.personal, True))
     chosen = (
         (_call_extra(sources.profile_lines, text) if text else _safe(sources.profile_lines, [])) if personal else []
     )

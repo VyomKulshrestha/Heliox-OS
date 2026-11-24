@@ -1008,7 +1008,9 @@ class ConversationLayer:
         sources = self.sources
         if _reach_limited():
             # A follow-up in a room that is not quiet: no profile, people or personal lines go with it.
-            sources = dataclasses.replace(sources, profile_lines=list, extra=[], people=dict)
+            sources = dataclasses.replace(
+                sources, profile_lines=list, extra=[], people=dict, things_due=lambda _text: ""
+            )
         messages = build_messages(
             text,
             sources,

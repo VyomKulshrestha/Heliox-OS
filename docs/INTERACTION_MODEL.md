@@ -548,6 +548,13 @@ Each turn the model gets, in this order, dropping from the end when the block pa
 1. the time and day;
 2. what Heliox is doing: a running task and its phase, an approval waiting (with the reminder that voice cannot
    approve), the last task result;
+   then what is due soon on the to-do list and reminders and bears on the words (`pilot.conversation.due`): a
+   reminder in the next 24 hours, a to-do whose words name a time in the next 36 hours, or an undated to-do sharing
+   a word with what was said, given only when it shares a word or the words speak of a time; at most two of each, in
+   one line of at most 300 characters. A model on this computer gets each item in its words; a cloud model gets only
+   the words the person has just said themselves and the time ("a to-do about "report", due tomorrow at 09:00"), or
+   only that something is due then, since to-dos and reminders read out in code stay on this computer; with
+   `share_profile` off a cloud model gets nothing from here;
 3. the focused app (see the table below);
 4. profile lines from `UserProfile.context_lines`, chosen for the words (see "What the model is sent about the
    person" below), and the person's answer length when they set one;
