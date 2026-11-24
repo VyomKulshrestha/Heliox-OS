@@ -578,6 +578,12 @@ recall and false alarms unchanged):
    the reply has started it becomes a card.
 4. So Live never asks to speak during a reply, and a reply that starts during a Live remark waits behind it.
 
+A card or remark Live raised in the last 90 s reaches the talk model as one context line only when it was raised in
+this conversation (the "new conversation" call clears it, `LiveConversationLink.new_conversation`) and the person's
+words bear on it: they share a word of four letters or more with it, or they answer or ask about it ("why?", "yes",
+"what reminder?"). The line tells the model the card is already there and never to repeat or offer it again
+(`tests/test_live_new_conversation.py`).
+
 What Live says aloud is recorded in `ConversationMemory` as a Heliox turn (cut off if talked over). The floor rule is
 **Fakes only**: measured on the Live Bench's simulated `converse` steps, not yet in a real voice session.
 

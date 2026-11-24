@@ -420,7 +420,14 @@ def forget_live_turn(server: Any, text: str) -> None:
 
 
 def drop_live_hold(server: Any) -> None:
-    """A new conversation: Live forgets a question it was waiting on and the turns it compared against."""
+    """A new conversation: Live forgets a question it was waiting on and the turns it compared against, and a card it
+    raised before is no longer given to the model as context (pilot.live.conversation_link)."""
+    link = getattr(server, "_live_link", None)
+    if link is not None:
+        try:
+            link.new_conversation()
+        except Exception:
+            logger.debug("The Live link could not start a new conversation", exc_info=True)
     drop = getattr(getattr(server, "_live", None), "drop_held", None)
     if callable(drop):
         try:

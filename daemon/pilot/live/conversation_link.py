@@ -21,6 +21,7 @@ here; "why?" is answered locally from the evidence.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -29,7 +30,7 @@ from pilot.live.detectors import KIND_LABELS
 logger = logging.getLogger("pilot.live.conversation_link")
 
 REPLY_WINDOW_SECONDS = 90.0
-MAX_LINE_CHARS = 320
+MAX_LINE_CHARS = 420
 
 
 def shareable(entry: dict[str, Any], *, setting: str, model_local: bool) -> bool:
@@ -71,6 +72,7 @@ class LiveConversationLink:
         self._model_local = model_local
         self._clock = clock
         self._recorded: set[str] = set()  # correction ids already a Heliox turn
+        self._cleared_at = float("-inf")  # the last "new conversation": anything Live raised before it is not given
 
     def _privacy(self) -> tuple[str, bool]:
         try:
@@ -102,17 +104,26 @@ class LiveConversationLink:
         self._recorded.update(str(e.get("id", "")) for e in entries)
         return True
 
-    def context_line(self) -> str:
-        """For ``ContextSources.extra``: what Live raised lately, when the turns the model gets do not show it."""
+    def new_conversation(self) -> None:
+        """The "new conversation" call: what Live raised before it belongs to the conversation that ended."""
+        self._cleared_at = self._clock()
+        self._recorded.clear()
+
+    def context_line(self, text: str = "") -> str:
+        """For ``ContextSources.extra``: what Live raised lately in this conversation, when the turns the model gets do
+        not show it and the person's words bear on it (``bears_on``; no words known: as before)."""
         live = self._live()
         if live is None:
             return ""
         entry = live.last_raised()
         if not entry:
             return ""
-        age = self._clock() - float(entry.get("at", 0.0))
-        if age > REPLY_WINDOW_SECONDS:
+        raised = float(entry.get("at", 0.0))
+        age = self._clock() - raised
+        if age > REPLY_WINDOW_SECONDS or raised <= self._cleared_at:
             return ""
+        if text and not bears_on(text, entry):
+            return ""  # the person is talking about something else: Live's card is not brought up
         layer = self._layer()
         memory = getattr(layer, "memory", None)
         if entry.get("id") in self._recorded and memory is not None and _shown_in_turns(memory):
@@ -128,9 +139,48 @@ class LiveConversationLink:
             body = redacted(entry)
         line = (
             f"Heliox Live, on its own, {how} {int(age)} seconds ago: {body} If the person refers to it, this is what "
-            "they mean."
+            "they mean. It is there already: never repeat it or offer it again."
         )
         return line[:MAX_LINE_CHARS]
+
+
+# A turn that refers to what Live just raised without naming it: a short question or answer ("why?", "what was
+# that?", "yes", "not now"), or words about a card, a reminder or what Heliox said.
+_REFERS = re.compile(
+    r"^(?:why|what|huh|sorry|really|yes|yeah|yep|sure|ok|okay|no|nope|not now|thanks|thank you|fix it|yes please"
+    r"|no thanks|why not|why that|why is that|why did you say that|what do you mean|what was that)$"
+)
+_ABOUT_IT = re.compile(
+    r"\b(?:card|reminder|remind|you (?:just )?(?:said|showed|mean|meant|offered|asked|pointed)|what was that)\b"
+)
+_SMALL = frozenset(
+    {
+        "that", "this", "with", "from", "have", "will", "what", "when", "your", "about", "there", "their", "they",
+        "them", "then", "than", "been", "were", "would", "could", "should", "going", "want", "need", "just", "also",
+        "into", "over", "some", "more", "most", "very", "much", "make", "made", "like", "said", "says", "today",
+        "tonight", "tomorrow",
+    }
+)  # fmt: skip
+
+
+def _content(text: str) -> set[str]:
+    return {
+        w.rstrip("s")
+        for w in re.findall(r"[a-z0-9']+", text.casefold())
+        if len(w) >= 4 and "'" not in w and w not in _SMALL
+    }
+
+
+def bears_on(text: str, entry: dict[str, Any]) -> bool:
+    """Whether the person's words are about what Live raised: they share a word of four letters or more with it, or
+    they refer to it ("why?", "yes", "what reminder?"). Pure."""
+    words = " ".join(re.sub(r"[^\w\s']", " ", text.casefold()).split())
+    if not words:
+        return True
+    if _REFERS.match(words) or _ABOUT_IT.search(words):
+        return True
+    raised = " ".join(str(entry.get(key) or "") for key in ("title", "message", "evidence", "detail", "fix"))
+    return bool(_content(words) & _content(raised))
 
 
 def _layer_keeps_opening_remarks() -> bool:
@@ -159,4 +209,4 @@ def _shown_in_turns(memory: Any) -> bool:
     return any(turn.role == "user" for turn in turns) or _layer_keeps_opening_remarks()
 
 
-__all__ = ["LiveConversationLink", "redacted", "remark_for_model", "shareable"]
+__all__ = ["LiveConversationLink", "bears_on", "redacted", "remark_for_model", "shareable"]
