@@ -13,6 +13,7 @@
   import PlannerModel from "./PlannerModel.svelte";
   import BudgetSpent from "./BudgetSpent.svelte";
   import SpeechDriverErrorsRow from "./SpeechDriverErrorsRow.svelte";
+  import LocalVoices from "./LocalVoices.svelte";
   import { _, locale } from "svelte-i18n";
   import { session } from "../stores/session";
   import { call, requireOkResult, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
@@ -2069,6 +2070,7 @@
     </div>
 
     <SpeechDriverErrorsRow />
+    <LocalVoices />
   </section>
 
   <section class="settings-group">

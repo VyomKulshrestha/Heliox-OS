@@ -340,6 +340,129 @@ export async function afterSetup(call: Call, models: string[], greet = true): Pr
   return left;
 }
 
+// ── Heliox's own voice: picked by the computer and the language, from the daemon's table in speech_models.json ──
+
+export type VoiceEngine = "kokoro_tts" | "pocket_tts";
+export type VoiceMachine = "nvidia_card" | "apple_silicon" | "processor";
+
+export interface LocalVoice {
+  engine: VoiceEngine;
+  title: string;
+  default_voice: string;
+  model: string;
+  download_bytes: number;
+  size_note: string;
+  licence: string;
+  source: string;
+  url: string;
+  attribution: string;
+  languages: string[];
+}
+
+interface VoiceRule {
+  machine: VoiceMachine;
+  languages: string[];
+  engine: VoiceEngine;
+  why: string;
+}
+
+const voiceData = speechManifest as unknown as { voices: LocalVoice[]; voice_rules: { rows: VoiceRule[] } };
+
+/** The local voices Heliox can speak with, as the daemon lists them (size, licence, source, attribution). */
+export function localVoices(): LocalVoice[] {
+  return voiceData.voices;
+}
+
+/**
+ * The kind of computer the voice table reads, as far as the first screen can tell before anything is installed:
+ * a Mac is taken as Apple Silicon (PyTorch publishes no wheels for Intel Macs since 2.3); an NVIDIA card counts on
+ * Linux, where Voice's PyTorch is the CUDA build, and on Windows only with "Voice on the graphics card".
+ */
+export function voiceMachine(platform: string, gpu: string, chosen: GroupId[]): VoiceMachine {
+  if (platform.includes("Mac")) return "apple_silicon";
+  if (!gpu) return "processor";
+  return platform.includes("Linux") || chosen.includes("voicegpu") ? "nvidia_card" : "processor";
+}
+
+/** "en-GB" -> "en": the voice language as the table names it. */
+export function voiceLanguage(locale: string): string {
+  return (locale || "en").split(/[-_]/)[0].toLowerCase() || "en";
+}
+
+export interface VoicePick {
+  voice: LocalVoice;
+  why: string;
+}
+
+/** The first row of the table that matches; Kokoro when none does (the daemon's voice_default.pick). */
+export function voicePick(machine: VoiceMachine, language: string): VoicePick {
+  const rule = voiceData.voice_rules.rows.find(
+    (row) => row.machine === machine && (row.languages.includes("*") || row.languages.includes(language)),
+  );
+  const engine = rule?.engine ?? "kokoro_tts";
+  const voice = localVoices().find((v) => v.engine === engine) ?? localVoices()[0];
+  return { voice, why: rule?.why ?? "" };
+}
+
+/** The voices the person can pick between: the table's pick first, then any other that speaks their language. */
+export function voiceOptions(machine: VoiceMachine, language: string): LocalVoice[] {
+  const picked = voicePick(machine, language).voice;
+  return [picked, ...localVoices().filter((v) => v.engine !== picked.engine && v.languages.includes(language))];
+}
+
+/** Where a voice runs on this kind of computer, in a few words. */
+export function voiceWhere(voice: LocalVoice, machine: VoiceMachine): string {
+  if (voice.engine === "kokoro_tts" && machine === "nvidia_card") return "on the graphics card";
+  if (voice.engine === "kokoro_tts" && machine === "apple_silicon") return "on this Mac";
+  return voice.engine === "pocket_tts" ? "on the processor, streaming" : "on the processor";
+}
+
+/** "CC-BY-4.0" as people write it: "CC BY 4.0". */
+export function licenceName(licence: string): string {
+  return licence.startsWith("CC-") ? licence.replace(/-/g, " ") : licence;
+}
+
+export const VOICE_KEY = "heliox_first_run_voice";
+
+/** A voice the person picked on the first screen instead of the table's, kept until the daemon is up. */
+export function pendingVoice(storage: Pick<Storage, "getItem"> | null): { engine: string; voice: string } | null {
+  try {
+    const raw = storage?.getItem(VOICE_KEY);
+    const kept = raw ? JSON.parse(raw) : null;
+    return kept && typeof kept.engine === "string" && typeof kept.voice === "string" ? kept : null;
+  } catch {
+    return null;
+  }
+}
+
+export function savePendingVoice(
+  storage: Pick<Storage, "setItem" | "removeItem"> | null,
+  voice: { engine: string; voice: string } | null,
+): void {
+  try {
+    if (voice) storage?.setItem(VOICE_KEY, JSON.stringify(voice));
+    else storage?.removeItem(VOICE_KEY);
+  } catch {
+    /* storage unavailable: the table's pick stands */
+  }
+}
+
+/**
+ * Once the daemon is up: the voice the person picked over the table's. Saved as a voice they chose, so nothing
+ * switches it later. True when the daemon took it.
+ */
+export async function applyPendingVoice(call: Call, voice: { engine: string; voice: string }): Promise<boolean> {
+  try {
+    const answer = await call("update_config", {
+      section: "voice",
+      values: { tts_engine: voice.engine, tts_voice: voice.voice },
+    });
+    return answer?.status === "ok";
+  } catch {
+    return false;
+  }
+}
+
 /** "0.15.0 to 0.16.0, 12 packages change, about 18 MB to download"; the size only when the index gave it. */
 export function updateSummary(plan: UpdatePlan | undefined): string {
   if (!plan) return "";

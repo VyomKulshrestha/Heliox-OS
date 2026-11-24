@@ -6,6 +6,7 @@
   import { session } from "../stores/session";
   import {
     afterSetup,
+    applyPendingVoice,
     catalog,
     defaultChoice,
     failedGroups,
@@ -13,15 +14,23 @@
     GREET_KEY,
     keptGroups,
     languageNote,
+    licenceName,
     pendingModels,
+    pendingVoice,
     pythonSentence,
     savePendingModels,
+    savePendingVoice,
     screenFor,
     sizePhrase,
     speechModels,
     stepLabel,
     totalMb,
     updateSummary,
+    voiceLanguage,
+    voiceMachine,
+    voiceOptions,
+    voicePick,
+    voiceWhere,
     type GroupId,
     type SetupState,
   } from "../firstRun";
@@ -47,6 +56,15 @@
       untrack(() => groups),
       false,
     ),
+  );
+  // Heliox's own voice: the daemon's table picks it by the computer and the language; the person may pick the other.
+  const language = voiceLanguage(typeof navigator !== "undefined" ? navigator.language : "en");
+  let pickedVoice = $state<string | null>(null); // null: the table's pick, which follows the groups ticked
+  const machine = $derived(voiceMachine(platform, setupState?.gpu ?? "", chosen));
+  const tablePick = $derived(voicePick(machine, language));
+  const voices = $derived(voiceOptions(machine, language));
+  const voiceEngine = $derived(
+    pickedVoice && voices.some((v) => v.engine === pickedVoice) ? pickedVoice : tablePick.voice.engine,
   );
   let startError = $state("");
   let dismissed = $state(false);
@@ -85,9 +103,13 @@
     if (phase && phase !== "done" && phase !== "installed") return;
     const pending = pendingModels(storage);
     const greet = storage?.getItem(GREET_KEY) === "1";
-    if (!pending.length && !greet) return;
+    const voice = pendingVoice(storage);
+    if (!pending.length && !greet && !voice) return;
     followUpRunning = true;
-    void afterSetup(daemonCall, pending, greet).then((left) => {
+    void (async () => {
+      // The voice first: the first thing Heliox says is then already in the voice the person picked.
+      if (voice && (await applyPendingVoice(daemonCall, voice))) savePendingVoice(storage, null);
+      const left = await afterSetup(daemonCall, pending, greet);
       savePendingModels(storage, left);
       try {
         storage?.removeItem(GREET_KEY);
@@ -95,7 +117,7 @@
         /* storage unavailable */
       }
       followUpRunning = false;
-    });
+    })();
   });
 
   function toggleModel(id: string, on: boolean) {
@@ -137,6 +159,10 @@
     // Kept until the daemon is up and has been asked for each (it is the only downloader of speech models).
     if (screen === "choose") {
       savePendingModels(storage, selection.includes("voice") ? chosenModels : []);
+      // Only a voice picked over the table's is sent: the daemon applies the same table to the rest.
+      const other = selection.includes("voice") && voiceEngine !== tablePick.voice.engine;
+      const voice = voices.find((v) => v.engine === voiceEngine);
+      savePendingVoice(storage, other && voice ? { engine: voice.engine, voice: voice.default_voice } : null);
       try {
         storage?.setItem(GREET_KEY, "1");
       } catch {
@@ -219,6 +245,41 @@
                   <span class="group-source">From {group.source}.{group.note ? ` ${group.note}` : ""}</span>
                 </span>
               </label>
+              {#if group.id === "voice"}
+                <ul class="models" aria-label="Heliox's voice">
+                  {#each voices as voice (voice.engine)}
+                    <li>
+                      <label class:disabled={!chosen.includes("voice")}>
+                        <input
+                          type="radio"
+                          name="first-run-voice"
+                          value={voice.engine}
+                          disabled={!chosen.includes("voice")}
+                          checked={voiceEngine === voice.engine}
+                          onchange={() => (pickedVoice = voice.engine)}
+                        />
+                        <span class="group-text">
+                          <span class="group-name"
+                            >Heliox's voice: {voice.title} ({voice.default_voice}), {voiceWhere(voice, machine)}
+                            <span class="size">{formatMb(voice.download_bytes / 1_000_000)}</span></span
+                          >
+                          <span class="group-gives"
+                            >{voice.engine === tablePick.voice.engine
+                              ? `Picked for this computer. ${tablePick.why}`
+                              : "You can pick this voice instead."}
+                            {voice.size_note}</span
+                          >
+                          <span class="group-source"
+                            >From {voice.source}. Licence {licenceName(voice.licence)}.{voice.attribution
+                              ? ` ${voice.attribution}`
+                              : ""}</span
+                          >
+                        </span>
+                      </label>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
               {#if group.id === "voice" && models.length}
                 <ul class="models" aria-label="Speech models">
                   {#each models as model (model.id)}

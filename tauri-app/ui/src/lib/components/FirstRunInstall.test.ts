@@ -386,3 +386,101 @@ describe("repair", () => {
     expect(invoke).toHaveBeenCalledWith("setup_repair");
   });
 });
+
+describe("Heliox's voice at first run", () => {
+  it("reads the kind of computer the way the daemon's table does", async () => {
+    const { voiceMachine, voiceLanguage } = await import("../firstRun");
+    const card = "NVIDIA GeForce RTX 4060 Laptop GPU";
+    expect(voiceMachine("Win32", "", ["voice"])).toBe("processor");
+    expect(voiceMachine("Win32", card, ["voice"])).toBe("processor"); // PyPI's PyTorch for Windows has no CUDA
+    expect(voiceMachine("Win32", card, ["voice", "voicegpu"])).toBe("nvidia_card");
+    expect(voiceMachine("Linux x86_64", card, ["voice"])).toBe("nvidia_card"); // Voice's PyTorch is the CUDA build
+    expect(voiceMachine("Linux x86_64", "", ["voice"])).toBe("processor");
+    expect(voiceMachine("MacIntel", "", ["voice"])).toBe("apple_silicon");
+    expect(voiceLanguage("en-GB")).toBe("en");
+    expect(voiceLanguage("pt_BR")).toBe("pt");
+    expect(voiceLanguage("")).toBe("en");
+  });
+
+  it("picks Pocket for English without a card and Kokoro everywhere else, from the daemon's table", async () => {
+    const { voicePick, voiceOptions } = await import("../firstRun");
+    expect(voicePick("processor", "en").voice.engine).toBe("pocket_tts");
+    for (const language of ["es", "fr", "it", "pt", "hi", "ja", "zh", "de", "nl"]) {
+      expect(voicePick("processor", language).voice.engine).toBe("kokoro_tts");
+      expect(voiceOptions("processor", language).map((v) => v.engine)).not.toContain("pocket_tts"); // English only
+    }
+    for (const machine of ["nvidia_card", "apple_silicon"] as const) {
+      expect(voicePick(machine, "en").voice.engine).toBe("kokoro_tts");
+      expect(voiceOptions(machine, "en").map((v) => v.engine)).toEqual(["kokoro_tts", "pocket_tts"]);
+    }
+    expect(voiceOptions("processor", "en").map((v) => v.engine)).toEqual(["pocket_tts", "kokoro_tts"]);
+    expect(voicePick("processor", "en").why).toContain("0.6 s sooner");
+  });
+
+  it("shows the voice it picked with its size, licence and source, and keeps the other one if picked", async () => {
+    invoke.mockClear();
+    localStorage.clear();
+    render(FirstRunInstall, { initial: state({}) });
+    const voice = screen.getByRole("checkbox", { name: /^Voice/ }) as HTMLInputElement;
+    const pocket = screen.getByRole("radio", { name: /Heliox's voice: Pocket TTS \(alba\)/ }) as HTMLInputElement;
+    const kokoro = screen.getByRole("radio", { name: /Heliox's voice: Kokoro \(af_heart\)/ }) as HTMLInputElement;
+    if (voice.checked) await fireEvent.click(voice);
+    expect(pocket.disabled).toBe(true); // nothing to pick without Voice
+    await fireEvent.click(voice);
+    expect(pocket.checked).toBe(true);
+    const shown = pocket.closest("label")?.textContent ?? "";
+    expect(shown).toContain("Picked for this computer.");
+    expect(shown).toContain("about 225 MB");
+    expect(shown).toContain("Licence CC BY 4.0");
+    expect(shown).toContain("kyutai/pocket-tts-without-voice-cloning");
+    expect(shown).toContain("kyutai/tts-voices");
+    expect(kokoro.closest("label")?.textContent).toContain("Licence Apache-2.0");
+    // The table's own pick sends nothing: the daemon applies the same table.
+    await fireEvent.click(screen.getByRole("button", { name: "Set up Heliox" }));
+    expect(localStorage.getItem("heliox_first_run_voice")).toBeNull();
+    // Picking the other is kept for the daemon, as a voice the person chose.
+    await fireEvent.click(kokoro);
+    await fireEvent.click(screen.getByRole("button", { name: "Set up Heliox" }));
+    expect(JSON.parse(localStorage.getItem("heliox_first_run_voice") ?? "null")).toEqual({
+      engine: "kokoro_tts",
+      voice: "af_heart",
+    });
+    expect(invoke).toHaveBeenCalledWith("setup_run", { groups: expect.arrayContaining(["voice"]) });
+    localStorage.clear();
+  });
+
+  it("follows Voice on the graphics card to Kokoro on the card", async () => {
+    render(FirstRunInstall, { initial: state({ gpu: "NVIDIA GeForce RTX 4060 Laptop GPU" }) });
+    const voice = screen.getByRole("checkbox", { name: /^Voice about/ }) as HTMLInputElement;
+    if (!voice.checked) await fireEvent.click(voice);
+    expect((screen.getByRole("radio", { name: /Pocket TTS/ }) as HTMLInputElement).checked).toBe(true);
+    await fireEvent.click(screen.getByRole("checkbox", { name: /Voice on the graphics card/ }));
+    const kokoro = screen.getByRole("radio", { name: /Kokoro \(af_heart\), on the graphics card/ }) as HTMLInputElement;
+    expect(kokoro.checked).toBe(true);
+  });
+
+  it("tells the daemon the picked voice first once it is up, then forgets it", async () => {
+    const { session } = (await import("../stores/session")) as unknown as {
+      session: { set: (v: { daemonConnected: boolean }) => void };
+    };
+    localStorage.clear();
+    localStorage.setItem("heliox_first_run_voice", JSON.stringify({ engine: "kokoro_tts", voice: "af_heart" }));
+    localStorage.setItem("heliox_first_run_greet", "1");
+    const calls: [string, Record<string, unknown>][] = [];
+    const daemonCall = async (method: string, params: Record<string, unknown>) => {
+      calls.push([method, params]);
+      if (params.action === "status")
+        return { status: "ok", profile_empty: false, active: false } as { status: string };
+      return { status: "ok" };
+    };
+    render(FirstRunInstall, { initial: state({ phase: "done" }), daemonCall });
+    session.set({ daemonConnected: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls[0]).toEqual([
+      "update_config",
+      { section: "voice", values: { tts_engine: "kokoro_tts", tts_voice: "af_heart" } },
+    ]);
+    expect(localStorage.getItem("heliox_first_run_voice")).toBeNull();
+    session.set({ daemonConnected: false });
+  });
+});
