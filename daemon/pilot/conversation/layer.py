@@ -357,6 +357,9 @@ class TurnResult:
     # Heliox's reason against a small step it does anyway, said after the acknowledgement (pilot.conversation.debate).
     concern: str = ""
     withheld: bool = False  # the words held a secret, taken out before anything else saw them (withheld)
+    # The reason against a costly step asked for directly, being asked of the model beside the planner (debate):
+    # said by the company before the approval sentence. None for every other hand-over.
+    _concern: asyncio.Future[str] | None = None
     timings: dict[str, float] = field(default_factory=dict)
     trace: list[tuple[str, float]] = field(default_factory=list)  # (name, monotonic) stamps (pilot.conversation.trace)
     spoken: list[str] = field(default_factory=list)
@@ -953,9 +956,12 @@ class ConversationLayer:
             result.done = True
             return result
         if decided.kind is TurnKind.ACTION:
+            concern = self._direct_concern(text, decided, result)  # asked before this turn joins the conversation
             self.memory.add_user(text)
-            self.debate.close(settle=True)  # a direct request: done as asked, nothing argued first
-            return self._hand_over(result, intent_from_route(decided, text))
+            self.debate.close(settle=True)  # a direct request: done as asked, nothing argued before it starts
+            handed = self._hand_over(result, intent_from_route(decided, text))
+            handed._concern = concern
+            return handed
         # LOCAL here means the server's own handlers had no answer ("why did you say that?" with no card to
         # explain): it is talk, and the fast model answers from the conversation, as for any question.
         if decided.kind is TurnKind.CONTROL:
@@ -1815,6 +1821,59 @@ class ConversationLayer:
 
     # ── handing over ──
 
+    def _direct_concern(self, text: str, decided: Route, result: TurnResult) -> asyncio.Future[str] | None:
+        """For a spoken direct request whose step is costly ("delete my only copy of the thesis for me"): one call to
+        the talk model, started now and run beside the planner, for the reason against it (debate.CONCERN_PROMPT).
+        None for anything else: a harmless request, a typed one, a secret said aloud, the setting off, a follow-up in
+        a room that is not quiet, or a model on this computer (it would share the cores the planner needs)."""
+        if (
+            result.source != "voice"
+            or result.withheld
+            or not self.debate.on
+            or not dbt.wants_direct_concern(decided.verb)
+            or _reach_limited()
+        ):
+            return None
+        try:
+            model = self._model()
+        except Exception:
+            return None
+        if model is None or getattr(model, "local", False):
+            return None
+        about = decided.target or text
+        if not self.debate.concern_allowed(about):
+            return None
+        messages = build_messages(text, self.sources, self.memory, budget=self._context_chars, screen=None)
+
+        async def ask() -> str:
+            written: list[str] = []
+            stream = stream_with_retry(model, dbt.CONCERN_PROMPT, messages)
+
+            async def read() -> None:
+                async for fragment in stream:
+                    written.append(fragment)
+
+            try:
+                await bounded(read(), dbt.CONCERN_SECONDS)
+            except (TimeoutError, FastModelUnavailable):
+                return ""
+            except Exception:
+                logger.debug("The concern call failed", exc_info=True)
+                return ""
+            finally:
+                with contextlib.suppress(Exception):
+                    await stream.aclose()
+            concern = clean_for_speech(dbt.concern_from_reply("".join(written)))
+            if concern and self.debate.concern_allowed(about):
+                self.debate.note_concern(about, concern, offered=False)  # said once; not argued again after
+                return concern
+            return ""
+
+        task = asyncio.ensure_future(ask())
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+        return task
+
     def _hand_over(self, result: TurnResult, intent: HandoverIntent, *, quick: QuickPlan | None = None) -> TurnResult:
         if quick is None and intent.source == "router" and intent.verb:
             try:
@@ -1910,6 +1969,7 @@ class ConversationLayer:
                 on_said=said,
                 user_speaking=self._user_speaking,
                 local_slow_once=self._local_slow_once,
+                concern=result._concern,
             )
         )
 

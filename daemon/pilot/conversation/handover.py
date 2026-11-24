@@ -25,6 +25,10 @@ from pilot.conversation.action_talk import asked_sentence, said_again
 from pilot.conversation.router import Route
 
 PROGRESS_AFTER_SECONDS = 2.0
+# How long after the hand-over the approval sentence waits for the reason against a costly step (debate): the talk
+# model's first text comes after about 1.2 s (the median, Claude Haiku), and a plan that needs an approval takes
+# several seconds more, so the wait is rarely felt.
+CONCERN_WAIT_SECONDS = 4.0
 PROGRESS_SPACING_SECONDS = 9.0  # a new line every 8 to 10 seconds while the work goes on: never a long silence
 POLL_SECONDS = 0.2
 SIMPLE_OBJECT_WORDS = 6
@@ -197,6 +201,8 @@ async def keep_company(
     user_speaking: Callable[[], bool] = lambda: False,
     local_slow_once: Callable[[], bool] = lambda: False,
     carried: tuple[str, float] | None = None,
+    concern: asyncio.Future[str] | None = None,
+    concern_wait: float = CONCERN_WAIT_SECONDS,
 ) -> None:
     """Runs from the hand-over until the caller cancels it (the planner returned).
 
@@ -204,7 +210,47 @@ async def keep_company(
     work goes on, a new line every ``spacing`` seconds: what changed when the state moved on, which step it is on,
     or a "still" line for the same work, never the same sentence twice running. Nothing is said while the person is
     talking. ``local_slow_once``: True once per session when the plan comes from a model on this computer, so the
-    first long wait says why."""
+    first long wait says why. ``concern``: the reason against a costly step asked for directly, still being asked
+    of the model (pilot.conversation.debate.CONCERN_PROMPT); said once, as soon as it is there and before anything
+    else, and the approval sentence waits for it up to ``concern_wait`` seconds after the hand-over. It is never
+    a question: the approval that follows is the question."""
+    try:
+        await _keep_company(
+            acknowledgement_text=acknowledgement_text,
+            speak=speak,
+            status=status,
+            on_said=on_said,
+            clock=clock,
+            progress_after=progress_after,
+            spacing=spacing,
+            poll=poll,
+            user_speaking=user_speaking,
+            local_slow_once=local_slow_once,
+            carried=carried,
+            concern=concern,
+            concern_wait=concern_wait,
+        )
+    finally:
+        if concern is not None and not concern.done():
+            concern.cancel()  # the planner has returned: a reason not said by now is not said at all
+
+
+async def _keep_company(
+    *,
+    acknowledgement_text: str,
+    speak: Speak,
+    status: Callable[[], dict[str, Any]],
+    on_said: Callable[[str], None],
+    clock: Callable[[], float],
+    progress_after: float,
+    spacing: float,
+    poll: float,
+    user_speaking: Callable[[], bool],
+    local_slow_once: Callable[[], bool],
+    carried: tuple[str, float] | None,
+    concern: asyncio.Future[str] | None,
+    concern_wait: float,
+) -> None:
     started = clock()
     key = f"conv-ack:{started}"
     if acknowledgement_text:
@@ -222,11 +268,26 @@ async def keep_company(
     # The first half's approval sentence stands for the joined request: the person was just told to look at the
     # dialog, and the joined plan's dialog takes its place.
     approval_said = carried is not None and carried[0] == APPROVAL_SENTENCE
+    concern_said = concern is None
     while True:
         await asyncio.sleep(poll)
         state = status() or {}
         phase = str(state.get("phase") or "")
         now = clock()
+        if not concern_said and concern is not None and concern.done():
+            if user_speaking():
+                continue  # never over the person; it waits for the next poll
+            concern_said = True
+            reason = "" if concern.cancelled() or concern.exception() is not None else str(concern.result() or "")
+            if reason:
+                outcome = await speak(reason, "task_narration", f"conv-concern:{started}")
+                if outcome in ("spoken", "interrupted"):
+                    on_said(reason)
+                said_at = clock()
+                last_line = reason
+                continue
+        if phase == "awaiting_approval" and not approval_said and not concern_said and now - started < concern_wait:
+            continue  # the reason comes before the approval sentence, if it comes soon
         if phase == "awaiting_approval" and not approval_said:
             approval_said = True
             outcome = await speak(APPROVAL_SENTENCE, "approval_risk", f"conv-approval:{started}")

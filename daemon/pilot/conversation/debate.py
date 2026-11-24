@@ -563,3 +563,43 @@ class Debate:
         else:
             self._settle(topic)
         self._giving_way = False
+
+
+# ── a direct request for a costly step ──
+#
+# "Delete my only copy of the thesis for me" is a request the router hands straight to the planner, with no model
+# call first. For a step whose verb is in COSTLY_VERBS, the talk model is asked once, beside the planner (it never
+# waits for this), for the reason against it, and that reason is said before the approval sentence. The approval is
+# the question: nothing more is asked. Harmless requests (open, play, set a timer) never go near a model.
+
+CONCERN_PROMPT = (
+    "You are Heliox, a voice companion on the person's computer. Their last words ask Heliox to do something, and "
+    "Heliox will do it once they approve it on the screen. If you have a reason against it that you can name, from "
+    "what you are told about them (their to-dos, their earlier words, what they said about it) or a risk they may not "
+    "have seen (it cannot be undone, it costs money, it reaches other people), write that reason as one short spoken "
+    'sentence of at most 15 words, the way a friend would: "That\'s your only copy of the thesis." No question, no '
+    "offer, no advice list, and never say Heliox did or will do anything. If you have no such reason, write only NONE."
+)
+CONCERN_WORDS = 20
+CONCERN_SECONDS = 4.0  # the longest the concern's call may take; after that it is not said
+_NOT_A_CONCERN = re.compile(
+    r"^(?:want me|do you want|would you like|should i|shall i|i can|i could|i'll|i will|i've|okay|ok|sure|done)\b",
+    re.IGNORECASE,
+)
+
+
+def wants_direct_concern(verb: str) -> bool:
+    """A direct request whose step the code classes as costly (its verb is in COSTLY_VERBS)."""
+    return costly(verb, "")
+
+
+def concern_from_reply(reply: str) -> str:
+    """The one sentence a concern call may have said, or "" (NONE, a question, an offer, too long, a claim)."""
+    text = " ".join(str(reply or "").split()).strip().strip('"')
+    upper = text.upper()
+    if not text or upper.startswith("NONE") or "STANCE" in upper or upper.startswith("ACT"):
+        return ""
+    first = re.split(r"(?<=[.!])\s+", text, maxsplit=1)[0].strip()
+    if not first or first.endswith("?") or len(first.split()) > CONCERN_WORDS or _NOT_A_CONCERN.match(first):
+        return ""
+    return first if first.endswith((".", "!")) else first + "."

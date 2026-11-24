@@ -200,8 +200,18 @@ or a trade-off it states. No reason, no disagreement.
 - A request to act is never refused. A small step that can be undone is done, and the reason is said after the
   acknowledgement ("I'll mute it. Your call with Dana starts in two minutes, though."). A step that cannot be
   undone, costs money or affects other people gets its reason first, once, and "Do you still want me to ...?"; a
-  yes or "do it anyway" hands it over through the usual road, with every review and approval as before. A direct
-  request the router hands to the planner gets no debate at all.
+  yes or "do it anyway" hands it over through the usual road, with every review and approval as before.
+- A direct request the router hands to the planner is never argued and never waits. When its verb is one of the
+  costly ones (`debate.COSTLY_VERBS`: delete, remove, erase, wipe, empty, format, uninstall, overwrite, purge, clear,
+  send, email, message, text, forward, reply, post, publish, share, upload, pay, buy, purchase, order, book,
+  subscribe, transfer, donate, cancel, decline, shut down, restart, reset, kill), the talk model is asked once,
+  beside the planner, for the reason against it (`debate.CONCERN_PROMPT`: one sentence of at most 15 words, or
+  NONE), and the company says it before the approval sentence: "That's your only copy of the thesis." then "This one
+  needs your approval...". No second question: the approval is the question. The cost is one short call for those
+  requests only, nothing for the planner (it starts as before), and the approval sentence waits for the reason at most
+  4 s after the hand-over. Not asked for a typed request, a model on this computer (it would share the cores the
+  planner needs), with the setting off, for a follow-up in a room that is not quiet, or when the topic was voiced
+  already in this conversation. Every other request (open, play, find, a timer) reaches no model before the planner.
 - Stop, wait, cancel and no never reach the debate, and a "do it anyway" while an approval waits on the screen is
   neither an approval nor a request. Waiting for the STANCE line after a reply cut at a question (at most 1 s, with
   nothing said) ends at once when the person speaks.
