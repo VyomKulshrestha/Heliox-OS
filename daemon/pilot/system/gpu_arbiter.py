@@ -537,14 +537,18 @@ class GpuArbiter:
             visible_from_env(self.environ.get("CUDA_VISIBLE_DEVICES")),
         )
 
-    def check(self, component: str, needs: Needs = Needs(), *, fresh: bool = True) -> GpuDecision:
-        """May ``component`` start now, and where? Takes no lock."""
+    def check(
+        self, component: str, needs: Needs = Needs(), *, fresh: bool = True, would_use: bool = True
+    ) -> GpuDecision:
+        """May ``component`` start now, and where? Takes no lock. ``would_use``: the component could run on the card
+        if it were free (False when what it needs for the card is not installed); only then does a "busy" answer
+        count as wanting the card (``wants``), which makes an idle voice on the card give it up."""
         reading = self.reading(fresh=fresh)
         holder = self.holder() if reading.kind in {"nvidia", "apple"} else None
         decision = decide(
             component, needs, reading, self.limits(), holder=holder, disabled_reason=self._disabled_reason
         )
-        if decision.code == "busy":
+        if decision.code == "busy" and would_use:
             with self._lock:
                 self._wants += 1
                 self._last_wanted_by = component

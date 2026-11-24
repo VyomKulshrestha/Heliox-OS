@@ -579,7 +579,11 @@ def _easyocr_read(easyocr_module, image) -> list:
 
     lease = None
     try:
-        if arbiter().check("ocr", Needs(gpu_bytes=EASYOCR_GPU_BYTES, default_device_only=True)).use_gpu:
+        from pilot.system import gpu_paths
+
+        # A CPU build of PyTorch never reads on the card: then a card held by the voice is not wanted here.
+        needs = Needs(gpu_bytes=EASYOCR_GPU_BYTES, default_device_only=True)
+        if arbiter().check("ocr", needs, would_use=gpu_paths.torch_build() != "cpu").use_gpu:
             candidate = GpuLease()
             if candidate.try_acquire("ocr"):
                 lease = candidate

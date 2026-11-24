@@ -116,7 +116,13 @@ def choose_provider(check: Any = None) -> tuple[str, str]:
         from pilot.system.gpu_arbiter import Needs, arbiter
 
         def check() -> Any:
-            return arbiter().check("parakeet", Needs(gpu_bytes=PARAKEET_GPU_BYTES, default_device_only=True))
+            # Without the CUDA build of sherpa-onnx Parakeet never runs on the card: finding it held by the voice is
+            # then no reason for the voice to give it up (a live run on 24 November released the idle voice so).
+            return arbiter().check(
+                "parakeet",
+                Needs(gpu_bytes=PARAKEET_GPU_BYTES, default_device_only=True),
+                would_use=gpu_paths.sherpa_onnx_cuda(),
+            )
 
     decision = check()
     if getattr(decision, "kind", "") != "nvidia":
