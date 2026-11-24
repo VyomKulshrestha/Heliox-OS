@@ -24,6 +24,7 @@ from pilot.system import voice
 from pilot.system.companion_speech import SpeechChannel, SpeechOutcome
 from pilot.system.voice import ContinuousVoiceListener, voice_turn_addressed
 from pilot.workflows.notes import NoteStore
+from tests.test_conversation_secrets import shows
 
 HUNTER = "My password is hunter two, don't tell anyone."
 
@@ -202,4 +203,5 @@ async def test_a_phone_request_is_kept_and_planned_only_in_the_left_out_form(tmp
         nonce, json.dumps({"text": "my door code is 2580, open the gate"}).encode(), b"request-v1"
     )
     request = await manager.submit_request("d1", {"nonce": _b64u(nonce), "ciphertext": _b64u(sealed)})
-    assert "2580" not in request.text and "2580" not in json.dumps(manager.list_requests()) and "2580" not in told[0]
+    assert not shows("2580", request.text) and not shows("2580", json.dumps(manager.list_requests()))
+    assert not shows("2580", told[0])

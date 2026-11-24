@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 import httpx
 import pytest
@@ -21,6 +22,16 @@ from pilot.system.companion_speech import SpeechChannel, SpeechOutcome
 from pilot.system.voice import voice_turn_addressed
 
 PIN = "4471"
+
+
+def shows(value: str, text: object) -> bool:
+    """Whether ``text`` holds the secret ``value``. A value of digits counts only as a whole run of digits, so a log's
+    millisecond offset ("+244718") is not taken for the PIN 4471; any other value is a plain substring, ignoring case.
+    """
+    found = str(text)
+    if value.replace(" ", "").replace("-", "").isdigit():
+        return re.search(rf"(?<!\d){re.escape(value)}(?!\d)", found) is not None
+    return value.casefold() in found.casefold()
 
 
 @pytest.mark.parametrize(
@@ -67,7 +78,7 @@ def test_the_conversation_keeps_only_the_left_out_form_and_forgets_the_value_wit
     memory.add_heliox("I won't keep 4471 or say it again.")  # a reply that repeated it
     memory.add_user("was it 4471?")  # said again without naming it
     texts = [turn.text for turn in memory.recent()]
-    assert not any(PIN in text for text in texts)
+    assert not any(shows(PIN, text) for text in texts)
     assert texts[0] == "oh, and my bank pin is [left out: a PIN]"
     memory.clear()
     memory.add_user("room 4471 please")  # a new conversation: the value is no longer known
@@ -132,7 +143,7 @@ async def test_no_request_to_any_provider_holds_the_pin(provider):
     sent: list[str] = []
     await _two_turns(_http_model(provider, sent))
     assert len(sent) >= 2  # the turn it was said in, and the next one
-    assert not any(PIN in body for body in sent)
+    assert not any(shows(PIN, body) for body in sent)
     assert "[left out: a PIN]" in sent[0]  # in its own turn: the words with the value taken out
     assert "[left out: a PIN]" in sent[-1]  # later: in the history, so the conversation still reads in order
     assert "they said a secret" in sent[-1]  # and the model is told what the marker means
@@ -141,7 +152,7 @@ async def test_no_request_to_any_provider_holds_the_pin(provider):
 async def test_no_request_through_the_model_router_holds_the_pin():
     sent: list[str] = []
     await _two_turns(RouterFastModel(router=_Router(sent)))
-    assert len(sent) == 2 and not any(PIN in body for body in sent)
+    assert len(sent) == 2 and not any(shows(PIN, body) for body in sent)
 
 
 async def test_a_request_to_do_something_with_it_is_not_handed_over():
@@ -156,7 +167,7 @@ async def test_a_request_to_do_something_with_it_is_not_handed_over():
     result = await layer.take("type my PIN 4471 into the bank form")
     assert result.done and result.intent is None and result.context is None
     assert said == [SECRET_NOT_USED]
-    assert PIN not in result.planner_input
+    assert not shows(PIN, result.planner_input)
     assert not sent  # no model was asked either
 
 
@@ -230,7 +241,7 @@ async def test_the_spoken_turn_reaches_no_store_no_planner_and_no_log(caplog):
         await server._voice_command_dispatch("What's the capital of Australia?")
     assert asked_handlers == ["What's the capital of Australia?"]  # notes, to-dos and the profile never saw them
     assert planned == []
-    assert not any(PIN in body or "2580" in body for body in sent)
-    assert PIN not in caplog.text and "2580" not in caplog.text
+    assert not any(shows(PIN, body) or shows("2580", body) for body in sent)
+    assert not shows(PIN, caplog.text) and not shows("2580", caplog.text)
     turns = [turn.text for turn in layer_for(server).memory.recent()]
-    assert not any(PIN in text or "2580" in text for text in turns)
+    assert not any(shows(PIN, text) or shows("2580", text) for text in turns)

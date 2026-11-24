@@ -28,6 +28,7 @@ from pilot.system.addressing import TALK_TAKEN_SECONDS
 from pilot.system.voice import voice_turn_addressed
 from tests.test_addressing_said_back import answered, say
 from tests.test_conversation_direct_concern import REASON, Model, _company
+from tests.test_conversation_secrets import shows
 from tests.test_secret_everywhere import _server_with_model
 from tests.test_turn_cut_reply_kept import _Voice, coordinator_for
 from tests.test_turn_interruption import over, replying
@@ -46,8 +47,10 @@ def _fresh():
 
 
 def _nowhere(value: str, *places: object) -> None:
+    """``value`` is in none of ``places``: a PIN only as a whole run of digits (shows), so a log's millisecond offset
+    such as "+244718" is not taken for 4471; a word secret as a plain substring, ignoring case."""
     for place in places:
-        assert value.casefold() not in str(place).casefold(), place
+        assert not shows(value, place), place
 
 
 # ── (1) a secret said back without the wake phrase, within the short while after an answer ──
