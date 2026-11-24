@@ -236,14 +236,102 @@ class _SilentPlayback:
 
     complete = True
 
-    def __init__(self, audio: Any, sample_rate: int) -> None:
+    def __init__(self, audio: Any, sample_rate: int, clock: Callable[[], float] = time.monotonic) -> None:
         self.audio = audio
-        self.sample_rate = int(sample_rate)
-        self._started = time.monotonic()
+        self.sample_rate = max(1, int(sample_rate))
+        self._clock = clock
+        self._started = clock()
 
     @property
     def position(self) -> int:
-        return min(len(self.audio), int((time.monotonic() - self._started) * self.sample_rate))
+        return min(len(self.audio), round((self._clock() - self._started) * self.sample_rate))
+
+
+class _SilentStream:
+    """A streamed piece (Pocket TTS) the bench consumes without playing it: ``received`` samples so far, of which
+    ``position`` have "played"; ``complete`` once its end frame arrived (local_tts_worker.playback_samples)."""
+
+    def __init__(self, rate: int) -> None:
+        self.sample_rate = max(1, int(rate or 24000))
+        self.position = 0
+        self.received = 0
+        self.complete = False
+
+
+SILENT_STEP_SECONDS = 0.02  # how often the silent player moves its position on
+STREAM_WAIT_SECONDS = 0.05  # how long it waits for a streamed piece's next chunk before counting the position on
+
+
+async def play_silently(
+    piece: Any,
+    log: Callable[..., Any],
+    *,
+    setup: bool = False,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], Any] = asyncio.sleep,
+) -> None:
+    """The bench's player in place of voice._play_local_tts_file: consumes a piece at the pace of its audio and never
+    opens a sound device. It takes what the voice hands over: a WAV path, a local_tts_worker.Piece (samples in memory,
+    or a kept WAV in ``path``) and, for Pocket TTS, a StreamedPiece (chunks as they arrive). "heliox audio starts" is
+    logged when the piece is handed over, as before; for a whole piece the real player's own stamps follow ("piece
+    read", "playback start"). Its position is reported to the speak() in progress (speech_progress), as the real
+    player does, so a cut counts the heard words the same way. A streamed piece whose next chunk is late counts a dry
+    spell (underrun), and a cut asks the worker to stop making it. ``clock`` and ``sleep``: the tests' own."""
+    from pilot.system import speech_trace
+    from pilot.system.local_tts_worker import StreamedPiece, speech_progress
+
+    log(tl.AUDIO_STARTS, "", setup=setup, piece=type(piece).__name__, source=str(getattr(piece, "source", "")))
+    progress = speech_progress.get()
+    if isinstance(piece, StreamedPiece):
+        stream = _SilentStream(piece.rate)
+        if progress is not None:
+            progress.playing = stream
+        start, taken, underruns, dry = clock(), 0, 0, False
+        try:
+            while True:
+                chunks, ended = await asyncio.to_thread(piece.take, taken, STREAM_WAIT_SECONDS)
+                taken += len(chunks)
+                stream.received += sum(len(chunk) for chunk in chunks)
+                stream.sample_rate = max(1, int(piece.rate or stream.sample_rate))
+                due = round((clock() - start) * stream.sample_rate)
+                stream.position = min(stream.received, due)
+                if not ended and due > stream.received:
+                    if not dry:
+                        underruns += 1
+                    dry = True
+                    start += (due - stream.received) / stream.sample_rate  # the line plays silence meanwhile
+                elif chunks:
+                    dry = False
+                if ended:
+                    stream.complete = True
+                    break
+            while stream.position < stream.received:
+                await sleep(SILENT_STEP_SECONDS)
+                stream.position = min(stream.received, round((clock() - start) * stream.sample_rate))
+        except asyncio.CancelledError:
+            piece.stop()
+            raise
+        finally:
+            log("silent stream played", "", chunks=taken, samples=stream.received, underruns=underruns,
+                audio_s=round(stream.received / stream.sample_rate, 3), complete=stream.complete,
+                error=str(getattr(piece, "error", "")))  # fmt: skip
+        return
+    asked = clock()
+    audio = getattr(piece, "audio", None)
+    in_memory = audio is not None and not isinstance(piece, (str, Path))
+    if in_memory:
+        rate = int(piece.rate)
+    else:
+        path = piece if isinstance(piece, (str, Path)) else piece.path
+        audio, rate = await asyncio.to_thread(lambda: wavio.decode(Path(path).read_bytes()))
+    rate = max(1, int(rate))
+    speech_trace.emit("piece read", asked=asked, done=clock(), in_memory=in_memory)
+    speech_trace.emit("playback start", at=clock(), rate=rate, seconds=len(audio) / rate, silent=True)
+    playback = _SilentPlayback(audio, rate, clock)
+    if progress is not None:
+        progress.playing = playback
+    while playback.position < len(audio):
+        await sleep(SILENT_STEP_SECONDS)
 
 
 class FilePump:
@@ -602,18 +690,11 @@ class Harness:
 
         server._speech_coordinator._speaker = speaker
 
-        async def silent_play(path: Any) -> None:
-            setup = self._speaking_setup
-            log(tl.AUDIO_STARTS, "", setup=setup)
-            raw, rate = wavio.decode(Path(path).read_bytes())
-            from pilot.system.local_tts_worker import speech_progress
-
-            progress = speech_progress.get()
-            if progress is not None:
-                # Reported as the real player does, so what the person heard of a cut sentence is known here too
-                # (before, a cut in a bench run always read as nothing heard, and the conversation kept nothing).
-                progress.playing = _SilentPlayback(raw, rate)
-            await asyncio.sleep(len(raw) / rate)  # consumed in real time, never played
+        async def silent_play(piece: Any) -> None:
+            # A path, an in-memory Piece or a StreamedPiece, consumed in real time and never played. Before, only a
+            # path was read, so the in-memory pieces the voice hands over failed here and every local reply fell to
+            # the system voice.
+            await play_silently(piece, log, setup=self._speaking_setup)
 
         voice_module._play_local_tts_file = silent_play
 
