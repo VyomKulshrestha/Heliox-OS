@@ -163,6 +163,10 @@ most answers were expected in time (none came before 1.38 s). Now:
 - Other turns (a follow-up judged on its final words) decide it at the hand-over, as before.
 - Never when the answer's first text is there: the early request's text counts, at the decision and again when due.
 
+Measured live afterwards (section 3, 24 November): the hum came at 0.59 to 0.67 s median, on 16 to 21 of 24
+turns, always from the store and never after the answer's text. With Pocket TTS the answer is quick enough to cut
+most hums; a hum is shaped and fades when cut (Pocket's version, 0 of 6 cut while sounding in the confirming run).
+
 So that it does not become a habit (`acknowledge.hum_allowed`):
 - the two take turns, so the same hum is never heard twice running (an action's own acknowledgement in between does
   not reset this);
@@ -542,7 +546,8 @@ $0.03 an hour; the 6-a-minute limit holds the most it can waste to about $0.05 a
   half of four cores whenever anyone spoke, in or out of a conversation.
   **Why it is parked:** none of these gives words that are both early and right. The ones that are right come no
   sooner than the final dispatch, and the early ones are wrong. Even a few tenths of a second would be small beside
-  the 2.1 to 2.9 s to a model's first sound on the runner.
+  the 2.1 to 2.9 s to a model's first sound on the runner (1.48 to 2.10 s median, measured live on one
+  development laptop on 24 November; section 3).
   **What would reopen it:** a streaming recogniser whose words at the last pause match the final words in at least
   80 % of addressed lines (call-mode headsets included) and arrive at least 0.3 s before the final dispatch, at a
   cost on a 4-core CPU the voice and the turn detector can share. Measured the same way, against the same gate.
@@ -1132,13 +1137,24 @@ the machine had too little free memory to load Kokoro for the run, so the model 
 | Last word to dispatch (owner recording, rehearsal probe, load not recorded) | 1.3 s (Parakeet), 2.8 to 3.3 s (with Whisper) | unchanged; not this layer |
 | Dispatch to first token (text, under load) | 10 to 15 s (a plan) | median 0.82 s, worst 1.61 s (first turn) |
 | Dispatch to first sentence handed to speech (text, under load) | stock phrase at 2.5 s; the answer 10 to 60 s | median 1.07 s, worst 1.66 s |
-| First sentence to first audio (Kokoro, owner's probe runs, load not recorded) | 0.15 to 0.63 s | the same path |
+| First sentence to first audio (before: Kokoro, probe runs, load not recorded; now: measured live, below) | 0.15 to 0.63 s | Kokoro 0.30 to 0.33 s on a graphics card, 0.76 s on the processor; Pocket TTS 0.12 s (its first chunk) |
 | A request handed over: dispatch to its acknowledgement | stock phrase at 2.5 s | no model call; the sentence goes to speech at once (tested with fakes) |
 
-Adding those stages, which were measured separately and partly under load, a model answer's first sound would come
-about 1.2 to 1.7 s after dispatch and 2.5 to 3 s after the last word. That sum is an estimate, not a measurement:
-no recording yet times the last word to Heliox's first audio end to end on a quiet machine. The scorecard asks for
-1.5 s from the last word; the gap, if the estimate holds, is mostly the end-of-turn and recognition stages.
+**From the last word to the answer's first sound, measured live end to end** (on one development laptop, 24 November 2026: synthetic questions played by the Conversation Bench's file pump through the real listener, server, conversation layer and voice, Claude Haiku 5.5 as the cloud talk model, silent playback, 24 model turns per run (12 and 8 in the two confirming runs on the final code)), median and worst:
+
+| Voice | Answer's first sound |
+|---|---|
+| Kokoro on a graphics card | 1.53 to 1.60 s (worst 2.14 to 2.69 s; 2 turns of 24 over 2.0 s) |
+| Kokoro on the processor | 2.10 s (worst 3.94 s) |
+| Pocket TTS on the processor, streaming | 1.48 to 1.59 s (worst 2.00 to 4.33 s) |
+
+The hum ("Mm.", "Hmm.") came first at about 0.6 s (0.59 to 0.67 s median) on roughly two thirds to seven eighths of
+the turns (16 to 21 of 24 in the full runs). Every figure includes the talk model's own wait, from the request to
+its first text, and that wait varies by the hour: 0.72 to 1.12 s was seen across that day's runs. These measurements
+replace the estimate this section gave before (2.5 to 3 s after the last word, summed from stages measured
+separately and partly under load). What is not measured: a person's own voice in a real room, and the speakers on;
+the scorecard's 1.5 s from the last word is met only in an hour when the model answers quickly, and that a quicker
+model wait moves every figure by the same amount is an expectation, not a measurement.
 
 The ten turns used 8,600 input and 400 output tokens, $0.0011, recorded in the budget tracker.
 
@@ -2137,8 +2153,9 @@ answering. It would show:
 - what share of real follow-ups the rule takes, and what it refuses;
 - whether a long request with a thinking pause is cut, and whether the continuation recovers it (section 5, and
   section 6's "a long request with a thinking pause can be cut today", shown only on synthetic voices);
-- the last word to Heliox's first audio, end to end, on a quiet machine with the speakers on (section 3's 2.5 to 3 s
-  is an estimate from separate stages, partly under load), along with section 1's end-of-turn and recognition times.
+- the last word to Heliox's first audio with a person's own voice and the speakers on. Section 3's figures (1.48
+  to 2.10 s median by voice and device) are measured live, but with synthetic questions and silent playback; they
+  replace the old estimate. Section 1's end-of-turn and recognition times with a person's voice are still owed.
 
 **A real room with other voices and a television** (the owner's microphones): a meeting or call on speaker, a video
 or television, a colleague talking to the owner, the owner talking about Heliox, and the owner saying the wake

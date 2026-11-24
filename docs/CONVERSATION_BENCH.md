@@ -215,7 +215,7 @@ results folder's `scorecard.txt`.
 | line | real voice, as recorded | synthetic | target | stage responsible (from the timelines) |
 |---|---|---|---|---|
 | 1.1a local answer starts | owed (laptop, real voice) | runner: 5.00 s (synthetic voice, GitHub runner (4 cores), CPU only); laptop owed | 0.8 s | stage order seen in the timelines: endpoint, then the final pass (the longest stage on this run), then synthesis; the answer itself is immediate |
-| 1.1b/c model answer starts | owed (laptop, real voice) | runner: 3.22 s median, 3.55 s worst (synthetic voice, GitHub runner (4 cores), CPU only); laptop owed | 1.5 s / 2.5 s | in this run the spoken acknowledgement was scheduled 2.5 s after dispatch (no longer so when the conversation layer is active) |
+| 1.1b/c model answer starts | owed (real voice) | runner: 3.22 s median, 3.55 s worst (synthetic voice, GitHub runner (4 cores), CPU only); laptop: measured live on 24 November (section "Live, 24 November 2026") | 1.5 s / 2.5 s | in this run the spoken acknowledgement was scheduled 2.5 s after dispatch (no longer so when the conversation layer is active) |
 | 1.1d longest silence | owed (laptop, real voice) | runner: 6.24 s cloud, 30.20 s local (synthetic voice, GitHub runner (4 cores), CPU only); laptop owed | 2.5 s | nothing is said while the final pass runs |
 | 1.2a talks over the person | 0 | 0 | 0 | |
 | 1.2b voice stops after barge-in | owed (laptop, real voice) | runner: 0.34 s (synthetic voice, GitHub runner (4 cores), CPU only); laptop owed | 0.4 s | `BargeInGate` waits 0.4 s of speech with open speakers (0.25 s with headphones) by design, which alone uses the whole budget |
@@ -239,6 +239,22 @@ plan request was answered with the "configure a provider" message (the acknowled
 Derived conditions on the owner's voice (WER / wake found): Bluetooth call mode 35% / 4 of 9, laptop fan 27% /
 6 of 9, another voice 10 dB under 112% / 2 of 9 (the background voice's words were transcribed instead),
 12 dB quieter 57% / 3 of 9, 10% faster 33% / 6 of 9.
+
+## Live, 24 November 2026
+
+`voice_latency`'s path run live (on one development laptop, 24 November 2026: synthetic questions played by the Conversation Bench's file pump through the real listener, server, conversation layer and voice, Claude Haiku 5.5 as the cloud talk model, silent playback, 24 model turns per run (12 and 8 in the two confirming runs on the final code)). From the last word to the first sound of Heliox's answer, median and
+worst:
+
+| Voice | 1.1b/c model answer starts |
+|---|---|
+| Kokoro on a graphics card | 1.53 to 1.60 s (worst 2.14 to 2.69 s) |
+| Kokoro on the processor | 2.10 s (worst 3.94 s) |
+| Pocket TTS on the processor, streaming | 1.48 to 1.59 s (worst 2.00 to 4.33 s) |
+
+The hum came at about 0.6 s on roughly two thirds to seven eighths of the turns. The talk model's own wait (request
+to first text) is in every figure and varied by the hour, 0.72 to 1.12 s across the day. Measured: the figures
+above, with synthetic questions and silent playback. Not measured: a real voice in a real room with the speakers
+on (line 1.1b/c's real-voice column stays owed).
 
 ## Timing on a GitHub runner (first run, 12 November)
 
