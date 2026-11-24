@@ -149,6 +149,7 @@ class ExecutionCompanion:
         undo_enabled: Callable[[], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
         wait: Callable[..., Any] = asyncio.wait,
+        limit_clock: Callable[[], float] | None = None,
     ) -> None:
         self._model = model_router
         # Undo is only offered when the caller says the undo journal is on.
@@ -157,9 +158,12 @@ class ExecutionCompanion:
         # No bundled or unverified learned checkpoint is loaded by default.
         self._scope_advisor = scope_advisor
         self._clock = clock
-        # How the model call is polled (asyncio.wait's signature): the limit is measured on ``clock``, the same clock
-        # the log's "did not answer within" reads, so the two always agree.
+        # How the model call is polled (asyncio.wait's signature), and the clock its limit is measured on (the event
+        # loop's when None). ``clock`` is the wall clock of the slow-provider cooldown, which tests may hold still; the
+        # limit never reads it. The log's "did not answer within" reports the wait as the limit measured it.
         self._wait = wait
+        self._limit_clock = limit_clock
+        self._waited = 0.0
         self._timeout_streak = 0
         self._skip_until = 0.0
 
@@ -186,11 +190,12 @@ class ExecutionCompanion:
     async def _generate_within_limit(self, prompt: str, others_running: Callable[[], bool] | None) -> str:
         """The model call, given its own limit or, while other reviews of the same plan still run, up to
         ``SHARED_WAIT_CEILING_SECONDS``: the person waits for those anyway, so waiting with them costs nothing."""
-        started = self._clock()
+        now = self._limit_clock or asyncio.get_running_loop().time
+        started = now()
         task = asyncio.ensure_future(self._model.generate(prompt, system=_SYSTEM_PROMPT, json_mode=True))
         try:
             while True:
-                elapsed = self._clock() - started
+                elapsed = self._waited = now() - started
                 limit = self._timeout_seconds
                 if others_running is not None and self._timeout_streak:
                     # The last review ran out of time: this one only rides along with the other reviews and never
@@ -246,7 +251,7 @@ class ExecutionCompanion:
             # not pretend to have reviewed or silently block harmless work.
             # A review cancelled by Stop or a correction is a CancelledError, not an Exception, so it never
             # lands here and is not counted against the provider.
-            elapsed = self._clock() - started
+            elapsed = self._waited if isinstance(exc, TimeoutError) else self._clock() - started
             logger.warning("Interactive companion review unavailable: %s", self._failure_reason(exc, elapsed))
             if isinstance(exc, TimeoutError):
                 self._timeout_streak += 1

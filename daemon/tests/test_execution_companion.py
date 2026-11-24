@@ -419,7 +419,7 @@ class _PolledClock:
 @pytest.mark.asyncio
 async def test_the_companion_stops_waiting_when_the_other_reviews_are_done_and_says_why(caplog):
     model, clock = _NeverAnswers(), _PolledClock()
-    companion = ExecutionCompanion(model, timeout_seconds=1.0, clock=clock, wait=clock.wait)
+    companion = ExecutionCompanion(model, timeout_seconds=1.0, wait=clock.wait, limit_clock=clock)
     others_until = clock.now + 0.3  # the other reviews finish 0.3 s in
     started = clock.now
 
