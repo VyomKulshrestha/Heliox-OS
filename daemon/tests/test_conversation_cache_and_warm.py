@@ -208,6 +208,19 @@ async def test_warm_ups_are_at_most_one_every_few_seconds():
     assert len(sent) == 2
 
 
+async def _warm_up_done(server) -> None:
+    """Wait on the warm-up itself, not on time: the layer's background tasks (prewarm starts model.warm() there), then
+    the connection the warm-up opens (model._warming). Nothing to wait for when nothing was started."""
+    from pilot.conversation import layer_for
+
+    layer = layer_for(server)
+    await asyncio.sleep(0)  # anything scheduled by the call gets its first turn
+    await asyncio.gather(*list(layer._background), return_exceptions=True)
+    warming = getattr(layer._model(), "_warming", None)
+    if warming is not None:
+        await asyncio.gather(warming, return_exceptions=True)
+
+
 def _server(sent: list):
     from pilot.config import PilotConfig
     from pilot.conversation import layer_for
@@ -240,7 +253,7 @@ async def test_only_speech_said_to_heliox_opens_a_connection(addressed, warmed):
     sent: list = []
     server = _server(sent)
     assert server.warm_for_speech(addressed) is warmed
-    await asyncio.sleep(0.05)
+    await _warm_up_done(server)
     assert bool(sent) is warmed
 
 
@@ -254,7 +267,7 @@ async def test_a_live_caption_of_any_speech_never_warms_the_model(monkeypatch):
 
     server._broadcast_notification = nowhere
     await server._voice_partial("so anyway I told him")  # captions come for every utterance, addressed or not
-    await asyncio.sleep(0.05)
+    await _warm_up_done(server)
     assert sent == []
 
 
@@ -289,5 +302,5 @@ async def test_the_listeners_status_warms_the_model_only_for_speech_the_rule_too
     server._broadcast_notification = nowhere
     status = "wake_detected" if addressed == "wake" else "follow_up_detected"
     await server._voice_status_broadcast(status, {"transcript": "x", "addressed": addressed})
-    await asyncio.sleep(0.05)
+    await _warm_up_done(server)
     assert bool(sent) is warmed
