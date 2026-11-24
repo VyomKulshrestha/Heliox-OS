@@ -99,11 +99,16 @@ def test_a_corrected_statement_is_recognised_and_taken():
         "I went to the market and bought too much fruit.",
     ],
 )
-def test_talk_that_only_looks_like_it_is_not_taken(text):
+def test_talk_that_only_looks_like_it_is_not_kept_as_about_me(text):
+    # Right after Heliox answered, it is what the person says back (addressing._said_back), never a fact to keep;
+    # later in the window it is talk, as before.
     assert not tells_about_self(text)
     rule, clock = opened()
     clock.t += 1.0
-    assert not said(rule, clock, text).act
+    assert said(rule, clock, text).why == "follow-up: said back"
+    later, later_clock = opened()
+    later_clock.t += 5.0
+    assert not said(later, later_clock, text).act
 
 
 def test_the_live_day_keeps_every_statement_said_in_one_go():
@@ -143,7 +148,7 @@ def test_not_when_the_second_voice_rule_is_on_and_the_room_was_heard():
     rule, clock = opened()
     rule.second_voice_threshold = 1
     clock.t += 0.5
-    assert not said(rule, clock, "Then we went to the market.").act  # someone else in the room
+    assert not said(rule, clock, "Sam, did you go to the market?").act  # someone else in the room
     clock.t += 0.5
     assert not said(rule, clock, "I start work at nine.").act
     rule.second_voice_threshold = 0  # the rule off (the default): the same sentence is taken

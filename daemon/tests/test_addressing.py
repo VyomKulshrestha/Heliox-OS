@@ -109,20 +109,24 @@ def test_a_reply_to_a_question_is_taken_even_when_it_is_only_a_name():
 
 
 @pytest.mark.parametrize(
-    "text",
+    ("text", "said_back"),
     [
-        "So then we went to the client and they said no.",  # narration
-        "He thinks the budget is fine.",  # third person
-        "I'll send Priya the deck by Friday.",
+        ("So then we went to the client and they said no.", False),  # narration naming neither: a room, a TV
+        ("He thinks the budget is fine.", False),  # third person
+        ("I'll send Priya the deck by Friday.", True),  # the person's own statement (a hard case in a meeting)
     ],
 )
-def test_talk_inside_the_window_is_not_taken(text):
-    clock = Clock()
-    rule = Addressing(clock=clock)
-    rule.decide(heard("Hey Heliox, what time is it?", clock.now))
-    rule.heliox_finished()
-    clock.now += 2
-    assert not rule.decide(heard(text, clock.now)).act
+def test_talk_right_after_heliox_answered_is_taken_when_it_reads_as_said_back(text, said_back):
+    # Said 2 s after Heliox answered the person, a statement in the first person is what a person says back (the
+    # acceptance run's debate lines read the same way); 5 s later, with no sign of being a reply, it is talk.
+    for after, taken in ((2, said_back), (5, False)):
+        clock = Clock()
+        rule = Addressing(clock=clock)
+        rule.decide(heard("Hey Heliox, what time is it?", clock.now))
+        rule.heliox_finished()
+        clock.now += after
+        decision = rule.decide(heard(text, clock.now))
+        assert decision.act is taken and decision.why == ("follow-up: said back" if taken else "follow-up: talk")
 
 
 def test_speech_that_began_while_heliox_was_talking_is_not_a_follow_up_unless_it_is_a_control_word():
@@ -150,7 +154,7 @@ def test_no_cascade_unclear_speech_gets_one_sorry_and_does_not_keep_the_conversa
     rule = Addressing(clock=clock)
     rule.decide(heard("Hey Heliox, what time is it?", clock.now))
     rule.heliox_finished()
-    clock.now += 2
+    clock.now += 5  # later than the few seconds in which anything said back is taken
     first = rule.decide(heard("Your thing over there", clock.now))
     assert not first.act and first.say_sorry
     rule.heliox_finished()  # Heliox said "Sorry?"
@@ -308,7 +312,8 @@ def test_an_elliptical_follow_up_is_not_taken_late_over_heliox_or_in_a_call():
     assert not answered(6.0, "And tomorrow?").act  # later than 4 s: read as words, and "And ..." is narration
     assert not answered(0.5, "And tomorrow?", over=True, voiced=2.0).act  # began over Heliox's voice
     assert not answered(1.0, "And tomorrow?", in_call=True).act
-    assert not answered(1.0, "And then we went home after the movie.").act  # too long: narration
+    # Too long to be elliptical, and narration naming neither the person nor Heliox: not said back either.
+    assert not answered(1.0, "And then we went home after the movie.").act
     assert answered(6.0, "Say that again.").act  # later it still reads as a request ("Say ...")
 
 

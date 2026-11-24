@@ -707,7 +707,7 @@
     },
     {
      "say": "Yeah I think Priya said the deck is due Friday.",
-     "gap": 1.0,
+     "gap": 5.0,
      "voiced": 3.2,
      "expect": {
       "taken": false,

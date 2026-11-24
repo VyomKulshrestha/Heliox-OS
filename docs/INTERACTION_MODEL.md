@@ -1412,8 +1412,9 @@ people apart would need speaker identification, an enrolled voiceprint. That is 
 decision, and it is not built.
 
 The window's reach is the size of the problem. In an open follow-up window, 483 of the 975 unaddressed corpus lines
-are taken. That was measured on `benchmarks/conversation_bench/corpus.lines()`, each line decided 1.5 s after Heliox
-finished speaking with the conversation open. It is corpus lines, not real rooms.
+are taken (617 since what is said back right after an answer is taken, section 5). That was measured on
+`benchmarks/conversation_bench/corpus.lines()`, each line decided 1.5 s after Heliox finished speaking with the
+conversation open. It is corpus lines, not real rooms.
 
 **The rule** (`pilot.conversation.reach`, `conversation.second_voice_guard`, off by default). The listener counts the
 utterances it did not take since Heliox last spoke (`Addressing.overheard_since_heliox`, a number, no words). When
@@ -1531,9 +1532,50 @@ only if all of these hold:
   "in short") or a continuation of at most six words starting with "and", "or", "what about", "how about" or
   "what if" ("And tomorrow?", "What about the second one?");
 - it is not third-person talk, narration ("So then we went...", "I'll send Priya the deck") or a monologue of more
-  than 8 seconds of voice.
+  than 8 seconds of voice, unless it was said back right after Heliox answered (below).
 A running task the person started, or an approval waiting, keeps the conversation open for control words and
 replies without the time limit.
+
+**Said back right after Heliox answered** (`Addressing._said_back`, `said_elsewhere`, 24 November). The companion
+acceptance run found a spoken debate impossible without "Hey Heliox" before every sentence: "And roughly how many
+people live there?" said 1.3 to 2.9 s after the answer was overheard 3 of 3 times, and so were the person's decision
+and "It'll be fine.". Now, for TALK_TAKEN_SECONDS (4 s) after Heliox's last word, when what it said was its reply to
+the person, what the person says next is taken as said to Heliox unless something says otherwise:
+- it is said to someone by name ("Priya, could you ...", "Hey Felix, ...", "..., Ken?"), to the room ("everyone",
+  "can somebody", "show us"), belongs to a call or a video ("you're on mute", "like and subscribe"), or talks about
+  Heliox in the third person;
+- it is not a reply in shape: one word, too little voice for its words, a line Whisper writes from noise, steps read
+  out ("First, ..."), fillers only ("Um, so."), a monologue, or more than 25 words;
+- it names neither the person nor Heliox ("I", "my", "you") and is longer than four words without asking anything: a
+  television, someone else or a passage read aloud is as likely ("He scored twice in the second half.", "Tonight on
+  channel four, the news at ten."); "It'll be fine." and "And roughly how many people live there." are taken;
+- another utterance was left out since Heliox spoke (someone else is talking), or what Heliox said last answered
+  nobody (a "Sorry?", a reminder, a card);
+- it began over Heliox's voice without stopping it, or it was said in a call.
+A stop or a no is taken whoever it was said to. Questions and requests keep the 8 s window, and the reasons above now
+refuse them too. Statements the profile keeps stay with the "about me" rule and its limits.
+
+Measured on text with the rule itself (`Addressing.decide`, voice estimated at 0.33 s a word):
+
+| | before | after |
+|---|---|---|
+| The acceptance run's lines without the wake phrase, at the times they were said (0.5 to 2.9 s) | 7 of 19 | 19 of 19 |
+| A follow-up 12 s later ("And what's the weather like there in December?") | not taken | not taken |
+| Unaddressed corpus, each line 1.5 s after Heliox answered | 483 of 975 | 617 of 975 |
+| The same with no conversation open, and in a call | 0 and 0 | 0 and 0 |
+| `test_addressing_overheard` lines as 9 s monologues | 0 of 10 | 0 of 10 |
+| The same lines as 2.5 s sentences, 1.5 s after an answer | 2 of 10 | 7 of 10 |
+| The owner's "The invoice is due on the thirty-first of November." at 5.3, 6.2, 11.4 s | 0 of 3 | 0 of 3 |
+
+The hard cases are on the corpus side. Right after Heliox answered, a statement said to the room in the first person
+("I'll send Ken the deck by Monday.", "I think the invoice is due on Monday at half past three."), an instruction to
+a video's viewers ("If you see an error here, restart Slack and try again.") or a sentence read aloud that names the
+reader ("my oven runs hot") is taken, since nothing in the words says it was not said to Heliox. The words that do
+say so now refuse 17 corpus sentences the old rule took ("Can you open the deck so everyone can see it?"). The line
+was chosen this way because a person talking with Heliox should not have to name it every sentence; what is taken
+by mistake reaches the talk model as one turn, and a step it asks for still goes through the planner's reviews and
+the approval dialog. The sentences decided here are text; how often a room really talks in those 4 seconds is not
+measured.
 
 **No cascade.** A follow-up that might be for Heliox but is not clearly so is dispatched as a doubtful follow-up:
 the conversation layer says one short "Sorry?" at most per conversation, sends it to no model, stores nothing, and

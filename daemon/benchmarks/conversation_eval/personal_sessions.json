@@ -823,7 +823,7 @@
         },
         {
           "say": "You know my brother Tom is a doctor.",
-          "gap": 2.0,
+          "gap": 5.0,
           "expect": {
             "taken": true,
             "has": [

@@ -402,7 +402,19 @@ async def test_after_a_question_a_short_answer_is_a_reply_and_a_story_is_not():
     dispatched, _ = await run()
     assert dispatched == ["the other one, the blue file", "PowerShell"]
     statement, run_statement = make_listener(["the other one, the blue file", "PowerShell"], follow_up=30)
+    # Later than the few seconds after an answer in which anything the person says back is taken (TALK_TAKEN_SECONDS).
+    statement._addressing.heliox_ended_at -= 5.0
     assert await run_statement() == ([], ["the other one, the blue file", "PowerShell"])
+
+
+@pytest.mark.asyncio
+async def test_right_after_heliox_answered_what_the_person_says_back_is_dispatched():
+    # The acceptance run's follow-up, as Whisper wrote it, said a second after Heliox's answer: overheard before.
+    _, run = make_listener(["And roughly how many people live there.", "It'll be fine."], follow_up=30)
+    dispatched, overheard = await run()
+    assert dispatched == ["And roughly how many people live there", "It'll be fine"] and overheard == []
+    elsewhere, run_elsewhere = make_listener(["Hey Felix, are you coming to lunch?", "It'll be fine."], follow_up=30)
+    assert await run_elsewhere() == ([], ["Hey Felix, are you coming to lunch?", "It'll be fine."])
 
 
 # What Heliox heard in the 19:53-19:58 rehearsal and in earlier takes, said without the wake phrase while a

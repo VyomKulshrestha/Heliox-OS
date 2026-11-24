@@ -6,12 +6,15 @@ of an utterance, or the microphone button (or hotkey). Nothing is taken as addre
 command.
 
 Inside an open conversation (Heliox has just answered someone who addressed it, or a task they started is running)
-a follow-up needs no wake phrase only if it starts within FOLLOW_UP_SECONDS of Heliox's last word, did not begin
-while Heliox was still talking, and is plausibly meant for Heliox: a control word, a reply to the question Heliox
-just asked, or a direct request or question (imperative or second person). Third-person talk, narration and long
-monologues do not count. A follow-up that might be for Heliox but is not clearly so gets one short "Sorry?" and does
-not keep the conversation open. Only a confidently addressed utterance keeps it open; CLOSE_SECONDS without one
-closes it, and a call closes it at once.
+a follow-up needs no wake phrase if it starts within FOLLOW_UP_SECONDS of Heliox's last word, did not begin while
+Heliox was still talking, and is plausibly meant for Heliox: a control word, a reply to the question Heliox just
+asked, or a direct request or question (imperative or second person). Right after Heliox answered the person
+(TALK_TAKEN_SECONDS), anything else they say is taken too, as a person takes what is said back to them, unless there
+is a reason to think it was said to someone else (said_elsewhere: a name or a room addressed, a call, a video, talk
+about Heliox) or it was not a reply at all (noise, one word, a monologue, a passage read aloud, another voice heard
+in between). A follow-up that might be for Heliox but is not clearly so, later in the window, gets one short "Sorry?"
+and does not keep the conversation open. Only a confidently addressed utterance keeps it open; CLOSE_SECONDS without
+one closes it, and a call closes it at once.
 
 Language: the wake phrase and the button work in any language. The words of a follow-up are read in English
 (imperatives, question starts, narration), so in another language a follow-up is more often "Sorry?" or nothing.
@@ -32,6 +35,13 @@ FOLLOW_UP_SECONDS = 8.0  # people answer within about a second; 8 s leaves room 
 CLOSE_SECONDS = 20.0  # no confidently addressed utterance for this long: the wake phrase is needed again
 MONOLOGUE_SECONDS = 8.0  # a follow-up with more voice than this is talk, not a reply
 CUT_OFF_SECONDS = 1.6  # a word or two said over Heliox's voice is "stop", whatever it reads as (voice.is_cut_off_stop)
+# Right after Heliox answered the person, what they say next is taken as said to Heliox unless there is a reason to
+# think otherwise (said_elsewhere, _said_back). In the companion acceptance run (24 November) the person's replies
+# without the wake phrase began 0.5 to 2.9 s after Heliox's last word; the same 4 s as an elliptical follow-up.
+TALK_TAKEN_SECONDS = 4.0
+TALK_TAKEN_WORDS = 25  # longer than this is a passage or a story, not a reply
+SHORT_REPLY_WORDS = 4  # "It'll be fine.": a statement this short with no "I", "my" or "you" in it is still a reply
+QUESTION_WORDS = frozenset({"what", "who", "where", "when", "why", "how", "which", "whose"})
 QUICK_REPLY_SECONDS = 2.0  # an answer to Heliox's question starts within this, in any language
 QUICK_REPLY_VOICE_SECONDS = 4.0  # and is short: an answer, not a story
 # "Thank you." is also what Whisper writes for silence and noise, so it counts as a reply only with this much voice
@@ -248,6 +258,87 @@ SOFTENER = re.compile(r"^(?:(?:just|okay|ok|so|right|then|now|and)\s+)+", re.I) 
 _INVITES = re.compile(r"(?:^|[.!?]\s+)(?:just\s+|you can\s+)?say\s+[\"“'‘]?\w", re.I)
 
 
+# ── said to someone else: the reasons a follow-up is not taken as said to Heliox ──
+
+# The room, not one person: "so everyone can see it", "you guys", and a question put to whoever is there ("Can
+# somebody set a timer?", "Does anyone mind ...?").
+ROOM = re.compile(
+    r"\b(?:everyone|everybody|you guys|guys|folks|you all|y'all|all of you)\b"
+    r"|^(?:\w+\s+){0,2}(?:can|could|would|will|does|did|is|has|do)\s+(?:anyone|anybody|somebody|someone)\b"
+    r"|\b(?:show|tell|give|send|help|join|walk)\s+us\b",
+    re.I,
+)
+# A call, a meeting on screen or a video playing: what is said there is for the people in it.
+ELSEWHERE = re.compile(
+    r"\b(?:on mute|you'?re muted|you are muted|can you hear me|can everyone hear|(?:stop )?shar(?:e|ing) (?:my|your) "
+    r"screen|next slide|previous slide|like and subscribe|this video|next video|thanks for watching|in the "
+    r"description)\b",
+    re.I,
+)
+# Steps read out to viewers ("First, open the start menu.", "Next, create a new folder"): a tutorial, not a reply.
+STEPS = re.compile(r"^(?:first|firstly|next|finally|step (?:one|two|three|four|five|\d+))\s*[,:]", re.I)
+# The person or Heliox in the words: a reply has them; a passage read aloud usually has neither.
+PERSONAL = re.compile(r"\b(?:i|i'm|i'll|i've|i'd|me|my|mine|myself|you|your|yours|you're|you'll)\b", re.I)
+# Capitalised words that open a sentence followed by a comma and are not a name said to someone ("Seriously, ...",
+# "Okay, ..."). Whisper capitalises the first word of every sentence, so a name at the start counts only when what
+# follows is said to someone (_vocative_other); in the middle or at the end, a capital is the recogniser's own.
+_NOT_A_NAME_WORDS = (
+    "okay ok yes yeah yep yup no nope nah well so actually honestly seriously sorry right alright fine sure wait hmm "
+    "hm oh ah um uh look listen anyway anyways also then now and but great perfect thanks cool nice good really true "
+    "hey hi hello please first next finally maybe wow ugh man dude mate boss sir fair still plus besides though "
+    "however instead otherwise again today tonight tomorrow yesterday morning afternoon evening later monday tuesday "
+    "wednesday thursday friday saturday sunday i it this that there here what why how when where who which agreed "
+    "exactly absolutely obviously definitely indeed interesting weird oops whoa yikes darling love honey"
+)
+NOT_A_NAME = frozenset(_NOT_A_NAME_WORDS.split())
+_GREETING = frozenset({"hey", "hi", "hello", "hiya", "yo", "oi", "morning", "evening"})
+_HELIOX_WORD = re.compile(r"\bheliox(?:'s)?\b", re.I)
+
+
+def _named(word: str) -> bool:
+    """A word that could be a person's name as a recogniser writes it: capitalised, not a common opener, not Heliox."""
+    return (
+        word[:1].isupper()
+        and word.casefold() not in NOT_A_NAME
+        and not word.casefold().endswith("ly")
+        and not (EXACT_NAME.match(word) or LOOSE_NAME.match(word))
+    )
+
+
+def _vocative_other(text: str) -> bool:
+    """Said to another person by name: "Hey Felix, are you coming?", "Hello, Alex, good to see you.", "Priya, could
+    you stop sharing?", "Can you take notes today, Ken?"."""
+    words = _words(text[:120])
+    if not words:
+        return False
+    first = words[0].group(0)
+    if first.casefold() in _GREETING and len(words) > 1 and _named(words[1].group(0)):
+        return True
+    after_first = text[words[0].end() : words[0].end() + 2]
+    if len(words) > 2 and _named(first) and after_first.startswith(","):
+        rest = text[words[0].end() :].lstrip(" ,")
+        if SECOND_PERSON.search(rest) or IMPERATIVE_START.match(rest) or rest.rstrip().endswith("?"):
+            return True
+    tail = re.search(r",\s*([A-Za-z]+)\s*[.?!]*\s*$", text)
+    return bool(tail and len(words) > 2 and _named(tail.group(1)))
+
+
+def said_elsewhere(text: str) -> str:
+    """Why an utterance reads as said to someone other than Heliox, or "" when nothing says so: a name or the room
+    addressed, a call or a video, or Heliox talked about in the third person. Never for "Stop" or "No": a control
+    word stops Heliox whoever it was said to."""
+    if _vocative_other(text):
+        return "said to someone by name"
+    if ROOM.search(text):
+        return "said to the room"
+    if ELSEWHERE.search(text):
+        return "a call or a video"
+    named = _HELIOX_WORD.search(text)
+    if named and not re.search(r",\s*heliox\s*[.?!]*\s*$", text, re.I):
+        return "talk about Heliox"
+    return ""
+
+
 def invites_reply(heliox_said: str) -> bool:
     """Whether what Heliox just said asks for a reply: a question, or a sentence that names a word to say
     (`Say "more" for others.`). After it, a short answer in the follow-up window is a reply."""
@@ -314,6 +405,9 @@ class Addressing:
     second_voice_threshold: int = 0
     _about_me_row: int = 0
     _reply_owed_since: float | None = None
+    # What Heliox said last was its reply to something the person said to it (not a "Sorry?", a reminder or a card):
+    # only then is the next thing the person says taken as said back to it (_said_back).
+    _answered: bool = False
 
     def _now(self) -> float:
         return self._at if self._at is not None else self.clock()
@@ -339,6 +433,7 @@ class Addressing:
         self.live_spoke_at = None
         self._about_me_row = 0
         self._reply_owed_since = None
+        self._answered = False
 
     def live_spoke(self) -> None:
         """Heliox Live just finished a spoken remark: for LIVE_REPLY_SECONDS its own replies are taken without the
@@ -354,12 +449,14 @@ class Addressing:
         self.overheard_since_heliox = 0
         now = self.clock()
         owed = self._reply_owed_since
-        if self.open_since is not None and owed is not None and 0 <= now - owed <= REPLY_OWED_SECONDS:
+        answered = self.open_since is not None and owed is not None and 0 <= now - owed <= REPLY_OWED_SECONDS
+        if answered:
             # Part of the reply to what the person said has just ended (a reply spoken sentence by sentence ends
             # several times): a long one, or a long wait for it, does not use up the conversation. Its quiet runs
             # from Heliox's last word, as the follow-up window does. A "Sorry?" after speech that was not taken is
             # no such reply (decide clears the debt), so it keeps nothing open.
             self.open_since = now
+        self._answered = answered
         if self.conversation_open:
             self.heliox_ended_at = now
             self.question_open = asked
@@ -432,7 +529,12 @@ class Addressing:
                 return self._not_taken(heard, "too long after Heliox spoke")
         if heard.voiced_seconds > MONOLOGUE_SECONDS and kind not in {"control"}:
             return Decision(False, why="talk, not a reply")
-        if kind in CONFIDENT or kind in ("elliptical", "about me"):
+        elsewhere = said_elsewhere(heard.text) if kind != "control" else ""
+        if elsewhere:
+            return Decision(False, why=f"follow-up: {elsewhere}")
+        if kind in {"talk", "unclear"} and self._said_back(heard):
+            kind = "said back"  # right after Heliox answered, with no sign it was said to anyone else
+        if kind in CONFIDENT or kind in ("elliptical", "about me", "said back"):
             self._addressed()
             if kind == "about me":
                 self._about_me_row += 1
@@ -441,6 +543,44 @@ class Addressing:
             self._sorry_given = True
             return Decision(False, why="unclear", say_sorry=True)
         return Decision(False, why=f"follow-up: {kind}")
+
+    def _said_back(self, heard: Heard) -> bool:
+        """Said back to Heliox right after it answered the person: begun within TALK_TAKEN_SECONDS of its last word
+        (not over it), its last words a reply to what the person said, nobody else heard since, and a reply in shape:
+        real voice, two words or more, no monologue, no passage read aloud and no line Whisper writes from noise.
+        "It'll be fine.", "I'm going to watch a series tonight.", "And roughly how many people live there?" are;
+        "PowerShell", "Thanks for watching" and four sentences of a speech are not. said_elsewhere was asked before."""
+        if not self._answered or heard.heliox_was_speaking or self.heliox_ended_at is None:
+            return False
+        if not 0 <= heard.started - self.heliox_ended_at <= TALK_TAKEN_SECONDS:
+            return False
+        if self.overheard_since_heliox:
+            return False  # someone or something else was heard since Heliox spoke: the room is not just the person
+        from pilot.system.voice import looks_hallucinated
+
+        words = _words(heard.text)
+        if len(words) < 2 or len(words) > TALK_TAKEN_WORDS or looks_hallucinated(heard.text):
+            return False
+        if 0 < heard.voiced_seconds < THANKS_VOICE_SECONDS:
+            return False  # too little voice to be words: noise read as words
+        if STEPS.match(heard.text.strip()):
+            return False
+        test = self.about_me
+        try:
+            if test is not None and test(heard.text):
+                return False  # what the profile keeps is the "about me" rule's alone, with its own limits
+        except Exception:
+            return False
+        rest = _without_control(" ".join(w.group(0) for w in words))
+        if len(rest.split()) < 2:
+            return False  # "Um, so.": fillers, nothing said yet
+        if PERSONAL.search(heard.text):
+            return True  # the person or Heliox in the words: "I'll do it anyway.", "Seriously, I'll manage."
+        # A statement that names neither, said in a room right after Heliox spoke, is as likely a television or
+        # someone else ("He scored twice in the second half.", "Tonight on channel four, the news at ten."): only a
+        # short one ("It'll be fine.") or a question ("And roughly how many people live there.") is said back.
+        asks = heard.text.rstrip().endswith("?") or any(w in QUESTION_WORDS for w in rest.casefold().split()[:3])
+        return len(words) <= SHORT_REPLY_WORDS or asks
 
     def _live_reply(self, heard: Heard) -> bool:
         """A reply to Live's remark: one of its own replies, begun after its voice ended (a sentence begun over it
