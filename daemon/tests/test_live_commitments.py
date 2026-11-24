@@ -54,6 +54,11 @@ def test_promises_with_a_deadline_get_a_reminder_offer_that_the_reminder_parser_
         "If I finish early I'll send it Friday.",
         "I'll send it.",
         "I'll have to think about it.",
+        # A plan with a time and nothing lost if it is forgotten: no reminder offer.
+        "I'll have pasta tonight.",
+        "I'm going to watch a series tonight.",
+        "I'll wear the blue shirt tomorrow.",
+        "I'll go for a run at 6pm.",
     ],
 )
 def test_questions_states_other_people_and_promises_without_a_deadline_are_left_alone(text):

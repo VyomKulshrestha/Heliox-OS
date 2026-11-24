@@ -137,6 +137,8 @@ SECRET_NOT_USED = (
 STILL_GO_AHEAD = "Do you still want me to go ahead?"
 # Said on a turn that gives way when every sentence the model wrote still pushed back (debate.pushes_back).
 GIVE_WAY = "Okay, your call."
+# Said for a statement of fact when every sentence the model wrote argued with it (debate.states_a_fact).
+GOT_IT = "Okay."  # the same audio as the layer's other "Okay.": no new piece to make ahead
 # The screen read for a spoken turn starts at the wake phrase (prewarm). At the turn it is waited for this long at
 # most, and the request goes without it when it is not there: on the first turn after start-up it took 0.55 to 0.75
 # s, and every later one 0.00 (the bench, 13 November). A read started more than SCREEN_FRESH_SECONDS before the turn
@@ -195,6 +197,14 @@ NOT_KEPT = (
     ),
 )
 NOT_CHANGED = 'I didn\'t change anything. Say "remember that" and the fact to keep it, or use Settings.'
+# "Remember that ..." that no handler kept (the fact had no verb or was too short to keep, or the profile was not
+# ready): the instruction above would ask for what they just said.
+ALREADY_ASKED_TO_KEEP = re.compile(
+    r"^(?:(?:no|ok|okay|and|oh|so|hey heliox|please)\s+)*(?:remember|note|keep in mind|bear in mind)(?: that)?\s+\S"
+)
+NOT_KEPT_AS_SAID = (
+    'I didn\'t keep that. Tell me the whole fact in one sentence, like "remember that the stand-up is at ten".'
+)
 DID_YOU = re.compile(
     r"^(?:so |and |ok |okay |wait |hey heliox,? )?(?:did you (?:get|save|keep|store|catch|change|do|note) "
     r"(?:that|it|this|my name)(?: right| down)?|what did you (?:just )?do|did that work|is that (?:saved|done|kept)"
@@ -1164,6 +1174,12 @@ class ConversationLayer:
         hold_allowed = self._may_hold()
         self._held_last_turn = False
         statement = decided.reason == "statement"
+        # A statement of fact with no disagreement open (debate.states_a_fact): acknowledged, never argued.
+        fact = (
+            self.debate.on
+            and self.debate.stance is None
+            and dbt.states_a_fact(normalize(text), asked=ends_with_question(text))
+        )
         # "I heard you, I'm thinking" while the answer is on its way (pilot.conversation.acknowledge).
         self._model_turns += 1
         early_hum = self._early_hums.pop(prov.dispatch_turn.get(), None) if not typed else None
@@ -1263,7 +1279,7 @@ class ConversationLayer:
                     if clean:
                         logger.info("Dropped a sentence claiming an action the fast model cannot take: %r", clean)
                     continue
-                if self.debate.giving and dbt.pushes_back(clean):
+                if (self.debate.giving or fact) and dbt.pushes_back(clean):
                     # This turn gives way (the third exchange, or "do it anyway"): a sentence still arguing the
                     # point is not said, whatever the model wrote.
                     logger.info("Held back a sentence that still pushed back on a turn that gives way: %r", clean)
@@ -1349,10 +1365,13 @@ class ConversationLayer:
             topic = ""
         # A reply whose words push back without the line (debate.pushes_back): the second signal.
         pushed = topic or self.debate.unmarked_topic(" ".join(said), written=written_text, words=normalize(text))
+        if fact:
+            pushed = ""  # a fact opens no disagreement, whatever the reply was marked
         if held_back and not said and not act_text and not promised and not failure:
             # Every sentence still argued on a turn that gives way: Heliox gives way in a few words instead.
-            if await self._say_one(result, GIVE_WAY, started) in HEARD:
-                said.append(GIVE_WAY)
+            line = GOT_IT if fact else GIVE_WAY
+            if await self._say_one(result, line, started) in HEARD:
+                said.append(line)
 
         own_step = False  # an ACT line for a costly step the person described as their own: never Heliox's
         if act_text:
@@ -1471,7 +1490,10 @@ class ConversationLayer:
             giving = self.debate.giving
             asked_already = any(ends_with_question(sentence) for sentence in said)
             costly_words = dbt.asks_for_costly_step(normalize(text))
-            self.debate.after_reply(pushed, " ".join(said), written=written_text, words=normalize(text))
+            if fact:
+                self.debate.close(settle=False, keep_thread=True)  # a fact: no stance, and nothing settled either
+            else:
+                self.debate.after_reply(pushed, " ".join(said), written=written_text, words=normalize(text))
             plain = normalize(text)
             gave_way = giving or dbt.gives_way(" ".join(said))
             if gave_way and pending and not self._approval_waiting() and not dbt.withdraws(plain):
@@ -1654,6 +1676,9 @@ class ConversationLayer:
             # A turn answered in code that changed nothing ("what time is it?"): the question is not about a save.
         if not SAVE_OR_CHANGE.search(text.strip()):
             return None
+        if ALREADY_ASKED_TO_KEEP.match(words):
+            # They said "remember that ..." already: telling them to say it is no help.
+            return NOT_KEPT_AS_SAID
         return next((sentence for pattern, sentence in NOT_KEPT if pattern.search(words)), NOT_CHANGED)
 
     def _word_cap(self) -> int:

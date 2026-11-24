@@ -490,6 +490,8 @@ class Debate:
         settled = [topic for topic in self.settled if stance is None or not same_topic(topic, stance.topic)]
         if settled:
             lines.append(f"You already gave way about {'; '.join(settled)}. Don't raise it again.")
+        if stance is None and states_a_fact(words):
+            lines.append(FACT_LINE)
         return " ".join(lines)
 
     def after_reply(self, topic: str, said: str, *, written: str = "", words: str = "") -> None:
@@ -603,3 +605,49 @@ def concern_from_reply(reply: str) -> str:
     if not first or first.endswith("?") or len(first.split()) > CONCERN_WORDS or _NOT_A_CONCERN.match(first):
         return ""
     return first if first.endswith((".", "!")) else first + "."
+
+
+# ── a fact is not a decision ──
+#
+# "My report is due at nine tomorrow and it's about four hours of work" decides nothing. Pushing back on it argued
+# with the time before any plan was made, and used up an exchange. Until the person states a decision, a statement of
+# fact gets an acknowledgement; it stays in the conversation as grounds for the decision that follows.
+_DECIDES = re.compile(
+    r"\b(?:i'?ll|i will|i'?m going to|i am going to|i'?m gonna|i'?m going|i decided|i'?ve decided|i have decided"
+    r"|let'?s|i won'?t|i'?m not going|i want to|i'?d rather|i'?m skipping|i'?m doing|i'?m taking|i'?m leaving"
+    r"|i'?m staying|i'?m having|i'?m buying|i'?m booking|i'?m deleting|i'?m sending|instead|anyway|my plan|i want"
+    r"|i need|i'?d like|please|can you|could you|you should|should i)\b"
+)
+_ASKS = re.compile(
+    r"^(?:what|what's|why|how|who|where|when|which|is|are|am|was|were|do|does|did|can|could|should|would|will|shall"
+    r"|have|has|any)\b"
+)
+FACT_LINE = (
+    "They told you a fact, not a decision. Acknowledge it in a few words. Do not push back or point out problems yet "
+    "and write no STANCE line; it is grounds if they decide something later."
+)
+
+
+# A fact names its subject first: "my report is due ...", "the build failed", "it's about four hours", "I have a
+# meeting at three". A request said as a statement ("I want the bin emptied", "get rid of the drafts") does not.
+_FACT_START = re.compile(
+    r"^(?:(?:so|and|oh|well|um|uh|okay|ok|also|by the way|just so you know|fyi)\s+)*"
+    r"(?:my|the|our|his|her|their|its|it'?s|it is|it was|this|that|there'?s|there is|there are|\w+'s"
+    r"|i have (?:a|an|my|the|\w+ hours)|i'?ve got (?:a|an|my|the))\b"
+)
+
+
+def states_a_fact(words: str, *, asked: bool = False) -> bool:
+    """A statement of fact that decides, asks and requests nothing (``words`` normalized; ``asked``: it ended with
+    "?")."""
+    text = _ADDRESS.sub("", " ".join(words.split()))
+    if asked or len(text.split()) < 3 or not _FACT_START.match(text):
+        return False
+    return not (
+        _DECIDES.search(text)
+        or _ASKS.match(text)
+        or own_plan(text)
+        or go_ahead(text)
+        or insists(text)
+        or asks_for_costly_step(text)
+    )

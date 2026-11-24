@@ -201,6 +201,11 @@ or a trade-off it states. No reason, no disagreement.
   acknowledgement ("I'll mute it. Your call with Dana starts in two minutes, though."). A step that cannot be
   undone, costs money or affects other people gets its reason first, once, and "Do you still want me to ...?"; a
   yes or "do it anyway" hands it over through the usual road, with every review and approval as before.
+- A statement of fact ("my report is due at nine tomorrow, and it's about four hours of work") is not a decision:
+  while no disagreement is open it gets an acknowledgement. The model is told so in the context, a sentence that
+  still pushes back is not said ("Okay." when none is left), and no stance opens; the fact stays in the
+  conversation as grounds for the decision that may follow (`debate.states_a_fact`: a statement that names its
+  subject first and decides, asks and requests nothing).
 - A direct request the router hands to the planner is never argued and never waits. When its verb is one of the
   costly ones (`debate.COSTLY_VERBS`: delete, remove, erase, wipe, empty, format, uninstall, overwrite, purge, clear,
   send, email, message, text, forward, reply, post, publish, share, upload, pay, buy, purchase, order, book,

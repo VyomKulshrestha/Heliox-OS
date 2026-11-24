@@ -12,6 +12,8 @@ What counts, in code, with no model:
   "next week", "tonight");
 - not a question, not "if I…", not "I'll be…" or "I'll think…" (a state, not a task), not "let me know" (asking
   someone else), and not something already in their reminders;
+- something lost if it is forgotten (``worth_a_reminder``): owed to someone, work someone waits for, or another
+  person in it. "I'll have pasta tonight" gets no offer;
 - in writing meant for someone else (mail, chat, documents), not in a terminal or code.
 
 The reminder goes at 10:00 on the day for a day-only deadline, an hour before a deadline with a time, at 16:00 for
@@ -61,6 +63,23 @@ _END_OF_DAY = re.compile(r"\b(?:end of (?:the )?day|eod|cob|close of business)\b
 _NEXT_WEEK = re.compile(r"\bnext week\b", re.IGNORECASE)
 _TONIGHT = re.compile(r"\btonight\b", re.IGNORECASE)
 _PRONOUNS = {"you": "them", "your": "their", "yours": "theirs"}
+# A plan earns a reminder offer only when something is lost if it is forgotten: it is owed to someone (sent, paid,
+# handed in, answered, booked), it is work someone waits for, or another person is in it. "I'll have pasta tonight"
+# and "I'll watch a series tonight" have a time and nothing to lose: no offer.
+_OWED = re.compile(
+    r"\b(?:send|email|e-mail|mail|call|ring|phone|text|message|ping|reply|respond|answer|get back|follow up|check"
+    r"|pay|transfer|submit|hand in|file|deliver|return|ship|post|share|finish|complete|review|sign|approve|book"
+    r"|cancel|renew|order|pick up|drop off|collect|fix|update|confirm|meet|visit|tell|ask|ready|prepare|draft"
+    r"|report|deck|doc|document|invoice|slides|proposal|application|form|taxes|homework|essay|thesis"
+    r"|them|their|him|her|team|client|boss|manager|mum|mom|dad|doctor|dentist)\b",
+    re.IGNORECASE,
+)
+_SOMEONE = re.compile(r"(?<=\s)[A-Z][a-z]{2,}\b")
+
+
+def worth_a_reminder(action: str) -> bool:
+    """Something is lost if this is forgotten (``_OWED``), or a named person is in it ("ping Sam"). Pure."""
+    return bool(_OWED.search(action) or _SOMEONE.search(f" {action}"))
 
 
 def _find_deadline(after: str) -> tuple[int, str] | None:
@@ -193,7 +212,7 @@ def find_commitments(
         action_text = said(origin, origin + cut_start) if speech else after[:cut_start]
         words = [_PRONOUNS.get(word.casefold(), word) for word in action_text.strip(" ,;:-").split()]
         action = " ".join(words[:MAX_ACTION_WORDS])
-        if moment is None or len(words) < 2:
+        if moment is None or len(words) < 2 or not worth_a_reminder(action):
             continue
         wanted = significant_words(action)
         if any(wanted and len(wanted & seen) * 2 >= len(wanted) for seen in existing):
