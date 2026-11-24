@@ -3284,6 +3284,25 @@ def make_fixed_speech_ahead(voice_config: Any, quiet: Callable[[], bool] = lambd
 _making_ahead: tuple[tuple[str, str], asyncio.Task[int]] | None = None
 
 
+async def stop_making_ahead() -> None:
+    """The daemon is stopping: cancel the fixed sentences being made ahead (make_fixed_speech_ahead, or a voice that
+    took over, _make_ready_soon) and wait for the task to end, so none is left pending when the event loop closes."""
+    global _making_ahead
+    current, _making_ahead = _making_ahead, None
+    if current is None:
+        return
+    task = current[1]
+    if task.done():
+        return
+    try:
+        same_loop = task.get_loop() is asyncio.get_running_loop()
+    except RuntimeError:
+        same_loop = False
+    task.cancel()
+    if same_loop:
+        await asyncio.gather(task, return_exceptions=True)
+
+
 def prewarm_local_voice(voice_config: Any) -> None:
     """The person is talking to Heliox: load the configured local voice now. Safe to call often; never blocks."""
     _manager.prewarm(*_speaking(voice_config))

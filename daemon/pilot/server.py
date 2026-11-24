@@ -14976,8 +14976,13 @@ def handle_tool(tool_name, params):
         # The local voice worker: closing its pipe ends it, and frees the thread waiting on its answer. Left open,
         # that thread kept the interpreter from exiting for 300 s after stop (2-hour soak, 12 November 2026).
         from pilot.system.local_tts_worker import manager as local_voice_manager
+        from pilot.system.local_tts_worker import shutdown_standby, stop_making_ahead
 
         try:
+            # The fixed sentences being made ahead and a voice loading for a change: ended and waited for first, so
+            # neither is left pending when the loop closes, nor asks the worker for anything while it shuts down.
+            await self._bounded_stop_step("fixed sentences made ahead", stop_making_ahead())
+            await self._bounded_stop_step("voice standby", shutdown_standby())
             await self._bounded_stop_step("local voice worker", local_voice_manager().shutdown())
         except Exception:
             logger.warning("Could not stop the local voice worker", exc_info=True)
