@@ -228,7 +228,9 @@ async def test_what_the_person_said_over_heliox_is_heard_even_while_its_own_voic
     dispatched, _ = await run()
     assert dispatched == ["Stop"]  # a cut-off over Heliox is a stop
     quiet, run_quiet = make_listener(["Wait, stop."], suppressed=True, follow_up=30)
-    assert await run_quiet() == ([], [])  # without an interruption, speech during Heliox's voice is its echo
+    # Without an interruption, speech during Heliox's voice may be its echo: nothing runs, and it is recorded as
+    # overheard (Live hears it as not addressed), never dropped without trace.
+    assert await run_quiet() == ([], ["Wait, stop."])
 
 
 @pytest.mark.asyncio
@@ -238,7 +240,7 @@ async def test_talking_over_heliox_stops_its_voice_but_only_a_reply_runs():
     listener.note_interruption()
     listener._recorder.last_voiced_seconds = 2.4  # long enough to be a sentence, not a cut-off
     dispatched, overheard = await run()
-    assert dispatched == [] and overheard == ["PowerShell"]
+    assert dispatched == [] and overheard == ["PowerShell", "Wait, stop."]  # the second: possibly its echo, recorded
 
 
 # "Wait, stop." said over Heliox, about a second of voice, as the recognisers wrote it in four rehearsals (19:58,

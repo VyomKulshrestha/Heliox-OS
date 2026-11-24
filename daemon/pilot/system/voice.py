@@ -208,6 +208,11 @@ def should_act_on_follow_up(text: str, *, question_open: bool = False) -> bool:
 
 
 SHORT_CUT_OFF_SECONDS = 1.6  # "Wait, stop." is about a second of voice; a sentence said over Heliox is longer
+# Speech that began at most this long before Heliox fell silent, and went on at least PAST_HELIOX_SECONDS after, is
+# the person talking over the end of a reply (_began_as_heliox_stopped). Batch five's spoken run t2gap_b: first word
+# 0.05 s before Heliox's reply ended after its first piece, voice on for 1.7 s after; its words were dropped.
+STRADDLE_SECONDS = 1.0
+PAST_HELIOX_SECONDS = 0.5
 
 
 def is_cut_off_stop(voiced_seconds: float | None) -> bool:
@@ -4090,6 +4095,11 @@ class ContinuousVoiceListener:
         started = getattr(recorder, "speech_started_at", None)
         now = time.monotonic()
         text = self._canonical_wake(transcript)
+        if not wake_free_allowed and not interruption and self._began_as_heliox_stopped(started, ended):
+            # The person began just as Heliox fell silent (in the gap after a piece, where Heliox ends its reply when
+            # it hears them) and went on well after: no next piece played for a barge-in to stop, but it is the
+            # person talking over the reply, read as any interruption (addressing._interruption).
+            interruption = "barge_in"
         heard = Heard(
             text=text,
             started=started if isinstance(started, float) else now,
@@ -4108,7 +4118,7 @@ class ContinuousVoiceListener:
 
             wake = vocative_wake(heard.wake_text or heard.text, heard.other_text)
             if wake is None:
-                return Decision(False, why="heard while Heliox was talking"), None
+                return Decision(False, why="heard while Heliox was talking"), heard
         decision = rule.decide(heard)
         if decision.act and decision.why == "wake":
             self._wake_calibrator.confirm_pending_if_followed_by_hit()
@@ -4217,7 +4227,16 @@ class ContinuousVoiceListener:
 
     def _overheard_ok(self, decision: Any) -> bool:
         """Overheard speech goes to Live only while a conversation was open (marked not addressed there)."""
-        return decision.why.startswith(("follow-up", "began while", "talk", "too long"))
+        return decision.why.startswith(("follow-up", "began while", "heard while", "talk", "too long"))
+
+    def _began_as_heliox_stopped(self, started: Any, ended: Any) -> bool:
+        """The utterance's voice began at most STRADDLE_SECONDS before Heliox's voice last stopped, Heliox is silent
+        now, and the voice went on at least PAST_HELIOX_SECONDS after it stopped. Heliox's own echo ends with its
+        voice; the person's words go on."""
+        if self._wake_free_suppression_depth or not isinstance(started, float) or not isinstance(ended, float):
+            return False
+        quiet = self._heliox_quiet_since
+        return 0.0 <= quiet - started <= STRADDLE_SECONDS and ended - quiet >= PAST_HELIOX_SECONDS
 
     @staticmethod
     def _addressed_kind(decision: Any) -> str:
@@ -4971,6 +4990,8 @@ class ContinuousVoiceListener:
                 if decision is None or not decision.act or decision.say_sorry:
                     self._drop_early_request("not_addressed")  # nothing of it may reach a model
                 if decision is None or not (decision.act or decision.say_sorry):
+                    # Every utterance not taken leaves a record of why (its words only at debug level).
+                    logger.info("Not taken: %s", decision.why if decision is not None else "no decision")
                     if decision is not None and decision.hint:
                         await self._capture_status("not_addressed", "no conversation", decision.hint)
                     if decision is not None and heard is not None and self._overheard_ok(decision):

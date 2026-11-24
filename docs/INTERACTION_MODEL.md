@@ -1698,6 +1698,14 @@ heard of Heliox alone, and voice that began after the last piece's echo died awa
 taken as the person on a headset's hold. The utterance is then an interruption like any other, and its words are
 read as above.
 
+When Heliox hears the person in that gap it ends its reply there, so no next piece plays and no barge-in fires. Before
+25 November the listener then took the utterance as begun while Heliox was talking (possibly its own echo) and
+dropped it without a record: in the spoken run t2gap_b the first word came 0.05 s before Heliox's voice stopped and
+"Actually, how tall is it?" vanished. Voice that began at most 1 s before Heliox fell silent and went on at least
+0.5 s after it is now the person interrupting (`_began_as_heliox_stopped`), and its words are read as above. Every
+utterance not taken now logs its reason ("Not taken: ..."), and one judged as possibly Heliox's echo reaches Live as
+overheard, as other refused follow-ups do.
+
 **Overheard speech** goes only to Heliox Live, marked not addressed, which does not check it: no card, nothing kept.
 It is never stored as conversation and never sent to a cloud model. **Fakes only**: unit tests with recognised text.
 
