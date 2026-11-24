@@ -16,6 +16,10 @@ in between). A follow-up that might be for Heliox but is not clearly so, later i
 and does not keep the conversation open. Only a confidently addressed utterance keeps it open; CLOSE_SECONDS without
 one closes it, and a call closes it at once.
 
+Speech that began over Heliox's voice and stopped it (a barge-in) is read for what it says (_interruption): a stop
+phrase, or words that cannot be read, stop Heliox and are acknowledged; a question or request, in a conversation
+Heliox is part of, is an interruption with words, and Heliox answers it.
+
 Language: the wake phrase and the button work in any language. The words of a follow-up are read in English
 (imperatives, question starts, narration), so in another language a follow-up is more often "Sorry?" or nothing.
 One part needs no words: a short reply that starts within QUICK_REPLY_SECONDS of Heliox's own question, and did
@@ -34,7 +38,9 @@ from pilot.system import voice_words
 FOLLOW_UP_SECONDS = 8.0  # people answer within about a second; 8 s leaves room to think, 30 s let a room in
 CLOSE_SECONDS = 20.0  # no confidently addressed utterance for this long: the wake phrase is needed again
 MONOLOGUE_SECONDS = 8.0  # a follow-up with more voice than this is talk, not a reply
-CUT_OFF_SECONDS = 1.6  # a word or two said over Heliox's voice is "stop", whatever it reads as (voice.is_cut_off_stop)
+# Up to this much voice said over Heliox, its words are read strictly (_interruption): recognisers misread "Wait,
+# stop." said over Heliox's own voice as "PowerShell", "Good score." or "Where we store home".
+CUT_OFF_SECONDS = 1.6
 # Right after Heliox answered the person, what they say next is taken as said to Heliox unless there is a reason to
 # think otherwise (said_elsewhere, _said_back). In the companion acceptance run (24 November) the person's replies
 # without the wake phrase began 0.5 to 2.9 s after Heliox's last word; the same 4 s as an elliptical follow-up.
@@ -251,6 +257,27 @@ def plausibly_addressed(text: str, *, question_open: bool, elliptical: bool = Tr
     if SECOND_PERSON.search(normalized) and len(words) <= 12:
         return "unclear"  # might be said to Heliox, might not
     return "talk"
+
+
+_FILLERS = frozenset({"okay", "ok", "oh", "um", "uh", "hey", "please", "just", "so", "and", "but", "well", "sorry",
+                      "yes", "yeah", "right", "hmm", "now", "then"})  # fmt: skip
+
+
+def _without_control(words: str) -> str:
+    """What is left once the control words and fillers at the start are taken off: "Actually, how tall is it" ->
+    "how tall is it"; "Okay, that's enough" -> "". ``words`` is the utterance's words joined by spaces."""
+    rest = words.strip()
+    while rest:
+        match = CONTROL.match(rest)
+        if match and match.end() > 0:
+            rest = rest[match.end() :].lstrip(" ,.!?;:-")
+            continue
+        first, _, tail = rest.partition(" ")
+        if first.casefold() in _FILLERS:
+            rest = tail.lstrip()
+            continue
+        break
+    return rest
 
 
 # What Heliox keeps about the person, said right after it spoke: "Forget that I'm a founder.", "Forget what I said.",
@@ -495,14 +522,10 @@ class Addressing:
             self._addressed()
             self._about_me_row = 0
             return Decision(True, heard.text.strip(), "button")
-        if (
-            heard.heliox_was_speaking
-            and 0 < heard.voiced_seconds <= CUT_OFF_SECONDS
-            and vocative_wake(heard.wake_text or heard.text, heard.other_text) is None
-        ):
-            # Heliox was talking and the person cut it off: it stops and acknowledges; the words go nowhere else.
-            # "Hey Heliox" over Heliox is not a stop: its voice has already stopped for it, and the request follows.
-            return Decision(True, "Stop", "cut-off")
+        if heard.heliox_was_speaking and vocative_wake(heard.wake_text or heard.text, heard.other_text) is None:
+            # The person talked over Heliox and its voice has stopped (a barge-in). "Hey Heliox" over Heliox is the
+            # start of a request and goes on below; anything else is read here.
+            return self._interruption(heard)
         wake = vocative_wake(heard.wake_text or heard.text, heard.other_text)
         if wake is None and heard.wake_text and heard.text != heard.wake_text:
             # The wake check's own words can misread what follows the name ("Hey Heliox and do that." for "Hey
@@ -556,6 +579,64 @@ class Addressing:
             self._sorry_given = True
             return Decision(False, why="unclear", say_sorry=True)
         return Decision(False, why=f"follow-up: {kind}")
+
+    def _interruption(self, heard: Heard) -> Decision:
+        """Speech that began over Heliox's voice and stopped it, read for what it says.
+
+        A stop phrase, or words that cannot be read, is a stop: Heliox acknowledges it and the words go nowhere
+        ("cut-off"). A question or request, in a conversation Heliox is part of, is an interruption with words:
+        Heliox has already stopped, and it answers ("interruption"). Up to CUT_OFF_SECONDS of voice the reading is
+        strict, since recognisers misread a quick "Wait, stop." said over Heliox ("Good score.", "Where we store
+        home", "PowerShell"): a question counts only with the "?" Whisper writes when it hears one, a request only
+        with two words or more. Over a remark Heliox Live made on its own (no conversation open), a short cut-off
+        is a stop and a sentence is not taken, as before. Never in a call (decided before this)."""
+        text = heard.text.strip()
+        short = 0 < heard.voiced_seconds <= CUT_OFF_SECONDS
+        stop = Decision(True, "Stop", "cut-off")
+        if not self.conversation_open:
+            return stop if short else Decision(False, why="no conversation open")
+        if not text or text == "(cut off)" or self._only_stops(text):
+            return stop if short else Decision(True, text.strip(" \t,.:;!?-") or "Stop", "follow-up: control")
+        kind = plausibly_addressed(text, question_open=False, language=self.language)
+        words = " ".join(w.group(0) for w in _words(text))
+        rest = _without_control(words)  # "Actually, how tall is it?" asks "how tall is it"; "And how long ..." too
+        if kind == "control":
+            if not short:
+                taken = Decision(True, text.strip(" \t,.:;!?-"), "follow-up: control")
+            elif self._reads_as_words(rest, text):
+                taken = Decision(True, text.strip(" \t,.:;!?-"), "interruption")
+            else:
+                return stop
+            self._addressed()
+            return taken
+        if kind == "talk" and rest and rest != words:
+            kind = plausibly_addressed(rest, question_open=False, language=self.language)
+        if kind in {"question", "request", "elliptical"} and not said_elsewhere(text):
+            if heard.voiced_seconds <= MONOLOGUE_SECONDS and (not short or self._reads_as_words(rest, text)):
+                self._addressed()
+                return Decision(True, text.strip(" \t,.:;!?-"), "interruption")
+        return stop if short else Decision(False, why="began while Heliox was talking")
+
+    def _reads_as_words(self, words: str, text: str) -> bool:
+        """A short reading over Heliox that is a real request or question: two words or more, not a line Whisper
+        writes from noise, and a question only when the recogniser heard it as one ("?")."""
+        from pilot.system.voice import looks_hallucinated
+
+        if len(words.split()) < 2 or looks_hallucinated(words):
+            return False
+        kind = plausibly_addressed(words, question_open=False, elliptical=True, language=self.language)
+        if kind == "request" or kind == "elliptical":
+            return True
+        return kind in {"question", "unclear"} and text.rstrip().endswith("?")
+
+    def _only_stops(self, text: str) -> bool:
+        """The whole utterance only stops or holds Heliox ("Wait, stop.", "Okay, that's enough", "Hold on")."""
+        from pilot.system import voice_words
+
+        if voice_words.is_control_word(text, self.language):
+            return True
+        words = " ".join(w.group(0) for w in _words(text))
+        return bool(words) and not _without_control(words)  # no English words at all is not "only stops"
 
     def _said_back(self, heard: Heard) -> bool:
         """Said back to Heliox right after it answered the person: begun within TALK_TAKEN_SECONDS of its last word

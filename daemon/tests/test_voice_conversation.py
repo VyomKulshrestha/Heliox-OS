@@ -296,14 +296,14 @@ async def test_a_cut_off_stops_and_is_acknowledged_without_reaching_the_planner_
 
 @pytest.mark.asyncio
 async def test_a_sentence_said_over_heliox_is_still_heard_as_what_it_is():
-    # Speech that began while Heliox was talking is not a follow-up (only a cut-off or a control word is): Live may
-    # hear it, nothing runs.
+    # Speech that stopped Heliox is read: a request or question to Heliox is an interruption it answers; talk only
+    # reaches Live, and nothing runs.
     listener, run = make_listener(
         ["Can you also add the budget figures from March to that"], suppressed=True, follow_up=30
     )
     listener.note_interruption()
     listener._recorder.last_voiced_seconds = 2.8
-    assert await run() == ([], ["Can you also add the budget figures from March to that"])
+    assert await run() == (["Can you also add the budget figures from March to that"], [])
     aside, run_aside = make_listener(["the meeting moved to Thursday afternoon"], suppressed=True, follow_up=30)
     aside.note_interruption()
     aside._recorder.last_voiced_seconds = 2.2
@@ -311,8 +311,13 @@ async def test_a_sentence_said_over_heliox_is_still_heard_as_what_it_is():
     request, run_request = make_listener(["Open my mail"], suppressed=True)
     request.note_interruption()
     request._recorder.last_voiced_seconds = 0.9
-    assert await run_request() == (["Stop"], [])  # a second said over Heliox is a stop, whatever it reads as
+    assert await run_request() == (["Stop"], [])  # over Heliox with no conversation open (Live's remark): a stop
+    asked, run_asked = make_listener(["Open my mail"], suppressed=True, follow_up=30)
+    asked.note_interruption()
+    asked._recorder.last_voiced_seconds = 0.9
+    assert await run_asked() == (["Open my mail"], [])  # in the conversation: a request, said over the reply
     quiet, run_quiet = make_listener(["Very discovered."], follow_up=30)
+    quiet._addressing.heliox_ended_at -= 5.0  # later than the few seconds in which what is said back is taken
     quiet._recorder.last_voiced_seconds = 1.0  # the same words without cutting Heliox off are not a stop
     assert await run_quiet() == ([], ["Very discovered."])
 
@@ -781,7 +786,11 @@ async def test_a_take_starts_a_clean_voice_conversation():
 
 
 @pytest.mark.asyncio
-async def test_a_cut_off_waits_for_no_recogniser():
+async def test_a_cut_off_is_read_and_its_misreading_is_still_a_stop():
+    # The words of a cut-off are read now (a question over Heliox is answered: tests/test_turn_interruption.py); a
+    # misreading of "Wait, stop." is still a stop by the rule.
+    from pilot.system.addressing import Addressing, Heard
+
     listener = ContinuousVoiceListener(wake_words=["hey heliox"], config=PilotConfig())
     listener.config.voice.transcription_engine = "whisper"
     listener._recorder._soundcard_recorder = object()  # the stream is "open"
@@ -793,8 +802,10 @@ async def test_a_cut_off_waits_for_no_recogniser():
     listener._recorder.record_utterance = record
     listener._transcribe_path = AsyncMock(return_value="Where we store home")
     listener.note_interruption()
-    assert await listener._record_and_transcribe(duration=3, timeout=None, keep_backlog=True) == "(cut off)"
-    listener._transcribe_path.assert_not_awaited()
+    text = await listener._record_and_transcribe(duration=3, timeout=None, keep_backlog=True)
+    assert text == "Where we store home"
+    decision = Addressing(clock=lambda: 0.0).decide(Heard(text, 0.0, 0.9, 0.9, heliox_was_speaking=True))
+    assert decision.act and decision.command == "Stop" and decision.why == "cut-off"
 
 
 @pytest.mark.asyncio

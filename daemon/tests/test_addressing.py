@@ -167,7 +167,8 @@ def test_speech_that_began_while_heliox_was_talking_is_not_a_follow_up_unless_it
     rule.decide(heard("Hey Heliox, read my mail", clock.now))
     rule.heliox_finished()
     clock.now += 1
-    # A sentence over Heliox (longer than a cut-off) is not taken; a control word is.
+    # A sentence over Heliox said to the room is not taken; a control word is (a question or request said to Heliox
+    # is an interruption: tests/test_turn_interruption.py).
     assert not rule.decide(heard("Open the deck for everyone", clock.now, heliox_was_speaking=True, voiced=2.5)).act
     assert rule.decide(heard("Stop, that is enough now", clock.now, heliox_was_speaking=True, voiced=2.0)).act
 
@@ -259,7 +260,7 @@ def test_how_a_follow_up_reads(text, kind):
     assert plausibly_addressed(text, question_open=False) == kind
 
 
-def test_a_word_or_two_over_heliox_is_a_stop_whatever_it_reads_as():
+def test_a_word_or_two_over_heliox_that_are_not_clearly_words_are_a_stop():
     clock = Clock()
     rule = Addressing(clock=clock)
     decision = rule.decide(heard("Great score.", clock.now, heliox_was_speaking=True, voiced=0.74))
@@ -340,9 +341,10 @@ def test_a_short_elliptical_follow_up_right_after_heliox_s_answer_is_taken(text)
     assert decision.act and decision.why == "follow-up: elliptical"
 
 
-def test_an_elliptical_follow_up_is_not_taken_late_over_heliox_or_in_a_call():
+def test_an_elliptical_follow_up_is_not_taken_late_or_in_a_call_and_over_heliox_is_an_interruption():
     assert not answered(6.0, "And tomorrow?").act  # later than 4 s: read as words, and "And ..." is narration
-    assert not answered(0.5, "And tomorrow?", over=True, voiced=2.0).act  # began over Heliox's voice
+    over = answered(0.5, "And tomorrow?", over=True, voiced=2.0)  # said over Heliox: it stopped, and it answers
+    assert over.act and over.why == "interruption"
     assert not answered(1.0, "And tomorrow?", in_call=True).act
     # Too long to be elliptical, and narration naming neither the person nor Heliox: not said back either.
     assert not answered(1.0, "And then we went home after the movie.").act

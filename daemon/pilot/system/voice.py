@@ -211,14 +211,15 @@ SHORT_CUT_OFF_SECONDS = 1.6  # "Wait, stop." is about a second of voice; a sente
 
 
 def is_cut_off_stop(voiced_seconds: float | None) -> bool:
-    """Speech that began while Heliox was talking and holds at most SHORT_CUT_OFF_SECONDS of voice is "stop".
+    """Speech that began while Heliox was talking and holds at most SHORT_CUT_OFF_SECONDS of voice is a cut-off: its
+    words are read strictly, and unless they are clearly a question or a request it is "stop".
 
-    Whatever the recognisers make of it. Said over Heliox's voice, "Wait, stop." came out as "PowerShell",
-    "Brutes gold", "Bruins go home", "Very discovered.", "Good score.", "Visual Studio Code." and "Where we store
-    home" in four rehearsals: at this length the words cannot be trusted, and nothing a person means as a request
-    fits in a second and a half said over someone else. Heliox has already stopped talking; it acknowledges, and the
-    words go nowhere (with an approval waiting, "Stop" denies it, as a spoken "No" would). A longer utterance said
-    over Heliox is heard as what it is.
+    Said over Heliox's voice, "Wait, stop." came out as "PowerShell", "Brutes gold", "Bruins go home", "Very
+    discovered.", "Good score.", "Visual Studio Code." and "Where we store home" in four rehearsals: those are still
+    a stop. "Actually, how tall is it?" (about 1.2 s of voice) is a question, and Heliox answers it
+    (addressing._interruption). Heliox has already stopped talking either way; after a stop it acknowledges (with an
+    approval waiting, "Stop" denies it, as a spoken "No" would). A longer utterance said over Heliox is heard as what
+    it is.
     """
     return voiced_seconds is not None and voiced_seconds <= SHORT_CUT_OFF_SECONDS
 
@@ -437,6 +438,20 @@ class BargeInGate:
         self._first: float | None = None
         self._samples: list[tuple[float, float]] = []  # (when, microphone level) while Heliox talks
 
+    def seed(self, samples: list[tuple[float, float]]) -> None:
+        """Start from what the microphone heard while Heliox spoke the piece before this one of the same reply: how
+        loud Heliox is in the microphone is known from the first moment, so speech the person begins in the gap
+        between two pieces, or just as the next one starts, is judged at once instead of never (BargeInWatcher)."""
+        kept = [(float(when), float(level)) for when, level in samples][-400:]
+        if kept:
+            self._samples = kept
+            self._first = kept[0][0]
+
+    def echo_samples(self) -> list[tuple[float, float]]:
+        """The levels heard before the person started talking: Heliox alone, for the next piece's gate."""
+        started = self._started
+        return [(when, level) for when, level in self._samples if started is None or when < started]
+
     def push(self, now: float, speaking: bool, level: float) -> bool:
         if self._first is None:
             self._first = now
@@ -471,20 +486,52 @@ class BargeInWatcher:
     """
 
     POLL_SECONDS = 0.02
+    # The echo heard during the last piece is used for the next one when that one starts within this long: the
+    # pieces of one reply follow each other with a gap of a few tenths of a second.
+    ECHO_CARRY_SECONDS = 3.0
+    # Voice that began this long after the last piece ended, and before this piece's watch began, is the person:
+    # Heliox's own echo of the last piece has died away by then, and this piece has not started.
+    ECHO_TAIL_SECONDS = 0.15
 
     def __init__(self, listener: Any, *, echo_free: bool, clock: Any = time.monotonic) -> None:
         self.listener = listener
         self.gate = BargeInGate(echo_free=echo_free)
         self.clock = clock
         self.detected_at: float | None = None
+        self.began_at: float | None = None
+        self.last_piece_ended: float | None = None
+        carried = getattr(listener, "barge_echo", None)
+        if isinstance(carried, tuple) and len(carried) == 2 and isinstance(carried[0], float):
+            if 0.0 <= clock() - carried[0] <= self.ECHO_CARRY_SECONDS:
+                self.gate.seed(list(carried[1]))
+                self.last_piece_ended = carried[0]
 
     @property
     def is_active(self) -> bool:
         return bool(self.listener.is_running and self.listener._recorder.is_active)
 
+    def _began_in_the_gap(self, since: Any) -> bool:
+        """The person's voice began before this piece's watch began, and after Heliox's last piece (and its echo)
+        ended: it cannot be Heliox, so it is judged on the headset's hold from when it began."""
+        if not isinstance(since, float) or self.began_at is None or since >= self.began_at:
+            return False
+        ended = self.last_piece_ended
+        if ended is not None and since < ended + self.ECHO_TAIL_SECONDS:
+            return False
+        return self.clock() - since >= self.gate.headset_hold
+
     async def wait_for_speech_start(self, timeout: float | None = None) -> bool:
+        try:
+            return await self._wait_for_speech_start(timeout)
+        finally:
+            # The next piece of the reply starts from what this one heard of Heliox (BargeInGate.seed).
+            with contextlib.suppress(Exception):
+                self.listener.barge_echo = (self.clock(), self.gate.echo_samples())
+
+    async def _wait_for_speech_start(self, timeout: float | None = None) -> bool:
         deadline = None if timeout is None else self.clock() + timeout
         recorder = self.listener._recorder
+        self.began_at = self.clock()
         while deadline is None or self.clock() < deadline:
             continuing = getattr(self.listener, "continuation_due", None)
             if (
@@ -503,7 +550,8 @@ class BargeInWatcher:
             speaking = (
                 (since is not None) if since is None or isinstance(since, float) else self.listener.user_is_speaking
             )
-            if self.gate.push(self.clock(), bool(speaking), float(recorder.last_frame_rms)):
+            pushed = self.gate.push(self.clock(), bool(speaking), float(recorder.last_frame_rms))
+            if pushed or (speaking and self._began_in_the_gap(since)):
                 self.detected_at = self.clock()
                 self.listener.note_interruption()
                 logger.info("The person started talking over Heliox; stopping speech")
@@ -3842,6 +3890,9 @@ class ContinuousVoiceListener:
         self._early_words = ""  # its words, normalised as the conversation layer compares them
         self._early_count = 0  # early requests started for this utterance (EARLY_REQUESTS_PER_TURN at most)
         self._interrupted_until = 0.0
+        # When the last barge-in watcher ended, and the levels it heard of Heliox alone: the next piece of the same
+        # reply starts from them (BargeInWatcher, BargeInGate.seed).
+        self.barge_echo: tuple[float, list[tuple[float, float]]] | None = None
         # The microphone button addresses the next sentence whatever it says; talking over Heliox does not.
         self._button_until = 0.0
         # Heliox's last words to the person asked them something ("Which file?"): a short answer is a reply.
@@ -5373,13 +5424,8 @@ class ContinuousVoiceListener:
             if early is not None and self.turn_ended is not None:
                 self._hum_at_turn_end(early, speculation.proof)
             heard = await streaming.finish() if streaming is not None else ""
-            if self._cutting_off(final=True) and not loose_wake_prefix(heard):
-                # A short cut-off over Heliox is a stop whatever it says (is_cut_off_stop): no recogniser is waited
-                # for, and the streaming guess is kept only for the log. One that sounds like "Hey Heliox" is read
-                # by the accurate pass: it is the start of a request, and the rule does not take it as a stop.
-                transcript = heard or "(cut off)"
-                self.last_transcription_engine = "none"
-            elif heard and is_safe_fast_phrase(heard):
+            cutting_off = self._cutting_off(final=True)
+            if heard and is_safe_fast_phrase(heard):
                 # "No", "Stop", "Wait": safe to act on from the fast recogniser (they only stop or deny).
                 transcript = heard
                 self.last_transcription_engine = "streaming"
@@ -5390,11 +5436,16 @@ class ContinuousVoiceListener:
                 self.last_transcription_engine = "whisper"  # _transcribe_path says "parakeet" when it used it
                 # Started at the candidate end, 200 ms into the quiet, when the turn ended there: most of the pass
                 # has already run by the time the end of turn is decided.
+                # Said over Heliox for a moment (a cut-off), the words are read too: a stop phrase stops (the fast
+                # recogniser's "Stop" above, at once), and a question is an interruption Heliox answers
+                # (addressing._interruption). Heliox's voice stopped at the barge-in, before any of this.
                 transcript = await early if early is not None else await self._traced_final_pass(audio_path)
                 if not transcript and heard and not self._final_pass_available():
                     transcript = heard
                     self.last_transcription_engine = "streaming"
-                if transcript and heard and self._on_partial and not self._cutting_off(final=True):
+                if not transcript and cutting_off:
+                    transcript = "(cut off)"  # nothing readable: still the person stopping Heliox, acknowledged
+                if transcript and heard and self._on_partial and not cutting_off:
                     self._schedule(self._on_partial, transcript)  # the caption shows the words acted on
             if early is not None and not early.done():
                 early.cancel()

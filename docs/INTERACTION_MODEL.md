@@ -1595,7 +1595,27 @@ unless it is a line Whisper writes from noise ("Thanks for watching.", one word 
 question is when noise or Heliox's own voice through open speakers is most likely to be read as words. This is
 tested on written sentences only (text); no one has yet spoken to Heliox in another language.
 Control words ("Stop", "Wait") are English only; talking over Heliox for a moment stops it in any language (from
-the code: the cut-off is judged on the length of the voice, not its words; shown on English recordings only).
+the code: its voice stops on voice activity, before any words are read; shown on English recordings only).
+
+**Talking over Heliox** (`Addressing._interruption`, 24 November). Heliox falls silent at the barge-in, as before,
+about a quarter of a second after the first word. What happens next depends on the words, which are now read: a stop
+phrase ("Wait, stop.", "That's enough.", "Hold on") or words that cannot be read stop Heliox and are acknowledged
+("Okay, stopped."); a question or request, in a conversation Heliox is part of, is an interruption with words, and
+Heliox answers it with the cut reply in the conversation. Up to 1.6 s of voice the reading is strict, because
+recognisers misread a quick "Wait, stop." said over Heliox ("Good score.", "Where we store home", "PowerShell"): a
+question counts only with the "?" Whisper writes when it hears one, a request only with two words or more; those
+misreadings are still a stop. A stop the fast recogniser hears is acted on at once; otherwise the accurate pass is
+waited for (about 0.6 s), so "Okay, stopped." can come that much later than before, never Heliox's silence. Over a
+remark Live made on its own nothing changes. Before, "Actually, how tall is it?" (1.2 s) over Heliox was "Stop" and
+was never answered (acceptance run, s2a-1).
+
+**Speech begun between two pieces of a reply** (`BargeInWatcher`, `BargeInGate.seed`). With open speakers the gate
+judges the person against how loud Heliox is in the microphone, and a new gate for each piece had no such level for
+its first half second: speech that began in the 0.25 s gap before the next piece was never judged, the piece played
+2.7 s over it and its words were dropped (s2a-2). Each piece's gate now starts from the levels the last piece's gate
+heard of Heliox alone, and voice that began after the last piece's echo died away and before this piece started is
+taken as the person on a headset's hold. The utterance is then an interruption like any other, and its words are
+read as above.
 
 **Overheard speech** goes only to Heliox Live, marked not addressed, which does not check it: no card, nothing kept.
 It is never stored as conversation and never sent to a cloud model. **Fakes only**: unit tests with recognised text.
