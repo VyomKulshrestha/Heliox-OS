@@ -1,5 +1,6 @@
 """Shared test fixtures."""
 
+import contextlib
 import importlib.util
 import os
 import sys
@@ -125,9 +126,19 @@ def kokoro_module_restored():
     # test starts as a daemon does, with neither.
     voices = (local_tts_worker._configured, local_tts_worker._handover, local_tts_worker._manager)
     local_tts_worker._configured, local_tts_worker._handover = None, None
+    # The voice's store, set on the module's manager by configure_local_voice, and the fixed sentences being made
+    # ahead: a later test that warms the voice (PilotServer._prewarm_voice) would otherwise start making them in its
+    # own loop and end with that task pending ("Task was destroyed but it is pending").
+    store, making = local_tts_worker._manager.head_cache, local_tts_worker._making_ahead
+    local_tts_worker._making_ahead = None
     yield
     kokoro_tts._device, kokoro_tts._offline_by_us, voice._daemon_config = saved
+    started = local_tts_worker._making_ahead
+    if started is not None and started is not making and not started[1].done():
+        with contextlib.suppress(RuntimeError):  # its loop has closed: it can no longer run, only be dropped
+            started[1].cancel()
     local_tts_worker._configured, local_tts_worker._handover, local_tts_worker._manager = voices
+    local_tts_worker._manager.head_cache, local_tts_worker._making_ahead = store, making
 
 
 @pytest.fixture

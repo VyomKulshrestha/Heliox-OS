@@ -287,6 +287,8 @@ async def test_changing_engine_or_device_releases_the_running_worker(monkeypatch
             break
         await asyncio.sleep(0)
     assert not manager.running
+    await manager.shutdown()  # the closing and the idle watch end here, not pending when the test's loop closes
+    assert not [task for task in manager._background if not task.done()]
 
 
 def test_settings_are_clamped_to_sensible_values() -> None:
