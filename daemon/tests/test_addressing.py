@@ -54,6 +54,38 @@ def test_the_name_said_about_heliox_or_something_like_it_does_not_wake_it(text):
     assert vocative_wake(text) is None
 
 
+@pytest.mark.parametrize(
+    ("text", "command"),
+    [
+        # The acceptance run (24 November), 0 of 3 before: Whisper wrote a full stop where no question was heard.
+        ("Hey Heliox, and roughly how many people live there.", "and roughly how many people live there"),
+        ("Heliox, and what about tomorrow?", "and what about tomorrow"),
+        ("Hey Heliox and what about Sydney", "and what about Sydney"),
+        ("Hey Heliox. Or the red one.", "Or the red one"),
+    ],
+)
+def test_the_name_then_and_goes_on_with_the_conversation(text, command):
+    wake = vocative_wake(text)
+    assert wake is not None and wake.command == command
+    clock = Clock()
+    decision = Addressing(clock=clock).decide(heard(text, clock.now))  # no conversation open: the wake phrase alone
+    assert decision.act and decision.why == "wake" and decision.command == command
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Heliox and I went to the market on Sunday.",  # no pause, no "Hey": talk about Heliox
+        "Hey Heliox and I are a good team.",  # a compound subject
+        "Heliox, and me, we built the launch deck.",
+        "Heliox and Notion are the apps I use.",
+        "Heliox, is a nice name for a project.",
+    ],
+)
+def test_heliox_and_someone_as_the_subject_is_still_talk_about_heliox(text):
+    assert vocative_wake(text) is None
+
+
 def test_a_misheard_name_counts_only_when_the_second_recogniser_heard_the_same_start():
     assert vocative_wake("Hey Heliocs, undo that", "Hey Lokes, undo that.") is not None
     assert vocative_wake("Hey Heliocs, undo that", "Hey Felix, open the door.") is None

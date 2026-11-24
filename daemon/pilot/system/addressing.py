@@ -184,7 +184,12 @@ def vocative_wake(text: str, other_text: str = "") -> Wake | None:
     command = rest.strip(" \t,.:;!?-–")
     if after:
         first = after[0].group(0).casefold()
-        if first in THIRD_PERSON and not SECOND_PERSON.search(rest) and not rest.rstrip().endswith("?"):
+        if first in CONTINUING and (pause or index == 1) and not _compound_subject(after):
+            # "Hey Heliox, and roughly how many people live there.": the person goes on with the conversation, and
+            # the recogniser put a full stop where they did not ask with their voice. "Heliox and I went ..." (no
+            # pause, no "Hey") stays talk about Heliox; so does "Hey Heliox and I ...", a compound subject.
+            pass
+        elif first in THIRD_PERSON and not SECOND_PERSON.search(rest) and not rest.rstrip().endswith("?"):
             # "Heliox is ...", "Heliox can do that", and with a pause the recogniser put in, "Heliox, is a nice
             # name for a project" (the bench's synthetic meeting): talk about Heliox. "Heliox, is it raining?" and
             # "Heliox, can you ..." are questions to it.
@@ -194,6 +199,14 @@ def vocative_wake(text: str, other_text: str = "") -> Wake | None:
     if not exact and not _agrees(command, other_text):
         return None
     return Wake(text[:end], command, exact)
+
+
+CONTINUING = {"and", "or"}  # after the name and a pause or a "Hey": the person goes on, as in "Hey Heliox, and ..."
+
+
+def _compound_subject(after: list[re.Match[str]]) -> bool:
+    """ "and I", "and me", "or my sister": Heliox named with someone else as the subject of what follows."""
+    return len(after) > 1 and after[1].group(0).casefold() in {"i", "me", "my", "myself", "we", "us", "he", "she"}
 
 
 def _agrees(command: str, other_text: str) -> bool:

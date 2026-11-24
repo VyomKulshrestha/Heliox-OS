@@ -1509,7 +1509,10 @@ sounds like a command; "Open the deck" in a meeting is for the meeting.
 
 **The wake phrase counts only when it is said to Heliox.** It must open the utterance, optionally after "Hey",
 "Hi", "Okay" or "Hello", and be followed by a pause or by words said to Heliox: "Hey Heliox, open my mail",
-"Heliox, what time is it?", "Hey Heliox." It does not count when Heliox is talked about ("Heliox is the app I use",
+"Heliox, what time is it?", "Hey Heliox." "Hey Heliox, and roughly how many people live there." counts too: "and" or "or"
+after the name and a pause (or a "Hey") goes on with the conversation, whatever mark the recogniser ends on (0 of 3 in
+the 24 November acceptance run before; "Heliox and I went ..." is still talk about Heliox). It does not count when
+Heliox is talked about ("Heliox is the app I use",
 "Heliox's settings", "I asked Heliox"), for a web address ("Heliox.com"), or for words that only resemble it
 ("Helix", "Hello, Alex", "Helium"). Recognisers write the name in other ways ("Heliocs", "Helios"); such a spelling
 counts only when the second recogniser heard the same words after it, so a misheard name needs two opinions while
