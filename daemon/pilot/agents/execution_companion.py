@@ -148,6 +148,7 @@ class ExecutionCompanion:
         scope_advisor: Any | None = None,
         undo_enabled: Callable[[], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        wait: Callable[..., Any] = asyncio.wait,
     ) -> None:
         self._model = model_router
         # Undo is only offered when the caller says the undo journal is on.
@@ -156,6 +157,9 @@ class ExecutionCompanion:
         # No bundled or unverified learned checkpoint is loaded by default.
         self._scope_advisor = scope_advisor
         self._clock = clock
+        # How the model call is polled (asyncio.wait's signature): the limit is measured on ``clock``, the same clock
+        # the log's "did not answer within" reads, so the two always agree.
+        self._wait = wait
         self._timeout_streak = 0
         self._skip_until = 0.0
 
@@ -182,12 +186,11 @@ class ExecutionCompanion:
     async def _generate_within_limit(self, prompt: str, others_running: Callable[[], bool] | None) -> str:
         """The model call, given its own limit or, while other reviews of the same plan still run, up to
         ``SHARED_WAIT_CEILING_SECONDS``: the person waits for those anyway, so waiting with them costs nothing."""
-        loop = asyncio.get_running_loop()
-        started = loop.time()
+        started = self._clock()
         task = asyncio.ensure_future(self._model.generate(prompt, system=_SYSTEM_PROMPT, json_mode=True))
         try:
             while True:
-                elapsed = loop.time() - started
+                elapsed = self._clock() - started
                 limit = self._timeout_seconds
                 if others_running is not None and self._timeout_streak:
                     # The last review ran out of time: this one only rides along with the other reviews and never
@@ -197,7 +200,7 @@ class ExecutionCompanion:
                     limit = max(limit, SHARED_WAIT_CEILING_SECONDS)
                 if elapsed >= limit:
                     raise TimeoutError
-                done, _ = await asyncio.wait({task}, timeout=min(SHARED_WAIT_POLL_SECONDS, limit - elapsed))
+                done, _ = await self._wait({task}, timeout=min(SHARED_WAIT_POLL_SECONDS, limit - elapsed))
                 if done:
                     return task.result()
         finally:

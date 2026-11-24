@@ -384,23 +384,53 @@ async def test_the_companion_may_finish_while_other_reviews_of_the_plan_still_ru
     assert review.status == "reviewed" and review.decision == "CONTINUE"
 
 
+class _NeverAnswers:
+    """A model that answers only when cancelled: how long the companion waits is decided by its clock alone."""
+
+    def __init__(self) -> None:
+        self.cancelled = 0
+
+    async def generate(self, prompt: str, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+
+
+class _PolledClock:
+    """The companion's clock, moved on only by its own polls: each wait for the model passes exactly its timeout."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.polls = 0
+
+    def __call__(self) -> float:
+        return self.now
+
+    async def wait(self, tasks, timeout=None):
+        self.polls += 1
+        self.now += timeout
+        await asyncio.sleep(0)
+        done = {task for task in tasks if task.done()}
+        return done, set(tasks) - done
+
+
 @pytest.mark.asyncio
 async def test_the_companion_stops_waiting_when_the_other_reviews_are_done_and_says_why(caplog):
-    model = _SlowModel(5.0)
-    companion = ExecutionCompanion(model, timeout_seconds=1.0)
-    loop = asyncio.get_running_loop()
-    others_until = loop.time() + 0.3
-    started = loop.time()
+    model, clock = _NeverAnswers(), _PolledClock()
+    companion = ExecutionCompanion(model, timeout_seconds=1.0, clock=clock, wait=clock.wait)
+    others_until = clock.now + 0.3  # the other reviews finish 0.3 s in
+    started = clock.now
 
     with caplog.at_level("WARNING", logger="pilot.agents.execution_companion"):
-        review = await companion.review(
-            "Show the OS version.", _plan(), others_running=lambda: loop.time() < others_until
-        )
+        review = await companion.review("Show the OS version.", _plan(), others_running=lambda: clock() < others_until)
 
     assert review.status == "unavailable" and review.reviewed is False
-    # Its own 1 s limit: it waited past the others (timers never fire early), and it gave up rather than wait for the
-    # 5 s model under the 20 s ceiling, which would have returned the model's answer instead of "unavailable".
-    assert loop.time() - started >= 0.95
+    # Its own 1 s limit, past the others: it gave up at 1.0 s rather than wait under the 20 s ceiling, which would
+    # have returned the model's answer instead of "unavailable".
+    assert clock.now - started == pytest.approx(1.0)
+    assert clock.polls == 10  # one poll every 0.1 s (SHARED_WAIT_POLL_SECONDS), counted
     assert model.cancelled == 1
     message = caplog.records[-1].getMessage()
     assert "did not answer within 1.0 s" in message and "limit 1 s" in message
