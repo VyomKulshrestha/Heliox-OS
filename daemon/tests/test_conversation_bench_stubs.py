@@ -22,7 +22,7 @@ async def test_the_model_is_told_a_made_up_app(monkeypatch):
         focus, setting="auto", model_local=False, excluded_apps=[], label=lambda name: name
     )
     sent = str(build_messages("hello", ContextSources(), ConversationMemory(), screen=screen))
-    assert f"The person is in {stubs.BENCH_APP}." in sent and "SomeRealApp" not in sent
+    assert f"The app in front of them: {stubs.BENCH_APP} (" in sent and "SomeRealApp" not in sent
 
 
 def test_a_run_can_ask_for_the_real_one(monkeypatch):

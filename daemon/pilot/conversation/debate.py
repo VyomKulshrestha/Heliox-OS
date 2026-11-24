@@ -65,7 +65,7 @@ def effective(setting: str, *, local: bool) -> str:
 
 
 _LEVEL = {
-    "when_it_matters": "Speak up only when it matters: the clash or the risk is real and they may not have seen it. "
+    "when_it_matters": "Speak up only when it matters: the clash or the risk is real and easy to miss. "
     "Let small things go without comment.",
     "often": "Speak up whenever you have such a reason, even a small one, and name the trade-off. Still let pure taste "
     "go.",
@@ -87,6 +87,8 @@ def prompt_section(setting: str, *, spoken: bool = True) -> str:
         "what they said earlier), a named risk (it cannot be undone, it costs money, it affects other people), or a "
         "trade-off you state. No reason, no disagreement. Never disagree for show, over taste, or on a guess.\n"
         f"- {_LEVEL[value]}\n"
+        '- Say it to them, as "you": "That\'s your only copy.", never "their" or "the person". State the '
+        'fact; never judge them (no "you may not have weighed", no "please be careful").\n'
         "- Every reply that pushes back ends with one more line: STANCE: <the topic in two to five words>. Heliox "
         "does not say that line aloud. Never write it in a reply that agrees or gives way.\n"
         '- If they give a new reason, weigh it. If it answers your point, say so in a few words, like "Fair, that '
@@ -575,12 +577,12 @@ class Debate:
 # the question: nothing more is asked. Harmless requests (open, play, set a timer) never go near a model.
 
 CONCERN_PROMPT = (
-    "You are Heliox, a voice companion on the person's computer. Their last words ask Heliox to do something, and "
-    "Heliox will do it once they approve it on the screen. If you have a reason against it that you can name, from "
-    "what you are told about them (their to-dos, their earlier words, what they said about it) or a risk they may not "
-    "have seen (it cannot be undone, it costs money, it reaches other people), write that reason as one short spoken "
-    'sentence of at most 15 words, the way a friend would: "That\'s your only copy of the thesis." No question, no '
-    "offer, no advice list, and never say Heliox did or will do anything. If you have no such reason, write only NONE."
+    "You are Heliox, a voice companion, speaking to the person at their computer. Their last words ask you to do "
+    "something, and it will be done once they approve it on the screen. If there is a fact against it that you were "
+    "told (their to-dos, their earlier words, what they said about it) or a plain risk (it cannot be undone, it costs "
+    "money, it reaches other people), write that fact as one short spoken sentence of at most 15 words, said to them "
+    'as "you": "That\'s your only copy of the thesis." State the fact only: no "their", no judgment of them, no '
+    "question, no offer, no advice, and never say anything was or will be done. Otherwise write only NONE."
 )
 CONCERN_WORDS = 20
 CONCERN_SECONDS = 4.0  # the longest the concern's call may take; after that it is not said
@@ -595,6 +597,13 @@ def wants_direct_concern(verb: str) -> bool:
     return costly(verb, "")
 
 
+# Not said to the person, or a judgment of them: "it's their only copy", "a risk you may not have weighed".
+_NOT_SAID_TO_THEM = re.compile(
+    r"\b(?:their|they|them|the person|weighed|thought (?:it )?through|considered|be careful|make sure you)\b",
+    re.IGNORECASE,
+)
+
+
 def concern_from_reply(reply: str) -> str:
     """The one sentence a concern call may have said, or "" (NONE, a question, an offer, too long, a claim)."""
     text = " ".join(str(reply or "").split()).strip().strip('"')
@@ -603,6 +612,8 @@ def concern_from_reply(reply: str) -> str:
         return ""
     first = re.split(r"(?<=[.!])\s+", text, maxsplit=1)[0].strip()
     if not first or first.endswith("?") or len(first.split()) > CONCERN_WORDS or _NOT_A_CONCERN.match(first):
+        return ""
+    if _NOT_SAID_TO_THEM.search(first):
         return ""
     return first if first.endswith((".", "!")) else first + "."
 

@@ -217,6 +217,15 @@ or a trade-off it states. No reason, no disagreement.
   4 s after the hand-over. Not asked for a typed request, a model on this computer (it would share the cores the
   planner needs), with the setting off, for a follow-up in a room that is not quiet, or when the topic was voiced
   already in this conversation. Every other request (open, play, find, a timer) reaches no model before the planner.
+  The reason is said to the person as "you" and states the fact, with no judgment of them; a reply in the third
+  person or with one ("their only copy", "you may not have weighed") is not said.
+- After the approval pointer, the company says nothing more until the approved plan runs (`acting`, `verifying`,
+  `correcting`); Heliox's own voice playing (the phase reads `speaking`) is never taken for progress. A spoken "no"
+  to the waiting approval gets one closing line: the dropped sentence, never also the task's own "Cancelled before
+  execution." (the two heard in the spoken run came from that run's stand-in for the planner, which bypasses
+  `_handle_execute`).
+- A reply that gives way while a disagreement is open ends there: no "but" after "Okay, your call.". A question with
+  an offer tucked in after "or" ("Do you have a backup, or should I look ...?") is said without the offer.
 - Stop, wait, cancel and no never reach the debate, and a "do it anyway" while an approval waits on the screen is
   neither an approval nor a request. Waiting for the STANCE line after a reply cut at a question (at most 1 s, with
   nothing said) ends at once when the person speaks.
@@ -572,7 +581,8 @@ Each turn the model gets, in this order, dropping from the end when the block pa
    the words the person has just said themselves and the time ("a to-do about "report", due tomorrow at 09:00 in the morning"), or
    only that something is due then, since to-dos and reminders read out in code stay on this computer; with
    `share_profile` off a cloud model gets nothing from here;
-3. the focused app (see the table below);
+3. the focused app (see the table below), given as context the model mentions only when the person asks or it bears
+   on what they say;
 4. profile lines from `UserProfile.context_lines`, chosen for the words (see "What the model is sent about the
    person" below), and the person's answer length when they set one;
 

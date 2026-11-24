@@ -180,6 +180,8 @@ def progress_sentence(phase: str, message: str) -> str:
     return "Still working on it."
 
 
+# After the approval sentence, the phases that mean something changed: the approved plan runs.
+MOVED_ON_AFTER_APPROVAL = frozenset({"acting", "verifying", "correcting"})
 APPROVAL_SENTENCE = "This one needs your approval. It's on the screen; press Approve if you want it to go ahead."
 # The person changed a request while its dialog was open: that dialog was closed (never approved), and then a new one.
 CHANGING = "Okay, I've closed that one and I'm changing it."
@@ -296,6 +298,10 @@ async def _keep_company(
             said_at = clock()
             continue
         if now - started < progress_after or (lines and now - said_at < spacing) or phase == "awaiting_approval":
+            continue
+        if phase == "speaking" or (approval_said and phase not in MOVED_ON_AFTER_APPROVAL):
+            # Heliox's own voice is playing (the phase reads "speaking" meanwhile), or the approval was pointed out
+            # and the work has not moved on: nothing to add until it runs, or the person answers the dialog.
             continue
         if user_speaking():
             continue  # never over the person; the line waits for the next poll

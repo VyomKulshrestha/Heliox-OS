@@ -253,6 +253,21 @@ _RESUME_LEAD = re.compile(
 )
 
 
+# An offer tucked into a question after "or" ("Do you have a backup, or should I look for space elsewhere first?"):
+# the offer rules only see a sentence that starts with one. The question is kept, the offer is not.
+_EMBEDDED_OFFER = re.compile(
+    r",?\s+or\s+(?:should i|shall i|do you want me to|want me to|would you like me to|i can|i could)\b[^?]*\?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _without_embedded_offer(sentence: str) -> str:
+    if not sentence.rstrip().endswith("?"):
+        return sentence
+    kept = _EMBEDDED_OFFER.sub("?", sentence)
+    return kept if len(kept.split()) >= 2 else sentence
+
+
 def _without_resume_lead(sentence: str) -> str:
     rest = _RESUME_LEAD.sub("", sentence, count=1)
     if rest == sentence or not rest:
@@ -1183,6 +1198,9 @@ class ConversationLayer:
         hold_allowed = self._may_hold()
         self._held_last_turn = False
         statement = decided.reason == "statement"
+        # A disagreement open as this turn starts: a reply that gives way ends there ("Okay, your call."), with no
+        # "but" after it.
+        stance_open = self.debate.stance is not None or self.debate.giving
         # A statement of fact with no disagreement open (debate.states_a_fact): acknowledged, never argued.
         fact = (
             self.debate.on
@@ -1275,6 +1293,7 @@ class ConversationLayer:
                 skipping = not getattr(sentence, "ends", True)  # cleared below once this piece is said
                 # Spoken text is cleaned for the ear; typed text keeps its markdown for the chat view.
                 clean = drop_action_claims(sentence) if typed else clean_for_speech(sentence, first=first)
+                clean = _without_embedded_offer(clean)  # "Do you have a backup, or should I look ...?"
                 if not typed and not self._was_cut_lately():
                     # "As I was saying" when nothing was cut off: there was nothing to pick up.
                     clean = _without_resume_lead(clean)
@@ -1337,6 +1356,10 @@ class ConversationLayer:
                 if outcome in HEARD or outcome == "duplicate":
                     said.append(clean)
                     result.spoken.append(clean)
+                if not typed and stance_open and dbt.gives_way(clean):
+                    # Gave way: nothing more on this turn, or the next sentence argues the point again.
+                    capped = True
+                    break
                 if not typed and ends_with_question(clean):
                     # One question per turn, and it ends the reply: the person answers it, not a second one.
                     capped = True

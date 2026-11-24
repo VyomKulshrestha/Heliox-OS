@@ -237,7 +237,8 @@ NOTHING_SAVED = (
 MARK_START = "[left out: "  # pilot.conversation.withheld.MARK_START
 LEFT_OUT = (
     "Where their words show [left out: ...], they said a secret (a PIN, a password, a code or a number like that). "
-    "Heliox kept it on this computer and does not keep or use secrets said aloud. Never ask for it or guess it."
+    "Heliox kept it on this computer and does not keep or use secrets said aloud. Never ask for it or guess it, "
+    "and don't tell them how to handle it."
 )
 
 LENGTH_LINES = {
@@ -290,7 +291,9 @@ def assemble(
     if screen is _UNSET:
         screen = _safe(sources.screen, None)
     if isinstance(screen, Screen) and screen.app:
-        sections.append(f"The person is in {screen.app}.")
+        sections.append(
+            f"The app in front of them: {screen.app} (mention it only if they ask or it bears on what they say)."
+        )
         if screen.excerpt:
             sections.append(f"End of the text they are writing there: {screen.excerpt!r}")
     last = memory.last_heliox()
