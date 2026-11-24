@@ -501,11 +501,24 @@ class LocalVoiceNotReady(LocalTTSUnavailable):
 
 
 # One voice per reply. A reply is often several speak() calls (the conversation layer says each sentence as it comes,
-# after a hum or a holding phrase), so the voice the first of them used is kept for the rest: the person never hears
-# the voice change inside a reply, and Heliox's own voice, once ready, takes over at the next reply. A reply ends when
-# the person is heard again (prewarm) or when Heliox has said nothing for REPLY_GAP_SECONDS: inside a reply the gaps
-# are the model's (a hum ends about 1.3 s before the answer; the layer stops waiting for a model after about 4.5 s).
+# after a holding phrase), so the voice the first of them used is kept for the rest: the person never hears the voice
+# change inside a reply, and Heliox's own voice, once ready, takes over at the next reply.
+#
+# What a reply is, the caller says: ``speech_reply`` names the reply a speak() belongs to (the speech coordinator sets
+# it for every request: one answer of the conversation layer with its holding phrase, one Read-aloud call, one reminder,
+# one Live card). A speak() with no name falls back on time: its reply ends when the person is heard again (prewarm) or
+# when Heliox has said nothing for REPLY_GAP_SECONDS. On 24 November that rule alone kept 60 Read-aloud calls, about 6 s
+# apart, in the system voice for 5.6 minutes after Heliox's own voice had loaded: they never left a 6 s gap.
 REPLY_GAP_SECONDS = 6.0
+# And whatever the caller says: once Heliox's own voice is ready, a reply that began in the system voice says at most
+# this many more pieces in it (an answer of the conversation layer is at most about 25 words: three or four sentences),
+# then the next piece is a new reply. No caller can keep Heliox in the system voice.
+SYSTEM_PIECES_AFTER_READY = 4
+REPLY_NAMES_KEPT = 32  # named replies whose voice is remembered (the latest)
+
+# The reply the speech being made belongs to ("" when its caller named none). Set by the speech coordinator for each
+# request it plays (pilot.system.companion_speech).
+speech_reply: ContextVar[str] = ContextVar("speech_reply", default="")
 
 
 class _MovedToCpu(LocalTTSUnavailable):
@@ -1477,6 +1490,8 @@ class LocalTTSWorkerManager:
         # The voice of the reply being spoken ("local" or "system"; "" before it is decided) and when Heliox last
         # finished speaking in any voice (note_spoken): see REPLY_GAP_SECONDS.
         self._reply_voice = ""
+        self._named_replies: dict[str, list[Any]] = {}  # reply name -> [voice, pieces said in it once ready]
+        self._system_after_ready = 0  # the unnamed reply's pieces in the system voice since Heliox's voice was ready
         self._spoke_until = clock()
         # How long each completed load took, [engine, "card" | "cpu", seconds], oldest first (loads.json in the
         # store's folder when there is a store, so a restart still knows this computer); and when the load under way
@@ -1525,16 +1540,49 @@ class LocalTTSWorkerManager:
     def begin_reply(self) -> None:
         """A new reply starts (the person was heard): its voice is decided afresh when it is first spoken."""
         self._reply_voice = ""
+        self._system_after_ready = 0
 
     def note_spoken(self) -> None:
         """Heliox has just finished saying something, in any voice (the system voice's speech is timed by the caller)."""
         self._spoke_until = self._clock()
 
     def reply_voice(self) -> str:
-        """The voice the reply being spoken keeps ("local", "system", or "" when a new reply decides afresh)."""
+        """The voice the reply being spoken keeps ("local", "system", or "" when a new reply decides afresh): the one
+        named by ``speech_reply``, or with no name the last unnamed one, until REPLY_GAP_SECONDS of silence."""
+        name = speech_reply.get()
+        if name:
+            kept = self._named_replies.get(name)
+            return str(kept[0]) if kept else ""
         if self._reply_voice and self._busy <= 1 and self._clock() - self._spoke_until > REPLY_GAP_SECONDS:
             self._reply_voice = ""  # Heliox has been quiet long enough: the next speech is a new reply
         return self._reply_voice
+
+    def _set_reply_voice(self, voice: str) -> None:
+        """The reply being spoken (named by ``speech_reply``, or the unnamed one) keeps ``voice``."""
+        name = speech_reply.get()
+        if not name:
+            self._reply_voice = voice
+            self._system_after_ready = 0
+            return
+        self._named_replies.pop(name, None)
+        self._named_replies[name] = [voice, 0]
+        while len(self._named_replies) > REPLY_NAMES_KEPT:
+            self._named_replies.pop(next(iter(self._named_replies)))
+
+    def _system_piece_after_ready(self) -> bool:
+        """Heliox's own voice is ready and the reply being spoken began in the system voice: count this piece. False
+        once the reply has said SYSTEM_PIECES_AFTER_READY pieces that way (it ends: the next piece decides afresh)."""
+        name = speech_reply.get()
+        if name:
+            kept = self._named_replies.get(name)
+            if kept is None:
+                return False
+            kept[1] += 1
+            said = kept[1]
+        else:
+            self._system_after_ready += 1
+            said = self._system_after_ready
+        return said <= SYSTEM_PIECES_AFTER_READY
 
     def speaks_locally_now(self, engine: str) -> bool:
         """Whether speech started now would be in Heliox's own voice without waiting: loaded, not failed, and not in a
@@ -2099,7 +2147,7 @@ class LocalTTSWorkerManager:
                 else:
                     await self._announce_loading(engine, voice)
                     record_reply_voice("local", "waited_no_system_voice")
-                self._reply_voice = "local"
+                self._set_reply_voice("local")
             else:
                 await self._voice_for_reply(engine, voice, sentences)
             with tempfile.TemporaryDirectory(prefix="heliox-tts-", ignore_cleanup_errors=True) as temp_dir:
@@ -2117,7 +2165,7 @@ class LocalTTSWorkerManager:
                     await self._speak_sentences(engine, sentences, voice, folder, play, speech=speech)
                     progress.finished = True
                 except LocalTTSUnavailable:
-                    self._reply_voice = "system"  # stopped partway (a fault): the system voice says the rest of it
+                    self._set_reply_voice("system")  # stopped partway (a fault): the system voice says the rest
                     raise
                 finally:
                     speech_progress.reset(token)
@@ -2181,31 +2229,33 @@ class LocalTTSWorkerManager:
         Raises LocalVoiceNotReady (or LocalTTSUnavailable for a voice that failed) when it is the system voice:
 
         * the reply began in the system voice: it ends in it, even when Heliox's voice has loaded meanwhile, and even
-          for sentences the store could play (the load goes on behind it, for the next reply);
+          for sentences the store could play (the load goes on behind it, for the next reply); once Heliox's voice is
+          ready, for at most SYSTEM_PIECES_AFTER_READY more pieces, then the reply ends here;
         * Heliox's voice is loaded: it speaks, from the store where every piece is kept;
         * it is not loaded: the system voice speaks this whole reply (_ready_within_grace decides how long a load
           that is nearly done is waited for), and the reply keeps it."""
         ready = self.loaded and self.running and self.engine == engine
-        if self.reply_voice() == "system":
+        usable = ready and self._failed_until is None
+        if self.reply_voice() == "system" and (not usable or self._system_piece_after_ready()):
             if not ready and self._failed_until is None:
                 self._load_behind(engine, voice)
             same = LocalVoiceNotReady(f"{engine}: this reply began in the system voice")
             same.branch = "system_same_reply"
             raise same
         if ready:
-            self._reply_voice = "local"
+            self._set_reply_voice("local")
             if self._all_kept(engine, voice, sentences):
                 record_reply_voice("store", "store")
             else:
                 record_reply_voice("local", "ready")
             return
-        self._reply_voice = "system"  # decided now; kept unless the load ends within the wait just below
+        self._set_reply_voice("system")  # decided now; kept unless the load ends within the wait just below
         if self._failed_until is not None:
             await self._usable_process(engine, voice)  # failed: retried behind (raises LocalTTSUnavailable)
         await self._ready_within_grace(engine, voice)
         if not (self.loaded and self.running and self.engine == engine):
             raise LocalTTSUnavailable(f"{engine} is unavailable")
-        self._reply_voice = "local"
+        self._set_reply_voice("local")
         record_reply_voice("local", "loaded_within_grace")
 
     def _loading_now(self) -> bool:

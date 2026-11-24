@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
+import re
 import time
 from dataclasses import dataclass
 from enum import StrEnum
@@ -64,6 +66,19 @@ def heard_part(text: str, spoken_words: int, spoken_total: int) -> str:
     return " ".join(words[: min(count, len(words))])
 
 
+# The conversation layer's keys for one answer: its sentences ("conv:<turn>:<n>"), its holding phrase, its
+# acknowledgement and its apology ("conv-hold:<turn>", "conv-ack:<turn>", "conv-sorry:<turn>").
+_ANSWER_KEY = re.compile(r"^conv(?:-hold|-ack|-sorry)?:([^:]+)(?::\d+)?$")
+
+
+def reply_name(dedupe_key: str, request_id: int) -> str:
+    """The reply a request belongs to, for one voice per reply (local_tts_worker.speech_reply): the conversation
+    layer's answer with its holding phrase and acknowledgement share one; every other request (a Read-aloud call, a
+    reminder, a Live card, a progress line) is a reply of its own."""
+    found = _ANSWER_KEY.match(dedupe_key.strip())
+    return f"conv:{found.group(1)}" if found else f"speech:{request_id}"
+
+
 @dataclass(slots=True)
 class _SpeechRequest:
     request_id: int
@@ -77,6 +92,12 @@ class _SpeechRequest:
 
 
 Speaker = Callable[[str, Any], Awaitable[bool]]
+
+
+def _name_reply(name: str) -> None:
+    from pilot.system.local_tts_worker import speech_reply
+
+    speech_reply.set(name)
 
 
 class CompanionSpeechCoordinator:
@@ -261,7 +282,10 @@ class CompanionSpeechCoordinator:
             sequence_before = self._local_sequence()
             request.sequence_before = sequence_before
             reply_before = self._reply_sequence()
-            self._current_speech = asyncio.create_task(self._speaker(request.text, request.recorder))
+            # The voice keeps one voice per reply, and this request says which reply it is.
+            context = contextvars.copy_context()
+            context.run(_name_reply, reply_name(request.key, request.request_id))
+            self._current_speech = asyncio.create_task(self._speaker(request.text, request.recorder), context=context)
             outcome = SpeechOutcome(
                 "cancelled",
                 request.channel,
