@@ -1768,6 +1768,23 @@ async def _speak_noticed(
         return await _speak_impl(text, voice, rate, volume, output_file)
 
 
+# The settings the daemon holds (PilotServer.config, changed in place by Settings): what every reply speaks with. None
+# outside the daemon (a script, a test), where the file is read as before. Reading the file for each reply cost about
+# 2.5 ms, and a file that said another engine than the running daemon moved the voice worker between engines on every
+# reply (a measurement on 24 November: Pocket in the daemon, Kokoro in the file).
+_daemon_config: Any = None
+
+
+def use_daemon_config(config: Any) -> None:
+    """Speak with ``config`` (the daemon's own settings object) from now on, never the file."""
+    global _daemon_config
+    _daemon_config = config
+
+
+def _speech_config() -> Any:
+    return _daemon_config if _daemon_config is not None else PilotConfig.load()
+
+
 async def _speak_impl(
     text: str,
     voice: str | None = None,
@@ -1799,7 +1816,7 @@ async def _speak_impl(
         logger.debug(f"Failed to modulate TTS rate by cognitive load: {e}")
 
     checked = time.monotonic()
-    config = PilotConfig.load()
+    config = _speech_config()
     speech_trace.emit(
         "speak started", entered=entered, rate_checked=checked, config_read=time.monotonic(), words=len(text.split())
     )

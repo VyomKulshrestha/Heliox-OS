@@ -1297,8 +1297,10 @@ class PilotServer:
         if self._tts_warmup_task and not self._tts_warmup_task.done():
             self._tts_warmup_task.cancel()
         self._tts_warmup_task = None
+        from pilot.system import voice as voice_module
         from pilot.system.local_tts_worker import configure_local_voice
 
+        voice_module.use_daemon_config(self.config)  # replies speak with the settings this daemon holds
         # While the local voice loads, the UI shows "Getting my voice ready…" (voice_status voice_loading).
         configure_local_voice(
             self.config.voice,

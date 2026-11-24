@@ -1576,6 +1576,7 @@ class LocalTTSWorkerManager:
         self._last_activity = clock()
         self._failed_until: float | None = None
         self._background: set[asyncio.Future[Any]] = set()
+        self._retired: set[int] = set()  # ids of worker processes this manager closed on purpose
         # Sentences synthesised ahead of their turn (prepare()), keyed by (engine, voice, sentence).
         self._prepared: dict[tuple[str, str, str], asyncio.Task[Piece]] = {}
         self._prepared_dir: Path | None = None
@@ -1878,12 +1879,23 @@ class LocalTTSWorkerManager:
             return False
 
     async def _close(self, process: Any) -> None:
+        self._retired.add(id(process))  # closed on purpose: a request still on it ends without blaming the voice
         if process is self.process:
             self.process = None
             self.engine = None
             self.loaded = False
             self._load_task = None
         await asyncio.to_thread(_close_process, process)
+
+    async def close_when_free(self) -> None:
+        """Close the worker for a change of engine or device once nothing is being said or made on it (a piece being
+        made finishes first; a request of the old engine never runs on a closed pipe). The next speech starts the new
+        one."""
+        process = self.process
+        while process is not None and process is self.process and (self._busy or self._io_lock.locked()):
+            await self._sleep(0.05)
+        if process is not None and process is self.process:
+            await self._release_now("settings changed")
 
     async def shutdown(self) -> None:
         """Stop the worker and every task the manager started: a load under way, the announcement waiting for it,
@@ -1935,6 +1947,11 @@ class LocalTTSWorkerManager:
         return "On the processor: the graphics card was hot, busy or switched off when it started."
 
     async def _fail(self, process: Any, engine: str, reason: str) -> LocalTTSUnavailable:
+        if process is not self.process and id(process) in self._retired:
+            # The worker was closed on purpose under this request (the engine or device changed, a release): the
+            # request is lost, the voice is not failed. Before, "write to closed file" marked the new engine failed and
+            # replies went to the system voice for RETRY_AFTER_SECONDS.
+            return LocalTTSUnavailable(f"{engine}: its worker was closed while it spoke ({reason[-120:]})")
         on_gpu = process is self.process and self.effective_device not in {None, "cpu"}
         from pilot.system import gpu_paths
 
@@ -2822,7 +2839,7 @@ def configure_local_voice(voice_config: Any, on_status: StatusCallback | None = 
             _manager.head_cache.trim_short_tails()  # hums kept with their whole quiet tail, from before
     if _manager.running and (_manager.engine != engine or _manager.process_device != _manager.device):
         with contextlib.suppress(RuntimeError):
-            task = asyncio.get_running_loop().create_task(_manager.shutdown())
+            task = asyncio.get_running_loop().create_task(_manager.close_when_free())
             _manager._background.add(task)
             task.add_done_callback(_manager._background.discard)
 
