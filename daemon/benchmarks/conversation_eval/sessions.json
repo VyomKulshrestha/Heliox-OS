@@ -536,7 +536,7 @@
      },
      "expect_model": {
       "has": [
-       "dropped"
+       "won't delete the old installers"
       ]
      }
     },

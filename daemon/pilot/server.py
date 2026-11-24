@@ -3099,7 +3099,14 @@ class PilotServer:
         # dropped: what is dropped is the change.
         from pilot.conversation.action_talk import wont_sentence
 
-        return wont_sentence(change or words) or "Okay, I've dropped that. Nothing ran."
+        said = wont_sentence(change or words)
+        if said:
+            return said
+        if change:
+            # A change that is not a request of its own ("the screenshots"): which one was dropped still matters.
+            short = " ".join(change.split()[:10])
+            return f"Okay, I've dropped the changed one: {short[:1].lower() + short[1:]}. Nothing ran."
+        return "Okay, I've dropped that. Nothing ran."
 
     def provisional_voice_turn(self, turn_id: str, words: str, addressed: str) -> bool:
         """The listener has words for an utterance already known to be addressed to Heliox ("wake" on the same proof
