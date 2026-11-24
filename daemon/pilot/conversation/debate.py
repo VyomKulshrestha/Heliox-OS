@@ -473,7 +473,12 @@ class Debate:
         lines = []
         stance = self.stance
         if stance is not None:
-            if go_ahead(words):
+            if words == HOLDS_COURSE:
+                lines.append(
+                    f'They keep their own plan about {stance.topic}. Give way in a few words, like "Okay, your '
+                    'call.", and stop there: it is their step, so no ACT line, no offer and no STANCE line.'
+                )
+            elif go_ahead(words):
                 lines.append(
                     f'They said to go ahead anyway about {stance.topic}. Give way in a few words, like "Okay, your '
                     'call.", and do what they asked. No STANCE line, and no "concern" in an ACT line.'
@@ -602,6 +607,45 @@ _NOT_SAID_TO_THEM = re.compile(
     r"\b(?:their|they|them|the person|weighed|thought (?:it )?through|considered|be careful|make sure you)\b",
     re.IGNORECASE,
 )
+
+
+# A sentence in which Heliox, or "we", would do something: "Want me to check the disk?", "Could we free up space by
+# clearing something else instead?", "Do you want me to skip the thesis?", "I can look for space elsewhere." Asking
+# the person to act ("Could you back it up first?") is not one.
+_HELIOX_WOULD_ACT = re.compile(
+    r"\b(?:do you want me to|would you like me to|want me to|should i|shall i|can i|could i|let me|i can|i could"
+    r"|i'?ll|i will|could we|can we|should we|shall we|let'?s|we can|we could|so we can|we should|how about i"
+    r"|why don'?t i)\b",
+    re.IGNORECASE,
+)
+
+
+def proposes_heliox_act(sentence: str) -> bool:
+    """Whether a sentence proposes that Heliox (or "we") do something: never said in reply to the person's own plan,
+    where they asked Heliox for nothing."""
+    return bool(_HELIOX_WOULD_ACT.search(" ".join(str(sentence or "").split())))
+
+
+# "It's your call" in the reply that first disagrees: giving way belongs after the person has pushed back.
+_YOUR_CALL = re.compile(
+    r"[,;]?\s*(?:(?:but|and|so|though)\s+)?(?:it'?s|that'?s|it is|that is)\s+(?:your call|up to you|your decision"
+    r"|your choice)\b[^.!?]*",
+    re.IGNORECASE,
+)
+
+
+def without_giving_way(sentence: str) -> str:
+    """The sentence without its "it's your call" clause ("" when that was all of it)."""
+    kept = _YOUR_CALL.sub("", sentence).strip().rstrip(" ,;:")
+    if not kept or not any(c.isalpha() for c in kept.strip(" .,!?")):
+        return ""
+    end = sentence.rstrip()[-1:]  # a piece cut at a comma goes on: it keeps its comma
+    return kept if kept[-1] in ".!?" else kept + (end if end in ".!?," else ".")
+
+
+# The person's "yes" after Heliox questioned their own plan: they hold their course. Read as this, the reply gives
+# way in a few words, and nothing is handed over (their plan was never Heliox's step to take).
+HOLDS_COURSE = "i'll do it anyway"
 
 
 def concern_from_reply(reply: str) -> str:

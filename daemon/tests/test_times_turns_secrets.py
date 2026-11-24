@@ -148,7 +148,7 @@ async def test_no_while_the_approval_waits_ends_the_turn_and_closes_once_and_yes
     await server._voice_command_dispatch("No")
     await request
     assert answered_with == [False]
-    closing = [line for line in heard if "won't run" in line or "Cancelled" in line or "Nothing ran" in line]
+    closing = [line for line in heard if "won't" in line or "Cancelled" in line or "Nothing ran" in line]
     assert len(closing) == 1, heard
     assert len(model.calls) == 1  # one concern call, and nothing asked of the model by "Yes" or "No"
 

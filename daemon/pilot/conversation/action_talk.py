@@ -138,6 +138,21 @@ def asked_sentence(verb: str, target: str, model_say: str = "") -> str:
     return f"I'll {verb} {target}."
 
 
+_YOURS = {"my": "your", "me": "you", "mine": "yours", "myself": "yourself", "i": "you", "i'm": "you're"}
+_POLITE_END = re.compile(r"(?:\s+(?:for me|please|now|right now|thanks|thank you))+$", re.IGNORECASE)
+
+
+def wont_sentence(request: str) -> str:
+    """ "delete my only copy of the thesis for me" dropped before it ran: "Okay, I won't delete your only copy of the
+    thesis." The request turned to the listener's side, without "for me" and the like, in at most ten words; "" when
+    it does not start with a verb Heliox acts on (then a plain line is said instead)."""
+    words = _POLITE_END.sub("", " ".join(str(request or "").split()).rstrip(".!?")).split()
+    if not words or words[0].casefold() not in ACTION_VERBS:
+        return ""
+    said = " ".join(_YOURS.get(word.casefold(), word) for word in words[:10])
+    return f"Okay, I won't {said[:1].lower() + said[1:]}."
+
+
 _UNVERIFIED = re.compile(
     r"\s*Note: \d+ action effects? (?:was|were) reported successful but not independently verified\.\s*$"
 )

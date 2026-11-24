@@ -238,7 +238,8 @@ MARK_START = "[left out: "  # pilot.conversation.withheld.MARK_START
 LEFT_OUT = (
     "Where their words show [left out: ...], they said a secret (a PIN, a password, a code or a number like that). "
     "Heliox kept it on this computer and does not keep or use secrets said aloud. Never ask for it or guess it, "
-    "and don't tell them how to handle it."
+    "and don't tell them how to handle it. If they only told you it, say in a few words that you left it out "
+    "(\"I've left that out; I don't keep those.\"), never that it was noted or saved."
 )
 
 LENGTH_LINES = {

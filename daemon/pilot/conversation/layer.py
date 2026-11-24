@@ -136,6 +136,9 @@ AGAIN_ALTERNATES = {
 }
 UNCLEAR_OFFLINE = "Sorry, I didn't catch that. Could you say it again?"
 # A request to do something with a PIN, password or code said aloud (pilot.conversation.withheld): nothing runs.
+# What a reply says when a secret was left out and the model wrote that it was noted or kept.
+SECRET_LEFT_OUT = "I've left that out; I don't keep those."
+_SOUNDS_KEPT = re.compile(r"\b(?:noted|saved|stored|kept|remembered|got it|i'?ll remember|made a note)\b", re.I)
 SECRET_NOT_USED = (
     "I don't use a PIN, password or code said aloud, so I left it out. Type it in yourself where it's needed."
 )
@@ -387,6 +390,7 @@ class TurnResult:
     route: Route | None = None
     # Heliox's reason against a small step it does anyway, said after the acknowledgement (pilot.conversation.debate).
     concern: str = ""
+    own_plan: bool = False  # the person stated their own plan and asked Heliox for nothing (debate.own_plan)
     withheld: bool = False  # the words held a secret, taken out before anything else saw them (withheld)
     # The reason against a costly step asked for directly, being asked of the model beside the planner (debate):
     # said by the company before the approval sentence. None for every other hand-over.
@@ -547,6 +551,8 @@ class ConversationLayer:
         self._pending_step: tuple[float, HandoverIntent] | None = None
         self._provisional_lines: dict[str, str] = {}  # turn id -> the disagreement line its provisional answer had
         self._debate_offer = False  # the waiting offer came from a disagreement: "do it anyway" is a yes to it
+        self._own_plan_open = False  # the person stated their own plan and has asked Heliox for nothing since
+        self._debate_words = ("", "")  # (this turn's words, the words the debate reads for it)
 
     # ── the server's hooks ──
 
@@ -821,11 +827,18 @@ class ConversationLayer:
         if [(t.role, t.text, t.at) for t in self.memory.recent()] != [(t.role, t.text, t.at) for t in held.before]:
             self.provisional.not_adopted(held, "conversation_moved")
             return None
-        if self._provisional_lines.pop(held.turn_id, "") != self.debate.context_line(normalize(text)):
+        if self._provisional_lines.pop(held.turn_id, "") != self.debate.context_line(self._debate_view(text)):
             # The disagreement moved on since the answer started (this turn gives way): the model is asked afresh.
             self.provisional.not_adopted(held, "conversation_moved")
             return None
         return held
+
+    def _debate_view(self, text: str) -> str:
+        """The words the debate reads for this turn: the person's, or HOLDS_COURSE for their plain \"yes\" that
+        holds their own plan (set in _take)."""
+        words = normalize(text)
+        said, read = self._debate_words
+        return read if said == words else words
 
     def clear(self) -> None:
         """The "new conversation" call: earlier turns no longer frame the next question."""
@@ -1005,7 +1018,22 @@ class ConversationLayer:
             result.done = True
             return result
 
-        self.debate.start_turn(words)
+        # The person's own plan ("I'm going to delete my only copy"): Heliox offers nothing for it, on this turn
+        # and on the short replies that follow. A plain "yes" after Heliox questioned it holds their course.
+        if dbt.own_plan(words):
+            self._own_plan_open = True
+        elif not (words in YES or dbt.insists(words) or dbt.go_ahead(words)):
+            self._own_plan_open = False
+        result.own_plan = self._own_plan_open
+        holds = (
+            self._own_plan_open
+            and words in YES
+            and offer is None
+            and self.debate.stance is not None
+            and not self.debate.stance.offered
+        )
+        self._debate_words = (words, dbt.HOLDS_COURSE if holds else words)
+        self.debate.start_turn(self._debate_words[1])
 
         held = self._adoptable(text, decided, source)
         if held is not None:
@@ -1057,7 +1085,7 @@ class ConversationLayer:
             self.memory,
             budget=self._context_chars,
             screen=screen,
-            stance=self.debate.context_line(normalize(text)),
+            stance=self.debate.context_line(self._debate_view(text)),
         )
         trace.mark("context ready", screen_ms=round((self._clock() - reading) * 1000, 1))
         self.memory.add_user(text)
@@ -1201,6 +1229,8 @@ class ConversationLayer:
         # A disagreement open as this turn starts: a reply that gives way ends there ("Okay, your call."), with no
         # "but" after it.
         stance_open = self.debate.stance is not None or self.debate.giving
+        # Their plain "yes" to their own plan after Heliox questioned it (debate.HOLDS_COURSE): give way only.
+        holding_course = self._debate_view(text) == dbt.HOLDS_COURSE
         # A statement of fact with no disagreement open (debate.states_a_fact): acknowledged, never argued.
         fact = (
             self.debate.on
@@ -1294,6 +1324,17 @@ class ConversationLayer:
                 # Spoken text is cleaned for the ear; typed text keeps its markdown for the chat view.
                 clean = drop_action_claims(sentence) if typed else clean_for_speech(sentence, first=first)
                 clean = _without_embedded_offer(clean)  # "Do you have a backup, or should I look ...?"
+                if not typed and result.own_plan and dbt.proposes_heliox_act(clean):
+                    # Their own plan: they asked Heliox to do nothing ("Could we free up space another way?").
+                    logger.info("Dropped a proposal for Heliox to act on the person's own plan: %r", clean)
+                    dropped = True
+                    continue
+                if not typed and not stance_open and self.debate.on and dbt.pushes_back(" ".join(written)):
+                    clean = dbt.without_giving_way(clean)  # "it's your call" only after they push back
+                    if not clean:
+                        continue
+                if not typed and result.withheld and _SOUNDS_KEPT.search(clean):
+                    clean = SECRET_LEFT_OUT  # "Got it, noted." after a PIN would say it was kept
                 if not typed and not self._was_cut_lately():
                     # "As I was saying" when nothing was cut off: there was nothing to pick up.
                     clean = _without_resume_lead(clean)
@@ -1307,9 +1348,12 @@ class ConversationLayer:
                     if clean:
                         logger.info("Dropped a sentence claiming an action the fast model cannot take: %r", clean)
                     continue
-                if (self.debate.giving or fact) and dbt.pushes_back(clean):
+                if ((self.debate.giving or fact) and dbt.pushes_back(clean)) or (
+                    holding_course and self.debate.giving and not dbt.gives_way(clean)
+                ):
                     # This turn gives way (the third exchange, or "do it anyway"): a sentence still arguing the
-                    # point is not said, whatever the model wrote.
+                    # point is not said, whatever the model wrote. After their "yes" to their own plan, only the
+                    # few words that give way are said ("Okay, your call."), never "Yes to deleting it?".
                     logger.info("Held back a sentence that still pushed back on a turn that gives way: %r", clean)
                     held_back.append(clean)
                     continue
@@ -1399,7 +1443,7 @@ class ConversationLayer:
         pushed = topic or self.debate.unmarked_topic(" ".join(said), written=written_text, words=normalize(text))
         if fact:
             pushed = ""  # a fact opens no disagreement, whatever the reply was marked
-        if held_back and not said and not act_text and not promised and not failure:
+        if (held_back or (holding_course and dropped)) and not said and not act_text and not promised and not failure:
             # Every sentence still argued on a turn that gives way: Heliox gives way in a few words instead.
             line = GOT_IT if fact else GIVE_WAY
             if await self._say_one(result, line, started) in HEARD:
@@ -1411,7 +1455,7 @@ class ConversationLayer:
             if (
                 act is not None
                 and (act.concern or dbt.costly(act.verb, act.risk))
-                and dbt.own_plan(normalize(text))
+                and (dbt.own_plan(normalize(text)) or result.own_plan)
                 and not self._only_asked(text)
             ):
                 # "I'm going to delete my only copy of the thesis": the person's own plan, and the model wrote a step

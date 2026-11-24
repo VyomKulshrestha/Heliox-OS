@@ -46,7 +46,7 @@ def test_a_finished_sentence_is_said_only_when_done(sentence):
     [
         "I'll open your launch folder.",
         handover.APPROVAL_SENTENCE,
-        "Okay, I've dropped that: delete the screenshots. Nothing ran.",
+        "Okay, I won't delete the screenshots.",
         "That didn't work: access is denied.",
     ],
 )

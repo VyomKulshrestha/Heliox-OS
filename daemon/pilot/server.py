@@ -3094,14 +3094,12 @@ class PilotServer:
             " ".join(self._voice_request_change.split()),
             flags=re.IGNORECASE,
         ).rstrip(".!?")
-        if change:
-            # It was changed before it was dropped: what is dropped is the changed request, said as the change.
-            short = " ".join(change.split()[:10])
-            return f"Okay, I've dropped the changed one: {short[:1].lower() + short[1:]}. Nothing ran."
-        if not words:
-            return "Okay, I've dropped that. Nothing ran."
-        short = " ".join(words.split()[:10])
-        return f"Okay, I've dropped that: {short[:1].lower() + short[1:]}. Nothing ran."
+        # Turned to the listener's side in a few words ("I won't delete your only copy of the thesis."), not read
+        # back word for word ("...: delete my only copy of the thesis for me."). It was changed before it was
+        # dropped: what is dropped is the change.
+        from pilot.conversation.action_talk import wont_sentence
+
+        return wont_sentence(change or words) or "Okay, I've dropped that. Nothing ran."
 
     def provisional_voice_turn(self, turn_id: str, words: str, addressed: str) -> bool:
         """The listener has words for an utterance already known to be addressed to Heliox ("wake" on the same proof

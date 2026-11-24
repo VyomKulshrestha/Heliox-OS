@@ -229,7 +229,13 @@ or a trade-off it states. No reason, no disagreement.
   execution." (the two heard in the spoken run came from that run's stand-in for the planner, which bypasses
   `_handle_execute`).
 - A reply that gives way while a disagreement is open ends there: no "but" after "Okay, your call.". A question with
-  an offer tucked in after "or" ("Do you have a backup, or should I look ...?") is said without the offer.
+  an offer tucked in after "or" ("Do you have a backup, or should I look ...?") is said without the offer. "It's
+  your call" in the reply that first disagrees is taken out: giving way belongs after the person pushes back.
+- The person's own plan ("I'm going to delete my only copy of the thesis") asks Heliox for nothing: on that turn
+  and the short replies after it, a sentence in which Heliox or "we" would act is not said
+  (`debate.proposes_heliox_act`; 16 of the 27 replies the talk model wrote to such turns in the spoken runs proposed
+  it). Their plain "yes" after Heliox questioned the plan holds their course: the model is told to give way, only
+  "Okay, your call." or the like is said, and nothing is handed over, even with an ACT line.
 - Stop, wait, cancel and no never reach the debate, and a "do it anyway" while an approval waits on the screen is
   neither an approval nor a request. Waiting for the STANCE line after a reply cut at a question (at most 1 s, with
   nothing said) ends at once when the person speaks.

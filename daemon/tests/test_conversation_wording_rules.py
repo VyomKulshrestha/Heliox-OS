@@ -56,7 +56,7 @@ async def test_the_request_body_carries_the_rules_and_no_example_date():
     body = sent[0]
     system = json.dumps(body["system"])
     assert "twelfth of November" not in system and "twelfth of November" not in SYSTEM_PROMPT
-    assert "Name a file, date, number, person or fact only when you were told it" in system
+    assert "About the person's own things (their files, backups, dates, plans, people), name only what" in system
     assert 'never \\"their\\"' in system and "you may not have weighed" in system  # said to them, no judgment
     assert "may not have seen it" not in system
     context = json.dumps(body["messages"])
@@ -177,5 +177,5 @@ async def test_saying_no_to_a_waiting_approval_gets_one_closing_line():
     voice_turn_addressed.set("follow_up")
     await server._voice_command_dispatch("No")
     await request
-    closing = [line for line in heard if "won't run" in line or "Cancelled" in line or "Nothing ran" in line]
+    closing = [line for line in heard if "won't" in line or "Cancelled" in line or "Nothing ran" in line]
     assert len(closing) == 1, heard
