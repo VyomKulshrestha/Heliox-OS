@@ -119,7 +119,13 @@ The turn stops when the sink reports the sentence was interrupted or cancelled, 
 the next sentence, or when a new utterance reaches dispatch (`interrupt()` is the second line of the dispatch).
 Stopping closes the model stream, so generation and its cost stop, and drops sentences not yet spoken. The
 conversation keeps only what was said: finished sentences plus the interrupted one, marked as cut off, and the
-model is told on the next turn that the rest was not heard.
+model is told on the next turn that the rest was not heard. Since 24 November what was heard of the interrupted
+sentence is read from the voice's progress at the moment the next utterance cuts the reply off (before, the layer
+asked before the voice had worked it out and got "unknown", which keeps the whole sentence, or the answer for an
+earlier sentence). A sentence withdrawn before it played (still queued, or waiting for the person to finish) is kept
+as not heard, and a sentence whose numbers the voice said its own way ("1889") still matches. The bench's silent
+player now reports how far a piece played, as the real one does; before, every cut in a bench run read as nothing
+heard and the conversation kept only the question (4 of 4 in the acceptance run).
 
 A short holding phrase ("One moment.", never the same one twice running; its audio is made ahead by the speech
 store, so it costs no synthesis) is said when no model text at all has come 1.2 s after the request, or text came but

@@ -73,6 +73,7 @@ class _SpeechRequest:
     key: str
     recorder: Any
     future: asyncio.Future[SpeechOutcome]
+    sequence_before: int | None = None  # the local voice's speak() count when this request began to play
 
 
 Speaker = Callable[[str, Any], Awaitable[bool]]
@@ -104,6 +105,8 @@ class CompanionSpeechCoordinator:
         self._duplicates = 0
         self._spoken = 0
         self._closing = False
+        # The last sentence cut off or withdrawn: (its text, the words heard, how many, of how many the voice had).
+        self._last_heard: tuple[str, str, int, int] | None = None
 
     async def speak(
         self,
@@ -117,6 +120,17 @@ class CompanionSpeechCoordinator:
         resolved_channel = SpeechChannel(channel)
         if not clean_text:
             return SpeechOutcome("error", resolved_channel, "Speech text is empty")
+        noted: list[bool] = []
+        try:
+            return await self._speak(clean_text, resolved_channel, dedupe_key, recorder, noted)
+        except asyncio.CancelledError:
+            if not noted:
+                self.note_unheard(clean_text)  # cancelled before a sound of it played: none of it was heard
+            raise
+
+    async def _speak(
+        self, clean_text: str, resolved_channel: SpeechChannel, dedupe_key: str, recorder: Any, noted: list[bool]
+    ) -> SpeechOutcome:
         now = time.monotonic()
         key = dedupe_key.strip() or (f"{resolved_channel.value}:{clean_text.casefold()}")
         loop = asyncio.get_running_loop()
@@ -169,6 +183,12 @@ class CompanionSpeechCoordinator:
             # queue, or stop it if it is already playing, so it is not heard after the answer.
             future.cancel()
             if self._current is request and self._current_speech is not None and not self._current_speech.done():
+                # What was heard is read now, as the voice stops: the caller (the conversation layer, cut off by
+                # the next utterance) keeps it at once, before the worker below has finished stopping the voice.
+                before = request.sequence_before
+                if before is not None and self._note_heard(request.text, before) is None:
+                    self._last_heard = None  # a system voice was speaking it: how much was heard is unknown
+                noted.append(True)
                 self._cancel_reasons[request.request_id] = "cancelled"
                 self._current_speech.cancel()
             raise
@@ -239,6 +259,7 @@ class CompanionSpeechCoordinator:
                 continue
             self._current = request
             sequence_before = self._local_sequence()
+            request.sequence_before = sequence_before
             reply_before = self._reply_sequence()
             self._current_speech = asyncio.create_task(self._speaker(request.text, request.recorder))
             outcome = SpeechOutcome(
@@ -328,24 +349,49 @@ class CompanionSpeechCoordinator:
         it was taken); unchanged when a system voice spoke it."""
         from dataclasses import replace
 
+        found = self._note_heard(text, sequence_before)
+        if found is None:
+            return outcome
+        heard, played, total = found
+        return replace(outcome, heard_text=heard, played_seconds=round(played, 2), duration_seconds=round(total, 2))
+
+    def _note_heard(self, text: str, sequence_before: int) -> tuple[str, float, float] | None:
+        """Read from the local voice's progress what the person heard of ``text`` and keep it for heard_of: (heard,
+        seconds played, seconds made), or None when the local voice did not speak this request."""
         from pilot.system.local_tts_worker import manager
 
         progress = manager().last_progress
         if progress is None or progress.sequence <= sequence_before:
-            return outcome
+            return None
         spoken_total = sum(len(piece.split()) for piece in progress.pieces)
         played, total = progress.played()
-        heard = heard_part(text, progress.heard_words(), spoken_total)
-        self._last_heard = (text, heard)
-        return replace(outcome, heard_text=heard, played_seconds=round(played, 2), duration_seconds=round(total, 2))
+        words = progress.heard_words()
+        heard = heard_part(text, words, spoken_total)
+        self._last_heard = (text, heard, words, spoken_total)
+        return heard, played, total
+
+    def note_unheard(self, text: str) -> None:
+        """``text`` was withdrawn before any of it played (still queued, or its caller was waiting for the floor):
+        none of it was heard, and heard_of says so instead of "unknown"."""
+        clean = " ".join(str(text).split())
+        self._last_heard = (clean, "", 0, len(clean.split()))
 
     def heard_of(self, text: str) -> str | None:
         """What the person heard of ``text`` when it was last cut off, or None when unknown (a system voice spoke
-        it, or the last cut was another sentence)."""
+        it, or the last cut was another sentence). ``text`` may be the words before the voice said numbers its way
+        ("1889" for "eighteen eighty-nine"): what was heard is then the same share of those words."""
         last = getattr(self, "_last_heard", None)
-        if last is None or " ".join(last[0].split()) != " ".join((text or "").split()):
+        if last is None:
             return None
-        return last[1]
+        said, heard, words, total = last
+        asked = " ".join((text or "").split())
+        if " ".join(said.split()) == asked:
+            return heard
+        from pilot.conversation.style import speakable_numbers
+
+        if " ".join(speakable_numbers(asked).split()) == " ".join(said.split()):
+            return heard_part(asked, words, total) if heard else ""
+        return None
 
     def _prune_recent(self, now: float) -> None:
         for key, observed_at in tuple(self._recent.items()):

@@ -15628,7 +15628,14 @@ def handle_tool(tool_name, params):
             return SpeechOutcome("suppressed", resolved, f"Quiet during a {call} call")
         if listener and resolved is not SpeechChannel.EMERGENCY_STOP:
             # Never start over the person: answers, corrections and narration wait for the end of their sentence.
-            waited = await listener.wait_for_floor()
+            try:
+                waited = await listener.wait_for_floor()
+            except asyncio.CancelledError:
+                # Withdrawn while waiting (the person's next utterance cut the reply off): none of it was heard.
+                note_unheard = getattr(self._speech_coordinator, "note_unheard", None)
+                if callable(note_unheard):
+                    note_unheard(text)
+                raise
             if waited >= 0.05:
                 logger.info("Waited %.1f s for the person to finish before speaking", waited)
         if listener and self.config.voice.barge_in_enabled:

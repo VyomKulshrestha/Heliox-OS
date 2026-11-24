@@ -230,6 +230,22 @@ def voiced_span(x: Any) -> tuple[float, float]:
     return float(loud[0]) / wavio.RATE, float(loud[-1] + 1) / wavio.RATE
 
 
+class _SilentPlayback:
+    """A piece the bench consumes without playing it, reporting its position as the real player's playback does
+    (SpeechProgress.playing): samples "played" so far by the clock since it started."""
+
+    complete = True
+
+    def __init__(self, audio: Any, sample_rate: int) -> None:
+        self.audio = audio
+        self.sample_rate = int(sample_rate)
+        self._started = time.monotonic()
+
+    @property
+    def position(self) -> int:
+        return min(len(self.audio), int((time.monotonic() - self._started) * self.sample_rate))
+
+
 class FilePump:
     """Stands in for the microphone: one block per frame period at ``pace`` times real time.
 
@@ -579,6 +595,13 @@ class Harness:
             setup = self._speaking_setup
             log(tl.AUDIO_STARTS, "", setup=setup)
             raw, rate = wavio.decode(Path(path).read_bytes())
+            from pilot.system.local_tts_worker import speech_progress
+
+            progress = speech_progress.get()
+            if progress is not None:
+                # Reported as the real player does, so what the person heard of a cut sentence is known here too
+                # (before, a cut in a bench run always read as nothing heard, and the conversation kept nothing).
+                progress.playing = _SilentPlayback(raw, rate)
             await asyncio.sleep(len(raw) / rate)  # consumed in real time, never played
 
         voice_module._play_local_tts_file = silent_play
