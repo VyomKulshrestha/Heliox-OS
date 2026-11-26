@@ -2663,7 +2663,7 @@ class Executor:
 
     async def _exec_browser_navigate(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await self._get_browser_backend().navigate(p.url, p.wait_until)
+        return await self._get_browser_backend().navigate(p.url, p.wait_until, tab_index=p.tab_index)
 
     async def _exec_browser_click(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
@@ -2676,12 +2676,12 @@ class Executor:
     async def _exec_browser_type(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
         return await self._get_browser_backend().type(
-            await self._browser_target(p), p.text, p.clear_first, p.press_enter
+            await self._browser_target(p), p.text, p.clear_first, p.press_enter, tab_index=p.tab_index
         )
 
     async def _exec_browser_select(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await self._get_browser_backend().select(await self._browser_target(p), p.value)
+        return await self._get_browser_backend().select(await self._browser_target(p), p.value, tab_index=p.tab_index)
 
     async def _exec_browser_hover(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
@@ -2712,7 +2712,7 @@ class Executor:
 
     async def _exec_browser_fill_form(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await self._get_browser_backend().fill_form(p.fields, p.submit_selector)
+        return await self._get_browser_backend().fill_form(p.fields, p.submit_selector, tab_index=p.tab_index)
 
     async def _exec_browser_new_tab(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]

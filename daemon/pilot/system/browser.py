@@ -381,15 +381,46 @@ def _append_diff(base_output: str, before: Any, after: Any, action_desc: str) ->
 # ── Navigation ───────────────────────────────────────────────────────
 
 
-async def browser_navigate(url: str, wait_until: str = "domcontentloaded") -> str:
-    """Navigate to a URL."""
+def _without_query(url: str) -> str:
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _redirect_chain(response: Any) -> list[str]:
+    """The addresses the browser went through to reach this response, first to last, without queries.
+
+    Read from Playwright's own record (``request.redirected_from``); queries are left out because a sign-in
+    redirect can carry a token in them.
+    """
+    chain: list[str] = []
+    request = getattr(response, "request", None)
+    while request is not None and len(chain) < 20:
+        chain.append(_without_query(str(getattr(request, "url", ""))))
+        request = getattr(request, "redirected_from", None)
+    return list(reversed(chain))
+
+
+async def browser_current_url(tab_index: int = -1) -> str | None:
+    """The address the given tab shows now, read from the page; None when no browser session is open."""
+    if not has_active_session():
+        return None
+    page = await _get_page(tab_index)
+    return str(page.url)
+
+
+async def browser_navigate(url: str, wait_until: str = "domcontentloaded", tab_index: int = -1) -> str:
+    """Navigate to a URL in the given tab (the latest one by default)."""
     if not url.startswith(("http://", "https://", "file://")):
         url = "https://" + url
-    page = await _get_page()
+    page = await _get_page(tab_index)
     resp = await page.goto(url, wait_until=wait_until, timeout=30000)
     status = resp.status if resp else "unknown"
     title = await page.title()
-    return f"Navigated to: {url}\nTitle: {title}\nStatus: {status}"
+    output = f"Navigated to: {url}\nTitle: {title}\nStatus: {status}"
+    chain = _redirect_chain(resp)
+    if len(chain) > 1:
+        output += "\nRedirect chain: " + " -> ".join(chain)
+    return output
 
 
 async def browser_back() -> str:
@@ -558,9 +589,10 @@ async def browser_type(
     text: str,
     clear_first: bool = True,
     press_enter: bool = False,
+    tab_index: int = -1,
 ) -> str:
     """Type once into an input field and record its observed DOM diff."""
-    page = await _get_page()
+    page = await _get_page(tab_index)
     await _refuse_sensitive_field(page, selector)
     before = await _snap(page)
 
@@ -576,9 +608,9 @@ async def browser_type(
     return _append_diff(f"Typed into {selector}", before, after, f"type:{selector}")
 
 
-async def browser_select(selector: str, value: str) -> str:
+async def browser_select(selector: str, value: str, tab_index: int = -1) -> str:
     """Select an option once and record its observed DOM diff."""
-    page = await _get_page()
+    page = await _get_page(tab_index)
     before = await _snap(page)
 
     await page.select_option(selector, value)
@@ -854,12 +886,12 @@ async def browser_wait_navigation(timeout: int = 30000) -> str:
 # ── Form Automation ──────────────────────────────────────────────────
 
 
-async def browser_fill_form(fields: dict[str, str], submit_selector: str | None = None) -> str:
+async def browser_fill_form(fields: dict[str, str], submit_selector: str | None = None, tab_index: int = -1) -> str:
     """Fill each form field once and optionally submit once.
 
     fields: {"#email": "user@example.com", "#name": "Ada", ...}
     """
-    page = await _get_page()
+    page = await _get_page(tab_index)
     for selector in fields:
         await _refuse_sensitive_field(page, selector)
     before_form = await _snap(page)
@@ -893,8 +925,8 @@ async def browser_close() -> str:
 
 
 class PlaywrightBackend(BrowserBackend):
-    async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> str:
-        return await browser_navigate(url, wait_until)
+    async def navigate(self, url: str, wait_until: str = "domcontentloaded", tab_index: int = -1) -> str:
+        return await browser_navigate(url, wait_until, tab_index)
 
     async def click(self, selector: str, button: str = "left", timeout: int = 5000) -> str:
         return await browser_click(selector, button=button, timeout=timeout)
@@ -902,11 +934,18 @@ class PlaywrightBackend(BrowserBackend):
     async def click_text(self, text: str, exact: bool = False) -> str:
         return await browser_click_text(text, exact)
 
-    async def type(self, selector: str, text: str, clear_first: bool = True, press_enter: bool = False) -> str:
-        return await browser_type(selector, text, clear_first, press_enter)
+    async def type(
+        self,
+        selector: str,
+        text: str,
+        clear_first: bool = True,
+        press_enter: bool = False,
+        tab_index: int = -1,
+    ) -> str:
+        return await browser_type(selector, text, clear_first, press_enter, tab_index)
 
-    async def select(self, selector: str, value: str) -> str:
-        return await browser_select(selector, value)
+    async def select(self, selector: str, value: str, tab_index: int = -1) -> str:
+        return await browser_select(selector, value, tab_index)
 
     async def hover(self, selector: str) -> str:
         return await browser_hover(selector)
@@ -931,8 +970,8 @@ class PlaywrightBackend(BrowserBackend):
     ) -> str:
         return await browser_screenshot(output_path, full_page, selector)
 
-    async def fill_form(self, fields: dict[str, str], submit_selector: str | None = None) -> str:
-        return await browser_fill_form(fields, submit_selector)
+    async def fill_form(self, fields: dict[str, str], submit_selector: str | None = None, tab_index: int = -1) -> str:
+        return await browser_fill_form(fields, submit_selector, tab_index)
 
     async def new_tab(self, url: str | None = None) -> str:
         return await browser_new_tab(url)

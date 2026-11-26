@@ -168,7 +168,9 @@ async def test_submitted_or_explicit_tab_browser_action_is_not_a_training_label(
     assert verification.passed is True
     assert verification.independently_observed_actions == []
     assert all("REPORTED" in detail for detail in verification.details)
-    check.assert_awaited_once()
+    # The explicit tab is read through that tab now; the check found nothing it could prove there.
+    assert check.await_count == 2
+    assert check.await_args_list[1].args[1].tab_index == 2
 
 
 @pytest.mark.asyncio
