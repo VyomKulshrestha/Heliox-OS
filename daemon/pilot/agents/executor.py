@@ -3393,7 +3393,9 @@ class Executor:
                 f"Ensure it looks clean, structured, and premium."
             )
             try:
-                llm_verdict = await self._model.generate([{"role": "system", "content": prompt}], temperature=0.1)
+                # A user message: a chat of only a system message has no turn to answer (Anthropic and Gemini
+                # refuse it, so this report was never written there).
+                llm_verdict = await self._model.generate([{"role": "user", "content": prompt}], temperature=0.1)
                 result_report["contextual_analysis"] = llm_verdict
             except Exception as e:
                 logger.warning("LLM Contextual analysis failed: %s", e)

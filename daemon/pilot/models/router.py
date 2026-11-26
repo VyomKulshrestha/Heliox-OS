@@ -643,7 +643,7 @@ class ModelRouter:
 
     async def _llamacpp_generate(
         self,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         *,
         system: str = "",
         temperature: float = 0.1,

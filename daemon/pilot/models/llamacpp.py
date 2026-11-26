@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pilot.models.gpu_utils import calculate_gpu_layers
 
@@ -20,6 +20,21 @@ if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
 logger = logging.getLogger("pilot.models.llamacpp")
+
+
+def render_prompt(prompt: str | list[dict[str, Any]], system: str = "") -> str:
+    """The text the model reads. A chat (the planner's messages) becomes one turn per message in order, every
+    system message kept; it once went in as the Python list's repr."""
+    if isinstance(prompt, str):
+        if not system:
+            return prompt
+        return f"<|system|>\n{system}\n<|user|>\n{prompt}\n<|assistant|>\n"
+    turns = [f"<|system|>\n{system}"] if system and not any(m.get("role") == "system" for m in prompt) else []
+    for message in prompt:
+        role = str(message.get("role") or "user")
+        tag = role if role in ("system", "user", "assistant") else "user"
+        turns.append(f"<|{tag}|>\n{message.get('content') or ''}")
+    return "\n".join(turns) + "\n<|assistant|>\n"
 
 
 class LlamaCppClient:
@@ -70,7 +85,7 @@ class LlamaCppClient:
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         *,
         system: str = "",
         temperature: float = 0.1,
@@ -78,11 +93,9 @@ class LlamaCppClient:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._generate_sync, prompt, system, temperature)
 
-    def _generate_sync(self, prompt: str, system: str, temperature: float) -> str:
+    def _generate_sync(self, prompt: str | list[dict[str, Any]], system: str, temperature: float) -> str:
         self._ensure_loaded()
-        full_prompt = prompt
-        if system:
-            full_prompt = f"<|system|>\n{system}\n<|user|>\n{prompt}\n<|assistant|>\n"
+        full_prompt = render_prompt(prompt, system)
 
         result = self._llm(
             full_prompt,
