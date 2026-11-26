@@ -15,10 +15,11 @@ import os
 import smtplib
 import socket
 import ssl
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from pilot.actions import SUPPORTED_HTTP_METHODS, OutputWithNotice
 from pilot.config import PilotConfig
@@ -372,6 +373,40 @@ async def send_webhook(
     return await api_request(method, url, headers=headers, body=payload)
 
 
+def _with_query(url: str, **values: str) -> str:
+    """The URL with these query values set, keeping the others (Discord's thread_id)."""
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.update(values)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def _chat_receipt(answer: str, webhook_url: str, sent_at: float) -> str:
+    """What a chat webhook answered, without the webhook URL or the response headers.
+
+    A webhook URL carries its secret token in the path, so the receipt names the host only. It keeps the
+    status, the send time and, for Discord, the id of the message created, which the post-condition check
+    uses to read the message back.
+    """
+    try:
+        parsed = json.loads(answer)
+    except (TypeError, ValueError):
+        parsed = {}
+    body = parsed.get("body") if isinstance(parsed, dict) else None
+    receipt: dict[str, Any] = {
+        "status": parsed.get("status") if isinstance(parsed, dict) else None,
+        "host": _origin(webhook_url)[1],
+        "sent_at": round(sent_at, 3),
+    }
+    if isinstance(body, dict):
+        for key, name in (("id", "message_id"), ("channel_id", "channel_id"), ("ok", "ok"), ("error", "error")):
+            if body.get(key) is not None:
+                receipt[name] = body[key]
+    elif body is not None:
+        receipt["body"] = str(body)[:200]
+    return json.dumps(receipt, ensure_ascii=False)
+
+
 # ── Slack (Webhook) ──────────────────────────────────────────────────
 
 
@@ -382,7 +417,10 @@ async def send_slack_message(
 ) -> str:
     """Send a message to Slack via webhook.
 
-    Uses SLACK_WEBHOOK_URL env var if not provided.
+    Uses SLACK_WEBHOOK_URL env var if not provided. Returns a receipt (status, host, send time, Slack's
+    answer) without the webhook URL. An incoming webhook gives no message id; the post-condition check reads
+    the message back only when SLACK_BOT_TOKEN and SLACK_CHANNEL_ID are set (see
+    pilot.agents.postconditions.messaging).
     """
     webhook_url = webhook_url or os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
@@ -394,7 +432,9 @@ async def send_slack_message(
     if channel:
         payload["channel"] = channel
 
-    return await api_request("POST", webhook_url, body=payload)
+    sent_at = time.time()
+    answer = await api_request("POST", webhook_url, body=payload)
+    return _chat_receipt(answer, webhook_url, sent_at)
 
 
 # ── Discord (Webhook) ───────────────────────────────────────────────
@@ -406,7 +446,8 @@ async def send_discord_message(
 ) -> str:
     """Send a message to Discord via webhook.
 
-    Uses DISCORD_WEBHOOK_URL env var if not provided.
+    Uses DISCORD_WEBHOOK_URL env var if not provided. Returns a receipt (status, host, send time and the id
+    of the message Discord created) without the webhook URL.
     """
     webhook_url = webhook_url or os.environ.get("DISCORD_WEBHOOK_URL", "")
     if not webhook_url:
@@ -415,7 +456,10 @@ async def send_discord_message(
             "Set DISCORD_WEBHOOK_URL or give webhook_url."
         )
 
-    return await api_request("POST", webhook_url, body={"content": message})
+    sent_at = time.time()
+    # wait=true makes Discord answer with the message it created, so its id can be read back later.
+    answer = await api_request("POST", _with_query(webhook_url, wait="true"), body={"content": message})
+    return _chat_receipt(answer, webhook_url, sent_at)
 
 
 # ── Web Scraping ─────────────────────────────────────────────────────
