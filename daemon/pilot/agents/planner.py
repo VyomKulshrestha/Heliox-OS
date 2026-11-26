@@ -478,7 +478,7 @@ IMPORTANT RULES:
 - Output ONLY valid JSON - no markdown, no explanation outside the JSON.
 - The JSON must have exactly these keys: "explanation" (string) and "actions" (array).
 - Each action must have: "action_type", "target", and "parameters" keys.
-- Wrap your JSON in ```json code blocks if needed.
+- Put the JSON on one line, as the output rules say, and leave out keys whose value is the default.
 """
 
 # A parsed plan that code found does not do what the request asks (pilot.agents.request_match), or that does with
