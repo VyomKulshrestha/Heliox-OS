@@ -139,7 +139,9 @@ async def test_resume_plan_returns_success_when_checkpoint_already_complete(tmp_
 
     assert response["status"] == "success"
     assert response["resumed"] is False
-    assert response["message"] == "done"
+    # The reply is the step's own sentence (pilot.result_sentences), shown and spoken; the handler's text is not.
+    assert response["message"] == 'Showed the notification "Test".'
+    assert response["spoken"]
     assert response["verification"]["passed"] is True
     server._executor.execute.assert_not_called()
     server._verifier.verify.assert_awaited_once_with(plan, [checkpoint_result])

@@ -392,7 +392,7 @@ async def test_empty_interactive_request_still_has_terminal_trace(ledger):
         ws=AsyncMock(),
     )
 
-    assert result == {"status": "error", "message": "Empty input"}
+    assert result == {"status": "error", "message": "Empty input", "spoken": "Empty input."}
     events = await ledger.list_events(task_id="empty-task")
     assert [event.event_type for event in events] == [
         ExperienceEventType.INTENT,

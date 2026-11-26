@@ -366,6 +366,8 @@ async def test_handle_execute_returns_conversation_without_preview_or_execution(
         "conversational": True,
         "dry_run": False,
         "results": [],
+        "message": response,
+        "spoken": response,
         "explanation": response,
         "agent_routing": {"assigned_agents": []},
     }
@@ -561,7 +563,7 @@ async def test_handle_execute_approved_success_reports_verified_outcome():
 
     assert result["status"] == "success"
     assert result["verification"]["passed"] is True
-    assert result["message"] == "opened"
+    assert result["message"] == result["spoken"] == "Opened example.com."
     assert server._recent_companion_context_by_session["default"].startswith(
         "Previous request: open example.com\nExecution result:"
     )
@@ -722,7 +724,9 @@ async def test_missing_file_read_returns_truthful_failure_without_llm_retry():
     )
 
     assert result["status"] == "partial_failure"
-    assert "File not found" in result["message"]
+    # Said in plain words; the system's own text stays in the step's result for the details and the receipt.
+    assert "I couldn't find missing.txt" in result["message"]
+    assert "File not found" in result["results"][0]["error"]
     assert planner_calls == 1
     assert executor.calls == 1
 
@@ -783,7 +787,8 @@ async def test_missing_application_returns_truthful_failure_without_llm_retry():
     )
 
     assert result["status"] == "partial_failure"
-    assert "was not found" in result["message"]
+    assert "I couldn't find Definitely Missing Product." in result["message"]
+    assert "was not found" in result["results"][0]["error"]
     assert planner_calls == 1
     assert executor.calls == 1
 

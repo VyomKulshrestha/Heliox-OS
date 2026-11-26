@@ -751,8 +751,14 @@ def _notification(method: str, params: Any) -> str:
     return json.dumps({"jsonrpc": "2.0", "method": method, "params": params})
 
 
-def _is_terminal_execution_failure(results: list[Any]) -> bool:
-    """Return True when replanning cannot repair an exact local resolution failure."""
+def _is_terminal_execution_failure(results: list[Any], request: str = "") -> bool:
+    """Return True when replanning cannot repair an exact local resolution failure.
+
+    Two lists decide it. The markers below are each handler's own sentences. Beside them, a common system failure that
+    asking again cannot change ends the run on any action and any platform (pilot.failure_sentences.FINAL_KINDS: no
+    permission, a read-only place, a refused sign-in, and a missing thing that ``request`` itself named)."""
+    from pilot.failure_sentences import is_final
+
     failed = [result for result in results if not result.success]
     if not failed:
         return False
@@ -790,9 +796,27 @@ def _is_terminal_execution_failure(results: list[Any]) -> bool:
     for result in failed:
         action_type = getattr(result.action.action_type, "value", str(result.action.action_type))
         markers = terminal_markers.get(action_type)
-        if markers is None or not any(marker in str(result.error or "").lower() for marker in markers):
-            return False
+        if markers is not None and any(marker in str(result.error or "").lower() for marker in markers):
+            continue
+        if result.error and is_final(result.action, str(result.error), request):
+            continue
+        return False
     return True
+
+
+def _step_key(action: Any) -> tuple[str, str]:
+    """A step by its kind and what it acts on: a repair plan's step with the same key repeats it."""
+    from pilot.reply_rules import undoubled
+
+    params = getattr(action, "parameters", None)
+    thing = ""
+    for field_name in ("path", "url", "repo_path", "webhook_url", "to", "name"):
+        value = getattr(params, field_name, None)
+        if isinstance(value, str) and value.strip():
+            thing = value
+            break
+    thing = undoubled(thing or str(getattr(action, "target", "") or "")).replace("\\", "/").rstrip("/").casefold()
+    return (str(getattr(action.action_type, "value", action.action_type)), thing)
 
 
 def _approval_effect(action: Any) -> str:
@@ -3108,6 +3132,10 @@ class PilotServer:
             return _success_response(request.id, starting)  # a sentence, never an exception
         if request.method not in CONFIG_MUTATING_RPC_METHODS:
             result = await handler(request.params, ws)
+            if request.method == "resume_task":
+                from pilot.task_reply import with_reply
+
+                result = with_reply(result)  # a resumed task's reply has a sentence to show and one to say
             return _success_response(request.id, result)
         # A change that takes a protection away is asked about first, without the config lock: a narrowing, or a
         # spoken "stop watching me", must never wait behind a dialog the person has not answered. The handler then
@@ -3696,7 +3724,13 @@ class PilotServer:
                 self._start_queued_execute_worker()
 
     async def _handle_execute(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Run one interactive request while exposing an out-of-band control slot."""
+        """Run one interactive request while exposing an out-of-band control slot. Whatever way it ends, the reply
+        carries a sentence to show and one to say (pilot.task_reply.with_reply)."""
+        from pilot.task_reply import with_reply
+
+        return with_reply(await self._handle_execute_unchecked(params, ws))
+
+    async def _handle_execute_unchecked(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         params, kept_here = await self._secret_left_out(params, ws)
         if kept_here is not None:
             return kept_here
@@ -4175,6 +4209,7 @@ class PilotServer:
                     "conversational": True,
                     "dry_run": False,
                     "results": [],
+                    "message": timeline_answer,
                     "explanation": timeline_answer,
                 }
 
@@ -4478,13 +4513,18 @@ class PilotServer:
         _original_verification = None
         _successful_results: list = []
         _pending_retry_plan = None
+        # Steps that failed in a way asking again cannot change (pilot.failure_sentences.is_final), the plan that
+        # ran last, and a repair round's answer in prose after a failure: the failure reply carries both.
+        final_failed_steps: set[tuple[str, str]] = set()
+        last_executed_plan = None
+        repair_prose = ""
         from pilot.agents.late_checks import FollowUp as LateFollowUp
         from pilot.agents.plan_differ import PlanDiffer
         from pilot.agents.unconfirmed import masked_verification, receipt_checks
         from pilot.response_contract import (
             exact_labeled_finding_count,
-            partial_failure_message,
-            success_message,
+            failure_reply,
+            success_reply,
         )
 
         for attempt in range(1 + self.MAX_RETRIES):
@@ -4628,6 +4668,21 @@ class PilotServer:
 
             last_explanation = plan.explanation
 
+            if last_executed_plan is not None and (
+                any(not r.success for r in all_results)
+                or (last_verification is not None and not last_verification.passed)
+            ):
+                if not plan.actions:
+                    # The repair round answered in prose after a step failed: the task failed, and the reply is
+                    # the failed step's own sentence with the repair round's words after it.
+                    repair_prose = plan.explanation
+                    plan = last_executed_plan
+                    break
+                if any(_step_key(action) in final_failed_steps for action in plan.actions):
+                    logger.info("The repair plan repeats a step that failed for good; ending with its failure")
+                    plan = last_executed_plan
+                    break
+
             # A useful conversational response is a valid zero-action plan.
             # It must bypass checkpoints, previews, permission gates,
             # execution, and verification: there is nothing to execute.
@@ -4656,6 +4711,7 @@ class PilotServer:
                     "conversational": True,
                     "dry_run": False,
                     "results": [],
+                    "message": plan.explanation,
                     "explanation": plan.explanation,
                     "agent_routing": routing,
                 }
@@ -5220,6 +5276,7 @@ class PilotServer:
                 # escape this RPC handler as an unhandled BaseException. ──
                 results = list(completed_results)
             all_results = results
+            last_executed_plan = plan
             if not dry_run:
                 _snapshot_id = next((r.snapshot_id for r in results if getattr(r, "snapshot_id", None)), None)
                 if _snapshot_id:
@@ -5450,7 +5507,8 @@ class PilotServer:
                     )
                 )
 
-                message = success_message(plan, results, verification, dry_run=dry_run)
+                outcome_said = success_reply(plan, results, verification, dry_run=dry_run)
+                message = outcome_said.shown
                 self._recent_companion_context_by_session[chat_session_id] = (
                     f"Previous request: {_sanitize_summary(request_text, limit=300)}\n"
                     f"Execution result: {_sanitize_summary(message, limit=700)}"
@@ -5492,6 +5550,7 @@ class PilotServer:
                     "results": [r.model_dump() for r in results],
                     "verification": masked_verification(verification, files=False).model_dump(),
                     "message": message,
+                    "spoken": outcome_said.spoken,
                     "explanation": (
                         f"(dry run) {plan.explanation}"
                         if dry_run and plan.explanation
@@ -5518,7 +5577,16 @@ class PilotServer:
                 logger.warning("Desktop input may have gone to another window; stopping instead of retrying")
                 break
 
-            if _is_terminal_execution_failure(results):
+            from pilot.failure_sentences import is_final
+
+            # A step that failed for good (no permission, read-only, a refused sign-in, a named thing not found) is
+            # never planned again in this task, so the person is never asked to approve it a second time.
+            final_failed_steps.update(
+                _step_key(r.action)
+                for r in results
+                if not r.success and r.executed and r.error and is_final(r.action, str(r.error), request_text)
+            )
+            if _is_terminal_execution_failure(results, request_text):
                 logger.info("Terminal execution failure; returning the exact error without LLM retry")
                 break
 
@@ -5605,7 +5673,8 @@ class PilotServer:
             )
         )
 
-        message = partial_failure_message(all_results, last_verification)
+        outcome_said = failure_reply(all_results, last_verification, follow_up=repair_prose)
+        message = outcome_said.shown
         await _emit_task_complete(
             "partial_failure",
             message,
@@ -5619,6 +5688,7 @@ class PilotServer:
                 masked_verification(last_verification, files=False).model_dump() if last_verification else {}
             ),
             "message": message,
+            "spoken": outcome_said.spoken,
             "explanation": (
                 f"(dry run) {last_explanation}"
                 if dry_run and last_explanation
@@ -6607,13 +6677,13 @@ class PilotServer:
 
         if not remaining_actions:
             from pilot.agents.unconfirmed import masked_verification
-            from pilot.response_contract import partial_failure_message, success_message
+            from pilot.response_contract import failure_reply, success_reply
 
             verification = await self._verifier.verify(approved_plan, checkpoint.results)
             if verification.passed:
                 await self._checkpoint_store.mark_status(plan_id, "complete")
                 status = "success"
-                message = success_message(
+                reply = success_reply(
                     approved_plan,
                     checkpoint.results,
                     verification,
@@ -6622,12 +6692,13 @@ class PilotServer:
             else:
                 await self._checkpoint_store.mark_status(plan_id, "failed")
                 status = "partial_failure"
-                message = partial_failure_message(checkpoint.results, verification)
+                reply = failure_reply(checkpoint.results, verification)
             return {
                 "status": status,
                 "plan_id": plan_id,
                 "resumed": False,
-                "message": message,
+                "message": reply.shown,
+                "spoken": reply.spoken,
                 "results": [result.model_dump() for result in checkpoint.results],
                 "verification": masked_verification(verification, files=False).model_dump(),
             }
@@ -6728,12 +6799,14 @@ class PilotServer:
                 final_status = "partial_failure"
                 await self._checkpoint_store.mark_status(plan_id, "failed")
 
-        from pilot.response_contract import partial_failure_message, success_message
+        from pilot.response_contract import failure_reply, success_reply
 
         completed_all = len(combined_results) >= len(approved_plan.actions)
+        spoken = ""
         if final_status in {"failed", "partial_failure"}:
             response_status = "partial_failure"
-            terminal_message = partial_failure_message(combined_results, verification)
+            failed_reply = failure_reply(combined_results, verification)
+            terminal_message, spoken = failed_reply.shown, failed_reply.spoken
         elif not completed_all:
             response_status = "interrupted"
             terminal_message = (
@@ -6743,16 +6816,18 @@ class PilotServer:
             await self._checkpoint_store.mark_status(plan_id, "interrupted")
         else:
             response_status = "success"
-            terminal_message = success_message(
+            done_reply = success_reply(
                 approved_plan,
                 combined_results,
                 verification,
                 dry_run=False,
             )
+            terminal_message, spoken = done_reply.shown, done_reply.spoken
 
         return {
             "status": response_status,
             "message": terminal_message,
+            **({"spoken": spoken} if spoken else {}),
             "plan_id": plan_id,
             "resumed": True,
             "skipped_actions": completed_count,
@@ -17791,9 +17866,22 @@ def handle_tool(tool_name, params):
             )
             from pilot.agents.unconfirmed import speakable_message
 
-            # The window's "could not be checked" line is not read out; its fixed phrase is, when it has one.
-            spoken = speakable_message(result_text, limit=300)
-            spoken = (turn.spoken_result(result_text, status) if turn is not None else "") or spoken
+            # The reply's own spoken sentence (pilot.result_sentences, pilot.task_reply): never the handler's raw
+            # output or the system's raw error. The quick road's sentence for a state read ("The battery is at 80
+            # percent.") is kept when the task succeeded; anything else the quick road would say is the reply's.
+            spoken = str(response.get("spoken") or "")
+            if spoken:
+                quick_said = (
+                    turn.spoken_result(result_text, status)
+                    if turn is not None and turn.quick is not None and status == "success"
+                    else ""
+                )
+                if quick_said and quick_said != "Done.":
+                    spoken = quick_said
+            else:
+                # A reply made without the reply path (none is, since with_reply): the older wording.
+                spoken = speakable_message(result_text, limit=300)
+                spoken = (turn.spoken_result(result_text, status) if turn is not None else "") or spoken
             if turn is not None:
                 # The next question can refer to what was done, in the words the person heard.
                 turn.finish(status, result_text, spoken)
