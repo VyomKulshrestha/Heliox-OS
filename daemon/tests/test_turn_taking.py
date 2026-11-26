@@ -232,7 +232,10 @@ async def test_streamed_text_is_the_caption_and_the_final_pass_gives_the_words(m
     feeder = asyncio.create_task(feed(listener._recorder._queue, frames))
     text = await listener._record_and_transcribe(timeout=3)
     feeder.cancel()
-    await asyncio.sleep(0.05)
+    # Captions reach the window through the listener's _schedule (call_soon_threadsafe, then a task), in the order
+    # they were scheduled; the corrected one is scheduled last, before _record_and_transcribe returns. Counted turns.
+    for _ in range(10):
+        await asyncio.sleep(0)
     assert text == "Open Chrome, and I'm done."  # the accurate pass's words are the ones acted on
     assert listener.last_transcription_engine == "whisper"
     assert captions[0].startswith("Open") and captions[-1] == "Open Chrome, and I'm done."  # caption corrected
