@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -281,6 +282,37 @@ async def build_catalog() -> dict[str, Any]:
     }
 
 
+README_VERIFICATION_ROW = "| Outcome verification |"
+
+
+def readme_with_verifier_counts(text: str, verified: int, total: int) -> str:
+    """Rewrite the README's outcome-verification row from the catalog, keeping each cell's width."""
+
+    lines = text.split("\n")
+    rows = [index for index, line in enumerate(lines) if line.startswith(README_VERIFICATION_ROW)]
+    if len(rows) != 1:
+        raise ValueError(
+            f"README must have exactly one row starting with {README_VERIFICATION_ROW!r}"
+        )
+    cells = lines[rows[0]].split("|")
+    if len(cells) != 5:
+        raise ValueError("README outcome-verification row must have three cells")
+    replacements = (
+        (2, r"^\d+ actions have", f"{verified} actions have"),
+        (3, r"^The other \d+ ", f"The other {total - verified} "),
+    )
+    for index, pattern, value in replacements:
+        width = len(cells[index]) - 2
+        content, count = re.subn(pattern, value, cells[index].strip())
+        if count != 1:
+            raise ValueError(
+                f"README outcome-verification cell {index - 1} no longer reads as expected"
+            )
+        cells[index] = f" {content.ljust(width)} "
+    lines[rows[0]] = "|".join(cells)
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -288,6 +320,12 @@ def main() -> int:
         type=Path,
         default=REPO_ROOT / "capabilities.json",
         help="Destination for the deterministic JSON catalog.",
+    )
+    parser.add_argument(
+        "--readme",
+        type=Path,
+        default=None,
+        help="README whose verifier counts to rewrite (default: the repository's, only when --output is the default).",
     )
     args = parser.parse_args()
     catalog = asyncio.run(build_catalog())
@@ -301,6 +339,18 @@ def main() -> int:
         f"Wrote {len(catalog['actions'])} actions and {len(catalog['plugins'])} plugins "
         f"to {args.output}"
     )
+    readme = args.readme
+    if readme is None and args.output.resolve() == (REPO_ROOT / "capabilities.json").resolve():
+        readme = REPO_ROOT / "README.md"
+    if readme is not None:
+        original = readme.read_bytes().decode("utf-8")
+        summary = catalog["summary"]
+        updated = readme_with_verifier_counts(
+            original, summary["independent_postcondition_verifiers"], summary["action_types"]
+        )
+        if updated != original:
+            readme.write_bytes(updated.encode("utf-8"))
+            print(f"Updated the verifier counts in {readme}")
     return 0
 
 

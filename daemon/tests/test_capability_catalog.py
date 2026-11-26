@@ -92,3 +92,35 @@ def test_committed_capability_catalog_is_current(tmp_path: Path) -> None:
     )
     assert b"\r\n" not in generated_path.read_bytes()
     assert generated_path.read_bytes() == (repo_root / "capabilities.json").read_bytes()
+
+
+def test_readme_verifier_counts_come_from_the_committed_catalog() -> None:
+    module = _generator_module()
+    repo_root = Path(__file__).resolve().parents[2]
+    catalog = json.loads((repo_root / "capabilities.json").read_text(encoding="utf-8"))
+    readme = (repo_root / "README.md").read_bytes().decode("utf-8")
+    summary = catalog["summary"]
+
+    assert (
+        module.readme_with_verifier_counts(
+            readme, summary["independent_postcondition_verifiers"], summary["action_types"]
+        )
+        == readme
+    )
+
+
+def test_readme_verifier_row_is_rewritten_in_place_keeping_cell_widths() -> None:
+    module = _generator_module()
+    row = (
+        "| Outcome verification | 22 actions have an independent observed post-condition verifier      "
+        "| The other 140 currently rely on the executor result      |"
+    )
+    text = f"intro\n{row}\nend\n"
+
+    updated = module.readme_with_verifier_counts(text, 31, 162)
+    new_row = updated.split("\n")[1]
+
+    assert "| 31 actions have an independent" in new_row
+    assert "| The other 131 currently rely" in new_row
+    assert [len(cell) for cell in new_row.split("|")] == [len(cell) for cell in row.split("|")]
+    assert updated.startswith("intro\n") and updated.endswith("\nend\n")
