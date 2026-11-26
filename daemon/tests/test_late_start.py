@@ -282,26 +282,49 @@ def _slow_part(late: LateStarts, name: str, seconds: float, starts: list[str]) -
     late.add(name, name.title(), f"{name} is still starting.", (f"{name}_status",), start)
 
 
+def _gated_part(late: LateStarts, name: str, starts: list[str]) -> asyncio.Event:
+    """A part that finishes when the test sets the returned event: its time is the test's choice, not a sleep."""
+    finish = asyncio.Event()
+
+    async def start():
+        starts.append(name)
+        await finish.wait()
+
+    late.add(name, name.title(), f"{name} is still starting.", (f"{name}_status",), start)
+    return finish
+
+
+async def _turns_until(condition, turns: int = 200) -> None:
+    for _ in range(turns):
+        if condition():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("not reached within the event loop's turns")
+
+
 async def test_on_demand_a_request_starts_its_part_and_waits_for_it_within_the_bound():
     late, starts = LateStarts(), []
-    _slow_part(late, "screen", 0.05, starts)
-    loop = asyncio.get_running_loop()
-    began = loop.time()
-    assert await late.ready_for("screen_status", 2.0) is None  # go ahead: it is ready
-    waited = loop.time() - began
+    finish = _gated_part(late, "screen", starts)
+    request = asyncio.create_task(late.ready_for("screen_status", 2.0))
+    await _turns_until(lambda: starts == ["screen"])  # the request started its part out of turn
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert not request.done() and late.snapshot() == {"screen": "starting"}  # it waits for the part
+    finish.set()
+    assert await request is None  # go ahead: ready as soon as the part was, not at the bound
     assert starts == ["screen"] and late.snapshot() == {"screen": "ready"}
-    assert 0.04 <= waited < 1.0  # as long as the part took, not the bound
 
 
 async def test_the_bound_answers_a_slow_part_with_its_sentence_and_the_part_carries_on():
     late, starts = LateStarts(), []
-    _slow_part(late, "neural", 0.3, starts)
-    loop = asyncio.get_running_loop()
-    began = loop.time()
+    finish = _gated_part(late, "neural", starts)
+    # The part cannot finish before the test lets it: the answer below can only come from the bound.
     assert await late.ready_for("neural_status", 0.05) == {"status": "starting", "message": "neural is still starting."}
-    assert loop.time() - began < 0.25  # the bound, not the part's own time
     assert late.snapshot() == {"neural": "starting"}  # the request giving up does not stop the part
-    await asyncio.sleep(0.4)
+    task = late.parts["neural"].task
+    assert task is not None and not task.done()
+    finish.set()
+    await task
     assert late.snapshot() == {"neural": "ready"}
     assert await late.ready_for("neural_status", 0.05) is None
     assert starts == ["neural"]
@@ -328,12 +351,22 @@ async def test_the_parts_few_need_early_wait_while_a_request_runs():
     from pilot.system import late_start
 
     busy = {"now": True}
-    late, starts = LateStarts(pause=0.0, idle_pause=0.0, busy=lambda: busy["now"]), []
+    idle_checks: list[float] = []
+    waiting = asyncio.Event()
+
+    async def sleep(seconds: float) -> None:  # the queue's own pauses, counted instead of slept
+        if seconds == 0.5:  # _wait_until_idle's pause between looks at the daemon
+            idle_checks.append(seconds)
+            waiting.set()
+        await asyncio.sleep(0)
+
+    late = LateStarts(pause=0.0, idle_pause=0.0, busy=lambda: busy["now"], sleep=sleep, clock=lambda: 0.0)
+    starts: list[str] = []
     _slow_part(late, "screen_vision", 0.0, starts)
     _slow_part(late, "neural", 0.0, starts)
     assert "neural" in late_start.IDLE_PARTS and "screen_vision" not in late_start.IDLE_PARTS
     run = asyncio.create_task(late.run())
-    await asyncio.sleep(0.2)
+    await waiting.wait()  # the queue reached neural and is waiting for the daemon to be idle
     assert starts == ["screen_vision"]  # neural waits: a request is running
     busy["now"] = False
     await run  # the queue ends once the daemon is idle
@@ -344,18 +377,20 @@ async def test_planning_starts_what_it_reads_together_within_one_bound(monkeypat
     monkeypatch.setattr("pilot.system.late_start.PLAN_PART_WAIT_SECONDS", 1.0)
     server, _called = _ready_server_with_nothing_started()
     started: list[str] = []
+    all_started = asyncio.Event()
     for name in ("screen_vision", "subconscious", "strategy_evolution"):
 
         async def start(name=name):
             started.append(name)
-            await asyncio.sleep(0.1)
+            if len(started) == 3:
+                all_started.set()
+            # Each part finishes only once all three have started: started one after another, the first would
+            # never finish within the bound and none would be ready below.
+            await all_started.wait()
 
         server._late_parts().set_start(name, start)
-    loop = asyncio.get_running_loop()
-    began = loop.time()
     await server._ensure_plan_parts("screen_vision", "subconscious", "strategy_evolution")
     assert sorted(started) == ["screen_vision", "strategy_evolution", "subconscious"]
-    assert loop.time() - began < 0.5  # together, not one after another
     snapshot = server._late_parts().snapshot()
     assert all(snapshot[name] == "ready" for name in started)
     assert snapshot["neural"] == "waiting"  # what the plan does not read is left to the queue
