@@ -134,6 +134,28 @@ def _persistable_text(text: str) -> str:
     return str(redact_for_persistence(text[:MAX_PERSISTED_STEP_CHARS]))
 
 
+def settle_instead_of_retrying(results: list[Any], failed_actions: list[int]) -> str | None:
+    """Why another round must not run, or None. Two cases: a step that worked but left the wrong thing behind where a
+    second run would add another (RECONCILE_NOT_RETRY_ACTIONS, such as a calendar event), and desktop input that may
+    have gone to another window, so doing it again could type or click there twice
+    (pilot.system.desktop_observe.input_went_elsewhere). The person settles both."""
+    from pilot.system.desktop_observe import input_went_elsewhere
+
+    elsewhere = input_went_elsewhere(results)
+    if elsewhere:
+        return elsewhere
+    for index in failed_actions:
+        if not isinstance(index, int) or not 0 <= index < len(results):
+            continue
+        result = results[index]
+        if result.success and result.action.action_type in RECONCILE_NOT_RETRY_ACTIONS:
+            return (
+                f"{result.action.action_type.value} worked but its result is not what was asked; "
+                "another round would add a second one"
+            )
+    return None
+
+
 @dataclass
 class JobStep:
     """A single step in an autonomous job."""
@@ -1297,13 +1319,8 @@ class AutonomousExecutor:
                 failure = "; ".join(errors) or verification_details or "verification failed"
                 progress.append(f"Round {round_index + 1} failed verification: {failure}")
                 step.error = failure
-                if any(
-                    0 <= index < len(results)
-                    and results[index].success
-                    and results[index].action.action_type in RECONCILE_NOT_RETRY_ACTIONS
-                    for index in verification.failed_actions
-                ):
-                    # The action worked but left the wrong thing behind; another round would add a second one.
+                if settle_instead_of_retrying(results, list(getattr(verification, "failed_actions", []))):
+                    # The person settles it; another round could add a second event or type into another window.
                     break
             else:
                 step.error = f"Goal was not verified complete after {MAX_AUTONOMOUS_ROUNDS_PER_STEP} adaptive rounds."

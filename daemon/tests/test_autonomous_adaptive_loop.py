@@ -10,6 +10,7 @@ from pilot.actions import (
     ActionPlan,
     ActionResult,
     ActionType,
+    CalendarParams,
     KeyboardParams,
     OpenApplicationParams,
     ShellCommandParams,
@@ -22,6 +23,7 @@ from pilot.agents.autonomous import (
     AutonomousExecutor,
     AutonomousJob,
     JobStep,
+    settle_instead_of_retrying,
 )
 from pilot.agents.decomposer import Subtask, SubtaskStatus, TaskDecomposer, TaskDecomposition
 from pilot.agents.multi_agent import MultiAgentRouter
@@ -712,3 +714,47 @@ async def test_repeated_identical_plan_stops_instead_of_looping_forever():
     assert job.steps[0].status == "failed"
     assert "repeating the same plan" in job.steps[0].error
     assert autonomous._executor.execute.await_count == 2
+
+
+def test_keys_that_may_have_gone_to_another_window_stop_the_autonomous_rounds() -> None:
+    from pilot.system import desktop_observe
+
+    action = Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text="hello"))
+    failed = ActionResult(action=action, success=False, error="Another window was in front: Mail")
+    desktop_observe.remember(
+        desktop_observe.StepRecord(
+            action=action, outcome="mismatch", detail="Mail was in front", facts={"elsewhere": True}
+        )
+    )
+    try:
+        assert settle_instead_of_retrying([failed], []) == "Another window was in front: Mail"
+    finally:
+        desktop_observe.forget_all()
+
+
+@pytest.mark.asyncio
+async def test_an_autonomous_step_runs_one_round_when_its_event_must_be_reconciled() -> None:
+    action = Action(
+        action_type=ActionType.CALENDAR_CREATE_EVENT,
+        target="Standup",
+        parameters=CalendarParams(summary="Standup", start="2026-11-27T09:00", end="2026-11-27T09:15"),
+    )
+    plan = ActionPlan(actions=[action], explanation="Add the standup")
+    created = ActionResult(action=action, success=True, output='{"uid": "abc"}')
+    autonomous = AutonomousExecutor(
+        planner=SimpleNamespace(plan=AsyncMock(side_effect=[plan, plan])),
+        executor=SimpleNamespace(execute=AsyncMock(side_effect=[[created], [created]])),
+        verifier=SimpleNamespace(
+            verify=AsyncMock(return_value=VerificationResult(passed=False, details=["wrong start"], failed_actions=[0]))
+        ),
+        decomposer=MagicMock(),
+    )
+    autonomous.set_approval_handler(AsyncMock(return_value=True))
+    autonomous._focus_target_window = AsyncMock(return_value=True)
+    autonomous._read_target_window_text = AsyncMock(return_value="")
+    job = AutonomousJob(goal="Add the standup", steps=[JobStep(index=0, title="Execute", description="")])
+
+    await autonomous._execute_single_step(job)
+
+    assert job.steps[0].status == "failed"
+    assert autonomous._executor.execute.await_count == 1
