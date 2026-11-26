@@ -83,7 +83,6 @@ def test_catalog_names_follow_the_registry_and_its_rules() -> None:
 def test_schedule_delete_lives_in_its_area_module() -> None:
     registration = postconditions.registrations()[ActionType.SCHEDULE_DELETE]
     assert registration.module == "pilot.agents.postconditions.triggers_schedules"
-    assert registration.precheck is False  # a delete by a name that matches nothing must run
 
 
 def test_a_second_verifier_for_one_action_is_refused(scratch_registry: dict) -> None:
@@ -258,27 +257,32 @@ async def test_an_observed_precheck_still_skips(monkeypatch: pytest.MonkeyPatch,
     assert await Verifier(MagicMock()).check_already_satisfied(action) == (True, "already there")
 
 
-def test_every_registered_precheck_is_declared_and_no_delete_by_name_has_one() -> None:
+def test_every_registered_precheck_is_declared() -> None:
     area = postconditions.registrations()
     for action, registration in area.items():
         assert (action in verifier_module._PRECHECKABLE_POSTCONDITIONS) is registration.precheck
-    # A delete by name or id that matches nothing must run and fail, never be skipped as already satisfied.
-    for action in (ActionType.SCHEDULE_DELETE, ActionType.TRIGGER_DELETE):
-        assert action not in verifier_module._PRECHECKABLE_POSTCONDITIONS
 
 
 @pytest.mark.asyncio
-async def test_schedule_delete_of_a_name_that_matches_nothing_reaches_the_handler(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("action_type", [ActionType.SCHEDULE_DELETE, ActionType.TRIGGER_DELETE])
+async def test_a_delete_of_a_name_that_matches_nothing_is_never_skipped(
+    monkeypatch: pytest.MonkeyPatch, action_type: ActionType
 ) -> None:
+    """The rule, whatever pre-check a series gives these deletes: a name that matches nothing reaches the handler
+    and fails there. The only skip allowed is a repeat of a delete this same run already made and verified."""
     from unittest.mock import AsyncMock
 
-    from pilot.actions import ScheduleParams
+    from pilot.actions import ScheduleParams, TriggerParams
     from pilot.system import scheduler
 
     monkeypatch.setattr(scheduler, "schedule_exists", AsyncMock(return_value=False))
-    action = Action(
-        action_type=ActionType.SCHEDULE_DELETE, target="nightly", parameters=ScheduleParams(name="no-such-task")
+    parameters = (
+        ScheduleParams(name="no-such-task")
+        if action_type == ActionType.SCHEDULE_DELETE
+        else TriggerParams(name="no-such-trigger")
     )
+    action = Action(action_type=action_type, target="no-such", parameters=parameters)
 
-    assert await Verifier(MagicMock()).check_already_satisfied(action) is None
+    state = await Verifier(MagicMock()).check_already_satisfied(action)
+
+    assert state is None or state[0] is False

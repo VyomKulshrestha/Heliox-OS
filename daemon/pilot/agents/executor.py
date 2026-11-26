@@ -1188,12 +1188,17 @@ class Executor:
                         logger.warning("Pre-action step check failed; continuing execution", exc_info=True)
                         step_state = None
                     if step_state is not None and step_state[0]:
+                        from pilot.agents.verifier import ALREADY_ABSENT_WORDING
+
+                        # A target found absent is said as found ("There was no file at ..."), never as done.
+                        absent = action.action_type in ALREADY_ABSENT_WORDING
                         result = ActionResult(
                             action=action,
                             success=True,
-                            output=f"Already satisfied: {step_state[1]}",
+                            output=step_state[1] if absent else f"Already satisfied: {step_state[1]}",
                             executed=False,
-                            skip_reason="already_satisfied",
+                            skip_reason="already_absent" if absent else "already_satisfied",
+                            notice=step_state[1] if absent else None,
                         )
                         if claimed and self._durable_task_store is not None:
                             from pilot.workflows.durable_tasks import ActionExecutionStatus
@@ -1583,6 +1588,7 @@ class Executor:
                 output=str(output) if notice else output,
                 snapshot_id=snapshot_id,
                 notice=notice,
+                skip_reason="already_absent" if getattr(output, "nothing_done", False) else None,
             )
         except Exception as e:
             logger.exception("Action execution failed: %s", action.action_type)

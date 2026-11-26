@@ -50,6 +50,14 @@ _SELECT = (
 )
 
 
+def _nothing_matched(target: str, verb: str) -> str:
+    """Nothing was open under that name: said as found, never as done (see verifier.ALREADY_ABSENT_WORDING)."""
+    from pilot.actions import OutputWithNotice
+
+    sentence = f"{target} was not open, so nothing was {verb}"
+    return OutputWithNotice(sentence, sentence, nothing_done=True)
+
+
 def _target(*, title: str | None, process_name: str | None) -> dict[str, str]:
     """The values ``_SELECT`` reads: the process name when given, else the title."""
     if process_name:
@@ -75,19 +83,23 @@ _FOCUS = (
     + "$foregroundPid = 0; [void][Win32]::GetWindowThreadProcessId([Win32]::GetForegroundWindow(), [ref]$foregroundPid); "
     + "if (-not $activated -or $foregroundPid -ne $p.Id) { Write-Error 'Window activation was rejected'; exit 1 }; $p.Id"
 )
+# Prints NOTHING_MATCHED when no process or window title matched, so the result can say so.
 _CLOSE = (
-    "if ($HelioxArgs['process']) { $p = Get-Process -Name $HelioxArgs['process'] -ErrorAction SilentlyContinue; "
-    "if ($p) { $p | ForEach-Object { $_.CloseMainWindow() } } else { Write-Error 'Process not found' } } "
+    "if ($HelioxArgs['process']) { $m = @(Get-Process -Name $HelioxArgs['process'] -ErrorAction SilentlyContinue) } "
     "else { $pattern = '*' + [WildcardPattern]::Escape([string]$HelioxArgs['title']) + '*'; "
-    "Get-Process | Where-Object {$_.MainWindowTitle -like $pattern} | ForEach-Object { $_.CloseMainWindow() } }"
+    "$m = @(Get-Process | Where-Object {$_.MainWindowTitle -like $pattern}) } "
+    "if ($m.Count -eq 0) { Write-Output 'heliox:nothing-matched' } "
+    "else { $m | ForEach-Object { [void]$_.CloseMainWindow() } }"
 )
+NOTHING_MATCHED = "heliox:nothing-matched"
 # Minimize and maximize match the name or title given against window titles, as before.
 _SHOW_WINDOW = (
     "$pattern = '*' + [WildcardPattern]::Escape([string]$HelioxArgs['title']) + '*'; "
     "$p = Get-Process | Where-Object {$_.MainWindowTitle -like $pattern} | Select-Object -First 1; "
     "if ($p) { Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; "
     'public class Win32 { [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); }\'; '
-    "[Win32]::ShowWindow($p.MainWindowHandle, [int]$HelioxArgs['show']) }"
+    "[void][Win32]::ShowWindow($p.MainWindowHandle, [int]$HelioxArgs['show']) } "
+    "else { Write-Output 'heliox:nothing-matched' }"
 )
 _MAC_EXISTS = (
     'tell application "System Events"\n'
@@ -349,6 +361,8 @@ async def window_close(window_id: str | None = None, title: str | None = None, p
 
     if code != 0:
         raise RuntimeError(f"Window close failed: {err.strip()}")
+    if NOTHING_MATCHED in out:
+        return _nothing_matched(title or process_name or "", "closed")
     return f"Closed window: {title or process_name or window_id}"
 
 
@@ -371,6 +385,8 @@ async def window_minimize(title: str | None = None, process_name: str | None = N
 
     if code != 0:
         raise RuntimeError(f"Minimize failed: {err.strip()}")
+    if NOTHING_MATCHED in out:
+        return _nothing_matched(title or process_name or "", "minimized")
     return f"Minimized window: {title or process_name}"
 
 
@@ -393,4 +409,6 @@ async def window_maximize(title: str | None = None, process_name: str | None = N
 
     if code != 0:
         raise RuntimeError(f"Maximize failed: {err.strip()}")
+    if NOTHING_MATCHED in out:
+        return _nothing_matched(title or process_name or "", "maximized")
     return f"Maximized window: {title or process_name}"

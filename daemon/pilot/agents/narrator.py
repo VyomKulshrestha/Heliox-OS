@@ -103,9 +103,15 @@ class ExecutionNarrator:
         if result.success and result.action.action_type.value in _SILENT_SUCCESS_ACTIONS:
             return
         description = _describe_action(result.action)
-        text = (
-            f"Done: {description}" if result.success else f"Failed: {description} — {result.error or 'unknown error'}"
-        )
+        if result.success and result.skip_reason in {"already_absent", "already_satisfied"}:
+            # Not run because its state was already there: say what was found, not "Done".
+            text = result.output
+        else:
+            text = (
+                f"Done: {description}"
+                if result.success
+                else f"Failed: {description} — {result.error or 'unknown error'}"
+            )
         await self._broadcast_fn(
             "execution_narration",
             {

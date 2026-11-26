@@ -790,7 +790,10 @@ async def browser_close_tab(tab_index: int = -1) -> str:
     ctx = await _ensure_browser()
     pages = ctx.pages
     if not pages:
-        return "No tabs to close"
+        from pilot.actions import OutputWithNotice
+
+        sentence = "No browser tab was open, so nothing was closed"
+        return OutputWithNotice(sentence, sentence, nothing_done=True)
     page = pages[min(tab_index, len(pages) - 1)]
     url = page.url
     await page.close()

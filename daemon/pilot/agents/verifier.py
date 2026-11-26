@@ -9,6 +9,7 @@ Updated for the expanded action set with cross-platform support.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from pilot.actions import (
@@ -109,6 +110,27 @@ _PRECHECKABLE_POSTCONDITIONS = frozenset(
 )
 
 
+def _process_label(params: Any) -> str:
+    return f"Process {params.pid}" if getattr(params, "pid", None) is not None else str(getattr(params, "name", ""))
+
+
+# Deleting, stopping, removing, closing or unmounting something observed to be absent skips the action: the goal
+# state holds, and plans rely on that (a clean-up step for a file that may not exist, closing a window that is already
+# gone). Heliox then says what it found, never a success verb for something that did not happen; the executor marks
+# these skips "already_absent". Triggers and scheduled tasks are different on purpose: they have no pre-check and fail
+# on a name that matches nothing, because a wrongly named automation keeps running unseen, so the plan must stop and
+# the person must be told. An absent file, process, package, window or mount leaves nothing running.
+ALREADY_ABSENT_WORDING: dict[ActionType, Callable[[Any], str]] = {
+    ActionType.FILE_DELETE: lambda p: f"There was no file at {p.path}, so nothing was deleted",
+    ActionType.PROCESS_KILL: lambda p: f"{_process_label(p)} was not running, so nothing was stopped",
+    ActionType.PACKAGE_REMOVE: lambda p: f"{p.name} is not installed, so nothing was removed",
+    ActionType.WINDOW_CLOSE: (
+        lambda p: f"{p.window_id or p.title or p.process_name} was not open, so nothing was closed"
+    ),
+    ActionType.DISK_UNMOUNT: lambda p: f"{p.mount_point or p.device} was not mounted, so nothing was unmounted",
+}
+
+
 class Verifier:
     """Verifies execution results against expected outcomes."""
 
@@ -146,6 +168,8 @@ class Verifier:
             # Could not look (no credentials, no probe on this platform, time limit, an error): that is not
             # evidence the state is already there, so the action runs.
             return None
+        if passed and action.action_type in ALREADY_ABSENT_WORDING:
+            return True, ALREADY_ABSENT_WORDING[action.action_type](action.parameters)
         return passed, detail
 
     async def verify(self, plan: ActionPlan, results: list[ActionResult]) -> VerificationResult:

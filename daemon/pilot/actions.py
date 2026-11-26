@@ -1141,10 +1141,13 @@ class OutputWithNotice(str):
     """A handler's output that succeeded with a caveat; the executor moves ``notice`` into ``ActionResult.notice``."""
 
     notice: str
+    nothing_done: bool
 
-    def __new__(cls, text: str, notice: str) -> OutputWithNotice:
+    def __new__(cls, text: str, notice: str, *, nothing_done: bool = False) -> OutputWithNotice:
         output = super().__new__(cls, text)
         output.notice = notice
+        # True when the target was not there, so nothing happened: the executor marks the result "already_absent".
+        output.nothing_done = nothing_done
         return output
 
 

@@ -64,7 +64,8 @@ def success_message(
     """Build a terminal success message from verified execution state."""
     message = _success_message_body(plan, results, verification, dry_run=dry_run)
     notices = [] if dry_run else [_clean(result.notice) for result in results if result.success and result.notice]
-    return "\n".join([message, *(f"Note: {notice}" for notice in notices if notice)])
+    # A notice already in the message (an absent target's sentence is also its output) is not repeated.
+    return "\n".join([message, *(f"Note: {notice}" for notice in notices if notice and notice not in message)])
 
 
 def _success_message_body(

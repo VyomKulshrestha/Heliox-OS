@@ -242,6 +242,8 @@ class TaskReceipts:
                 "output_sha256": _sha256(str(output).encode("utf-8")) if output else None,
                 # Kept in plain text, unlike the output: a part of a success the person must be able to look up.
                 "notice": str(getattr(result, "notice", "") or "")[:500],
+                # "already_absent": the target was not there, so nothing was done (the notice says what was found).
+                "skip_reason": str(getattr(result, "skip_reason", "") or ""),
                 "undo": undo_kind,
                 "at": _iso(time.time()),
             }
