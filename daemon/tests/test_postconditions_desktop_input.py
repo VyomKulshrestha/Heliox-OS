@@ -121,11 +121,11 @@ def test_every_desktop_action_is_registered() -> None:
     assert ActionType.OPEN_URL not in POSTCONDITION_VERIFIERS
 
 
-def test_open_url_is_listed_as_unobservable_once_the_list_exists() -> None:
-    """The list (postconditions/_unobservable.py) comes with the vsys series; the integrator adds open_url to it."""
-    unobservable = pytest.importorskip("pilot.agents.postconditions._unobservable")
-    if ActionType.OPEN_URL not in unobservable.UNOBSERVABLE_POSTCONDITION:
-        pytest.skip("open_url's entry is added when the vsys and vdesk series are stacked")
+def test_open_url_is_listed_as_unobservable() -> None:
+    """open_url has a reason in postconditions/_unobservable.py and no verifier."""
+    from pilot.agents.postconditions import _unobservable as unobservable
+
+    assert unobservable.UNOBSERVABLE_POSTCONDITION[ActionType.OPEN_URL]
     assert not set(unobservable.UNOBSERVABLE_POSTCONDITION) & set(POSTCONDITION_VERIFIERS)
 
 
