@@ -39,6 +39,7 @@ ORIGINAL_22 = {
     ActionType.SCHEDULE_DELETE: "schedule_absence_postcondition",
 }
 
+# The pre-checks of the original 22, less schedule_delete: a name that matches nothing must run and fail.
 ORIGINAL_PRECHECKABLE = {
     ActionType.FILE_WRITE,
     ActionType.FILE_DELETE,
@@ -50,7 +51,6 @@ ORIGINAL_PRECHECKABLE = {
     ActionType.PROCESS_KILL,
     ActionType.WINDOW_CLOSE,
     ActionType.DISK_UNMOUNT,
-    ActionType.SCHEDULE_DELETE,
 }
 
 
@@ -83,7 +83,7 @@ def test_catalog_names_follow_the_registry_and_its_rules() -> None:
 def test_schedule_delete_lives_in_its_area_module() -> None:
     registration = postconditions.registrations()[ActionType.SCHEDULE_DELETE]
     assert registration.module == "pilot.agents.postconditions.triggers_schedules"
-    assert registration.precheck is True
+    assert registration.precheck is False  # a delete by a name that matches nothing must run
 
 
 def test_a_second_verifier_for_one_action_is_refused(scratch_registry: dict) -> None:
@@ -196,3 +196,89 @@ async def test_a_failed_action_never_reaches_its_verifier(
     assert calls == []
     assert verification.passed is False
     assert "FAILED — handler raised" in verification.details[0]
+
+
+# ── Pre-checks: only an observed "the post-condition already holds" may skip an action ──
+
+
+def _unobservable(kind: str):
+    async def check(_result: ActionResult) -> Outcome:
+        if kind == "unobserved":
+            return unobserved("no credentials to look with")
+        if kind == "raises":
+            raise RuntimeError("observer unavailable")
+        if kind == "mismatch":
+            return mismatch("expected absent, found present")
+        await asyncio.Event().wait()  # never finishes; a zero time limit cancels it at once
+        return verified("never")
+
+    return check
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["unobserved", "raises", "times_out", "mismatch"])
+@pytest.mark.parametrize("action_type", sorted(verifier_module._PRECHECKABLE_POSTCONDITIONS, key=lambda a: a.value))
+async def test_a_precheck_that_did_not_observe_the_state_never_skips_the_action(
+    monkeypatch: pytest.MonkeyPatch, scratch_registry: dict, action_type: ActionType, kind: str
+) -> None:
+    """Every action with a pre-check, area-registered or not, put behind a check that cannot confirm the state."""
+    scratch_registry[action_type] = postconditions.Registration(
+        action_type=action_type,
+        method="test_postcondition",
+        check=_unobservable(kind),
+        precheck=True,
+        timeout=0 if kind == "times_out" else 20,
+        module="tests",
+    )
+    monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
+    from pilot.actions import PackageParams
+
+    parameters = PackageParams(name="x") if action_type == ActionType.PACKAGE_INSTALL else FileParams(path="x")
+    action = Action(action_type=action_type, target="x", parameters=parameters)
+
+    state = await Verifier(MagicMock()).check_already_satisfied(action)
+
+    assert state is None or state[0] is False
+
+
+@pytest.mark.asyncio
+async def test_an_observed_precheck_still_skips(monkeypatch: pytest.MonkeyPatch, scratch_registry: dict) -> None:
+    async def present(_result: ActionResult) -> Outcome:
+        return verified("already there")
+
+    register(ActionType.FILE_HASH, method="test_postcondition", precheck=True)(present)
+    monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
+    monkeypatch.setattr(
+        verifier_module,
+        "_PRECHECKABLE_POSTCONDITIONS",
+        verifier_module._PRECHECKABLE_POSTCONDITIONS | {ActionType.FILE_HASH},
+    )
+    action = Action(action_type=ActionType.FILE_HASH, target="x", parameters=FileParams(path="x"))
+
+    assert await Verifier(MagicMock()).check_already_satisfied(action) == (True, "already there")
+
+
+def test_every_registered_precheck_is_declared_and_no_delete_by_name_has_one() -> None:
+    area = postconditions.registrations()
+    for action, registration in area.items():
+        assert (action in verifier_module._PRECHECKABLE_POSTCONDITIONS) is registration.precheck
+    # A delete by name or id that matches nothing must run and fail, never be skipped as already satisfied.
+    for action in (ActionType.SCHEDULE_DELETE, ActionType.TRIGGER_DELETE):
+        assert action not in verifier_module._PRECHECKABLE_POSTCONDITIONS
+
+
+@pytest.mark.asyncio
+async def test_schedule_delete_of_a_name_that_matches_nothing_reaches_the_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from pilot.actions import ScheduleParams
+    from pilot.system import scheduler
+
+    monkeypatch.setattr(scheduler, "schedule_exists", AsyncMock(return_value=False))
+    action = Action(
+        action_type=ActionType.SCHEDULE_DELETE, target="nightly", parameters=ScheduleParams(name="no-such-task")
+    )
+
+    assert await Verifier(MagicMock()).check_already_satisfied(action) is None

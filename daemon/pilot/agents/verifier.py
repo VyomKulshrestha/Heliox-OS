@@ -141,7 +141,11 @@ class Verifier:
             params: PackageParams = action.parameters  # type: ignore[assignment]
             if params.version or params.repository:
                 return None
-        passed, detail, _ = await self._verify_single(ActionResult(action=action, success=True))
+        passed, detail, observed = await self._verify_single(ActionResult(action=action, success=True))
+        if not observed:
+            # Could not look (no credentials, no probe on this platform, time limit, an error): that is not
+            # evidence the state is already there, so the action runs.
+            return None
         return passed, detail
 
     async def verify(self, plan: ActionPlan, results: list[ActionResult]) -> VerificationResult:
