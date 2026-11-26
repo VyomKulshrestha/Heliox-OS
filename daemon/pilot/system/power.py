@@ -7,6 +7,8 @@ macOS (pmset/osascript).
 from __future__ import annotations
 
 import logging
+import os
+from typing import NamedTuple
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
 
@@ -153,6 +155,123 @@ async def lock_screen() -> str:
     if code != 0:
         raise RuntimeError(f"Lock failed: {err.strip()}")
     return "Screen locked"
+
+
+# WTSQuerySessionInformationW(WTSSessionInfoEx) answers a WTSINFOEXW: Level (4 bytes, then padding to 8), then
+# WTSINFOEX_LEVEL1_W: SessionId, SessionState, SessionFlags. SessionFlags is WTS_SESSIONSTATE_LOCK (0) or
+# WTS_SESSIONSTATE_UNLOCK (1) from Windows 8 on (Windows 7 swapped the two; it is not supported).
+WTS_SESSION_INFO_EX = 25
+WTS_CURRENT_SESSION = 0xFFFFFFFF
+WTS_SESSIONSTATE_LOCK = 0
+WTS_SESSIONSTATE_UNLOCK = 1
+
+
+class LockReading(NamedTuple):
+    """Whether the session's screen is locked, as the session manager reports it.
+
+    ``locked`` is None when this platform gave no answer that can be trusted; ``source`` names what was read (or
+    why nothing could be), in words for the verification result."""
+
+    locked: bool | None
+    source: str
+
+
+def parse_wts_session_flags(raw: bytes) -> bool | None:
+    """Locked (True), unlocked (False) or unknown (None) from a WTSINFOEXW buffer."""
+    if len(raw) < 20 or int.from_bytes(raw[0:4], "little") != 1:
+        return None
+    flags = int.from_bytes(raw[16:20], "little", signed=True)
+    if flags == WTS_SESSIONSTATE_LOCK:
+        return True
+    if flags == WTS_SESSIONSTATE_UNLOCK:
+        return False
+    return None
+
+
+def _windows_session_info() -> bytes:
+    """This process's session record from the Terminal Services API: a read that needs no elevation."""
+    import ctypes
+
+    wts = ctypes.WinDLL("wtsapi32", use_last_error=True)
+    wts.WTSQuerySessionInformationW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    wts.WTSFreeMemory.argtypes = [ctypes.c_void_p]
+    buffer = ctypes.c_void_p()
+    size = ctypes.c_uint32()
+    if not wts.WTSQuerySessionInformationW(
+        None, WTS_CURRENT_SESSION, WTS_SESSION_INFO_EX, ctypes.byref(buffer), ctypes.byref(size)
+    ):
+        raise OSError(ctypes.get_last_error(), "WTSQuerySessionInformationW failed")
+    try:
+        return ctypes.string_at(buffer, size.value)
+    finally:
+        wts.WTSFreeMemory(buffer)
+
+
+def parse_mac_console_lock(plist_bytes: bytes, uid: int) -> bool | None:
+    """Locked, unlocked or unknown for ``uid`` from ``ioreg -n Root -d1 -a`` (the IOConsoleUsers list that
+    CGSessionCopyCurrentDictionary also reads). The lock key is present only while the screen is locked."""
+    import plistlib
+
+    try:
+        root = plistlib.loads(plist_bytes)
+    except Exception:
+        return None
+    if isinstance(root, list):
+        root = root[0] if root and isinstance(root[0], dict) else {}
+    if not isinstance(root, dict):
+        return None
+    users = root.get("IOConsoleUsers")
+    if not isinstance(users, list):
+        return None
+    for user in users:
+        if isinstance(user, dict) and user.get("kCGSSessionUserIDKey") == uid:
+            return bool(user.get("CGSSessionScreenIsLocked", False))
+    return None
+
+
+async def screen_locked() -> LockReading:
+    """Read whether this session is locked through the session manager, never through the command that locked it.
+
+    Windows: the session's lock flag from WTSQuerySessionInformationW. macOS: CGSSessionScreenIsLocked in the
+    console users' record (``ioreg``). Linux: logind's LockedHint for this session, which a screen locker sets when
+    it has locked; ``loginctl lock-session`` only sends logind's Lock signal and exits 0 whether or not a locker
+    acted on it. Raises when the reading itself fails."""
+    import asyncio
+
+    if CURRENT_PLATFORM == Platform.WINDOWS:
+        raw = await asyncio.to_thread(_windows_session_info)
+        locked = parse_wts_session_flags(raw)
+        if locked is None:
+            return LockReading(None, "Windows reported no lock state for this session")
+        return LockReading(locked, "the Windows session's lock flag")
+
+    if CURRENT_PLATFORM == Platform.MACOS:
+        code, out, err = await run_command(["ioreg", "-n", "Root", "-d1", "-a"], timeout=10)
+        if code != 0:
+            raise RuntimeError(f"Lock state read failed: {err.strip() or 'ioreg exited ' + str(code)}")
+        locked = parse_mac_console_lock(out.encode("utf-8"), os.getuid())
+        if locked is None:
+            return LockReading(None, "macOS listed no console session for this user")
+        return LockReading(locked, "macOS's console session record")
+
+    session = os.environ.get("XDG_SESSION_ID") or "self"
+    code, out, err = await run_command(
+        ["loginctl", "show-session", session, "--property=LockedHint", "--value"], timeout=10
+    )
+    if code == -1 and "not found" in err:
+        return LockReading(None, "this system has no loginctl (no systemd-logind) to ask")
+    if code != 0:
+        raise RuntimeError(f"Lock state read failed: {err.strip() or out.strip()}")
+    value = out.strip().casefold()
+    if value not in {"yes", "no"}:
+        return LockReading(None, "logind gave no LockedHint for this session")
+    return LockReading(value == "yes", "logind's LockedHint for this session")
 
 
 async def logout() -> str:
