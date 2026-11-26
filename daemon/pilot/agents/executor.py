@@ -871,10 +871,9 @@ class Executor:
                 and self._world_model_outcome_recorder is not None
                 and not (result.output or "").startswith("(dry run)")
             ):
-                self._world_model_outcome_recorder(
-                    result.action.action_type,
-                    result.success,
-                )
+                # A failure is recorded now, as changing nothing or as possibly half done; a success waits for its
+                # check (pilot.security.outcome_evidence).
+                self._world_model_outcome_recorder(result)
 
         async def _on_recorded_action_complete(result: ActionResult) -> None:
             completed_result_ids.add(id(result))

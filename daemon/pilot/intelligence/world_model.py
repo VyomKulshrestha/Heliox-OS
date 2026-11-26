@@ -819,39 +819,3 @@ class HybridWorldModel:
             sources=tuple(dict.fromkeys(structured.sources + visual.sources)),
             model_version=f"{structured.model_version}+{visual.model_version}",
         )
-
-
-class HistoricalFailureRisk:
-    """Bounded empirical risk from executor callbacks, not postconditions."""
-
-    def __init__(self, *, minimum_samples: int = 3) -> None:
-        self._minimum_samples = max(1, minimum_samples)
-        self._counts: dict[str, list[int]] = {}
-
-    def record(self, action_type: ActionType | str, success: bool) -> None:
-        key = ActionType(action_type).value
-        counts = self._counts.setdefault(key, [0, 0])
-        counts[0 if success else 1] += 1
-
-    def score(self, action_type: ActionType | str) -> tuple[float, str]:
-        key = ActionType(action_type).value
-        successes, failures = self._counts.get(key, [0, 0])
-        total = successes + failures
-        if total < self._minimum_samples:
-            return 0.0, ""
-        failure_rate = failures / total
-        support = min(1.0, total / 10.0)
-        score = min(0.85, failure_rate * (0.5 + 0.5 * support))
-        if score < 0.2:
-            return 0.0, ""
-        return (
-            score,
-            f"{failures} of {total} observed {key} executor callbacks failed",
-        )
-
-    def status(self) -> dict[str, Any]:
-        return {
-            "minimum_samples": self._minimum_samples,
-            "action_types_observed": len(self._counts),
-            "samples": sum(sum(counts) for counts in self._counts.values()),
-        }

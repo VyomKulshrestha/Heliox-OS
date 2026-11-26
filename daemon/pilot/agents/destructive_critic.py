@@ -62,6 +62,8 @@ class PlanRiskAssessment:
     model_version: str = "disabled"
     predictions: list[dict[str, Any]] = field(default_factory=list)
     prediction_contract: dict[str, Any] = field(default_factory=dict)
+    # The signal that set the worst risk (pilot.security.risk_gate): what the approval card's sentence says.
+    pause_source: str = ""
 
     @property
     def requires_confirmation(self) -> bool:
@@ -69,6 +71,30 @@ class PlanRiskAssessment:
 
     def to_dict(self) -> dict[str, Any]:
         return {**asdict(self), "requires_confirmation": self.requires_confirmation}
+
+
+# A pause learned from past outcomes already reads as a sentence in the person's terms
+# (pilot.security.outcome_evidence); a percentage on top of it says nothing more.
+PLAIN_PAUSE_SOURCES = frozenset({"execution_history", "verified_online_transition"})
+# Steps that cannot be undone always ask for approval on their own (Action.is_irreversible); the world model's
+# "may be irreversible" adds no second line to that card.
+IRREVERSIBLE_REASON = "Action may be irreversible"
+
+
+def world_model_card(assessment: dict[str, Any]) -> tuple[str, bool]:
+    """(the sentence an approval card shows for a world-model pause, whether the card also shows the world model's
+    block with its predicted risk). The pause itself is unchanged: this decides only what the person reads."""
+    reasons = [str(reason) for reason in assessment.get("reasons") or [] if str(reason).strip()]
+    reason_text = "; ".join(reasons) or "predicted outcome crossed the safety threshold"
+    if assessment.get("model_version") == "evaluation-error":
+        return f"World-model assessment unavailable: {reason_text}", True
+    source = str(assessment.get("pause_source") or "")
+    if source == "reversibility" and reasons and all(reason == IRREVERSIBLE_REASON for reason in reasons):
+        return "", False
+    if source in PLAIN_PAUSE_SOURCES and reasons:
+        return reason_text, False
+    score = float(assessment.get("world_model_score", 0.0) or 0.0)
+    return f"World model paused this plan at {score:.0%} predicted risk: {reason_text}", True
 
 
 def heuristic_risk(plan: ActionPlan) -> float:
@@ -139,6 +165,7 @@ def assess_plan_risk(
                 dict(prediction) for prediction in latest.get("predictions", []) if isinstance(prediction, dict)
             ],
             prediction_contract=dict(gate.status(enabled=True).get("prediction_contract", {})),
+            pause_source=str(latest.get("pause_source") or ""),
         )
     except Exception:
         logger.warning("Risk Gate evaluation failed; state-changing plans require review", exc_info=True)

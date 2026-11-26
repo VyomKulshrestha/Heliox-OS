@@ -1737,7 +1737,7 @@ class PilotServer:
         gate = get_risk_gate()
         gate.set_online_learner(self._online_learning)
         gate.set_ui_observation_provider(None)
-        self._executor.set_world_model_outcome_recorder(gate.record_outcome)
+        self._executor.set_world_model_outcome_recorder(gate.record_step)
         from pilot.workflows.recorded_workflows import RecordedWorkflowStore
 
         self._recorded_workflows = RecordedWorkflowStore(
@@ -4792,6 +4792,7 @@ class PilotServer:
                 HEURISTIC_RISK_THRESHOLD,
                 assess_plan_risk,
                 constrain_verdict_to_plan_authority,
+                world_model_card,
             )
 
             critic_verdict_payload: dict[str, Any] | None = None
@@ -5079,14 +5080,11 @@ class PilotServer:
                     )
 
                 world_model_reason = ""
+                show_world_model_block = False
                 if world_model_interrupt:
-                    reason_text = "; ".join(risk_assessment.reasons) or "predicted outcome crossed the safety threshold"
-                    world_model_reason = (
-                        f"World-model assessment unavailable: {reason_text}"
-                        if risk_assessment.model_version == "evaluation-error"
-                        else f"World model paused this plan at {risk_assessment.world_model_score:.0%} "
-                        f"predicted risk: {reason_text}"
-                    )
+                    # One plain reason: a learned pause says what happened before, and a step that cannot be undone
+                    # is marked on its own line, not given a second risk line (pilot.agents.destructive_critic).
+                    world_model_reason, show_world_model_block = world_model_card(risk_assessment.to_dict())
                 elif mcp_requires_visible_approval:
                     world_model_reason = (
                         "A local MCP client proposed this task. Heliox requires visible user approval "
@@ -5100,7 +5098,7 @@ class PilotServer:
                     plan,
                     ws,
                     reason=world_model_reason,
-                    risk_assessment=risk_assessment.to_dict() if world_model_interrupt else None,
+                    risk_assessment=risk_assessment.to_dict() if show_world_model_block else None,
                     force_all_actions=world_model_interrupt or gnomon_interrupt or mcp_requires_visible_approval,
                 )
 
@@ -5158,6 +5156,7 @@ class PilotServer:
                 # are untouched.
                 denied_indices = required_indices - approved_indices
                 partially_approved = bool(denied_indices)
+                self._learn_outcomes("approved", [a for i, a in enumerate(plan.actions) if i in approved_indices])
                 if partially_approved:
                     logger.info(
                         "Plan %s partially approved — skipping %d action(s) denied by user: %s",
@@ -5429,6 +5428,8 @@ class PilotServer:
 
             all_results = results
             last_verification = verification
+            if not dry_run:
+                self._learn_outcomes("checked", results, verification)
             await self._append_experience(
                 ExperienceEventType.OUTCOME_VERIFIED,
                 plan_id=plan_id,
@@ -5892,6 +5893,27 @@ class PilotServer:
                 )
 
         task.add_done_callback(_finished)
+
+    def _learn_outcomes(self, kind: str, *args: Any) -> None:
+        """Feed the world model's outcome evidence (pilot.security.outcome_evidence). Learning never decides whether
+        a task goes on, so a failure here is logged and ignored."""
+        try:
+            from pilot.security.risk_gate import get_risk_gate
+
+            gate = get_risk_gate()
+            if kind == "checked":
+                gate.record_checked(*args)
+            elif kind == "approved":
+                gate.record_approved(args[0])
+            elif kind == "undone":
+                from types import SimpleNamespace
+
+                for item in args[0]:
+                    gate.record_undone(
+                        SimpleNamespace(action_type=item["type"], target=str(item.get("target") or ""), parameters=None)
+                    )
+        except Exception:
+            logger.warning("Could not record %s outcomes for the world model", kind, exc_info=True)
 
     async def _drain_post_execution_tasks(self) -> None:
         """Finish durable memory writes and cancel optional reflection before shutdown."""
@@ -7715,6 +7737,12 @@ class PilotServer:
         # The journal checks the token again: a change while the dialog was open undoes nothing.
         result = await self._undo_journal.undo(task_key, preview_token)
         if result.get("status") in ("ok", "partial"):
+            # Each change the person undid is a step whose result they did not want (pilot.security.outcome_evidence).
+            kinds = {item.get("seq"): item for item in preview.get("items", [])}
+            for undone in result.get("results", []):
+                item = kinds.get(undone.get("seq"))
+                if undone.get("state") == "undone" and item is not None:
+                    self._learn_outcomes("undone", [item])
             logger.info(
                 "Undid task %s: %s undone, %s skipped, %s failed",
                 task_key,

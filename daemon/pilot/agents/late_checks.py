@@ -142,6 +142,7 @@ class LateVerifications:
         except asyncio.CancelledError:
             await late.cancel()
             raise
+        _learn_late(outcomes)
         report = LateReport(follow_up, [_entry(outcome) for outcome in outcomes])
         finished = {outcome.index for outcome in outcomes}
         for index in late.pending:
@@ -180,6 +181,24 @@ class LateVerifications:
     @property
     def running(self) -> int:
         return len(self._checks) + len(self._reports)
+
+
+def _learn_late(outcomes: list[Any]) -> None:
+    """A check that finished after the reply teaches the world model as one before it does: a mismatch is harm in
+    that step's place, a confirmed step is evidence the other way (pilot.security.outcome_evidence)."""
+    try:
+        from pilot.security.outcome_evidence import Outcome
+        from pilot.security.risk_gate import get_risk_gate
+
+        pairs = [
+            (outcome.result.action, Outcome.MISMATCH if outcome.kind is Kind.MISMATCH else Outcome.VERIFIED)
+            for outcome in outcomes
+            if outcome.kind is Kind.MISMATCH or (outcome.kind is None and outcome.outcome.observed)
+        ]
+        if pairs:
+            get_risk_gate().record_outcomes(pairs)
+    except Exception:
+        logger.warning("Could not record late check outcomes for the world model", exc_info=True)
 
 
 __all__ = ["LATE_CEILING_SECONDS", "FollowUp", "LateReport", "LateVerifications"]

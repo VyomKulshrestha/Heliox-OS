@@ -156,12 +156,10 @@ class ExecutionNarrator:
             return True
 
         if world_model_triggered:
-            reasons = world_model.get("reasons", [])
-            reason_text = (
-                "; ".join(str(reason) for reason in reasons) or "predicted outcome crossed the safety threshold"
-            )
-            score = float(world_model.get("world_model_score", 0.0))
-            reason = f"World model paused this plan at {score:.0%} predicted risk: {reason_text}"
+            from pilot.agents.destructive_critic import world_model_card
+
+            reason, _show_block = world_model_card(world_model)
+            reason = reason or "This step cannot be undone."
         else:
             reason = (
                 critic_verdict.get("recommendation")

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from pilot.actions import Action, ActionPlan, ActionType, EmptyParams
+from pilot.actions import Action, ActionPlan, ActionResult, ActionType, EmptyParams, VerificationResult
 from pilot.config import PilotConfig
 from pilot.intelligence.online_learning import AdaptationScore
 from pilot.security.risk_gate import RiskGate, get_risk_gate
@@ -118,6 +118,7 @@ def test_status_reports_model_metadata_and_sanitized_last_evaluation():
         "reasons",
         "worst_action_type",
         "prediction_sources",
+        "pause_source",
         "prediction_confidence",
         "predictions",
     }
@@ -146,7 +147,7 @@ def test_prediction_contract_covers_browser_transition(monkeypatch):
     assert prediction["predicted_state"]["browser"]["dom_state"] == "requires_observation"
 
 
-def test_repeated_callback_failures_add_historical_caution(monkeypatch):
+def test_repeated_mismatches_add_caution_and_failures_alone_do_not(monkeypatch):
     monkeypatch.setattr(
         "pilot.security.risk_gate.capture_os_snapshot",
         lambda: OsSnapshot(
@@ -157,16 +158,26 @@ def test_repeated_callback_failures_add_historical_caution(monkeypatch):
         ),
     )
     gate = RiskGate(weights_path="/nonexistent.npz")
+    plan = _plan(ActionType.BROWSER_CLICK_TEXT, target="Submit")
     for _ in range(3):
-        gate.record_outcome(ActionType.BROWSER_CLICK_TEXT, False)
+        gate.record_step(
+            ActionResult(action=plan.actions[0], success=False, executed=True, error="Element not found: Submit")
+        )
+    risk, _reasons = gate.evaluate_plan(plan, PilotConfig())
+    assert risk < 0.3  # three failures that changed nothing: no card
 
-    risk, reasons = gate.evaluate_plan(
-        _plan(ActionType.BROWSER_CLICK_TEXT),
-        PilotConfig(),
-    )
+    results = [ActionResult(action=plan.actions[0], success=True, output="clicked")]
+    for _ in range(2):
+        gate.record_checked(
+            results, VerificationResult(passed=False, failed_actions=[0], independently_observed_actions=[0])
+        )
+    risk, reasons = gate.evaluate_plan(plan, PilotConfig())
 
     assert risk >= 0.3
-    assert "observed browser_click_text executor callbacks failed" in reasons[0]
+    assert (
+        reasons[0]
+        == "The last two browser click text steps here ended differently from what was asked when Heliox checked them."
+    )
     prediction = gate.last_evaluation["predictions"][0]
     assert "execution_history" in prediction["sources"]
 
@@ -197,7 +208,7 @@ def test_verified_online_transition_adds_caution_only_for_known_source(monkeypat
 
     assert with_source >= without_source
     assert with_source == pytest.approx(0.7)
-    assert "independently verified" in reasons[0]
+    assert "Heliox's checks of" in reasons[0]
     prediction = gate.last_evaluation["predictions"][0]
     assert "verified_online_transition" in prediction["sources"]
     assert any(evidence["source"] == "verified_online_transition" for evidence in prediction["risk_evidence"])

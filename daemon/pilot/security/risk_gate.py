@@ -29,13 +29,13 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from pilot.actions import ActionType
 from pilot.intelligence.world_model import (
-    HistoricalFailureRisk,
     HybridWorldModel,
     RiskEvidence,
     UiJepaPredictor,
     WorldPrediction,
     WorldState,
 )
+from pilot.security.outcome_evidence import Outcome, OutcomeEvidence, failure_outcome, outcomes_of
 from pilot.security.risk_model import EMBEDDING_SIZE, LEARNABLE_ACTION_TYPES, RiskTransitionModel
 from pilot.security.risk_observation import (
     NOMINAL_PROC_CAPACITY,
@@ -492,7 +492,7 @@ class RiskGate:
     def __init__(self, weights_path: str | None = None) -> None:
         self._transition = RiskTransitionModel(weights_path)
         self._world_model = HybridWorldModel()
-        self._history = HistoricalFailureRisk()
+        self._history = OutcomeEvidence()
         self._online_learner: VerifiedOnlineLearner | None = None
         self._ui_observation_provider: Callable[[], dict[str, Any] | None] | None = None
         self._last_evaluation: dict[str, object] | None = None
@@ -501,7 +501,6 @@ class RiskGate:
         # lock serializes evaluations; a thread-local copy lets a caller read
         # back the evaluation its own call produced, not a newer one.
         self._evaluate_lock = threading.Lock()
-        self._history_lock = threading.Lock()
         self._thread_state = threading.local()
         self._measure_tree_size: Callable[..., TreeSize | None] = measure_tree_size
         self._volume_of: Callable[[str], VolumeUsage | None] = volume_of
@@ -526,10 +525,30 @@ class RiskGate:
         """Load an optional visual candidate while preserving structured rules."""
         self._world_model.set_visual_predictor(UiJepaPredictor(weights_path, weight_loader=weight_loader))
 
-    def record_outcome(self, action_type: object, success: bool) -> None:
-        """Feed only observed execution outcomes into historical caution."""
-        with self._history_lock:
-            self._history.record(action_type, success)
+    def record_step(self, result: Any) -> None:
+        """A step's own report as it finishes: only a failure is recorded here, as changing nothing or as possibly
+        half done (pilot.security.outcome_evidence). A success waits for its check (``record_checked``)."""
+        if getattr(result, "success", True) or str(getattr(result, "output", "") or "").startswith("(dry run)"):
+            return
+        outcome, cause = failure_outcome(result)
+        self._history.record(result.action, outcome, cause=cause)
+
+    def record_checked(self, results: Any, verification: Any) -> None:
+        """The checks of a finished plan: verified, mismatch or unchecked for every step that reported success."""
+        self._history.record_many(outcomes_of(list(results), verification))
+
+    def record_outcomes(self, pairs: Any) -> None:
+        """Outcomes found later (a check that finished after the reply): (action, Outcome) pairs."""
+        self._history.record_many(pairs)
+
+    def record_approved(self, actions: Any) -> None:
+        """Steps the person approved on a card: evidence that this kind of step here is what they want."""
+        for action in actions:
+            self._history.record(action, Outcome.APPROVED)
+
+    def record_undone(self, action: Any) -> None:
+        """A step the person undid afterwards."""
+        self._history.record(action, Outcome.UNDONE)
 
     @property
     def available(self) -> bool:
@@ -548,12 +567,7 @@ class RiskGate:
         return dict(evaluation) if evaluation is not None else None
 
     def _history_status(self) -> dict[str, Any]:
-        with self._history_lock:
-            return self._history.status()
-
-    def _history_score(self, action_type: object) -> tuple[float, str]:
-        with self._history_lock:
-            return self._history.score(action_type)
+        return self._history.status()
 
     def _online_adaptation(self, action_type: str, source: str) -> Any:
         """The learner is updated on the event loop; reading it from a worker
@@ -626,6 +640,7 @@ class RiskGate:
                 "reasons": [],
                 "worst_action_type": None,
                 "prediction_sources": [],
+                "pause_source": "",
                 "prediction_confidence": None,
                 "predictions": [],
             }
@@ -655,6 +670,8 @@ class RiskGate:
         worst_reasons: list[str] = []
         worst_action_type: str | None = None
         worst_sources: list[str] = []
+        # Which signal set the worst risk: what the approval card's sentence is built from.
+        pause_source = ""
         worst_prediction_confidence: float | None = None
         world_predictions: list[dict[str, object]] = []
         rollout_ui = ui_observation
@@ -708,6 +725,7 @@ class RiskGate:
                     worst_reasons = reasons
                     worst_action_type = action.action_type.value
                     worst_sources = sorted({candidate.source for candidate in candidates})
+                    pause_source = "risk_transition"
                     worst_prediction_confidence = (
                         learned_or_rule.confidence if learned_or_rule.source != "rule" else None
                     )
@@ -723,6 +741,7 @@ class RiskGate:
                 worst_reasons = [size_reason]
                 worst_action_type = action.action_type.value
                 worst_sources = ["size_estimate"]
+                pause_source = "size_estimate"
                 worst_prediction_confidence = None
 
             if contract_evidence is not None and contract_evidence.score > action_risk:
@@ -732,6 +751,7 @@ class RiskGate:
                 worst_risk = contract_evidence.score
                 worst_reasons = [contract_evidence.reason]
                 worst_action_type = action.action_type.value
+                pause_source = contract_evidence.source
                 worst_sources = sorted(
                     {
                         *contract_prediction.sources,
@@ -745,7 +765,8 @@ class RiskGate:
                     else max(0.0, min(1.0, 1.0 - contract_prediction.uncertainty))
                 )
 
-            historical_risk, historical_reason = self._history_score(action.action_type)
+            evidence = self._history.assess(action)
+            historical_risk, historical_reason = evidence.score, evidence.reason
             if historical_risk > action_risk:
                 action_risk = historical_risk
                 action_reasons = [historical_reason]
@@ -754,10 +775,8 @@ class RiskGate:
                 worst_reasons = [historical_reason]
                 worst_action_type = action.action_type.value
                 worst_sources = ["execution_history"]
-                worst_prediction_confidence = min(
-                    1.0,
-                    self._history_status()["samples"] / 10.0,
-                )
+                pause_source = "execution_history"
+                worst_prediction_confidence = min(1.0, (evidence.harmful + evidence.supporting) / 10.0)
 
             online_risk = 0.0
             online_reason = ""
@@ -770,9 +789,10 @@ class RiskGate:
                 adaptation = self._online_adaptation(action.action_type.value, source)
                 if adaptation.state == "promoted" and adaptation.probability < 0.42:
                     online_risk = min(0.7, max(0.0, (0.5 - adaptation.probability) * 2.0))
+                    steps = action.action_type.value.replace("_", " ")
                     online_reason = (
-                        f"{adaptation.labels} independently verified {action.action_type.value} "
-                        "outcomes suggest elevated failure risk"
+                        f"Heliox's checks of {adaptation.labels} earlier {steps} steps often found something other "
+                        "than what was asked."
                     )
             if online_risk > action_risk:
                 action_risk = online_risk
@@ -782,6 +802,7 @@ class RiskGate:
                 worst_reasons = [online_reason]
                 worst_action_type = action.action_type.value
                 worst_sources = ["verified_online_transition"]
+                pause_source = "verified_online_transition"
                 worst_prediction_confidence = None
 
             contract_payload = contract_prediction.to_dict()
@@ -795,6 +816,9 @@ class RiskGate:
                 )
             )
             contract_payload["risk_score"] = action_risk
+            if evidence.note:
+                # Harmless failures in this scope: kept with the details, never a reason to ask.
+                contract_payload["notes"] = [evidence.note]
             if historical_risk > 0:
                 contract_payload["sources"] = list(dict.fromkeys([*contract_payload["sources"], "execution_history"]))
                 contract_payload["risk_evidence"].append(
@@ -866,6 +890,7 @@ class RiskGate:
             "reasons": worst_reasons,
             "worst_action_type": worst_action_type,
             "prediction_sources": worst_sources,
+            "pause_source": pause_source,
             "prediction_confidence": worst_prediction_confidence,
             "predictions": world_predictions,
         }

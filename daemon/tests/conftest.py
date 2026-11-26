@@ -192,6 +192,18 @@ def _no_real_output_line(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _world_model_outcomes_forgotten():
+    """The daemon's risk gate is one per process: what one test's checks taught it (a mismatch, an approval) must not
+    pause a plan in the next test (pilot.security.outcome_evidence)."""
+    yield
+    risk_gate = sys.modules.get("pilot.security.risk_gate")  # never imported by this fixture itself
+    if risk_gate is not None and risk_gate._gate is not None:
+        from pilot.security.outcome_evidence import OutcomeEvidence
+
+        risk_gate._gate._history = OutcomeEvidence()
+
+
+@pytest.fixture(autouse=True)
 def _gpu_paths_forgotten():
     """What one test found not installed on its fake card is not what the next test's machine has."""
     from pilot.system import gpu_paths

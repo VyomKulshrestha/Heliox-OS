@@ -613,7 +613,7 @@ async def test_transition_promotion_requires_support_for_action_and_source(tmp_p
     )
     risk, reasons = gate.evaluate_plan(plan, PilotConfig(), source="interactive")
     assert risk > 0
-    assert "independently verified" in reasons[0]
+    assert "Heliox's checks of" in reasons[0]
     assert "verified_online_transition" in gate.last_evaluation["prediction_sources"]
     assert gate.status(enabled=True)["verified_online_transition"]["labels"] == MINIMUM_PROMOTION_LABELS
     await ledger.close()
