@@ -6,10 +6,11 @@ validated Action objects ΓÇö there is no path from raw LLM text to system cal
 
 from __future__ import annotations
 
+import re
 from enum import Enum, StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 
 class ActionType(StrEnum):
@@ -1006,6 +1007,9 @@ class Action(BaseModel):
     rollback_action: Action | None = None
     use_previous_output: bool = False  # Inject previous step's output into this action
     dangerous_flags: list[str] = Field(default_factory=list)  # populated by ActionValidator
+    # A declared post-condition: a read-only probe run after this action, and what it must find.
+    # Checked and run by pilot.agents.postconditions.declared; absent means the step stays "reported".
+    expect: Expectation | None = None
 
     @property
     def permission_tier(self) -> PermissionTier:
@@ -1106,7 +1110,54 @@ class Action(BaseModel):
         return self.action_type in IRREVERSIBLE_ACTIONS
 
 
+EXPECT_KINDS = ("exit_code", "equals", "contains", "pattern", "json_equals", "exists", "absent")
+MAX_EXPECT_TEXT = 500
+MAX_EXPECT_WILDCARDS = 8
+MAX_EXPECTS_PER_PLAN = 4
+_EXPECT_FIELD = re.compile(r"^[A-Za-z0-9_\-]{1,64}(\.[A-Za-z0-9_\-]{1,64}){0,7}$")
+
+
+class Expectation(BaseModel):
+    """What a read-only probe must find after the action ran.
+
+    ``kind`` says how the probe's reading is compared: its exit code, its whole output (``equals``), part of it
+    (``contains``), a glob over it (``pattern``, ``*`` and ``?`` only, never a regular expression), one JSON field
+    (``json_equals`` with a dotted ``field``), or whether the thing it reads is there (``exists``, ``absent``).
+    Whether the probe is allowed at all is decided by ``pilot.agents.postconditions.declared.probe_refusal``.
+    """
+
+    probe: Action
+    kind: Literal["exit_code", "equals", "contains", "pattern", "json_equals", "exists", "absent"]
+    value: str | int | float | bool | None = None
+    field: str = Field(default="", max_length=600)
+
+    @model_validator(mode="after")
+    def _value_fits_kind(self) -> Expectation:
+        if self.probe.expect is not None or self.probe.rollback_action is not None:
+            raise ValueError("a probe cannot carry its own expect or rollback_action")
+        kind, value = self.kind, self.value
+        if kind == "exit_code":
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
+                raise ValueError("exit_code needs an integer from 0 to 255")
+        elif kind in {"equals", "contains", "pattern"}:
+            if not isinstance(value, str) or not value or len(value) > MAX_EXPECT_TEXT:
+                raise ValueError(f"{kind} needs text of 1 to {MAX_EXPECT_TEXT} characters")
+            if kind == "pattern" and value.count("*") + value.count("?") > MAX_EXPECT_WILDCARDS:
+                raise ValueError(f"a pattern may hold at most {MAX_EXPECT_WILDCARDS} wildcards")
+        elif kind == "json_equals":
+            if not _EXPECT_FIELD.match(self.field):
+                raise ValueError("json_equals needs a dotted field such as state or items.0.id")
+            if isinstance(value, str) and len(value) > MAX_EXPECT_TEXT:
+                raise ValueError(f"json_equals takes a value of at most {MAX_EXPECT_TEXT} characters")
+        elif value is not None:
+            raise ValueError(f"{kind} takes no value")
+        if kind != "json_equals" and self.field:
+            raise ValueError("field is only for json_equals")
+        return self
+
+
 Action.model_rebuild()
+Expectation.model_rebuild()
 
 
 class ActionPlan(BaseModel):
@@ -1147,6 +1198,10 @@ class ActionResult(BaseModel):
     # A success with a part the person must see, such as recipients the mail server refused. The reply and the
     # task receipt carry it in full; the output itself is kept in the receipt only as a hash.
     notice: str | None = None
+
+    # The outcome of this result's declared ``expect`` probe, kept so a second verification of the same
+    # result (the retry merge in server.py verifies merged results again) never runs the probe twice.
+    _expect_outcome: Any = PrivateAttr(default=None)
 
 
 class OutputWithNotice(str):

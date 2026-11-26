@@ -173,7 +173,13 @@ def admissible(action: Action, *, platform: str | None = None, home: Path | None
     platform = platform or _platform()
     if action.action_type not in ALLOWED:
         return False, f"{action.action_type.value} is not on the quick road's allow-list"
-    if action.requires_root or action.destructive or action.rollback_action is not None or action.use_previous_output:
+    if (
+        action.requires_root
+        or action.destructive
+        or action.rollback_action is not None
+        or action.use_previous_output
+        or action.expect is not None
+    ):
         return False, "the action asks for more than a plain step"
     if action.permission_tier > PermissionTier.USER_WRITE or action.requires_confirmation or action.is_irreversible:
         return False, "the permission tiers would ask for approval"

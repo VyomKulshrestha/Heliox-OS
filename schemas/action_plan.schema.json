@@ -47,7 +47,27 @@
             { "$ref": "#/$defs/Action" },
             { "type": "null" }
           ]
+        },
+        "expect": {
+          "description": "A declared post-condition: a read-only probe run once after the action, and what it must find. Which probes are allowed is decided by daemon/pilot/agents/postconditions/declared.py.",
+          "oneOf": [
+            { "$ref": "#/$defs/Expectation" },
+            { "type": "null" }
+          ]
         }
+      }
+    },
+    "Expectation": {
+      "type": "object",
+      "required": ["probe", "kind"],
+      "properties": {
+        "probe": { "$ref": "#/$defs/Action" },
+        "kind": {
+          "type": "string",
+          "enum": ["exit_code", "equals", "contains", "pattern", "json_equals", "exists", "absent"]
+        },
+        "value": { "type": ["string", "integer", "number", "boolean", "null"] },
+        "field": { "type": "string", "description": "json_equals only: a dotted path such as state or items.0.id" }
       }
     }
   }
