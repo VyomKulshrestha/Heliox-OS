@@ -52,7 +52,17 @@ if os.environ.get("HELIOX_TEST_REAL_TORCH") != "1":
 _folder_guard_lines: list[str] = []
 # Tests whose code tried to change the real system and was refused (pilot.system.system_guard), by node id.
 _system_refused: dict[str, list[tuple[str, str]]] = {}
+# CI-only tests marked real_system(...) that made the changes they named, by node id.
+_system_opted_in: dict[str, list[tuple[str, str]]] = {}
 _system_snapshot_fakes: list[str] = []
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_system(*changes): a CI-only test may make exactly these changes to the real system "
+        "(names as pilot.system.system_guard reports them, such as Set-ItemProperty)",
+    )
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -107,6 +117,12 @@ def pytest_terminal_summary(terminalreporter):
     )
     for nodeid, attempts in sorted(_system_refused.items()):
         terminalreporter.write_line(f"  {nodeid}: " + "; ".join(f"{kind}: {what}" for kind, what in attempts))
+    if _system_opted_in:
+        terminalreporter.write_line(
+            f"SYSTEM-GUARD {len(_system_opted_in)} CI-only tests opted in and made the real-system changes they named"
+        )
+        for nodeid, uses in sorted(_system_opted_in.items()):
+            terminalreporter.write_line(f"  {nodeid}: " + "; ".join(f"{kind}: {what}" for kind, what in uses))
 
 
 @pytest.fixture(autouse=True)
@@ -114,10 +130,13 @@ def _no_real_system_changes(monkeypatch, request):
     """No test changes the computer it runs on (pilot.system.system_guard refuses the commands; this records which
     test asked). Executors built in a test get a snapshot manager whose system snapshot is a fake that takes nothing
     and answers "no backend", as on a computer without one; file snapshots stay real (they live in the test's folder).
-    A test that truly needs the real system sets HELIOX_TEST_REAL_SYSTEM=1, honoured only where CI is set."""
+    A CI-only test that truly needs the real system is marked real_system("<change>", ...): exactly those changes
+    pass while it runs, only where CI is set, and are counted apart from the refusals."""
     if not system_guard.guarded():
         yield
         return
+    marker = request.node.get_closest_marker("real_system")
+    allowed = system_guard.real_system_allowed(*marker.args) if marker else contextlib.nullcontext()
     from pilot.agents import executor as executor_module
     from pilot.system.snapshots import SnapshotManager
 
@@ -128,10 +147,15 @@ def _no_real_system_changes(monkeypatch, request):
 
     monkeypatch.setattr(executor_module, "SnapshotManager", GuardedSnapshotManager)
     before = len(system_guard.attempts())
-    yield
+    used_before = len(system_guard.allowed_uses())
+    with allowed:
+        yield
     new = system_guard.attempts()[before:]
     if new:
         _system_refused[request.node.nodeid] = new
+    used = system_guard.allowed_uses()[used_before:]
+    if used:
+        _system_opted_in[request.node.nodeid] = used
 
 
 @pytest.fixture(autouse=True)

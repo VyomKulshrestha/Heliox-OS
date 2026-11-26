@@ -132,3 +132,24 @@ def test_the_real_system_needs_ci_to_opt_in(monkeypatch: pytest.MonkeyPatch) -> 
     assert system_guard.guarded() is True
     monkeypatch.setenv("CI", "true")
     assert system_guard.guarded() is False
+
+
+SET_VALUE = "Set-ItemProperty -LiteralPath x -Name y -Value 1"
+
+
+def test_a_marked_test_may_make_only_the_changes_it_names_and_only_on_ci(
+    monkeypatch: pytest.MonkeyPatch, expected_refusals
+) -> None:
+    monkeypatch.delenv(system_guard.ALLOW_VARIABLE, raising=False)
+    monkeypatch.setenv("CI", "true")
+    with system_guard.real_system_allowed("Set-ItemProperty"):
+        system_guard.check_powershell(SET_VALUE)  # the named change passes
+        with pytest.raises(SystemChangeRefused):
+            system_guard.check_powershell("Remove-ItemProperty -LiteralPath x -Name y")
+    assert ("PowerShell", "Set-ItemProperty") in system_guard.allowed_uses()
+    with pytest.raises(SystemChangeRefused):
+        system_guard.check_powershell(SET_VALUE)  # only while the marked test runs
+
+    monkeypatch.delenv("CI")
+    with system_guard.real_system_allowed("Set-ItemProperty"), pytest.raises(SystemChangeRefused):
+        system_guard.check_powershell(SET_VALUE)  # never off CI

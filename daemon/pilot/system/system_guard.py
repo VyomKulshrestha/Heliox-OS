@@ -8,15 +8,20 @@ snapshot, install or remove software, start or stop a service, write the registr
 scheduled task, join a network, mount a disk, lock the session, or send mail or a webhook is refused with
 ``SystemChangeRefused`` and recorded, so the suite can report it. Reads (queries, listings) pass.
 
-A test that truly needs the real system opts in with HELIOX_TEST_REAL_SYSTEM=1, which is honoured only where CI is
-set. A daemon a person runs never has the mark, so nothing here changes what Heliox does for them.
+A test that truly needs the real system opts in for itself with the marker ``real_system("Set-ItemProperty")``
+(tests/conftest.py): only the named changes pass, only while that test runs, and only where CI is set; each use is
+recorded and counted apart from the refusals (``allowed_uses``). HELIOX_TEST_REAL_SYSTEM=1, also honoured only where
+CI is set, lifts the guard for a whole process and is meant for a separate real-system run, not for one test. A
+daemon a person runs never has the mark, so nothing here changes what Heliox does for them.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import threading
+from collections.abc import Iterator
 
 ALLOW_VARIABLE = "HELIOX_TEST_REAL_SYSTEM"
 
@@ -88,6 +93,9 @@ _CMDLETS = re.compile(
 
 _lock = threading.Lock()
 _attempts: list[tuple[str, str]] = []
+# The changes one CI-only test may make (lower case, as system_change or powershell_change names them), and the uses.
+_allowed: frozenset[str] = frozenset()
+_allowed_uses: list[tuple[str, str]] = []
 
 
 class SystemChangeRefused(PermissionError):
@@ -144,6 +152,9 @@ def check(kind: str, what: str | None) -> None:
     if not what or not guarded():
         return
     with _lock:
+        if what.casefold() in _allowed and os.environ.get("CI"):
+            _allowed_uses.append((kind, what))
+            return
         _attempts.append((kind, what))
     raise SystemChangeRefused(
         f"Refused under the test suite: {kind} would change the real system ({what}). Pass a fake instead."
@@ -158,6 +169,27 @@ def check_powershell(script: str) -> None:
     check("PowerShell", powershell_change(script))
 
 
+@contextlib.contextmanager
+def real_system_allowed(*changes: str) -> Iterator[None]:
+    """Let exactly ``changes`` through for the duration, and only where CI is set (elsewhere nothing is let through:
+    the change is refused as always). For a CI-only test that must change the real system, such as writing a
+    registry value under a key it creates and removes. Every change let through is recorded (``allowed_uses``)."""
+    global _allowed
+    with _lock:
+        previous = _allowed
+        _allowed = frozenset(change.casefold() for change in changes) if os.environ.get("CI") else frozenset()
+    try:
+        yield
+    finally:
+        with _lock:
+            _allowed = previous
+
+
+def allowed_uses() -> list[tuple[str, str]]:
+    with _lock:
+        return list(_allowed_uses)
+
+
 def attempts() -> list[tuple[str, str]]:
     with _lock:
         return list(_attempts)
@@ -166,6 +198,7 @@ def attempts() -> list[tuple[str, str]]:
 def clear() -> None:
     with _lock:
         _attempts.clear()
+        _allowed_uses.clear()
 
 
 import smtplib as _smtplib  # noqa: E402

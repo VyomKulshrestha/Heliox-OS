@@ -420,7 +420,10 @@ async def test_registry_write_failure_is_a_failed_action(monkeypatch: pytest.Mon
     sys.platform != "win32" or not os.environ.get("CI"),
     reason="writes the real registry: only on a Windows CI runner, under a key the test creates and removes",
 )
+# The handler writes with Set-ItemProperty, which the suite's system guard refuses; this test alone may use it, on CI.
+@pytest.mark.real_system("Set-ItemProperty")
 async def test_registry_write_reads_back_dword_and_string_on_windows_ci() -> None:
+    import contextlib
     import uuid
     import winreg
 
@@ -451,12 +454,16 @@ async def test_registry_write_reads_back_dword_and_string_on_windows_ci() -> Non
         )
         assert "REG_EXPAND_SZ" in _assert_mismatch(await _verify(ActionType.REGISTRY_WRITE, params))
     finally:
-        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, subkey)
-        with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER, r"Software\HelioxVerifierTest", 0, winreg.KEY_ALL_ACCESS
-        ) as parent:
-            if winreg.QueryInfoKey(parent)[0] == 0:
-                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, r"Software\HelioxVerifierTest")
+        # Removed whatever happened above: the key holds only values, so DeleteKey takes it with them.
+        parent_path = r"Software\HelioxVerifierTest"
+        with contextlib.suppress(FileNotFoundError):
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, subkey)
+        empty = False
+        with contextlib.suppress(OSError), winreg.OpenKey(winreg.HKEY_CURRENT_USER, parent_path) as parent:
+            empty = winreg.QueryInfoKey(parent)[0] == 0
+        if empty:
+            with contextlib.suppress(OSError):
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, parent_path)
 
 
 # ── service_enable and service_disable ──────────────────────────────────────────────────────────────────────────
