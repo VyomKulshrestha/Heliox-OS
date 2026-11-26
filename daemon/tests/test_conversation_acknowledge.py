@@ -116,8 +116,11 @@ async def test_late_turns_in_a_row_hum_and_never_the_same_sound_twice_running():
     questions = (QUESTION, "And why does it get worse at night?", "What about when it is charging?")
     for words, reply in zip(questions, replies, strict=True):
         current[0] = Gate(reply)
+        before = len(ear.heard)
         turn = asyncio.ensure_future(layer.take(words))
-        await asyncio.sleep(0.05)  # the acknowledgement is due at once (the clock is past it), or not at all
+        # The acknowledgement is due at once (the clock is past it): the answer is released once it was said, on any
+        # machine. A sleep of 50 ms could release it first on a busy one, and then no sound is due at all.
+        await until(lambda: len(ear.heard) > before)  # noqa: B023 (read while this turn runs)
         current[0].release.set()
         await turn
     layer_sounds = [text for text, _ch in ear.heard if text in ACKNOWLEDGEMENTS]
