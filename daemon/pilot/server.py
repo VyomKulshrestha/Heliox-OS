@@ -16962,12 +16962,11 @@ def handle_tool(tool_name, params):
     def _warm_planner_connection(self) -> bool:
         """Open the planner's cloud connection while the person types or speaks to Heliox (ModelRouter.
         warm_planner_connection): a HEAD with nothing billed, at most once per idle period, never beside a request.
-        Silent when there is no router or it fails."""
-        router = getattr(self, "_model_router", None)
-        warm = getattr(router, "warm_planner_connection", None)
-        if not callable(warm):
-            return False
+        Silent when there is no router, it has no such method (a stand-in router may refuse any name), or it fails."""
         try:
+            warm = getattr(getattr(self, "_model_router", None), "warm_planner_connection", None)
+            if not callable(warm):
+                return False
             return bool(warm())
         except Exception:
             logger.debug("Could not warm the planner's connection", exc_info=True)
