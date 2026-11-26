@@ -159,7 +159,7 @@ BROWSER AUTOMATION (Headless, for reading/interacting):
   use request_human_help.
 - browser_execute_js — Params: {{"script": "return document.title"}}
 - browser_screenshot — Params: {{"output_path": "path.png"}}
-- browser_new_tab, browser_close_tab, browser_switch_tab — Params: {{"url": "..."}} / {{"tab_index": 0}}
+- browser_new_tab, browser_close_tab, browser_switch_tab — Params: {{"url": "..."}} / {{"tab_index": 0}} (first tab is 0; -1 is the tab in use)
 - browser_back, browser_forward, browser_refresh, browser_wait — Params: {{"timeout": 5000}}
 
 REACTIVE TRIGGERS:

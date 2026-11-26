@@ -44,6 +44,8 @@ DOM_DIFF_ENABLED: bool = True
 # Global browser instance for session persistence
 _browser_context: Any = None
 _playwright_instance: Any = None
+# The tab browser_switch_tab chose; None means the newest tab (which also follows pop-ups a click opens).
+_active_page: Any = None
 
 _CLICK_INTENT_GROUPS = (
     frozenset({"learn", "read", "discover", "explore", "details", "detail", "information", "info", "more"}),
@@ -239,8 +241,248 @@ async def _get_page(tab_index: int = -1):
         page = await ctx.new_page()
         return page
     if tab_index < 0:
-        return pages[-1]  # Latest tab
+        return _current_of(pages)
     return pages[min(tab_index, len(pages) - 1)]
+
+
+def _page_closed(page: Any) -> bool:
+    is_closed = getattr(page, "is_closed", None)
+    try:
+        return bool(is_closed()) if callable(is_closed) else False
+    except Exception:
+        return False
+
+
+def _current_of(pages: list[Any]) -> Any:
+    """The tab Heliox acts on: the one browser_switch_tab chose while it is open, else the newest."""
+    if _active_page is not None and any(page is _active_page for page in pages) and not _page_closed(_active_page):
+        return _active_page
+    return pages[-1]
+
+
+# ---------------------------------------------------------------------------
+# Read-only observation, used for the state recorded before an action and by the
+# post-condition checks after it. Nothing here opens a browser or a tab, clicks,
+# types, scrolls, navigates or changes the page: the scripts only read the DOM,
+# the address, the scroll position and the document's load time.
+# ---------------------------------------------------------------------------
+
+PAGE_BEFORE_MARKER = "[PAGE_BEFORE]"
+
+_PAGE_STATE_SCRIPT = """() => {
+  const root = document.scrollingElement || document.documentElement;
+  return {
+    href: location.href,
+    ready: document.readyState,
+    visibility: document.visibilityState,
+    origin: performance.timeOrigin,
+    x: window.scrollX,
+    y: window.scrollY,
+    max_y: Math.max(0, Math.round((root ? root.scrollHeight : 0) - window.innerHeight)),
+  };
+}"""
+
+_ELEMENT_STATE_SCRIPT = """(el) => {
+  const tag = el.tagName.toLowerCase();
+  const type = (el.getAttribute('type') || '').toLowerCase();
+  const role = (el.getAttribute('role') || '').toLowerCase();
+  const native = tag === 'input' && (type === 'checkbox' || type === 'radio');
+  const rect = el.getBoundingClientRect();
+  const details = tag === 'details' ? el : (tag === 'summary' && el.parentElement
+    && el.parentElement.tagName === 'DETAILS' ? el.parentElement : null);
+  return {
+    kind: native ? type : (['checkbox', 'radio', 'switch'].includes(role) ? role : 'other'),
+    on: native ? !!el.checked : (el.hasAttribute('aria-checked') ? el.getAttribute('aria-checked') : null),
+    expanded: el.getAttribute('aria-expanded'),
+    pressed: el.getAttribute('aria-pressed'),
+    selected: el.getAttribute('aria-selected'),
+    open: details ? !!details.open : null,
+    disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
+    in_view: rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0
+      && rect.top < window.innerHeight && rect.left < window.innerWidth,
+    hovered: el.matches(':hover'),
+  };
+}"""
+
+_ELEMENT_STATE_KEYS = ("kind", "on", "expanded", "pressed", "selected", "open", "disabled", "in_view", "hovered")
+
+
+def open_tabs() -> list[Any] | None:
+    """The browser's open tabs as the driver reports them; None when no session is open. Never opens anything."""
+    if _browser_context is None:
+        return None
+    return list(getattr(_browser_context, "pages", None) or [])
+
+
+def current_tab() -> Any | None:
+    """The tab Heliox acts on, or None when no tab is open. Never opens one."""
+    pages = open_tabs()
+    if not pages:
+        return None
+    return _current_of(pages)
+
+
+async def read_page_state(page: Any) -> dict[str, Any] | None:
+    """Read the page's address, load time, visibility and scroll position afresh; None when it cannot be read."""
+    try:
+        state = await page.evaluate(_PAGE_STATE_SCRIPT)
+    except Exception:
+        logger.debug("Reading the page state failed", exc_info=True)
+        return None
+    return state if isinstance(state, dict) else None
+
+
+async def read_element_state(page: Any, selector: str) -> dict[str, Any] | None:
+    """Read how many elements match ``selector`` and the first one's state; None when it cannot be read."""
+    if not selector:
+        return None
+    try:
+        locator = page.locator(selector)
+        count = int(await locator.count())
+        if count == 0:
+            return {"count": 0}
+        raw = await locator.first.evaluate(_ELEMENT_STATE_SCRIPT)
+    except Exception:
+        logger.debug("Reading an element's state failed", exc_info=True)
+        return None
+    if not isinstance(raw, dict):
+        return None
+    state = {key: raw.get(key) for key in _ELEMENT_STATE_KEYS}
+    state["count"] = count
+    return state
+
+
+async def read_history(page: Any) -> dict[str, Any] | None:
+    """The tab's history (entry ids and the current position) from the browser itself, over its own DevTools session.
+
+    Chromium only; None elsewhere or when it cannot be read.
+    """
+    try:
+        session = await page.context.new_cdp_session(page)
+    except Exception:
+        return None
+    try:
+        history = await session.send("Page.getNavigationHistory")
+    except Exception:
+        return None
+    finally:
+        try:
+            await session.detach()
+        except Exception:
+            pass
+    entries = history.get("entries") if isinstance(history, dict) else None
+    index = history.get("currentIndex") if isinstance(history, dict) else None
+    if not isinstance(entries, list) or not isinstance(index, int) or not 0 <= index < len(entries):
+        return None
+    return {"index": index, "ids": [entry.get("id") for entry in entries]}
+
+
+def url_fingerprint(url: str) -> str:
+    """A short hash of the canonical URL, so a record can compare addresses without carrying them."""
+    import hashlib
+
+    try:
+        canonical = _canonical_browser_url(str(url))
+    except Exception:
+        canonical = str(url)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def structure_fingerprint(snapshot: Any) -> str | None:
+    """A hash of which elements are visible (tag and id, in order), ignoring text, classes and positions.
+
+    Text and classes change by themselves (clocks, counters, focus styles); elements appearing or disappearing
+    (a dialog, a menu, a new section) change this. None for an empty or missing snapshot.
+    """
+    import hashlib
+
+    nodes = getattr(snapshot, "nodes", None)
+    if not nodes:
+        return None
+    raw = "|".join(f"{node.tag}#{node.id}" for node in nodes if getattr(node, "visible", False))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _with_before(output: str, record: dict[str, Any] | None) -> str:
+    """Append what was observed before the action, for its post-condition check. No page text or address."""
+    if not record or all(value is None for value in record.values()):
+        return output
+    return output + f"\n{PAGE_BEFORE_MARKER} {json.dumps(record, separators=(',', ':'))}"
+
+
+def parse_page_before(output: str | None) -> dict[str, Any] | None:
+    """The record ``_with_before`` appended to a handler's output, or None."""
+    for line in reversed(str(output or "").splitlines()):
+        if line.startswith(PAGE_BEFORE_MARKER):
+            try:
+                record = json.loads(line[len(PAGE_BEFORE_MARKER) :].strip())
+            except ValueError:
+                return None
+            return record if isinstance(record, dict) else None
+    return None
+
+
+def browser_process_ids() -> list[list[float]]:
+    """Process ids and start times of the browser Heliox's Playwright driver started (its descendants).
+
+    Only processes under a child of this process whose command line names Playwright are counted, so a browser
+    the person opened, or one open_url started, is never included.
+    """
+    try:
+        import psutil
+
+        children = psutil.Process().children()
+    except Exception:
+        return []
+    found: list[list[float]] = []
+    for child in children:
+        try:
+            if "playwright" not in " ".join(child.cmdline()).casefold():
+                continue
+            descendants = child.children(recursive=True)
+        except Exception:
+            continue
+        for process in descendants:
+            try:
+                found.append([process.pid, process.create_time()])
+            except Exception:
+                continue
+    return found
+
+
+def _element_summary(state: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not state:
+        return None
+    return {
+        key: state.get(key) for key in ("count", "kind", "on", "expanded", "pressed", "selected", "open", "disabled")
+    }
+
+
+async def _click_baseline(page: Any, selector: str, before: Any) -> dict[str, Any] | None:
+    """What a click's check compares with: the address and document, the visible structure, the target's state."""
+    if before is None:
+        return None
+    state = await read_page_state(page)
+    target = await read_element_state(page, selector)
+    return {
+        "u": url_fingerprint(state["href"]) if state and state.get("href") else None,
+        "o": state.get("origin") if state else None,
+        "s": structure_fingerprint(before),
+        "t": _element_summary(target),
+    }
+
+
+async def _history_baseline(page: Any) -> dict[str, Any] | None:
+    history = await read_history(page)
+    if history is None:
+        return None
+    ids, index = history["ids"], history["index"]
+    return {
+        "i": index,
+        "cur": ids[index],
+        "prev": ids[index - 1] if index > 0 else None,
+        "next": ids[index + 1] if index + 1 < len(ids) else None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -425,20 +667,33 @@ async def browser_navigate(url: str, wait_until: str = "domcontentloaded", tab_i
 
 async def browser_back() -> str:
     page = await _get_page()
+    record = await _history_baseline(page)
+    if record is not None and record["prev"] is None:
+        # Playwright's go_back does nothing here and returns quietly; saying "Navigated back" would be untrue.
+        raise LookupError("There is no earlier page in this tab to go back to, so the tab stayed where it was")
     await page.go_back()
-    return f"Navigated back to: {page.url}"
+    return _with_before(f"Navigated back to: {page.url}", record)
 
 
 async def browser_forward() -> str:
     page = await _get_page()
+    record = await _history_baseline(page)
+    if record is not None and record["next"] is None:
+        raise LookupError("There is no later page in this tab to go forward to, so the tab stayed where it was")
     await page.go_forward()
-    return f"Navigated forward to: {page.url}"
+    return _with_before(f"Navigated forward to: {page.url}", record)
 
 
 async def browser_refresh() -> str:
     page = await _get_page()
+    state = await read_page_state(page)
+    history = await _history_baseline(page)
+    record = {
+        "o": state.get("origin") if state else None,
+        "cur": history["cur"] if history else None,
+    }
     await page.reload()
-    return f"Refreshed: {page.url}"
+    return _with_before(f"Refreshed: {page.url}", record)
 
 
 # ── Interaction ──────────────────────────────────────────────────────
@@ -456,12 +711,13 @@ async def browser_click(
     """
     page = await _get_page()
     before = await _snap(page)
+    record = await _click_baseline(page, selector, before)
 
     await page.click(selector, button=button, click_count=click_count, timeout=timeout)
     await page.wait_for_timeout(300)
     after = await _snap(page)
 
-    return _append_diff(f"Clicked: {selector}", before, after, f"click:{selector}")
+    return _with_before(_append_diff(f"Clicked: {selector}", before, after, f"click:{selector}"), record)
 
 
 async def browser_click_text(text: str, exact: bool = False) -> str:
@@ -473,14 +729,12 @@ async def browser_click_text(text: str, exact: bool = False) -> str:
     """
     page = await _get_page()
     before = await _snap(page)
+    record = await _click_baseline(page, click_text_selector(text, exact), before)
     matched_text = text
     used_fallback = False
 
     try:
-        if exact:
-            await page.click(f"text='{text}'", timeout=1000, no_wait_after=True)
-        else:
-            await page.click(f"text={text}", timeout=1000, no_wait_after=True)
+        await page.click(click_text_selector(text, exact), timeout=1000, no_wait_after=True)
     except Exception as exc:
         if "timeout" not in str(exc).lower():
             raise
@@ -490,6 +744,8 @@ async def browser_click_text(text: str, exact: bool = False) -> str:
         candidate_locator, matched_text = candidate
         await candidate_locator.click(timeout=10000, no_wait_after=True)
         used_fallback = True
+        if record is not None:
+            record["t"] = None  # the recorded target was the literal text, not the control actually clicked
 
     await page.wait_for_timeout(300)
     after = await _snap(page)
@@ -499,7 +755,12 @@ async def browser_click_text(text: str, exact: bool = False) -> str:
         if used_fallback
         else f"Clicked element with text: {text}"
     )
-    return _append_diff(output, before, after, f"click_text:{matched_text}")
+    return _with_before(_append_diff(output, before, after, f"click_text:{matched_text}"), record)
+
+
+def click_text_selector(text: str, exact: bool = False) -> str:
+    """The Playwright selector browser_click_text clicks first (before any semantic fallback)."""
+    return f"text='{text}'" if exact else f"text={text}"
 
 
 def _normalize_click_label(value: str) -> str:
@@ -646,7 +907,12 @@ async def browser_press_key(key: str) -> str:
 
 async def browser_scroll(direction: str = "down", amount: int = 500) -> str:
     """Scroll the page."""
+    if direction not in {"down", "up", "top", "bottom"}:
+        # Any other word scrolled nothing and still said "Scrolled".
+        raise ValueError(f"Unknown scroll direction {direction!r}: use down, up, top or bottom")
     page = await _get_page()
+    state = await read_page_state(page)
+    record = {key: state.get(key) for key in ("y", "max_y")} if state else None
     if direction == "down":
         await page.evaluate(f"window.scrollBy(0, {amount})")
     elif direction == "up":
@@ -655,7 +921,7 @@ async def browser_scroll(direction: str = "down", amount: int = 500) -> str:
         await page.evaluate("window.scrollTo(0, 0)")
     elif direction == "bottom":
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-    return f"Scrolled {direction} by {amount}px"
+    return _with_before(f"Scrolled {direction} by {amount}px", record)
 
 
 # ── Data Extraction ──────────────────────────────────────────────────
@@ -808,17 +1074,25 @@ async def browser_screenshot(
 
 async def browser_new_tab(url: str | None = None) -> str:
     """Open a new browser tab."""
+    global _active_page
     ctx = await _ensure_browser()
+    record = {"n": len(ctx.pages)}
     page = await ctx.new_page()
+    _active_page = None  # the newest tab, this one, is now the one Heliox acts on
     if url:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
         await page.goto(url)
-    return f"Opened new tab: {url or 'about:blank'}"
+    return _with_before(f"Opened new tab: {url or 'about:blank'}", record)
+
+
+def _tab_out_of_range(tab_index: int, count: int) -> LookupError:
+    return LookupError(f"Tab {tab_index} does not exist: {count} tab(s) are open (the first is tab 0)")
 
 
 async def browser_close_tab(tab_index: int = -1) -> str:
-    """Close a browser tab."""
+    """Close a browser tab: the one Heliox acts on (-1), or the one at ``tab_index``."""
+    global _active_page
     ctx = await _ensure_browser()
     pages = ctx.pages
     if not pages:
@@ -826,10 +1100,19 @@ async def browser_close_tab(tab_index: int = -1) -> str:
 
         sentence = "No browser tab was open, so nothing was closed"
         return OutputWithNotice(sentence, sentence, nothing_done=True)
-    page = pages[min(tab_index, len(pages) - 1)]
+    if tab_index < 0:
+        page = _current_of(pages)
+    elif tab_index < len(pages):
+        page = pages[tab_index]
+    else:
+        # This closed the last tab instead of the one asked for.
+        raise _tab_out_of_range(tab_index, len(pages))
+    record = {"n": len(pages)}
     url = page.url
     await page.close()
-    return f"Closed tab: {url}"
+    if page is _active_page:
+        _active_page = None
+    return _with_before(f"Closed tab: {url}", record)
 
 
 async def browser_list_tabs() -> str:
@@ -848,13 +1131,17 @@ async def browser_list_tabs() -> str:
 
 
 async def browser_switch_tab(tab_index: int) -> str:
-    """Switch to a specific tab."""
+    """Switch to a specific tab: bring it to the front and act on it from now on."""
+    global _active_page
     ctx = await _ensure_browser()
     pages = ctx.pages
-    if tab_index >= len(pages):
-        return f"Tab {tab_index} doesn't exist (only {len(pages)} tabs open)"
+    if not -len(pages) <= tab_index < len(pages):
+        # This used to return "doesn't exist" as a success.
+        raise _tab_out_of_range(tab_index, len(pages))
     page = pages[tab_index]
     await page.bring_to_front()
+    # Without this the next click or type still went to the newest tab, not the one brought to the front.
+    _active_page = page
     return f"Switched to tab {tab_index}: {page.url}"
 
 
@@ -914,14 +1201,21 @@ async def browser_fill_form(fields: dict[str, str], submit_selector: str | None 
 
 async def browser_close() -> str:
     """Close the browser completely."""
-    global _browser_context, _playwright_instance
+    global _browser_context, _playwright_instance, _active_page
+    if _browser_context is None and _playwright_instance is None:
+        from pilot.actions import OutputWithNotice
+
+        sentence = "No browser was open, so nothing was closed"
+        return OutputWithNotice(sentence, sentence, nothing_done=True)
+    processes = browser_process_ids()
+    _active_page = None
     if _browser_context:
         await _browser_context.close()
         _browser_context = None
     if _playwright_instance:
         await _playwright_instance.stop()
         _playwright_instance = None
-    return "Browser closed"
+    return _with_before("Browser closed", {"pids": processes or None})
 
 
 class PlaywrightBackend(BrowserBackend):
