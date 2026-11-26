@@ -9108,6 +9108,8 @@ class PilotServer:
         reason = str(params.get("reason", ""))
         if reason not in VOICE_PREPARE_REASONS:
             return {"status": "error", "message": "reason must be focus or typing"}
+        if reason == "typing":
+            self._warm_planner_connection()  # a typed request may become a plan
         now = time.monotonic()
         if now - self._voice_prepared_at < VOICE_PREPARE_SECONDS:
             return {"status": "ok", "started": False}
@@ -16957,6 +16959,20 @@ def handle_tool(tool_name, params):
                 stopped += 1
         return stopped
 
+    def _warm_planner_connection(self) -> bool:
+        """Open the planner's cloud connection while the person types or speaks to Heliox (ModelRouter.
+        warm_planner_connection): a HEAD with nothing billed, at most once per idle period, never beside a request.
+        Silent when there is no router or it fails."""
+        router = getattr(self, "_model_router", None)
+        warm = getattr(router, "warm_planner_connection", None)
+        if not callable(warm):
+            return False
+        try:
+            return bool(warm())
+        except Exception:
+            logger.debug("Could not warm the planner's connection", exc_info=True)
+            return False
+
     def warm_for_speech(self, addressed: str) -> bool:
         """The listener: speech now known to be said to Heliox ("wake" at the early opening read, "button", or
         "follow_up" with the follow-up window open) is under way or has just ended. Open the fast model's connection
@@ -16969,6 +16985,7 @@ def handle_tool(tool_name, params):
         from pilot.conversation import layer_for
 
         layer_for(self).prewarm()
+        self._warm_planner_connection()
         from pilot.system.local_tts_worker import LOCAL_ENGINES
 
         if self.config.voice.tts_engine in LOCAL_ENGINES:

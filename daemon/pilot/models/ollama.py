@@ -12,6 +12,9 @@ from pilot.system.http_client import create_httpx_client
 logger = logging.getLogger("pilot.models.ollama")
 
 DEFAULT_TIMEOUT = 600.0  # 10 minutes — local LLMs can be slow for complex plans
+# The availability check (is_available): the wait for a connection to a server on this computer, and the whole check.
+AVAILABILITY_CONNECT_LOCAL = 0.5
+AVAILABILITY_SECONDS = 5.0
 # The context window to ask for. Older Ollama releases default to 2,048 or 4,096 tokens and silently cut the start
 # of a longer prompt, which is the system prompt; Heliox's planner prompt alone is about 4,100 tokens. So every call
 # asks for a window that fits its prompt plus room to answer, rounded up, and never more than the model supports.
@@ -72,9 +75,19 @@ class OllamaClient:
             "num_ctx": context_size(get_token_count(text), await self._max_context(model)),
         }
 
+    def availability_timeout(self) -> httpx.Timeout:
+        """How long the check waits. A server on this computer accepts at once when it runs, but Windows takes about
+        2 s to report a refused local connection, so the wait for the connection is short there; a server that
+        accepted and then does not list its models within a few seconds is not answering either (the client's own
+        limit is 10 minutes, for generation)."""
+        from pilot.models.model_place import endpoint_on_this_computer
+
+        connect = AVAILABILITY_CONNECT_LOCAL if endpoint_on_this_computer(self._base_url) else AVAILABILITY_SECONDS
+        return httpx.Timeout(AVAILABILITY_SECONDS, connect=connect)
+
     async def is_available(self) -> bool:
         try:
-            resp = await self._client.get(f"{self._base_url}/api/tags")
+            resp = await self._client.get(f"{self._base_url}/api/tags", timeout=self.availability_timeout())
             return resp.status_code == 200
         except (httpx.ConnectError, httpx.TimeoutException):
             return False

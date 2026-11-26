@@ -13,9 +13,12 @@ import json
 import logging
 import math
 import re
+import time
+from collections.abc import Callable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -31,6 +34,10 @@ logger = logging.getLogger("pilot.models.cloud")
 # How long the planner's client keeps an idle connection to a provider (httpx's default is 5 s; the providers keep
 # one at least 120 s, measured 13 November).
 IDLE_CONNECTION_SECONDS = 120.0
+# No warm-up (CloudClient.warm) when the client used a connection this recently: it is still open. Half the idle time
+# above, for servers that close sooner (the talk model's rule, pilot.conversation.fast_model.WARM_SKIP_SECONDS).
+WARM_SKIP_SECONDS = 60.0
+WARM_TIMEOUT_SECONDS = 5.0
 
 
 PROVIDER_ENDPOINTS = {
@@ -449,6 +456,11 @@ def _parse_anthropic_response(data: dict[str, Any]) -> str:
 class CloudClient:
     """Unified cloud LLM client. API keys are fetched from the vault at call time."""
 
+    _clock: Callable[[], float] = staticmethod(time.monotonic)
+    _in_flight = 0  # requests open now
+    _last_used = float("-inf")  # when a request or a warm-up last finished on this client
+    _warming: asyncio.Task[None] | None = None
+
     def __init__(self, config: PilotConfig, vault: KeyVault) -> None:
         self._config = config
         self._vault = vault
@@ -458,6 +470,36 @@ class CloudClient:
             config, timeout=120.0, limits=httpx.Limits(keepalive_expiry=IDLE_CONNECTION_SECONDS)
         )
         self._key_cooldowns: dict[bytes, float] = {}
+
+    def warm(self) -> bool:
+        """Open the connection to the provider in the background, for a plan that may follow (the person started
+        typing or speaking to Heliox). A HEAD to the API's own address: no key, no model, nothing the person said,
+        nothing billed, any status will do. Not while a request is in flight or a warm-up runs, and not when the
+        client used a connection less than WARM_SKIP_SECONDS ago (it is still open): at most once per idle period. A
+        request that starts meanwhile never waits for it. Returns whether a warm-up was started."""
+        if self._in_flight or (self._warming is not None and not self._warming.done()):
+            return False
+        if self._clock() - self._last_used < WARM_SKIP_SECONDS:
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        self._warming = loop.create_task(self._open_connection(), name="planner-connection-warm")
+        return True
+
+    def warm_url(self) -> str:
+        parts = urlsplit(PROVIDER_ENDPOINTS.get(self._config.model.cloud_provider, PROVIDER_ENDPOINTS["openai"]))
+        return f"{parts.scheme}://{parts.netloc}/"
+
+    async def _open_connection(self) -> None:
+        try:
+            await self._client.request("HEAD", self.warm_url(), timeout=WARM_TIMEOUT_SECONDS)
+            self._last_used = self._clock()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # no network, a slow provider: silent, and not a provider fault
+            logger.debug("Warming the planner's connection failed", exc_info=True)
 
     @staticmethod
     def _key_identity(api_key: str) -> bytes:
@@ -727,6 +769,7 @@ class CloudClient:
         A connect or pool timeout is not noted: that request never reached the provider."""
         loop = asyncio.get_running_loop()
         started = loop.time()
+        self._in_flight += 1
         try:
             return await self._client.post(url, json=payload, headers=headers)
         except (httpx.ConnectTimeout, httpx.PoolTimeout):
@@ -736,6 +779,9 @@ class CloudClient:
             if capture is not None:
                 capture.abandoned.append(estimate_abandoned_call(provider, model, payload, loop.time() - started))
             raise
+        finally:
+            self._in_flight -= 1
+            self._last_used = self._clock()
 
     async def _call_anthropic(
         self,
@@ -796,4 +842,8 @@ class CloudClient:
         raise RuntimeError(f"Failed after {MAX_RETRIES} retries due to rate limiting")
 
     async def close(self) -> None:
+        warming = self._warming
+        if warming is not None and not warming.done():
+            warming.cancel()
+            await asyncio.gather(warming, return_exceptions=True)
         await self._client.aclose()

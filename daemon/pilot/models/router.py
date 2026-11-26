@@ -587,10 +587,23 @@ class ModelRouter:
 
             return response
 
+        if provider in ("ollama", "local"):
+            raise RuntimeError(
+                f"The local model server (Ollama at {self._config.model.ollama_base_url}) is not answering. "
+                "Start Ollama, or choose a cloud model in Settings."
+            )
         raise RuntimeError(
             "No model backend available. Start Ollama, configure a cloud API key, "
             "or connect a supported subscription CLI."
         )
+
+    def warm_planner_connection(self) -> bool:
+        """The person started typing to Heliox or speaking to it: open the cloud provider's connection now, so the
+        plan that may follow does not set it up (0.13 to 0.15 s, measured 27 November). Only for a cloud provider;
+        the client decides whether a warm-up is due (CloudClient.warm). Returns whether one was started."""
+        if self._config.model.provider != "cloud" or self._cloud is None:
+            return False
+        return self._cloud.warm()
 
     def _open_cloud_circuit(self, reason: str, *, seconds: float = 60.0) -> None:
         self._cloud_unavailable_reason = reason
