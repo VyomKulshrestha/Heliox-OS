@@ -14,11 +14,15 @@ from pathlib import Path
 logger = logging.getLogger("pilot.system.file_intel")
 
 
+class UnreadableFileError(ValueError):
+    """The file exists but none of the readers could turn it into text."""
+
+
 async def parse_file(file_path: str) -> str:
     """Auto-detect file type and extract text/data content."""
     p = Path(file_path)
     if not p.exists():
-        return f"File not found: {file_path}"
+        raise FileNotFoundError(f"File not found: {file_path}")
 
     ext = p.suffix.lower()
     size = p.stat().st_size
@@ -83,12 +87,14 @@ async def parse_file(file_path: str) -> str:
             # Try as text
             try:
                 return info + await _parse_text(file_path)
-            except Exception:
-                return info + f"Unable to parse file type: {ext}"
+            except Exception as e:
+                raise UnreadableFileError(f"Heliox cannot read {p.name}: unable to parse file type {ext}") from e
     except ImportError as e:
-        return info + f"Missing dependency: {e}. Install it with pip."
+        raise RuntimeError(f"Heliox cannot read {p.name}: a reader library is missing ({e})") from e
+    except UnreadableFileError:
+        raise
     except Exception as e:
-        return info + f"Parse error: {e}"
+        raise RuntimeError(f"Heliox could not parse {p.name}: {e}") from e
 
 
 async def _parse_pdf(path: str) -> str:
@@ -356,7 +362,7 @@ async def search_file_contents(
     results = []
     p = Path(directory)
     if not p.exists():
-        return f"Directory not found: {directory}"
+        raise FileNotFoundError(f"Directory not found: {directory}")
 
     def _do():
         count = 0

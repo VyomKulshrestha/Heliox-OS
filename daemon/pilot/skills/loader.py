@@ -183,9 +183,9 @@ class SkillRegistry:
         skill = self._skills.get(skill_id)
         if skill is None:
             known = ", ".join(sorted(self._skills)) or "(none)"
-            return f"Unknown skill_id {skill_id!r}. Loaded: {known}"
+            raise LookupError(f"Unknown skill_id {skill_id!r}. Loaded: {known}")
         try:
             return await skill.run(arguments or {}, ctx)
         except Exception as e:
             logger.exception("Skill %s raised", skill_id)
-            return f"Skill {skill_id!r} failed: {e}"
+            raise RuntimeError(f"Skill {skill_id!r} failed: {e}") from e

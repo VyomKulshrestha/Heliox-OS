@@ -654,7 +654,7 @@ async def browser_extract(
     else:
         element = await page.query_selector(selector)
         if not element:
-            return f"Element not found: {selector}"
+            raise LookupError(f"Element not found: {selector}")
         if attribute == "innerText":
             val = await element.inner_text()
         elif attribute == "innerHTML":
@@ -685,7 +685,7 @@ async def browser_extract_table(selector: str = "table") -> str:
     """)
 
     if not result:
-        return f"Table not found: {selector}"
+        raise LookupError(f"Table not found: {selector}")
     return json.dumps(result, indent=2)
 
 
@@ -763,7 +763,7 @@ async def browser_screenshot(
         if element:
             await element.screenshot(path=output_path)
         else:
-            return f"Element not found for screenshot: {selector}"
+            raise LookupError(f"Element not found for screenshot: {selector}")
     else:
         await page.screenshot(path=output_path, full_page=full_page)
 

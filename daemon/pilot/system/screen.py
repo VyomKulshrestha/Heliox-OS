@@ -24,7 +24,9 @@ async def brightness_get() -> str:
         )
         if code == 0 and out.strip():
             return f"Brightness: {out.strip()}%"
-        return "Brightness: Unable to read (desktop monitor may not support WMI brightness)"
+        raise RuntimeError(
+            "Could not read the brightness: this display does not report it to Windows (WMI). " + err.strip()[:160]
+        )
 
     elif CURRENT_PLATFORM == Platform.MACOS:
         code, out, err = await run_command(["brightness", "-l"])
@@ -32,6 +34,8 @@ async def brightness_get() -> str:
             code, out, err = await run_command(
                 ["osascript", "-e", 'tell application "System Preferences" to get brightness']
             )
+        if code != 0 or not out.strip():
+            raise RuntimeError(f"Could not read the brightness: {err.strip()[:160] or 'no reader answered'}")
         return f"Brightness: {out.strip()}"
 
     else:  # Linux
@@ -47,6 +51,8 @@ async def brightness_get() -> str:
                 return f"Brightness: {out.strip()}"
         # Fallback
         code, out, err = await run_command(["xrandr", "--verbose"])
+        if code != 0 or not out.strip():
+            raise RuntimeError(f"Could not read the brightness: {err.strip()[:160] or 'no reader answered'}")
         return f"Brightness info:\n{out.strip()}"
 
 

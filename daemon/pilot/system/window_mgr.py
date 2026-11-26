@@ -244,7 +244,9 @@ async def window_list() -> str:
                     'tell application "System Events" to get name of every process whose visible is true',
                 ]
             )
-        return out.strip() if code == 0 else "Could not list windows"
+        if code != 0:
+            raise RuntimeError(f"Window list failed: {err.strip()[:200]}")
+        return out.strip()
 
     else:  # Linux
         code, out, err = await run_command(["wmctrl", "-l"])

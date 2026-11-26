@@ -1867,7 +1867,10 @@ class Executor:
         from pilot.system.pty_session import PtySessionManager
 
         session = PtySessionManager.get_session(params.session_id)
-        return await session.exec(params.command, timeout=params.timeout)
+        output = await session.exec(params.command, timeout=params.timeout)
+        if output.startswith("ERROR: command timed out"):
+            raise TimeoutError(output.removeprefix("ERROR: ").capitalize())
+        return output
 
     # ======================================================================
     # OPEN URL / APPLICATION / NOTIFY
@@ -1891,6 +1894,8 @@ class Executor:
         else:
             code, _, err = await run_command(["xdg-open", url])
 
+        if code != 0:
+            raise RuntimeError(f"The browser did not open {url}: {err.strip() or f'exit code {code}'}")
         return f"Opened {url} in default browser"
 
     async def _exec_open_application(self, action: Action) -> str:
@@ -2785,7 +2790,7 @@ class Executor:
 
         p: SkillRunParams = action.parameters  # type: ignore[assignment]
         if self._skill_registry is None:
-            return "Skill registry is not configured"
+            raise RuntimeError(f"Skills are not available in this runtime, so {p.skill_id.strip()!r} did not run.")
         ctx = SkillContext(pilot_config=self._config)
         return await self._skill_registry.run(p.skill_id.strip(), p.arguments, ctx)
 

@@ -127,7 +127,7 @@ async def execute_code(
             return result
         return await _execute_node(code, timeout)
     else:
-        return f"Unsupported language: {language}. Use: python, powershell, bash, cmd, javascript"
+        raise ValueError(f"Unsupported language: {language}. Use: python, powershell, bash, cmd, javascript")
 
 
 async def generate_and_execute(
@@ -181,10 +181,13 @@ async def generate_and_execute(
             code = code[:-3].rstrip()
 
         result = await execute_code(code, language, timeout, sandbox_cfg=sandbox_cfg)
+        if result.strip().upper().startswith("ERROR:"):
+            # Keep the backend's failure first, where the executor looks for it.
+            return f"{result.strip()}\n\n[GENERATED CODE]\n{code}"
         return f"[GENERATED CODE]\n{code}\n\n[OUTPUT]\n{result}"
 
     except Exception as e:
-        return f"Code generation failed: {e}"
+        return f"ERROR: Code generation failed: {e}"
 
 
 # ---------------------------------------------------------------------------
