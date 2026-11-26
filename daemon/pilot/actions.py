@@ -10,7 +10,9 @@ import re
 from enum import Enum, StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_validator, model_validator
+
+from pilot.security.secret_urls import mask_if_secret, mask_url, redact_text
 
 
 class ActionType(StrEnum):
@@ -824,7 +826,30 @@ class FileIntelParams(BaseModel):
 
 
 class ApiRequestParams(BaseModel):
-    """For generic API and service calls."""
+    """For generic API and service calls.
+
+    ``webhook_url`` is always a secret (whoever has it can post), and ``url`` is one when it carries a user,
+    a password or a token. Both stay whole in memory for the step that sends; every serialization (the plan
+    card, the approval, the audit log, receipts, the saved plan, a repair prompt) and the repr in log lines
+    shows them masked by ``pilot.security.secret_urls``.
+    """
+
+    @field_serializer("webhook_url")
+    def _mask_webhook(self, value: str | None) -> str | None:
+        return mask_url(value)
+
+    @field_serializer("url")
+    def _mask_secret_url(self, value: str) -> str:
+        return mask_if_secret(value) or ""
+
+    def __repr_args__(self):  # type: ignore[no-untyped-def]
+        for name, value in super().__repr_args__():
+            if name == "webhook_url":
+                yield name, mask_url(value)
+            elif name == "url":
+                yield name, mask_if_secret(value)
+            else:
+                yield name, value
 
     method: str = "GET"
     url: str = ""
@@ -1013,6 +1038,13 @@ class Action(BaseModel):
     # Checked and run by pilot.agents.postconditions.declared; absent means the step stays "reported".
     expect: Expectation | None = None
 
+    @field_validator("target")
+    @classmethod
+    def _target_without_secrets(cls, value: str) -> str:
+        # The target is only ever shown (plan card, approval, audit, receipts); a webhook or token URL in it is
+        # masked at once. The handlers take their address from the parameters.
+        return redact_text(value) or ""
+
     @property
     def permission_tier(self) -> PermissionTier:
         # These actions are ALWAYS safe ΓÇö never require confirmation
@@ -1170,6 +1202,16 @@ class ActionPlan(BaseModel):
     error: str | None = None
     raw_input: str = ""
 
+    @field_validator("explanation")
+    @classmethod
+    def _explanation_without_secrets(cls, value: str) -> str:
+        return redact_text(value) or ""
+
+    @field_serializer("raw_input")
+    def _raw_input_without_secrets(self, value: str) -> str:
+        # The request stays whole in memory (the planner needs the address it names); kept or shown, it is masked.
+        return redact_text(value) or ""
+
     @property
     def max_tier(self) -> PermissionTier:
         if not self.actions:
@@ -1197,6 +1239,11 @@ class ActionResult(BaseModel):
     snapshot_id: str | None = None
     executed: bool = True
     skip_reason: str | None = None
+
+    @field_serializer("output", "error")
+    def _without_secret_urls(self, value: str | None) -> str | None:
+        return redact_text(value)
+
     # A success with a part the person must see, such as recipients the mail server refused. The reply and the
     # task receipt carry it in full; the output itself is kept in the receipt only as a hash.
     notice: str | None = None

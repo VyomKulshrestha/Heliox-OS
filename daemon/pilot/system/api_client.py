@@ -23,6 +23,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from pilot.actions import SUPPORTED_HTTP_METHODS, OutputWithNotice
 from pilot.config import PilotConfig
+from pilot.security.secret_urls import mask_if_secret, refuse_masked
 from pilot.system.http_client import create_httpx_client
 from pilot.system.mail_readback import message_id_note, new_message_id
 
@@ -49,6 +50,8 @@ def _is_public_address(address: str) -> bool:
 
 
 async def _validate_outbound_url(url: str, *, allow_private_network: bool) -> None:
+    # A plan restored from storage holds masked addresses (pilot.security.secret_urls): never send to one.
+    refuse_masked(url)
     parsed = urlsplit(url)
     if parsed.scheme.lower() not in {"http", "https"}:
         raise ValueError("Outbound URLs must use http:// or https://")
@@ -214,7 +217,7 @@ async def api_request(
 
         result = {
             "status": resp.status_code,
-            "url": str(resp.url),
+            "url": mask_if_secret(str(resp.url)),
             "headers": dict(resp.headers),
         }
 

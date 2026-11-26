@@ -17,6 +17,7 @@ from typing import Any
 import aiosqlite
 
 from pilot.config import PERMISSION_AUDIT_DB_FILE, PERMISSION_AUDIT_KEY_FILE
+from pilot.security.secret_urls import redact_text
 
 logger = logging.getLogger("pilot.security.permission_audit")
 
@@ -94,6 +95,8 @@ class PermissionEscalationAuditStore:
         execution_success: bool | None = None,
         execution_error: str = "",
     ) -> str:
+        target = redact_text(target) or ""
+        execution_error = redact_text(execution_error) or ""
         await self.initialize()
         async with aiosqlite.connect(self._db_file) as db:
             previous_hmac = await self._last_hmac(db)

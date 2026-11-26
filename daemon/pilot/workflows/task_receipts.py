@@ -37,6 +37,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
+from pilot.security.secret_urls import redact_text
 from pilot.task_request import readable_request
 
 logger = logging.getLogger("pilot.workflows.task_receipts")
@@ -233,15 +234,15 @@ class TaskReceipts:
                 "action_type": getattr(
                     getattr(action, "action_type", ""), "value", str(getattr(action, "action_type", ""))
                 ),
-                "target": str(getattr(action, "target", "") or "")[:300],
+                "target": (redact_text(str(getattr(action, "target", "") or "")) or "")[:300],
                 "parameters_sha256": _sha256(canonical_json(params_dump)),
                 "user_confirmed": bool(user_confirmed),
                 "executed": bool(getattr(result, "executed", True)),
                 "success": bool(getattr(result, "success", False)),
-                "error": str(getattr(result, "error", "") or "")[:300],
+                "error": (redact_text(str(getattr(result, "error", "") or "")) or "")[:300],
                 "output_sha256": _sha256(str(output).encode("utf-8")) if output else None,
                 # Kept in plain text, unlike the output: a part of a success the person must be able to look up.
-                "notice": str(getattr(result, "notice", "") or "")[:500],
+                "notice": (redact_text(str(getattr(result, "notice", "") or "")) or "")[:500],
                 # "already_absent": the target was not there, so nothing was done (the notice says what was found).
                 "skip_reason": str(getattr(result, "skip_reason", "") or ""),
                 "undo": undo_kind,
@@ -313,9 +314,9 @@ class TaskReceipts:
             "task_key": task_key,
             "plan_ids": pending["plan_ids"],
             "source": source,
-            "request": request[:2000],
+            "request": (redact_text(request) or "")[:2000],
             "status": status,
-            "summary": summary[:2000],
+            "summary": (redact_text(summary) or "")[:2000],
             "started_at": _iso(pending["started_at"]),
             "finished_at": _iso(finished),
             "actions": pending["actions"],

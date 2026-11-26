@@ -18,6 +18,7 @@ import aiofiles.os
 
 from pilot.actions import Action, ActionResult
 from pilot.config import AUDIT_FILE, DATA_DIR
+from pilot.security.secret_urls import redact
 
 logger = logging.getLogger("pilot.security.audit")
 
@@ -138,7 +139,8 @@ class AuditLogger:
             return await asyncio.to_thread(archive_older_than, self._file, older_than, **options)
 
     async def _write(self, entry: AuditEntry) -> None:
-        line = json.dumps(entry.to_dict(), separators=(",", ":")) + "\n"
+        # A webhook or token URL in a target, an output preview or an error is written masked.
+        line = json.dumps(redact(entry.to_dict()), separators=(",", ":")) + "\n"
         try:
             await aiofiles.os.makedirs(self._file.parent, exist_ok=True)
             async with self._lock, aiofiles.open(self._file, "a", encoding="utf-8") as f:

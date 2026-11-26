@@ -15,6 +15,7 @@ import aiosqlite
 
 from pilot import config as pilot_config
 from pilot.actions import ActionPlan, ActionResult
+from pilot.security.secret_urls import redact_text
 
 WORKFLOW_DB_FILENAME = "workflow_checkpoints.db"
 
@@ -247,11 +248,11 @@ class WorkflowCheckpointStore:
     def _to_row(checkpoint: PlanCheckpoint) -> tuple[Any, ...]:
         return (
             checkpoint.plan_id,
-            checkpoint.user_input,
+            redact_text(checkpoint.user_input) or "",
             checkpoint.plan.model_dump_json(),
             json.dumps([result.model_dump(mode="json") for result in checkpoint.results]),
             checkpoint.completed_count,
-            checkpoint.last_output,
+            redact_text(checkpoint.last_output),
             json.dumps(checkpoint.snapshot_ids),
             checkpoint.status,
             checkpoint.updated_at,

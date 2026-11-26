@@ -32,6 +32,7 @@ import aiosqlite
 
 from pilot.config import AGENT_GATEWAY_AUDIT_DB_FILE, AGENT_GATEWAY_AUDIT_KEY_FILE
 from pilot.security.permission_audit import ChainVerificationResult
+from pilot.security.secret_urls import redact_text
 
 logger = logging.getLogger("pilot.security.gateway_audit")
 
@@ -120,6 +121,8 @@ class AgentGatewayAuditStore:
         execution_error: str = "",
         policy_snapshot: dict[str, Any] | None = None,
     ) -> str:
+        target = redact_text(target) or ""
+        execution_error = redact_text(execution_error) or ""
         await self.initialize()
         async with aiosqlite.connect(self._db_file) as db:
             previous_hmac = await self._last_hmac(db)

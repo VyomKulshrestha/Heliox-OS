@@ -104,6 +104,7 @@ from pilot.security.rpc_identity import (
     derive_neural_signing_key,
     rpc_method_allowed,
 )
+from pilot.security.secret_urls import SecretUrlFilter, redact_text
 from pilot.system import voice_words
 from pilot.system.companion_speech import (
     CompanionSpeechCoordinator,
@@ -752,6 +753,11 @@ def _declared_check_line(action: Any) -> dict[str, str]:
     return {"check": line} if line else {}
 
 
+def _repair_error_context(failed_details: list[str], errors: list[str]) -> str:
+    """What went wrong, as the model reads it in the repair round; a webhook or token URL in it is masked."""
+    return redact_text("\n".join([*failed_details, *errors])) or ""
+
+
 def _postcondition_failure_requires_reconciliation(results: list[Any], verification: Any) -> bool:
     """Stop before repeating a destructive action whose effect is uncertain, or one the person must reconcile."""
     from pilot.actions import RECONCILE_NOT_RETRY_ACTIONS
@@ -978,7 +984,7 @@ class PlanHistoryStore:
             (
                 plan_id,
                 datetime.now(timezone.utc).isoformat(),
-                raw_input,
+                redact_text(raw_input) or "",
                 json.dumps(plan_dict, ensure_ascii=False),
                 len(getattr(plan, "actions", [])),
                 json.dumps(critic_verdict, ensure_ascii=False) if critic_verdict is not None else None,
@@ -5344,7 +5350,7 @@ class PilotServer:
 
             failed_details = [d for d in verification.details if "FAILED" in d or "MISMATCH" in d]
             error_msgs = [r.error for r in results if r.error]
-            error_context = "\n".join(failed_details + error_msgs)
+            error_context = _repair_error_context(failed_details, error_msgs)
 
             # Use partial retry plan if PlanDiffer found fewer actions to retry
             if len(retry_plan.actions) < len(plan.actions) and attempt < self.MAX_RETRIES:
@@ -19102,6 +19108,9 @@ def _setup_logging() -> None:
     # API-key query parameter, so leaving this enabled writes credentials into
     # console/file logs and any pasted support transcript.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # A webhook or token URL in any log line (a message, an exception) is written masked.
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(SecretUrlFilter())
 
 
 def main() -> None:
