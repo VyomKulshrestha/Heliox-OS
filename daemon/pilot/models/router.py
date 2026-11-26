@@ -268,6 +268,16 @@ class ModelRouter:
         provider = self._config.model.provider
         model: str | None = None
         response: str | None = None
+        # Whether Ollama answers is asked at most once per call, and never when a cloud provider is configured (the
+        # call goes there). On Windows a refused connection to 127.0.0.1 takes about 2 s (the system retries the
+        # connect), so a cloud person without Ollama paid 2 s before every model call, the planner's included.
+        cloud_configured = provider == "cloud" and self._cloud is not None
+        ollama_answer: list[bool] = []
+
+        async def ollama_available() -> bool:
+            if not ollama_answer:
+                ollama_answer.append(await self._ollama.is_available())
+            return ollama_answer[0]
 
         # Skip cache when streaming - can't cache partial tokens
         if not stream_callback:
@@ -302,7 +312,7 @@ class ModelRouter:
 
             # Try ollama or local backend
             if provider in ("ollama", "local"):
-                if await self._ollama.is_available():
+                if await ollama_available():
                     model = await self._resolve_ollama_model()
 
                     response = await self._cache.get(
@@ -333,7 +343,7 @@ class ModelRouter:
                         return response
 
             # Fallback: try ollama if not already tried
-            if provider not in ("ollama", "subscription") and await self._ollama.is_available():
+            if provider not in ("ollama", "subscription") and not cloud_configured and await ollama_available():
                 model = await self._resolve_ollama_model()
 
                 response = await self._cache.get(
@@ -348,8 +358,8 @@ class ModelRouter:
                 if response is not None:
                     return response
 
-            # Final fallback: cloud API
-            if self._cloud and provider not in ("ollama", "local", "subscription"):
+            # Final fallback: cloud API (for provider "cloud" the same key was looked up above)
+            if self._cloud and provider not in ("ollama", "local", "subscription", "cloud"):
                 model = self._config.model.cloud_model or "unknown"
 
                 response = await self._cache.get(
@@ -426,7 +436,7 @@ class ModelRouter:
 
         # Try ollama or local backend
         if provider in ("ollama", "local"):
-            if await self._ollama.is_available():
+            if await ollama_available():
                 model = await self._resolve_ollama_model()
 
                 logger.info("Waiting for local Ollama slot...")
@@ -500,7 +510,7 @@ class ModelRouter:
                 return response
 
         # Fallback: try ollama if not already tried
-        if provider != "ollama" and await self._ollama.is_available():
+        if provider != "ollama" and await ollama_available():
             model = await self._resolve_ollama_model()
 
             logger.info("Waiting for fallback Ollama slot...")
