@@ -705,6 +705,15 @@ def _is_terminal_execution_failure(results: list[Any]) -> bool:
             "is ambiguous",
             "is registered, but its executable is missing",
         ),
+        # Missing integration settings: another plan cannot supply them, so report instead of replanning.
+        "api_send_email": ("smtp credentials are not configured",),
+        "api_slack": ("no webhook url is configured",),
+        "api_discord": ("no webhook url is configured",),
+        # The platform or runtime lacks the facility; a different plan would hit the same wall.
+        "registry_read": ("the registry exists only on windows",),
+        "registry_write": ("the registry exists only on windows",),
+        "file_permissions": ("windows has no unix permission modes",),
+        "request_human_help": ("could not hand the desktop over",),
     }
     for result in failed:
         action_type = getattr(result.action.action_type, "value", str(result.action.action_type))

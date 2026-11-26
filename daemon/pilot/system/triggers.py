@@ -493,7 +493,7 @@ async def trigger_delete(trigger_id: str) -> str:
     """Delete a trigger by ID or name."""
     if _engine.delete_trigger(trigger_id):
         return f"Deleted trigger: {trigger_id}"
-    return f"Trigger not found: {trigger_id}"
+    raise LookupError(f"No trigger has the id or name {trigger_id!r}, so nothing was deleted. List the triggers first.")
 
 
 async def trigger_start_engine() -> str:

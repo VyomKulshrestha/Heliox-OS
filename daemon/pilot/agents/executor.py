@@ -108,6 +108,11 @@ REGISTRY_KINDS = {
 # Spoken and shown when the stress gate pauses a gated action. Nobody confirms anything during the pause: the
 # action continues after ten seconds unless the person stops the task.
 STRESS_PAUSE_PHRASE = "Pausing ten seconds before continuing. Say or press Stop to cancel."
+REGISTRY_ONLY_ON_WINDOWS = "The registry exists only on Windows, so nothing was {verb} on this computer."
+HUMAN_HELP_UNAVAILABLE = (
+    "Heliox could not hand the desktop over here, so the person was not asked: {request}. "
+    "Tell them in the reply what they need to do."
+)
 
 _EXIT_CODE_PATTERN = re.compile(r"\[EXIT CODE:\s*(-?\d+)\]")
 _SWALLOWED_EXCEPTION_PATTERN = re.compile(
@@ -1902,7 +1907,7 @@ class Executor:
             request += f" ({params.instructions.strip()})"
         human_control = getattr(self, "_human_control", None)
         if human_control is None:
-            return f"Asked the person for help: {request}. Human takeover is not available in this runtime."
+            raise RuntimeError(HUMAN_HELP_UNAVAILABLE.format(request=request))
         human_control.take(f"Heliox asked for help: {request}")
         return f"Asked the person for help: {request}. Heliox will continue after they hand control back."
 
@@ -2321,7 +2326,7 @@ class Executor:
         from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
 
         if CURRENT_PLATFORM != Platform.WINDOWS:
-            return "Registry operations are only available on Windows"
+            raise NotImplementedError(REGISTRY_ONLY_ON_WINDOWS.format(verb="read"))
         params: RegistryParams = action.parameters  # type: ignore[assignment]
         # The key and the value name are data ($HelioxArgs), never part of the command text.
         script = "Get-ItemProperty -LiteralPath ('Registry::' + $HelioxArgs['key'])"
@@ -2338,7 +2343,7 @@ class Executor:
         from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
 
         if CURRENT_PLATFORM != Platform.WINDOWS:
-            return "Registry operations are only available on Windows"
+            raise NotImplementedError(REGISTRY_ONLY_ON_WINDOWS.format(verb="written"))
         params: RegistryParams = action.parameters  # type: ignore[assignment]
         if not params.value_name or params.value_data is None:
             raise ValueError("registry_write requires value_name and value_data")

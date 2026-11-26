@@ -145,6 +145,21 @@ async def _request_with_validated_redirects(
 # ── Generic REST API ─────────────────────────────────────────────────
 
 
+class HttpStatusError(RuntimeError):
+    """The server answered with HTTP 4xx or 5xx, so the request did not do what was asked.
+
+    The message names only the scheme and host: a webhook URL carries its secret in the path.
+    """
+
+    def __init__(self, method: str, url: str, status: int, reason: str = "", body: str = "") -> None:
+        scheme, host, _port = _origin(url)
+        excerpt = " ".join((body or "").split())[:300]
+        reason = f" {reason}" if reason else ""
+        message = f"{method} to {scheme}://{host} failed with HTTP {status}{reason}"
+        super().__init__(f"{message}: {excerpt}" if excerpt else message)
+        self.status = status
+
+
 async def api_request(
     method: str,
     url: str,
@@ -183,6 +198,11 @@ async def api_request(
             allow_private_network=allow_private_network,
             request_kwargs=kwargs,
         )
+
+        if resp.status_code >= 400:
+            raise HttpStatusError(
+                method, str(resp.url), resp.status_code, getattr(resp, "reason_phrase", ""), resp.text
+            )
 
         result = {
             "status": resp.status_code,
@@ -285,7 +305,9 @@ async def send_email(
     from_addr = from_addr or username
 
     if not username or not password:
-        return "ERROR: SMTP credentials not configured. Set SMTP_USER and SMTP_PASS environment variables."
+        raise ValueError(
+            "The email was not sent: SMTP credentials are not configured. Set SMTP_USER and SMTP_PASS for the daemon."
+        )
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -297,18 +319,27 @@ async def send_email(
     else:
         msg.attach(MIMEText(body, "plain"))
 
-    def _do():
+    accepted: dict[str, Any] = {}
+
+    def _do() -> None:
         context = ssl.create_default_context()
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls(context=context)
             server.login(username, password)
-            server.sendmail(from_addr, to, msg.as_string())
+            accepted["refused"] = server.sendmail(from_addr, to, msg.as_string())
 
     try:
         await asyncio.to_thread(_do)
-        return f"Email sent to {to}: {subject}"
     except Exception as e:
-        return f"Failed to send email: {e}"
+        if "refused" not in accepted:
+            raise RuntimeError(f"The email to {to} was not sent: {e}") from e
+        # The server already took the message; only closing the connection failed. Reporting a failure
+        # here would invite a retry that sends it twice.
+        logger.warning("SMTP connection closed with an error after the message was accepted: %s", type(e).__name__)
+    refused = accepted.get("refused") or {}
+    if refused:
+        return f"Email sent to {to}: {subject} (the server refused: {', '.join(sorted(refused))})"
+    return f"Email sent to {to}: {subject}"
 
 
 # ── Webhook ──────────────────────────────────────────────────────────
@@ -338,7 +369,9 @@ async def send_slack_message(
     """
     webhook_url = webhook_url or os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
-        return "ERROR: Slack webhook URL not configured. Set SLACK_WEBHOOK_URL."
+        raise ValueError(
+            "The Slack message was not sent: no webhook URL is configured. Set SLACK_WEBHOOK_URL or give webhook_url."
+        )
 
     payload: dict[str, str] = {"text": message}
     if channel:
@@ -360,7 +393,10 @@ async def send_discord_message(
     """
     webhook_url = webhook_url or os.environ.get("DISCORD_WEBHOOK_URL", "")
     if not webhook_url:
-        return "ERROR: Discord webhook URL not configured. Set DISCORD_WEBHOOK_URL."
+        raise ValueError(
+            "The Discord message was not sent: no webhook URL is configured. "
+            "Set DISCORD_WEBHOOK_URL or give webhook_url."
+        )
 
     return await api_request("POST", webhook_url, body={"content": message})
 
@@ -393,6 +429,8 @@ async def scrape_url(
             url,
             allow_private_network=allow_private_network,
         )
+        if resp.status_code >= 400:
+            raise HttpStatusError("GET", str(resp.url), resp.status_code, getattr(resp, "reason_phrase", ""))
         html = resp.text
 
     if extract == "html":

@@ -313,11 +313,10 @@ async def file_permissions(path: str, permissions: str | None = None) -> str:
         return f"Permissions for {path}: {mode}"
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        # Windows doesn't use Unix-style permissions
-        from pilot.system.platform_detect import run_command
-
-        code, out, err = await run_command(["icacls", str(p)])
-        return f"Windows permissions for {path}:\n{out.strip()}"
+        # Windows keeps access lists, not Unix modes; nothing here would set the requested mode.
+        raise NotImplementedError(
+            f"Windows has no Unix permission modes, so the permissions of {path} were not changed to {permissions}."
+        )
 
     # Unix: set permissions
     mode = int(permissions, 8)
