@@ -22,6 +22,7 @@ from typing import Any
 
 from pilot.actions import ActionResult, ActionType, ApiRequestParams, EmailParams
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 
 logger = logging.getLogger("pilot.agents.postconditions.mail_calendar")
 
@@ -91,14 +92,17 @@ async def _sent_copy_outcome(result: ActionResult, *, original: str = "", is_rep
     message_id = mail_readback.message_id_from_output(result.output)
     if not message_id:
         return unobserved(
-            f"{_RECEIPT}, but the send named no Message-ID, so Heliox could not look for its copy in Sent."
+            f"{_RECEIPT}, but the send named no Message-ID, so Heliox could not look for its copy in Sent.",
+            kind=Kind.COULD_NOT_LOOK,
         )
     account, why = await _imap_account(await _sender(result))
     if account is None:
-        return unobserved(f"{_RECEIPT}, but Heliox could not check its copy in Sent: {why}.")
+        return unobserved(f"{_RECEIPT}, but Heliox could not check its copy in Sent: {why}.", kind=Kind.COULD_NOT_LOOK)
     copy = await mail_readback.find_sent_copy(account, message_id)
     if copy.state == "unavailable":
-        return unobserved(f"{_RECEIPT}, but Heliox could not check its copy in Sent: {copy.reason}.")
+        return unobserved(
+            f"{_RECEIPT}, but Heliox could not check its copy in Sent: {copy.reason}.", kind=Kind.COULD_NOT_LOOK
+        )
     if copy.state == "absent":
         looked = f'no copy with Message-ID {message_id} is in "{copy.folder}" after {copy.searches} searches'
         if account.host.casefold() in mail_readback.FILES_SMTP_MAIL_IN_SENT:
@@ -108,7 +112,8 @@ async def _sent_copy_outcome(result: ActionResult, *, original: str = "", is_rep
             )
         return unobserved(
             f"{_RECEIPT}, but {looked}, and {account.host} may not keep a copy of mail sent this way. Heliox "
-            "did not send it again."
+            "did not send it again.",
+            kind=Kind.COULD_NOT_LOOK,
         )
     where = f'"{copy.folder}" ({copy.found_by})'
     if not is_reply:
@@ -221,7 +226,10 @@ async def event_absent(result: ActionResult) -> Outcome:
 
     answer, why = await _read_calendar(getattr(params, "calendar_id", None), still_there)
     if answer is None:
-        return unobserved(f"Heliox could not check that event {uid} is gone from the calendar, because {why}.")
+        return unobserved(
+            f"Heliox could not check that event {uid} is gone from the calendar, because {why}.",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     if answer:
         return mismatch(f"Event {uid} is still on the CalDAV server after the delete")
     return verified(f"No event with UID {uid} remains on the CalDAV server")
@@ -242,7 +250,8 @@ async def event_matches(result: ActionResult) -> Outcome:
     uid = readback.event_uid_from_output(result.output)
     if not uid:
         return unobserved(
-            "The calendar server accepted the event, but the create named no UID, so Heliox could not read it back."
+            "The calendar server accepted the event, but the create named no UID, so Heliox could not read it back.",
+            kind=Kind.RECEIPT_ONLY,
         )
     summary = str(getattr(params, "summary", "") or "")
     start = datetime.fromisoformat(str(getattr(params, "start", "")))
@@ -264,7 +273,9 @@ async def event_matches(result: ActionResult) -> Outcome:
             waited += pause
         answer, why = await _read_calendar(getattr(params, "calendar_id", None), look)
         if answer is None:
-            return unobserved(f"Heliox could not read the new event back from the calendar, because {why}.")
+            return unobserved(
+                f"Heliox could not read the new event back from the calendar, because {why}.", kind=Kind.COULD_NOT_LOOK
+            )
         kind, found = answer
         if kind == "uid" or found:
             break
@@ -275,7 +286,8 @@ async def event_matches(result: ActionResult) -> Outcome:
         # A slow server can still be filing it: "not there yet" is no reason to create a second event.
         return unobserved(
             f'The calendar server accepted "{summary}" at {when}, but it was not found there after {looks} looks over '
-            f"{waited:g} s. Heliox did not create it again; check the calendar before adding it again."
+            f"{waited:g} s. Heliox did not create it again; check the calendar before adding it again.",
+            kind=Kind.COULD_NOT_LOOK,
         )
     if found is None:
         return mismatch(f"Event {uid} on the calendar server holds no event data")

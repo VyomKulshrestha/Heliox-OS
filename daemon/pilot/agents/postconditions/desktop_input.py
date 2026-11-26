@@ -23,6 +23,7 @@ from typing import Any
 
 from pilot.actions import ActionResult, ActionType
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 
 APP_WINDOW_WAIT_SECONDS = 3.0  # the launch was earlier in the plan; this is extra time
 APP_POLL_SECONDS = 0.5
@@ -49,7 +50,8 @@ def _from_record(result: ActionResult, *, verified_suffix: str = "") -> Outcome 
         return verified(record.detail + verified_suffix)
     if record.outcome == "mismatch":
         return mismatch(record.detail)
-    return unobserved(f"Could not verify: {record.detail}")
+    # The reading names its kind (desktop_observe._record); one made before kinds existed could not look.
+    return unobserved(f"Could not verify: {record.detail}", kind=record.facts.get("kind") or Kind.COULD_NOT_LOOK)
 
 
 # ── window_focus ──
@@ -72,12 +74,13 @@ async def focused_window(result: ActionResult) -> Outcome:
         found = await observe.foreground()
         pids = await observe._threaded(lambda: observe.title_pids_now(title or "")) if title else frozenset()
     except observe.Unobservable as reason:
-        return unobserved(f"Could not verify the focus: {reason}")
+        return unobserved(f"Could not verify the focus: {reason}", kind=Kind.NOT_OBSERVABLE)
     verdict = observe.focus_matches(found, window_id=window_id, title=title, process_name=process_name, title_pids=pids)
     if verdict:
         return verified(f"{found.describe()} is in front ({found.source})")
     return unobserved(
-        f"{NO_READING}; {found.describe()} is in front now, and later steps or the person may have moved the focus"
+        f"{NO_READING}; {found.describe()} is in front now, and later steps or the person may have moved the focus",
+        kind=Kind.CHANGED_LATER,
     )
 
 
@@ -93,7 +96,9 @@ async def typed_text(result: ActionResult) -> Outcome:
     if recorded is not None:
         return recorded
     length = len(getattr(result.action.parameters, "text", "") or "")
-    return unobserved(f"{NO_READING}, so where the {length} typed characters went cannot be said")
+    return unobserved(
+        f"{NO_READING}, so where the {length} typed characters went cannot be said", kind=Kind.NOT_OBSERVABLE
+    )
 
 
 # ── keyboard_press, keyboard_hotkey, keyboard_hold ──
@@ -125,17 +130,20 @@ async def keys_released(result: ActionResult) -> Outcome:
     if recorded is not None:
         return recorded
     if result.action.action_type == ActionType.KEYBOARD_PRESS and keys and keys[0] in MEDIA_KEYS:
-        return unobserved("The media player was asked through MPRIS or a media key; no key state shows what it did")
+        return unobserved(
+            "The media player was asked through MPRIS or a media key; no key state shows what it did",
+            kind=Kind.NOT_OBSERVABLE,
+        )
     if not keys:
-        return unobserved("The step named no key to read")
+        return unobserved("The step named no key to read", kind=Kind.COULD_NOT_LOOK)
     try:
         held, unknown = await observe.keys_down(keys)
     except observe.Unobservable as reason:
-        return unobserved(f"Could not verify the keys were released: {reason}")
+        return unobserved(f"Could not verify the keys were released: {reason}", kind=Kind.NOT_OBSERVABLE)
     if held:
         return mismatch(f"{'+'.join(sorted(held))} is still held down")
     if len(unknown) == len(keys):
-        return unobserved(f"The state of {'+'.join(unknown)} cannot be read here")
+        return unobserved(f"The state of {'+'.join(unknown)} cannot be read here", kind=Kind.NOT_OBSERVABLE)
     return verified(f"{'+'.join(k for k in keys if k not in unknown)} released{tail}")
 
 
@@ -170,16 +178,22 @@ async def pointer_where_sent(result: ActionResult) -> Outcome:
     if output.startswith("Pressed "):
         return unobserved(
             "The control was pressed through the accessibility interface and the pointer did not move; its state "
-            "after a press is not something Heliox knows to expect"
+            "after a press is not something Heliox knows to expect",
+            kind=Kind.NOTHING_HAPPENED,
         )
     if "through xdotool" in output:
-        return unobserved("The click went through xdotool, after which the pointer was not read")
+        return unobserved(
+            "The click went through xdotool, after which the pointer was not read", kind=Kind.NOT_OBSERVABLE
+        )
     params = result.action.parameters
     if result.action.action_type == ActionType.MOUSE_SCROLL and not (
         getattr(params, "x", 0) and getattr(params, "y", 0)
     ):
-        return unobserved("The scroll went to wherever the pointer was; how far the content moved cannot be read")
-    return unobserved(NO_READING)
+        return unobserved(
+            "The scroll went to wherever the pointer was; how far the content moved cannot be read",
+            kind=Kind.NOT_OBSERVABLE,
+        )
+    return unobserved(NO_READING, kind=Kind.NOT_OBSERVABLE)
 
 
 @register(ActionType.MOUSE_MOVE, method="pointer_position_postcondition", timeout=10.0)
@@ -189,8 +203,12 @@ async def pointer_moved(result: ActionResult) -> Outcome:
     if recorded is not None:
         return recorded
     if getattr(result.action.parameters, "relative", False):
-        return unobserved(f"{NO_READING}; a relative move has no fixed point to compare with later")
-    return unobserved(f"{NO_READING}; later steps or the person may have moved the pointer since")
+        return unobserved(
+            f"{NO_READING}; a relative move has no fixed point to compare with later", kind=Kind.NOT_OBSERVABLE
+        )
+    return unobserved(
+        f"{NO_READING}; later steps or the person may have moved the pointer since", kind=Kind.CHANGED_LATER
+    )
 
 
 # ── window_minimize, window_maximize ──
@@ -211,7 +229,8 @@ async def window_state(result: ActionResult) -> Outcome:
     verb = "minimised" if minimise else "maximised"
     if result.skip_reason == "already_absent":
         return unobserved(
-            str(result.notice or result.output or f"Nothing was open under that name, so nothing was {verb}")
+            str(result.notice or result.output or f"Nothing was open under that name, so nothing was {verb}"),
+            kind=Kind.NOTHING_HAPPENED,
         )
     target = _window_target(result)
     if not target:
@@ -219,7 +238,7 @@ async def window_state(result: ActionResult) -> Outcome:
     try:
         states = await observe.window_states(target)
     except observe.Unobservable as reason:
-        return unobserved(f"Could not verify the window state: {reason}")
+        return unobserved(f"Could not verify the window state: {reason}", kind=Kind.NOT_OBSERVABLE)
     if not states:
         return mismatch(f"Expected a {verb} window matching {target!r}; no window matching it is open")
     if minimise:
@@ -318,7 +337,7 @@ async def application_window(result: ActionResult) -> Outcome:
     if not candidates:
         raise ValueError("open_application has no application name to observe")
     if str(result.output or "").endswith("so it was not opened again"):
-        return unobserved(f"{name} was already opened in this task")
+        return unobserved(f"{name} was already opened in this task", kind=Kind.NOT_OBSERVABLE)
     before = facts.get("windows_before")
     started_pid = int(facts.get("pid", 0) or 0)
     waited = 0.0
@@ -327,7 +346,9 @@ async def application_window(result: ActionResult) -> Outcome:
             rows = await observe.window_rows()
         except observe.Unobservable:
             # No window list here (Wayland without wmctrl, macOS without pyobjc): said at once, no waiting.
-            return unobserved(f"{candidates[0]} was started; its window could not be looked for here")
+            return unobserved(
+                f"{candidates[0]} was started; its window could not be looked for here", kind=Kind.NOT_OBSERVABLE
+            )
         for row in rows:
             if (started_pid and row.pid == started_pid) or window_matches(row, candidates):
                 return verified(f"A window of {row.name or candidates[0]} is open (the window list)")
@@ -343,5 +364,6 @@ async def application_window(result: ActionResult) -> Outcome:
         waited += APP_POLL_SECONDS
     return unobserved(
         f"{candidates[0]} was started, but its window was not seen within {APP_WINDOW_WAIT_SECONDS:g} s (an app that "
-        "lives in the tray, or one still starting)"
+        "lives in the tray, or one still starting)",
+        kind=Kind.COULD_NOT_LOOK,
     )

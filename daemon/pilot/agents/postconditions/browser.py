@@ -18,6 +18,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from pilot.actions import ActionResult, ActionType
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 
 _CHAIN = re.compile(r"^Redirect chain: (?P<chain>.+)$", re.MULTILINE)
 
@@ -56,12 +57,12 @@ async def browser_at_requested_url(result: ActionResult) -> Outcome:
     requested = str(getattr(params, "url", "") or "")
     observed = await browser_action_already_satisfied("browser_navigate", params)
     if observed is None:
-        return unobserved("The page could not be read")
+        return unobserved("The page could not be read", kind=Kind.COULD_NOT_LOOK)
     if observed[0]:
         return verified("Browser URL matches requested navigation")
     current = await browser_current_url(int(getattr(params, "tab_index", -1)))
     if current is None:
-        return unobserved("The page's address could not be read")
+        return unobserved("The page's address could not be read", kind=Kind.COULD_NOT_LOOK)
     requested_host = _parts(requested)[1]
     chain = _redirect_chain(result.output)
     if (
@@ -73,9 +74,11 @@ async def browser_at_requested_url(result: ActionResult) -> Outcome:
         return verified(f"The browser was redirected {len(chain) - 1} time(s) to the same page on {requested_host}")
     current_host = _parts(current)[1]
     if current_host != requested_host:
-        return unobserved(f"The page shown is on {current_host or 'another site'}, not {requested_host}")
+        return unobserved(
+            f"The page shown is on {current_host or 'another site'}, not {requested_host}", kind=Kind.CHANGED_LATER
+        )
     # A consent page, a canonical address or a sign-in wall all look the same from here: say only that it differs.
-    return unobserved(f"{requested_host} showed a different page than the one asked for")
+    return unobserved(f"{requested_host} showed a different page than the one asked for", kind=Kind.CHANGED_LATER)
 
 
 @register(
@@ -91,7 +94,7 @@ async def browser_fields_hold_values(result: ActionResult) -> Outcome:
     action = result.action
     observed = await browser_action_already_satisfied(action.action_type.value, action.parameters)
     if observed is None:
-        return unobserved("The page could not be read")
+        return unobserved("The page could not be read", kind=Kind.COULD_NOT_LOOK)
     if observed[0]:
         return verified("Browser field state matches requested value")
     return mismatch("Browser field state differs from requested value")

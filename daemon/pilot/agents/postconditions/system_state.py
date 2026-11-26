@@ -13,6 +13,7 @@ import os
 
 from pilot.actions import ActionResult, ActionType
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform
 
 # Locking, joining a network and mounting finish a moment after the command returns: the check reads the state
@@ -38,7 +39,7 @@ async def session_locked(result: ActionResult) -> Outcome:
         await _pause()
         reading = await screen_locked()
     if reading.locked is None:
-        return unobserved(f"Could not read the lock state: {reading.source}")
+        return unobserved(f"Could not read the lock state: {reading.source}", kind=Kind.COULD_NOT_LOOK)
     if reading.locked:
         return verified(f"The session is locked ({reading.source})")
     seconds = LOCK_READINGS * READING_INTERVAL_SECONDS
@@ -55,7 +56,8 @@ async def session_locked(result: ActionResult) -> Outcome:
     if active:
         return unobserved(
             "Could not verify the lock: logind's LockedHint says unlocked, but the desktop's screensaver reports "
-            "itself active (a screen locker that does not set the hint may have locked the screen)"
+            "itself active (a screen locker that does not set the hint may have locked the screen)",
+            kind=Kind.COULD_NOT_LOOK,
         )
     second = (
         "the desktop's screensaver also reports itself inactive"
@@ -76,11 +78,15 @@ async def file_mode_matches(result: ActionResult) -> Outcome:
 
     params: FileParams = result.action.parameters  # type: ignore[assignment]
     if params.permissions is None:
-        return unobserved("A permissions read changes nothing, so there is no new state to observe")
+        return unobserved(
+            "A permissions read changes nothing, so there is no new state to observe", kind=Kind.NOT_OBSERVABLE
+        )
     if CURRENT_PLATFORM == Platform.WINDOWS:
         # Windows keeps access in the file's ACL and the handler sets no mode there. A handler that set an ACL
         # would be checked by reading the ACL back (Get-Acl or icacls in a new process) and comparing its entries.
-        return unobserved("Windows has no POSIX file mode to read back; access lives in the file's ACL")
+        return unobserved(
+            "Windows has no POSIX file mode to read back; access lives in the file's ACL", kind=Kind.NOT_OBSERVABLE
+        )
     if not params.path:
         raise ValueError("File permissions change has no path to observe")
     expected = int(params.permissions, 8) & 0o7777
@@ -112,7 +118,7 @@ async def registry_value_matches(result: ActionResult) -> Outcome:
     from pilot.system.registry_readback import read_registry_value
 
     if CURRENT_PLATFORM != Platform.WINDOWS:
-        return unobserved("Only Windows has a registry to read back")
+        return unobserved("Only Windows has a registry to read back", kind=Kind.NOT_OBSERVABLE)
     params: RegistryParams = result.action.parameters  # type: ignore[assignment]
     kind = REGISTRY_KINDS.get(str(params.value_type or "").strip().upper())
     if not params.key_path or not params.value_name or params.value_data is None or kind is None:
@@ -133,7 +139,8 @@ async def registry_value_matches(result: ActionResult) -> Outcome:
     elif found.expected is None:
         return unobserved(
             f"{where} exists as {wanted_kind}, but the requested data could not be read as {wanted_kind}, "
-            "so the data was not compared"
+            "so the data was not compared",
+            kind=Kind.COULD_NOT_LOOK,
         )
     else:
         expected = found.expected
@@ -188,7 +195,7 @@ async def _service_boot_state(result: ActionResult, wanted: set[str], expectatio
         # The service actions drive systemctl only. On Windows and macOS systemctl does not exist, the handler
         # raises, and the action fails before this check runs; a Windows check would read the service's start type
         # (Get-Service), a macOS one launchctl print-disabled, once handlers for those platforms exist.
-        return unobserved("Services are managed through systemd here, which only Linux has")
+        return unobserved("Services are managed through systemd here, which only Linux has", kind=Kind.NOT_OBSERVABLE)
     params: ServiceParams = result.action.parameters  # type: ignore[assignment]
     if not params.name:
         raise ValueError("Service action has no unit name to observe")
@@ -219,7 +226,7 @@ async def disk_mounted(result: ActionResult) -> Outcome:
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
         # The handler refuses on Windows (drive letters are assigned, not mounted at a path here).
-        return unobserved("Heliox does not mount disks at a path on Windows")
+        return unobserved("Heliox does not mount disks at a path on Windows", kind=Kind.NOT_OBSERVABLE)
     params: DiskManageParams = result.action.parameters  # type: ignore[assignment]
     if not params.device or not params.mount_point:
         raise ValueError("Disk mount has no device or mount point to observe")
@@ -248,7 +255,7 @@ async def wifi_joined(result: ActionResult) -> Outcome:
         await _pause()
         reading = await connected_ssids(params.interface)
     if reading.ssids is None:
-        return unobserved(f"Could not read which network is joined: {reading.reason}")
+        return unobserved(f"Could not read which network is joined: {reading.reason}", kind=Kind.COULD_NOT_LOOK)
     if params.ssid in reading.ssids:
         return verified(f"Joined to {params.ssid}")
     found = ", ".join(reading.ssids) if reading.ssids else "no network"
@@ -268,7 +275,10 @@ async def packages_up_to_date(result: ActionResult) -> Outcome:
 
     pending = await pending_upgrades()
     if pending is None:
-        return unobserved("This system's package manager has no read-only list of pending upgrades Heliox can ask")
+        return unobserved(
+            "This system's package manager has no read-only list of pending upgrades Heliox can ask",
+            kind=Kind.NOT_OBSERVABLE,
+        )
     if not pending:
         return verified("The package manager lists no upgrades left to install")
     shown = ", ".join(pending[:5]) + (f" and {len(pending) - 5} more" if len(pending) > 5 else "")
@@ -296,7 +306,7 @@ async def wifi_left(result: ActionResult) -> Outcome:
         await _pause()
         reading = await connected_ssids(params.interface)
     if reading.ssids is None:
-        return unobserved(f"Could not read which network is joined: {reading.reason}")
+        return unobserved(f"Could not read which network is joined: {reading.reason}", kind=Kind.COULD_NOT_LOOK)
     if reading.ssids:
         return mismatch(f"Expected no Wi-Fi network; still joined to {', '.join(reading.ssids)}")
     return verified("No Wi-Fi network is joined")
@@ -311,7 +321,10 @@ async def environment_value_stored(result: ActionResult) -> Outcome:
 
     params: EnvParams = result.action.parameters  # type: ignore[assignment]
     if not params.persistent:
-        return unobserved("A session-only variable lives in Heliox's own process; nothing outside it to read")
+        return unobserved(
+            "A session-only variable lives in Heliox's own process; nothing outside it to read",
+            kind=Kind.NOT_OBSERVABLE,
+        )
     if not params.name:
         raise ValueError("Environment change has no variable name to observe")
     found = await persistent_value(params.name)
@@ -337,7 +350,7 @@ async def mute_state_matches(result: ActionResult) -> Outcome:
     wanted = params.mute if params.mute is not None else True
     state = await volume_state()
     if state.muted is None:
-        return unobserved("This system's mixer did not say whether the sound is muted")
+        return unobserved("This system's mixer did not say whether the sound is muted", kind=Kind.COULD_NOT_LOOK)
     if state.muted != wanted:
         return mismatch(f"Expected the sound {'muted' if wanted else 'on'}; it is {'muted' if state.muted else 'on'}")
     return verified(f"The sound is {'muted' if wanted else 'on'}")
@@ -358,11 +371,11 @@ async def volume_level_matches(result: ActionResult) -> Outcome:
 
     params: VolumeParams = result.action.parameters  # type: ignore[assignment]
     if params.step is not None or params.level is None:
-        return unobserved("A volume step has no fixed target to compare with")
+        return unobserved("A volume step has no fixed target to compare with", kind=Kind.NOT_OBSERVABLE)
     wanted = max(0, min(100, int(params.level)))
     state = await volume_state()
     if state.level is None:
-        return unobserved("This system's mixer did not report the volume")
+        return unobserved("This system's mixer did not report the volume", kind=Kind.COULD_NOT_LOOK)
     if abs(state.level - wanted) > VOLUME_TOLERANCE:
         return mismatch(f"Expected the volume at {wanted}; it is at {state.level}")
     return verified(f"The volume is at {state.level}")
@@ -380,7 +393,10 @@ async def brightness_level_matches(result: ActionResult) -> Outcome:
     wanted = max(0, min(100, int(params.level)))
     found = await brightness_percent()
     if found is None:
-        return unobserved("This display's brightness cannot be read here (an external monitor, or no reader)")
+        return unobserved(
+            "This display's brightness cannot be read here (an external monitor, or no reader)",
+            kind=Kind.NOT_OBSERVABLE,
+        )
     if abs(found - wanted) > BRIGHTNESS_TOLERANCE:
         return mismatch(f"Expected brightness {wanted}%; it is {found}%")
     return verified(f"Brightness is {found}%")

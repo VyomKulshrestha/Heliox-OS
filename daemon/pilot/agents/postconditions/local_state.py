@@ -16,6 +16,7 @@ from pathlib import Path
 
 from pilot.actions import ActionResult, ActionType
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 
 ASPECT_TOLERANCE = 0.02
 MAX_INDEX_WALK_FILES = 20_000
@@ -36,19 +37,26 @@ async def clipboard_text(result: ActionResult) -> Outcome:
             return verified(record.detail + ", read right after the step")
         if record.outcome == "mismatch":
             return mismatch(record.detail)
-        return unobserved(f"Could not verify the clipboard: {record.detail}")
+        return unobserved(
+            f"Could not verify the clipboard: {record.detail}",
+            kind=record.facts.get("kind") or Kind.COULD_NOT_LOOK,
+        )
     if result.action.use_previous_output:
-        return unobserved("The copied text came from the previous step and no reading was made right after the copy")
+        return unobserved(
+            "The copied text came from the previous step and no reading was made right after the copy",
+            kind=Kind.NOT_OBSERVABLE,
+        )
     expected = getattr(result.action.parameters, "content", None) or ""
     try:
         found, tool = await observe.clipboard_text()
     except observe.Unobservable as reason:
-        return unobserved(f"Could not verify the clipboard: {reason}")
+        return unobserved(f"Could not verify the clipboard: {reason}", kind=Kind.NOT_OBSERVABLE)
     if observe.clipboard_holds(found, expected) is not None:
         return verified(f"The clipboard holds the {len(expected)} copied characters ({tool})")
     return unobserved(
         f"No reading was made right after the copy; the clipboard now holds {len(found)} other characters, and a "
-        "later step or the person may have copied since"
+        "later step or the person may have copied since",
+        kind=Kind.CHANGED_LATER,
     )
 
 
@@ -219,12 +227,17 @@ async def workspace_index_store(result: ActionResult) -> Outcome:
     try:
         stored = await asyncio.to_thread(_faiss_count, vectors)
     except ImportError:
-        return unobserved("Could not verify the index: faiss is not installed to read its vector file")
+        return unobserved(
+            "Could not verify the index: faiss is not installed to read its vector file", kind=Kind.COULD_NOT_LOOK
+        )
     if stored != len(chunks):
         return mismatch(f"The index's vector file holds {stored} entries, its chunk list {len(chunks)}")
     files = await asyncio.to_thread(eligible_files, Path(folder_text))
     if files is None:
-        return unobserved(f"Could not verify the index: the folder has more than {MAX_INDEX_WALK_FILES} entries")
+        return unobserved(
+            f"Could not verify the index: the folder has more than {MAX_INDEX_WALK_FILES} entries",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     absent = [path for path in files if str(path) not in hashes]
     if absent:
         return mismatch(

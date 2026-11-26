@@ -16,6 +16,7 @@ from pathlib import Path
 
 from pilot.actions import ActionResult, ActionType, DownloadParams, FileParams
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 
 CHUNK_BYTES = 1024 * 1024
 # A copied file is compared byte for byte up to this many bytes and within this time, whichever comes first; past
@@ -153,7 +154,7 @@ async def file_has_content(result: ActionResult) -> Outcome:
         if data == expected or data == params.content.encode("utf-8"):
             return verified("File exists with expected content")
         return mismatch(f"File content mismatch (expected {len(expected)} bytes, got {len(data)})")
-    return unobserved("File exists; no content was given or recorded to compare it with")
+    return unobserved("File exists; no content was given or recorded to compare it with", kind=Kind.COULD_NOT_LOOK)
 
 
 # ── file_copy ────────────────────────────────────────────────────────
@@ -238,7 +239,8 @@ async def copy_matches_source(result: ActionResult) -> Outcome:
         )
         if source_tree is None or destination_tree is None:
             return unobserved(
-                f"Copy destination exists; listing the folders did not finish within {COPY_COMPARE_SECONDS:g} s"
+                f"Copy destination exists; listing the folders did not finish within {COPY_COMPARE_SECONDS:g} s",
+                kind=Kind.COULD_NOT_LOOK,
             )
         source_files, source_folders = source_tree
         destination_files, destination_folders = destination_tree
@@ -320,7 +322,10 @@ async def downloaded_file_present(result: ActionResult) -> Outcome:
     if facts is None:
         if found_sha:
             return verified(f"File downloaded with the declared sha256 ({size:,} bytes)")
-        return unobserved(f"File downloaded ({size:,} bytes); no length or hash was recorded to compare it with")
+        return unobserved(
+            f"File downloaded ({size:,} bytes); no length or hash was recorded to compare it with",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     length = str(facts.get("content_length") or "")
     encoding = str(facts.get("content_encoding") or "identity").lower()
     if length.isdigit() and encoding == "identity":
@@ -328,7 +333,9 @@ async def downloaded_file_present(result: ActionResult) -> Outcome:
     elif isinstance(facts.get("bytes"), int):
         expected, source = facts["bytes"], "the bytes received"
     else:
-        return unobserved(f"File downloaded ({size:,} bytes); no length was recorded to compare it with")
+        return unobserved(
+            f"File downloaded ({size:,} bytes); no length was recorded to compare it with", kind=Kind.COULD_NOT_LOOK
+        )
     if size != expected:
         return mismatch(f"Downloaded file has {size:,} bytes; {source} is {expected:,} bytes")
     recorded = facts.get("sha256")

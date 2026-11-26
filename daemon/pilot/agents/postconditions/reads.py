@@ -22,6 +22,7 @@ from typing import Any
 
 from pilot.actions import ActionResult, ActionType
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 
 # ── shared ───────────────────────────────────────────────────────────
 
@@ -61,23 +62,30 @@ def _compare_file_read(path: str, returned: str) -> Outcome:
         stat = p.stat()
         data = p.read_bytes()
     except FileNotFoundError:
-        return unobserved("The file was removed after it was read, so the text could not be compared with it")
+        return unobserved(
+            "The file was removed after it was read, so the text could not be compared with it",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     except OSError as exc:
-        return unobserved(f"The file could not be read again to compare ({type(exc).__name__})")
+        return unobserved(
+            f"The file could not be read again to compare ({type(exc).__name__})", kind=Kind.COULD_NOT_LOOK
+        )
     then = _changed_since(path, stat.st_size, stat.st_mtime_ns)
     try:
         expected = _universal_newlines(data.decode("utf-8"))
     except UnicodeDecodeError:
         if then is not None:
-            return unobserved(_changed_detail(then, len(data)))
-        return unobserved("The file is no longer valid UTF-8, so it may have changed after it was read")
+            return unobserved(_changed_detail(then, len(data)), kind=Kind.CHANGED_LATER)
+        return unobserved(
+            "The file is no longer valid UTF-8, so it may have changed after it was read", kind=Kind.CHANGED_LATER
+        )
     if returned == expected:
         return verified(
             f"The {len(returned):,} characters returned match the file's {len(data):,} bytes read again as UTF-8 "
             f"(sha256 {_short_sha(returned)})"
         )
     if then is not None:
-        return unobserved(_changed_detail(then, len(data)))
+        return unobserved(_changed_detail(then, len(data)), kind=Kind.CHANGED_LATER)
     extra = returned.count("�") - expected.count("�")
     if extra > 0:
         return mismatch(
@@ -134,14 +142,18 @@ def _compare_file_hash(path: str, algorithm: str, claimed: str) -> Outcome:
             )
         digest = _second_digest(p, algorithm)
     except FileNotFoundError:
-        return unobserved("The file was removed after it was hashed, so the digest could not be checked")
+        return unobserved(
+            "The file was removed after it was hashed, so the digest could not be checked", kind=Kind.COULD_NOT_LOOK
+        )
     except OSError as exc:
-        return unobserved(f"The file could not be read again to check the digest ({type(exc).__name__})")
+        return unobserved(
+            f"The file could not be read again to check the digest ({type(exc).__name__})", kind=Kind.COULD_NOT_LOOK
+        )
     if digest == claimed:
         return verified(f"A second {algorithm} of the file's {stat.st_size:,} bytes, read another way, is the same")
     then = _changed_since(path, stat.st_size, stat.st_mtime_ns)
     if then is not None:
-        return unobserved(_changed_detail(then, stat.st_size))
+        return unobserved(_changed_detail(then, stat.st_size), kind=Kind.CHANGED_LATER)
     return mismatch(
         f"The {algorithm} reported ({claimed[:12]}...) differs from a second reading of the file ({digest[:12]}...)"
     )
@@ -197,7 +209,9 @@ def _check_pdf(p: Path, body: str) -> Outcome:
     try:
         declared = _pdf_declared_pages(p)
     except ImportError:
-        return unobserved("The PDF's page count could not be read another way: pypdf is not installed")
+        return unobserved(
+            "The PDF's page count could not be read another way: pypdf is not installed", kind=Kind.COULD_NOT_LOOK
+        )
     reported = re.search(r"^Pages: (\d+)$", body, re.M)
     if not reported:
         return mismatch(f"The document declares {declared} pages; the parse does not say how many it read")
@@ -329,7 +343,10 @@ def _zip_declared_entries(p: Path) -> int | None:
 def _check_zip(p: Path, body: str) -> Outcome:
     declared = _zip_declared_entries(p)
     if declared is None:
-        return unobserved("The archive's own entry count could not be read (a ZIP64 archive or a damaged end)")
+        return unobserved(
+            "The archive's own entry count could not be read (a ZIP64 archive or a damaged end)",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     stated = re.search(r"^ZIP: (\d+) files", body, re.M)
     if not stated or int(stated.group(1)) != declared:
         return mismatch(
@@ -376,11 +393,16 @@ def _check_parse(path: str, output: str) -> Outcome:
     p = Path(path)
     ext = p.suffix.lower()
     if ext in _METADATA_ONLY:
-        return unobserved("The parse reads this file's metadata only, so there is no page or row count to compare")
+        return unobserved(
+            "The parse reads this file's metadata only, so there is no page or row count to compare",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     if ext in _NOT_COUNTED:
-        return unobserved(f"Not counted another way: {_NOT_COUNTED[ext]}")
+        return unobserved(f"Not counted another way: {_NOT_COUNTED[ext]}", kind=Kind.COULD_NOT_LOOK)
     if not p.is_file():
-        return unobserved("The file is no longer there, so the parse could not be compared with it")
+        return unobserved(
+            "The file is no longer there, so the parse could not be compared with it", kind=Kind.COULD_NOT_LOOK
+        )
     body = _parse_body(output)
     try:
         if ext == ".pdf":
@@ -395,7 +417,9 @@ def _check_parse(path: str, output: str) -> Outcome:
             return _check_zip(p, body)
         return _check_text(p, body)
     except Exception as exc:  # unreadable now, or a reader library that broke on this file: not verified
-        return unobserved(f"The document could not be counted another way ({type(exc).__name__})")
+        return unobserved(
+            f"The document could not be counted another way ({type(exc).__name__})", kind=Kind.COULD_NOT_LOOK
+        )
 
 
 @register(ActionType.FILE_PARSE, method="conditional_file_parse_count_postcondition", timeout=30.0)
@@ -465,7 +489,7 @@ async def extract_matches_fresh_reading(result: ActionResult) -> Outcome:
     multiple = bool(getattr(params, "multiple", False))
     page = await _open_page()
     if page is None:
-        return unobserved("The browser is closed, so the page could not be read again")
+        return unobserved("The browser is closed, so the page could not be read again", kind=Kind.COULD_NOT_LOOK)
     fresh = await page.evaluate(_ELEMENTS_SCRIPT, [selector, attribute, multiple, EXTRACT_ELEMENT_LIMIT])
     count = int(fresh.get("count") or 0)
     values = [value for value in fresh.get("values") or []]
@@ -473,7 +497,9 @@ async def extract_matches_fresh_reading(result: ActionResult) -> Outcome:
 
     if not multiple:
         if count == 0:
-            return unobserved("The element is no longer on the page, so the extract could not be compared")
+            return unobserved(
+                "The element is no longer on the page, so the extract could not be compared", kind=Kind.COULD_NOT_LOOK
+            )
         value = values[0] or ""
         if returned == (value or "(empty)"):
             return verified(f"The {len(value):,} characters returned match a fresh reading of the element")
@@ -482,7 +508,9 @@ async def extract_matches_fresh_reading(result: ActionResult) -> Outcome:
                 f"The extract returned {len(returned):,} characters; a fresh reading of the element has "
                 f"{len(value):,}: it was cut short"
             )
-        return unobserved(f"The element reads differently now ({len(value):,} characters); {_CHANGED_PAGE}")
+        return unobserved(
+            f"The element reads differently now ({len(value):,} characters); {_CHANGED_PAGE}", kind=Kind.CHANGED_LATER
+        )
 
     texts = [str(value).strip() for value in values if value and str(value).strip()]
     body = "\n\n".join(texts) if attribute == "innerText" else json.dumps(texts, indent=2)
@@ -498,7 +526,10 @@ async def extract_matches_fresh_reading(result: ActionResult) -> Outcome:
             f"The extract returned {len(got):,} characters; a fresh reading of the same {shown} element(s) gives "
             f"{len(body):,}: it was cut short"
         )
-    return unobserved(f"{count} element(s) match now and their text differs from the extract; {_CHANGED_PAGE}")
+    return unobserved(
+        f"{count} element(s) match now and their text differs from the extract; {_CHANGED_PAGE}",
+        kind=Kind.CHANGED_LATER,
+    )
 
 
 @register(ActionType.BROWSER_EXTRACT_TABLE, method="conditional_table_fresh_reading_postcondition", timeout=15.0)
@@ -514,10 +545,12 @@ async def table_matches_fresh_reading(result: ActionResult) -> Outcome:
         raise ValueError("The table extract's output is not the table JSON it should be") from exc
     page = await _open_page()
     if page is None:
-        return unobserved("The browser is closed, so the table could not be read again")
+        return unobserved("The browser is closed, so the table could not be read again", kind=Kind.COULD_NOT_LOOK)
     fresh = await page.evaluate(_ROWS_SCRIPT, selector)
     if not fresh:
-        return unobserved("The table is no longer on the page, so the extract could not be compared")
+        return unobserved(
+            "The table is no longer on the page, so the extract could not be compared", kind=Kind.COULD_NOT_LOOK
+        )
     fresh_rows = list(fresh.get("rows") or [])
     total = len(fresh_rows)
     expected = fresh_rows[:EXTRACT_TABLE_ROW_LIMIT]
@@ -530,7 +563,9 @@ async def table_matches_fresh_reading(result: ActionResult) -> Outcome:
         return verified(f"All {len(rows)} rows returned match a fresh reading of the table{said}")
     if len(rows) < len(expected) and expected[: len(rows)] == rows:
         return mismatch(f"The table has {total} rows; the extract returned only {len(rows)}")
-    return unobserved(f"The table now has {total} rows and differs from the extract; {_CHANGED_PAGE}")
+    return unobserved(
+        f"The table now has {total} rows and differs from the extract; {_CHANGED_PAGE}", kind=Kind.CHANGED_LATER
+    )
 
 
 # ── browser_screenshot ───────────────────────────────────────────────
@@ -589,7 +624,10 @@ def _check_screenshot(path: str) -> Outcome:
         return mismatch(f"The file at {p} does not decode as an image")
     width, height = size
     if single_colour:
-        return unobserved(f"Not verified: the image is a single colour ({width}x{height}); the page may be blank")
+        return unobserved(
+            f"Not verified: the image is a single colour ({width}x{height}); the page may be blank",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     if single_colour is None:
         return verified(
             f"{p.name} is a whole {width}x{height} image (Pillow is not installed, so blankness was not checked)"

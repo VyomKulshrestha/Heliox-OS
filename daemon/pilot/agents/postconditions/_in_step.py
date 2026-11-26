@@ -21,6 +21,7 @@ from contextvars import ContextVar
 
 from pilot.actions import ActionResult, ActionType
 from pilot.agents.postconditions import Outcome, load_area_modules, unobserved
+from pilot.agents.unconfirmed import Kind
 
 logger = logging.getLogger("pilot.agents.postconditions.in_step")
 
@@ -69,13 +70,19 @@ async def observe(result: ActionResult) -> str | None:
     try:
         outcome = await bounded(registration.check(result), IN_STEP_SECONDS)
     except TimeoutError:
-        outcome = unobserved("The page took too long to read after this step")
+        outcome = unobserved("The page took too long to read after this step", kind=Kind.COULD_NOT_LOOK)
     except Exception:
         logger.debug("Reading the page after %s failed", result.action.action_type.value, exc_info=True)
-        outcome = unobserved("The page could not be read after this step")
+        outcome = unobserved("The page could not be read after this step", kind=Kind.COULD_NOT_LOOK)
     finally:
         _RIGHT_AFTER_STEP.reset(token)
-    record = {"passed": outcome.passed, "detail": outcome.detail, "observed": outcome.observed}
+    record = {
+        "passed": outcome.passed,
+        "detail": outcome.detail,
+        "observed": outcome.observed,
+        "kind": outcome.kind,
+        "notice": outcome.notice,
+    }
     return f"{STEP_CHECK_MARKER} {json.dumps(record, separators=(',', ':'))}"
 
 
@@ -85,7 +92,13 @@ def recalled(result: ActionResult) -> Outcome | None:
         if line.startswith(STEP_CHECK_MARKER):
             try:
                 record = json.loads(line[len(STEP_CHECK_MARKER) :].strip())
-                return Outcome(bool(record["passed"]), str(record["detail"]), bool(record["observed"]))
+                return Outcome(
+                    bool(record["passed"]),
+                    str(record["detail"]),
+                    bool(record["observed"]),
+                    str(record.get("kind") or ""),
+                    str(record.get("notice") or ""),
+                )
             except (ValueError, KeyError, TypeError):
                 return None
     return None

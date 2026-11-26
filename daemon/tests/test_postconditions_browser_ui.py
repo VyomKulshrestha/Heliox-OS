@@ -15,6 +15,7 @@ import pytest
 
 from pilot.actions import Action, ActionPlan, ActionResult, ActionType, BrowserParams
 from pilot.agents.postconditions import _in_step, browser_ui, registrations
+from pilot.agents.unconfirmed import Kind
 from pilot.agents.verifier import POSTCONDITION_VERIFIERS, Verifier
 from pilot.system import browser, dom_diff
 
@@ -374,7 +375,9 @@ async def test_click_with_no_visible_consequence_is_not_verified_and_not_a_misma
         False,
         True,
     )
-    assert outcome == browser_ui.unobserved("The click landed on the element; no change was observed after it")
+    assert outcome == browser_ui.unobserved(
+        "The click landed on the element; no change was observed after it", kind=Kind.NOTHING_HAPPENED
+    )
 
 
 @pytest.mark.asyncio
@@ -514,7 +517,8 @@ async def test_switch_to_a_tab_that_does_not_exist_fails(monkeypatch) -> None:
             ("visible", "visible"),
             browser_ui.unobserved(
                 "Every tab reports itself visible (a browser without a window does), "
-                "so which one is in front cannot be read"
+                "so which one is in front cannot be read",
+                kind=Kind.NOT_OBSERVABLE,
             ),
         ),
     ],

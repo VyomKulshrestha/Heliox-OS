@@ -33,6 +33,7 @@ from pilot.actions import (
     Expectation,
 )
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 from pilot.timeouts import bounded
 
 logger = logging.getLogger("pilot.agents.postconditions.declared")
@@ -734,13 +735,13 @@ def _expected(expect: Expectation) -> str:
 def compare(expect: Expectation, reading: Reading, probe_text: str) -> Outcome:
     """The outcome of one reading against what was declared. Found text is short and masked."""
     if reading.unavailable:
-        return unobserved(f"not verified: {reading.unavailable}")
+        return unobserved(f"not verified: {reading.unavailable}", kind=Kind.COULD_NOT_LOOK)
     kind, value = expect.kind, expect.value
     expected = f"{probe_text}: expected {_expected(expect)}"
 
     if kind == "exit_code":
         if reading.exit_code is None:
-            return unobserved("not verified: the check gave no exit code")
+            return unobserved("not verified: the check gave no exit code", kind=Kind.COULD_NOT_LOOK)
         if reading.exit_code == value:
             return verified(f"{probe_text}; {_met(expect)}, as declared")
         return mismatch(f"{expected}, found exit code {reading.exit_code}")
@@ -748,7 +749,9 @@ def compare(expect: Expectation, reading: Reading, probe_text: str) -> Outcome:
     if kind in {"exists", "absent"}:
         if reading.present is None:
             code = f" (exit code {reading.exit_code})" if reading.exit_code is not None else ""
-            return unobserved(f"not verified: the check could not tell whether it is there{code}")
+            return unobserved(
+                f"not verified: the check could not tell whether it is there{code}", kind=Kind.COULD_NOT_LOOK
+            )
         if reading.present == (kind == "exists"):
             return verified(f"{probe_text}; {_met(expect)}, as declared")
         return mismatch(f"{expected}, found {'it is still there' if kind == 'absent' else 'it is not there'}")
@@ -787,7 +790,7 @@ async def declared_expectation(result: ActionResult) -> Outcome:
     """Run the action's declared probe once and compare; without ``expect`` the step stays reported."""
     action = result.action
     if action.expect is None:
-        return unobserved(NO_EXPECT_DETAIL)
+        return unobserved(NO_EXPECT_DETAIL, kind=Kind.NOT_OBSERVABLE)
     cached = result._expect_outcome
     if isinstance(cached, Outcome):
         return cached
@@ -800,18 +803,22 @@ async def _check(result: ActionResult) -> Outcome:
     action = result.action
     if not result.success or not result.executed:
         # The registry is only reached for a success; a dry run or an already-satisfied skip did not run.
-        return unobserved("not verified: the step did not run, so its check did not run either")
+        return unobserved(
+            "not verified: the step did not run, so its check did not run either", kind=Kind.COULD_NOT_LOOK
+        )
     refusal = probe_refusal(action) or validator_refusal(action)
     if refusal:
-        return unobserved(f"not verified: the check was refused because {refusal}")
+        return unobserved(f"not verified: the check was refused because {refusal}", kind=Kind.COULD_NOT_LOOK)
     expect = action.expect
     assert expect is not None
     probe_text = describe_probe(expect.probe)
     try:
         reading = await run_probe(expect.probe)
     except TimeoutError:
-        return unobserved("not verified: the check did not finish in time")
+        return unobserved("not verified: the check did not finish in time", kind=Kind.COULD_NOT_LOOK)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Declared check for %s could not run: %s", action.action_type.value, type(exc).__name__)
-        return unobserved(f"not verified: the check could not run: {_short(str(exc)) or type(exc).__name__}")
+        return unobserved(
+            f"not verified: the check could not run: {_short(str(exc)) or type(exc).__name__}", kind=Kind.COULD_NOT_LOOK
+        )
     return compare(expect, reading, probe_text)

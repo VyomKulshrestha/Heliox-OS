@@ -33,6 +33,7 @@ from pilot.agents.postconditions import (
     unobserved,
     verified,
 )
+from pilot.agents.unconfirmed import Kind
 
 
 # The pre-check skips only a repeat of a delete this run already made and verified; a task name that
@@ -126,7 +127,7 @@ async def trigger_present(result: ActionResult) -> Outcome:
     engine = get_engine()
     store = _store(engine)
     if store is None:
-        return unobserved(_NO_STORE)
+        return unobserved(_NO_STORE, kind=Kind.NOT_OBSERVABLE)
     name = params.name.strip()
     created = _created_id(result)
     entries = [entry for entry in store["triggers"] if isinstance(entry, dict)]
@@ -173,7 +174,7 @@ async def trigger_absent(result: ActionResult) -> Outcome:
     if store is None:
         if precheck:
             return mismatch("The trigger store is not attached; the delete runs")
-        return unobserved(_NO_STORE)
+        return unobserved(_NO_STORE, kind=Kind.NOT_OBSERVABLE)
     stored = [
         entry
         for entry in store["triggers"]
@@ -200,7 +201,7 @@ async def trigger_engine_running(result: ActionResult) -> Outcome:
     engine = get_engine()
     store = _store(engine)
     if store is None:
-        return unobserved(_NO_STORE)
+        return unobserved(_NO_STORE, kind=Kind.NOT_OBSERVABLE)
     if store.get("engine_running") is not True:
         return mismatch("The trigger store does not record the engine as running, so a restart would leave it off")
     if not engine.is_running():
@@ -216,7 +217,7 @@ async def trigger_engine_stopped(result: ActionResult) -> Outcome:
     engine = get_engine()
     store = _store(engine)
     if store is None:
-        return unobserved(_NO_STORE)
+        return unobserved(_NO_STORE, kind=Kind.NOT_OBSERVABLE)
     if store.get("engine_running") is not False:
         return mismatch("The trigger store still records the engine as running, so a restart would start it again")
     if engine.is_running():

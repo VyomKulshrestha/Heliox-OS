@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 
 from pilot.actions import ActionResult, ActionType
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 from pilot.timeouts import bounded
 
 # Each check runs right after its step (postconditions/_in_step.py), so these waits add to the step: kept short.
@@ -145,20 +146,28 @@ async def click_was_followed_by_an_effect(result: ActionResult) -> Outcome:
 
     before = _record(result)
     if before is None:
-        return unobserved("The page was not recorded before the click, so what followed it cannot be judged")
+        return unobserved(
+            "The page was not recorded before the click, so what followed it cannot be judged", kind=Kind.COULD_NOT_LOOK
+        )
     page = browser.current_tab()
     if page is None:
-        return unobserved("No browser tab is open after the click, so the page could not be read")
+        return unobserved(
+            "No browser tab is open after the click, so the page could not be read", kind=Kind.COULD_NOT_LOOK
+        )
     await _settle(page)
     now = await browser.read_page_state(page)
     if now is None:
-        return unobserved("The page could not be read after the click; it may still be loading")
+        return unobserved(
+            "The page could not be read after the click; it may still be loading", kind=Kind.COULD_NOT_LOOK
+        )
 
     if _left_since(before, now) or (
         not right_after_step() and isinstance(before.get("n"), int) and len(browser.open_tabs() or []) > before["n"]
     ):
         # Read after the plan: a navigation or a new tab may be a later step's, not this click's.
-        return unobserved("The page changed after this click, and a later step may have changed it")
+        return unobserved(
+            "The page changed after this click, and a later step may have changed it", kind=Kind.CHANGED_LATER
+        )
 
     tabs_before = before.get("n")
     tabs_now = browser.open_tabs() or []
@@ -193,7 +202,7 @@ async def click_was_followed_by_an_effect(result: ActionResult) -> Outcome:
     structure = browser.structure_fingerprint(snapshot)
     if before.get("s") and structure and structure != before.get("s"):
         return verified("The page changed after the click: elements appeared or disappeared")
-    return unobserved("The click landed on the element; no change was observed after it")
+    return unobserved("The click landed on the element; no change was observed after it", kind=Kind.NOTHING_HAPPENED)
 
 
 # ── Tabs ─────────────────────────────────────────────────────────────
@@ -207,23 +216,23 @@ async def new_tab_is_open(result: ActionResult) -> Outcome:
     before = _record(result) or {}
     tabs = browser.open_tabs()
     if tabs is None:
-        return unobserved("The browser is no longer open, so the new tab could not be read")
+        return unobserved("The browser is no longer open, so the new tab could not be read", kind=Kind.COULD_NOT_LOOK)
     count_before = before.get("n")
     if isinstance(count_before, int) and len(tabs) == count_before:
         return mismatch(f"No new tab is open: {len(tabs)} tab(s), as before")
     if not tabs or (isinstance(count_before, int) and len(tabs) < count_before):
-        return unobserved("Tabs were closed meanwhile, so the new one cannot be told apart")
+        return unobserved("Tabs were closed meanwhile, so the new one cannot be told apart", kind=Kind.CHANGED_LATER)
     newest = tabs[-1]
     await _settle(newest)
     state = await browser.read_page_state(newest)
     if state is None:
-        return unobserved("The new tab could not be read; it may still be loading")
+        return unobserved("The new tab could not be read; it may still be loading", kind=Kind.COULD_NOT_LOOK)
     href = str(state.get("href") or "")
     requested = str(getattr(result.action.parameters, "url", "") or "")
     if not requested:
         if href == "about:blank":
             return verified("A new blank tab is open")
-        return unobserved("The newest tab is not blank; it may be a pop-up a page opened")
+        return unobserved("The newest tab is not blank; it may be a pop-up a page opened", kind=Kind.CHANGED_LATER)
     if href == "about:blank":
         asked = requested if "://" in requested else "https://" + requested
         return mismatch(f"The new tab is open but blank; {_host(asked)} did not load")
@@ -232,7 +241,10 @@ async def new_tab_is_open(result: ActionResult) -> Outcome:
             return verified(f"A new tab is open on {_host(href)}")
     except ValueError:
         pass
-    return unobserved(f"The new tab shows {_host(href)}, not the address asked for; it may have been redirected")
+    return unobserved(
+        f"The new tab shows {_host(href)}, not the address asked for; it may have been redirected",
+        kind=Kind.CHANGED_LATER,
+    )
 
 
 @register(ActionType.BROWSER_SWITCH_TAB, method="conditional_front_tab_postcondition")
@@ -242,12 +254,14 @@ async def switched_tab_is_in_front(result: ActionResult) -> Outcome:
 
     tabs = browser.open_tabs()
     if not tabs:
-        return unobserved("No browser tab is open now, so the front tab could not be read")
+        return unobserved("No browser tab is open now, so the front tab could not be read", kind=Kind.COULD_NOT_LOOK)
     index = int(getattr(result.action.parameters, "tab_index", -1))
     if not -len(tabs) <= index < len(tabs):
-        return unobserved("Tabs were closed meanwhile, so the chosen tab is no longer at that place")
+        return unobserved(
+            "Tabs were closed meanwhile, so the chosen tab is no longer at that place", kind=Kind.CHANGED_LATER
+        )
     if len(tabs) > MAX_TABS_READ:
-        return unobserved(f"More than {MAX_TABS_READ} tabs are open; they were not all read")
+        return unobserved(f"More than {MAX_TABS_READ} tabs are open; they were not all read", kind=Kind.COULD_NOT_LOOK)
     target = tabs[index]
     visibility: list[str | None] = []
     for tab in tabs:
@@ -260,7 +274,8 @@ async def switched_tab_is_in_front(result: ActionResult) -> Outcome:
     if target_visibility == "visible" and all(value == "hidden" for value in others):
         return verified(f"Tab {index} is the visible tab; the other {len(others)} are hidden")
     return unobserved(
-        "Every tab reports itself visible (a browser without a window does), so which one is in front cannot be read"
+        "Every tab reports itself visible (a browser without a window does), so which one is in front cannot be read",
+        kind=Kind.NOT_OBSERVABLE,
     )
 
 
@@ -272,17 +287,17 @@ async def tab_is_closed(result: ActionResult) -> Outcome:
     before = _record(result)
     tabs = browser.open_tabs()
     if tabs is None:
-        return unobserved("The browser is no longer open, so its tabs could not be counted")
+        return unobserved("The browser is no longer open, so its tabs could not be counted", kind=Kind.COULD_NOT_LOOK)
     if before is None or not isinstance(before.get("n"), int):
         if not tabs:
             return verified("No browser tab is open")
-        return unobserved("The tab count before the close was not recorded")
+        return unobserved("The tab count before the close was not recorded", kind=Kind.COULD_NOT_LOOK)
     count_before = before["n"]
     if len(tabs) == count_before - 1:
         return verified(f"{len(tabs)} tab(s) remain open, one fewer than before")
     if len(tabs) == count_before:
         return mismatch(f"{len(tabs)} tab(s) are still open, as before the close; no tab was closed")
-    return unobserved("Pages opened or closed tabs meanwhile, so the count does not tell")
+    return unobserved("Pages opened or closed tabs meanwhile, so the count does not tell", kind=Kind.CHANGED_LATER)
 
 
 @register(ActionType.BROWSER_CLOSE, method="conditional_browser_exited_postcondition", timeout=20.0)
@@ -292,8 +307,11 @@ async def browser_processes_exited(result: ActionResult) -> Outcome:
     processes = (before or {}).get("pids")
     if not processes:
         if str(result.output or "").startswith("No browser was open"):
-            return unobserved("No browser was open, so there was nothing to watch close")
-        return unobserved("The browser's processes could not be found before the close, so their exit was not watched")
+            return unobserved("No browser was open, so there was nothing to watch close", kind=Kind.COULD_NOT_LOOK)
+        return unobserved(
+            "The browser's processes could not be found before the close, so their exit was not watched",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     import psutil
 
     running: list[int] = []
@@ -327,14 +345,17 @@ async def _history_moved(result: ActionResult, *, key: str, word: str) -> Outcom
 
     before = _record(result)
     if before is None or before.get("cur") is None or before.get(key) is None:
-        return unobserved("The tab's place in its history was not recorded before (this browser does not report it)")
+        return unobserved(
+            "The tab's place in its history was not recorded before (this browser does not report it)",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     page = browser.current_tab()
     if page is None:
-        return unobserved("No browser tab is open now, so its history could not be read")
+        return unobserved("No browser tab is open now, so its history could not be read", kind=Kind.COULD_NOT_LOOK)
     await _settle(page)
     history = await browser.read_history(page)
     if history is None:
-        return unobserved("The tab's history could not be read from the browser")
+        return unobserved("The tab's history could not be read from the browser", kind=Kind.COULD_NOT_LOOK)
     current = history["ids"][history["index"]]
     if current == before[key]:
         state = await browser.read_page_state(page)
@@ -342,7 +363,10 @@ async def _history_moved(result: ActionResult, *, key: str, word: str) -> Outcom
         return verified(f"The tab went {word} one page in its history{where}")
     if current == before["cur"]:
         return mismatch(f"The tab is still on the same page of its history; it did not go {word}")
-    return unobserved(f"The tab is on another page of its history than one step {word}; the page may have redirected")
+    return unobserved(
+        f"The tab is on another page of its history than one step {word}; the page may have redirected",
+        kind=Kind.CHANGED_LATER,
+    )
 
 
 @register(ActionType.BROWSER_BACK, method="conditional_history_back_postcondition")
@@ -364,18 +388,22 @@ async def page_was_reloaded(result: ActionResult) -> Outcome:
 
     before = _record(result)
     if before is None or before.get("o") is None:
-        return unobserved("The page's load time was not recorded before the refresh")
+        return unobserved("The page's load time was not recorded before the refresh", kind=Kind.COULD_NOT_LOOK)
     page = browser.current_tab()
     if page is None:
-        return unobserved("No browser tab is open now, so the page could not be read")
+        return unobserved("No browser tab is open now, so the page could not be read", kind=Kind.COULD_NOT_LOOK)
     await _settle(page)
     if before.get("cur") is not None:
         history = await browser.read_history(page)
         if history is not None and history["ids"][history["index"]] != before["cur"]:
-            return unobserved("The tab is on another page of its history now; the reload cannot be judged")
+            return unobserved(
+                "The tab is on another page of its history now; the reload cannot be judged", kind=Kind.CHANGED_LATER
+            )
     state = await browser.read_page_state(page)
     if state is None or state.get("origin") is None:
-        return unobserved("The page could not be read after the refresh; it may still be loading")
+        return unobserved(
+            "The page could not be read after the refresh; it may still be loading", kind=Kind.COULD_NOT_LOOK
+        )
     if state["origin"] != before["o"]:
         return verified("The page was loaded again: a new document at the same place")
     return mismatch("The page was not reloaded: it is still the document that was there before the refresh")
@@ -391,23 +419,28 @@ async def pointer_is_over_element(result: ActionResult) -> Outcome:
 
     selector = _target_selector(result)
     if not selector:
-        return unobserved("The hover named no element to read")
+        return unobserved("The hover named no element to read", kind=Kind.COULD_NOT_LOOK)
     page = browser.current_tab()
     if page is None:
-        return unobserved("No browser tab is open now, so the element could not be read")
+        return unobserved("No browser tab is open now, so the element could not be read", kind=Kind.COULD_NOT_LOOK)
     before = _record(result)
     if before and _left_since(before, await browser.read_page_state(page)):
-        return unobserved(LEFT_THE_PAGE)
+        return unobserved(LEFT_THE_PAGE, kind=Kind.CHANGED_LATER)
     state = await browser.read_element_state(page, selector)
     if state is None:
-        return unobserved("The element could not be read after the hover")
+        return unobserved("The element could not be read after the hover", kind=Kind.COULD_NOT_LOOK)
     if not state.get("count"):
-        return unobserved("The element is no longer on the page, so the hover cannot be judged")
+        return unobserved(
+            "The element is no longer on the page, so the hover cannot be judged", kind=Kind.COULD_NOT_LOOK
+        )
     if state.get("hovered"):
         return verified("The pointer is over the element")
     if not state.get("in_view"):
         return mismatch("The element is outside the visible part of the page, so the pointer is not over it")
-    return unobserved("The element is visible but not under the pointer now; the pointer may have moved since")
+    return unobserved(
+        "The element is visible but not under the pointer now; the pointer may have moved since",
+        kind=Kind.CHANGED_LATER,
+    )
 
 
 def _same_panel(before: dict[str, Any], now: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -482,13 +515,15 @@ async def page_scrolled(result: ActionResult) -> Outcome:
     direction = str(getattr(result.action.parameters, "direction", "down") or "down")
     before = _record(result)
     if before is None or before.get("y") is None or before.get("max_y") is None:
-        return unobserved("The scroll position was not recorded before the scroll")
+        return unobserved("The scroll position was not recorded before the scroll", kind=Kind.COULD_NOT_LOOK)
     page = browser.current_tab()
     if page is None:
-        return unobserved("No browser tab is open now, so the scroll position could not be read")
+        return unobserved(
+            "No browser tab is open now, so the scroll position could not be read", kind=Kind.COULD_NOT_LOOK
+        )
     now = await browser.read_page_state(page)
     if _left_since(before, now):
-        return unobserved(LEFT_THE_PAGE)
+        return unobserved(LEFT_THE_PAGE, kind=Kind.CHANGED_LATER)
     for attempt in range(SCROLL_READS):  # smooth scrolling takes a moment to arrive
         if attempt:
             await _pause(SCROLL_INTERVAL_SECONDS)
@@ -498,7 +533,10 @@ async def page_scrolled(result: ActionResult) -> Outcome:
             if outcome is not None:
                 return outcome
     if now is None:
-        return unobserved("The scroll position could not be read after the scroll")
+        return unobserved("The scroll position could not be read after the scroll", kind=Kind.COULD_NOT_LOOK)
     if _moved_or_grew(before, now):
-        return unobserved("The page moved or grew, but not simply the way asked; it may load more as it scrolls")
-    return unobserved(f"The page did not move when scrolled {direction}")
+        return unobserved(
+            "The page moved or grew, but not simply the way asked; it may load more as it scrolls",
+            kind=Kind.NOT_OBSERVABLE,
+        )
+    return unobserved(f"The page did not move when scrolled {direction}", kind=Kind.NOTHING_HAPPENED)

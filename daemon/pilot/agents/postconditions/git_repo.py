@@ -21,6 +21,7 @@ from typing import Any
 
 from pilot.actions import ActionResult, ActionType, GitParams
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 
 LOCAL_GIT_TIMEOUT_SECONDS = 10
 REMOTE_GIT_TIMEOUT_SECONDS = 25
@@ -134,19 +135,21 @@ async def commit_landed(result: ActionResult) -> Outcome:
     before = _text(record, "head_before")
     branch = _text(record, "branch")
     if not commit:
-        return unobserved("The commit handler did not record the commit it made; nothing to read back")
+        return unobserved(
+            "The commit handler did not record the commit it made; nothing to read back", kind=Kind.COULD_NOT_LOOK
+        )
     if before and commit == before:
         return mismatch(f"HEAD did not move: it is still at {_short(before)} after the commit")
 
     code, out = await _git(repo, "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}")
     if code == -1:
-        return unobserved("git could not be run to read the commit back")
+        return unobserved("git could not be run to read the commit back", kind=Kind.COULD_NOT_LOOK)
     if code != 0:
         return mismatch(f"Commit {_short(commit)} does not exist in {repo}")
 
     code, out = await _git(repo, "log", "-1", "--format=%B", commit)
     if code != 0:
-        return unobserved(f"git could not read the message of {_short(commit)}")
+        return unobserved(f"git could not read the message of {_short(commit)}", kind=Kind.COULD_NOT_LOOK)
     cleanup, comment = await _cleanup_mode(repo)
     # The handler commits the message with its outer whitespace removed.
     expected = normalized_message(params.message.strip(), cleanup, comment)
@@ -179,7 +182,9 @@ async def commit_landed(result: ActionResult) -> Outcome:
                 "something reset or rewrote it after the commit"
             )
         if code != 0:
-            return unobserved(f"git could not tell whether {branch or 'HEAD'} still holds {_short(commit)}")
+            return unobserved(
+                f"git could not tell whether {branch or 'HEAD'} still holds {_short(commit)}", kind=Kind.COULD_NOT_LOOK
+            )
 
     code, head = await _git(repo, "rev-parse", "--verify", "--quiet", "HEAD")
     if code == 0 and head.strip() == commit:
@@ -188,7 +193,7 @@ async def commit_landed(result: ActionResult) -> Outcome:
         if code == 1:
             return mismatch(f"Commit {_short(commit)} was made but changes to the requested files are still staged")
         if code != 0:
-            return unobserved("git could not compare the index with the new commit")
+            return unobserved("git could not compare the index with the new commit", kind=Kind.COULD_NOT_LOOK)
         return verified(
             f"Commit {_short(commit)} is on {branch or 'HEAD'} with the requested message; nothing left staged"
         )
@@ -213,9 +218,14 @@ async def push_landed(result: ActionResult) -> Outcome:
     remote = _text(record, "remote") or params.remote or "origin"
     shown = plain_remote(remote)
     if not pushed or not remote_ref:
-        return unobserved("The push handler did not record which commit and remote ref it pushed")
+        return unobserved(
+            "The push handler did not record which commit and remote ref it pushed", kind=Kind.COULD_NOT_LOOK
+        )
     if not (remote_ref.startswith("refs/heads/") or remote_ref.startswith("refs/tags/")):
-        return unobserved(f"{remote_ref} is not a branch or a tag the remote lists; the push cannot be read back")
+        return unobserved(
+            f"{remote_ref} is not a branch or a tag the remote lists; the push cannot be read back",
+            kind=Kind.RECEIPT_ONLY,
+        )
 
     # Ask the repository pushed to: a remote with a separate push URL (a fork) is read at that URL.
     code, url = await _git(repo, "remote", "get-url", "--push", remote)
@@ -225,7 +235,8 @@ async def push_landed(result: ActionResult) -> Outcome:
     if code != 0:
         return unobserved(
             f"Remote {shown} could not be asked for {remote_ref} (no network, a credential it would have to "
-            "ask for, or no answer in time); the push is unverified"
+            "ask for, or no answer in time); the push is unverified",
+            kind=Kind.COULD_NOT_LOOK,
         )
     found = ""
     for line in listing.splitlines():
@@ -268,10 +279,10 @@ async def stage_landed(result: ActionResult) -> Outcome:
     if code == 1:
         return mismatch("Some of the requested files still have changes that are not staged")
     if code != 0:
-        return unobserved("git could not compare the working tree with the index")
+        return unobserved("git could not compare the working tree with the index", kind=Kind.COULD_NOT_LOOK)
     code, untracked = await _git(repo, "ls-files", "--others", "--exclude-standard", "--", *files)
     if code != 0:
-        return unobserved("git could not list untracked files")
+        return unobserved("git could not list untracked files", kind=Kind.COULD_NOT_LOOK)
     left = [line for line in untracked.splitlines() if line.strip()]
     if left:
         return mismatch(f"{len(left)} requested file(s) are still untracked, for example {left[0]}")
@@ -290,7 +301,7 @@ async def branch_landed(result: ActionResult) -> Outcome:
         raise ValueError("Branch action has no branch name to observe")
     code, _ = await _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}")
     if code == -1:
-        return unobserved("git could not be run to read the branch back")
+        return unobserved("git could not be run to read the branch back", kind=Kind.COULD_NOT_LOOK)
     if code != 0:
         return mismatch(f"Branch {name} does not exist")
     code, current = await _git(repo, "symbolic-ref", "--quiet", "--short", "HEAD")
@@ -315,7 +326,10 @@ async def resolve_landed(result: ActionResult) -> Outcome:
         return mismatch(f"{params.path} does not exist after the conflict was resolved")
     content = await asyncio.to_thread(path.read_text, "utf-8")
     if params.full_block in params.resolved_code:
-        return unobserved("The resolved code contains the conflict block itself; the two cannot be told apart")
+        return unobserved(
+            "The resolved code contains the conflict block itself; the two cannot be told apart",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     if params.full_block in content:
         return mismatch(f"{params.path} still holds the conflict block")
     if params.resolved_code and params.resolved_code not in content:

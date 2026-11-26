@@ -31,6 +31,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from pilot.actions import ActionResult, ActionType, ApiRequestParams
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.unconfirmed import Kind
 from pilot.system import connections
 
 logger = logging.getLogger("pilot.agents.postconditions.messaging")
@@ -121,7 +122,9 @@ async def slack_message_in_channel(result: ActionResult) -> Outcome:
     params: ApiRequestParams = result.action.parameters  # type: ignore[assignment]
     receipt = _receipt(result.output)
     if receipt is None:
-        return unobserved("Slack's answer was not recorded, so the message cannot be looked for")
+        return unobserved(
+            "Slack's answer was not recorded, so the message cannot be looked for", kind=Kind.COULD_NOT_LOOK
+        )
     status = _status(receipt)
     if status is None or not 200 <= status < 300:
         return mismatch(f"Slack refused the message: HTTP {status}, so nothing was posted")
@@ -139,23 +142,28 @@ async def slack_message_in_channel(result: ActionResult) -> Outcome:
         webhook = ""
     if not urlsplit(webhook).path.startswith("/services/"):
         return unobserved(
-            "Slack accepted the message (receipt, no read-back): a workflow webhook decides the text it posts"
+            "Slack accepted the message (receipt, no read-back): a workflow webhook decides the text it posts",
+            kind=Kind.RECEIPT_ONLY,
         )
     token = slack.get(connections.SLACK_BOT_TOKEN)
     channel = slack.get(connections.SLACK_CHANNEL)
     if not token or not channel:
         return unobserved(
             "Slack accepted the message (receipt, no read-back); add a bot token and the channel ID in "
-            f"{connections.WHERE['slack']} to have it read back"
+            f"{connections.WHERE['slack']} to have it read back",
+            kind=Kind.RECEIPT_ONLY,
         )
     if webhook != configured_webhook:
         return unobserved(
             "Slack accepted the message (receipt, no read-back): the plan used its own webhook, which may "
-            f"post to a channel other than the one connected in {connections.WHERE['slack']}"
+            f"post to a channel other than the one connected in {connections.WHERE['slack']}",
+            kind=Kind.RECEIPT_ONLY,
         )
     sent_at = receipt.get("sent_at")
     if not isinstance(sent_at, int | float):
-        return unobserved("Slack accepted the message (receipt); its send time was not recorded")
+        return unobserved(
+            "Slack accepted the message (receipt); its send time was not recorded", kind=Kind.RECEIPT_ONLY
+        )
 
     oldest = float(sent_at) - SLACK_CLOCK_MARGIN_SECONDS
     query = {"channel": channel, "oldest": f"{oldest:.6f}", "inclusive": "true", "limit": "200"}
@@ -164,18 +172,27 @@ async def slack_message_in_channel(result: ActionResult) -> Outcome:
         try:
             code, body = await _http_get(SLACK_HISTORY_URL, headers={"Authorization": f"Bearer {token}"}, params=query)
         except _Unreachable as exc:
-            return unobserved(f"Slack accepted the message (receipt); slack.com could not be reached ({exc})")
+            return unobserved(
+                f"Slack accepted the message (receipt); slack.com could not be reached ({exc})",
+                kind=Kind.COULD_NOT_LOOK,
+            )
         if code != 200 or not isinstance(body, dict):
-            return unobserved(f"Slack accepted the message (receipt); reading it back answered HTTP {code}")
+            return unobserved(
+                f"Slack accepted the message (receipt); reading it back answered HTTP {code}", kind=Kind.COULD_NOT_LOOK
+            )
         if body.get("ok") is not True:
             error = str(body.get("error") or "unknown_error")[:60]
             return unobserved(
                 f"Slack accepted the message (receipt); reading channel {channel} failed with {error!r} "
-                "(the token needs channels:history or groups:history and the app must be in the channel)"
+                "(the token needs channels:history or groups:history and the app must be in the channel)",
+                kind=Kind.COULD_NOT_LOOK,
             )
         messages = body.get("messages")
         if not isinstance(messages, list):
-            return unobserved("Slack accepted the message (receipt); the channel history came back without messages")
+            return unobserved(
+                "Slack accepted the message (receipt); the channel history came back without messages",
+                kind=Kind.RECEIPT_ONLY,
+            )
         read = len(messages)
         for message in messages:
             if isinstance(message, dict) and _same_text(params.message, str(message.get("text", ""))):
@@ -208,13 +225,17 @@ async def discord_message_in_channel(result: ActionResult) -> Outcome:
     params: ApiRequestParams = result.action.parameters  # type: ignore[assignment]
     receipt = _receipt(result.output)
     if receipt is None:
-        return unobserved("Discord's answer was not recorded, so the message cannot be looked for")
+        return unobserved(
+            "Discord's answer was not recorded, so the message cannot be looked for", kind=Kind.COULD_NOT_LOOK
+        )
     status = _status(receipt)
     if status is None or not 200 <= status < 300:
         return mismatch(f"Discord refused the message: HTTP {status}, so nothing was posted")
     message_id = str(receipt.get("message_id") or "")
     if not message_id.isdigit():
-        return unobserved("Discord accepted the message (receipt) but gave no message id to read back")
+        return unobserved(
+            "Discord accepted the message (receipt) but gave no message id to read back", kind=Kind.RECEIPT_ONLY
+        )
     stored = (await connections.service("discord")).get(connections.DISCORD_WEBHOOK)
     try:
         webhook = connections.choose(params.webhook_url, stored, service_name="discord", what="Discord webhook address")
@@ -224,17 +245,22 @@ async def discord_message_in_channel(result: ActionResult) -> Outcome:
     if target is None:
         return unobserved(
             f"Discord accepted message {message_id} (receipt); the webhook address is not a Discord webhook "
-            "address, so it cannot be read back"
+            "address, so it cannot be read back",
+            kind=Kind.RECEIPT_ONLY,
         )
     url, query, host = target
     try:
         code, body = await _http_get(url, params=query or None)
     except _Unreachable as exc:
-        return unobserved(f"Discord accepted message {message_id} (receipt); {host} could not be reached ({exc})")
+        return unobserved(
+            f"Discord accepted message {message_id} (receipt); {host} could not be reached ({exc})",
+            kind=Kind.COULD_NOT_LOOK,
+        )
     if code == 200:
         if not isinstance(body, dict) or str(body.get("id")) != message_id:
             return unobserved(
-                f"Discord accepted message {message_id} (receipt); {host} answered the read-back without it"
+                f"Discord accepted message {message_id} (receipt); {host} answered the read-back without it",
+                kind=Kind.RECEIPT_ONLY,
             )
         found = str(body.get("content", ""))
         if _same_text(params.message, found):
@@ -247,10 +273,14 @@ async def discord_message_in_channel(result: ActionResult) -> Outcome:
         if isinstance(body, dict) and body.get("code") == _UNKNOWN_DISCORD_WEBHOOK:
             return unobserved(
                 f"Discord accepted message {message_id} (receipt); the webhook no longer exists, "
-                "so the message cannot be read back"
+                "so the message cannot be read back",
+                kind=Kind.RECEIPT_ONLY,
             )
         return mismatch(
             f"Discord accepted message {message_id}, but {host} has no such message from this webhook "
             "(HTTP 404). Look at the channel before sending it again"
         )
-    return unobserved(f"Discord accepted message {message_id} (receipt); reading it back answered HTTP {code}")
+    return unobserved(
+        f"Discord accepted message {message_id} (receipt); reading it back answered HTTP {code}",
+        kind=Kind.COULD_NOT_LOOK,
+    )

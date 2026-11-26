@@ -1189,16 +1189,22 @@ async def confirm_focus(*, window_id: str | None, title: str | None, process_nam
             waited += SETTLE_STEP_SECONDS
             found = await foreground()
     except Unobservable as reason:
-        _record("unobservable", str(reason))
+        _record("unobservable", str(reason), kind="not_observable")
         return
     except Exception as error:  # an observer that broke never fails the step
         logger.debug("Focus read failed", exc_info=True)
-        _record("unobservable", f"the window in front could not be read ({type(error).__name__})")
+        _record(
+            "unobservable", f"the window in front could not be read ({type(error).__name__})", kind="could_not_look"
+        )
         return
     verdict = focus_matches(found, window_id=window_id, title=title, process_name=process_name, title_pids=title_pids)
     wanted = title or process_name or window_id or ""
     if verdict is None:
-        _record("unobservable", f"{found.describe()} is in front; its {_unread_part(found)} cannot be read here")
+        _record(
+            "unobservable",
+            f"{found.describe()} is in front; its {_unread_part(found)} cannot be read here",
+            kind="not_observable",
+        )
         return
     if verdict:
         _record("match", f"{found.describe()} is in front ({found.source})", source=found.source)
@@ -1264,6 +1270,7 @@ async def confirm_typing(text: str, before: Foreground | None, *, target_window:
             f"The text was set in {target_window}'s editor through UI Automation, which compared it in the same call; "
             "it was not read back separately",
             typed_length=len(text),
+            kind="not_observable",
         )
         return
     try:
@@ -1274,7 +1281,12 @@ async def confirm_typing(text: str, before: Foreground | None, *, target_window:
             if isinstance(error, Unobservable)
             else f"the window in front could not be read ({type(error).__name__})"
         )
-        _record("unobservable", reason, typed_length=len(text))
+        _record(
+            "unobservable",
+            reason,
+            typed_length=len(text),
+            kind="not_observable" if isinstance(error, Unobservable) else "could_not_look",
+        )
         return
     ends_with_enter = "\n" in text or "\r" in text
     window_ok = True
@@ -1297,6 +1309,7 @@ async def confirm_typing(text: str, before: Foreground | None, *, target_window:
             "partial",
             f"After typing text that contains Enter, {after.app()} is in front (Enter often opens or closes a window)",
             typed_length=len(text),
+            kind="changed_later",
         )
         return
     reading = None
@@ -1311,7 +1324,10 @@ async def confirm_typing(text: str, before: Foreground | None, *, target_window:
                 break
     except Unobservable as reason:
         _record(
-            "partial", f"{after.app()} kept the focus; the field's text was not read: {reason}", typed_length=len(text)
+            "partial",
+            f"{after.app()} kept the focus; the field's text was not read: {reason}",
+            typed_length=len(text),
+            kind="not_observable",
         )
         return
     except Exception as error:
@@ -1320,6 +1336,7 @@ async def confirm_typing(text: str, before: Foreground | None, *, target_window:
             "partial",
             f"{after.app()} kept the focus; the field could not be read ({type(error).__name__})",
             typed_length=len(text),
+            kind="could_not_look",
         )
         return
     if reading is not None:
@@ -1337,6 +1354,7 @@ def _record_field(after: Foreground, reading: FieldReading, text: str) -> None:
             "partial",
             f"{where} kept the focus; the focused field is a password field, which is never read",
             typed_length=len(text),
+            kind="not_observable",
         )
         return
     if not reading.editable or reading.text is None:
@@ -1344,6 +1362,7 @@ def _record_field(after: Foreground, reading: FieldReading, text: str) -> None:
             "partial",
             f"{where} kept the focus; the focused element does not expose its text through {reading.source}",
             typed_length=len(text),
+            kind="not_observable",
         )
         return
     facts = field_holds(reading.text, text)
@@ -1358,6 +1377,7 @@ def _record_field(after: Foreground, reading: FieldReading, text: str) -> None:
         "partial",
         f"{where} kept the focus; its field ({facts['field_length']} characters) does not show the {len(text)} typed "
         f"characters as typed, which apps that paste late, complete or reformat text also cause ({reading.source})",
+        kind="not_observable",
         **facts,
     )
 
@@ -1397,11 +1417,16 @@ async def confirm_pointer(target: tuple[int, int], *, released: tuple[str, ...] 
         found = await pointer()
         held = await buttons_down(list(released)) if released else set()
     except Unobservable as reason:
-        _record("unobservable", str(reason), target=list(target))
+        _record("unobservable", str(reason), target=list(target), kind="not_observable")
         return
     except Exception as error:
         logger.debug("Pointer read failed", exc_info=True)
-        _record("unobservable", f"the pointer could not be read ({type(error).__name__})", target=list(target))
+        _record(
+            "unobservable",
+            f"the pointer could not be read ({type(error).__name__})",
+            target=list(target),
+            kind="could_not_look",
+        )
         return
     facts = {"target": list(target), "found": list(found), "held": sorted(held)}
     if held:
@@ -1412,6 +1437,7 @@ async def confirm_pointer(target: tuple[int, int], *, released: tuple[str, ...] 
         _record(
             "partial",
             f"The pointer was at {found} after the step, not at {target}; the mouse may have been moved since",
+            kind="changed_later",
             **facts,
         )
         return
@@ -1426,11 +1452,16 @@ async def confirm_keys_released(keys: list[str]) -> None:
     try:
         held, unknown = await keys_down(keys)
     except Unobservable as reason:
-        _record("unobservable", str(reason), keys=list(keys))
+        _record("unobservable", str(reason), keys=list(keys), kind="not_observable")
         return
     except Exception as error:
         logger.debug("Key state read failed", exc_info=True)
-        _record("unobservable", f"the key state could not be read ({type(error).__name__})", keys=list(keys))
+        _record(
+            "unobservable",
+            f"the key state could not be read ({type(error).__name__})",
+            keys=list(keys),
+            kind="could_not_look",
+        )
         return
     facts = {"keys": list(keys), "held": sorted(held), "unknown": list(unknown)}
     if held:
@@ -1449,11 +1480,13 @@ async def confirm_clipboard(content: str) -> None:
     try:
         found, tool = await clipboard_text()
     except Unobservable as reason:
-        _record("unobservable", str(reason), **facts)
+        _record("unobservable", str(reason), kind="not_observable", **facts)
         return
     except Exception as error:
         logger.debug("Clipboard read failed", exc_info=True)
-        _record("unobservable", f"the clipboard could not be read ({type(error).__name__})", **facts)
+        _record(
+            "unobservable", f"the clipboard could not be read ({type(error).__name__})", kind="could_not_look", **facts
+        )
         return
     holds = clipboard_holds(found, content)
     if holds is None:
