@@ -26,9 +26,13 @@ from pilot.actions import ActionResult, ActionType
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
 from pilot.timeouts import bounded
 
-SETTLE_SECONDS = 3.0
-POLL_ATTEMPTS = 10
+# Each check runs right after its step (postconditions/_in_step.py), so these waits add to the step: kept short.
+SETTLE_SECONDS = 1.0
+SCROLL_READS = 5
+SCROLL_INTERVAL_SECONDS = 0.1
+POLL_ATTEMPTS = 8
 POLL_INTERVAL_SECONDS = 0.25
+LEFT_THE_PAGE = "A later step left this page, so this step cannot be checked now"
 MAX_TABS_READ = 30
 
 _REF = re.compile(r"^e\d{1,4}$")
@@ -64,6 +68,19 @@ def _origin_and_path(url: str) -> tuple[str, str, str]:
 
     parts = urlsplit(_canonical_browser_url(url))
     return parts.scheme, parts.netloc, parts.path.rstrip("/") or "/"
+
+
+def _left_since(before: dict[str, Any] | None, now: dict[str, Any] | None) -> bool:
+    """When the check runs after the plan rather than right after its step: the tab shows another page than the one
+    recorded before the step (another address or another document), so a later step may have moved it on."""
+    from pilot.agents.postconditions._in_step import right_after_step
+    from pilot.system.browser import url_fingerprint
+
+    if right_after_step() or not before or not now:
+        return False
+    other_address = bool(before.get("u")) and url_fingerprint(str(now.get("href") or "")) != before.get("u")
+    other_document = before.get("o") is not None and now.get("origin") != before.get("o")
+    return other_address or other_document
 
 
 def _record(result: ActionResult) -> dict[str, Any] | None:
@@ -122,6 +139,7 @@ async def click_was_followed_by_an_effect(result: ActionResult) -> Outcome:
     The click itself (target present, visible, enabled, not covered) is Playwright's actionability check in the
     handler, which raises when it fails, so a missed target is a failed action before this runs.
     """
+    from pilot.agents.postconditions._in_step import right_after_step
     from pilot.system import browser
     from pilot.system.dom_diff import snapshot_dom
 
@@ -135,6 +153,12 @@ async def click_was_followed_by_an_effect(result: ActionResult) -> Outcome:
     now = await browser.read_page_state(page)
     if now is None:
         return unobserved("The page could not be read after the click; it may still be loading")
+
+    if _left_since(before, now) or (
+        not right_after_step() and isinstance(before.get("n"), int) and len(browser.open_tabs() or []) > before["n"]
+    ):
+        # Read after the plan: a navigation or a new tab may be a later step's, not this click's.
+        return unobserved("The page changed after this click, and a later step may have changed it")
 
     tabs_before = before.get("n")
     tabs_now = browser.open_tabs() or []
@@ -371,6 +395,9 @@ async def pointer_is_over_element(result: ActionResult) -> Outcome:
     page = browser.current_tab()
     if page is None:
         return unobserved("No browser tab is open now, so the element could not be read")
+    before = _record(result)
+    if before and _left_since(before, await browser.read_page_state(page)):
+        return unobserved(LEFT_THE_PAGE)
     state = await browser.read_element_state(page, selector)
     if state is None:
         return unobserved("The element could not be read after the hover")
@@ -415,20 +442,23 @@ async def page_scrolled(result: ActionResult) -> Outcome:
     page = browser.current_tab()
     if page is None:
         return unobserved("No browser tab is open now, so the scroll position could not be read")
+    first = await browser.read_page_state(page)
+    if _left_since(before, first):
+        return unobserved(LEFT_THE_PAGE)
     if before["max_y"] <= 0 and direction in {"down", "bottom"}:
         return mismatch(
             "The page did not move: the window has nothing to scroll on this page "
             "(its content may scroll inside a panel instead)"
         )
-    now: dict[str, Any] | None = None
-    for attempt in range(POLL_ATTEMPTS):  # smooth scrolling takes a moment to arrive
-        now = await browser.read_page_state(page)
+    now = first
+    for attempt in range(SCROLL_READS):  # smooth scrolling takes a moment to arrive
+        if attempt:
+            await _pause(SCROLL_INTERVAL_SECONDS)
+            now = await browser.read_page_state(page)
         if now is not None:
             outcome = _scroll_outcome(direction, before, now)
             if outcome is not None:
                 return outcome
-        if attempt + 1 < POLL_ATTEMPTS:
-            await _pause(POLL_INTERVAL_SECONDS)
     if now is None:
         return unobserved("The scroll position could not be read after the scroll")
     if round(float(now.get("y") or 0)) == round(float(before["y"])):

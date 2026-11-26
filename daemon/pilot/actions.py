@@ -1276,6 +1276,7 @@ MACHINE_LINE_ACTIONS = frozenset(
         ActionType.BROWSER_SELECT,
         ActionType.BROWSER_FILL_FORM,
         ActionType.BROWSER_SCROLL,
+        ActionType.BROWSER_HOVER,
         ActionType.BROWSER_BACK,
         ActionType.BROWSER_FORWARD,
         ActionType.BROWSER_REFRESH,

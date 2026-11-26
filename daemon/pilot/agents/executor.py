@@ -1608,7 +1608,7 @@ class Executor:
             # Machine lines a browser handler added for its check never reach the reply, speech or a model.
             output, observation = split_machine_lines(action.action_type, output)
             notice = getattr(output, "notice", None)
-            return ActionResult(
+            result = ActionResult(
                 action=action,
                 success=True,
                 output=str(output) if notice else output,
@@ -1617,6 +1617,14 @@ class Executor:
                 skip_reason="already_absent" if getattr(output, "nothing_done", False) else None,
                 observation=observation,
             )
+            from pilot.agents.postconditions._in_step import IN_STEP_ACTIONS, observe
+
+            if action.action_type in IN_STEP_ACTIONS:
+                # Read the page now, while it is still the one this step acted on; the verifier reports it later.
+                reading = await observe(result)
+                if reading:
+                    result.observation = "\n".join(part for part in (observation, reading) if part)
+            return result
         except Exception as e:
             logger.exception("Action execution failed: %s", action.action_type)
             return ActionResult(action=action, success=False, error=str(e), snapshot_id=snapshot_id)

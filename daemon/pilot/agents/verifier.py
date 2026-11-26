@@ -228,6 +228,13 @@ class Verifier:
         try:
             registration = _AREA_VERIFIERS.get(action.action_type)
             if registration is not None:
+                from pilot.agents.postconditions._in_step import recalled
+
+                # A browser step is read right after it ran (the executor keeps that reading); a later step may
+                # have left its page by now.
+                read_then = recalled(result)
+                if read_then is not None:
+                    return read_then.passed, read_then.detail, read_then.observed
                 try:
                     outcome = await bounded(registration.check(result), registration.timeout)
                 except TimeoutError:

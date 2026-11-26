@@ -439,6 +439,13 @@ def structure_fingerprint(snapshot: Any) -> str | None:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _page_identity(state: dict[str, Any] | None) -> dict[str, Any]:
+    """Which page this is (a hash of its address, its document's load time), so a later check can tell it left."""
+    if not state:
+        return {}
+    return {"u": url_fingerprint(str(state.get("href") or "")), "o": state.get("origin")}
+
+
 def _with_before(output: str, record: dict[str, Any] | None) -> str:
     """Append what was observed before the action, for its post-condition check. No page text or address."""
     if not record or all(value is None for value in record.values()):
@@ -938,8 +945,9 @@ async def browser_check(selector: str, checked: bool = True) -> str:
 async def browser_hover(selector: str) -> str:
     """Hover over an element."""
     page = await _get_page()
+    record = _page_identity(await read_page_state(page))
     await page.hover(selector)
-    return f"Hovering over: {selector}"
+    return _with_before(f"Hovering over: {selector}", record)
 
 
 async def browser_press_key(key: str) -> str:
@@ -956,7 +964,7 @@ async def browser_scroll(direction: str = "down", amount: int = 500) -> str:
         raise ValueError(f"Unknown scroll direction {direction!r}: use down, up, top or bottom")
     page = await _get_page()
     state = await read_page_state(page)
-    record = {key: state.get(key) for key in ("y", "max_y")} if state else None
+    record = {key: state.get(key) for key in ("y", "max_y")} | _page_identity(state) if state else None
     if direction == "down":
         await page.evaluate(f"window.scrollBy(0, {amount})")
     elif direction == "up":

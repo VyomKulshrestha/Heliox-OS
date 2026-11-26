@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pilot.actions import Action, ActionPlan, ActionResult, ActionType, BrowserParams
-from pilot.agents.postconditions import browser_ui, registrations
+from pilot.agents.postconditions import _in_step, browser_ui, registrations
 from pilot.agents.verifier import POSTCONDITION_VERIFIERS, Verifier
 from pilot.system import browser, dom_diff
 
@@ -141,6 +141,9 @@ class _Page:
     async def click(self, selector: str, **_: Any) -> None:
         await self._act(f"click:{selector}")
 
+    async def hover(self, selector: str, **_: Any) -> None:
+        await self._act(f"hover:{selector}")
+
     async def go_back(self) -> None:
         await self._act("back")
 
@@ -206,13 +209,30 @@ def _action(action_type: ActionType, **params: Any) -> Action:
     return Action(action_type=action_type, target="browser", parameters=BrowserParams(**params))
 
 
+async def _read_right_after(result: ActionResult) -> ActionResult:
+    """What the executor does right after a browser step: read the page now and keep the outcome."""
+    reading = await _in_step.observe(result)
+    if reading:
+        result.observation = "\n".join(part for part in (result.observation, reading) if part)
+    return result
+
+
 async def _verify(action: Action, output: str, *, success: bool = True) -> tuple[str, bool, bool]:
     result = ActionResult(action=action, success=success, output=output, error=None if success else "boom")
+    await _read_right_after(result)
     verification = await Verifier(MagicMock()).verify(ActionPlan(actions=[action]), [result])
     return verification.details[0], 0 in verification.independently_observed_actions, verification.passed
 
 
 async def _check(action: Action, output: str) -> browser_ui.Outcome:
+    result = await _read_right_after(ActionResult(action=action, success=True, output=output))
+    outcome = _in_step.recalled(result)
+    assert outcome is not None
+    return outcome
+
+
+async def _check_later(action: Action, output: str) -> browser_ui.Outcome:
+    """The check run after the plan, without a reading made right after the step."""
     return await registrations()[action.action_type].check(ActionResult(action=action, success=True, output=output))
 
 
@@ -553,7 +573,7 @@ async def test_browser_still_running_after_close_is_a_mismatch(monkeypatch, _no_
 
     outcome = await _check(_action(ActionType.BROWSER_CLOSE), output)
 
-    assert outcome == browser_ui.mismatch("1 of 2 browser process(es) were still running 2.5 s after the close")
+    assert outcome == browser_ui.mismatch("1 of 2 browser process(es) were still running 2 s after the close")
     assert len(_no_real_browser) == browser_ui.POLL_ATTEMPTS - 1
 
 
@@ -812,16 +832,19 @@ async def test_no_machine_line_reaches_the_reply_and_the_check_still_reads_it(mo
     _open(monkeypatch, first, second)
     browser._active_page = first
     steps = [
-        (_action(ActionType.BROWSER_CLICK, selector="#pay"), await browser.browser_click("#pay")),
-        (_action(ActionType.BROWSER_SCROLL, direction="down"), await browser.browser_scroll("down")),
-        (_action(ActionType.BROWSER_SWITCH_TAB, tab_index=1), await browser.browser_switch_tab(1)),
+        (_action(ActionType.BROWSER_CLICK, selector="#pay"), lambda: browser.browser_click("#pay")),
+        (_action(ActionType.BROWSER_SCROLL, direction="down"), lambda: browser.browser_scroll("down")),
+        (_action(ActionType.BROWSER_SWITCH_TAB, tab_index=1), lambda: browser.browser_switch_tab(1)),
     ]
-    assert browser.PAGE_BEFORE_MARKER in steps[0][1] and "[DOM_DIFF]" in steps[0][1]
 
     results = []
-    for action, output in steps:  # what the executor does with a handler's output
+    for action, run in steps:  # what the executor does with each step: run it, split its output, read the page
+        output = await run()
+        if action.action_type == ActionType.BROWSER_CLICK:
+            assert browser.PAGE_BEFORE_MARKER in output and "[DOM_DIFF]" in output
         words, machine = split_machine_lines(action.action_type, output)
-        results.append(ActionResult(action=action, success=True, output=words, observation=machine))
+        result = ActionResult(action=action, success=True, output=words, observation=machine)
+        results.append(await _read_right_after(result))
     plan = ActionPlan(actions=[action for action, _ in steps], explanation="Pay, scroll, switch.")
     verification = await Verifier(MagicMock()).verify(plan, results)
     reply = success_message(plan, results, verification, dry_run=False)
@@ -840,3 +863,102 @@ def test_machine_lines_are_split_only_for_browser_handlers_and_keep_a_notice() -
     words, machine = split_machine_lines(ActionType.BROWSER_CLICK, OutputWithNotice(text, "A new tab opened"))
     assert (str(words), words.notice, machine) == ("line one", "A new tab opened", "[DOM_DIFF] {}\n[PAGE_BEFORE] {}")
     assert split_machine_lines(ActionType.BROWSER_CLICK, "Clicked: #a") == ("Clicked: #a", None)
+
+
+# ── A later step must not make an earlier browser step fail ─────────
+
+
+@pytest.mark.asyncio
+async def test_scroll_then_open_an_article_keeps_the_scroll_verified(monkeypatch) -> None:
+    from pilot.response_contract import success_message
+
+    page = _Page(y=0, elements={"#second": _button()})
+    _open(monkeypatch, page)
+    scroll = _action(ActionType.BROWSER_SCROLL, direction="down")
+    click = _action(ActionType.BROWSER_CLICK, selector="#second")
+
+    page.effect = _scroll_to(800)
+    scrolled = await _read_right_after(ActionResult(action=scroll, success=True, output=await browser.browser_scroll()))
+    page.effect = lambda p: p.state.update(href=DONE, origin=2000.0, y=0)  # the article opens at the top
+    clicked = await _read_right_after(
+        ActionResult(action=click, success=True, output=await browser.browser_click("#second"))
+    )
+    plan = ActionPlan(actions=[scroll, click], explanation="Scroll down and open the second article.")
+    verification = await Verifier(MagicMock()).verify(plan, [scrolled, clicked])
+
+    assert verification.passed
+    assert verification.details == [
+        "Action 0 (browser_scroll): VERIFIED",
+        "Action 1 (browser_click): VERIFIED",
+    ]
+    assert "did not move" not in success_message(plan, [scrolled, clicked], verification, dry_run=False)
+
+
+@pytest.mark.asyncio
+async def test_a_check_run_after_the_plan_on_a_page_that_moved_on_is_not_verified_never_a_mismatch(
+    monkeypatch,
+) -> None:
+    page = _Page(y=0, elements={"#menu": _button(hovered=True), "#second": _button()})
+    _open(monkeypatch, page)
+    scroll_output = await browser.browser_scroll()  # the page did not move yet: a reading now would say so
+    hover_output = await browser.browser_hover("#menu")
+    click_output = await browser.browser_click("#second")
+    page.state.update(href=DONE, origin=2000.0, y=0)  # a later step opened another page
+
+    for action, output in (
+        (_action(ActionType.BROWSER_SCROLL, direction="down"), scroll_output),
+        (_action(ActionType.BROWSER_HOVER, selector="#menu"), hover_output),
+        (_action(ActionType.BROWSER_CLICK, selector="#second"), click_output),
+    ):
+        outcome = await _check_later(action, output)
+        assert outcome.passed and not outcome.observed, (action.action_type, outcome)
+        assert "later step" in outcome.detail
+
+
+@pytest.mark.asyncio
+async def test_the_reading_right_after_the_step_is_what_the_verifier_reports(monkeypatch) -> None:
+    page = _Page(y=0)
+    _open(monkeypatch, page)
+    action = _action(ActionType.BROWSER_SCROLL, direction="down")
+    result = await _read_right_after(ActionResult(action=action, success=True, output=await browser.browser_scroll()))
+    page.state.update(y=900)  # later the page moves by itself; the step's own reading stands
+
+    label, observed, _ = await _verify_stored(result)
+
+    assert label == "Action 0 (browser_scroll): MISMATCH — The page did not move: it is still 0 px from the top"
+    assert observed is True
+
+
+async def _verify_stored(result: ActionResult) -> tuple[str, bool, bool]:
+    verification = await Verifier(MagicMock()).verify(ActionPlan(actions=[result.action]), [result])
+    return verification.details[0], 0 in verification.independently_observed_actions, verification.passed
+
+
+def test_a_browser_mismatch_is_not_retried_once_a_later_browser_step_ran() -> None:
+    from pilot.actions import VerificationResult
+    from pilot.server import _postcondition_failure_requires_reconciliation
+
+    scroll = ActionResult(action=_action(ActionType.BROWSER_SCROLL), success=True)
+    click = ActionResult(action=_action(ActionType.BROWSER_CLICK, selector="#second"), success=True)
+    failed_scroll = VerificationResult(passed=False, failed_actions=[0])
+
+    assert _postcondition_failure_requires_reconciliation([scroll, click], failed_scroll) is True
+    assert _postcondition_failure_requires_reconciliation([scroll], failed_scroll) is False  # same page: retry
+
+
+@pytest.mark.asyncio
+async def test_the_reading_right_after_a_step_is_bounded(monkeypatch) -> None:
+    page = _Page()
+    _open(monkeypatch, page)
+
+    async def never(*_: Any, **__: Any) -> None:
+        import asyncio
+
+        await asyncio.Event().wait()
+
+    page.wait_for_load_state = never  # type: ignore[method-assign]
+    monkeypatch.setattr(browser_ui, "SETTLE_SECONDS", 0.01)
+    output = await browser.browser_click("#anything")
+    outcome = await _check(_action(ActionType.BROWSER_CLICK, selector="#anything"), output)
+
+    assert outcome.observed is False  # no change seen; the settle wait gave up at its bound instead of hanging
