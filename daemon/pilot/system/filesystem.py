@@ -29,11 +29,19 @@ async def file_read(path: str) -> str:
 
 
 async def file_write(path: str, content: str) -> str:
-    """Write content to a file, creating parent directories as needed."""
+    """Write content to a file, creating parent directories as needed.
+
+    The bytes are those ``write_text(content, "utf-8")`` writes (text mode turns each newline into the
+    platform's). Their sha256 and length go into the result, so the post-condition check can compare the file
+    on disk with what was written after placeholders were filled in.
+    """
     p = Path(path)
+    data = content.replace("\n", os.linesep).encode("utf-8")
     await asyncio.to_thread(p.parent.mkdir, parents=True, exist_ok=True)
-    await asyncio.to_thread(p.write_text, content, "utf-8")
-    return f"Written {len(content)} bytes to {path}"
+    await asyncio.to_thread(p.write_bytes, data)
+    return (
+        f"Written {len(content)} bytes to {path} (sha256 {hashlib.sha256(data).hexdigest()}, {len(data)} bytes on disk)"
+    )
 
 
 async def file_delete(path: str, recursive: bool = False) -> str:
