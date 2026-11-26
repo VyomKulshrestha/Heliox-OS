@@ -468,6 +468,12 @@ async def send_discord_message(
 # ── Web Scraping ─────────────────────────────────────────────────────
 
 
+SCRAPE_CHAR_LIMIT = 10_000
+SCRAPE_ELEMENT_LIMIT = 50
+SCRAPE_LINK_LIMIT = 100
+SCRAPE_TABLE_LIMIT = 10
+
+
 async def scrape_url(
     url: str,
     selector: str | None = None,
@@ -497,44 +503,59 @@ async def scrape_url(
             raise HttpStatusError("GET", str(resp.url), resp.status_code, getattr(resp, "reason_phrase", ""))
         html = resp.text
 
-    if extract == "html":
-        return html[:10000]
+    from urllib.parse import urlsplit
+
+    from pilot.system.read_limits import with_cut
+
+    if extract == "html" and not selector:
+        return with_cut(html[:SCRAPE_CHAR_LIMIT], min(len(html), SCRAPE_CHAR_LIMIT), len(html), "characters of HTML")
 
     try:
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "html.parser")
 
-        if selector:
+        if selector and extract in ("text", "html"):
             elements = soup.select(selector)
+            if not elements:
+                host = urlsplit(url).hostname or "the page"
+                raise LookupError(f"No element matches the selector {selector!r} on {host}")
+            shown = elements[:SCRAPE_ELEMENT_LIMIT]
             if extract == "text":
-                return "\n".join(el.get_text(strip=True) for el in elements[:50])
-            elif extract == "html":
-                return "\n".join(str(el) for el in elements[:50])
+                joined = "\n".join(el.get_text(strip=True) for el in shown)
+            else:
+                joined = "\n".join(str(el) for el in shown)
+            return with_cut(joined, len(shown), len(elements), "matching elements")
 
         if extract == "links":
+            anchors = soup.find_all("a", href=True)
             links = []
-            for a in soup.find_all("a", href=True)[:100]:
+            for a in anchors[:SCRAPE_LINK_LIMIT]:
                 links.append({"text": a.get_text(strip=True)[:100], "href": a["href"]})
-            return json.dumps(links, indent=2)
+            return with_cut(json.dumps(links, indent=2), len(links), len(anchors), "links")
 
         if extract == "tables":
+            found = soup.find_all("table")
             tables = []
-            for table in soup.find_all("table")[:10]:
+            for table in found[:SCRAPE_TABLE_LIMIT]:
                 rows = []
                 for tr in table.find_all("tr"):
                     cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
                     rows.append(cells)
                 tables.append(rows)
-            return json.dumps(tables, indent=2)
+            return with_cut(json.dumps(tables, indent=2), len(tables), len(found), "tables")
 
         text = soup.get_text(separator="\n", strip=True)
-        return text[:10000]
+        return with_cut(text[:SCRAPE_CHAR_LIMIT], min(len(text), SCRAPE_CHAR_LIMIT), len(text), "characters of text")
 
     except ImportError:
-        # Fallback without BeautifulSoup
+        # Fallback without BeautifulSoup: plain text only, so a selector or a links or tables request cannot be met.
         import re
 
+        if selector or extract in ("links", "tables", "html"):
+            raise RuntimeError(
+                "Extracting by selector, links, tables or HTML needs BeautifulSoup (pip install beautifulsoup4)"
+            ) from None
         text = re.sub(r"<[^>]+>", " ", html)
         text = re.sub(r"\s+", " ", text).strip()
-        return text[:10000]
+        return with_cut(text[:SCRAPE_CHAR_LIMIT], min(len(text), SCRAPE_CHAR_LIMIT), len(text), "characters of text")

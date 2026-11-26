@@ -970,6 +970,28 @@ async def browser_scroll(direction: str = "down", amount: int = 500) -> str:
 
 # ── Data Extraction ──────────────────────────────────────────────────
 
+EXTRACT_ELEMENT_LIMIT = 50
+EXTRACT_TABLE_ROW_LIMIT = 100
+EXTRACT_LINK_LIMIT = 100
+
+# The table as the handler reads it: header texts and the rows that have data cells, all of them, so the caller can
+# say how many it kept. The selector is passed as an argument, never pasted into the script.
+TABLE_SCRIPT = """
+    (selector) => {
+        const table = document.querySelector(selector);
+        if (!table) return null;
+        const headers = [];
+        const rows = [];
+        table.querySelectorAll('th').forEach(th => headers.push(th.innerText.trim()));
+        table.querySelectorAll('tr').forEach(tr => {
+            const cells = [];
+            tr.querySelectorAll('td').forEach(td => cells.push(td.innerText.trim()));
+            if (cells.length > 0) rows.push(cells);
+        });
+        return { headers, rows };
+    }
+"""
+
 
 async def browser_extract(
     selector: str = "body",
@@ -983,16 +1005,23 @@ async def browser_extract(
     page = await _get_page()
 
     if multiple:
+        from pilot.system.read_limits import with_cut
+
         elements = await page.query_selector_all(selector)
         values = []
-        for el in elements[:50]:  # cap at 50
-            val = await el.get_attribute(attribute) if attribute != "innerText" else await el.inner_text()
+        for el in elements[:EXTRACT_ELEMENT_LIMIT]:
+            if attribute == "innerText":
+                val = await el.inner_text()
+            elif attribute == "innerHTML":
+                val = await el.inner_html()
+            else:
+                val = await el.get_attribute(attribute)
             if val and val.strip():
                 values.append(val.strip())
         # For text extraction, return plain text joined by newlines (not JSON)
-        if attribute == "innerText":
-            return "\n\n".join(values)
-        return json.dumps(values, indent=2)
+        text = "\n\n".join(values) if attribute == "innerText" else json.dumps(values, indent=2)
+        shown = min(len(elements), EXTRACT_ELEMENT_LIMIT)
+        return with_cut(text, shown, len(elements), "matching elements")
     else:
         element = await page.query_selector(selector)
         if not element:
@@ -1008,31 +1037,29 @@ async def browser_extract(
 
 async def browser_extract_table(selector: str = "table") -> str:
     """Extract a table as JSON."""
-    page = await _get_page()
+    from pilot.actions import OutputWithNotice
+    from pilot.system.read_limits import cut_sentence
 
-    result = await page.evaluate(f"""
-        (() => {{
-            const table = document.querySelector('{selector}');
-            if (!table) return null;
-            const rows = [];
-            const headers = [];
-            table.querySelectorAll('th').forEach(th => headers.push(th.innerText.trim()));
-            table.querySelectorAll('tr').forEach(tr => {{
-                const cells = [];
-                tr.querySelectorAll('td').forEach(td => cells.push(td.innerText.trim()));
-                if (cells.length > 0) rows.push(cells);
-            }});
-            return {{ headers, rows: rows.slice(0, 100) }};
-        }})()
-    """)
+    page = await _get_page()
+    result = await page.evaluate(TABLE_SCRIPT, selector)
 
     if not result:
         raise LookupError(f"Table not found: {selector}")
-    return json.dumps(result, indent=2)
+    rows = list(result.get("rows") or [])
+    table = {"headers": list(result.get("headers") or []), "rows": rows[:EXTRACT_TABLE_ROW_LIMIT]}
+    if len(rows) <= EXTRACT_TABLE_ROW_LIMIT:
+        return json.dumps(table, indent=2)
+    # Said inside the JSON, so the next step still gets valid JSON, and in the notice for the person.
+    sentence = cut_sentence(EXTRACT_TABLE_ROW_LIMIT, len(rows), "rows")
+    table["rows_total"] = len(rows)
+    table["cut"] = sentence
+    return OutputWithNotice(json.dumps(table, indent=2), sentence)
 
 
 async def browser_extract_links() -> str:
     """Extract all links from the current page."""
+    from pilot.system.read_limits import with_cut
+
     page = await _get_page()
     links = await page.evaluate("""
         (() => {
@@ -1040,10 +1067,11 @@ async def browser_extract_links() -> str:
             document.querySelectorAll('a[href]').forEach(a => {
                 links.push({ text: a.innerText.trim().substring(0, 100), href: a.href });
             });
-            return links.slice(0, 100);
+            return links;
         })()
     """)
-    return json.dumps(links, indent=2)
+    shown = links[:EXTRACT_LINK_LIMIT]
+    return with_cut(json.dumps(shown, indent=2), len(shown), len(links), "links")
 
 
 async def browser_get_page_info() -> str:

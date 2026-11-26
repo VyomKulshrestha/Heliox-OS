@@ -159,8 +159,10 @@ async def screen_ocr(
             logger.debug("macOS Vision OCR failed: %s", e)
 
     # ── Tesseract CLI (cross-platform, no Python wrapper needed) ─────
+    ran_clean = False  # an engine ran without error and found no text
     try:
         result = await _ocr_tesseract_cli(img_bytes, language)
+        ran_clean = True
         if result and result.strip():
             logger.info("OCR succeeded via tesseract CLI")
             return result
@@ -176,6 +178,7 @@ async def screen_ocr(
     # ── EasyOCR (CPU; see _easyocr_reader) ───────────────────────────
     try:
         result = await _ocr_easyocr(img_bytes, language)
+        ran_clean = True
         if result and result.strip():
             logger.info("OCR succeeded via EasyOCR")
             return result
@@ -188,6 +191,7 @@ async def screen_ocr(
     # ── pytesseract Python wrapper ───────────────────────────────────
     try:
         result = await _ocr_pytesseract(img_bytes, language)
+        ran_clean = True
         if result and result.strip():
             logger.info("OCR succeeded via pytesseract")
             return result
@@ -198,6 +202,9 @@ async def screen_ocr(
         logger.debug("pytesseract failed: %s", e)
 
     # ── All engines failed ───────────────────────────────────────────
+    if ran_clean:
+        # An engine ran cleanly and found no text: the screen has none, which is an answer, not a failure.
+        return ""
     install_hint = _get_install_hint()
     logger.warning("No OCR engine available.")
     return f"[OCR unavailable on this system. Tried: {'; '.join(errors)}. To fix: {install_hint}]"

@@ -15,6 +15,9 @@ from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 logger = logging.getLogger("pilot.system.processes")
 
 
+PROCESS_LIST_LIMIT = 100
+
+
 async def process_list(filter_name: str | None = None) -> str:
     """List running processes with PID, name, CPU%, memory%."""
     try:
@@ -33,7 +36,13 @@ async def process_list(filter_name: str | None = None) -> str:
                 )
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        return "\n".join(procs[:100]) if procs else "No matching processes found"
+        if not procs:
+            return "No matching processes found"
+        from pilot.system.read_limits import with_cut
+
+        return with_cut(
+            "\n".join(procs[:PROCESS_LIST_LIMIT]), min(len(procs), PROCESS_LIST_LIMIT), len(procs), "processes"
+        )
     except ImportError:
         pass
 
@@ -51,12 +60,13 @@ async def process_list(filter_name: str | None = None) -> str:
     if code != 0:
         raise RuntimeError(f"Process list failed: {err.strip()}")
 
+    from pilot.system.read_limits import with_cut
+
     lines = out.strip().split("\n")
-    if filter_name:
-        header = lines[0] if lines else ""
-        filtered = [l for l in lines[1:] if filter_name.lower() in l.lower()]
-        return header + "\n" + "\n".join(filtered[:100])
-    return "\n".join(lines[:100])
+    header = lines[0] if lines else ""
+    rows = [l for l in lines[1:] if filter_name.lower() in l.lower()] if filter_name else lines[1:]
+    shown = rows[:PROCESS_LIST_LIMIT]
+    return with_cut(header + "\n" + "\n".join(shown), len(shown), len(rows), "processes")
 
 
 async def process_kill(pid: int | None = None, name: str | None = None, sig: str = "SIGTERM") -> str:

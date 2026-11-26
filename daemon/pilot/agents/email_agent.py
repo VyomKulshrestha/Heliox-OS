@@ -266,33 +266,39 @@ class EmailAgent(BaseAgent):
                 return ActionResult(action=action, success=False, error="IMAP SEARCH failed")
 
             uid_list = data[0].split()
+            unseen_total = len(uid_list)
             # Respect the caller's limit, newest first
             uid_list = uid_list[-params.max_emails :][::-1]
 
             emails: list[dict[str, str]] = []
+            unreadable = 0
             for uid in uid_list:
                 fetch_status, msg_data = mail.fetch(uid, "(RFC822)")
                 if fetch_status != "OK" or not msg_data or not msg_data[0]:
+                    unreadable += 1
                     continue
 
                 raw = msg_data[0][1]
                 if not isinstance(raw, bytes):
+                    unreadable += 1
                     continue
 
                 msg = email_lib.message_from_bytes(raw)
                 body = _extract_body(msg)
 
-                emails.append(
-                    {
-                        "uid": uid.decode(),
-                        "message_id": msg.get("Message-ID", ""),
-                        "from": msg.get("From", ""),
-                        "to": msg.get("To", ""),
-                        "subject": msg.get("Subject", "(no subject)"),
-                        "date": msg.get("Date", ""),
-                        "body": body[:_MAX_BODY_CHARS],
-                    }
-                )
+                entry = {
+                    "uid": uid.decode(),
+                    "message_id": msg.get("Message-ID", ""),
+                    "from": msg.get("From", ""),
+                    "to": msg.get("To", ""),
+                    "subject": msg.get("Subject", "(no subject)"),
+                    "date": msg.get("Date", ""),
+                    "body": body[:_MAX_BODY_CHARS],
+                }
+                if len(body) > _MAX_BODY_CHARS:
+                    # Said inside the message, so the next step knows the body is partial.
+                    entry["body_cut"] = f"Only the first {_MAX_BODY_CHARS:,} of {len(body):,} characters are included."
+                emails.append(entry)
 
                 if params.mark_as_read:
                     mail.store(uid, "+FLAGS", "\\Seen")
@@ -303,7 +309,15 @@ class EmailAgent(BaseAgent):
 
         output = json.dumps(emails, ensure_ascii=False, indent=2)
         logger.info("Fetched %d unread email(s) from %s", len(emails), params.mailbox)
-        return ActionResult(action=action, success=True, output=output)
+        notes = []
+        if unseen_total > len(uid_list):
+            notes.append(f"Only the newest {len(uid_list)} of {unseen_total} unread messages were fetched.")
+        if unreadable:
+            notes.append(f"{unreadable} message(s) could not be fetched and are not included.")
+        cut_bodies = sum(1 for entry in emails if "body_cut" in entry)
+        if cut_bodies:
+            notes.append(f"{cut_bodies} message body(ies) were cut at {_MAX_BODY_CHARS:,} characters.")
+        return ActionResult(action=action, success=True, output=output, notice=" ".join(notes) or None)
 
     # ── LLM: summarise emails ─────────────────────────────────────────────────
 

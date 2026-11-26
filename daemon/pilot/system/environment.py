@@ -144,8 +144,12 @@ async def env_list(filter_prefix: str | None = None) -> str:
     for k, v in sorted(os.environ.items()):
         if filter_prefix and not k.upper().startswith(filter_prefix.upper()):
             continue
-        # Truncate long values for readability
-        display_v = v if len(v) <= 200 else v[:200] + "..."
+        # Truncate long values for readability, and say by how much
+        display_v = v if len(v) <= 200 else v[:200] + f"... [Cut: {len(v):,} characters in all]"
         entries.append(f"{k}={display_v}")
 
-    return "\n".join(entries[:100]) if entries else "No matching environment variables"
+    if not entries:
+        return "No matching environment variables"
+    from pilot.system.read_limits import with_cut
+
+    return with_cut("\n".join(entries[:100]), min(len(entries), 100), len(entries), "variables")

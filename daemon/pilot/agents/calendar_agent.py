@@ -26,6 +26,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger("pilot.agents.calendar_agent")
 
 
+class _FixedCalendars:
+    """A principal whose calendar list is already read, so choosing one does not ask the server twice."""
+
+    def __init__(self, calendars: list[Any]) -> None:
+        self._calendars = calendars
+
+    def principal(self) -> _FixedCalendars:
+        return self
+
+    def calendars(self) -> list[Any]:
+        return self._calendars
+
+
 @auto_register
 class CalendarAgent(BaseAgent):
     """Specialist agent for managing calendar events (local .ics and remote CalDAV)."""
@@ -264,6 +277,8 @@ class CalendarAgent(BaseAgent):
             action=action,
             success=True,
             output=json.dumps({"events": parsed_events, "sources": sources, "warnings": warnings}),
+            # The warnings say what was not read; the next step sees them in the JSON, the person in the notice.
+            notice=" ".join(warnings) or None,
         )
 
     async def collect_events(self, calendar_id: str | None = None) -> tuple[list[dict[str, Any]], list[str], list[str]]:
@@ -272,20 +287,30 @@ class CalendarAgent(BaseAgent):
         if self._config.calendar.enabled:
             try:
                 client = await self._get_caldav_client()
-                calendar = self._select_calendar(client, calendar_id)
+                calendars = client.principal().calendars()
+                calendar = self._select_calendar(_FixedCalendars(calendars), calendar_id)
                 calendar_name = str(getattr(calendar, "name", ""))
                 sources.append(f"caldav:{calendar_name}")
+                if not calendar_id and len(calendars) > 1:
+                    warnings.append(
+                        f"CalDAV: only the calendar {calendar_name!r} was read; {len(calendars) - 1} other "
+                        "calendar(s) on the account were not (name one with calendar_id to read it)."
+                    )
+                unreadable = 0
                 for event in calendar.events():
-                    remote_calendar = icalendar.Calendar.from_ical(event.data)
-                    for component in remote_calendar.walk():
-                        if component.name == "VEVENT":
-                            parsed_events.append(
-                                self._event_from_component(
-                                    component,
-                                    source="caldav",
-                                    calendar_id=calendar_name,
-                                )
-                            )
+                    try:
+                        remote_calendar = icalendar.Calendar.from_ical(event.data)
+                        found = [
+                            self._event_from_component(component, source="caldav", calendar_id=calendar_name)
+                            for component in remote_calendar.walk()
+                            if component.name == "VEVENT"
+                        ]
+                    except Exception:
+                        unreadable += 1
+                        continue
+                    parsed_events.extend(found)
+                if unreadable:
+                    warnings.append(f"CalDAV: {unreadable} event(s) could not be read and are not included.")
             except Exception as exc:
                 warning = f"CalDAV: {exc}"
                 warnings.append(warning)

@@ -192,7 +192,7 @@ class _Page:
     async def query_selector(self, _selector: str):
         return None
 
-    async def evaluate(self, _script: str):
+    async def evaluate(self, _script: str, *_args):
         return None
 
     async def screenshot(self, **_kwargs) -> None:

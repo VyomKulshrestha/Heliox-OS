@@ -117,9 +117,11 @@ async def schedule_list() -> str:
         code, out, err = await run_command(["schtasks", "/query", "/fo", "TABLE", "/nh"])
         if code != 0:
             raise RuntimeError(f"Task list failed: {err.strip()}")
-        # Filter to show manageable number of lines
+        # Filter to show manageable number of lines, and say when there are more
+        from pilot.system.read_limits import with_cut
+
         lines = out.strip().split("\n")
-        return "\n".join(lines[:50])
+        return with_cut("\n".join(lines[:50]), min(len(lines), 50), len(lines), "scheduled tasks")
 
     elif CURRENT_PLATFORM == Platform.MACOS:
         code, out, err = await run_command(["launchctl", "list"])
@@ -130,12 +132,19 @@ async def schedule_list() -> str:
         pilot_lines = [l for l in lines if "pilot" in l.lower()]
         if pilot_lines:
             return "Pilot tasks:\n" + "\n".join(pilot_lines)
-        return "User launch agents:\n" + "\n".join(lines[:30])
+        from pilot.system.read_limits import with_cut
+
+        return with_cut(
+            "User launch agents:\n" + "\n".join(lines[:30]), min(len(lines), 30), len(lines), "launch agents"
+        )
 
     else:  # Linux
         code, out, err = await run_command(["crontab", "-l"])
         if code != 0:
-            return "No crontab configured"
+            # "no crontab for <user>" is the answer; anything else (crontab missing, refused) is a failed read.
+            if "no crontab" in (err or "").lower():
+                return "No crontab configured"
+            raise RuntimeError(f"Task list failed: {(err or out).strip() or f'crontab exited with {code}'}")
         return f"Current crontab:\n{out.strip()}"
 
 

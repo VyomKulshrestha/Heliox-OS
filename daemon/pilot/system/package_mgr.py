@@ -291,8 +291,12 @@ async def package_search(name: str) -> str:
 
     if code != 0:
         raise RuntimeError(f"Package search failed: {err.strip()}")
-    lines = out.strip().split("\n")[:20]
-    return "\n".join(lines) if lines[0] else f"No packages found matching '{name}'"
+    lines = [line for line in out.strip().split("\n") if line.strip()]
+    if not lines:
+        return f"No packages found matching '{name}'"
+    from pilot.system.read_limits import with_cut
+
+    return with_cut("\n".join(lines[:20]), min(len(lines), 20), len(lines), "lines of results")
 
 
 async def is_installed(name: str) -> bool:

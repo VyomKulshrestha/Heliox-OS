@@ -11,21 +11,49 @@ import hashlib
 import logging
 import os
 import shutil
+from collections import OrderedDict
 from pathlib import Path
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform
 
 logger = logging.getLogger("pilot.system.filesystem")
 
+FILE_LIST_LIMIT = 500
+FILE_SEARCH_LIMIT = 200
+
+# Size and modification time of each file when file_read or file_hash last read it, so a verifier can tell a file
+# that changed after the read from a read that lost data. Metadata only, never content; the newest 64 are kept.
+_READ_STAMPS: OrderedDict[str, tuple[int, int]] = OrderedDict()
+
+
+def _stamp(p: Path, stat: os.stat_result) -> None:
+    key = os.path.normcase(str(p.resolve()))
+    _READ_STAMPS[key] = (stat.st_size, stat.st_mtime_ns)
+    _READ_STAMPS.move_to_end(key)
+    while len(_READ_STAMPS) > 64:
+        _READ_STAMPS.popitem(last=False)
+
+
+def read_stamp(path: str) -> tuple[int, int] | None:
+    """(size, mtime_ns) of ``path`` when file_read or file_hash last read it, or None."""
+    return _READ_STAMPS.get(os.path.normcase(str(Path(path).resolve())))
+
 
 async def file_read(path: str) -> str:
-    """Read file contents."""
+    """Read file contents (UTF-8, strict, universal newlines). The whole file is returned; there is no size cap."""
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"File not found: {path}")
     if not p.is_file():
         raise ValueError(f"Not a file: {path}")
-    return await asyncio.to_thread(p.read_text, "utf-8")
+
+    def _read() -> str:
+        before = p.stat()
+        text = p.read_text("utf-8")
+        _stamp(p, before)
+        return text
+
+    return await asyncio.to_thread(_read)
 
 
 async def file_write(path: str, content: str) -> str:
@@ -93,7 +121,7 @@ async def file_list(path: str, recursive: bool = False) -> str:
     if not p.is_dir():
         raise ValueError(f"Not a directory: {path}")
 
-    def _list() -> list[str]:
+    def _list() -> tuple[list[str], int]:
         entries = []
         if recursive:
             for item in sorted(p.rglob("*")):
@@ -112,10 +140,14 @@ async def file_list(path: str, recursive: bool = False) -> str:
                     entries.append(f"[{kind}] {item.name}  ({size} bytes)")
                 except PermissionError:
                     entries.append(f"[?] {item.name}  (access denied)")
-        return entries[:500]  # Cap output
+        return entries[:FILE_LIST_LIMIT], len(entries)
 
-    items = await asyncio.to_thread(_list)
-    return "\n".join(items) if items else "(empty directory)"
+    items, total = await asyncio.to_thread(_list)
+    if not items:
+        return "(empty directory)"
+    from pilot.system.read_limits import with_cut
+
+    return with_cut("\n".join(items), len(items), total, "entries")
 
 
 async def file_search(path: str, pattern: str) -> str:
@@ -126,7 +158,7 @@ async def file_search(path: str, pattern: str) -> str:
     if not p.is_dir():
         raise ValueError(f"Not a directory: {path}")
 
-    def _search() -> list[str]:
+    def _search() -> tuple[list[str], int]:
         matches = []
         for item in sorted(p.rglob(pattern)):
             try:
@@ -135,12 +167,14 @@ async def file_search(path: str, pattern: str) -> str:
                 matches.append(f"[{kind}] {item.relative_to(p)}  ({size} bytes)")
             except PermissionError:
                 continue
-        return matches[:200]
+        return matches[:FILE_SEARCH_LIMIT], len(matches)
 
-    items = await asyncio.to_thread(_search)
+    items, total = await asyncio.to_thread(_search)
     if not items:
         return f"No files matching '{pattern}' in {path}"
-    return f"Found {len(items)} matches:\n" + "\n".join(items)
+    from pilot.system.read_limits import with_cut
+
+    return with_cut(f"Found {total} matches:\n" + "\n".join(items), len(items), total, "matches")
 
 
 async def file_hash(path: str, algorithm: str = "sha256") -> str:
@@ -154,10 +188,12 @@ async def file_hash(path: str, algorithm: str = "sha256") -> str:
         raise ValueError(f"Unsupported hash algorithm: {algorithm}")
 
     def _hash() -> str:
+        before = p.stat()
         digest = hashlib.new(algorithm)
         with p.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
+        _stamp(p, before)
         return digest.hexdigest()
 
     digest = await asyncio.to_thread(_hash)
@@ -256,14 +292,18 @@ async def directory_summary(
     depth_limit = max(0, max_depth)
     entry_limit = max(1, max_entries)
 
-    def _summarize() -> list[str]:
+    def _summarize() -> tuple[list[str], list[str]]:
         lines = [f"{p.name or str(p)}/"]
         emitted = 0
         omitted = 0
+        unopened = 0
+        hidden = 0
 
         def walk(directory: Path, depth: int, prefix: str) -> None:
-            nonlocal emitted, omitted
+            nonlocal emitted, omitted, unopened, hidden
             if depth >= depth_limit or emitted >= entry_limit:
+                if _has_children(directory):
+                    unopened += 1
                 return
 
             try:
@@ -276,6 +316,7 @@ async def directory_summary(
                 return
 
             visible = [item for item in children if not (item.is_dir() and item.name in ignored)]
+            hidden += len(children) - len(visible)
             for index, item in enumerate(visible):
                 if emitted >= entry_limit:
                     omitted += len(visible) - index
@@ -298,11 +339,29 @@ async def directory_summary(
                     emitted += 1
 
         walk(p, 0, "")
-        if omitted:
-            lines.append(f"... {omitted} more entr{'y' if omitted == 1 else 'ies'} omitted")
-        return lines
+        notes = []
+        if emitted >= entry_limit and (omitted or unopened):
+            notes.append(
+                f"The listing stopped at {entry_limit} entries: at least {omitted} more entries omitted in the "
+                f"folders shown, and the contents of {unopened} folder(s) are not listed."
+            )
+        elif unopened:
+            notes.append(f"{unopened} folder(s) below depth {depth_limit} are not opened.")
+        if hidden:
+            notes.append(f"{hidden} folder(s) on the ignore list are not shown.")
+        return lines, notes
 
-    return "\n".join(await asyncio.to_thread(_summarize))
+    lines, notes = await asyncio.to_thread(_summarize)
+    from pilot.system.read_limits import with_notes
+
+    return with_notes("\n".join(lines), notes)
+
+
+def _has_children(directory: Path) -> bool:
+    try:
+        return any(True for _ in directory.iterdir())
+    except OSError:
+        return False
 
 
 async def file_permissions(path: str, permissions: str | None = None) -> str:

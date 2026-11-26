@@ -2549,19 +2549,27 @@ class Executor:
     # ======================================================================
 
     async def _exec_screen_ocr(self, action: Action) -> str:
-        from pilot.system.vision import screen_ocr
+        from pilot.system.vision import OCRUnavailableError, screen_ocr
 
         region = None
-        language = "eng"
-        try:
-            p: ScreenVisionParams = action.parameters  # type: ignore[assignment]
-            if p.region:
+        p: ScreenVisionParams = action.parameters  # type: ignore[assignment]
+        if getattr(p, "region", None):
+            # A region that cannot be read must not silently become the whole screen.
+            try:
                 parts = [int(x) for x in str(p.region).split(",")]
-                region = tuple(parts[:4]) if len(parts) >= 4 else None
-            language = p.language or "eng"
-        except Exception as e:
-            logger.warning("screen_ocr: failed to parse params (%s), using defaults", e)
-        return await screen_ocr(region, language)
+            except ValueError:
+                parts = []
+            if len(parts) < 4:
+                raise ValueError(f"screen_ocr region must be x,y,width,height; got {p.region!r}")
+            region = tuple(parts[:4])
+        language = getattr(p, "language", None) or "eng"
+        text = await screen_ocr(region, language)
+        if text.startswith("[OCR unavailable"):
+            # The engines' failure, not text on the screen: fail the action instead of passing it on as data.
+            raise OCRUnavailableError(text.strip("[]"))
+        if not text.strip():
+            return "No text was found on the screen."
+        return text
 
     async def _exec_screen_find_text(self, action: Action) -> str:
         from pilot.system.vision import screen_find_text

@@ -18,6 +18,34 @@ class UnreadableFileError(ValueError):
     """The file exists but none of the readers could turn it into text."""
 
 
+# What a parse shows at most. Every cut is said in the output with ``read_limits.cut_line``.
+PARSE_ROW_LIMIT = 100
+PARSE_TEXT_LINE_LIMIT = 200
+PARSE_CHAR_LIMIT = 5000
+PARSE_LIST_LIMIT = 100
+PARSE_TAG_LIMIT = 20
+
+
+def _cut(shown: int, total: int | None, noun: str) -> str:
+    from pilot.system.read_limits import cut_line
+
+    return cut_line(shown, total, noun)
+
+
+def _decode(data: bytes) -> tuple[str, str]:
+    """UTF-8 text with universal newlines, and a note when bytes had to be replaced (empty when none)."""
+    try:
+        text = data.decode("utf-8")
+        note = ""
+    except UnicodeDecodeError:
+        text = data.decode("utf-8", errors="replace")
+        note = (
+            "[Note: the file is not valid UTF-8; "
+            f"{text.count(chr(0xFFFD))} undecodable byte sequence(s) are shown as \ufffd]\n"
+        )
+    return text.replace("\r\n", "\n").replace("\r", "\n"), note
+
+
 async def parse_file(file_path: str) -> str:
     """Auto-detect file type and extract text/data content."""
     p = Path(file_path)
@@ -106,11 +134,14 @@ async def _parse_pdf(path: str) -> str:
         def _do():
             reader = PdfReader(path)
             pages = []
+            empty: list[int] = []
             for i, page in enumerate(reader.pages):
                 text = page.extract_text() or ""
                 if text.strip():
                     pages.append(f"--- Page {i + 1} ---\n{text}")
-            return f"Pages: {len(reader.pages)}\n\n" + "\n\n".join(pages)
+                else:
+                    empty.append(i + 1)
+            return _pdf_text(len(reader.pages), pages, empty)
 
         return await asyncio.to_thread(_do)
     except ImportError:
@@ -123,15 +154,28 @@ async def _parse_pdf(path: str) -> str:
         def _do():
             with pdfplumber.open(path) as pdf:
                 pages = []
+                empty: list[int] = []
                 for i, page in enumerate(pdf.pages):
                     text = page.extract_text() or ""
                     if text.strip():
                         pages.append(f"--- Page {i + 1} ---\n{text}")
-                return f"Pages: {len(pdf.pages)}\n\n" + "\n\n".join(pages)
+                    else:
+                        empty.append(i + 1)
+                return _pdf_text(len(pdf.pages), pages, empty)
 
         return await asyncio.to_thread(_do)
     except ImportError:
         raise ImportError("pypdf or pdfplumber (pip install pypdf pdfplumber)")
+
+
+def _pdf_text(count: int, pages: list[str], empty: list[int]) -> str:
+    """'Pages: N', the pages with text, and the pages without (scans or images), so no page goes missing unsaid."""
+    head = f"Pages: {count}\n"
+    if empty:
+        listed = ", ".join(str(n) for n in empty[:PARSE_LIST_LIMIT])
+        more = f" and {len(empty) - PARSE_LIST_LIMIT} more" if len(empty) > PARSE_LIST_LIMIT else ""
+        head += f"Pages without extractable text: {listed}{more}\n"
+    return head + "\n" + "\n\n".join(pages)
 
 
 async def _parse_docx(path: str) -> str:
@@ -167,11 +211,21 @@ async def _parse_excel(path: str) -> str:
             output = []
             for sheet_name in wb.sheetnames:
                 ws = wb[sheet_name]
+                # A stored dimension that is wrong (some writers save "A1") would make a read-only sheet stop early.
+                if hasattr(ws, "reset_dimensions"):
+                    ws.reset_dimensions()
                 rows = []
-                for row in ws.iter_rows(max_row=100, values_only=True):
-                    cells = [str(c) if c is not None else "" for c in row]
-                    rows.append(" | ".join(cells))
-                output.append(f"--- Sheet: {sheet_name} ---\n" + "\n".join(rows))
+                total = 0
+                for row in ws.iter_rows(values_only=True):
+                    total += 1
+                    if total <= PARSE_ROW_LIMIT:
+                        cells = [str(c) if c is not None else "" for c in row]
+                        rows.append(" | ".join(cells))
+                block = f"--- Sheet: {sheet_name} ({total} rows) ---\n" + "\n".join(rows)
+                if total > PARSE_ROW_LIMIT:
+                    block += "\n" + _cut(PARSE_ROW_LIMIT, total, f"rows of sheet {sheet_name}")
+                output.append(block)
+            wb.close()
             return "\n\n".join(output)
 
         return await asyncio.to_thread(_do)
@@ -184,15 +238,19 @@ async def _parse_csv(path: str) -> str:
     import csv
 
     def _do():
-        with open(path, encoding="utf-8", errors="replace") as f:
-            reader = csv.reader(f)
-            rows = []
-            for i, row in enumerate(reader):
-                if i >= 100:
-                    rows.append(f"... ({i}+ rows total)")
-                    break
+        import io
+
+        text, note = _decode(Path(path).read_bytes())
+        rows = []
+        total = 0
+        for row in csv.reader(io.StringIO(text, newline="")):
+            total += 1
+            if total <= PARSE_ROW_LIMIT:
                 rows.append(" | ".join(row))
-            return "\n".join(rows)
+        body = f"{note}Rows: {total}\n" + "\n".join(rows)
+        if total > PARSE_ROW_LIMIT:
+            body += "\n" + _cut(PARSE_ROW_LIMIT, total, "rows")
+        return body
 
     return await asyncio.to_thread(_do)
 
@@ -202,8 +260,8 @@ async def _parse_json(path: str) -> str:
     text = Path(path).read_text("utf-8")
     data = json.loads(text)
     formatted = json.dumps(data, indent=2, ensure_ascii=False)
-    if len(formatted) > 5000:
-        formatted = formatted[:5000] + f"\n... ({len(text):,} chars total)"
+    if len(formatted) > PARSE_CHAR_LIMIT:
+        formatted = formatted[:PARSE_CHAR_LIMIT] + "\n" + _cut(PARSE_CHAR_LIMIT, len(formatted), "characters")
     return formatted
 
 
@@ -212,27 +270,30 @@ async def _parse_xml(path: str) -> str:
     try:
         from bs4 import BeautifulSoup
 
-        text = Path(path).read_text("utf-8", errors="replace")
-        soup = BeautifulSoup(text, "html.parser")
-        return soup.get_text(separator="\n", strip=True)[:5000]
+        text, note = _decode(Path(path).read_bytes())
+        clean = BeautifulSoup(text, "html.parser").get_text(separator="\n", strip=True)
     except ImportError:
         # Basic fallback
         import re
 
-        text = Path(path).read_text("utf-8", errors="replace")
+        text, note = _decode(Path(path).read_bytes())
         clean = re.sub(r"<[^>]+>", "", text)
-        return clean[:5000]
+    if len(clean) > PARSE_CHAR_LIMIT:
+        return note + clean[:PARSE_CHAR_LIMIT] + "\n" + _cut(PARSE_CHAR_LIMIT, len(clean), "characters of text")
+    return note + clean
 
 
 async def _parse_text(path: str) -> str:
     """Read plain text files."""
-    text = Path(path).read_text("utf-8", errors="replace")
+    text, note = _decode(Path(path).read_bytes())
     lines = text.split("\n")
     line_count = len(lines)
-    if line_count > 200:
-        preview = "\n".join(lines[:200])
-        return f"({line_count} lines total, showing first 200)\n\n{preview}"
-    return text
+    if line_count > PARSE_TEXT_LINE_LIMIT:
+        preview = "\n".join(lines[:PARSE_TEXT_LINE_LIMIT])
+        return f"{note}({line_count} lines total, showing first {PARSE_TEXT_LINE_LIMIT})\n\n{preview}\n" + _cut(
+            PARSE_TEXT_LINE_LIMIT, line_count, "lines"
+        )
+    return note + text
 
 
 async def _parse_image(path: str) -> str:
@@ -253,9 +314,11 @@ async def _parse_image(path: str) -> str:
             # EXIF data
             exif_data = img.getexif()
             if exif_data:
-                for tag_id, value in list(exif_data.items())[:20]:
+                for tag_id, value in list(exif_data.items())[:PARSE_TAG_LIMIT]:
                     tag = TAGS.get(tag_id, tag_id)
                     parts.append(f"  {tag}: {value}")
+                if len(exif_data) > PARSE_TAG_LIMIT:
+                    parts.append(_cut(PARSE_TAG_LIMIT, len(exif_data), "EXIF tags"))
             return "\n".join(parts)
 
         info_parts.append(await asyncio.to_thread(_do))
@@ -279,8 +342,11 @@ async def _parse_audio_meta(path: str) -> str:
                 parts.append(f"Bitrate: {audio.info.bitrate // 1000}kbps")
             if hasattr(audio.info, "sample_rate"):
                 parts.append(f"Sample Rate: {audio.info.sample_rate}Hz")
-            for key, value in list(audio.items())[:20]:
+            tags = list(audio.items())
+            for key, value in tags[:PARSE_TAG_LIMIT]:
                 parts.append(f"  {key}: {value}")
+            if len(tags) > PARSE_TAG_LIMIT:
+                parts.append(_cut(PARSE_TAG_LIMIT, len(tags), "tags"))
             return "\n".join(parts)
 
         return await asyncio.to_thread(_do)
@@ -335,7 +401,9 @@ async def _parse_archive(path: str) -> str:
         with zipfile.ZipFile(path, "r") as zf:
             items = zf.namelist()
             total = sum(i.file_size for i in zf.infolist())
-            listing = "\n".join(items[:100])
+            listing = "\n".join(items[:PARSE_LIST_LIMIT])
+            if len(items) > PARSE_LIST_LIMIT:
+                listing += "\n" + _cut(PARSE_LIST_LIMIT, len(items), "entries")
             return f"ZIP: {len(items)} files, {total:,} bytes uncompressed\n\n{listing}"
 
     elif ext in (".tar", ".gz"):
@@ -343,10 +411,15 @@ async def _parse_archive(path: str) -> str:
 
         with tarfile.open(path, "r:*") as tf:
             members = tf.getmembers()
-            listing = "\n".join(m.name for m in members[:100])
+            listing = "\n".join(m.name for m in members[:PARSE_LIST_LIMIT])
+            if len(members) > PARSE_LIST_LIMIT:
+                listing += "\n" + _cut(PARSE_LIST_LIMIT, len(members), "entries")
             return f"TAR: {len(members)} entries\n\n{listing}"
 
     return f"Archive: {Path(path).stat().st_size:,} bytes"
+
+
+SEARCH_MAX_FILE_BYTES = 10_000_000
 
 
 async def search_file_contents(
@@ -364,12 +437,20 @@ async def search_file_contents(
     if not p.exists():
         raise FileNotFoundError(f"Directory not found: {directory}")
 
+    skipped = {"large": 0, "unreadable": 0}
+    stopped = False
+
     def _do():
+        nonlocal stopped
         count = 0
         for f in p.rglob(pattern):
             if count >= max_results:
+                stopped = True
                 break
-            if not f.is_file() or f.stat().st_size > 10_000_000:  # Skip >10MB
+            if not f.is_file():
+                continue
+            if f.stat().st_size > SEARCH_MAX_FILE_BYTES:
+                skipped["large"] += 1
                 continue
             try:
                 for i, line in enumerate(f.open("r", encoding="utf-8", errors="replace"), 1):
@@ -383,12 +464,23 @@ async def search_file_contents(
                         )
                         count += 1
                         if count >= max_results:
+                            stopped = True
                             break
             except Exception:
+                skipped["unreadable"] += 1
                 continue
         return results
 
+    from pilot.system.read_limits import with_notes
+
     results = await asyncio.to_thread(_do)
+    notes = []
+    if stopped:
+        notes.append(f"The search stopped at {max_results} matches; there may be more.")
+    if skipped["large"]:
+        notes.append(f"{skipped['large']} file(s) over 10 MB were not searched.")
+    if skipped["unreadable"]:
+        notes.append(f"{skipped['unreadable']} file(s) could not be read and were not searched.")
     if not results:
-        return f"No matches for '{search_text}' in {directory} ({pattern})"
-    return json.dumps({"matches": results, "count": len(results)}, indent=2)
+        return with_notes(f"No matches for '{search_text}' in {directory} ({pattern})", notes)
+    return with_notes(json.dumps({"matches": results, "count": len(results)}, indent=2), notes)
