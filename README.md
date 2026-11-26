@@ -400,6 +400,18 @@ learn_across_sessions = false
 ambiguity_threshold = 0.25   # may only be made stricter; never learned
 ```
 
+Mail, GitHub and chat actions read their settings from the daemon's environment:
+
+| Variable | Used by |
+| --- | --- |
+| `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | `api_send_email` |
+| `GITHUB_TOKEN` | `api_github` |
+| `SLACK_WEBHOOK_URL` | `api_slack` (an incoming webhook) |
+| `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID` | optional: read a sent Slack message back from the channel to confirm it arrived. The token needs `channels:history` (or `groups:history` for a private channel) and the app must be in the channel the webhook posts to. Without them a Slack send is reported, not verified |
+| `DISCORD_WEBHOOK_URL` | `api_discord` |
+
+A webhook address is itself a password: anyone who has it can post. Wherever Heliox shows or keeps a plan (the approval, the audit log, receipts, task history, a saved plan, its logs) the address appears masked as the host and its last four characters, and so does any address with a user, a password or a token in it.
+
 OpenRouter uses its OpenAI-compatible endpoint. Settings and first-run setup offer automatic routing, DeepSeek V4 Pro, the latest DeepSeek V4 Flash alias, and other current aliases; an exact OpenRouter catalog model ID can also be entered manually. Provider keys remain in the operating-system credential store.
 
 ### Use an existing Codex or Claude subscription
