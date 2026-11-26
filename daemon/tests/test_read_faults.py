@@ -243,3 +243,54 @@ async def test_calendar_fetch_says_an_invite_cut_in_the_body_and_fails_on_text_t
     bad = CalendarParams(emails_json="not json")
     failed = await agent._fetch_calendar_events(Action(action_type=ActionType.CALENDAR_FETCH, parameters=bad), bad)
     assert failed.success is False and "Invalid emails_json" in (failed.error or "")
+
+
+# ── system information without psutil ───────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("probe", ["memory_usage", "cpu_usage", "disk_usage", "network_info", "battery_info"])
+async def test_a_failed_fallback_command_fails_the_read(monkeypatch: pytest.MonkeyPatch, probe: str) -> None:
+    import sys
+    from unittest.mock import AsyncMock
+
+    from pilot.system import sysinfo
+    from pilot.system.platform_detect import Platform
+
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    monkeypatch.setattr(sysinfo, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(sysinfo, "run_command", AsyncMock(return_value=(-1, "", "Command not found: lscpu")))
+
+    with pytest.raises(sysinfo.SystemReadError, match="without psutil: Command not found"):
+        await getattr(sysinfo, probe)()
+
+    monkeypatch.setattr(sysinfo, "run_command", AsyncMock(return_value=(0, "  ", "")))
+    with pytest.raises(sysinfo.SystemReadError, match="answered nothing"):
+        await getattr(sysinfo, probe)()
+
+    monkeypatch.setattr(sysinfo, "run_command", AsyncMock(return_value=(0, "a reading", "")))
+    assert (await getattr(sysinfo, probe)()).endswith("a reading")
+
+
+@pytest.mark.asyncio
+async def test_system_info_says_which_sections_it_could_not_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    from unittest.mock import AsyncMock
+
+    from pilot.system import sysinfo
+    from pilot.system.platform_detect import Platform
+
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    monkeypatch.setattr(sysinfo, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(sysinfo, "run_powershell", AsyncMock(return_value=(1, "", "Access is denied.")))
+
+    with pytest.raises(sysinfo.SystemReadError, match="Access is denied"):
+        await sysinfo.system_info(["memory", "disk"])  # every section failed: no answer at all
+
+    async def memory_only(script: str):
+        return (0, "Total: 16 GB", "") if "Win32_OperatingSystem" in script else (1, "", "Access is denied.")
+
+    monkeypatch.setattr(sysinfo, "run_powershell", memory_only)
+    text = await sysinfo.system_info(["memory", "disk"])
+    assert "Total: 16 GB" in text and "=== Disk ===\n  Not read:" in text
+    assert text.notice == "Not read: disk (the system command failed)."

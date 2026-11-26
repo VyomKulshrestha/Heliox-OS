@@ -74,11 +74,41 @@ async def system_info(categories: list[str] | None = None) -> str:
     }
     requested = [(name, probe()) for name, probe in probes.items() if name in categories]
     if requested:
-        results = await asyncio.gather(*(coroutine for _, coroutine in requested))
-        section_values.update({name: result for (name, _), result in zip(requested, results, strict=True)})
+        results = await asyncio.gather(*(coroutine for _, coroutine in requested), return_exceptions=True)
+        failures = [result for result in results if isinstance(result, BaseException)]
+        for result in failures:
+            if not isinstance(result, SystemReadError):
+                raise result
+        if failures and len(failures) == len(results) and "os" not in section_values:
+            raise SystemReadError("; ".join(str(failure) for failure in failures))
+        for (name, _), result in zip(requested, results, strict=True):
+            # One section that could not be read is said as such; the others are still answered.
+            section_values[name] = (
+                f"=== {name.capitalize()} ===\n  Not read: {result}" if isinstance(result, BaseException) else result
+            )
 
     display_order = ("time", "os", "cpu", "memory", "disk", "network", "battery")
-    return "\n\n".join(section_values[name] for name in display_order if name in section_values)
+    text = "\n\n".join(section_values[name] for name in display_order if name in section_values)
+    unread = [name for name, value in section_values.items() if "\n  Not read: " in value]
+    if unread:
+        from pilot.actions import OutputWithNotice
+
+        return OutputWithNotice(text, f"Not read: {', '.join(unread)} (the system command failed).")
+    return text
+
+
+class SystemReadError(RuntimeError):
+    """A system command used without psutil failed or answered nothing, so there is no reading to give."""
+
+
+def _fallback_section(section: str, code: int, out: str, err: str) -> str:
+    """The section from a fallback command's output; a failed or empty answer is an error, never a reading."""
+    if code != 0 or not out.strip():
+        reason = (err or "").strip().splitlines()[0][:200] if (err or "").strip() else f"exit code {code}"
+        if code == 0:
+            reason = "the command answered nothing"
+        raise SystemReadError(f"Could not read {section.lower()} information without psutil: {reason}")
+    return f"=== {section} ===\n{out.strip()}"
 
 
 async def _time_info() -> str:
@@ -121,14 +151,14 @@ async def _cpu_info(sample_interval: float | None = SYSTEM_INFO_CPU_SAMPLE_SECON
         pass
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, _ = await run_powershell(
+        code, out, err = await run_powershell(
             "Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, "
             "NumberOfLogicalProcessors, CurrentClockSpeed, LoadPercentage | Format-List"
         )
-        return f"=== CPU ===\n{out.strip()}"
+        return _fallback_section("CPU", code, out, err)
     else:
-        code, out, _ = await run_command(["lscpu"])
-        return f"=== CPU ===\n{out.strip()}"
+        code, out, err = await run_command(["lscpu"])
+        return _fallback_section("CPU", code, out, err)
 
 
 async def _memory_info() -> str:
@@ -149,17 +179,17 @@ async def _memory_info() -> str:
         pass
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, _ = await run_powershell(
+        code, out, err = await run_powershell(
             "$os = Get-CimInstance Win32_OperatingSystem; "
             "$total = [math]::Round($os.TotalVisibleMemorySize/1MB, 1); "
             "$free = [math]::Round($os.FreePhysicalMemory/1MB, 1); "
             "$used = $total - $free; "
             '"Total: ${total} GB`nUsed: ${used} GB`nFree: ${free} GB"'
         )
-        return f"=== Memory ===\n{out.strip()}"
+        return _fallback_section("Memory", code, out, err)
     else:
-        code, out, _ = await run_command(["free", "-h"])
-        return f"=== Memory ===\n{out.strip()}"
+        code, out, err = await run_command(["free", "-h"])
+        return _fallback_section("Memory", code, out, err)
 
 
 async def memory_usage() -> str:
@@ -191,15 +221,15 @@ async def _disk_info() -> str:
         pass
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, _ = await run_powershell(
+        code, out, err = await run_powershell(
             "Get-PSDrive -PSProvider FileSystem | "
             "Select-Object Name, @{N='Used(GB)';E={[math]::Round($_.Used/1GB,1)}}, "
             "@{N='Free(GB)';E={[math]::Round($_.Free/1GB,1)}} | Format-Table"
         )
-        return f"=== Disk ===\n{out.strip()}"
+        return _fallback_section("Disk", code, out, err)
     else:
-        code, out, _ = await run_command(["df", "-h"])
-        return f"=== Disk ===\n{out.strip()}"
+        code, out, err = await run_command(["df", "-h"])
+        return _fallback_section("Disk", code, out, err)
 
 
 async def disk_usage() -> str:
@@ -227,11 +257,11 @@ async def _network_info() -> str:
         pass
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, _ = await run_powershell("Get-NetIPAddress | Format-Table -AutoSize")
-        return f"=== Network ===\n{out.strip()}"
+        code, out, err = await run_powershell("Get-NetIPAddress | Format-Table -AutoSize")
+        return _fallback_section("Network", code, out, err)
     else:
-        code, out, _ = await run_command(["ip", "addr"])
-        return f"=== Network ===\n{out.strip()}"
+        code, out, err = await run_command(["ip", "addr"])
+        return _fallback_section("Network", code, out, err)
 
 
 async def network_info() -> str:
@@ -253,15 +283,15 @@ async def _battery_info() -> str:
         pass
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, _ = await run_powershell(
+        code, out, err = await run_powershell(
             "$b = Get-CimInstance Win32_Battery; "
             'if ($b) { "Charge: $($b.EstimatedChargeRemaining)%`n'
             "Status: $($b.BatteryStatus)\" } else { 'No battery detected' }"
         )
-        return f"=== Battery ===\n{out.strip()}"
+        return _fallback_section("Battery", code, out, err)
     else:
-        code, out, _ = await run_command(["upower", "-i", "/org/freedesktop/UPower/devices/battery_BAT0"])
-        return f"=== Battery ===\n{out.strip()}"
+        code, out, err = await run_command(["upower", "-i", "/org/freedesktop/UPower/devices/battery_BAT0"])
+        return _fallback_section("Battery", code, out, err)
 
 
 async def battery_info() -> str:
