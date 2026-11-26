@@ -419,3 +419,21 @@ async def test_macos_plist_written_by_create_is_valid_for_shell_characters(
     await scheduler.schedule_create("controlled-task", "a && b < c", "")
 
     assert plistlib.loads(target.read_bytes())["ProgramArguments"] == ["/bin/bash", "-c", "a && b < c"]
+
+
+@pytest.mark.asyncio
+async def test_linux_delete_keeps_the_task_whose_name_only_starts_the_same(monkeypatch: pytest.MonkeyPatch) -> None:
+    installed: list[str] = []
+
+    async def run(args, **_kwargs):
+        if args == ["crontab", "-l"]:
+            return 0, "0 9 * * * a # pilot-task:backup\n0 9 * * * b # pilot-task:backup-old\n", ""
+        installed.append(Path(args[1]).read_text(encoding="utf-8"))
+        return 0, "", ""
+
+    monkeypatch.setattr(scheduler, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(scheduler, "run_command", run)
+
+    await scheduler.schedule_delete("backup")
+
+    assert installed == ["0 9 * * * b # pilot-task:backup-old\n"]

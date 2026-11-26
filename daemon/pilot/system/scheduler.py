@@ -298,12 +298,11 @@ async def schedule_delete(name: str = "", task_id: str | None = None) -> str:
         return f"Deleted scheduled task: {target}"
 
     else:  # Linux
-        marker = f"# pilot-task:{target}"
         code, existing, _ = await run_command(["crontab", "-l"])
         if code != 0:
             return "No crontab configured"
 
-        lines = [l for l in existing.strip().split("\n") if marker not in l]
+        lines = [l for l in existing.strip().split("\n") if _crontab_entry(l, target) is None]
         new_crontab = "\n".join(lines) + "\n"
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".cron", delete=False) as f:
