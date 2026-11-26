@@ -103,13 +103,16 @@ def test_readme_verifier_counts_come_from_the_committed_catalog() -> None:
 
     assert (
         module.readme_with_verifier_counts(
-            readme, summary["independent_postcondition_verifiers"], summary["action_types"]
+            readme,
+            summary["independent_postcondition_verifiers"],
+            summary["effect_actions"],
+            summary["read_only_actions"],
         )
         == readme
     )
 
 
-def test_readme_verifier_row_is_rewritten_in_place_keeping_cell_widths() -> None:
+def test_readme_verifier_row_is_rewritten_with_two_numbers() -> None:
     module = _generator_module()
     row = (
         "| Outcome verification | 22 actions have an independent observed post-condition verifier      "
@@ -117,10 +120,41 @@ def test_readme_verifier_row_is_rewritten_in_place_keeping_cell_widths() -> None
     )
     text = f"intro\n{row}\nend\n"
 
-    updated = module.readme_with_verifier_counts(text, 31, 162)
+    updated = module.readme_with_verifier_counts(text, 31, 106, 56)
     new_row = updated.split("\n")[1]
 
-    assert "| 31 actions have an independent" in new_row
-    assert "| The other 131 currently rely" in new_row
-    assert [len(cell) for cell in new_row.split("|")] == [len(cell) for cell in row.split("|")]
+    assert "| 31 of 106 actions that change something have an independent post-condition check; " in new_row
+    assert "56 read-only actions need none" in new_row
+    assert "| The other 75 rely on the executor result; a read that fails now fails its action" in new_row
     assert updated.startswith("intro\n") and updated.endswith("\nend\n")
+    assert module.readme_with_verifier_counts(updated, 31, 106, 56) == updated
+
+
+def test_read_only_actions_are_a_category_of_their_own(tmp_path: Path) -> None:
+    from pilot.agents.postconditions._read_only import READ_ONLY_WITHOUT_POSTCONDITION
+
+    repo_root = Path(__file__).resolve().parents[2]
+    output = tmp_path / "capabilities.json"
+    # In a separate process, as the other generator tests do: building the catalog registers every agent.
+    subprocess.run(
+        [sys.executable, str(repo_root / "scripts" / "generate_capability_catalog.py"), "--output", str(output)],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    catalog = json.loads(output.read_text(encoding="utf-8"))
+    entries = {entry["id"]: entry["verification"] for entry in catalog["actions"]}
+    summary = catalog["summary"]
+
+    assert not set(READ_ONLY_WITHOUT_POSTCONDITION) & set(POSTCONDITION_VERIFIERS)
+    assert summary["read_only_actions"] == len(READ_ONLY_WITHOUT_POSTCONDITION)
+    assert summary["effect_actions"] + summary["read_only_actions"] == summary["action_types"]
+    for action, reason in READ_ONLY_WITHOUT_POSTCONDITION.items():
+        assert entries[action.value]["method"] == "read_only"
+        assert entries[action.value]["independent_postcondition"] is False
+        assert entries[action.value]["reason"] == reason and reason.endswith(".")
+    # The six reads that can lose data on the way get real checks, so they are not marked read-only.
+    for action in ("file_read", "file_parse", "file_hash", "browser_extract", "browser_extract_table"):
+        assert entries[action]["method"] != "read_only"
+    assert entries["browser_screenshot"]["method"] != "read_only"

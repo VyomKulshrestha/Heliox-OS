@@ -99,7 +99,9 @@ def build_proof() -> str:
     summary = capabilities["summary"]
     action_total = summary["action_types"]
     independent_total = summary["independent_postcondition_verifiers"]
-    executor_only = action_total - independent_total
+    read_only_total = summary.get("read_only_actions", 0)
+    effect_total = summary.get("effect_actions", action_total)
+    executor_only = effect_total - independent_total
     before = legacy_latency["before"]
     after = legacy_latency["after"]
     mean_reduction = _percent_reduction(before["mean_ms"], after["mean_ms"])
@@ -153,8 +155,9 @@ Product version: **{capabilities["product"]["version"]}**
 - **{action_total}** declared action types are generated from `daemon/pilot/actions.py`.
 - **{summary["mesh"]["specialists"]}** executable specialists register providers for all **{summary["mesh"]["registered_action_types"]}** action types.
 - Mesh coverage is **{"complete" if summary["mesh"]["coverage_complete"] else "incomplete"}**; uncovered action types: **{len(summary["mesh"]["uncovered_action_types"])}**.
-- **{independent_total}** action types have a separate observed post-condition verifier.
-- **{executor_only}** action types currently rely on the executor result without an independent post-condition check.
+- **{independent_total}** of the **{effect_total}** action types that change something have a separate observed post-condition verifier.
+- **{executor_only}** action types that change something currently rely on the executor result without an independent post-condition check.
+- **{read_only_total}** read-only action types need none: they change nothing, so what they return is their result (`verification.method = "read_only"`, with a reason for each). A read that fails now fails its action instead of returning an error message as data, so a failed read cannot pass as an answer.
 - **{summary["plugins"]}** plugin manifests are represented in the generated catalog.
 
 Source: [machine-readable capability catalog]({REPOSITORY_URL}/blob/main/capabilities.json). Platform declarations describe product targets; host tools, credentials, permissions, hardware, and integrations still determine runtime availability.
@@ -280,7 +283,7 @@ Neural details and the recorded EEGBCI snapshot are documented in [Neural Intent
 
 ## Known limitations
 
-1. Only {independent_total} of {action_total} actions currently have an independent post-condition verifier; inspect `verification.independent_postcondition` in the capability catalog.
+1. Only {independent_total} of the {effect_total} actions that change something currently have an independent post-condition verifier; inspect `verification.independent_postcondition` in the capability catalog. A read returns what its source said: a source that is wrong, or changes right after, still feeds that answer to the next step.
 2. CI validates software contracts but cannot establish camera, microphone, speaker, accessibility-permission, EEG, or human-factors accuracy.
 3. Browser pages, third-party APIs, cloud models, and external applications can change independently of Heliox.
 4. Local-first operation does not mean every configured path is offline. Cloud model and integration tasks send necessary context to the selected provider.

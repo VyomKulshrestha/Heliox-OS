@@ -10,7 +10,6 @@ import argparse
 import asyncio
 import hashlib
 import json
-import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -26,6 +25,7 @@ from pilot.actions import Action, ActionType, PermissionTier  # noqa: E402
 from pilot.agents.agent_mesh import AgentMesh  # noqa: E402
 from pilot.agents.orchestrator import AgentOrchestrator  # noqa: E402
 from pilot.agents.registry import AgentRegistry  # noqa: E402
+from pilot.agents.postconditions._read_only import READ_ONLY_WITHOUT_POSTCONDITION  # noqa: E402
 from pilot.agents.verifier import POSTCONDITION_VERIFIERS  # noqa: E402
 
 ALL_PLATFORMS = ("windows", "macos", "linux")
@@ -174,6 +174,31 @@ def _plugin_catalog() -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     return plugins, sources
 
 
+def _verification(action_type: ActionType, verifier: str | None) -> dict[str, Any]:
+    if verifier is None and action_type in READ_ONLY_WITHOUT_POSTCONDITION:
+        return {
+            "method": "read_only",
+            "independent_postcondition": False,
+            "reason": READ_ONLY_WITHOUT_POSTCONDITION[action_type],
+            "note": (
+                "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails "
+                "fails its action instead of returning an error message as data."
+            ),
+        }
+    return {
+        "method": verifier or "executor_result_only",
+        "independent_postcondition": verifier is not None,
+        "note": (
+            "Verifier checks this post-condition only when the live state is unambiguous; "
+            "other outcomes remain executor-reported."
+            if verifier and verifier.startswith("conditional_")
+            else "Verifier checks an observed post-condition."
+            if verifier
+            else "No independent post-condition check is currently registered."
+        ),
+    }
+
+
 async def build_catalog() -> dict[str, Any]:
     providers, mesh_summary = await _provider_map()
     plugins, plugin_sources = _plugin_catalog()
@@ -185,6 +210,14 @@ async def build_catalog() -> dict[str, Any]:
     tier_counts: dict[str, int] = defaultdict(int)
     family_counts: dict[str, int] = defaultdict(int)
     independently_verified = 0
+    both = sorted(
+        action.value
+        for action in set(READ_ONLY_WITHOUT_POSTCONDITION) & set(POSTCONDITION_VERIFIERS)
+    )
+    if both:
+        raise ValueError(
+            f"Listed as read-only without a check but also verified: {', '.join(both)}"
+        )
     for action_type in ActionType:
         action = Action(action_type=action_type, parameters={})
         platforms, platform_basis = _platforms(action_type)
@@ -214,18 +247,7 @@ async def build_catalog() -> dict[str, Any]:
                     ),
                 },
                 "providers": providers.get(action_type.value, []),
-                "verification": {
-                    "method": verifier or "executor_result_only",
-                    "independent_postcondition": independent,
-                    "note": (
-                        "Verifier checks this post-condition only when the live state is unambiguous; "
-                        "other outcomes remain executor-reported."
-                        if verifier and verifier.startswith("conditional_")
-                        else "Verifier checks an observed post-condition."
-                        if independent
-                        else "No independent post-condition check is currently registered."
-                    ),
-                },
+                "verification": _verification(action_type, verifier),
             }
         )
 
@@ -271,6 +293,8 @@ async def build_catalog() -> dict[str, Any]:
             "families": dict(sorted(family_counts.items())),
             "permission_tiers": dict(sorted(tier_counts.items())),
             "independent_postcondition_verifiers": independently_verified,
+            "read_only_actions": len(READ_ONLY_WITHOUT_POSTCONDITION),
+            "effect_actions": len(actions) - len(READ_ONLY_WITHOUT_POSTCONDITION),
             "plugins": len(plugins),
             "mesh": mesh_summary,
         },
@@ -285,8 +309,8 @@ async def build_catalog() -> dict[str, Any]:
 README_VERIFICATION_ROW = "| Outcome verification |"
 
 
-def readme_with_verifier_counts(text: str, verified: int, total: int) -> str:
-    """Rewrite the README's outcome-verification row from the catalog, keeping each cell's width."""
+def readme_with_verifier_counts(text: str, verified: int, effects: int, read_only: int) -> str:
+    """Rewrite the README's outcome-verification row from the catalog, keeping each cell's width where it fits."""
 
     lines = text.split("\n")
     rows = [index for index, line in enumerate(lines) if line.startswith(README_VERIFICATION_ROW)]
@@ -297,17 +321,18 @@ def readme_with_verifier_counts(text: str, verified: int, total: int) -> str:
     cells = lines[rows[0]].split("|")
     if len(cells) != 5:
         raise ValueError("README outcome-verification row must have three cells")
-    replacements = (
-        (2, r"^\d+ actions have", f"{verified} actions have"),
-        (3, r"^The other \d+ ", f"The other {total - verified} "),
-    )
-    for index, pattern, value in replacements:
+    contents = {
+        2: (
+            f"{verified} of {effects} actions that change something have an independent post-condition check; "
+            f"{read_only} read-only actions need none"
+        ),
+        3: (
+            f"The other {effects - verified} rely on the executor result; a read that fails now fails its action "
+            "instead of returning an error message as data"
+        ),
+    }
+    for index, content in contents.items():
         width = len(cells[index]) - 2
-        content, count = re.subn(pattern, value, cells[index].strip())
-        if count != 1:
-            raise ValueError(
-                f"README outcome-verification cell {index - 1} no longer reads as expected"
-            )
         cells[index] = f" {content.ljust(width)} "
     lines[rows[0]] = "|".join(cells)
     return "\n".join(lines)
@@ -346,7 +371,10 @@ def main() -> int:
         original = readme.read_bytes().decode("utf-8")
         summary = catalog["summary"]
         updated = readme_with_verifier_counts(
-            original, summary["independent_postcondition_verifiers"], summary["action_types"]
+            original,
+            summary["independent_postcondition_verifiers"],
+            summary["effect_actions"],
+            summary["read_only_actions"],
         )
         if updated != original:
             readme.write_bytes(updated.encode("utf-8"))

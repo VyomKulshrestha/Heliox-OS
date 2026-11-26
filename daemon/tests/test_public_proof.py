@@ -73,7 +73,8 @@ def test_current_source_documentation_matches_runtime_contracts() -> None:
     ipc = (repo_root / "IPC_MESSAGE_FORMATS.md").read_text(encoding="utf-8")
 
     assert f"{action_count} declared action types" in readme
-    assert f"The other {action_count - independent_count}" in readme
+    effect_count = capabilities["summary"].get("effect_actions", action_count)
+    assert f"The other {effect_count - independent_count}" in readme
     assert f"{action_count}-action system interface" in daemon_readme
     assert "system_health_review" in architecture
     assert "OpenRouter" in architecture
