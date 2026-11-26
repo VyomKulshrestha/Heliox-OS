@@ -501,3 +501,58 @@ async def test_resolve_verifies_and_a_restored_block_is_a_mismatch(tmp_path: Pat
     _assert_mismatch(await _verify(result), "still holds the conflict block")
     path.write_text("a = 0\nb = 3\n", encoding="utf-8")
     _assert_mismatch(await _verify(result), "does not hold the resolved code")
+
+
+# ── Messages and cleanup modes ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_commit_under_cleanup_strip_with_a_comment_line_verifies(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _git(repo, "config", "commit.cleanup", "strip")
+    _commit_file(repo, "a.txt", "one", "start")
+    (repo / "a.txt").write_text("two", encoding="utf-8")
+
+    result = await _run(
+        ActionType.GIT_COMMIT, GitParams(repo_path=str(repo), files=["a.txt"], message="fix: a\n# not kept\nbody")
+    )
+
+    assert _git(repo, "log", "-1", "--format=%B") == "fix: a\nbody"
+    _assert_verified(await _verify(result))
+
+
+@pytest.mark.asyncio
+async def test_commit_without_files_commits_what_is_staged(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _commit_file(repo, "a.txt", "one", "start")
+    (repo / "a.txt").write_text("two", encoding="utf-8")
+    _git(repo, "add", "a.txt")
+
+    result = await _run(ActionType.GIT_COMMIT, GitParams(repo_path=str(repo), message="fix: staged"))
+
+    assert result.success is True, result.error
+    _assert_verified(await _verify(result))
+
+
+@pytest.mark.asyncio
+async def test_commit_without_files_and_nothing_staged_says_what_to_do(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _commit_file(repo, "a.txt", "one", "start")
+    (repo / "a.txt").write_text("two", encoding="utf-8")
+
+    result = await _run(ActionType.GIT_COMMIT, GitParams(repo_path=str(repo), message="fix: nothing"))
+
+    assert result.success is False
+    assert "Name the files to commit" in (result.error or "")
+    assert "stage them first with git_stage" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_push_refusal_of_a_delete_says_what_to_do_instead(tmp_path: Path) -> None:
+    repo, _bare_repo = _pushed_repo(tmp_path)
+
+    result = await _run(ActionType.GIT_PUSH, GitParams(repo_path=str(repo), remote="origin", branch=":main"))
+
+    assert result.success is False
+    assert "name the local branch" in (result.error or "")
+    assert "do it yourself" in (result.error or "")

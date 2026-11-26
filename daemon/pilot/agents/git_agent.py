@@ -407,14 +407,29 @@ class GitAgent(BaseAgent):
             files = [files]
 
         manual_message = params.get("message", "").strip()
+        files = [name for name in files if str(name).strip()]
 
-        # Stage files first
-        stage_result = await self._handle_stage({"files": files})
-        if not stage_result["success"]:
-            return {
-                "success": False,
-                "output": f"Staging failed: {stage_result['output']}",
-            }
+        if files:
+            # Stage files first
+            stage_result = await self._handle_stage({"files": files})
+            if not stage_result["success"]:
+                return {
+                    "success": False,
+                    "output": f"Staging failed: {stage_result['output']}",
+                }
+        else:
+            # No files named: commit what is already staged, or say what to do.
+            staged_result = await _run_git(["diff", "--cached", "--quiet"], cwd=self.repo_path)
+            if staged_result["returncode"] != 1:
+                return {
+                    "success": False,
+                    "output": (
+                        "git_commit: no files were named and nothing is staged. Name the files to commit "
+                        "(or '.' for every change), or stage them first with git_stage."
+                    ),
+                    "commit_message": "",
+                    "commit_hash": "",
+                }
 
         # Get staged diff for LLM
         diff_result = await self._handle_diff({"staged": True})
@@ -506,7 +521,11 @@ class GitAgent(BaseAgent):
         if not source:
             return {
                 "success": False,
-                "output": "git_push: a refspec with no source would delete the remote branch; git_push does not delete",
+                "output": (
+                    f"git_push: {branch!r} has no source, so it would delete the remote branch, and git_push does "
+                    "not delete. To push, name the local branch (for example 'main' or 'main:main'); to delete a "
+                    "remote branch, do it yourself in git or on the hosting site"
+                ),
             }
 
         # Record what is being pushed, so the verifier can ask the remote whether it landed.

@@ -84,9 +84,20 @@ def plain_remote(remote: str) -> str:
     return _USERINFO.sub("", remote)
 
 
-def normalized_message(message: str) -> str:
-    """A commit message as ``git commit -m`` stores it by default (cleanup mode ``whitespace``)."""
-    lines = [line.rstrip() for line in message.replace("\r\n", "\n").split("\n")]
+def normalized_message(message: str, cleanup: str = "whitespace", comment: str = "#") -> str:
+    """A commit message as ``git commit -m`` stores it under the repository's cleanup mode.
+
+    ``whitespace`` (the default for ``-m``, and what ``default`` and ``scissors`` mean there):
+    trailing spaces, leading and trailing blank lines and runs of blank lines go. ``strip`` also
+    drops comment lines. ``verbatim`` keeps everything but the final newlines ``git log`` adds.
+    """
+    text = message.replace("\r\n", "\n")
+    if cleanup == "verbatim":
+        return text.rstrip("\n")
+    lines = text.split("\n")
+    if cleanup == "strip":
+        lines = [line for line in lines if not line.startswith(comment)]
+    lines = [line.rstrip() for line in lines]
     collapsed: list[str] = []
     for line in lines:
         if not line and (not collapsed or not collapsed[-1]):
@@ -95,6 +106,17 @@ def normalized_message(message: str) -> str:
     while collapsed and not collapsed[-1]:
         collapsed.pop()
     return "\n".join(collapsed)
+
+
+async def _cleanup_mode(repo: str) -> tuple[str, str]:
+    """The repository's ``commit.cleanup`` as it applies to ``git commit -m``, and its comment character."""
+    code, out = await _git(repo, "config", "--get", "commit.cleanup")
+    mode = out.strip().casefold() if code == 0 else ""
+    if mode not in {"strip", "verbatim"}:
+        mode = "whitespace"  # default, whitespace and scissors all mean this when the message is not edited
+    code, out = await _git(repo, "config", "--get", "core.commentChar")
+    comment = out.strip() if code == 0 and out.strip() and out.strip() != "auto" else "#"
+    return mode, comment
 
 
 # ── git_commit ───────────────────────────────────────────────────────
@@ -125,8 +147,10 @@ async def commit_landed(result: ActionResult) -> Outcome:
     code, out = await _git(repo, "log", "-1", "--format=%B", commit)
     if code != 0:
         return unobserved(f"git could not read the message of {_short(commit)}")
-    expected = normalized_message(params.message)
-    actual = normalized_message(out)
+    cleanup, comment = await _cleanup_mode(repo)
+    # The handler commits the message with its outer whitespace removed.
+    expected = normalized_message(params.message.strip(), cleanup, comment)
+    actual = normalized_message(out, cleanup, comment)
     if actual != expected:
         return mismatch(
             f"Commit {_short(commit)} has a different message from the one requested "
