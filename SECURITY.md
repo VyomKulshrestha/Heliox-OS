@@ -1112,7 +1112,9 @@ to keep the saved safety settings intact:
   for a webhook its host and last four characters (`connections_status`). Opening Settings sends nothing.
 - **Plans hold no secret.** The senders take the stored connection. A literal token or webhook in an older plan
   still works and is masked wherever the plan is shown or kept. The connected GitHub token is sent to
-  `api.github.com` only.
+  `api.github.com` only. Credential headers of `api_request` (`Authorization`, `Proxy-Authorization`,
+  `Cookie`, `Set-Cookie`, and names containing token, secret, api-key, apikey, auth or password) are masked
+  the same way and kept the same way; the approval card says which host receives a credential.
 - **Kept plans.** A saved plan that holds a secret stores it in the credential store as `plan_secret:<plan id>`,
   removed when the plan finishes, is cancelled or turned down, and after seven days at most (the start-up sweep).
   Mesh peers never receive steps that need a secret.

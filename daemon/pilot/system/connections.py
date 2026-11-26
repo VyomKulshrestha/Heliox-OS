@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
-from pilot.security.secret_urls import is_masked, mask_secret, mask_url
+from pilot.security.secret_urls import is_masked, mask_secret, mask_url, unrestored_reason
 
 logger = logging.getLogger("pilot.system.connections")
 
@@ -148,9 +148,10 @@ def choose(plan_value: str | None, stored: str, *, service_name: str, what: str)
         return given
     if stored and given in {mask_url(stored), mask_secret(stored)}:
         return stored
+    why = unrestored_reason(given)
     raise ValueError(
         f"The {what} in this plan was hidden when the plan was kept and is not the one connected in "
-        f"{WHERE[service_name]}, so nothing was sent. Connect it there, or ask again with the {what}."
+        f"{WHERE[service_name]}, so nothing was sent. " + (why or f"Connect it there, or ask again with the {what}.")
     )
 
 

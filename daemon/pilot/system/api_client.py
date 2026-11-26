@@ -209,6 +209,10 @@ async def api_request(
     if method not in SUPPORTED_HTTP_METHODS:
         supported = ", ".join(sorted(SUPPORTED_HTTP_METHODS))
         raise ValueError(f"Unsupported HTTP method {method!r}; expected one of: {supported}")
+    for name, value in (headers or {}).items():
+        # A resumed plan whose header secret could not be restored holds its masked form: never send that.
+        refuse_masked(str(value), what=f"{name} header")
+    refuse_masked(url)
     from pilot.system.system_guard import check_http
 
     check_http(method, _origin(url)[1], real_client=create_httpx_client is _REAL_CLIENT_FACTORY)

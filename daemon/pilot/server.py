@@ -742,6 +742,17 @@ def _approval_effect(action: Any) -> str:
         from pilot.system.package_mgr import update_effect
 
         return update_effect()
+    params = getattr(action, "parameters", None)
+    if getattr(action, "action_type", None) in {ActionType.API_REQUEST, ActionType.API_WEBHOOK}:
+        from urllib.parse import urlsplit
+
+        from pilot.security.secret_urls import secret_header_names
+
+        # The card shows the header's value masked; it still says which host receives a credential.
+        names = secret_header_names(getattr(params, "headers", None))
+        host = urlsplit(str(getattr(params, "url", "") or "")).hostname or "the address in this step"
+        if names:
+            return f"Sends a credential to {host} (the {', '.join(names)} header)."
     return ""
 
 

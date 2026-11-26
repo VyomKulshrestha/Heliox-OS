@@ -1,7 +1,8 @@
 """The secrets of a kept plan, held apart from its stored text so the plan can be resumed.
 
 A saved plan (``pilot.workflows.checkpoints``) is stored the way it is shown: every webhook address, URL with a
-token, GitHub token and mail password in it is masked (``pilot.security.secret_urls``). Before this module, a plan
+token, GitHub token, mail password and credential header value (Authorization, Cookie, X-Api-Key and
+similar) in it is masked (``pilot.security.secret_urls``). Before this module, a plan
 read back from storage held only the masked values and the HTTP layer refused them, so an interrupted plan, or one
 approved later from a phone or through MCP, could not be continued.
 
@@ -18,7 +19,9 @@ sweep can find them; the index holds no secret.
 
 With no credential store (Linux without a Secret Service, or a store that refuses the write), the values are held in
 the daemon's memory only: a plan approved later in the same run still resumes, but after a restart its masked values
-cannot be restored. A step whose secret is a stored connection (Settings > Connections) still runs, because the
+cannot be restored. When the store refused the entry (on Windows, one longer than about 1,280 characters), the
+index records why, and the refused step's failure says the secret was too large to keep and the request has to
+be given again. A step whose secret is a stored connection (Settings > Connections) still runs, because the
 sender matches the masked value against the connection; any other such step fails with "give the address again".
 
 Plans sent to a mesh peer carry no secrets at all: only system read-outs may be delegated
@@ -32,10 +35,19 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from pilot.actions import ActionPlan, ApiRequestParams, EmailParams
-from pilot.security.secret_urls import carries_secret, is_masked, mask_secret, mask_url
+from pilot.security.secret_urls import (
+    carries_secret,
+    is_masked,
+    is_secret_header,
+    mask_header_value,
+    mask_secret,
+    mask_url,
+    note_unrestored,
+)
 
 logger = logging.getLogger("pilot.security.plan_secrets")
 
@@ -45,32 +57,66 @@ KEEP_DAYS = 7
 KEEP_SECONDS = KEEP_DAYS * 24 * 3600
 
 
-def _masked_fields(params: Any) -> list[tuple[str, str, Callable[[str], str | None]]]:
-    """(field, value, how it is masked) for each secret value the parameters hold."""
-    found: list[tuple[str, str, Callable[[str], str | None]]] = []
+# A credential store entry on Windows holds about 1,280 characters; a longer one is refused.
+WINDOWS_ENTRY_CHARS = 1280
+
+
+@dataclass(frozen=True)
+class _Slot:
+    """One secret value in a step's parameters: a field, or one header of ``headers``."""
+
+    field: str
+    value: str
+    mask: Callable[[str], str | None]
+    header: str = ""
+
+    def key(self, masked: str) -> str:
+        # Header values are matched by header name too: two short tokens both mask to "Bearer ***".
+        return f"header:{self.header.casefold()}:{masked}" if self.header else masked
+
+
+def _slots(params: Any) -> list[_Slot]:
+    """Each secret value the parameters hold, masked or not."""
+    found: list[_Slot] = []
     if isinstance(params, ApiRequestParams):
         if params.url and (carries_secret(params.url) or is_masked(params.url)):
-            found.append(("url", params.url, mask_url))
+            found.append(_Slot("url", params.url, mask_url))
         if params.webhook_url:
-            found.append(("webhook_url", params.webhook_url, mask_url))
+            found.append(_Slot("webhook_url", params.webhook_url, mask_url))
         if params.token:
-            found.append(("token", params.token, mask_secret))
+            found.append(_Slot("token", params.token, mask_secret))
+        for name, value in (params.headers or {}).items():
+            if is_secret_header(name) and isinstance(value, str) and value:
+                found.append(_Slot("headers", value, mask_header_value, header=str(name)))
     elif isinstance(params, EmailParams) and params.app_password:
-        found.append(("app_password", params.app_password, mask_secret))
+        found.append(_Slot("app_password", params.app_password, mask_secret))
     return found
 
 
+def _masked_slots(plan: ActionPlan) -> list[_Slot]:
+    return [slot for action in plan.actions for slot in _slots(action.parameters) if is_masked(slot.value)]
+
+
 def secrets_of(plan: ActionPlan) -> dict[str, str]:
-    """Masked form -> real value, for every secret value the plan holds in memory."""
+    """Matching key (the masked form) -> real value, for every secret value the plan holds in memory.
+
+    Two different values with the same key are left out: neither could be put back with certainty, so both steps
+    are refused on resume rather than one getting the other's secret.
+    """
     values: dict[str, str] = {}
+    ambiguous: set[str] = set()
     for action in plan.actions:
-        for _field, value, mask in _masked_fields(action.parameters):
-            if is_masked(value):
+        for slot in _slots(action.parameters):
+            if is_masked(slot.value):
                 continue
-            masked = mask(value)
-            if masked and masked != value:
-                values[masked] = value
-    return values
+            masked = slot.mask(slot.value)
+            if not masked or masked == slot.value:
+                continue
+            key = slot.key(masked)
+            if key in values and values[key] != slot.value:
+                ambiguous.add(key)
+            values[key] = slot.value
+    return {key: value for key, value in values.items() if key not in ambiguous}
 
 
 def restore(plan: ActionPlan, values: dict[str, str]) -> ActionPlan:
@@ -80,16 +126,27 @@ def restore(plan: ActionPlan, values: dict[str, str]) -> ActionPlan:
     changed = False
     actions = []
     for action in plan.actions:
-        update = {
-            field: values[value]
-            for field, value, _mask in _masked_fields(action.parameters)
-            if is_masked(value) and value in values
-        }
+        update: dict[str, Any] = {}
+        headers = dict(getattr(action.parameters, "headers", None) or {})
+        for slot in _slots(action.parameters):
+            key = slot.key(slot.value)
+            if not is_masked(slot.value) or key not in values:
+                continue
+            if slot.header:
+                headers[slot.header] = values[key]
+                update["headers"] = headers
+            else:
+                update[slot.field] = values[key]
         if update:
             changed = True
             action = action.model_copy(update={"parameters": action.parameters.model_copy(update=update)})
         actions.append(action)
     return plan.model_copy(update={"actions": actions}) if changed else plan
+
+
+def _created(entry: Any) -> float | None:
+    value = entry.get("created") if isinstance(entry, dict) else entry
+    return float(value) if isinstance(value, int | float) else None
 
 
 class PlanSecretKeeper:
@@ -159,33 +216,54 @@ class PlanSecretKeeper:
             merged = {**(held["values"] if held is not None else {}), **values}
             entry = {"created": created, "values": merged}
             self._memory[plan_id] = entry
+            index = await self._load_index()
             if await self._write_json(PREFIX + plan_id, entry):
-                index = await self._load_index()
-                if plan_id not in index:
+                if not isinstance(index.get(plan_id), int | float):
                     index[plan_id] = created
                     await self._save_index(index)
+            elif self._store_usable():
+                # Held in memory for this run only. The index (no secret) records why, so a resume after a restart
+                # can tell the person instead of failing without a reason.
+                size = len(json.dumps(entry, separators=(",", ":")))
+                why = "too_large" if size > WINDOWS_ENTRY_CHARS else "refused"
+                index[plan_id] = {"created": created, "not_kept": why}
+                await self._save_index(index)
 
-    async def values(self, plan_id: str) -> dict[str, str]:
-        """The kept values of a plan, or {} when none are kept or they expired."""
+    async def _lookup(self, plan_id: str) -> tuple[dict[str, str], str]:
+        """(kept values, why there are none: a key of secret_urls.UNRESTORED_REASONS, or "")."""
         async with self._lock:
             entry = self._memory.get(plan_id)
             if entry is None:
                 entry = await self._read_json(PREFIX + plan_id)
                 if entry:
                     self._memory[plan_id] = entry
+            listed = (await self._load_index()).get(plan_id)
         if not entry:
-            return {}
-        created = entry.get("created")
-        if not isinstance(created, int | float) or self._clock() - created > KEEP_SECONDS:
+            if not self._store_usable():
+                return {}, "no_store"
+            if isinstance(listed, dict) and listed.get("not_kept"):
+                return {}, str(listed["not_kept"])
+            return {}, ""
+        created = _created(entry)
+        if created is None or self._clock() - created > KEEP_SECONDS:
             await self.forget(plan_id)
-            return {}
+            return {}, "expired"
         values = entry.get("values")
-        return {str(k): str(v) for k, v in values.items()} if isinstance(values, dict) else {}
+        return ({str(k): str(v) for k, v in values.items()} if isinstance(values, dict) else {}), ""
+
+    async def values(self, plan_id: str) -> dict[str, str]:
+        """The kept values of a plan, or {} when none are kept or they expired."""
+        return (await self._lookup(plan_id))[0]
 
     async def restore(self, plan_id: str, plan: ActionPlan) -> ActionPlan:
-        if not any(is_masked(value) for action in plan.actions for _f, value, _m in _masked_fields(action.parameters)):
+        if not _masked_slots(plan):
             return plan
-        return restore(plan, await self.values(plan_id))
+        values, reason = await self._lookup(plan_id)
+        restored = restore(plan, values)
+        for slot in _masked_slots(restored):
+            # The step will be refused before it sends; the refusal says why (pilot.security.secret_urls).
+            note_unrestored(slot.value, reason)
+        return restored
 
     async def forget(self, plan_id: str) -> None:
         async with self._lock:
@@ -203,8 +281,8 @@ class PlanSecretKeeper:
         now = self._clock()
         expired = [
             plan_id
-            for plan_id, created in index.items()
-            if not isinstance(created, int | float) or now - created > KEEP_SECONDS
+            for plan_id, entry in index.items()
+            if (created := _created(entry)) is None or now - created > KEEP_SECONDS
         ]
         for plan_id in expired:
             await self.forget(plan_id)

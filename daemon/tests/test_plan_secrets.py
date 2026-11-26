@@ -38,7 +38,9 @@ SLACK = "https://hooks.slack.com/services/T0FAKE/B0FAKE/fakeFakeFake1234"
 DISCORD = "https://discord.com/api/webhooks/123456789/fakeDiscordToken9876"
 TOKEN = "ghp_fakefakefakefakefake0000"
 KEYED = "https://api.weather.example/v1/current.json?key=fakekey5678&q=Paris"
-SECRETS = (SLACK, DISCORD, TOKEN, "fakekey5678")
+BEARER = "Bearer fakeHeaderToken0000WXYZ"
+COOKIE = "sid=fakeCookieValue7777"
+SECRETS = (SLACK, DISCORD, TOKEN, "fakekey5678", "fakeHeaderToken0000WXYZ", "fakeCookieValue7777")
 
 
 class FakeVault:
@@ -100,6 +102,14 @@ def _plan() -> ActionPlan:
                 parameters=ApiRequestParams(endpoint="/user", token=TOKEN),
             ),
             Action(action_type=ActionType.API_REQUEST, target="weather", parameters=ApiRequestParams(url=KEYED)),
+            Action(
+                action_type=ActionType.API_REQUEST,
+                target="private api",
+                parameters=ApiRequestParams(
+                    url="https://api.example.com/v1/me",
+                    headers={"Authorization": BEARER, "Cookie": COOKIE, "Accept": "application/json"},
+                ),
+            ),
         ],
         explanation="post and read",
         raw_input="post it",
@@ -113,7 +123,14 @@ def _no_secret(text: str) -> None:
 
 def _values(plan: ActionPlan) -> list[Any]:
     p = [action.parameters for action in plan.actions]
-    return [p[0].webhook_url, p[1].webhook_url, p[2].token, p[3].url]
+    return [
+        p[0].webhook_url,
+        p[1].webhook_url,
+        p[2].token,
+        p[3].url,
+        p[4].headers.get("Authorization"),
+        p[4].headers.get("Cookie"),
+    ]
 
 
 # ── the pure parts ───────────────────────────────────────────────────
@@ -125,9 +142,9 @@ def test_a_masked_plan_gets_its_values_back_matched_by_their_masked_form_whateve
     stored = ActionPlan.model_validate_json(plan.model_dump_json())
     _no_secret(plan.model_dump_json())
 
-    assert _values(restore(stored, held)) == [SLACK, DISCORD, TOKEN, KEYED]
+    assert _values(restore(stored, held)) == [SLACK, DISCORD, TOKEN, KEYED, BEARER, COOKIE]
     reordered = stored.model_copy(update={"actions": list(reversed(stored.actions))})
-    assert [a.parameters for a in restore(reordered, held).actions][0].url == KEYED
+    assert [a.parameters for a in restore(reordered, held).actions][1].url == KEYED
     # A masked value nobody kept stays masked, and the HTTP layer refuses it.
     assert _values(restore(stored, {}))[0] == mask_url(SLACK)
 
@@ -153,7 +170,7 @@ async def test_the_stored_row_holds_no_secret_and_a_restart_reads_the_plan_back_
 
     after_restart = WorkflowCheckpointStore(db, secrets=PlanSecretKeeper(vault))
     checkpoint = await after_restart.get("plan-1")
-    assert _values(checkpoint.plan) == [SLACK, DISCORD, TOKEN, KEYED]
+    assert _values(checkpoint.plan) == [SLACK, DISCORD, TOKEN, KEYED, BEARER, COOKIE]
 
 
 @pytest.mark.asyncio
@@ -206,7 +223,7 @@ async def test_without_a_credential_store_the_secrets_live_in_memory_for_this_ru
     store = WorkflowCheckpointStore(tmp_path / "c.db", secrets=keeper)
     await store.start_plan("plan-1", "post it", _plan())
 
-    assert _values((await store.get("plan-1")).plan) == [SLACK, DISCORD, TOKEN, KEYED]
+    assert _values((await store.get("plan-1")).plan) == [SLACK, DISCORD, TOKEN, KEYED, BEARER, COOKIE]
     restarted = WorkflowCheckpointStore(tmp_path / "c.db", secrets=PlanSecretKeeper(vault))
     assert _values((await restarted.get("plan-1")).plan)[0] == mask_url(SLACK)
 
@@ -267,6 +284,7 @@ async def test_the_window_resumes_an_interrupted_plan_with_its_webhook_and_token
         TOKEN,
     ]
     assert recorder.params[3].url == KEYED
+    assert recorder.params[4].headers == {"Authorization": BEARER, "Cookie": COOKIE, "Accept": "application/json"}
     _no_secret(json.dumps(resumed, default=str))
     assert "plan_secret:plan-1" not in vault.entries  # the plan completed
 
@@ -286,7 +304,14 @@ async def test_a_task_approved_later_from_a_phone_or_mcp_continues_with_its_webh
                     action_type=ActionType.API_SLACK,
                     target="post",
                     parameters=ApiRequestParams(message="hi", webhook_url=SLACK),
-                )
+                ),
+                Action(
+                    action_type=ActionType.API_REQUEST,
+                    target="private api",
+                    parameters=ApiRequestParams(
+                        method="POST", url="https://api.example.com/v1/items", headers={"Authorization": BEARER}
+                    ),
+                ),
             ],
             explanation="post",
             raw_input="post it",
@@ -297,7 +322,10 @@ async def test_a_task_approved_later_from_a_phone_or_mcp_continues_with_its_webh
         await durable.create_approval(
             task_id="task-1",
             plan_id="plan-1",
-            request={"action_indices": [0], "actions": [{"index": 0, "action_type": "api_slack"}]},
+            request={
+                "action_indices": [0, 1],
+                "actions": [{"index": 0, "action_type": "api_slack"}, {"index": 1, "action_type": "api_request"}],
+            },
             timeout_seconds=300,
         )
 
@@ -309,6 +337,7 @@ async def test_a_task_approved_later_from_a_phone_or_mcp_continues_with_its_webh
 
         assert resumed["status"] == "success"
         assert recorder.params[0].webhook_url == SLACK
+        assert recorder.params[1].headers == {"Authorization": BEARER}
     finally:
         await durable.close()
 
@@ -346,3 +375,101 @@ async def test_a_masked_webhook_runs_through_the_matching_connection_and_any_oth
 
 def test_the_module_text_names_the_lifetime_it_enforces() -> None:
     assert plan_secrets.KEEP_DAYS == 7 and "KEEP_DAYS" in (plan_secrets.__doc__ or "")
+
+
+# ── why a secret could not be put back, said in the step's own failure ──
+
+
+class SmallVault(FakeVault):
+    """A store that refuses an entry longer than Windows Credential Manager holds."""
+
+    async def store_key(self, name: str, value: str) -> None:
+        if len(value) > plan_secrets.WINDOWS_ENTRY_CHARS:
+            raise VaultUnavailableError("could not save")
+        await super().store_key(name, value)
+
+
+def _big_plan() -> ActionPlan:
+    long_token = "Bearer " + "fakeLongToken" * 120
+    return ActionPlan(
+        actions=[
+            Action(
+                action_type=ActionType.API_REQUEST,
+                target="private api",
+                parameters=ApiRequestParams(url="https://api.example.com/v1/me", headers={"Authorization": long_token}),
+            ),
+            Action(
+                action_type=ActionType.API_SLACK,
+                target="post",
+                parameters=ApiRequestParams(message="hi", webhook_url=SLACK),
+            ),
+        ],
+        explanation="read and post",
+        raw_input="do it",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_secret_too_large_to_keep_is_named_in_the_failure_after_a_restart(tmp_path, monkeypatch) -> None:
+    from pilot.system import api_client
+
+    vault = SmallVault()
+    await WorkflowCheckpointStore(tmp_path / "c.db", secrets=PlanSecretKeeper(vault)).start_plan(
+        "big", "do it", _big_plan()
+    )
+    assert "plan_secret:big" not in vault.entries
+    assert json.loads(vault.entries["plan_secret:index"])["big"]["not_kept"] == "too_large"
+
+    restarted = await WorkflowCheckpointStore(tmp_path / "c.db", secrets=PlanSecretKeeper(vault)).get("big")
+    request, slack = (action.parameters for action in restarted.plan.actions)
+    sent: list[str] = []
+
+    async def _no_send(*args: Any, **kwargs: Any) -> str:
+        sent.append("sent")
+        return "{}"
+
+    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError))
+    with pytest.raises(ValueError) as header_failure:
+        await api_client.api_request("GET", request.url, headers=request.headers)
+    monkeypatch.setattr(api_client, "api_request", _no_send)
+    with pytest.raises(ValueError) as webhook_failure:
+        await api_client.send_slack_message("hi", slack.webhook_url)
+
+    for failure in (header_failure, webhook_failure):
+        text = str(failure.value)
+        assert "too large to keep in the credential store" in text and "Give the request again" in text
+        _no_secret(text)
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_with_no_credential_store_the_failure_after_a_restart_says_so(tmp_path) -> None:
+    from pilot.system import api_client
+
+    vault = FakeVault(available=False)
+    await WorkflowCheckpointStore(tmp_path / "c.db", secrets=PlanSecretKeeper(vault)).start_plan("p", "do it", _plan())
+
+    restarted = await WorkflowCheckpointStore(tmp_path / "c.db", secrets=PlanSecretKeeper(vault)).get("p")
+    request = restarted.plan.actions[4].parameters
+    with pytest.raises(ValueError, match="no credential store"):
+        await api_client.api_request("GET", request.url, headers=request.headers)
+
+
+def test_two_different_secrets_that_mask_alike_are_never_swapped() -> None:
+    plan = ActionPlan(
+        actions=[
+            Action(
+                action_type=ActionType.API_REQUEST,
+                target=str(index),
+                parameters=ApiRequestParams(
+                    url="https://api.example.com/x", headers={"Authorization": f"Bearer ab{index}"}
+                ),
+            )
+            for index in range(2)
+        ]
+    )
+    held = secrets_of(plan)
+    kept = ActionPlan.model_validate_json(plan.model_dump_json())
+
+    assert held == {}
+    assert [a.parameters.headers["Authorization"] for a in restore(kept, held).actions] == ["Bearer ***", "Bearer ***"]

@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_validator, model_validator
 
-from pilot.security.secret_urls import mask_if_secret, mask_secret, mask_url, redact_text
+from pilot.security.secret_urls import mask_if_secret, mask_secret, mask_url, redact_headers, redact_text
 
 
 class ActionType(StrEnum):
@@ -857,6 +857,11 @@ class ApiRequestParams(BaseModel):
     def _mask_token(self, value: str | None) -> str | None:
         return mask_secret(value)
 
+    @field_serializer("headers")
+    def _mask_secret_headers(self, value: dict[str, str]) -> dict[str, str]:
+        # Authorization, Cookie, X-Api-Key and the like (pilot.security.secret_urls.is_secret_header).
+        return redact_headers(value)
+
     def __repr_args__(self):  # type: ignore[no-untyped-def]
         for name, value in super().__repr_args__():
             if name == "webhook_url":
@@ -865,6 +870,8 @@ class ApiRequestParams(BaseModel):
                 yield name, mask_if_secret(value)
             elif name == "token":
                 yield name, mask_secret(value)
+            elif name == "headers":
+                yield name, redact_headers(value)
             else:
                 yield name, value
 
