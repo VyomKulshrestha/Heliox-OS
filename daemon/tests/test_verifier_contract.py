@@ -291,7 +291,9 @@ async def test_directory_copy_existence_does_not_count_as_independent_outcome(tm
 
 @pytest.mark.asyncio
 async def test_large_copy_is_not_labeled_independently_verified(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(verifier_module, "MAX_COPY_CONTENT_VERIFY_BYTES", 4)
+    from pilot.agents.postconditions import files
+
+    monkeypatch.setattr(files, "MAX_COPY_CONTENT_VERIFY_BYTES", 4)
     source = tmp_path / "source.txt"
     destination = tmp_path / "destination.txt"
     source.write_text("sample", encoding="utf-8")

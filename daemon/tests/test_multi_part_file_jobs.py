@@ -18,6 +18,7 @@ from pilot.agents.autonomous_review import AutonomousReviewer
 from pilot.agents.base_agent import AgentRole
 from pilot.agents.orchestrator import AgentOrchestrator
 from pilot.agents.planner import SYSTEM_PROMPT
+from pilot.agents.postconditions.files import copy_matches_source
 from pilot.agents.verifier import Verifier
 from pilot.config import PilotConfig
 from pilot.intelligence.experience import experience_scope, get_experience_context
@@ -194,20 +195,22 @@ async def test_a_folder_copy_is_verified_file_by_file(tmp_path):
     destination = tmp_path / "release" / "screens"
     destination.mkdir(parents=True)
     (destination / "a.png").write_bytes(b"1234")
-    verifier = Verifier(MagicMock())
     params = FileParams(path=str(source), destination=str(destination), recursive=True)
+    copied = ActionResult(
+        action=Action(action_type=ActionType.FILE_COPY, target=str(source), parameters=params), success=True
+    )
 
-    passed, detail, independent = await verifier._verify_file_copy(params)
+    passed, detail, independent = await copy_matches_source(copied)
     assert (passed, independent) == (False, True)
     assert "missing 1 file" in detail and "sub/b.png" in detail
 
     (destination / "sub").mkdir()
     (destination / "sub" / "b.png").write_bytes(b"1")
-    passed, detail, _ = await verifier._verify_file_copy(params)
+    passed, detail, _ = await copy_matches_source(copied)
     assert passed is False and "size differs" in detail
 
     (destination / "sub" / "b.png").write_bytes(b"12")
-    passed, detail, independent = await verifier._verify_file_copy(params)
+    passed, detail, independent = await copy_matches_source(copied)
     assert (passed, independent) == (True, True)
     assert "all 2 files" in detail
 

@@ -34,38 +34,12 @@ if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
 
 logger = logging.getLogger("pilot.agents.verifier")
-MAX_COPY_CONTENT_VERIFY_BYTES = 64 * 1024 * 1024
-MAX_COPY_TREE_VERIFY_FILES = 20_000
-
-
-def _tree_listing(root: Any) -> dict[str, int] | None:
-    """Relative path to size for every file under ``root``, or None past the file limit."""
-    import os
-    from pathlib import Path
-
-    listing: dict[str, int] = {}
-    for dirpath, _dirs, names in os.walk(root):
-        for name in names:
-            path = Path(dirpath) / name
-            try:
-                listing[path.relative_to(root).as_posix()] = path.stat().st_size
-            except OSError:
-                continue
-            if len(listing) > MAX_COPY_TREE_VERIFY_FILES:
-                return None
-    return listing
 
 
 # Verifiers written before the area registry. New verifiers go in a module of
 # pilot.agents.postconditions and register themselves there.
 _BUILTIN_POSTCONDITION_VERIFIERS: dict[ActionType, str] = {
-    ActionType.BROWSER_NAVIGATE: "conditional_exact_url_postcondition",
-    ActionType.BROWSER_TYPE: "conditional_field_value_postcondition",
-    ActionType.BROWSER_SELECT: "conditional_field_value_postcondition",
-    ActionType.BROWSER_FILL_FORM: "conditional_field_value_postcondition",
-    ActionType.FILE_WRITE: "file_content_postcondition",
     ActionType.FILE_DELETE: "file_absence_postcondition",
-    ActionType.FILE_COPY: "copy_destination_postcondition",
     ActionType.FILE_MOVE: "move_source_and_destination_postcondition",
     ActionType.PACKAGE_INSTALL: "package_installed_postcondition",
     ActionType.PACKAGE_REMOVE: "package_removed_postcondition",
@@ -73,7 +47,6 @@ _BUILTIN_POSTCONDITION_VERIFIERS: dict[ActionType, str] = {
     ActionType.SERVICE_RESTART: "service_active_postcondition",
     ActionType.SERVICE_STOP: "service_inactive_postcondition",
     ActionType.GNOME_SETTING_WRITE: "setting_value_postcondition",
-    ActionType.DOWNLOAD_FILE: "download_file_exists_postcondition",
     ActionType.PROCESS_KILL: "process_absence_postcondition",
     ActionType.POWER_SHUTDOWN: "shutdown_transition_postcondition",
     ActionType.POWER_RESTART: "restart_transition_postcondition",
@@ -96,7 +69,6 @@ POSTCONDITION_VERIFIERS: dict[ActionType, str] = {
 
 _PRECHECKABLE_POSTCONDITIONS = frozenset(
     {
-        ActionType.FILE_WRITE,
         ActionType.FILE_DELETE,
         ActionType.PACKAGE_INSTALL,
         ActionType.PACKAGE_REMOVE,
@@ -266,18 +238,7 @@ class Verifier:
                     )
                 return outcome.passed, outcome.detail, outcome.observed
 
-            if action.action_type in {
-                ActionType.BROWSER_NAVIGATE,
-                ActionType.BROWSER_TYPE,
-                ActionType.BROWSER_SELECT,
-                ActionType.BROWSER_FILL_FORM,
-            }:
-                return await self._verify_browser_state(action)
-
-            if action.action_type == ActionType.FILE_WRITE:
-                check = await self._verify_file_write(action.parameters)  # type: ignore[arg-type]
-
-            elif action.action_type == ActionType.FILE_DELETE:
+            if action.action_type == ActionType.FILE_DELETE:
                 check = await self._verify_file_delete(action.parameters)  # type: ignore[arg-type]
 
             elif action.action_type == ActionType.PACKAGE_INSTALL:
@@ -294,12 +255,6 @@ class Verifier:
 
             elif action.action_type == ActionType.GNOME_SETTING_WRITE:
                 check = await self._verify_gnome_setting(action.parameters)  # type: ignore[arg-type]
-
-            elif action.action_type == ActionType.DOWNLOAD_FILE:
-                check = await self._verify_download(result)
-
-            elif action.action_type == ActionType.FILE_COPY:
-                return await self._verify_file_copy(action.parameters)  # type: ignore[arg-type]
 
             elif action.action_type == ActionType.FILE_MOVE:
                 check = await self._verify_file_move(action.parameters)  # type: ignore[arg-type]
@@ -330,37 +285,6 @@ class Verifier:
             logger.warning("Verification check failed: %s", e)
             return False, f"Verification error: {e}", False
 
-    async def _verify_browser_state(self, action: Action) -> tuple[bool, str, bool]:
-        from pilot.system.browser import browser_action_already_satisfied
-
-        params = action.parameters
-        if getattr(params, "tab_index", -1) != -1:
-            return True, "Browser action tab is not bound to the executor backend", False
-        observed = await browser_action_already_satisfied(action.action_type.value, params)
-        if observed is None:
-            return True, "Browser postcondition is unavailable or has side effects", False
-        if action.action_type == ActionType.BROWSER_NAVIGATE:
-            if observed[0]:
-                return True, "Browser URL matches requested navigation", True
-            return True, "Browser URL differs or redirected; exact outcome is unverified", False
-        if observed[0]:
-            return True, "Browser field state matches requested value", True
-        return False, "Browser field state differs from requested value", True
-
-    async def _verify_file_write(self, params: FileParams) -> tuple[bool, str]:
-        from pathlib import Path
-
-        if not params.path:
-            raise ValueError("File write has no path to observe")
-        p = Path(params.path)
-        if not p.exists():
-            return False, f"File does not exist after write: {params.path}"
-        if params.content is not None:
-            actual = p.read_text("utf-8")
-            if actual != params.content:
-                return False, f"File content mismatch (expected {len(params.content)} bytes, got {len(actual)})"
-        return True, "File exists with expected content"
-
     async def _verify_file_delete(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
 
@@ -369,53 +293,6 @@ class Verifier:
         if Path(params.path).exists():
             return False, f"File still exists after delete: {params.path}"
         return True, "File successfully deleted"
-
-    async def _verify_file_copy(self, params: FileParams) -> tuple[bool, str, bool]:
-        import asyncio
-        from pathlib import Path
-
-        if not params.path or not params.destination:
-            raise ValueError("File copy has no source or destination to observe")
-        source = Path(params.path)
-        destination = Path(params.destination)
-        if not source.exists():
-            return False, f"Source does not exist after copy: {params.path}", True
-        if not destination.exists():
-            return False, f"Destination does not exist after copy: {params.destination}", True
-        if source.is_file() and destination.is_file():
-            source_size = source.stat().st_size
-            destination_size = destination.stat().st_size
-            if source_size != destination_size:
-                return False, "Copy destination size mismatch", True
-            if source_size > MAX_COPY_CONTENT_VERIFY_BYTES:
-                return True, "Copy destination exists; file is too large to compare within verifier budget", False
-
-            def contents_match() -> bool:
-                with source.open("rb") as original, destination.open("rb") as copied:
-                    for chunk in iter(lambda: original.read(1024 * 1024), b""):
-                        if chunk != copied.read(len(chunk)):
-                            return False
-                    return not copied.read(1)
-
-            matches = await asyncio.to_thread(contents_match)
-            return matches, "Copy content matches source" if matches else "Copy destination content mismatch", True
-        if source.is_dir() and destination.is_dir():
-            source_files, destination_files = await asyncio.gather(
-                asyncio.to_thread(_tree_listing, source), asyncio.to_thread(_tree_listing, destination)
-            )
-            if source_files is None or destination_files is None:
-                return True, "Copy destination exists; the folder is too large to compare file by file", False
-            if not source_files:
-                return True, "Copy destination exists; the source folder has no files to compare", False
-            missing = sorted(set(source_files) - set(destination_files))
-            if missing:
-                return False, f"Copy is missing {len(missing)} file(s), for example {missing[0]}", True
-            different = sorted(name for name, size in source_files.items() if destination_files[name] != size)
-            if different:
-                return False, f"Copied file size differs for {len(different)} file(s), for example {different[0]}", True
-            total = sum(source_files.values())
-            return True, f"Copy has all {len(source_files)} files of the source ({total} bytes), sizes match", True
-        return False, "Copy destination type does not match source", True
 
     async def _verify_file_move(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
@@ -475,19 +352,6 @@ class Verifier:
         if actual_clean == expected:
             return True, f"Setting {params.key} = {actual}"
         return False, f"Setting mismatch: expected {expected}, got {actual_clean}"
-
-    async def _verify_download(self, result: ActionResult) -> tuple[bool, str]:
-        from pathlib import Path
-
-        from pilot.actions import DownloadParams
-
-        params: DownloadParams = result.action.parameters  # type: ignore[assignment]
-        if not params.output_path:
-            raise ValueError("Download has no output path to observe")
-        if Path(params.output_path).exists():
-            size = Path(params.output_path).stat().st_size
-            return True, f"File downloaded: {params.output_path} ({size:,} bytes)"
-        return False, f"Downloaded file not found: {params.output_path}"
 
     async def _verify_process_kill(self, params: ProcessParams) -> tuple[bool, str]:
         from pilot.system.processes import process_exists
