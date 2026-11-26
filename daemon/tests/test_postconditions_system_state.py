@@ -780,3 +780,197 @@ async def test_failed_wifi_connect_never_reaches_the_verifier(monkeypatch: pytes
         await network.wifi_connect("Cafe")
     _assert_failed(await _verify(ActionType.WIFI_CONNECT, _wifi(), success=False))
     observer.assert_not_awaited()
+
+
+# ── package_update ──────────────────────────────────────────────────────────────────────────────────────────────
+
+WINGET_TABLE = (
+    "\r   - \r   \\ \r"
+    "Name                      Id                      Version        Available      Source\n"
+    "-----------------------------------------------------------------------------------------\n"
+    "Microsoft Edge            Microsoft.Edge          119.0.2151.58  119.0.2151.72  winget\n"
+    "7-Zip 23.01 (x64)         7zip.7zip               23.01          24.07          winget\n"
+    "2 upgrades available.\n"
+    "\n"
+    "The following packages have an upgrade available, but require explicit targeting for upgrade:\n"
+    "Name     Id          Version  Available  Source\n"
+    "-----------------------------------------------\n"
+    "Pinned   Pin.Ned     1.0      2.0        winget\n"
+)
+# The same table from a German Windows: titles and the summary are translated, the layout is not.
+WINGET_TABLE_DE = (
+    "Name                      ID                      Version        Verfügbar      Quelle\n"
+    "-----------------------------------------------------------------------------------------\n"
+    "Microsoft Edge            Microsoft.Edge          119.0.2151.58  119.0.2151.72  winget\n"
+    "1 Aktualisierungen verfügbar.\n"
+)
+
+
+def test_winget_table_is_read_by_position_in_any_language() -> None:
+    from pilot.system.package_mgr import parse_winget_upgrade_table
+
+    assert parse_winget_upgrade_table(WINGET_TABLE) == ["Microsoft Edge", "7-Zip 23.01 (x64)"]
+    assert parse_winget_upgrade_table(WINGET_TABLE_DE) == ["Microsoft Edge"]
+    assert parse_winget_upgrade_table("No installed package found matching input criteria.\n") == []
+
+
+def test_dnf_and_choco_lists_are_parsed() -> None:
+    from pilot.system.package_mgr import parse_choco_outdated, parse_dnf_check_update
+
+    dnf = (
+        "\nkernel.x86_64        6.6.9-200.fc39       updates\n"
+        "vim-enhanced.x86_64  2:9.1.016-1.fc39     updates\n"
+        "Obsoleting Packages\n"
+        "grub2-tools.x86_64   1:2.06-111.fc39      updates\n"
+    )
+    assert parse_dnf_check_update(dnf) == ["kernel.x86_64", "vim-enhanced.x86_64"]
+    assert parse_choco_outdated("git|2.42.0|2.43.0|false\nnode|20.1|21.0|true\n") == ["git"]
+
+
+def _package_platform(monkeypatch: pytest.MonkeyPatch, platform: Platform, manager: str, run: AsyncMock) -> None:
+    from pilot.system import package_mgr
+
+    monkeypatch.setattr(package_mgr, "CURRENT_PLATFORM", platform)
+    monkeypatch.setattr(package_mgr, "run_command", run)
+    monkeypatch.setattr(package_mgr, "_detect_linux_pkg_manager", AsyncMock(return_value=manager))
+    monkeypatch.setattr(package_mgr, "_detect_win_pkg_manager", AsyncMock(return_value=manager))
+
+
+@pytest.mark.parametrize(
+    ("platform", "manager", "command", "root"),
+    [
+        (Platform.LINUX, "apt-get", ["sh", "-c"], True),
+        (Platform.LINUX, "dnf", ["dnf", "upgrade", "-y", "--refresh"], True),
+        (Platform.LINUX, "pacman", ["pacman", "-Syu", "--noconfirm"], True),
+        (
+            Platform.WINDOWS,
+            "winget",
+            ["winget", "upgrade", "--all", "--accept-package-agreements", "--accept-source-agreements"],
+            False,
+        ),
+        (Platform.WINDOWS, "choco", ["choco", "upgrade", "all", "-y"], False),
+    ],
+)
+async def test_package_update_upgrades_on_every_platform(
+    monkeypatch: pytest.MonkeyPatch, platform, manager, command, root
+) -> None:
+    from pilot.system.package_mgr import APT_UPGRADE_SCRIPT, package_update
+
+    run = AsyncMock(return_value=(0, "", ""))
+    _package_platform(monkeypatch, platform, manager, run)
+
+    assert "brought up to date" in await package_update()
+    args = run.await_args.args[0]
+    assert args[: len(command)] == command
+    assert run.await_args.kwargs.get("root", False) is root
+    if manager == "apt-get":
+        # One pkexec prompt: the list refresh and the upgrade run in one fixed root shell command.
+        assert args == ["sh", "-c", APT_UPGRADE_SCRIPT]
+        assert "apt-get update && apt-get -y" in APT_UPGRADE_SCRIPT and "upgrade" in APT_UPGRADE_SCRIPT
+
+
+async def test_macos_update_upgrades_and_a_failed_upgrade_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system.package_mgr import package_update
+
+    run = AsyncMock(side_effect=[(0, "", ""), (0, "", ""), (0, "", ""), (1, "", "Error: openssl@3: failed")])
+    _package_platform(monkeypatch, Platform.MACOS, "brew", run)
+
+    assert "brew" in await package_update()
+    assert [call.args[0] for call in run.await_args_list] == [["brew", "update"], ["brew", "upgrade"]]
+    with pytest.raises(RuntimeError, match="Package update failed"):
+        await package_update()
+
+
+async def test_winget_with_nothing_to_upgrade_is_not_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system.package_mgr import package_update
+
+    _package_platform(monkeypatch, Platform.WINDOWS, "winget", AsyncMock(return_value=(0x8A15002B, "No update", "")))
+
+    assert "winget" in await package_update()
+
+
+@pytest.mark.parametrize(
+    ("platform", "manager", "answers", "outcome"),
+    [
+        (Platform.LINUX, "dnf", [(0, "", "")], "verified"),
+        (Platform.LINUX, "dnf", [(100, "kernel.x86_64  6.6.9-200.fc39  updates\n", "")], "mismatch"),
+        (Platform.LINUX, "apt-get", [(0, "Conf libc6 (2.39)\n", "")], "verified"),
+        (
+            Platform.LINUX,
+            "apt-get",
+            [(0, "Inst libc6 [2.38] (2.39 Ubuntu:24.04/noble-updates [amd64])\n", "")],
+            "mismatch",
+        ),
+        (Platform.LINUX, "pacman", [(1, "", "")], "verified"),
+        (Platform.LINUX, "pacman", [(0, "linux 6.6.1-1 -> 6.6.2-1\n", "")], "mismatch"),
+        (Platform.LINUX, "zypper", [], "reported"),
+        (Platform.MACOS, "brew", [(0, '{"formulae": [], "casks": []}', "")], "verified"),
+        (
+            Platform.MACOS,
+            "brew",
+            [(0, '{"formulae": [{"name": "node", "pinned": true}], "casks": []}', "")],
+            "verified",
+        ),
+        (
+            Platform.MACOS,
+            "brew",
+            [(0, '{"formulae": [{"name": "git", "pinned": false}], "casks": []}', "")],
+            "mismatch",
+        ),
+        (
+            Platform.WINDOWS,
+            "winget",
+            [(0x8A15002B, "No installed package found matching input criteria.\n", "")],
+            "verified",
+        ),
+        (Platform.WINDOWS, "winget", [(0, WINGET_TABLE, "")], "mismatch"),
+        (Platform.WINDOWS, "choco", [(0, "", "")], "verified"),
+        (Platform.WINDOWS, "choco", [(0, "git|2.42.0|2.43.0|false\n", "")], "mismatch"),
+    ],
+)
+async def test_package_update_verified_from_pending_upgrades(
+    monkeypatch: pytest.MonkeyPatch, platform, manager, answers, outcome
+) -> None:
+    from pilot.actions import PackageParams
+
+    run = AsyncMock(side_effect=answers)
+    _package_platform(monkeypatch, platform, manager, run)
+
+    verification = await _verify(ActionType.PACKAGE_UPDATE, PackageParams())
+
+    {"verified": _assert_verified, "mismatch": _assert_mismatch, "reported": _assert_reported}[outcome](verification)
+    for call in run.await_args_list:
+        assert call.kwargs.get("root", False) is False  # the read never asks for a password
+
+
+async def test_dnf_check_update_error_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.actions import PackageParams
+
+    _package_platform(monkeypatch, Platform.LINUX, "dnf", AsyncMock(return_value=(1, "", "Cannot download repomd.xml")))
+
+    verification = await _verify(ActionType.PACKAGE_UPDATE, PackageParams())
+
+    assert verification.passed is False and "Verification error" in verification.details[0]
+
+
+async def test_failed_package_update_never_reaches_the_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.actions import PackageParams
+    from pilot.system import package_mgr
+
+    _package_platform(
+        monkeypatch, Platform.LINUX, "apt-get", AsyncMock(return_value=(100, "", "E: Could not get lock"))
+    )
+    observer = AsyncMock()
+    monkeypatch.setattr(package_mgr, "pending_upgrades", observer)
+
+    with pytest.raises(RuntimeError, match="Package update failed"):
+        await package_mgr.package_update()
+    _assert_failed(await _verify(ActionType.PACKAGE_UPDATE, PackageParams(), success=False))
+    observer.assert_not_awaited()
+
+
+def test_package_update_keeps_its_approval_tier() -> None:
+    from pilot.actions import SYSTEM_MODIFY_ACTIONS
+
+    # It now upgrades on every platform: never lower than the system-modify tier that asks first.
+    assert ActionType.PACKAGE_UPDATE in SYSTEM_MODIFY_ACTIONS

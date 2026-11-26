@@ -237,3 +237,17 @@ async def wifi_joined(result: ActionResult) -> Outcome:
     found = ", ".join(reading.ssids) if reading.ssids else "no network"
     seconds = WIFI_READINGS * READING_INTERVAL_SECONDS
     return mismatch(f"Expected to be joined to {params.ssid}; after {seconds:g} s the Wi-Fi is on {found}")
+
+
+@register(ActionType.PACKAGE_UPDATE, method="packages_current_postcondition", timeout=200.0)
+async def packages_up_to_date(result: ActionResult) -> Outcome:
+    """Nothing is left to upgrade, asked of the package manager afresh (winget, choco, brew, apt, dnf, pacman)."""
+    from pilot.system.package_mgr import pending_upgrades
+
+    pending = await pending_upgrades()
+    if pending is None:
+        return unobserved("This system's package manager has no read-only list of pending upgrades Heliox can ask")
+    if not pending:
+        return verified("The package manager lists no upgrades left to install")
+    shown = ", ".join(pending[:5]) + (f" and {len(pending) - 5} more" if len(pending) > 5 else "")
+    return mismatch(f"Expected every installed package to be up to date; {len(pending)} still have upgrades: {shown}")
