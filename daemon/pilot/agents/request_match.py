@@ -33,6 +33,8 @@ import json
 import ntpath
 import os
 import re
+import sys
+import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
@@ -136,8 +138,30 @@ def is_refusal(error: str | None) -> bool:
 
 # ── what a request names ─────────────────────────────────────────────
 
+
+def _mark_ranges() -> str:
+    """Every combining mark (Unicode categories Mn, Mc, Me) as character-class ranges. Python's \\w leaves them
+    out, so without them a Hindi file name like रिपोर्ट.txt would break apart at its vowel signs."""
+    ranges: list[tuple[int, int]] = []
+    for code in range(sys.maxunicode + 1):
+        if unicodedata.category(chr(code)).startswith("M"):
+            if ranges and ranges[-1][1] == code - 1:
+                ranges[-1] = (ranges[-1][0], code)
+            else:
+                ranges.append((code, code))
+    return "".join(f"\\U{a:08x}-\\U{b:08x}" if a != b else f"\\U{a:08x}" for a, b in ranges)
+
+
+_W = r"\w" + _mark_ranges()  # a letter, digit or underscore of any script, or a combining mark
+# Scripts written without spaces between words: a path or file name there can run straight into the next word
+# ("C:\\w\\報告書.txtを削除して").
+_NO_SPACE = (
+    "\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af"
+    "\uf900-\ufaff\uff00-\uffef"
+)
+
 _URL = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
-_EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
+_EMAIL = re.compile(rf"(?<![{_W}.+-])[{_W}.+-]+@[{_W}-]+(?:\.[{_W}-]+)+")
 _QUOTED = re.compile(
     r"(?:(?<=[\s(:,])|^)(?:'([^'\n]{2,200})'|\"([^\"\n]{2,200})\"|“([^”\n]{2,200})”|‘([^’\n]{2,200})’)"
     r"(?=[\s.,;:!?)]|$)"
@@ -147,10 +171,12 @@ _SEGMENT = r"[^\\/\s\"'<>|*?,;:]+"
 _WIN_ABS = re.compile(
     rf"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\[\w.$-]+[\\/])(?:{_SEGMENT}(?: {_SEGMENT})*[\\/])*(?:{_SEGMENT})?"
 )
-_POSIX_SEGMENT = r"[\w.~+@-]+"
+_POSIX_SEGMENT = rf"[{_W}.~+@-]+"
 _POSIX_ABS = re.compile(rf"(?:^|(?<=[\s(\"'=]))~?/(?:{_POSIX_SEGMENT}(?: {_POSIX_SEGMENT})*/)*(?:{_POSIX_SEGMENT})?")
-_RELATIVE = re.compile(r"(?<![\w:\\/.-])[\w.-]+(?:[\\/][\w.-]+)+")
-_BARE = re.compile(r"(?<![\w\\/.-])[\w-]+(?:\.[\w-]+)*\.[A-Za-z][A-Za-z0-9]{0,7}(?![\w\\/-])")
+_RELATIVE = re.compile(rf"(?<![{_W}:\\/.-])[{_W}.-]+(?:[\\/][{_W}.-]+)+")
+_BARE = re.compile(
+    rf"(?<![{_W}\\/.-])[{_W}-]+(?:\.[{_W}-]+)*\.[A-Za-z][A-Za-z0-9]{{0,7}}(?=$|[{_NO_SPACE}]|[^{_W}\\/-])"
+)
 _NOT_FILE_NAMES = frozenset({"e.g", "i.e", "etc", "a.m", "p.m", "vs"})
 
 
@@ -159,7 +185,8 @@ def _norm(path: str) -> str:
 
     Case is folded on every system: that only ever makes two different Linux paths look alike (an accepted plan),
     never a matching pair look different (a refused one)."""
-    text = str(path or "").strip().strip("\"'`").rstrip(".,;:!?)")
+    # One Unicode spelling (NFC): "café" typed as e plus a combining accent matches the one-character é.
+    text = unicodedata.normalize("NFC", str(path or "")).strip().strip("\"'`").rstrip(".,;:!?)")
     if text.startswith("~"):
         text = os.path.expanduser(text)
     text = text.replace("/", "\\")
@@ -169,7 +196,7 @@ def _norm(path: str) -> str:
         text = "\\" + text
     if len(text) > 3 or not re.match(r"^[A-Za-z]:\\$", text):
         text = text.rstrip("\\")
-    return text.casefold()
+    return unicodedata.normalize("NFC", text.casefold())
 
 
 def _base(path: str) -> str:
@@ -212,9 +239,28 @@ def _verbs(text: str) -> tuple[frozenset[str], bool]:
     return kinds, any(f" {verb} " in words for verb in _OPEN_VERBS)
 
 
+_GLUED_EXTENSION = re.compile(rf"^(.*\.[A-Za-z][A-Za-z0-9]{{0,7}})[{_NO_SPACE}]")
+
+
+def _glued_tail(path: str) -> str:
+    """A path whose last part runs into words of a script written without spaces: cut after its extension, or, with
+    no extension to cut at, keep only the folder it is in. Never more than the request said: a looser target can
+    only let a plan through, never refuse one because the words around the path were not understood."""
+    folder, _, last = path.replace("/", "\\").rpartition("\\")
+    if not folder or not re.search(rf"[{_NO_SPACE}]", last):
+        return path
+    glued = _GLUED_EXTENSION.match(last)
+    if glued:
+        return f"{folder}\\{glued.group(1)}"
+    if re.search(r"\.[A-Za-z][A-Za-z0-9]{0,7}$", last):
+        return path
+    return folder
+
+
 def named_in(request: str) -> Named:
-    """The targets, quoted text and verbs of one request."""
-    text = str(request or "")
+    """The targets, quoted text and verbs of one request. The verbs are English words only: a request in another
+    language gets the target checks and no kind check, so it is never refused for words that were not understood."""
+    text = unicodedata.normalize("NFC", str(request or ""))
     quoted = [next(group for group in match.groups() if group) for match in _QUOTED.finditer(text)]
     # A quoted path is one path, spaces and all.
     rest = _QUOTED.sub(" ", text)
@@ -225,7 +271,7 @@ def named_in(request: str) -> Named:
         absolute.append(_norm(chunk))
     for pattern in (_WIN_ABS, _POSIX_ABS):
         for match in pattern.finditer(rest):
-            found = match.group(0).strip()
+            found = _glued_tail(match.group(0).strip())
             if len(found) > 1:
                 absolute.append(_norm(found))
         rest = pattern.sub(" ", rest)
@@ -288,7 +334,9 @@ def _params(action: Action) -> dict:
 
 def _step_text(action: Action) -> str:
     raw = json.dumps({"target": action.target, "parameters": _params(action)}, ensure_ascii=False)
-    return raw.replace("\\\\", "\\").replace("/", "\\").casefold()
+    return unicodedata.normalize(
+        "NFC", unicodedata.normalize("NFC", raw).replace("\\\\", "\\").replace("/", "\\").casefold()
+    )
 
 
 def changing_steps(actions: Iterable[Action]) -> list[Step]:

@@ -219,3 +219,63 @@ def test_counts_over_both_lists() -> None:
     false_accepts = [r for r, p, e in WRONG if request_match.check_plan(r, p, earlier=e) is None]
     assert (len(RIGHT), len(false_refusals)) == (20, 0)
     assert (len(WRONG), len(false_accepts)) == (8, 0)
+
+
+# ── other languages and scripts ──────────────────────────────────────
+
+HINDI = "रिपोर्ट.txt"
+JAPANESE = "報告書.txt"
+ARABIC = "تقرير.txt"
+
+
+def nfd(text: str) -> str:
+    import unicodedata
+
+    return unicodedata.normalize("NFD", text)
+
+
+@pytest.mark.parametrize(
+    ("request_text", "plan"),
+    [
+        # Hindi: the file name has vowel signs (combining marks), the plan spells it decomposed.
+        (f"{W}\\{HINDI} को हटाओ", [delete(nfd(f"{W}\\{HINDI}"))]),
+        (f"{HINDI} हटाओ", [delete(f"{D}\\Desktop\\{HINDI}")]),
+        # Japanese: the path runs straight into the next word, with and without an extension.
+        (f"{W}\\{JAPANESE}を削除して", [delete(f"{W}\\{JAPANESE}")]),
+        (f"{W}\\写真を整理して", [move(f"{W}\\写真\\a.jpg", f"{W}\\写真\\2026\\a.jpg")]),
+        # Arabic, right to left around a left-to-right path.
+        (f"احذف الملف {W}\\{ARABIC}", [delete(f"{W}\\{ARABIC}")]),
+        # A kind the English lists would call wrong is not refused in a language they do not read.
+        (f"{W}\\{HINDI} की कॉपी {W}\\backup में बनाओ", [copy(f"{W}\\{HINDI}", f"{W}\\backup\\{HINDI}")]),
+        (f"{W}\\{JAPANESE}を{W}\\backupにコピーして", [copy(f"{W}\\{JAPANESE}", f"{W}\\backup\\{JAPANESE}")]),
+        (f"انسخ {W}\\{ARABIC} إلى {W}\\backup", [copy(f"{W}\\{ARABIC}", f"{W}\\backup\\{ARABIC}")]),
+        # Combining characters in a Latin name: typed composed, planned decomposed.
+        (f"Delete {W}\\café.txt", [delete(nfd(f"{W}\\café.txt"))]),
+        (f"Delete {nfd('résumé.pdf')}", [delete(f"{D}\\Desktop\\résumé.pdf")]),
+    ],
+)
+def test_requests_in_other_scripts_are_never_refused_for_their_words(request_text, plan) -> None:
+    assert request_match.check_plan(request_text, plan) is None
+
+
+@pytest.mark.parametrize(
+    "request_text",
+    [f"{W}\\{HINDI} को हटाओ", f"{W}\\{JAPANESE}を削除して", f"احذف الملف {W}\\{ARABIC}"],
+)
+def test_no_verb_is_read_from_hindi_japanese_or_arabic(request_text) -> None:
+    named = request_match.named_in(request_text)
+    assert named.kinds == frozenset() and named.targets
+
+
+@pytest.mark.parametrize(
+    "request_text",
+    [
+        f"{W}\\archive\\note_backup.txt को हटाओ",
+        f"{W}\\archive\\note_backup.txtを削除して",
+        f"احذف {W}\\archive\\note_backup.txt",
+    ],
+)
+def test_a_plan_for_another_file_is_still_refused_in_any_script(request_text) -> None:
+    plan = [copy(f"{W}\\notes\\does_not_exist.txt", f"{W}\\notes\\x.txt")]
+    problem = request_match.check_plan(request_text, plan)
+    assert problem is not None and problem.rule == "off_target"
