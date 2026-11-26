@@ -810,8 +810,8 @@ def test_a_plan_of_several_steps_is_one_or_two_sentences_about_its_outcome() -> 
         ),
         (
             ActionType.BATTERY_INFO,
-            "The battery is at 80 percent, plugged in.",
-            "The battery is at 80 percent, plugged in.",
+            "The battery is at 80 percent, charging.",
+            "The battery is at 80 percent, charging.",
         ),
         (
             ActionType.FILE_HASH,

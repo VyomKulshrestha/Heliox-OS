@@ -392,7 +392,11 @@ def _health_review(step: Step) -> Said:
 
 
 def _network_info(step: Step) -> Said:
-    up = re.findall(r"^\s{2}(\S.*?) \(UP\):", step.out, re.MULTILINE)
+    up = [
+        name
+        for name in re.findall(r"^\s{2}(\S.*?) \(UP\):", step.out, re.MULTILINE)
+        if not re.match(r"^(?:lo\d*|Loopback\b.*)$", name)  # this computer's own loopback is always up
+    ]
     if not up:
         return _answer(step, "Network")
     return Said(shown=for_screen(step.out), spoken=f"{plural(len(up), 'network connection')} up: {_names(up)}.")

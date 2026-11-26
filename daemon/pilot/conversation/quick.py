@@ -385,28 +385,93 @@ def from_model(proposal: Any, *, words: str, platform: str | None = None, home: 
     )
 
 
+# Win32_Battery.BatteryStatus, as the Windows fallback of battery_info prints it.
+_WINDOWS_BATTERY_STATUS = {
+    "1": "on battery",
+    "2": "plugged in",
+    "3": "fully charged",
+    "4": "low",
+    "5": "critically low",
+    "6": "charging",
+    "7": "charging",
+    "8": "charging",
+    "9": "charging",
+    "11": "partly charged",
+}
+
+
+def _battery_state(status: str, percent: int) -> str:
+    """The battery's state in words: psutil says "Plugged in" or "On battery", Windows a number, upower a word."""
+    status = status.strip()
+    if status in _WINDOWS_BATTERY_STATUS:
+        status = _WINDOWS_BATTERY_STATUS[status]
+    lowered = status.lower().replace("-", " ")
+    if lowered in ("", "n/a", "unknown"):
+        return ""
+    if lowered in ("plugged in", "charging"):
+        return "fully charged" if percent >= 100 else "charging"
+    if lowered in ("fully charged", "full"):
+        return "fully charged"
+    return lowered
+
+
+def _gigabytes(value: str) -> float | None:
+    """A size as free -h or a table prints it ("15Gi", "6.1G", "512Mi"), in gigabytes; None when it is not one."""
+    found = re.fullmatch(r"([\d.]+)([KMGT])i?B?", value.strip(), re.IGNORECASE)
+    if not found:
+        return None
+    scale = {"K": 1 / 1024**2, "M": 1 / 1024, "G": 1.0, "T": 1024.0}[found.group(2).upper()]
+    return float(found.group(1)) * scale
+
+
 def speakable_state(result: str) -> str:
-    """Battery, disk and memory readings as a sentence; "" when the text is not one of them."""
+    """Battery, disk, memory and processor readings as a sentence, from every form the system readers return
+    (psutil, and the Windows, macOS and Linux fallbacks); "" when the text is not one of them."""
     text = result or ""
-    charge = re.search(r"Charge:\s*(\d+)%", text)
+    charge = re.search(r"(?:Charge|percentage):\s*(\d+)%", text, re.IGNORECASE)
     if charge:
-        status = re.search(r"Status:\s*([A-Za-z ]+?)(?=\s*(?:Time remaining|$)|\n|\s{2})", text)
-        tail = f", {status.group(1).strip().lower()}" if status and status.group(1).strip() not in ("", "N/A") else ""
-        return f"The battery is at {charge.group(1)} percent{tail}."
-    drives = re.findall(r"([A-Za-z]:\\|/[^\s(]*)[^\n]*?([\d.]+) GB total, ([\d.]+) GB used", text)
+        percent = int(charge.group(1))
+        status = re.search(r"(?:Status|state):\s*([A-Za-z0-9 -]+?)\s*(?:\n|$|Time remaining)", text, re.IGNORECASE)
+        state = _battery_state(status.group(1), percent) if status else ""
+        return f"The battery is at {percent} percent{f', {state}' if state else ''}."
+    drives = re.findall(
+        r"^\s*(\S+) \(([^)]*)\) \S+ ([\d.]+) GB total, ([\d.]+) GB used[^\n]*?(?:fstype=(\S+))?$", text, re.MULTILINE
+    )
     if drives:
         parts = []
-        for name, total, used in drives[:3]:
+        for device, mount, total, used, fstype in drives:
+            if fstype.lower() in {"squashfs", "tmpfs", "devtmpfs", "overlay"} or float(total) <= 0:
+                continue  # a snap or a memory disk, not a place for files
             free = max(0.0, float(total) - float(used))
-            label = f"drive {name[0].upper()}" if name[:1].isalpha() else (name or "the main disk")
+            where = mount or device
+            if re.match(r"^[A-Za-z]:\\?$", where):
+                label = f"drive {where[0].upper()}"
+            elif where == "/":
+                label = "the main disk"
+            else:
+                label = where
             parts.append(f"{free:.0f} gigabytes free on {label}")
-        return "You have " + ", and ".join(parts) + "."
-    memory = re.search(r"Total:\s*([\d.]+) GB\s+Used:\s*([\d.]+) GB \(([\d.]+)%\)", text)
+            if len(parts) == 3:
+                break
+        if parts:
+            return "You have " + ", and ".join(parts) + "."
+    memory = re.search(r"Total:\s*([\d.]+) GB\s+Used:\s*([\d.]+) GB(?: \(([\d.]+)%\))?", text)
     if memory:
-        return f"{memory.group(2)} of {memory.group(1)} gigabytes of memory are in use, {float(memory.group(3)):.0f} percent."
-    cpu = re.search(r"(?:CPU|Usage)[^\n]*?([\d.]+)%", text)
-    if cpu and "=== CPU" in text:
-        return f"The processor is at {float(cpu.group(1)):.0f} percent."
+        total, used = float(memory.group(1)), float(memory.group(2))
+        percent = float(memory.group(3)) if memory.group(3) else (used / total * 100 if total else 0.0)
+        return f"{used:g} of {total:g} gigabytes of memory are in use, {percent:.0f} percent."
+    free_line = re.search(r"^Mem:\s+(\S+)\s+(\S+)", text, re.MULTILINE)
+    if free_line:
+        total_gb, used_gb = _gigabytes(free_line.group(1)), _gigabytes(free_line.group(2))
+        if total_gb and used_gb is not None:
+            return (
+                f"{used_gb:.1f} of {total_gb:.1f} gigabytes of memory are in use, {used_gb / total_gb * 100:.0f} "
+                "percent."
+            )
+    if "=== CPU" in text:
+        average = re.search(r"Average usage:\s*([\d.]+)%", text) or re.search(r"LoadPercentage\s*:\s*([\d.]+)", text)
+        if average:
+            return f"The processor is at {float(average.group(1)):.0f} percent."
     return ""
 
 
