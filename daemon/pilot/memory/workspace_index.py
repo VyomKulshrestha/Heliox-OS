@@ -41,6 +41,14 @@ SUPPORTED_EXTENSIONS = {
 
 MAX_FILE_SIZE_BYTES = 500_000
 CHUNK_SIZE = 40
+SKIPPED_FOLDERS = ("node_modules", "__pycache__", ".git", "venv", ".venv")
+
+
+def skipped_folder(relative: Path) -> bool:
+    """Whether a file, given relative to the indexed folder, sits in a hidden or dependency folder. Only the part
+    inside the indexed folder counts: a workspace that itself lives under a dot-folder (~/.config/project) is
+    indexed; before, every one of its files was skipped and the index was left as it was."""
+    return any(part.startswith(".") or part in SKIPPED_FOLDERS for part in relative.parts)
 
 
 class WorkspaceIndex:
@@ -134,10 +142,7 @@ class WorkspaceIndex:
             if file_path.stat().st_size > MAX_FILE_SIZE_BYTES:
                 files_skipped += 1
                 continue
-            if any(
-                p.startswith(".") or p in ("node_modules", "__pycache__", ".git", "venv", ".venv")
-                for p in file_path.parts
-            ):
+            if skipped_folder(file_path.relative_to(folder)):
                 continue
 
             try:
@@ -160,7 +165,8 @@ class WorkspaceIndex:
 
         all_chunks = unchanged_chunks + new_chunks
         if not all_chunks:
-            return {"success": True, "message": "No files to index", "files": 0}
+            # Nothing was indexed and the stored index still describes what was indexed before.
+            return {"success": False, "error": f"No supported text files to index in {folder_path}"}
 
         texts = [c["text"] for c in all_chunks]
         embeddings = self._model.encode(texts, show_progress_bar=False, batch_size=32)
