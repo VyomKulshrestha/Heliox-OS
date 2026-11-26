@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 # Where a cloud provider sends requests, for the sentence the person reads.
 CLOUD_HOSTS = {
@@ -64,7 +64,7 @@ def host_of(value: Any) -> str:
 
 
 def is_local(host: str) -> bool:
-    """A host on this computer without a lookup: loopback and unspecified addresses (IPv4, IPv6 and IPv4-mapped),
+    """A host on this computer without a lookup: loopback addresses (IPv4, IPv6 and IPv4-mapped),
     ``localhost`` and names under ``.localhost``. Any other name, a private network address among them, is not."""
     from pilot.models.model_place import LOOPBACK_NAMES, address_on_this_computer
 

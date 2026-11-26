@@ -680,9 +680,10 @@ other people's private details) holds under both.
 
 "On this computer" means the request cannot leave it: Ollama or the local backend at a loopback address, `localhost`,
 a Unix socket or a host name that resolved to loopback only (`pilot.models.model_place`). Ollama at any other address
-(a home network, `host.docker.internal`, a container or WSL bridge, a name that resolves elsewhere or could not be
-looked up) is a cloud model for this table, for the to-dos and reminders line, for the text on screen and for Live;
-Settings says so once under the Ollama model. Host names are looked up in the background the first time they are
+(a home network, `host.docker.internal`, a container or WSL bridge, `0.0.0.0` or `::`, a name that resolves
+elsewhere or could not be looked up) is a cloud model for this table, for the to-dos and reminders line, for the text
+on screen and for Live; Settings says so once at the end of the Model group and points to "Your profile and the
+model". No setting makes such a model count as on this computer. Host names are looked up in the background the first time they are
 needed after a start or a save of the model settings, never on the reply path.
 
 - **In the window:** Settings, Cloud API, "Your profile and the model" says this in words and turns it off.

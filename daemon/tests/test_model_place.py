@@ -57,7 +57,8 @@ def resolver(monkeypatch) -> FakeResolver:
     ("http://ollama.localhost:11434", True),
     ("http://[::1]:11434", True),
     ("http://[::ffff:127.0.0.1]:11434", True),
-    ("http://0.0.0.0:11434", True),  # reaches this computer or nothing
+    ("http://0.0.0.0:11434", False),  # not a loopback address: no standard says where it goes
+    ("http://[::]:11434", False),
     ("unix:///run/ollama.sock", True),
     ("http+unix://%2Frun%2Follama.sock", True),
     ("http://192.168.1.20:11434", False),

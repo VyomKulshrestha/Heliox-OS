@@ -2184,7 +2184,8 @@
         <div class="setting-info">
           <span class="setting-label">Where the model runs</span>
           <span class="setting-desc">
-            This model runs on another computer: what Heliox sends to it follows the cloud sharing settings.
+            This model runs on another computer: what Heliox sends to it follows the sharing settings for models that
+            are not on this computer. Change them under Cloud API, Your profile and the model.
           </span>
           <span class="security-setting-status">At {$settings.model_elsewhere}, set in config.toml</span>
         </div>

@@ -6,9 +6,11 @@ its requests cannot leave it:
 
 - the provider is Ollama or the local backend (``model.provider`` "ollama" or "local"), and
 - the Ollama address (``model.ollama_base_url``) names this computer: a loopback address (``127.0.0.0/8``, ``::1``,
-  an IPv4-mapped ``::ffff:127.x.x.x``), the unspecified address (a connection to ``0.0.0.0`` or ``::`` reaches this
-  computer or nothing), ``localhost`` or a name under ``.localhost``, or a Unix socket; or a host name that resolved
-  to loopback addresses only.
+  an IPv4-mapped ``::ffff:127.x.x.x``), ``localhost`` or a name under ``.localhost``, or a Unix socket; or a host
+  name that resolved to loopback addresses only.
+
+The unspecified addresses ``0.0.0.0`` and ``::`` are not loopback addresses. Linux and macOS send a connection to
+them to this computer and Windows refuses it, but no standard promises that, so they count as another computer.
 
 Anything else is another computer, whatever the provider is called: a private network address (``192.168.x.x``,
 ``10.x.x.x``), ``host.docker.internal``, a WSL or container bridge address, a host name that resolves to any address
@@ -60,7 +62,7 @@ def host_of(url: Any) -> str:
 
 
 def address_on_this_computer(address: str) -> bool | None:
-    """True for a loopback or unspecified address, False for any other address, None when ``address`` is a name."""
+    """True for a loopback address, False for any other address (0.0.0.0 and :: among them), None for a name."""
     text = address.strip().strip("[]").split("%", 1)[0]  # an IPv6 zone ("fe80::1%eth0") names no other host
     try:
         ip = ipaddress.ip_address(text)
@@ -69,7 +71,7 @@ def address_on_this_computer(address: str) -> bool | None:
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped
-    return bool(ip.is_loopback or ip.is_unspecified)
+    return bool(ip.is_loopback)
 
 
 def literal_place(url: Any) -> bool | None:

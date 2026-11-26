@@ -10373,7 +10373,8 @@ class PilotServer:
         data.pop("server", None)
         # Settings shows a banner: Heliox is running on defaults and will not overwrite the file.
         data["load_errors"] = self.config.load_errors
-        # Settings says once that a model on another computer follows the cloud sharing settings: its host, or "".
+        # Settings says once that a model on another computer follows the sharing settings for models elsewhere: its
+        # host, or "".
         from pilot.models.model_place import model_elsewhere
 
         data["model_elsewhere"] = model_elsewhere(self.config.model)

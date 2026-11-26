@@ -270,13 +270,14 @@ describe("SettingsPanel saves", () => {
     expect(banner?.textContent).toContain("Invalid value (at line 4, column 9)");
   });
 
-  it("says once that an Ollama model on another computer follows the cloud sharing settings", async () => {
+  it("says once that an Ollama model on another computer follows the settings for models elsewhere", async () => {
     settingsMocks.set({ ...structuredClone(baseSettings), model_elsewhere: "192.168.1.20" });
     await renderPanel();
     const row = screen.getByTestId("model-elsewhere");
     expect(row.textContent).toContain(
-      "This model runs on another computer: what Heliox sends to it follows the cloud sharing settings.",
+      "This model runs on another computer: what Heliox sends to it follows the sharing settings for models that are not on this computer.",
     );
+    expect(row.textContent).toContain("Change them under Cloud API, Your profile and the model.");
     expect(row.textContent).toContain("192.168.1.20");
     expect(screen.getAllByTestId("model-elsewhere")).toHaveLength(1);
   });

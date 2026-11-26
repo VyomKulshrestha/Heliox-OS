@@ -928,13 +928,16 @@ goes; with a model on this computer it is free, since nothing about you leaves i
 to-dos and other answers Heliox gives on this computer never go to a cloud model, whatever this setting says.
 
 **What counts as on this computer.** Ollama (or the local backend, which asks Ollama first) is on this computer only
-when `[model] ollama_base_url` names it: a loopback address (`127.0.0.0/8`, `::1`, `::ffff:127.x.x.x`), `0.0.0.0`,
+when `[model] ollama_base_url` names it: a loopback address (`127.0.0.0/8`, `::1`, `::ffff:127.x.x.x`),
 `localhost` or a name under `.localhost`, a Unix socket, or a host name that resolves to loopback addresses only.
 Any other address is another computer: a home network address such as `192.168.1.20`, `host.docker.internal`, a WSL
 or container bridge, a tunnel or overlay address, or a name that resolves elsewhere. A model on another computer is
 treated as a cloud model for every rule above and for the text on screen (`share_screen_text`), and Settings says so
-under the Ollama model: "This model runs on another computer: what Heliox sends to it follows the cloud sharing
-settings". Live's checks against your calendar, to-dos and reminders ask a model only when Ollama is on this
+at the end of the Model group: "This model runs on another computer: what Heliox sends to it follows the sharing
+settings for models that are not on this computer. Change them under Cloud API, Your profile and the model." The
+text on screen follows `conversation.share_screen_text` in config.toml. `0.0.0.0` and `::` are not loopback
+addresses and count as another computer. There is no setting that makes a model on another computer count as on
+this one; the sharing settings above decide what it gets. Live's checks against your calendar, to-dos and reminders ask a model only when Ollama is on this
 computer; elsewhere the checks in code still run. A host name is looked up once in the background, the first time it is
 needed after Heliox starts or the model settings are saved, never while Heliox waits to answer you; until the answer is in, and when the lookup fails, the
 name counts as another computer. Pointing Ollama at another computer asks in the approval dialog first, naming the
