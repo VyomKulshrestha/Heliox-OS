@@ -807,28 +807,76 @@ async def test_a_new_window_after_the_launch_is_evidence_whatever_its_title(monk
     assert "new window" in await said(action, output="Launched Zed (resolved via PATH).")
 
 
-async def test_a_repair_round_never_opens_the_app_a_second_time(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pilot.agents.executor import Executor
+def _open(name: str = "Notepad") -> Action:
+    return Action(action_type=ActionType.OPEN_APPLICATION, parameters=OpenApplicationParams(name=name))
+
+
+@pytest.fixture
+def launcher(monkeypatch: pytest.MonkeyPatch):
+    """The executor's open_application handler with the launcher faked: nothing is started."""
+    from pilot.agents.executor import Executor, _launch_counts
     from pilot.intelligence.experience import experience_scope
     from pilot.system import applications
 
     launch = AsyncMock(return_value="Launched Notepad (resolved via PATH).")
     monkeypatch.setattr(applications, "launch_application", launch)
-    monkeypatch.setattr(observe, "window_rows_now", MagicMock(return_value=[]))
-    observe._LAUNCHED.clear()
-    action = Action(action_type=ActionType.OPEN_APPLICATION, parameters=OpenApplicationParams(name="Notepad"))
+    observe._TASK_LAUNCHES.clear()
 
-    with experience_scope(task_id="task-1"):
-        first = await Executor._exec_open_application(None, action)
-        again = await Executor._exec_open_application(None, action)
-    with experience_scope(task_id="task-2"):
-        other_task = await Executor._exec_open_application(None, action)
+    async def run(plan: list[Action], steps: list[Action] | None = None, task: str = "task-1") -> list[str]:
+        """Run ``steps`` (default: the open steps of ``plan``) the way _execute_inner does for ``plan``."""
+        executor = types.SimpleNamespace(_launch_counts=_launch_counts(plan))
+        said = []
+        with experience_scope(task_id=task):
+            for action in steps if steps is not None else plan:
+                if action.action_type == ActionType.OPEN_APPLICATION:
+                    said.append(await Executor._exec_open_application(executor, action))
+        return said
 
-    assert first.startswith("Launched") and other_task.startswith("Launched")
-    assert again == "Notepad was opened a moment ago in this task, so it was not opened again"
+    yield launch, run
+    observe._TASK_LAUNCHES.clear()
+
+
+async def test_a_repair_round_repeating_the_same_step_launches_once(launcher) -> None:
+    launch, run = launcher
+    first = _open()
+    plan = [first, Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text="x"))]
+    await run(plan)
+    again = await run(plan, steps=[first])  # the same step object issued again
+    assert launch.await_count == 1
+    assert again == ["Notepad was already opened in this task, so it was not opened again"]
+    assert (await verify(first, output=again[0])).passed
+
+
+async def test_a_full_re_plan_launches_once(launcher) -> None:
+    launch, run = launcher
+    await run([_open()])
+    replanned = await run([_open(), Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text="x"))])
+    assert launch.await_count == 1 and "not opened again" in replanned[0]
+    await run([_open()], task="task-2")  # another request is another task
     assert launch.await_count == 2
-    assert (await verify(action, output=again)).passed
-    observe._LAUNCHED.clear()
+
+
+async def test_two_wanted_launches_in_one_plan_launch_twice(launcher) -> None:
+    launch, run = launcher
+    await run([_open(), _open()])
+    assert launch.await_count == 2
+
+
+async def test_open_close_open_launches_twice(launcher) -> None:
+    launch, run = launcher
+    close = Action(action_type=ActionType.WINDOW_CLOSE, parameters=WindowParams(process_name="notepad"))
+    await run([_open(), close, _open()])
+    assert launch.await_count == 2
+
+
+async def test_a_launch_that_failed_is_tried_again_by_its_repair_round(launcher) -> None:
+    launch, run = launcher
+    step = _open()
+    launch.side_effect = [RuntimeError("Notepad exited during startup"), "Launched Notepad (resolved via PATH)."]
+    with pytest.raises(RuntimeError):
+        await run([step])
+    await run([step])
+    assert launch.await_count == 2
 
 
 def test_the_launcher_names_the_program_it_started() -> None:

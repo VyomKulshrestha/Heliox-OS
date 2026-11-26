@@ -1466,8 +1466,19 @@ async def confirm_clipboard(content: str) -> None:
 
 # ── open_application: the window list before the launch, the program the launcher started ──
 
-LAUNCH_MEMORY_SECONDS = 120.0
-_LAUNCHED: OrderedDict[tuple[str, str], float] = OrderedDict()
+
+@dataclass
+class _TaskLaunches:
+    """One task's open_application steps: the steps that ran the launch check, the ones whose launch succeeded,
+    and how many successful launches each app had."""
+
+    seen: list[Any] = field(default_factory=list)
+    launched: list[Any] = field(default_factory=list)
+    made: dict[str, int] = field(default_factory=dict)
+
+
+_TASK_LAUNCHES: OrderedDict[str, _TaskLaunches] = OrderedDict()
+_MAX_TASKS = 32
 
 
 def _merge_facts(**facts: Any) -> None:
@@ -1508,22 +1519,35 @@ def note_launch(program: str, pid: int = 0) -> None:
     _merge_facts(**facts)
 
 
-def recently_launched(task: str, name: str, *, clock: Callable[[], float] | None = None) -> bool:
-    """Whether this task already launched ``name`` a moment ago (a repair round must not open a second copy)."""
-    import time
+def launch_allowed(task: str, action: Any, name: str, wanted: int) -> bool:
+    """Whether this open_application step may launch, so a repair round never opens an app a second time while a
+    plan that asks for two launches gets two.
 
-    now = (clock or time.monotonic)()
-    for key, when in list(_LAUNCHED.items()):
-        if now - when > LAUNCH_MEMORY_SECONDS:
-            _LAUNCHED.pop(key, None)
-    return bool(task) and (task, bare_name(name)) in _LAUNCHED
-
-
-def remember_launch(task: str, name: str, *, clock: Callable[[], float] | None = None) -> None:
-    import time
-
+    A step is the same step again when it is the same ``Action`` object (a partial repair round re-issues the very
+    objects that failed): it launches only if it has not launched yet. A full re-plan makes new objects, and nothing
+    identifies "the same step" across it, so a new step launches only while this task has made fewer successful
+    launches of the app than the running plan asks for (``wanted``). Counted, never timed."""
     if not task:
+        return True
+    entry = _TASK_LAUNCHES.get(task)
+    if entry is None:
+        entry = _TaskLaunches()
+        _TASK_LAUNCHES[task] = entry
+        while len(_TASK_LAUNCHES) > _MAX_TASKS:
+            _TASK_LAUNCHES.popitem(last=False)
+    if any(step is action for step in entry.launched):
+        return False
+    if any(step is action for step in entry.seen):
+        return True
+    entry.seen.append(action)
+    return entry.made.get(bare_name(name), 0) < max(1, wanted)
+
+
+def launch_done(task: str, action: Any, name: str) -> None:
+    """The step's launcher succeeded."""
+    entry = _TASK_LAUNCHES.get(task)
+    if not task or entry is None:
         return
-    _LAUNCHED[(task, bare_name(name))] = (clock or time.monotonic)()
-    while len(_LAUNCHED) > 64:
-        _LAUNCHED.popitem(last=False)
+    entry.launched.append(action)
+    key = bare_name(name)
+    entry.made[key] = entry.made.get(key, 0) + 1

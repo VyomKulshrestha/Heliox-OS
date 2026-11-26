@@ -318,7 +318,7 @@ async def application_window(result: ActionResult) -> Outcome:
     if not candidates:
         raise ValueError("open_application has no application name to observe")
     if str(result.output or "").endswith("so it was not opened again"):
-        return unobserved(f"{name} was opened a moment ago in this task")
+        return unobserved(f"{name} was already opened in this task")
     before = facts.get("windows_before")
     started_pid = int(facts.get("pid", 0) or 0)
     waited = 0.0

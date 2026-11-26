@@ -139,6 +139,17 @@ def _code_execution_error(output: str) -> str | None:
 LOG_TIMELINE_LIMIT = 15
 
 
+def _launch_counts(actions: list[Action]) -> dict[str, int]:
+    from pilot.system.desktop_observe import bare_name
+
+    counts: dict[str, int] = {}
+    for action in actions:
+        if action.action_type == ActionType.OPEN_APPLICATION:
+            name = bare_name(str(getattr(action.parameters, "name", "") or ""))
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 class Executor:
     """Executes validated action plans against the system."""
 
@@ -1081,6 +1092,9 @@ class Executor:
                 ]
 
         batches = self._analyze_dependencies(plan.actions)
+        # How many times the running plan opens each app: a full re-plan may launch an app again only as often as
+        # its plan asks beyond the launches this task already made (desktop_observe.launch_allowed).
+        self._launch_counts = _launch_counts(plan.actions)
         durable_action_indices = {id(action): index + action_index_offset for index, action in enumerate(plan.actions)}
         durable_task = (
             await self._durable_task_store.get(get_experience_context().task_id)
@@ -1933,11 +1947,12 @@ class Executor:
         # A repair round of the same task never opens a second copy of an app this task just opened.
         context = get_experience_context()
         task = context.task_id or context.plan_id
-        if desktop_observe.recently_launched(task, params.name):
-            return f"{params.name} was opened a moment ago in this task, so it was not opened again"
+        wanted = getattr(self, "_launch_counts", {}).get(desktop_observe.bare_name(params.name), 1)
+        if not desktop_observe.launch_allowed(task, action, params.name, wanted):
+            return f"{params.name} was already opened in this task, so it was not opened again"
         await desktop_observe.windows_before_launch()
         said = await launch_application(params.name, params.args or [])
-        desktop_observe.remember_launch(task, params.name)
+        desktop_observe.launch_done(task, action, params.name)
         return said
 
     async def _exec_request_human_help(self, action: Action) -> str:
