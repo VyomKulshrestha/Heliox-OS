@@ -958,3 +958,74 @@ def test_a_failure_reply_has_no_prefix_and_counts_only_several_steps() -> None:
     three = failure_reply([copied, denied, listed], None)
     assert three.shown.endswith("1 of 3 steps failed; the other 2 are done.")
     assert "did not complete" not in three.shown and "actions failed" not in three.shown
+
+
+# ── One voice: every sentence that can end a request, from every place that makes one ──────────
+
+
+def _every_ending() -> dict[str, str]:
+    """Each fixed or built sentence that can be shown or said when a request or a step ends, by where it comes from."""
+    from pilot.actions import Action, FileParams
+    from pilot.agents.orchestrator import AGENT_FAULT_ERROR
+    from pilot.agents.request_match import REFUSED_FIRST, REFUSED_REPAIR
+    from pilot.agents.review_timing import kept_copy_failed_sentence
+    from pilot.agents.unconfirmed import LATE_MISMATCH_DEFAULT, LATE_MISMATCH_SENTENCES, SPOKEN_PHRASES, window_line
+    from pilot.result_sentences import trigger_fire_sentence
+    from pilot.server import REQUEST_FAULT_SENTENCE
+    from pilot.task_reply import NO_STATUS, STATUS_SENTENCES
+
+    trigger = {
+        "name": "notes_watch",
+        "trigger_type": "file_modified",
+        "condition": {"path": "C:\\Users\\sam\\notes.txt"},
+        "action_command": "add a line to log.txt",
+        "steps": [
+            {"action_type": "file_read", "target": "log.txt", "parameters": {"path": "log.txt"}},
+            {
+                "action_type": "file_write",
+                "target": "log.txt",
+                "parameters": {"path": "log.txt", "content": "{PREV_OUTPUT}\nseen"},
+                "use_previous_output": True,
+            },
+        ],
+    }
+    endings = {
+        "agent fault": AGENT_FAULT_ERROR,
+        "request fault": REQUEST_FAULT_SENTENCE,
+        "undo copy lost": kept_copy_failed_sentence(
+            Action(action_type=ActionType.FILE_WRITE, target="a.txt", parameters=FileParams(path="a.txt"))
+        ),
+        "no status": NO_STATUS,
+        "late default": LATE_MISMATCH_DEFAULT,
+        "plan check, first": f"{REFUSED_FIRST}: the plan I made would copy a.txt to b.txt, which is not what you asked.",
+        "plan check, repair": f"{REFUSED_REPAIR}: the retry would delete b.txt, which this request did not name.",
+        "window line": window_line([(ActionType.FILE_COPY, "could_not_look")]),
+    }
+    endings.update({f"status {key}": value for key, value in STATUS_SENTENCES.items()})
+    # The phrases are said as sentences of their own (pilot.agents.unconfirmed.speakable_message adds the stop).
+    endings.update({f"phrase {key}": f"{value}." for key, value in SPOKEN_PHRASES.items()})
+    endings.update({f"late {key.value}": value for key, value in LATE_MISMATCH_SENTENCES.items()})
+    for outcome in ("ran", "timeout", "fault", "waits", "unreadable", "unavailable", "job_done", "job_failed"):
+        endings[f"trigger {outcome}"] = trigger_fire_sentence(trigger, outcome, seconds=60)
+    return endings
+
+
+import re  # noqa: E402
+
+INTERNAL_WORDS = re.compile(
+    r"\b(?:executor|callback|postcondition|post-condition|action_type|plan_id|risk gate|world model|traceback|"
+    r"exception|stack|json|none|null|true|false)\b",
+    re.IGNORECASE,
+)
+
+
+@pytest.mark.parametrize(("source", "sentence"), sorted(_every_ending().items()))
+def test_every_ending_speaks_plainly(source: str, sentence: str) -> None:
+    from pilot.reply_rules import ear_faults, screen_faults
+
+    assert sentence.strip(), source
+    assert ear_faults(sentence) == [], source
+    assert screen_faults(sentence) == [], source
+    assert not INTERNAL_WORDS.search(sentence), source
+    # Where Heliox acted or stopped, it says so in the first person, never as "Heliox" or "it".
+    assert not re.search(r"\bHeliox (?:stopped|could not|did not|failed|ran)\b", sentence), source

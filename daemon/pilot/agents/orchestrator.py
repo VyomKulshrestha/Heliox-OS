@@ -67,7 +67,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("pilot.agents.orchestrator")
 
 # A step whose specialist agent raised: what the person is told about that step (the exception is in the log).
-AGENT_FAULT_ERROR = "A fault inside Heliox stopped this step before it finished."
+AGENT_FAULT_ERROR = "Something went wrong on my side, so I stopped this step before it finished."
 
 
 class AgentOrchestrator:

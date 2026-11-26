@@ -268,7 +268,7 @@ async def test_a_step_run_beside_its_review_does_not_overwrite_when_the_journal_
 
     assert content == "earlier"  # nothing was changed
     assert result.success is False and result.executed is False and result.skip_reason == KEPT_COPY_FAILED_SKIP
-    assert result.error == "Heliox could not keep a copy of the earlier file, so it did not overwrite it."
+    assert result.error == "I could not keep a copy of the earlier file, so I did not overwrite it."
 
 
 @pytest.mark.asyncio

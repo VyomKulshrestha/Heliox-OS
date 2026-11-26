@@ -609,7 +609,7 @@ def _storage_answer(req_id: str | int | None, method: str, kind: str, sentence: 
 # this sentence and the detail goes to the log. -32603 "Internal error" is left for a call that could not be handled
 # at all; a method that runs a person's request never answers with it.
 REQUEST_FAULT_SENTENCE = (
-    "Something inside Heliox failed while it was doing that, so it stopped there. The details are in Heliox's log."
+    "Something went wrong on my side while I was doing that, so I stopped there. The details are in Heliox's log."
 )
 # The methods that run a request (typed, queued, resumed, from a phone, an MCP client, a schedule, a recording or a
 # background job). Each answers with a {status, message} result already, so a fault answers in that shape too.
