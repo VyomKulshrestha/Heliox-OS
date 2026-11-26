@@ -135,7 +135,7 @@ NAMED: dict[ActionType, Words] = {
             "space left",
             "space (?:on|in) (?:my|the|this) (?:disk|drive|computer|laptop|machine)",
         ),
-        topics=("disk", "drive", "storage"),
+        topics=("disk", "drive", "storage", "space"),
         asked="How much free disk space is there?",
     ),
     A.MEMORY_USAGE: Words(
@@ -406,6 +406,103 @@ def read_subject(words: str) -> tuple[bool, bool]:
 def names_anything(words: str) -> bool:
     """A subject of any action (a read one, or "Slack", "a webhook", "a trigger") in normalized words."""
     return bool(ANCHOR.search(words))
+
+
+# Words that ask for a reading without changing what is read: the question's frame, here and now, and what a reading
+# is called. Anything else left once the action's own subjects and topics are taken out (a temperature, a graphics
+# card, a named app or drive, "per core", "yesterday", "average", "than") is a qualifier the read does not cover.
+_FRAME = frozenset(
+    [
+        "what",
+        "what's",
+        "whats",
+        "how",
+        "busy",
+        "much",
+        "many",
+        "is",
+        "are",
+        "was",
+        "the",
+        "my",
+        "me",
+        "i",
+        "i'm",
+        "do",
+        "does",
+        "have",
+        "has",
+        "got",
+        "left",
+        "right",
+        "now",
+        "currently",
+        "current",
+        "at",
+        "the",
+        "moment",
+        "this",
+        "computer",
+        "laptop",
+        "machine",
+        "pc",
+        "mac",
+        "there",
+        "of",
+        "on",
+        "in",
+        "a",
+        "an",
+        "it",
+        "tell",
+        "show",
+        "check",
+        "please",
+        "just",
+        "free",
+        "used",
+        "use",
+        "usage",
+        "level",
+        "remaining",
+        "available",
+        "space",
+        "percent",
+        "percentage",
+        "status",
+        "still",
+        "much",
+        "amount",
+        "total",
+        "how's",
+        "can",
+        "you",
+        "could",
+        "would",
+        "let",
+        "know",
+        "see",
+        "give",
+        "s",
+        "quick",
+        "quickly",
+        "whole",
+        "full",
+        "charge",
+        "charged",
+        "reading",
+    ]
+)
+
+
+def asks_only_for(kind: ActionType, words: str) -> bool:
+    """Whether normalized ``words`` ask for exactly what read action ``kind`` returns, with no qualifier it does not
+    take (the quick road runs it only then; anything more goes to the planner)."""
+    entry = NAMED.get(kind)
+    if entry is None:
+        return False
+    rest = _alternation([*entry.subjects, *entry.topics]).sub(" ", words)
+    return all(word in _FRAME for word in rest.split())
 
 
 def asked_for(kind: ActionType) -> str:

@@ -1055,8 +1055,7 @@ class ConversationLayer:
             concern = self._direct_concern(text, decided, result)  # asked before this turn joins the conversation
             self.memory.add_user(text)
             self.debate.close(settle=True)  # a direct request: done as asked, nothing argued before it starts
-            read_subject = decided.target if decided.reason == READ_REASON else None
-            handed = self._hand_over(result, intent_from_route(decided, text), quick_words=read_subject)
+            handed = self._hand_over(result, intent_from_route(decided, text))
             handed._concern = concern
             return handed
         # LOCAL here means the server's own handlers had no answer ("why did you say that?" with no card to
@@ -2068,20 +2067,11 @@ class ConversationLayer:
         task.add_done_callback(self._background.discard)
         return task
 
-    def _hand_over(
-        self,
-        result: TurnResult,
-        intent: HandoverIntent,
-        *,
-        quick: QuickPlan | None = None,
-        quick_words: str | None = None,
-    ) -> TurnResult:
-        """``quick_words``: the words the quick road reads instead of the whole request (a read the catalog net found:
-        only the subject it named, so a path holding "disk" never becomes a disk reading)."""
+    def _hand_over(self, result: TurnResult, intent: HandoverIntent, *, quick: QuickPlan | None = None) -> TurnResult:
         if quick is None and intent.source == "router" and intent.verb:
             try:
                 quick = from_words(
-                    normalize(intent.words if quick_words is None else quick_words),
+                    normalize(intent.words),
                     intent.verb,
                     intent.object,
                     search_url=valid_search_url(self._search_url()),

@@ -306,8 +306,14 @@ def from_words(
     if action is None and (level := _VOLUME_LEVEL.match(text)):
         action = _action(ActionType.VOLUME_SET, "", VolumeParams(level=min(100, int(level.group(1)))))
     if action is None and verb == "check":
+        from pilot.conversation.catalog_words import asks_only_for
+
         for pattern, action_type in _STATE:
             if pattern.search(text):
+                if not asks_only_for(action_type, text):
+                    # "What is the CPU temperature?", "how much memory does my graphics card have?": the read would
+                    # answer another question. The planner has an action for it, or says it cannot.
+                    break
                 params = ProcessParams() if action_type is ActionType.PROCESS_LIST else SystemInfoParams()
                 action = _action(action_type, "", params)
                 break
