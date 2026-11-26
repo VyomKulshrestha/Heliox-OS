@@ -140,6 +140,10 @@ class Verifier:
 
     def __init__(self, model_router: ModelRouter) -> None:
         self._model = model_router
+        # Declared checks (Action.expect) read the same configuration and vault the actions use.
+        from pilot.agents.postconditions.declared import bind_router
+
+        bind_router(model_router)
 
     async def check_already_satisfied(self, action: Action) -> tuple[bool, str] | None:
         """Prove whether an action's intended state is already present.
@@ -220,6 +224,9 @@ class Verifier:
                     # Why it was not confirmed (a receipt only, no credentials to look with, a time limit).
                     status += f" ({check_detail})"
                     reasons[i] = check_detail
+                elif result.action.expect is not None and check_detail:
+                    # A declared check says what it ran and found (postconditions.declared).
+                    status = f"{status} ({check_detail})"
                 details.append(f"Action {i} ({result.action.action_type.value}): {status}")
             else:
                 details.append(f"Action {i} ({result.action.action_type.value}): MISMATCH — {check_detail}")

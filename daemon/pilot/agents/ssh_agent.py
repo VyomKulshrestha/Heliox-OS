@@ -8,6 +8,7 @@ This agent is intentionally constrained:
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 from typing import TYPE_CHECKING, Any
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
     from pilot.security.gateway import TaskScopeOverride
 
 logger = logging.getLogger("pilot.agents.ssh_agent")
+
+PROBE_OUTPUT_LIMIT = 64 * 1024
 
 SSH_ACTION_TYPES: set[ActionType] = {
     ActionType.SSH_COMMAND,
@@ -151,6 +154,68 @@ class SshAgent(BaseAgent):
             "hostname": host_cfg.hostname,
             "strict_host_key_checking": host_cfg.strict_host_key_checking,
         }
+
+    async def run_probe(self, host_alias: str, command: str, *, timeout_seconds: int) -> tuple[int, str, str]:
+        """Run one read-only check command on an allow-listed host over a second, new connection.
+
+        Used by declared post-conditions (``pilot.agents.postconditions.declared``), which decide beforehand that the
+        command is read-only. It connects exactly as an ssh action does: same host alias, key from the vault, the
+        host's ``strict_host_key_checking`` and the configured connect timeout. Output is read up to 64 KiB.
+        Raises ``RuntimeError`` with a reason a person can read when the host cannot be reached.
+        """
+        if not self._model:
+            raise RuntimeError("SSH is unavailable")
+        config = self._model.get_config()
+        vault = self._model.get_vault()
+        if not getattr(config, "ssh", None) or not config.ssh.enabled:
+            raise RuntimeError("SSH is disabled in Settings")
+        host_cfg = next(
+            (h for h in config.ssh.allowed_hosts if h.name == host_alias and h.hostname and h.username),
+            None,
+        )
+        if host_cfg is None:
+            raise RuntimeError(f"Unknown SSH host alias '{host_alias}'")
+        if not host_cfg.private_key_provider:
+            raise RuntimeError(f"SSH host '{host_alias}' has no private key saved in Settings")
+        key_pem = await vault.get_key(host_cfg.private_key_provider)
+        if not key_pem:
+            raise RuntimeError(f"No private key is saved for SSH host '{host_alias}'")
+        passphrase = await vault.get_key(host_cfg.passphrase_provider) if host_cfg.passphrase_provider else None
+        try:
+            import paramiko  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("Paramiko is not installed. Install pilot-daemon[ssh].") from exc
+
+        def _run() -> tuple[int, str, str]:
+            pkey = _load_private_key(paramiko, key_pem, passphrase)
+            client = paramiko.SSHClient()
+            try:
+                client.load_system_host_keys()
+                if host_cfg.strict_host_key_checking:
+                    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+                else:
+                    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                client.connect(
+                    hostname=host_cfg.hostname,
+                    port=host_cfg.port,
+                    username=host_cfg.username,
+                    pkey=pkey,
+                    timeout=config.ssh.connect_timeout_seconds,
+                    banner_timeout=config.ssh.connect_timeout_seconds,
+                    auth_timeout=config.ssh.connect_timeout_seconds,
+                )
+                stdin, stdout, stderr = client.exec_command(command, timeout=timeout_seconds)
+                try:
+                    stdin.close()
+                except Exception:
+                    pass
+                out = stdout.read(PROBE_OUTPUT_LIMIT).decode("utf-8", errors="replace")
+                err = stderr.read(PROBE_OUTPUT_LIMIT).decode("utf-8", errors="replace")
+                return int(stdout.channel.recv_exit_status()), out, err
+            finally:
+                client.close()
+
+        return await asyncio.to_thread(_run)
 
     async def handle_task(
         self,
