@@ -26,14 +26,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.agents.monitor_agent")
 
-MONITOR_ACTION_TYPES: set[ActionType] = {
-    ActionType.SYSTEM_INFO,
-    ActionType.CPU_USAGE,
-    ActionType.MEMORY_USAGE,
-    ActionType.DISK_USAGE,
-    ActionType.NETWORK_INFO,
-    ActionType.BATTERY_INFO,
-}
+# The monitor agent starts, stops and lists background monitors through its messages. It runs no
+# plan step: the one-off readings (cpu_usage, memory_usage, disk_usage, network_info, battery_info)
+# are the executor's, reached through the system and network agents. Declaring them here once sent
+# "how much battery" to the monitor list.
+MONITOR_ACTION_TYPES: frozenset[ActionType] = frozenset()
 
 
 class MonitorAgent(BaseAgent):
@@ -52,28 +49,7 @@ class MonitorAgent(BaseAgent):
         self._message_handlers["list_monitors"] = self._handle_list_monitors
 
     def get_capabilities(self) -> list[AgentCapability]:
-        return [
-            AgentCapability(
-                action_type=ActionType.CPU_USAGE,
-                description="Monitor CPU usage with threshold alerting",
-            ),
-            AgentCapability(
-                action_type=ActionType.MEMORY_USAGE,
-                description="Monitor RAM usage with threshold alerting",
-            ),
-            AgentCapability(
-                action_type=ActionType.DISK_USAGE,
-                description="Monitor disk space with threshold alerting",
-            ),
-            AgentCapability(
-                action_type=ActionType.NETWORK_INFO,
-                description="Monitor network activity and connectivity",
-            ),
-            AgentCapability(
-                action_type=ActionType.BATTERY_INFO,
-                description="Monitor battery level and charging status",
-            ),
-        ]
+        return []
 
     def get_system_prompt(self) -> str:
         return (
@@ -95,68 +71,19 @@ class MonitorAgent(BaseAgent):
         context: dict[str, Any] | None = None,
         scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
-        """Handle monitoring-related tasks by delegating to BackgroundTaskManager.
+        """Refuse every plan step: this agent declares none (see MONITOR_ACTION_TYPES).
 
-        Note: BackgroundTaskManager is driven directly, not through the
-        shared Executor, so scope_override has nothing to apply to here —
-        accepted only for interface consistency with BaseAgent.handle_task.
+        Nothing routes a step here; a caller that does gets a failed result for each step, never
+        the monitor list in place of the reading that was asked for.
         """
-        import time
-
-        start = time.time()
-        self.status = AgentStatus.BUSY
-        results: list[ActionResult] = []
-
-        input_lower = user_input.lower()
-
-        # Detect intent: start, stop, or status
-        if any(kw in input_lower for kw in ["start", "begin", "enable", "turn on"]):
-            task_id = self._detect_monitor_type(input_lower)
-            ok = self._bg.start(task_id)
-            results.append(
-                ActionResult(
-                    action=plan.actions[0] if plan.actions else _dummy_action(),
-                    success=ok,
-                    output=f"Monitor '{task_id}' started" if ok else f"Failed to start '{task_id}'",
-                )
+        return [
+            ActionResult(
+                action=action,
+                success=False,
+                error=f"The monitor agent does not run {action.action_type.value}.",
             )
-        elif any(kw in input_lower for kw in ["stop", "disable", "turn off"]):
-            task_id = self._detect_monitor_type(input_lower)
-            ok = self._bg.stop(task_id)
-            results.append(
-                ActionResult(
-                    action=plan.actions[0] if plan.actions else _dummy_action(),
-                    success=ok,
-                    output=f"Monitor '{task_id}' stopped" if ok else f"Failed to stop '{task_id}'",
-                )
-            )
-        else:
-            # Default: list all monitors
-            tasks = self._bg.list_tasks()
-            results.append(
-                ActionResult(
-                    action=plan.actions[0] if plan.actions else _dummy_action(),
-                    success=True,
-                    output=f"Active monitors: {tasks}",
-                )
-            )
-
-        duration_ms = int((time.time() - start) * 1000)
-        self._record_task(duration_ms, all(r.success for r in results))
-        self.status = AgentStatus.IDLE
-        return results
-
-    def _detect_monitor_type(self, text: str) -> str:
-        """Heuristically detect which monitor the user is referring to."""
-        if "cpu" in text:
-            return "cpu_monitor"
-        if "memory" in text or "ram" in text:
-            return "memory_monitor"
-        if "disk" in text or "storage" in text:
-            return "disk_monitor"
-        if "network" in text or "net" in text:
-            return "network_monitor"
-        return "cpu_monitor"  # default
+            for action in plan.actions
+        ]
 
     # ── Message handlers ──
 
@@ -173,14 +100,3 @@ class MonitorAgent(BaseAgent):
     async def _handle_list_monitors(self, msg: AgentMessage) -> AgentMessage:
         tasks = self._bg.list_tasks()
         return msg.reply({"tasks": tasks})
-
-
-def _dummy_action():
-    """Create a minimal Action for results when no plan actions exist."""
-    from pilot.actions import Action, EmptyParams
-
-    return Action(
-        action_type=ActionType.SYSTEM_INFO,
-        target="monitor",
-        parameters=EmptyParams(),
-    )

@@ -58,12 +58,10 @@ class RssAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def get_capabilities(self) -> list[AgentCapability]:
-        return [
-            AgentCapability(
-                action_type=ActionType.API_REQUEST,
-                description="Poll RSS/Atom feeds and return news summaries",
-            ),
-        ]
+        # No plan step is this agent's: it polls feeds in the background and keeps the digest in
+        # memory. It once declared api_request and then answered every HTTP request with its own
+        # keyword menu, so an HTTP GET never reached the executor.
+        return []
 
     def get_system_prompt(self) -> str:
         return (
@@ -73,7 +71,7 @@ class RssAgent(BaseAgent):
         )
 
     def can_handle(self, action_type: ActionType) -> bool:
-        return action_type == ActionType.API_REQUEST
+        return False
 
     async def handle_task(
         self,
@@ -87,73 +85,47 @@ class RssAgent(BaseAgent):
         # accepted only for interface consistency with BaseAgent.handle_task.
         lower = user_input.lower()
 
+        def answer(success: bool, text: str) -> list[ActionResult]:
+            # One result per step, each naming the step it answers (a result without its action
+            # fails validation, and that once surfaced as an internal error instead of a reply).
+            return [
+                ActionResult(action=action, success=success, output=text, error=None if success else text)
+                for action in plan.actions
+            ]
+
         if any(k in lower for k in ["today", "digest", "summary", "headlines"]):
             key = f"rss_digest_{date.today().isoformat()}"
             digest = await self._memory.get_preference(key)
             if digest:
-                return [ActionResult(action_type=ActionType.API_REQUEST, success=True, output=digest)]
-            return [
-                ActionResult(
-                    action_type=ActionType.API_REQUEST,
-                    success=False,
-                    output="No RSS digest available for today. Try 'summarize feeds now' to fetch one.",
-                )
-            ]
+                return answer(True, digest)
+            return answer(False, "No RSS digest available for today. Try 'summarize feeds now' to fetch one.")
 
         if "summarize" in lower or "fetch" in lower or "poll" in lower:
             result = await self._poll_feeds()
-            digest = result.get("digest", "No items found.")
-            return [ActionResult(action_type=ActionType.API_REQUEST, success=True, output=digest)]
+            return answer(True, result.get("digest", "No items found."))
 
         if "subscribe" in lower or "add feed" in lower or "add rss" in lower:
             words = user_input.split()
             urls = [w for w in words if w.startswith("http")]
             if not urls:
-                return [
-                    ActionResult(
-                        action_type=ActionType.API_REQUEST,
-                        success=False,
-                        output="Please provide a feed URL to subscribe to.",
-                    )
-                ]
+                return answer(False, "Please provide a feed URL to subscribe to.")
             self._config.rss.feeds.extend(urls)
             if not self._config.rss.enabled:
                 self._config.rss.enabled = True
                 self._register_background_task()
             self._config.save()
-            return [
-                ActionResult(
-                    action_type=ActionType.API_REQUEST,
-                    success=True,
-                    output=f"Subscribed to: {', '.join(urls)}",
-                )
-            ]
+            return answer(True, f"Subscribed to: {', '.join(urls)}")
 
         if "list" in lower or "feeds" in lower:
             feeds = self._config.rss.feeds
             if not feeds:
-                return [
-                    ActionResult(
-                        action_type=ActionType.API_REQUEST,
-                        success=True,
-                        output="No feeds subscribed yet.",
-                    )
-                ]
-            return [
-                ActionResult(
-                    action_type=ActionType.API_REQUEST,
-                    success=True,
-                    output="Subscribed feeds:\n" + "\n".join(f"  - {f}" for f in feeds),
-                )
-            ]
+                return answer(True, "No feeds subscribed yet.")
+            return answer(True, "Subscribed feeds:\n" + "\n".join(f"  - {f}" for f in feeds))
 
-        return [
-            ActionResult(
-                action_type=ActionType.API_REQUEST,
-                success=False,
-                output="RSS Agent: unrecognized request. Try 'show today's digest', 'list my feeds', or 'subscribe to <url>'.",
-            )
-        ]
+        return answer(
+            False,
+            "RSS Agent: unrecognized request. Try 'show today's digest', 'list my feeds', or 'subscribe to <url>'.",
+        )
 
     # ------------------------------------------------------------------
     # Background task
