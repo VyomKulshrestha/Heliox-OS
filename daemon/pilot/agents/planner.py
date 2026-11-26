@@ -315,22 +315,10 @@ WINDOWS REGISTRY (Windows only):
 
 === OUTPUT FORMAT ===
 
-Output STRICT JSON (no markdown, no explanation outside JSON):
-{{
-  "explanation": "One or two plain sentences naming the steps in order",
-  "actions": [
-    {{
-      "action_type": "<type>",
-      "target": "<primary resource — file path, URL, app name, etc>",
-      "parameters": {{ <type-specific params> }},
-      "requires_root": false,
-      "destructive": false,
-      "reversible": true,
-      "rollback_action": null,
-      "use_previous_output": false
-    }}
-  ]
-}}
+Output STRICT JSON on one line, without indentation (no markdown, no explanation outside JSON):
+{{"explanation": "One or two plain sentences naming the steps in order", "actions": [{{"action_type": "<type>", "target": "<primary resource — file path, URL, app name, etc>", "parameters": {{ <type-specific params> }}}}]}}
+An action may also carry these keys; write one only when its value differs from the default shown:
+"requires_root": false, "destructive": false, "reversible": true, "rollback_action": null, "use_previous_output": false.
 
 === RULES ===
 
@@ -2093,7 +2081,10 @@ class Planner:
             destructive=bool(raw.get("destructive", False)),
             reversible=bool(raw.get("reversible", True)),
             rollback_action=rollback,
-            use_previous_output=bool(raw.get("use_previous_output", False)),
+            # A content that holds {PREV_OUTPUT} uses the step before whether or not the model wrote the flag (the
+            # prompt asks for keys only where they differ from their default, and a model sometimes leaves this out).
+            use_previous_output=bool(raw.get("use_previous_output", False))
+            or _PLACEHOLDER_MARK in str(getattr(parameters, "content", "") or ""),
             expect=self._parse_expect(raw.get("expect")),
         )
 
