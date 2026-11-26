@@ -101,23 +101,41 @@ def test_committed_capability_catalog_is_current(tmp_path: Path) -> None:
     assert generated_path.read_bytes() == (repo_root / "capabilities.json").read_bytes()
 
 
-def test_readme_verifier_counts_come_from_the_committed_catalog() -> None:
+def test_the_generator_writes_a_readme_row_that_matches_its_catalog(tmp_path: Path) -> None:
+    """Regenerated into a temporary folder, so it holds before the committed catalog is regenerated; whether the
+    committed files are current is test_committed_capability_catalog_is_current's and the proof tests' question."""
     module = _generator_module()
     repo_root = Path(__file__).resolve().parents[2]
-    catalog = json.loads((repo_root / "capabilities.json").read_text(encoding="utf-8"))
-    readme = (repo_root / "README.md").read_bytes().decode("utf-8")
-    summary = catalog["summary"]
-
-    assert (
-        module.readme_with_verifier_counts(
-            readme,
-            summary["independent_postcondition_verifiers"],
-            summary["effect_actions"],
-            summary["read_only_actions"],
-            summary["declared_postcondition_verifiers"],
-        )
-        == readme
+    output = tmp_path / "capabilities.json"
+    readme = tmp_path / "README.md"
+    readme.write_bytes((repo_root / "README.md").read_bytes())
+    subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "generate_capability_catalog.py"),
+            "--output",
+            str(output),
+            "--readme",
+            str(readme),
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
     )
+    summary = json.loads(output.read_text(encoding="utf-8"))["summary"]
+    text = readme.read_bytes().decode("utf-8")
+    counts = (
+        summary["independent_postcondition_verifiers"],
+        summary["effect_actions"],
+        summary["read_only_actions"],
+        summary["declared_postcondition_verifiers"],
+    )
+
+    assert module.readme_with_verifier_counts(text, *counts) == text
+    row = next(line for line in text.split("\n") if line.startswith(module.README_VERIFICATION_ROW))
+    assert f"{counts[0]} of {counts[1]} actions that change something" in row
+    assert f"{counts[2]} read-only actions need none" in row
 
 
 def test_readme_verifier_row_is_rewritten_with_two_numbers() -> None:
