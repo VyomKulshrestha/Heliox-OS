@@ -398,3 +398,313 @@ def test_every_action_type_has_exactly_one_category_in_the_committed_catalog() -
     assert summary["independent_postcondition_verifiers"] == counts.get("independent", 0)
     assert summary["declared_postcondition_verifiers"] == counts.get("declared", 0)
     assert summary["read_only_actions"] == counts.get("read_only", 0)
+
+
+# ── 7. Where the fix series meet: the desktop and browser readings, kept plans, Settings connections, late checks ──
+
+
+def _executor(tmp_path: Path):
+    from pilot.agents.executor import Executor
+    from pilot.config import PilotConfig
+    from pilot.security.audit import AuditLogger
+    from pilot.security.permissions import PermissionChecker
+    from pilot.security.validator import ActionValidator
+
+    config = PilotConfig()
+    return Executor(
+        config, ActionValidator(config), PermissionChecker(config), AuditLogger(audit_file=tmp_path / "audit.jsonl")
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_desktop_and_browser_readings_each_read_only_their_own_steps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Open an app, type, press Enter, then click on a page: both observers are wired in _execute_single, the
+    desktop one around every step, the browser one after browser steps only, and neither runs inside the other."""
+    from pilot.actions import BrowserParams, OpenApplicationParams
+    from pilot.agents.postconditions import _in_step
+    from pilot.system import desktop_observe
+
+    executor = _executor(tmp_path)
+    inside: list[tuple[str, bool, bool]] = []
+
+    async def handler(action: Action) -> str:
+        inside.append((action.action_type.value, desktop_observe.current_step() is action, _in_step.right_after_step()))
+        return f"done: {action.action_type.value}"
+
+    readings: list[tuple[str, object]] = []
+
+    async def observe(result: ActionResult) -> str | None:
+        readings.append((result.action.action_type.value, desktop_observe.current_step()))
+        return _in_step.STEP_CHECK_MARKER + ' {"passed":true,"detail":"read","observed":true}'
+
+    steps = [
+        Action(action_type=ActionType.OPEN_APPLICATION, target="Notes", parameters=OpenApplicationParams(name="Notes")),
+        Action(action_type=ActionType.KEYBOARD_TYPE, target="Notes", parameters=KeyboardParams(text="hello")),
+        Action(action_type=ActionType.KEYBOARD_PRESS, target="Notes", parameters=KeyboardParams(key="enter")),
+        Action(action_type=ActionType.BROWSER_CLICK, target="Play", parameters=BrowserParams(selector="#play")),
+    ]
+    for step in steps:
+        monkeypatch.setitem(executor._dispatch_table, step.action_type, handler)
+    monkeypatch.setattr(_in_step, "observe", observe)
+
+    results = [await executor._execute_single(step, None) for step in steps]
+
+    assert all(result.success for result in results)
+    # Every handler ran inside its own desktop step, never while a browser reading was being taken.
+    assert inside == [(step.action_type.value, True, False) for step in steps]
+    # One browser reading, for the browser step only, taken after its desktop step had closed.
+    assert readings == [("browser_click", None)]
+    assert [bool(result.observation) for result in results] == [False, False, False, True]
+    assert all(desktop_observe.recalled(step) is None for step in steps)  # fake handlers read nothing
+
+
+@pytest.mark.asyncio
+async def test_a_scroll_read_in_its_step_stays_verified_after_a_click_changes_the_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scratch_registry: dict
+) -> None:
+    from pilot.actions import BrowserParams
+    from pilot.agents.postconditions import mismatch, verified
+
+    page = {"address": "news", "y": 0}
+
+    async def scroll(_action: Action) -> str:
+        page["y"] = 600
+        return "Scrolled down by 500px"
+
+    async def click(_action: Action) -> str:
+        page.update(address="article", y=0)
+        return "Clicked: a.article"
+
+    async def scrolled(_result: ActionResult) -> Outcome:
+        return verified("The page moved down") if page["y"] > 0 else mismatch("The page did not move")
+
+    async def opened(_result: ActionResult) -> Outcome:
+        return verified("The article opened") if page["address"] == "article" else mismatch("No article")
+
+    for action_type, check in ((ActionType.BROWSER_SCROLL, scrolled), (ActionType.BROWSER_CLICK, opened)):
+        scratch_registry[action_type] = dataclasses.replace(scratch_registry[action_type], check=check)
+    monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
+    executor = _executor(tmp_path)
+    monkeypatch.setitem(executor._dispatch_table, ActionType.BROWSER_SCROLL, scroll)
+    monkeypatch.setitem(executor._dispatch_table, ActionType.BROWSER_CLICK, click)
+    steps = [
+        Action(action_type=ActionType.BROWSER_SCROLL, target="page", parameters=BrowserParams(direction="down")),
+        Action(action_type=ActionType.BROWSER_CLICK, target="article", parameters=BrowserParams(selector="a.article")),
+    ]
+
+    results = [await executor._execute_single(step, None) for step in steps]
+    verification = await Verifier(MagicMock()).verify(ActionPlan(actions=steps), results)
+
+    # Read now, the scroll would look undone (the click opened a page at the top); it was read in its step.
+    assert (await scrolled(results[0])).passed is False
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0, 1]
+
+
+@pytest.fixture
+def no_connections(monkeypatch: pytest.MonkeyPatch):
+    from pilot.system import connections
+
+    for variable in connections.ENVIRONMENT.values():
+        monkeypatch.delenv(variable, raising=False)
+    connections.configure(None, None)
+    yield connections
+    connections.configure(None, None)
+
+
+class _Store:
+    """The credential store: a dict."""
+
+    backend_name = "FakeKeyring"
+    available = True
+
+    def __init__(self, **entries: str) -> None:
+        self.entries: dict[str, str] = dict(entries)
+
+    async def get_key(self, name: str) -> str | None:
+        return self.entries.get(name)
+
+    async def store_key(self, name: str, value: str) -> None:
+        self.entries[name] = value
+
+    async def delete_key(self, name: str) -> None:
+        self.entries.pop(name, None)
+
+
+HEADER_SECRET = "fakeHeaderToken0000WXYZ"
+BEARER = f"Bearer {HEADER_SECRET}"
+
+
+def _kept_plan() -> ActionPlan:
+    return ActionPlan(
+        actions=[
+            Action(
+                action_type=ActionType.API_DISCORD,
+                target=f"post to {DISCORD_HOOK}",
+                parameters=ApiRequestParams(message="Deploy finished", webhook_url=DISCORD_HOOK),
+            ),
+            Action(
+                action_type=ActionType.API_REQUEST,
+                target="status",
+                parameters=ApiRequestParams(
+                    method="GET", url="https://api.example.com/v1/status", headers={"Authorization": BEARER}
+                ),
+            ),
+        ],
+        explanation="post and read",
+        raw_input="post it",
+    )
+
+
+def _network(monkeypatch: pytest.MonkeyPatch, *answers: tuple[int, object]) -> _Network:
+    from pilot.system import api_client
+
+    async def _public(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def _no_pause(_seconds: float) -> None:
+        return None
+
+    network = _Network(*answers)
+    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
+    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_a, **_k: _ClientContext(network))
+    monkeypatch.setattr(api_client, "_validate_outbound_url", _public)
+    monkeypatch.setattr(messaging, "_pause", _no_pause)
+    return network
+
+
+@pytest.mark.asyncio
+async def test_a_kept_plan_with_a_masked_webhook_and_header_resumes_after_a_restart_and_is_verified(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, no_connections, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from pilot.security.plan_secrets import PlanSecretKeeper
+    from pilot.system import api_client
+    from pilot.workflows.checkpoints import WorkflowCheckpointStore
+
+    caplog.set_level(logging.DEBUG)
+    store = _Store()
+    db = tmp_path / "checkpoints.db"
+    await WorkflowCheckpointStore(db, secrets=PlanSecretKeeper(store)).start_plan("plan-1", "post it", _kept_plan())
+    assert SECRET not in db.read_bytes().decode("utf-8", "replace")
+    assert HEADER_SECRET not in db.read_bytes().decode("utf-8", "replace")
+
+    # The daemon restarts: a new store object reads the plan back, its secrets restored from the credential store.
+    resumed = (await WorkflowCheckpointStore(db, secrets=PlanSecretKeeper(store)).get("plan-1")).plan
+    discord, status = resumed.actions
+    assert discord.parameters.webhook_url == DISCORD_HOOK
+    assert status.parameters.headers["Authorization"] == BEARER
+
+    network = _network(
+        monkeypatch,
+        (200, {"id": "987654321", "channel_id": "555", "content": "Deploy finished"}),
+        (200, {"ok": True}),
+        (200, {"id": "987654321", "content": "Deploy finished"}),
+    )
+    sent = await api_client.send_discord_message("Deploy finished", discord.parameters.webhook_url)
+    answer = await api_client.api_request("GET", status.parameters.url, headers=status.parameters.headers)
+    results = [
+        ActionResult(action=discord, success=True, output=sent),
+        ActionResult(action=status, success=True, output=str(answer)),
+    ]
+    verification = await Verifier(MagicMock()).verify(resumed, results)
+
+    assert verification.passed is True and 0 in verification.independently_observed_actions
+    assert [method for method, _url in network.requests] == ["POST", "GET", "GET"]
+    assert network.requests[0][1].startswith(DISCORD_HOOK)
+    for text in (str(verification), resumed.model_dump_json(), caplog.text, sent):
+        assert SECRET not in text and HEADER_SECRET not in text
+
+
+@pytest.mark.asyncio
+async def test_a_slack_post_from_a_settings_connection_says_where_to_set_up_its_read_back(
+    monkeypatch: pytest.MonkeyPatch, no_connections
+) -> None:
+    from pilot.system import api_client
+
+    connections = no_connections
+    webhook = "https://hooks.slack.com/services/T0FAKE/B0FAKE/fakeSettingsHook1234"
+    connections.configure(MagicMock(), _Store(**{connections.SLACK_WEBHOOK: webhook}))
+    network = _network(monkeypatch, (200, "ok"))
+    action = Action(action_type=ActionType.API_SLACK, target="team", parameters=ApiRequestParams(message="Deploy"))
+
+    output = await api_client.send_slack_message("Deploy")
+    plan = ActionPlan(actions=[action])
+    results = [ActionResult(action=action, success=True, output=output)]
+    verification = await Verifier(MagicMock()).verify(plan, results)
+    reply = success_message(plan, results, verification, dry_run=False)
+
+    assert network.requests[0][1] == webhook
+    assert verification.passed is True and verification.independently_observed_actions == []
+    assert connections.WHERE["slack"] in verification.reasons[0]
+    assert verification.reason_kinds[0] == "receipt_only"
+    assert "fakeSettingsHook1234" not in reply + str(verification)
+
+
+@pytest.mark.asyncio
+async def test_a_late_check_after_its_plan_finished_needs_no_kept_secret_and_writes_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, no_connections, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The reply went out before the Discord read-back finished; the plan then completed, which removes its kept
+    secrets. The late check still reads the message back (the result holds its webhook in memory) and nothing it
+    records or logs holds the webhook or the header."""
+    import asyncio
+    import logging
+
+    from pilot.agents.late_checks import FollowUp, LateVerifications
+    from pilot.security.plan_secrets import PlanSecretKeeper
+    from pilot.system import api_client
+    from pilot.workflows.checkpoints import WorkflowCheckpointStore
+
+    caplog.set_level(logging.DEBUG)
+    store = _Store()
+    checkpoints = WorkflowCheckpointStore(tmp_path / "c.db", secrets=PlanSecretKeeper(store))
+    plan = _kept_plan()
+    await checkpoints.start_plan("plan-1", "post it", plan)
+    network = _network(
+        monkeypatch,
+        (200, {"id": "987654321", "channel_id": "555", "content": "Deploy finished"}),
+        (200, {"id": "987654321", "content": "Deploy finished"}),
+    )
+    sent = await api_client.send_discord_message("Deploy finished", DISCORD_HOOK)
+    results = [
+        ActionResult(action=plan.actions[0], success=True, output=sent),
+        ActionResult(action=plan.actions[1], success=True, output='{"status": 200}'),
+    ]
+    budget_spent = asyncio.Event()
+
+    async def reply_goes_out_first(task, _budget: float) -> None:
+        budget_spent.set()  # the reply does not wait for any check
+
+    monkeypatch.setattr(Verifier, "_wait_budget", staticmethod(reply_goes_out_first))
+    reports: list = []
+    told: list[str] = []
+
+    async def record(report) -> None:
+        reports.append(report)
+
+    async def tell(sentence: str, _report, _spoken: bool) -> None:
+        told.append(sentence)
+
+    verification, late = await Verifier(MagicMock()).verify_within(plan, results, budget=3.0)
+    await checkpoints.mark_status("plan-1", "complete")
+    assert "plan_secret:plan-1" not in store.entries
+    assert late is not None and 0 in late.pending
+
+    follower = LateVerifications(record=record, tell=tell)
+    follower.follow(late, FollowUp(task_key="task-1", plan_id="plan-1", request="post it"))
+    await late.task
+    for _ in range(50):
+        if reports:
+            break
+        await asyncio.sleep(0)
+
+    assert reports and verification.passed is True
+    assert any(check["step"] == 1 and check["kind"] == "verified" for check in reports[0].checks)
+    assert told == []
+    assert [method for method, _url in network.requests] == ["POST", "GET"]
+    written = repr(reports) + caplog.text
+    assert SECRET not in written and HEADER_SECRET not in written
