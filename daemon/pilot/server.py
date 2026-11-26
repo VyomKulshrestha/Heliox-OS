@@ -1495,6 +1495,11 @@ class PilotServer:
         planner, executor, verifier, orchestrator, multimodal fusion,
         cognitive intelligence, and autonomous execution features.
         """
+        # A host name in the local model's address is looked up now, in the background, so the first request is
+        # judged by where the model really is (pilot.models.model_place). Nothing waits on it.
+        from pilot.models.model_place import look_up_ahead
+
+        look_up_ahead(self.config.model)
         # The heavy imports first, in a worker thread: the loop keeps answering ping and startup_status meanwhile.
         await import_off_loop(*INITIALIZE_IMPORTS)
         from pilot.agents.background import BackgroundTaskManager

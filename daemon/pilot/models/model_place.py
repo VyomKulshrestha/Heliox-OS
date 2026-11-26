@@ -18,9 +18,10 @@ that is not loopback, a name whose lookup failed and a name not looked up yet. A
 exactly what a cloud model gets: the same settings (``conversation.share_profile``, ``share_screen_text``) decide,
 and the same shortened forms are sent.
 
-A host name is judged by what it resolved to, never by a lookup on the reply path: the first time a name is asked
-about after the daemon starts (Settings asks when it opens) it is looked up once in the background, and until that
-answer is in the name counts as another computer. Saving the model settings looks every name up again.
+A host name is judged by what it resolved to, never by a lookup on the reply path: the daemon starts looking the
+model's name up in the background as it starts (``look_up_ahead``), and any name asked about later is looked up once
+the same way; until the answer is in the name counts as another computer. Saving the model settings looks every name
+up again.
 
 Two things cannot be seen from here and are the person's own set-up: a loopback port that forwards to a server
 elsewhere (an SSH tunnel, a proxy), and a name the system's hosts file points somewhere unusual after the lookup.
@@ -164,6 +165,20 @@ def model_on_this_computer(model: Any, places: Places | None = None) -> bool:
     return endpoint_on_this_computer(get("ollama_base_url", "") or DEFAULT_OLLAMA_URL, places)
 
 
+def look_up_ahead(model: Any, places: Places | None = None) -> bool:
+    """At daemon start: start looking up the host name in an Ollama or local model's address, in the background, so
+    the first request after a start is judged by the answer instead of counting as another computer until something
+    asks. Never waits; a failed lookup stays "another computer". True when a lookup was started."""
+    get = model.get if isinstance(model, dict) else lambda key, default=None: getattr(model, key, default)
+    if str(get("provider", "") or "").casefold() not in OLLAMA_PROVIDERS:
+        return False
+    url = get("ollama_base_url", "") or DEFAULT_OLLAMA_URL
+    if literal_place(url) is not None:
+        return False  # an address that needs no lookup
+    (places or PLACES).on_this_computer(url)  # starts the lookup off this thread and returns at once
+    return True
+
+
 def model_elsewhere(model: Any, places: Places | None = None) -> str:
     """For Settings: the host of an Ollama or local model on another computer, else "". Only the host name: never
     the rest of the address."""
@@ -182,6 +197,7 @@ __all__ = [
     "endpoint_on_this_computer",
     "host_of",
     "literal_place",
+    "look_up_ahead",
     "model_elsewhere",
     "model_on_this_computer",
 ]

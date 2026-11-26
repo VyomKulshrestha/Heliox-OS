@@ -339,3 +339,51 @@ async def test_live_asks_the_model_about_personal_facts_only_on_this_computer(re
     assert bool(asked) is here
     if not here:
         assert checker.last_verdict == "left to code: the model is on another computer" and checker.model_calls == 0
+
+
+# ── the lookup starts with the daemon ──
+
+
+def test_the_daemon_start_looks_the_model_host_up_in_the_background_without_waiting():
+    started: list = []
+    fake = FakeResolver()
+    places = Places(resolve=fake, run=started.append)
+    model = {"provider": "ollama", "ollama_base_url": "http://my-ollama:11434"}
+
+    assert model_place.look_up_ahead(model, places) is True
+    assert fake.asked == []  # nothing was looked up on the caller's thread
+    assert model_on_this_computer(model, places) is False  # until the answer is in
+
+    started[0]()  # the background lookup finishes
+
+    assert fake.asked == ["my-ollama"]
+    assert model_on_this_computer(model, places) is True
+    assert len(started) == 1  # asking again starts no second lookup
+
+
+@pytest.mark.parametrize("model", [
+    {"provider": "ollama", "ollama_base_url": "http://127.0.0.1:11434"},  # needs no lookup
+    {"provider": "ollama", "ollama_base_url": ""},
+    {"provider": "cloud", "ollama_base_url": "http://my-ollama:11434"},  # not a local model
+])  # fmt: skip
+def test_nothing_is_looked_up_ahead_when_nothing_needs_it(model):
+    started: list = []
+    assert model_place.look_up_ahead(model, Places(resolve=FakeResolver(), run=started.append)) is False
+    assert started == []
+
+
+def test_a_failed_lookup_at_start_stays_another_computer():
+    places = Places(resolve=FakeResolver({}), run=lambda work: work())
+    model = {"provider": "local", "ollama_base_url": "http://ollama:11434"}
+
+    model_place.look_up_ahead(model, places)
+
+    assert model_on_this_computer(model, places) is False
+
+
+def test_the_daemon_starts_the_lookup_when_it_initializes():
+    import inspect
+
+    from pilot.server import PilotServer
+
+    assert "look_up_ahead(self.config.model)" in inspect.getsource(PilotServer.initialize)
