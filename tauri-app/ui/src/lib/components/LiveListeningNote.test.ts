@@ -42,6 +42,19 @@ describe("what Live listens to, said plainly", () => {
     expect(note).toContain("Your language model runs on this computer, so nothing you say leaves it.");
   });
 
+  it("tells a person whose Ollama runs on another computer that their words go there", () => {
+    mocks.store!.set({
+      model: { provider: "ollama", cloud_provider: "" },
+      model_elsewhere: "192.168.1.20",
+      live: { enabled: true, level: "balanced", listen_to_speech: true, muted_kinds: [] },
+    });
+    render(LiveCompanionPanel);
+    const note = screen.getByTestId("live-listening-note").textContent ?? "";
+    expect(note).not.toContain("runs on this computer");
+    expect(note).toContain("goes to your language model on another computer (192.168.1.20) with your request");
+    expect(note).toContain("speech that was not for Heliox never does");
+  });
+
   it("tells a person with a cloud model what goes to it and what never does", () => {
     mocks.store!.set({
       model: { provider: "cloud", cloud_provider: "claude" },

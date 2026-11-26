@@ -2178,6 +2178,18 @@
         />
       </div>
     {/if}
+
+    {#if ($settings.model.provider === "ollama" || $settings.model.provider === "local") && $settings.model_elsewhere}
+      <div class="setting-row" data-testid="model-elsewhere">
+        <div class="setting-info">
+          <span class="setting-label">Where the model runs</span>
+          <span class="setting-desc">
+            This model runs on another computer: what Heliox sends to it follows the cloud sharing settings.
+          </span>
+          <span class="security-setting-status">At {$settings.model_elsewhere}, set in config.toml</span>
+        </div>
+      </div>
+    {/if}
   </section>
 
   <section class="settings-group">

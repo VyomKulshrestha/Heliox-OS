@@ -170,6 +170,8 @@ export interface PilotSettings {
     pack?: string;
   };
   first_run_complete: boolean;
+  /** Set by the daemon, never saved: the host of an Ollama model on another computer, else "" (pilot.models.model_place). */
+  model_elsewhere?: string;
   theme: "light" | "dark";
   hotkey: string; // Added tracking for active UI theme mode
 }
