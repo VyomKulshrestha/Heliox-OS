@@ -170,8 +170,13 @@ REACTIVE TRIGGERS:
 - trigger_create — Params: {{"name": "alert", "trigger_type": "cpu_threshold", "condition": {{"threshold": 90}},
   "action_command": "Tell me the CPU is above 90 percent"}} / {{"name": "notes-watch", "trigger_type":
   "file_modified", "condition": {{"path": "C:\\\\path\\\\notes.txt"}}, "action_command": "Append the line 'seen a
-  change' to C:\\\\path\\\\log.txt"}}. "action_command" is the request, in plain words, that Heliox plans and runs
-  (with the usual approvals) each time the trigger fires: never a shell line.
+  change' to C:\\\\path\\\\log.txt", "steps": [{{"action_type": "file_append", "target":
+  "C:\\\\path\\\\log.txt", "parameters": {{"path": "C:\\\\path\\\\log.txt", "content": "seen a change"}}}}]}}.
+  "action_command" says in plain words what happens each time the trigger fires: never a shell line. "steps" are the
+  exact steps each fire runs, written like a plan's own steps (at most 5; never a trigger or schedule step); the
+  person approves them with this request, and a fire runs them and nothing else. Give "steps" whenever the job is
+  fixed (append a line, write or copy a file, a notification); leave them out only when the job is just to tell
+  the person, and then "action_command" says what to tell.
 - The trigger types Heliox watches, with the keys of their "condition":
 <<TRIGGER_TYPES>>
 - trigger_list, trigger_delete — Params: {{}} / {{"name": "alert"}}
@@ -688,6 +693,38 @@ def _expand_text_edits(raw_actions: list[Any]) -> list[Any]:
         )
         logger.info("Plan: expanded a one-step %s of %s into file_read then file_write", kind, path)
     return expanded
+
+
+def _trigger_steps(raw_steps: list[Any]) -> list[Action]:
+    """A trigger's fixed steps, read the way a plan's own steps are: the same names, aliases and fixes (an append
+    becomes a read then a write, so a fire never replaces the file with one line). Raises ValueError for a step that
+    is not an action, so the plan is made again instead of storing a trigger whose fire cannot run."""
+    steps: list[Action] = []
+    for raw in _expand_text_edits(list(raw_steps)):
+        if isinstance(raw, Action):
+            steps.append(raw)
+            continue
+        if not isinstance(raw, dict):
+            raise ValueError("A trigger step must be an action object")
+        raw = Planner._canonical_action_keys(raw)
+        action_type = Planner._resolve_action_type(Planner, str(raw.get("action_type") or ""))  # type: ignore[arg-type]
+        target = str(raw.get("target", "") or "")
+        params = dict(raw.get("parameters") or {})
+        for key, value in raw.items():
+            if key not in {"action_type", "target", "parameters", "use_previous_output"} and key not in params:
+                params[key] = value
+        params = Planner._normalize_params(action_type, params, target)
+        if not target:
+            target = next((str(params[key]) for key in ("path", "url", "name") if str(params.get(key) or "")), "")
+        steps.append(
+            Action(
+                action_type=action_type,
+                target=target,
+                parameters=Planner._parse_parameters(action_type, params),
+                use_previous_output=bool(raw.get("use_previous_output", False)),
+            )
+        )
+    return steps
 
 
 def _mcp_tool_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -2167,6 +2204,8 @@ class Planner:
             _one_of(p, "destination", ("dest", "target_path", "to"))
         if action_type == ActionType.TRIGGER_CREATE and isinstance(p.get("trigger_type"), str):
             p["trigger_type"] = resolve_trigger_type(p["trigger_type"])
+        if action_type == ActionType.TRIGGER_CREATE and isinstance(p.get("steps"), list):
+            p["steps"] = _trigger_steps(p["steps"])
 
         file_types = {
             ActionType.FILE_READ,
