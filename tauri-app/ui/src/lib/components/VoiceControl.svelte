@@ -625,11 +625,12 @@
     const unsub = session.subscribe((s: any) => {
       if (!s.loading && s.messages.length > 0) {
         const lastMsg = s.messages[s.messages.length - 1];
+        // The daemon's sentence for the ear when it sent one: the shown text can name a path or quote an error.
         if (lastMsg.type === "result" || lastMsg.type === "system") {
-          speakText(lastMsg.text || "Done.", "final_answer");
+          speakText(lastMsg.spoken || lastMsg.text || "Done.", "final_answer");
           unsub();
         } else if (lastMsg.type === "error") {
-          speakText("Error: " + (lastMsg.text || "Something went wrong."), "task_failure");
+          speakText(lastMsg.spoken || "Error: " + (lastMsg.text || "Something went wrong."), "task_failure");
           unsub();
         }
       }

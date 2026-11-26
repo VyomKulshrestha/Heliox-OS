@@ -51,9 +51,14 @@ _SILENT_SUCCESS_ACTIONS = {
 
 
 def _describe_action(action: Action) -> str:
-    target = getattr(action, "target", "") or ""
+    """ "file write note.txt": the step's kind and what it acts on by name (narration is spoken, so never a path)."""
+    from pilot.reply_rules import host_of, name_of
+
+    target = str(getattr(action, "target", "") or "")
     action_type = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
-    return f"{action_type} ({target})" if target else action_type
+    thing = host_of(target) if "://" in target else name_of(target)
+    words = action_type.replace("_", " ")
+    return f"{words} {thing}" if thing else words
 
 
 class ExecutionNarrator:
@@ -102,15 +107,21 @@ class ExecutionNarrator:
             return
         if result.success and result.action.action_type.value in _SILENT_SUCCESS_ACTIONS:
             return
-        description = _describe_action(result.action)
         if result.success and result.skip_reason in {"already_absent", "already_satisfied"}:
-            # Not run because its state was already there: say what was found, not "Done".
-            text = result.output
+            # Not run because its state was already there: say what was found, not "Done" (a file by its name).
+            from pilot.reply_rules import for_ear
+
+            text = for_ear(result.output) or result.output
         else:
+            # The step's own sentence (pilot.result_sentences), or its failure in plain words (pilot.failure_sentences):
+            # the system's raw error stays in the receipt and the log.
+            from pilot.failure_sentences import failure_sentence
+            from pilot.result_sentences import step_said
+
             text = (
-                f"Done: {description}"
+                step_said(result).spoken
                 if result.success
-                else f"Failed: {description} — {result.error or 'unknown error'}"
+                else failure_sentence(result.action, str(result.error or "the step failed"))[1]
             )
         await self._broadcast_fn(
             "execution_narration",

@@ -84,7 +84,7 @@ class TestAmbientNarration:
         await narrator.on_action_complete(result)
         method, params = broadcast.calls[0]
         assert params["success"] is True
-        assert "Done" in params["text"]
+        assert params["text"]  # the step's own sentence (pilot.result_sentences)
 
     @pytest.mark.asyncio
     async def test_on_action_complete_failure_text_includes_error(self):
@@ -93,8 +93,9 @@ class TestAmbientNarration:
         await narrator.on_action_complete(result)
         method, params = broadcast.calls[0]
         assert params["success"] is False
-        assert "Failed" in params["text"]
-        assert "boom" in params["text"]
+        # Narration is spoken: the failure in plain words, the system's raw text only in the receipt and the log.
+        assert "failed" in params["text"]
+        assert "boom" not in params["text"]
 
     @pytest.mark.asyncio
     async def test_narrate_steps_off_suppresses_ambient_narration(self):
@@ -120,7 +121,7 @@ class TestAmbientNarration:
         await narrator.on_action_complete(ActionResult(action=action, success=False, error="not found"))
 
         assert len(broadcast.calls) == 1
-        assert "Failed" in broadcast.calls[0][1]["text"]
+        assert broadcast.calls[0][1]["text"].startswith("I couldn't open Missing")
 
 
 class TestPlanRiskInterrupt:

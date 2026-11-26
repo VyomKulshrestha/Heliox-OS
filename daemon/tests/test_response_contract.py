@@ -60,7 +60,8 @@ def test_mixed_execution_results_avoid_verified_heading_for_unobserved_effect():
 
     message = success_message(plan, results, VerificationResult(passed=True), dry_run=False)
 
-    assert message.startswith("Execution results:\n")
+    # One sentence about the outcome (the click, the step that changed something), never a list of raw outputs.
+    assert message == "Clicked Submit"
     assert "Verified results" not in message
 
 

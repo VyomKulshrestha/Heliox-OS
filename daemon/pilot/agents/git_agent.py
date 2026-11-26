@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -506,6 +507,8 @@ class GitAgent(BaseAgent):
             "success": True,
             "output": f"Committed as {commit_hash}: {commit_message}",
             "commit_message": commit_message,
+            # How many files the commit holds, read from the staged diff it was made from (the reply says it).
+            "files_committed": len(re.findall(r"^diff --git ", diff, re.MULTILINE)),
             "commit_hash": commit_hash,
             "commit_sha": commit_sha,
             "head_before": head_before,

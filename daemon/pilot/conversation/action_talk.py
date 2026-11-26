@@ -202,5 +202,7 @@ def result_sentence(status: str, message: str) -> str:
             return f"That didn't work: {phrase[:1].lower()}{phrase[1:]}."
         if not issue or "\n" in issue or len(issue.split()) > _SPOKEN_LIMIT:
             return "That didn't work."
+        if re.match(r"I\b", issue):
+            return issue  # a failure sentence of its own (pilot.failure_sentences): "I couldn't write ..."
         return f"That didn't work: {issue[:1].lower() + issue[1:]}"
     return ""

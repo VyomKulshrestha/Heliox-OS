@@ -23,6 +23,7 @@ from pilot.agents.executor import Executor
 from pilot.agents.narrator import ExecutionNarrator
 from pilot.agents.verifier import Verifier
 from pilot.config import PilotConfig, ReceiptsConfig
+from pilot.reply_rules import for_ear
 from pilot.response_contract import success_message
 from pilot.security.audit import AuditLogger
 from pilot.security.permissions import PermissionChecker
@@ -128,7 +129,8 @@ async def test_an_absent_target_is_said_as_found_everywhere(
         narrated.append(payload)
 
     await ExecutionNarrator(config, {}, broadcast).on_action_complete(result)
-    assert narrated[-1]["text"] == sentence
+    # Narration is spoken: the same sentence, with a path said as its last part (pilot.reply_rules.for_ear).
+    assert narrated[-1]["text"] == for_ear(sentence)
 
     receipts = TaskReceipts(tmp_path / "receipts", config=ReceiptsConfig(), vault=_Vault())
     receipts.record_action("task-1", "plan-1", action, result, user_confirmed=True)

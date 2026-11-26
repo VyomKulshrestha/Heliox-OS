@@ -252,12 +252,19 @@ export interface Message {
   agentRun?: AgentRun;
   /** What the finished task left behind: its signed receipt and whether it can still be undone. */
   task?: TaskFooter;
+  /** The daemon's sentence for the ear (no path, hash or raw data), read aloud instead of `text` when present. */
+  spoken?: string;
 }
 
 export interface TaskFooter {
   receiptId?: string;
   undo?: { taskKey: string; available: boolean; undoable: number; notUndoable: number; undone?: boolean };
   receiptCheck?: string;
+}
+
+function spokenFrom(result: Record<string, unknown>): { spoken?: string } {
+  const spoken = typeof result.spoken === "string" ? result.spoken.trim() : "";
+  return spoken ? { spoken } : {};
 }
 
 function taskFooterFrom(result: Record<string, unknown>): TaskFooter | undefined {
@@ -891,6 +898,7 @@ function createSession() {
           timestamp: Date.now(),
           actionResults,
           verification,
+          ...(result ? spokenFrom(result) : {}),
         };
         update((s) => ({
           ...s,
@@ -1694,6 +1702,7 @@ function createSession() {
           actionResults,
           verification,
           task: taskFooterFrom(result),
+          ...spokenFrom(result),
         },
       ],
     }));
