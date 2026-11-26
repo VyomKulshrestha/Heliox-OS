@@ -77,7 +77,9 @@ async def test_spoken_keeps_its_own_wording():
     said = await _take("type my PIN 4471 into the bank form", "voice")
     assert said == [SECRET_NOT_USED]
     spoken = secret_not_used("post it to Slack with the token [left out: a key]", typed=False)
-    assert spoken.startswith("I don't use a PIN, password or code said aloud") and "Settings, Connections, Slack" in spoken
+    assert (
+        spoken.startswith("I don't use a PIN, password or code said aloud") and "Settings, Connections, Slack" in spoken
+    )
 
 
 def test_the_sentence_never_quotes_the_words():
