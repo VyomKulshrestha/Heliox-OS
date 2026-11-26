@@ -222,6 +222,9 @@ async def test_a_long_session_still_sends_six_raw_turns_and_recalls_the_rest_as_
 
     planner = Planner(KeepingModel(), LongMemory())  # type: ignore[arg-type]
     await planner.plan("Email the warehouse report to the Porto team", session_id="chat-7")
-    history = [m for m in KeepingModel.sent[1:-1] if m["role"] == "user"]
-    assert 0 < len(history) <= 6 and not any("Porto" in m["content"] for m in history)
-    assert "Porto warehouse" in KeepingModel.sent[-1]["content"]  # recalled into the context block
+    # The recent turns are one background block in the request message, never chat turns of their own.
+    assert [m["role"] for m in KeepingModel.sent] == ["system", "user"]
+    request_message = KeepingModel.sent[-1]["content"]
+    history = [line for line in request_message.splitlines() if ". The person asked: " in line]
+    assert 0 < len(history) <= 6 and not any("Porto" in line for line in history)
+    assert "Porto warehouse" in request_message  # recalled into the context block

@@ -366,6 +366,16 @@ def claude_supports_effort(model: str) -> bool:
     return not model.lower().startswith(CLAUDE_NO_EFFORT_PREFIXES)
 
 
+def joined_system(messages: list[dict[str, Any]], system: str = "") -> str:
+    """Every system message of a chat, in order, for a provider that takes one system text (Anthropic, Gemini).
+
+    Keeping only the last one once replaced the planner's whole prompt with a history summary that came after it, so
+    the model answered in prose and planned from the conversation alone. ``system`` is used when there is none."""
+    parts = [str(m.get("content") or "") for m in messages if m.get("role") == "system"]
+    parts = [part for part in parts if part.strip()]
+    return "\n\n".join(parts) if parts else system
+
+
 def _parse_anthropic_response(data: dict[str, Any]) -> str:
     """Return the text of a Messages API response or raise a clear error.
 
@@ -539,10 +549,9 @@ class CloudClient:
         contents = []
         system_content = system
         if isinstance(prompt, list):
+            system_content = joined_system(prompt, system)
             for msg in prompt:
-                if msg["role"] == "system":
-                    system_content = msg["content"]
-                else:
+                if msg["role"] != "system":
                     role = "model" if msg["role"] == "assistant" else "user"
                     contents.append({"role": role, "parts": [{"text": msg["content"]}]})
         else:
@@ -697,10 +706,9 @@ class CloudClient:
         messages = []
         system_content = system
         if isinstance(prompt, list):
+            system_content = joined_system(prompt, system)
             for msg in prompt:
-                if msg["role"] == "system":
-                    system_content = msg["content"]
-                else:
+                if msg["role"] != "system":
                     messages.append({"role": msg["role"], "content": msg["content"]})
         else:
             messages = [{"role": "user", "content": prompt}]

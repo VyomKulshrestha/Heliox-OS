@@ -911,7 +911,12 @@ def _postcondition_failure_requires_reconciliation(results: list[Any], verificat
 
 
 def _is_terminal_planning_failure(error: str) -> bool:
-    """Return whether the planner already exhausted the configured provider path."""
+    """Return whether the planner already exhausted the configured provider path, or refused a plan that does not
+    match the request (pilot.agents.request_match): planning that again would only plan the same thing."""
+    from pilot.agents.request_match import is_refusal
+
+    if is_refusal(error):
+        return True
     normalized = error.casefold()
     return any(
         marker in normalized
@@ -4554,6 +4559,10 @@ class PilotServer:
         final_failed_steps: set[tuple[str, str]] = set()
         last_executed_plan = None
         repair_prose = ""
+        # The plan whose step failed, while a repair round re-plans it; the repair is held to its targets.
+        _repair_of = None
+        _last_failed_plan = None
+        _repair_refused = ""
         from pilot.agents.late_checks import FollowUp as LateFollowUp
         from pilot.agents.plan_differ import PlanDiffer
         from pilot.agents.unconfirmed import masked_verification, receipt_checks
@@ -4679,6 +4688,8 @@ class PilotServer:
                     }
                     if chat_session_id != "default":
                         planner_kwargs["session_id"] = chat_session_id
+                    if _repair_of is not None and error_context:
+                        planner_kwargs["repair_of"] = _repair_of
                     plan = await self._await_execution_tracked(
                         self._planner.plan(
                             user_input,
@@ -4694,6 +4705,14 @@ class PilotServer:
             if plan.error:
                 if emit:
                     await emit.phase_error("planning", PLANNER_ERROR, plan.error, parent_id=plan_phase)
+                from pilot.agents.request_match import is_refusal
+
+                if _repair_of is not None and is_refusal(plan.error):
+                    # The repair would have reached outside the failed step: nothing more runs, the failure stands.
+                    logger.warning("Repair round refused: %s", plan.error)
+                    _repair_refused = plan.error
+                    plan = _last_failed_plan or _repair_of
+                    break
                 if attempt < self.MAX_RETRIES and not _is_terminal_planning_failure(plan.error):
                     error_context = plan.error
                     continue
@@ -5727,6 +5746,17 @@ class PilotServer:
             failed_details = [d for d in verification.details if "FAILED" in d or "MISMATCH" in d]
             error_msgs = [r.error for r in results if r.error]
             error_context = _repair_error_context(failed_details, error_msgs)
+            _last_failed_plan = plan
+            # Every plan of this task that ran so far: a repair of a repair may still redo the first plan's steps.
+            _repair_of = (
+                plan
+                if _repair_of is None
+                else ActionPlan(
+                    actions=[*_repair_of.actions, *plan.actions],
+                    explanation=plan.explanation,
+                    raw_input=plan.raw_input,
+                )
+            )
 
             # Use partial retry plan if PlanDiffer found fewer actions to retry
             if len(retry_plan.actions) < len(plan.actions) and attempt < self.MAX_RETRIES:
@@ -5799,6 +5829,14 @@ class PilotServer:
 
         outcome_said = failure_reply(all_results, last_verification, follow_up=repair_prose)
         message = outcome_said.shown
+        if _repair_refused:
+            # The repair round planned something other than the request: said after the failure, shown and spoken.
+            message = f"{message}\n{_repair_refused}"
+            from pilot.reply_rules import for_ear
+
+            outcome_said = type(outcome_said)(
+                shown=message, spoken=for_ear(f"{outcome_said.spoken} {_repair_refused}".strip())
+            )
         await _emit_task_complete(
             "partial_failure",
             message,
