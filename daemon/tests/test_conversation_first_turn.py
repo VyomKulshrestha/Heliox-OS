@@ -52,16 +52,21 @@ def _layer(model: HttpFastModel, read) -> ConversationLayer:
 
 async def test_the_screen_read_started_at_the_wake_phrase_is_used_by_the_turn():
     reads: list[float] = []
+    read_done = asyncio.Event()
 
     async def read(local: bool):
         reads.append(time.monotonic())
         await asyncio.sleep(0.3)  # slower than the turn may wait, but started early enough
+        read_done.set()
         return Screen("Notepad", "the shopping list")
 
     seen: list = []
     layer = _layer(_model(seen), read)
     layer.prewarm()  # the wake phrase
-    await asyncio.sleep(0.35)  # the person is still talking
+    # The person is still talking while the read runs; the question comes once it has finished. Awaited on the read
+    # itself: a sleep a little longer than the read could end first on a busy machine.
+    await read_done.wait()
+    await asyncio.sleep(0)
     await layer.take(QUESTION)
     assert len(reads) == 1  # read once, at the wake phrase
     assert "the shopping list" in json.dumps(seen[0])
@@ -100,7 +105,8 @@ async def test_a_read_from_long_before_the_turn_is_not_used(monkeypatch):
     layer = _layer(_model(seen), read)
     layer._clock = lambda: now[0]
     layer.prewarm()
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0)  # the prewarm's tasks get their first turn
+    await asyncio.gather(*layer._background, return_exceptions=True)  # the early read, to its end
     now[0] += layer_module.SCREEN_FRESH_SECONDS + 1
     await layer.take(QUESTION)
     sent = json.dumps(seen[0])
