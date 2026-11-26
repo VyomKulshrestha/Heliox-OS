@@ -136,7 +136,7 @@ def _server(seen: dict[str, Any]) -> PilotServer:
     server._record_plan_history = history
 
     class _Companion:
-        async def review(self, user_input, plan, *, screen_context="", others_running=None):
+        async def review(self, user_input, plan, *, screen_context="", others_running=None, **_options):
             seen.setdefault("companion", []).append(user_input)
             return CompanionReview(decision="CONTINUE", reason="ok")
 

@@ -4901,7 +4901,8 @@ class PilotServer:
                     or world_model_interrupt
                     or mcp_requires_visible_approval
                 )
-                timing = review_timing(plan, card_anyway=card_anyway, undo_enabled=bool(self.config.undo.enabled))
+                # Off the loop: it reads sizes, folders and drives of the files the plan would change.
+                timing = await asyncio.to_thread(review_timing, plan, card_anyway=card_anyway, undo=self.config.undo)
             beside_review_started = False
             if model_review_due and timing is ReviewTiming.BEFORE:
                 reviews.append(

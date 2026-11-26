@@ -68,7 +68,7 @@ def _server(seen: dict[str, Any], *, needs_confirmation: bool) -> PilotServer:
     server._control_reply = AsyncMock(return_value=None)
 
     class _Companion:
-        async def review(self, user_input, plan, *, screen_context="", others_running=None):
+        async def review(self, user_input, plan, *, screen_context="", others_running=None, **_options):
             seen.setdefault("companion", []).append(user_input)
             return CompanionReview(decision="CONTINUE", reason="ok")
 

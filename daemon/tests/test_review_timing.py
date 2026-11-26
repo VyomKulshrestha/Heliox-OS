@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,9 +19,11 @@ from pilot.actions import (
     ActionPlan,
     ActionResult,
     ActionType,
+    ClipboardParams,
     FileParams,
     KeyboardParams,
     VerificationResult,
+    VolumeParams,
 )
 from pilot.agents.execution_companion import ExecutionCompanion
 from pilot.agents.review_timing import (
@@ -27,7 +31,6 @@ from pilot.agents.review_timing import (
     UNANSWERED_REASON,
     ReviewTiming,
     review_timing,
-    step_cannot_hurt,
 )
 from tests.test_execute_tracked import _FakePermissionChecker, _FakeWs, _server_ready_for_handle_execute
 
@@ -58,21 +61,120 @@ def _plan(*actions: Action) -> ActionPlan:
 
 # ── the rule, from what the plan carries ──
 
-
-def test_reads_and_undoable_local_changes_cannot_hurt():
-    assert step_cannot_hurt(_read(), undo_enabled=True)
-    assert step_cannot_hurt(_write(), undo_enabled=True)
-    assert review_timing(_plan(_read(), _write()), card_anyway=False, undo_enabled=True) is ReviewTiming.BESIDE
+UNDO = SimpleNamespace(enabled=True, max_task_mb=1)
 
 
-def test_a_delete_typing_into_another_app_or_a_write_without_undo_waits_for_the_review():
-    assert review_timing(_plan(_delete()), card_anyway=False, undo_enabled=True) is ReviewTiming.BEFORE
-    assert review_timing(_plan(_read(), _type()), card_anyway=False, undo_enabled=True) is ReviewTiming.BEFORE
-    assert review_timing(_plan(_write()), card_anyway=False, undo_enabled=False) is ReviewTiming.BEFORE
+@pytest.fixture(autouse=True)
+def _home_is_the_working_folder(monkeypatch):
+    """The server-level tests write (in fakes) under the working folder; it stands in for the home folder."""
+    monkeypatch.setattr("pilot.agents.review_timing._home", lambda: Path(os.getcwd()))
 
 
-def test_a_plan_with_a_card_is_reviewed_while_the_card_is_open():
-    assert review_timing(_plan(_write()), card_anyway=True, undo_enabled=True) is ReviewTiming.WITH_CARD
+def _file_action(kind: ActionType, path: Path, destination: Path | None = None) -> Action:
+    params = FileParams(path=str(path), destination=str(destination) if destination else None, content="x")
+    return Action(action_type=kind, target=str(path), parameters=params)
+
+
+def _timing(*actions: Action, home: Path, undo=UNDO, **options) -> ReviewTiming:
+    return review_timing(_plan(*actions), card_anyway=False, undo=undo, home=home, **options)
+
+
+def test_reads_and_new_files_in_the_persons_folders_run_beside_their_review(tmp_path):
+    source = tmp_path / "notes" / "a.txt"
+    source.parent.mkdir()
+    source.write_text("a")
+    read = _file_action(ActionType.FILE_READ, source)
+    write_new = _file_action(ActionType.FILE_WRITE, tmp_path / "notes" / "new.txt")
+    copy_new = _file_action(ActionType.FILE_COPY, source, tmp_path / "notes" / "copy.txt")
+    move_into_folder = _file_action(ActionType.FILE_MOVE, source, tmp_path / "notes" / "moved.txt")
+    assert _timing(read, write_new, copy_new, move_into_folder, home=tmp_path) is ReviewTiming.BESIDE
+
+
+def test_an_overwrite_runs_beside_only_while_the_journal_can_keep_the_file_it_replaces(tmp_path):
+    small = tmp_path / "small.txt"
+    small.write_bytes(b"x" * 1000)
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"x" * (1024 * 1024 + 1))  # past the 1 MB undo limit of this task
+    assert _timing(_file_action(ActionType.FILE_WRITE, small), home=tmp_path) is ReviewTiming.BESIDE
+    assert _timing(_file_action(ActionType.FILE_WRITE, big), home=tmp_path) is ReviewTiming.BEFORE
+    source = tmp_path / "source.txt"
+    source.write_text("s")
+    assert _timing(_file_action(ActionType.FILE_COPY, source, big), home=tmp_path) is ReviewTiming.BEFORE
+    # Two overwrites that each fit but not together: the limit is for the whole task.
+    half = tmp_path / "half.bin"
+    half.write_bytes(b"x" * (600 * 1024))
+    other = tmp_path / "other.bin"
+    other.write_bytes(b"x" * (600 * 1024))
+    writes = (_file_action(ActionType.FILE_WRITE, half), _file_action(ActionType.FILE_WRITE, other))
+    assert _timing(*writes, home=tmp_path) is ReviewTiming.BEFORE
+
+
+def test_undo_off_keeps_nothing_so_every_change_waits(tmp_path):
+    off = SimpleNamespace(enabled=False, max_task_mb=512)
+    write = _file_action(ActionType.FILE_WRITE, tmp_path / "new.txt")
+    assert _timing(write, home=tmp_path, undo=off) is ReviewTiming.BEFORE
+
+
+def test_a_folder_in_the_way_or_a_folder_copied_waits(tmp_path):
+    inner = tmp_path / "folder" / "inner"
+    inner.mkdir(parents=True)
+    source = tmp_path / "a.txt"
+    source.write_text("a")
+    copy_into = _file_action(ActionType.FILE_COPY, source, inner)
+    assert _timing(copy_into, home=tmp_path) is ReviewTiming.BESIDE
+    # A folder where the copy would land: the journal refuses it ("the destination folder already exists").
+    (inner / "a.txt").mkdir()
+    assert _timing(copy_into, home=tmp_path) is ReviewTiming.BEFORE
+    assert _timing(_file_action(ActionType.FILE_WRITE, inner), home=tmp_path) is ReviewTiming.BEFORE
+    # A whole folder copied (many files): not this class.
+    folder_copy = _file_action(ActionType.FILE_COPY, tmp_path / "folder", tmp_path / "copy")
+    assert _timing(folder_copy, home=tmp_path) is ReviewTiming.BEFORE
+
+
+def test_a_move_across_drives_waits(tmp_path):
+    source = tmp_path / "a.txt"
+    source.write_text("a")
+    move = _file_action(ActionType.FILE_MOVE, source, tmp_path / "b.txt")
+    same = _timing(move, home=tmp_path, device_of=lambda path: 1)
+    across = _timing(move, home=tmp_path, device_of=lambda path: 1 if path == source else 2)
+    assert (same, across) == (ReviewTiming.BESIDE, ReviewTiming.BEFORE)
+
+
+def test_outside_the_persons_own_folders_waits_even_where_the_journal_could_restore_it(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    inside = home / "notes.txt"
+    inside.write_text("n")
+    # A program folder or another user's folder: not under the home folder.
+    outside = tmp_path / "Program Files" / "App" / "settings.ini"
+    assert _timing(_file_action(ActionType.FILE_WRITE, outside), home=home) is ReviewTiming.BEFORE
+    share = Path("//server/share/notes.txt")  # a network share
+    assert _timing(_file_action(ActionType.FILE_WRITE, share), home=home) is ReviewTiming.BEFORE
+    removable = _file_action(ActionType.FILE_COPY, inside, tmp_path / "usb" / "notes.txt")
+    assert _timing(removable, home=home) is ReviewTiming.BEFORE
+    assert _timing(_file_action(ActionType.FILE_WRITE, inside), home=home) is ReviewTiming.BESIDE
+    # Heliox's own folders inside the home folder: the journal refuses to keep a copy there.
+    own = _timing(_file_action(ActionType.FILE_WRITE, inside), home=home, private=lambda path: True)
+    assert own is ReviewTiming.BEFORE
+
+
+def test_clipboard_and_level_changes_wait_because_their_earlier_state_may_not_be_kept(tmp_path):
+    clipboard = Action(
+        action_type=ActionType.CLIPBOARD_WRITE, target="clipboard", parameters=ClipboardParams(content="x")
+    )
+    volume = Action(action_type=ActionType.VOLUME_SET, target="volume", parameters=VolumeParams(level=30))
+    assert _timing(clipboard, home=tmp_path) is ReviewTiming.BEFORE
+    assert _timing(volume, home=tmp_path) is ReviewTiming.BEFORE
+
+
+def test_a_delete_or_typing_into_another_app_waits(tmp_path):
+    assert _timing(_file_action(ActionType.FILE_DELETE, tmp_path / "a.txt"), home=tmp_path) is ReviewTiming.BEFORE
+    assert _timing(_type(), home=tmp_path) is ReviewTiming.BEFORE
+
+
+def test_a_plan_with_a_card_is_reviewed_while_the_card_is_open(tmp_path):
+    plan = _plan(_file_action(ActionType.FILE_DELETE, tmp_path / "a.txt"))
+    assert review_timing(plan, card_anyway=True, undo=UNDO, home=tmp_path) is ReviewTiming.WITH_CARD
 
 
 # ── fakes ──
