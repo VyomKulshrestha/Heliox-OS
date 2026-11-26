@@ -34,11 +34,16 @@ def test_reported_browser_effect_is_not_called_independently_verified():
     )
     plan = ActionPlan(actions=[action], explanation="Submit the form.")
     result = ActionResult(action=action, success=True, output="Clicked Submit")
-    reported = VerificationResult(passed=True, details=["Action 0: REPORTED — no independent postcondition"])
+    reported = VerificationResult(
+        passed=True,
+        details=["Action 0: REPORTED — no independent postcondition"],
+        reason_kinds={0: "nothing_happened"},
+    )
 
     message = success_message(plan, [result], reported, dry_run=False)
     assert message.startswith("Clicked Submit")
-    assert "1 action effect was reported successful but not independently verified" in message
+    assert message.endswith("Note: 1 step could not be checked; details in the receipt.")
+    assert "independently verified" not in message
 
     observed = VerificationResult(passed=True, independently_observed_actions=[0])
     assert success_message(plan, [result], observed, dry_run=False) == "Clicked Submit"
@@ -56,7 +61,7 @@ def test_mixed_execution_results_avoid_verified_heading_for_unobserved_effect():
     message = success_message(plan, results, VerificationResult(passed=True), dry_run=False)
 
     assert message.startswith("Execution results:\n")
-    assert "not independently verified" in message
+    assert "Verified results" not in message
 
 
 def test_unobserved_exact_finding_does_not_use_verified_filler():
@@ -66,8 +71,7 @@ def test_unobserved_exact_finding_does_not_use_verified_filler():
 
     message = success_message(plan, [result], VerificationResult(passed=True), dry_run=False)
 
-    assert message.startswith("1. Submit: Reported.")
-    assert "not independently verified" in message
+    assert message == "1. Submit: Reported."
 
 
 def test_dry_run_message_explicitly_says_no_changes_were_made():

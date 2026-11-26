@@ -38,11 +38,15 @@ PRECHECK = "precheck"
 
 
 class Outcome(NamedTuple):
-    """The verifier's answer, in the shape ``Verifier._verify_single`` returns."""
+    """The verifier's answer. ``kind`` names why an unobserved outcome was not confirmed (a value of
+    ``pilot.agents.unconfirmed.Kind``; empty: read from the detail there). ``notice`` is a sentence the person should
+    see beside a result that holds (packages an upgrade left behind)."""
 
     passed: bool
     detail: str
     observed: bool
+    kind: str = ""
+    notice: str = ""
 
 
 def is_precheck(result: ActionResult) -> bool:
@@ -50,16 +54,16 @@ def is_precheck(result: ActionResult) -> bool:
     return result.skip_reason == PRECHECK and not result.executed
 
 
-def verified(detail: str) -> Outcome:
-    return Outcome(True, detail, True)
+def verified(detail: str, *, notice: str = "") -> Outcome:
+    return Outcome(True, detail, True, "", notice)
 
 
 def mismatch(detail: str) -> Outcome:
     return Outcome(False, detail, True)
 
 
-def unobserved(detail: str) -> Outcome:
-    return Outcome(True, detail, False)
+def unobserved(detail: str, *, kind: str = "") -> Outcome:
+    return Outcome(True, detail, False, kind)
 
 
 VerifierFunction = Callable[[ActionResult], Awaitable[Outcome]]

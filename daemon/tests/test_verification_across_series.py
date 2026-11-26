@@ -124,7 +124,9 @@ async def test_a_refused_declared_check_leaves_the_step_reported_with_its_reason
     assert "refused" in verification.details[0]
     # The run is not stopped for reconciliation and the step is not repaired: it completed, as reported.
     assert _postcondition_failure_requires_reconciliation(results, verification) is False
-    assert "Not confirmed" in success_message(plan, results, verification, dry_run=False)
+    # An ssh command cannot be undone: the window's one line leads with the phrase said aloud, never the reason.
+    reply = success_message(plan, results, verification, dry_run=False)
+    assert reply.endswith("Note: I couldn't check that it went through; details in the receipt.")
 
 
 # ── 3. A mismatch on an irreversible send stops; on a retryable action it retries ─────────────

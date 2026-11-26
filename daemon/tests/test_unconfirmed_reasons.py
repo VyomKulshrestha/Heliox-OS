@@ -1,4 +1,4 @@
-"""Why a step was not confirmed reaches the person: in the verification result, the reply and the spoken sentence."""
+"""Why a step was not confirmed: kept in the verification result; the reply and the voice say only a fixed phrase."""
 
 from __future__ import annotations
 
@@ -55,8 +55,11 @@ async def test_a_step_that_could_not_be_checked_carries_its_reason_to_the_reply(
 
     assert verification.passed is True
     assert verification.reasons == {0: NO_IMAP}
+    assert verification.reason_kinds == {0: "could_not_look"}
     assert f"REPORTED — no independent postcondition ({NO_IMAP})" in verification.details[0]
-    assert f"Not confirmed, friend@example.com: {NO_IMAP}" in reply
+    # Mail is sent to someone else: its doubt is said in a fixed phrase; the verifier's sentence is not in the reply.
+    assert reply.endswith("Note: I couldn't check that it went through; details in the receipt.")
+    assert NO_IMAP not in reply
     assert "Body" not in reply
 
 
@@ -74,10 +77,10 @@ async def test_a_plainly_verified_step_and_a_step_without_a_check_add_no_reason(
     reply = success_message(plan, results, verification, dry_run=False)
 
     assert verification.reasons == {}
-    assert "Not confirmed" not in reply
+    assert "Note:" not in reply
 
 
-def test_a_long_plan_says_at_most_three_reasons() -> None:
+def test_a_long_plan_says_one_line() -> None:
     from pilot.actions import VerificationResult
 
     actions = [
@@ -86,22 +89,24 @@ def test_a_long_plan_says_at_most_three_reasons() -> None:
     ]
     results = [ActionResult(action=action, success=True, output="200") for action in actions]
     verification = VerificationResult(
-        passed=True, reasons={index: "Receipt only: the server answered 200" for index in range(5)}
+        passed=True,
+        reasons={index: "Receipt only: the server answered 200" for index in range(5)},
+        reason_kinds={index: "receipt_only" for index in range(5)},
     )
 
     reply = success_message(ActionPlan(actions=actions), results, verification, dry_run=False)
 
-    assert reply.count("Not confirmed, ") == 3
-    assert "2 more steps not confirmed." in reply
+    assert reply.count("Note:") == 1
+    assert reply.endswith(
+        "Note: It was accepted, but I can't read it back, 4 more steps could not be checked; details in the receipt."
+    )
+    assert "server answered 200" not in reply
 
 
-def test_the_spoken_sentence_names_only_what_was_not_confirmed() -> None:
-    message = f"Email sent: Hi\nNot confirmed, friend@example.com: {NO_IMAP}"
+def test_the_spoken_sentence_says_the_fixed_phrase_never_the_reason() -> None:
+    message = "Email sent: Hi\nNote: I couldn't check that it went through; details in the receipt."
 
     spoken = result_sentence("success", message)
 
-    assert spoken == (
-        "Email sent: Hi. I couldn't confirm it: the server accepted the message; its copy in Sent could not be "
-        "checked: no IMAP settings."
-    )
+    assert spoken == "Email sent: Hi. I couldn't check that it went through."
     assert result_sentence("success", "Email sent: Hi") == "Email sent: Hi."

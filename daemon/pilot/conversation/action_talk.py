@@ -173,39 +173,33 @@ def wont_change_sentence(change: str) -> str:
     return f"Okay, I won't change it to {named}." if named else "Okay, I won't change it."
 
 
-_UNVERIFIED = re.compile(
-    r"\s*Note: \d+ action effects? (?:was|were) reported successful but not independently verified\.\s*$"
-)
-_NOT_CONFIRMED = re.compile(
-    r"^Not confirmed, [^\n]*?: (?P<reason>[^\n]+)$\n?|^\d+ more steps? not confirmed\.$\n?", re.MULTILINE
-)
 _FAILED = re.compile(r"^Task did not complete successfully:[^.]*\.\s*")
 _SPOKEN_LIMIT = 20  # words; longer results stay in the window and are left to the server's own wording
 
 
 def result_sentence(status: str, message: str) -> str:
-    """The planner road's outcome in a sentence, from its end state: done (the result's one line, and that it could
-    not be checked when the verifier saw nothing), or failed (what went wrong). "" leaves the server's wording:
-    a refusal or cancel is already said in plain words, and a long or listed result is not read out here."""
+    """The planner road's outcome in a sentence, from its end state: done (the result's one line, and the fixed
+    phrase of a doubt worth saying, pilot.agents.unconfirmed), or failed (what went wrong). "" leaves the server's
+    wording: a refusal or cancel is already said in plain words, and a long or listed result is not read out here.
+    The verifier's own reason is never said: it can hold a window title or a file name."""
+    from pilot.agents.unconfirmed import SPOKEN_PHRASES, Kind, spoken_from_window_line
+
     text = message.strip()
     if status == "success":
-        # "Not confirmed, <step>: <reason>" lines (response_contract): only the first reason is said aloud.
-        reasons = [found.group("reason") for found in _NOT_CONFIRMED.finditer(text) if found.group("reason")]
-        text = _NOT_CONFIRMED.sub("", text).strip()
-        unverified = bool(_UNVERIFIED.search(text))
-        body = _UNVERIFIED.sub("", text).strip()
+        body, phrase = spoken_from_window_line(text)
         if not body or "\n" in body or len(body.split()) > _SPOKEN_LIMIT:
             return ""
         sentence = body if body.endswith((".", "!", "?")) else body + "."
-        if reasons:
-            reason = reasons[0].strip().rstrip(".")
-            return f"{sentence} I couldn't confirm it: {reason[:1].lower() + reason[1:]}."
-        return f"{sentence} I couldn't check that it worked." if unverified else sentence
+        return f"{sentence} {phrase}." if phrase else sentence
     if status in {"partial_failure", "partial", "error", "failed"}:
         found = _FAILED.match(text)
         if found is None:
             return ""
         issue = text[found.end() :].strip()
+        if " MISMATCH — " in issue or issue.startswith("Verification error"):
+            # What the check read is in the window and the receipt; aloud, only that it did not match.
+            phrase = SPOKEN_PHRASES[Kind.MISMATCH]
+            return f"That didn't work: {phrase[:1].lower()}{phrase[1:]}."
         if not issue or "\n" in issue or len(issue.split()) > _SPOKEN_LIMIT:
             return "That didn't work."
         return f"That didn't work: {issue[:1].lower() + issue[1:]}"

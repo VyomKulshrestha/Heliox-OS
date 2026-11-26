@@ -277,15 +277,51 @@ class TaskReceipts:
         summary: str,
         source: str,
         undo: dict[str, Any] | None = None,
+        checks: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
-        """Write the signed receipt for ``task_key``. Returns its short form, or None if nothing ran."""
+        """Write the signed receipt for ``task_key``. Returns its short form, or None if nothing ran.
+
+        ``checks``: each step that was not plainly verified, with its kind and the verifier's reason, window titles and
+        file names already masked (pilot.agents.unconfirmed.Step.for_receipt)."""
         pending = self._pending.pop(task_key, None) if task_key else None
         if not pending or not pending["actions"] or not self.enabled:
             return None
         async with self._lock:
             key = await self._signing_key()
             return await asyncio.to_thread(
-                self._write_receipt, key, task_key, pending, request, status, summary, source, undo
+                self._write_receipt, key, task_key, pending, request, status, summary, source, undo, checks
+            )
+
+    async def record_late_checks(
+        self,
+        task_key: str,
+        *,
+        request: str,
+        plan_id: str,
+        follows: str | None,
+        summary: str,
+        checks: list[dict[str, Any]],
+        source: str = "verification",
+    ) -> dict[str, Any] | None:
+        """A receipt of its own for checks that finished after the task's receipt was signed: signed receipts are
+        never changed, so the late outcome is added to the chain and names the receipt it ``follows``."""
+        if not task_key or not checks or not self.enabled:
+            return None
+        pending = {"started_at": time.time(), "plan_ids": [plan_id] if plan_id else [], "actions": []}
+        async with self._lock:
+            key = await self._signing_key()
+            return await asyncio.to_thread(
+                self._write_receipt,
+                key,
+                task_key,
+                pending,
+                request,
+                "checked_later",
+                summary,
+                source,
+                None,
+                checks,
+                follows,
             )
 
     def _write_receipt(
@@ -298,6 +334,8 @@ class TaskReceipts:
         summary: str,
         source: str,
         undo: dict[str, Any] | None,
+        checks: list[dict[str, Any]] | None = None,
+        follows: str | None = None,
     ) -> dict[str, Any]:
         from pilot import __version__
 
@@ -326,6 +364,12 @@ class TaskReceipts:
             "key_fingerprint": key_fingerprint(public_raw) if public_raw else None,
             "previous_receipt_sha256": previous_hash,
         }
+        if checks:
+            receipt["checks"] = [
+                {**check, "reason": (redact_text(str(check.get("reason") or "")) or "")[:500]} for check in checks
+            ]
+        if follows:
+            receipt["follows_receipt_id"] = follows
         envelope: dict[str, Any] = {"receipt": receipt, "algorithm": "ed25519"}
         if key is not None and public_raw is not None:
             envelope["signature"] = _b64(key.sign(canonical_json(receipt)))

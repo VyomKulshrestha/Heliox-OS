@@ -8,8 +8,10 @@ Updated for the expanded action set with cross-platform support.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pilot.actions import (
@@ -28,6 +30,7 @@ from pilot.actions import (
 )
 from pilot.agents import postconditions
 from pilot.agents.postconditions import PRECHECK
+from pilot.agents.unconfirmed import Kind, classify, no_check_kind
 from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
@@ -105,6 +108,55 @@ ALREADY_ABSENT_WORDING: dict[ActionType, Callable[[Any], str]] = {
 
 
 NO_POSTCONDITION = "No independent postcondition for this action type"
+STILL_CHECKING = "The check was still running when the reply went out; its outcome goes to the receipt"
+
+
+@dataclass
+class LateOutcome:
+    """A check that finished after the reply: its step, its outcome and its kind (None: plainly verified)."""
+
+    index: int
+    result: ActionResult
+    outcome: postconditions.Outcome
+    kind: Kind | None
+
+
+@dataclass
+class LateChecks:
+    """Checks still running behind the reply (``Verifier.verify_within``). ``task`` runs them in the plan's order."""
+
+    task: asyncio.Task[Any]
+    pending: list[int]
+    results: list[ActionResult]
+
+    async def outcomes(self) -> list[LateOutcome]:
+        """Wait for the checks to finish; the outcome of each step that was still being checked, in order."""
+        found = await asyncio.shield(self.task)
+        late = []
+        for index in self.pending:
+            outcome = found.get(index)
+            if outcome is None:
+                continue
+            result = self.results[index]
+            kind = (
+                classify(
+                    result.action.action_type,
+                    outcome.detail,
+                    observed=outcome.observed,
+                    passed=outcome.passed,
+                    hint=outcome.kind,
+                )
+                if outcome.detail != NO_POSTCONDITION
+                else no_check_kind(result.action.action_type)
+            )
+            late.append(LateOutcome(index, result, outcome, kind))
+        return late
+
+    async def cancel(self) -> None:
+        """Stop the checks and wait until they have stopped."""
+        if not self.task.done():
+            self.task.cancel()
+        await asyncio.wait({self.task})
 
 
 class Verifier:
@@ -154,28 +206,44 @@ class Verifier:
         return passed, detail
 
     async def verify(self, plan: ActionPlan, results: list[ActionResult]) -> VerificationResult:
-        """Verify all action results against the plan."""
-        details: list[str] = []
+        """Verify all action results against the plan, waiting for every check."""
+        verification, _late = await self.verify_within(plan, results, budget=None)
+        return verification
+
+    async def verify_within(
+        self, plan: ActionPlan, results: list[ActionResult], *, budget: float | None
+    ) -> tuple[VerificationResult, LateChecks | None]:
+        """Verify, waiting at most ``budget`` seconds for the checks together (None: for all of them).
+
+        Checks run one after another, in the plan's order, as before. A check still running when the budget is spent
+        goes on behind the reply: its step is reported "still being checked" now (``pending_actions``), and the
+        returned ``LateChecks`` gives its outcome when it arrives. A late outcome only informs: whoever holds the
+        ``LateChecks`` writes it to the receipt and may tell the person; it never fails this result or starts a
+        repair. The caller must cancel and await ``LateChecks.task`` when it stops caring (``LateChecks.cancel``).
+        """
+        details: dict[int, str] = {}
+        head: list[str] = []
         failed_indices: list[int] = []
         observed_indices: list[int] = []
         reasons: dict[int, str] = {}
+        kinds: dict[int, str] = {}
+        notices: dict[int, str] = {}
+        to_check: list[int] = []
 
         if len(results) != len(plan.actions):
-            details.append(
+            head.append(
                 f"RESULT COUNT MISMATCH — planned {len(plan.actions)} action(s), received {len(results)} result(s)"
             )
 
         for i, planned_action in enumerate(plan.actions):
             if i >= len(results):
-                details.append(
-                    f"Action {i} ({planned_action.action_type.value}): MISSING — executor returned no result"
-                )
+                details[i] = f"Action {i} ({planned_action.action_type.value}): MISSING — executor returned no result"
                 failed_indices.append(i)
                 continue
 
             result = results[i]
             if result.action.model_dump(mode="json") != planned_action.model_dump(mode="json"):
-                details.append(
+                details[i] = (
                     f"Action {i} ({planned_action.action_type.value}): MISMATCH — "
                     f"executor returned a result for {result.action.action_type.value}"
                 )
@@ -183,13 +251,62 @@ class Verifier:
                 continue
 
             if not result.success:
-                details.append(f"Action {i} ({result.action.action_type.value}): FAILED — {result.error}")
+                details[i] = f"Action {i} ({result.action.action_type.value}): FAILED — {result.error}"
                 failed_indices.append(i)
                 continue
+            to_check.append(i)
 
-            check_passed, check_detail, independently_observed = await self._verify_single(result)
+        outcomes: dict[int, postconditions.Outcome] = {}
+
+        async def run_checks() -> dict[int, postconditions.Outcome]:
+            for index in to_check:
+                outcomes[index] = await self._verify_one(results[index])
+            return outcomes
+
+        late: LateChecks | None = None
+        if budget is None or not to_check:
+            await run_checks()
+        else:
+            task = asyncio.create_task(run_checks(), name="verification-checks")
+            try:
+                await self._wait_budget(task, budget)
+            except asyncio.CancelledError:
+                task.cancel()
+                await asyncio.wait({task})
+                raise
+            if not task.done():
+                pending = [index for index in to_check if index not in outcomes]
+                late = LateChecks(task=task, pending=pending, results=list(results))
+            elif not task.cancelled() and task.exception() is not None:
+                raise task.exception()  # type: ignore[misc]
+
+        for i in to_check:
+            result = results[i]
+            label = f"Action {i} ({result.action.action_type.value})"
+            if i not in outcomes:
+                details[i] = f"{label}: CHECKING — the check was still running when the reply went out"
+                reasons[i] = STILL_CHECKING
+                kinds[i] = Kind.STILL_CHECKING.value
+                continue
+            outcome = outcomes[i]
+            check_passed, check_detail, independently_observed = outcome.passed, outcome.detail, outcome.observed
             if independently_observed:
                 observed_indices.append(i)
+            if outcome.notice:
+                notices[i] = outcome.notice
+            kind = (
+                classify(
+                    result.action.action_type,
+                    check_detail,
+                    observed=independently_observed,
+                    passed=check_passed,
+                    hint=outcome.kind,
+                )
+                if check_detail != NO_POSTCONDITION
+                else no_check_kind(result.action.action_type)
+            )
+            if kind is not None:
+                kinds[i] = kind.value
             if check_passed:
                 status = "VERIFIED" if independently_observed else "REPORTED — no independent postcondition"
                 if not independently_observed and check_detail and check_detail != NO_POSTCONDITION:
@@ -199,30 +316,47 @@ class Verifier:
                 elif result.action.expect is not None and check_detail:
                     # A declared check says what it ran and found (postconditions.declared).
                     status = f"{status} ({check_detail})"
-                details.append(f"Action {i} ({result.action.action_type.value}): {status}")
+                details[i] = f"{label}: {status}"
             else:
-                details.append(f"Action {i} ({result.action.action_type.value}): MISMATCH — {check_detail}")
+                details[i] = f"{label}: MISMATCH — {check_detail}"
                 failed_indices.append(i)
                 reasons[i] = check_detail
 
-        for i, result in enumerate(results[len(plan.actions) :], start=len(plan.actions)):
-            details.append(
-                f"Action {i} ({result.action.action_type.value}): UNEXPECTED — result was not present in the plan"
-            )
-            failed_indices.append(i)
+        tail = [
+            f"Action {i} ({result.action.action_type.value}): UNEXPECTED — result was not present in the plan"
+            for i, result in enumerate(results[len(plan.actions) :], start=len(plan.actions))
+        ]
+        failed_indices.extend(range(len(plan.actions), len(results)))
 
         passed = len(failed_indices) == 0
-        return VerificationResult(
+        verification = VerificationResult(
             passed=passed,
-            details=details,
-            failed_actions=failed_indices,
+            details=[*head, *(details[i] for i in sorted(details)), *tail],
+            failed_actions=sorted(failed_indices),
             independently_observed_actions=observed_indices,
             rollback_triggered=False,
             reasons=reasons,
+            reason_kinds=kinds,
+            notices=notices,
+            pending_actions=late.pending if late is not None else [],
         )
+        return verification, late
+
+    @staticmethod
+    async def _wait_budget(task: asyncio.Task[Any], budget: float) -> None:
+        """Wait for ``task`` at most ``budget`` seconds; it goes on running past that (tests replace this wait)."""
+        try:
+            await bounded(asyncio.shield(task), budget)
+        except TimeoutError:
+            pass
 
     async def _verify_single(self, result: ActionResult) -> tuple[bool, str, bool]:
         """Return (passed, detail, independent observation completed)."""
+        outcome = await self._verify_one(result)
+        return outcome.passed, outcome.detail, outcome.observed
+
+    async def _verify_one(self, result: ActionResult) -> postconditions.Outcome:
+        """The check of one step, with the kind of an outcome that is not plainly verified."""
         action = result.action
 
         try:
@@ -234,16 +368,14 @@ class Verifier:
                 # have left its page by now.
                 read_then = recalled(result)
                 if read_then is not None:
-                    return read_then.passed, read_then.detail, read_then.observed
+                    return read_then
                 try:
-                    outcome = await bounded(registration.check(result), registration.timeout)
+                    return await bounded(registration.check(result), registration.timeout)
                 except TimeoutError:
-                    return (
-                        True,
+                    return postconditions.unobserved(
                         f"Post-condition check did not finish within {registration.timeout:g} s; outcome unverified",
-                        False,
+                        kind=Kind.COULD_NOT_LOOK.value,
                     )
-                return outcome.passed, outcome.detail, outcome.observed
 
             if action.action_type == ActionType.FILE_DELETE:
                 check = await self._verify_file_delete(action.parameters)  # type: ignore[arg-type]
@@ -284,13 +416,13 @@ class Verifier:
 
             else:
                 # The executor callback alone is not evidence of a state transition.
-                return True, NO_POSTCONDITION, False
+                return postconditions.Outcome(True, NO_POSTCONDITION, False)
 
-            return check[0], check[1], True
+            return postconditions.Outcome(check[0], check[1], True)
 
         except Exception as e:
             logger.warning("Verification check failed: %s", e)
-            return False, f"Verification error: {e}", False
+            return postconditions.Outcome(False, f"Verification error: {e}", False)
 
     async def _verify_file_delete(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path

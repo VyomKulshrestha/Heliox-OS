@@ -1359,3 +1359,10 @@ class VerificationResult(BaseModel):
     # Action index to the verifier's one-sentence reason, for every outcome that is not a plain VERIFIED and has a
     # specific reason (a receipt only, a look that was refused or could not be made, a mismatch).
     reasons: dict[int, str] = Field(default_factory=dict)
+    # Action index to the kind of a step that was not plainly verified (pilot.agents.unconfirmed.Kind): what decides
+    # whether it is said aloud, counted in the window's line, or only kept in the receipt.
+    reason_kinds: dict[int, str] = Field(default_factory=dict)
+    # Action index to a sentence the person sees beside a result that holds (packages an upgrade left behind).
+    notices: dict[int, str] = Field(default_factory=dict)
+    # Steps whose check was still running when the reply went out; their outcome reaches the receipt later.
+    pending_actions: list[int] = Field(default_factory=list)

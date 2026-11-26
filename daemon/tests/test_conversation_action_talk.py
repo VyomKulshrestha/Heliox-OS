@@ -82,10 +82,18 @@ def test_a_sentence_said_again_keeps_the_capital_i():
     [
         (
             "success",
-            "Deleted\nNote: 1 action effect was reported successful but not independently verified.",
-            "Deleted. I couldn't check that it worked.",
+            "Deleted\nNote: I couldn't check that it went through; details in the receipt.",
+            "Deleted. I couldn't check that it went through.",
         ),
+        # A step that could not be checked and is not worth saying aloud stays in the window.
+        ("success", "Typed it\nNote: 1 step could not be checked; details in the receipt.", "Typed it."),
         ("success", "Notepad is open.", "Notepad is open."),
+        (
+            "partial_failure",
+            "Task did not complete successfully: 1 of 1 action failed or could not be verified. "
+            'Action 0 (keyboard_type): MISMATCH — Slack window "Gen…" was in front',
+            "That didn't work: the check afterwards found something else.",
+        ),
         ("success", "Execution results:\n- a: one\n- b: two", ""),  # a list stays in the window
         (
             "partial_failure",

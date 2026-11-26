@@ -1437,9 +1437,12 @@ From the paid runs (12 November main pack, rounds 17 to 19 personal pack) and th
   close, shut down, pay and the like) says the approval sentence first and nothing before it. Any other request
   handed to the planner says what Heliox will do ("I'll look for your launch folder."). The quick road's one
   checked step, which runs at once, says "Opening Notepad." as it starts. A person with no model is promised nothing
-  before the planner answers. The planner's end state is said as it is: "Deleted. I couldn't check that it worked."
-  or "That didn't work: access is denied." Before, the raw result was read out, including "Note: 1 action effect was
-  reported successful but not independently verified". The session check fails any under-way sentence in a turn
+  before the planner answers. The planner's end state is said as it is: "Email sent. I couldn't check that it went
+  through." or "That didn't work: access is denied." A doubt is said only for a step that sends something or cannot
+  be undone, or a check that found something else, and always in a fixed phrase, never the verifier's own sentence
+  (which can name a window title or a file); the window shows one line and the receipt keeps the reasons, masked
+  (`pilot.agents.unconfirmed`). Before, the raw result was read out, including "Note: 1 action effect was reported
+  successful but not independently verified". The session check fails any under-way sentence in a turn
   that ran nothing or before its approval was pressed (the new `approve` event presses it). What is left: a verb not
   on the list whose plan turns out to need approval hears "I'll organise your desktop." and then the approval
   sentence. That is a promise, not a claim.

@@ -4017,7 +4017,8 @@ class PilotServer:
                     ttl_seconds=86400,
                 )
 
-        async def _emit_task_complete(status: str, summary: str) -> None:
+        async def _emit_task_complete(status: str, summary: str, *, checks: list[dict[str, Any]] | None = None) -> None:
+            # ``checks``: the steps that were not plainly verified, masked (pilot.agents.unconfirmed.receipt_checks).
             try:
                 duration_ms = int((time.time() - _start_time) * 1000)
                 payload = {
@@ -4041,6 +4042,7 @@ class PilotServer:
                         summary=payload["summary"],
                         source=str(params.get("source") or "text"),
                         undo=payload.get("undo"),
+                        checks=checks,
                     )
                     if receipt is not None:
                         payload["receipt_id"] = receipt["receipt_id"]
@@ -4385,6 +4387,7 @@ class PilotServer:
         _successful_results: list = []
         _pending_retry_plan = None
         from pilot.agents.plan_differ import PlanDiffer
+        from pilot.agents.unconfirmed import masked_verification, receipt_checks
         from pilot.response_contract import (
             exact_labeled_finding_count,
             partial_failure_message,
@@ -5283,7 +5286,7 @@ class PilotServer:
                     await emit.phase_complete(
                         "verification",
                         VERIFICATION_PASSED,
-                        {"details": verification.details[:3]},
+                        {"details": masked_verification(verification).details[:3]},
                         parent_id=verify_phase,
                     )
 
@@ -5350,7 +5353,9 @@ class PilotServer:
                     f"Previous request: {_sanitize_summary(request_text, limit=300)}\n"
                     f"Execution result: {_sanitize_summary(message, limit=700)}"
                 )
-                await _emit_task_complete("success", message)
+                await _emit_task_complete(
+                    "success", message, checks=None if dry_run else receipt_checks(results, verification)
+                )
 
                 if (
                     self.config.narration.follow_up_enabled
@@ -5371,7 +5376,7 @@ class PilotServer:
                     "status": "success",
                     "dry_run": dry_run,
                     "results": [r.model_dump() for r in results],
-                    "verification": verification.model_dump(),
+                    "verification": masked_verification(verification, files=False).model_dump(),
                     "message": message,
                     "explanation": (
                         f"(dry run) {plan.explanation}"
@@ -5386,7 +5391,10 @@ class PilotServer:
 
             if emit:
                 await emit.phase_error(
-                    "verification", VERIFICATION_FAILED, "; ".join(verification.details[:3]), parent_id=verify_phase
+                    "verification",
+                    VERIFICATION_FAILED,
+                    "; ".join(masked_verification(verification).details[:3]),
+                    parent_id=verify_phase,
                 )
 
             from pilot.system.desktop_observe import input_went_elsewhere
@@ -5484,12 +5492,18 @@ class PilotServer:
         )
 
         message = partial_failure_message(all_results, last_verification)
-        await _emit_task_complete("partial_failure", message)
+        await _emit_task_complete(
+            "partial_failure",
+            message,
+            checks=receipt_checks(all_results, last_verification) if last_verification and not dry_run else None,
+        )
         return {
             "status": "partial_failure",
             "dry_run": dry_run,
             "results": [r.model_dump() for r in all_results],
-            "verification": last_verification.model_dump() if last_verification else {},
+            "verification": (
+                masked_verification(last_verification, files=False).model_dump() if last_verification else {}
+            ),
             "message": message,
             "explanation": (
                 f"(dry run) {last_explanation}"
@@ -6401,6 +6415,7 @@ class PilotServer:
         )
 
         if not remaining_actions:
+            from pilot.agents.unconfirmed import masked_verification
             from pilot.response_contract import partial_failure_message, success_message
 
             verification = await self._verifier.verify(approved_plan, checkpoint.results)
@@ -6423,7 +6438,7 @@ class PilotServer:
                 "resumed": False,
                 "message": message,
                 "results": [result.model_dump() for result in checkpoint.results],
-                "verification": verification.model_dump(),
+                "verification": masked_verification(verification, files=False).model_dump(),
             }
 
         self._cancel_event = asyncio.Event()
@@ -17397,7 +17412,10 @@ def handle_tool(tool_name, params):
                 message=result_text[:160],
                 interaction_id=interaction_id,
             )
-            spoken = result_text[:300] if len(result_text) < 300 else result_text[:297] + "..."
+            from pilot.agents.unconfirmed import speakable_message
+
+            # The window's "could not be checked" line is not read out; its fixed phrase is, when it has one.
+            spoken = speakable_message(result_text, limit=300)
             spoken = (turn.spoken_result(result_text, status) if turn is not None else "") or spoken
             if turn is not None:
                 # The next question can refer to what was done, in the words the person heard.

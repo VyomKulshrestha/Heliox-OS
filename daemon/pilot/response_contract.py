@@ -64,30 +64,31 @@ def success_message(
     """Build a terminal success message from verified execution state."""
     message = _success_message_body(plan, results, verification, dry_run=dry_run)
     notices = [] if dry_run else [_clean(result.notice) for result in results if result.success and result.notice]
+    if not dry_run:
+        found = getattr(verification, "notices", None) or {}
+        notices.extend(_clean(found[index]) for index in sorted(found) if found[index])
     # A notice already in the message (an absent target's sentence is also its output) is not repeated.
     lines = [message, *(f"Note: {notice}" for notice in notices if notice and notice not in message)]
     if not dry_run:
-        lines.extend(_unconfirmed_lines(results, verification))
+        line = unconfirmed_line(results, verification)
+        if line:
+            lines.append(line)
     return "\n".join(lines)
 
 
-MAX_UNCONFIRMED_LINES = 3
+def unconfirmed_line(results: Sequence[ActionResult], verification: VerificationResult) -> str:
+    """The one line about steps that were not confirmed (pilot.agents.unconfirmed.window_line), or "".
 
+    The verifier's reasons are not in it: they go to the receipt, masked."""
+    from pilot.agents.unconfirmed import window_line
 
-def _unconfirmed_lines(results: Sequence[ActionResult], verification: VerificationResult) -> list[str]:
-    """One short sentence per step whose outcome was not confirmed, with the verifier's reason; at most three."""
-    reasons = getattr(verification, "reasons", None) or {}
-    lines = []
-    for index, result in enumerate(results):
-        reason = _clean(reasons.get(index, ""))
-        if not reason or not result.success:
-            continue
-        label = _clean(result.action.target) or result.action.action_type.value.replace("_", " ")
-        lines.append(f"Not confirmed, {_bound(label, 80)}: {_bound(reason, 200)}")
-    if len(lines) > MAX_UNCONFIRMED_LINES:
-        extra = len(lines) - MAX_UNCONFIRMED_LINES
-        lines = [*lines[:MAX_UNCONFIRMED_LINES], f"{extra} more step{'s' if extra != 1 else ''} not confirmed."]
-    return lines
+    kinds = getattr(verification, "reason_kinds", None) or {}
+    steps = [
+        (result.action.action_type, kinds[index])
+        for index, result in enumerate(results)
+        if index in kinds and result.success
+    ]
+    return window_line(steps)
 
 
 def _success_message_body(
@@ -116,13 +117,9 @@ def _success_message_body(
         and result.action.permission_tier > PermissionTier.READ_ONLY
         for index, result in enumerate(results)
     )
-    caveat = (
-        "\nNote: "
-        + ("1 action effect was" if unverified_effects == 1 else f"{unverified_effects} action effects were")
-        + " reported successful but not independently verified."
-        if unverified_effects
-        else ""
-    )
+    # What was not confirmed is said once, by unconfirmed_line: a step that by nature cannot be read (a volume step, a
+    # scroll, typing where no reader exists) adds nothing, so an everyday reply carries no caveat a person tires of.
+    caveat = ""
 
     exact_count = exact_labeled_finding_count(plan)
     if exact_count is not None:
@@ -171,7 +168,9 @@ def _success_message_body(
     if intent:
         return f"{prefix} {intent}{caveat}"
     if verification.details:
-        return f"{prefix} {_clean(verification.details[0])}{caveat}"
+        from pilot.agents.unconfirmed import mask
+
+        return f"{prefix} {_clean(mask(verification.details[0], files=False))}{caveat}"
     return prefix + caveat
 
 
@@ -195,8 +194,11 @@ def partial_failure_message(
 
     issues = [result.error for result in results if result.error]
     if verification:
+        from pilot.agents.unconfirmed import mask
+
+        # What a check read can name a window by its title (a mail subject, a document): the title is masked here.
         issues.extend(
-            detail
+            mask(detail, files=False)
             for detail in verification.details
             if "FAILED" in detail or "MISMATCH" in detail or "error" in detail.lower()
         )
