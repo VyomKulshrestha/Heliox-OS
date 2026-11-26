@@ -96,6 +96,9 @@ export function catalog(platform: string, gpu = ""): Group[] {
       source: linux
         ? "PyPI (NVIDIA cuBLAS and cuDNN, already part of Voice's PyTorch on Linux)"
         : "PyPI (NVIDIA cuBLAS and cuDNN) and download.pytorch.org (PyTorch with CUDA)",
+      note: linux
+        ? "If Voice was installed while no card or driver was found, this also replaces its processor PyTorch with the CUDA build from PyPI (about 2.5 GB)."
+        : undefined,
     });
   }
   groups.push(

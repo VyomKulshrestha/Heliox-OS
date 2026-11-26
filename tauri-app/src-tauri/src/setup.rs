@@ -37,6 +37,19 @@ pub fn python_versions() -> (String, String, String) {
     )
 }
 
+/// (version, index): PyTorch's processor build for Voice on Linux without an NVIDIA card (python-versions.json,
+/// "linux_torch_cpu"); empty strings when the file has none, and the script then installs Voice as before.
+pub fn linux_torch_cpu() -> (String, String) {
+    let data: serde_json::Value = serde_json::from_str(PYTHON_VERSIONS).unwrap_or_default();
+    let get = |key: &str| {
+        data["linux_torch_cpu"][key]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    };
+    (get("version"), get("index"))
+}
+
 /// Optional groups the person can choose, and the daemon extras each installs. The UI cannot ask for anything
 /// outside this list.
 pub fn group_extras(id: &str) -> Option<&'static str> {
@@ -287,6 +300,8 @@ fn script_command(mode: &str) -> std::io::Result<Command> {
         .env("HELIOX_PYTHON_MIN", python_versions().0)
         .env("HELIOX_PYTHON_MAX", python_versions().1)
         .env("HELIOX_PYTHON_PRIVATE", python_versions().2)
+        .env("HELIOX_TORCH_CPU_VERSION", linux_torch_cpu().0)
+        .env("HELIOX_TORCH_CPU_INDEX", linux_torch_cpu().1)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1119,6 +1134,16 @@ mod tests {
         println!("REPAIRED_DAEMON_STARTED pid {}", child.id());
         crate::supervisor::kill_tree(&mut child);
         let _ = child.wait();
+    }
+
+    #[test]
+    fn the_linux_processor_pytorch_comes_from_the_shared_file() {
+        let (version, index) = linux_torch_cpu();
+        let data: serde_json::Value = serde_json::from_str(PYTHON_VERSIONS).unwrap();
+        assert_eq!(version, data["linux_torch_cpu"]["version"].as_str().unwrap());
+        assert_eq!(index, data["linux_torch_cpu"]["index"].as_str().unwrap());
+        assert!(index.starts_with("https://"));
+        assert!(!version.is_empty() && !version.contains('+'));
     }
 
     #[test]

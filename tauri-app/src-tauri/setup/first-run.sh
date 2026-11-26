@@ -11,6 +11,9 @@
 #   HELIOX_PYTHON_MIN, HELIOX_PYTHON_MAX, HELIOX_PYTHON_PRIVATE
 #                      the Python versions Heliox is tested with and the one it downloads, from
 #                      setup/python-versions.json (the app passes them; CI reads the same file)
+#   HELIOX_TORCH_CPU_VERSION, HELIOX_TORCH_CPU_INDEX
+#                      Linux x86_64 without an NVIDIA card: the PyTorch version whose processor build Voice gets,
+#                      and the index it comes from (python-versions.json, "linux_torch_cpu"); empty: as before
 #   $1                 "probe" prints only the Python plan; "run" (default) does the setup
 #
 # Output: lines starting with "@@" are for the app; everything else is detail shown as progress.
@@ -120,12 +123,16 @@ if [ -n "$ASSET" ]; then
   URL="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${ASSET_NAME}"
 fi
 
-gpu_line() {
-  # The NVIDIA card's name from its driver's own tool; nothing else is read, nothing is installed.
-  name=""
+gpu_name() {
+  # The NVIDIA card's name from its driver's own tool; nothing else is read, nothing is installed. Empty without a
+  # card, and with a card whose driver is not installed or does not answer (nvidia-smi missing or failing).
   if [ "$(uname -s)" = "Linux" ] && command -v nvidia-smi >/dev/null 2>&1; then
-    name="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '\r')"
+    nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '\r'
   fi
+}
+
+gpu_line() {
+  name="$(gpu_name)"
   if [ -n "$name" ]; then say "@@gpu nvidia $name"; else say "@@gpu none"; fi
 }
 
@@ -232,6 +239,42 @@ measure core
 
 PIP="$ENV_DIR/bin/python -m pip --disable-pip-version-check"
 
+# Voice on Linux x86_64 without a usable NVIDIA card: PyPI's PyTorch for Linux is the CUDA build, with about 2.5 GB of
+# NVIDIA libraries no card here can use. The processor build of the same version comes first from PyTorch's own index,
+# so the voice extra finds PyTorch already there and keeps it. A card whose driver does not answer counts as none (the
+# voice could not use it either); once the driver works, Settings > Optional parts > Voice on the graphics card swaps
+# in the CUDA build. When the processor build cannot be fetched (no network, or a mirror or proxy that does not reach
+# download.pytorch.org), Voice installs as before, with PyPI's build, and says so. macOS and Windows: nothing here.
+torch_cpu_first() {
+  if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then return 0; fi
+  if [ -z "${HELIOX_TORCH_CPU_VERSION:-}" ] || [ -z "${HELIOX_TORCH_CPU_INDEX:-}" ]; then return 0; fi
+  case ";${HELIOX_GROUPS:-};" in *";voicegpu="*) return 0 ;; esac
+  if [ -n "$(gpu_name)" ]; then return 0; fi
+  if $PIP show torch >/dev/null 2>&1; then
+    say "PyTorch is already installed; it stays as it is"
+    return 0
+  fi
+  say "No NVIDIA card: installing PyTorch ${HELIOX_TORCH_CPU_VERSION}'s processor build from ${HELIOX_TORCH_CPU_INDEX} (about 2.5 GB less than PyPI's)"
+  if $PIP install --progress-bar off --index-url "$HELIOX_TORCH_CPU_INDEX" "torch==${HELIOX_TORCH_CPU_VERSION}+cpu" 2>&1; then
+    say "@@torch cpu ${HELIOX_TORCH_CPU_VERSION}"
+  else
+    say "PyTorch's processor build could not be downloaded from ${HELIOX_TORCH_CPU_INDEX}; Voice installs PyPI's build instead (about 2.5 GB more)"
+    say "@@torch pypi ${HELIOX_TORCH_CPU_VERSION}"
+  fi
+}
+
+# Voice on the graphics card on Linux, added after Voice got the processor build (no card, or no driver, at the
+# time): the same PyTorch version's CUDA build from the person's own index (PyPI, or their mirror), with its NVIDIA
+# libraries. pip fetches it before it removes the processor build, so a failed download leaves Voice working.
+torch_cuda_instead() {
+  if [ "$(uname -s)" != "Linux" ]; then return 0; fi
+  installed="$("$ENV_DIR/bin/python" -c "import importlib.metadata as m; print(m.version('torch'))" 2>/dev/null)"
+  case "$installed" in *+cpu) ;; *) return 0 ;; esac
+  version="${installed%%+*}"
+  say "Replacing PyTorch ${installed} (processor build) with ${version}'s CUDA build from PyPI (about 2.5 GB)"
+  $PIP install --progress-bar off --force-reinstall "torch==${version}" 2>&1
+}
+
 # ── Optional groups: a failure is reported and the others carry on ──
 status=0
 OLDIFS="$IFS"; IFS=';'
@@ -240,6 +283,14 @@ for pair in ${HELIOX_GROUPS:-}; do
   [ -n "$pair" ] || continue
   id="${pair%%=*}"; req="${pair#*=}"
   say "@@step $id running Installing"
+  if [ "$id" = "voice" ]; then torch_cpu_first; fi
+  if [ "$id" = "voicegpu" ] && ! torch_cuda_instead; then
+    say "@@step $id failed PyTorch's CUDA build could not be installed."
+    say "@@hint $id Press Retry; Voice keeps working on the processor meanwhile."
+    status=2
+    IFS=';'
+    continue
+  fi
   if $PIP install --progress-bar off "$req" 2>&1; then
     if [ "$id" = "browser" ]; then
       say "Downloading Chromium for browser automation (playwright.azureedge.net, about 170 MB)"

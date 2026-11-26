@@ -911,6 +911,72 @@ jobs:
           "$PY" daemon/tests/platform_real/first_run_rpc_check.py 240
           exit $(( $? + kept ))
 
+  # Voice on Linux without an NVIDIA card (the runner has none): the first-run script installs PyTorch's processor
+  # build from PyTorch's own index before the voice extra (python-versions.json, "linux_torch_cpu"), so no NVIDIA
+  # library comes with it. Checks: the probe says no card; the script reports the processor build; the installed
+  # PyTorch is that build (pilot.system.gpu_paths.torch_build() == "cpu", version ending "+cpu"); no nvidia-*
+  # distribution is installed; both voices import; the environment stays under 4,500 MB (PyPI's CUDA build alone adds
+  # several GB); and an update planned the way update.py plans it (pip --dry-run, only-if-needed) changes no PyTorch.
+  first-run-voice-linux:
+    name: First run with Voice on Linux without a card (processor PyTorch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run the first-run script with Voice in an empty home folder
+        run: |
+          set +e
+          export HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          export HELIOX_SETUP_DIR="$HOME/.config/heliox-os" HELIOX_CORE_REQ="$GITHUB_WORKSPACE/daemon" HELIOX_PYTHON=auto
+          export PIP_CACHE_DIR="$RUNNER_TEMP/pip-cache" HELIOX_MEASURE_PIP_CACHE="$RUNNER_TEMP/pip-cache"
+          mkdir -p "$PIP_CACHE_DIR"
+          V=tauri-app/src-tauri/setup/python-versions.json
+          read_v() { python3 -c "import json, sys; d = json.load(open('$V')); print(eval('d' + sys.argv[1]))" "$1"; }
+          export HELIOX_PYTHON_MIN="$(read_v "['min']")" HELIOX_PYTHON_MAX="$(read_v "['max']")"
+          export HELIOX_PYTHON_PRIVATE="$(read_v "['private']")"
+          export HELIOX_TORCH_CPU_VERSION="$(read_v "['linux_torch_cpu']['version']")"
+          export HELIOX_TORCH_CPU_INDEX="$(read_v "['linux_torch_cpu']['index']")"
+          export HELIOX_GROUPS="voice=$GITHUB_WORKSPACE/daemon[voice]"
+          echo "PyTorch ${HELIOX_TORCH_CPU_VERSION} from ${HELIOX_TORCH_CPU_INDEX}"
+          sh tauri-app/src-tauri/setup/first-run.sh probe | tee "$RUNNER_TEMP/probe.log"
+          sh tauri-app/src-tauri/setup/first-run.sh run | tee "$RUNNER_TEMP/setup.log"
+          status=${PIPESTATUS[0]}
+          failed=0
+          check() { if eval "$2"; then echo "CHECK $1: PASS"; else echo "CHECK $1: FAIL"; failed=1; fi; }
+          check first-run-voice/no-card-found 'grep -q "^@@gpu none" "$RUNNER_TEMP/probe.log"'
+          check first-run-voice/setup-succeeded '[ "$status" = 0 ] && grep -q "^@@step voice done" "$RUNNER_TEMP/setup.log"'
+          check first-run-voice/processor-build-reported 'grep -q "^@@torch cpu ${HELIOX_TORCH_CPU_VERSION}" "$RUNNER_TEMP/setup.log"'
+          grep "^@@" "$RUNNER_TEMP/setup.log"
+          exit $(( status || failed ))
+
+      - name: Check the installed voice
+        run: |
+          set +e
+          export HOME="$RUNNER_TEMP/home"
+          ENV="$HOME/.config/heliox-os/env"
+          PY="$ENV/bin/python"
+          failed=0
+          check() { if eval "$2"; then echo "CHECK $1: PASS"; else echo "CHECK $1: FAIL"; failed=1; fi; }
+          check first-run-voice/torch-build-cpu '"$PY" -c "from pilot.system.gpu_paths import torch_build; import sys; print(torch_build()); sys.exit(torch_build() != \"cpu\")"'
+          check first-run-voice/torch-version-cpu '"$PY" -c "import importlib.metadata as m, sys; v = m.version(\"torch\"); print(v); sys.exit(not v.endswith(\"+cpu\"))"'
+          check first-run-voice/no-nvidia-packages '"$PY" -c "import importlib.metadata as m, sys; n = sorted({d.metadata[\"Name\"] for d in m.distributions() if d.metadata[\"Name\"].lower().startswith(\"nvidia\")}); print(n); sys.exit(bool(n))"'
+          check first-run-voice/kokoro-imports '"$PY" -c "import kokoro"'
+          check first-run-voice/pocket-tts-imports '"$PY" -c "import pocket_tts"'
+          size=$(du -sm "$ENV" | cut -f1)
+          echo "FIRST_RUN_VOICE_LINUX environment ${size} MB, pip download cache $(du -sm "$RUNNER_TEMP/pip-cache" | cut -f1) MB"
+          check first-run-voice/size-under-4500-mb '[ "$size" -lt 4500 ]'
+          # An update plans the same way (update.py: pip install --dry-run --report, only-if-needed): no PyTorch change.
+          "$PY" -m pip install --dry-run --quiet --disable-pip-version-check --upgrade-strategy only-if-needed \
+            --report "$RUNNER_TEMP/update.json" "$GITHUB_WORKSPACE/daemon[voice]"
+          check first-run-voice/update-keeps-the-processor-build '"$PY" -c "import json, sys; r = json.load(open(\"$RUNNER_TEMP/update.json\")); n = [i[\"metadata\"][\"name\"] for i in r.get(\"install\", [])]; print(n); sys.exit(any(x.lower() == \"torch\" or x.lower().startswith(\"nvidia\") for x in n))"'
+          exit $failed
+
   # ── Update from the previous release (experimental, non-blocking) ──
   # Installs the released pilot-daemon 0.15.0 the way an older desktop app did, then runs the app's update path
   # (tauri-app/src-tauri/setup/update.py) to this checkout: first an update that cannot install, which must leave
