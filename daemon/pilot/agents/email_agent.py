@@ -296,6 +296,10 @@ class EmailAgent(BaseAgent):
                     "date": msg.get("Date", ""),
                     "body": body[:_MAX_BODY_CHARS],
                 }
+                calendar = _extract_calendar(msg, body)
+                if calendar:
+                    # Whole, never cut: calendar_fetch parses these, and the body cut is for display only.
+                    entry["calendar"] = calendar
                 if len(body) > _MAX_BODY_CHARS:
                     # Said inside the message, so the next step knows the body is partial.
                     entry["body_cut"] = f"Only the first {_MAX_BODY_CHARS:,} of {len(body):,} characters are included."
@@ -493,10 +497,19 @@ class EmailAgent(BaseAgent):
                 error="emails_json is required for CALENDAR_FETCH",
             )
 
-        events = _parse_ics_from_emails(params.emails_json)
+        try:
+            events, notes = _parse_ics_from_emails(params.emails_json)
+        except ValueError as exc:
+            return ActionResult(action=action, success=False, error=f"Invalid emails_json: {exc}")
         now_ts = time.time()
         cutoff_ts = now_ts + params.lookahead_hours * 3600
         upcoming = [e for e in events if now_ts <= e["dtstart_ts"] <= cutoff_ts]
+        outside = len(events) - len(upcoming)
+        if outside:
+            notes.append(
+                f"{outside} event(s) start outside the next {params.lookahead_hours} hours and are not listed "
+                "(set lookahead_hours to include them)."
+            )
 
         logger.info(
             "CALENDAR_FETCH: %d event(s) in next %dh",
@@ -506,7 +519,18 @@ class EmailAgent(BaseAgent):
         return ActionResult(
             action=action,
             success=True,
-            output=json.dumps(upcoming, ensure_ascii=False, indent=2),
+            output=json.dumps(
+                {
+                    "events": upcoming,
+                    "lookahead_hours": params.lookahead_hours,
+                    "found": len(events),
+                    "outside_window": outside,
+                    "notes": notes,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            notice=" ".join(notes) or None,
         )
 
     # ── Calendar: reconcile events with emails ────────────────────────────────
@@ -520,10 +544,18 @@ class EmailAgent(BaseAgent):
                 error="emails_json is required for CALENDAR_RECONCILE",
             )
 
-        events = _parse_ics_from_emails(params.emails_json)
+        try:
+            events, notes = _parse_ics_from_emails(params.emails_json)
+        except ValueError as exc:
+            return ActionResult(action=action, success=False, error=f"Invalid emails_json: {exc}")
         now_ts = time.time()
         cutoff_ts = now_ts + params.lookahead_hours * 3600
         upcoming = [e for e in events if now_ts <= e["dtstart_ts"] <= cutoff_ts]
+        if len(events) > len(upcoming):
+            notes.append(
+                f"{len(events) - len(upcoming)} event(s) start outside the next {params.lookahead_hours} hours "
+                "and were not checked."
+            )
 
         issues: list[dict[str, Any]] = []
 
@@ -560,10 +592,11 @@ class EmailAgent(BaseAgent):
             action=action,
             success=True,
             output=json.dumps(
-                {"events_checked": len(upcoming), "issues": issues, "summary": summary},
+                {"events_checked": len(upcoming), "issues": issues, "summary": summary, "notes": notes},
                 ensure_ascii=False,
                 indent=2,
             ),
+            notice=" ".join(notes) or None,
         )
 
 
@@ -681,21 +714,46 @@ _MEETING_LINK_PATTERNS: list[str] = [
 ]
 
 
-def _parse_ics_from_emails(emails_json: str) -> list[dict[str, Any]]:
-    """Extract VEVENT records from ICS blocks embedded in email bodies."""
-    try:
-        emails, _notes = _fetched_messages(emails_json)
-    except ValueError:
-        return []
+def _extract_calendar(msg: email_lib.message.Message, body: str) -> list[str]:
+    """Every invitation in the message, whole: text/calendar parts (attached or inline) and VEVENT blocks in the
+    plain-text body, which is read before any cut."""
+    found: list[str] = []
+    for part in msg.walk() if msg.is_multipart() else [msg]:
+        if part.get_content_type() == "text/calendar":
+            payload = part.get_payload(decode=True)
+            if isinstance(payload, bytes):
+                found.append(payload.decode(part.get_content_charset() or "utf-8", errors="replace"))
+    if not found and "BEGIN:VEVENT" in body:
+        found.append(body)
+    return found
 
+
+def _parse_ics_from_emails(emails_json: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """VEVENT records from the fetched messages, and notes on what could not be read whole.
+
+    Reads each message's whole ``calendar`` parts when email_fetch kept them, else its body. A body that was cut
+    with an invitation started but not finished is said in the notes. Raises ValueError for text that is not an
+    email_fetch output.
+    """
+    emails, notes = _fetched_messages(emails_json)
     events: list[dict[str, Any]] = []
+    incomplete = 0
     for em in emails:
-        text = em.get("body", "") + "\n" + em.get("subject", "")
-        for match in re.finditer(r"BEGIN:VEVENT(.+?)END:VEVENT", text, re.DOTALL):
-            evt = _parse_vevent_block(match.group(1))
-            if evt:
-                events.append(evt)
-    return events
+        texts = list(em.get("calendar") or []) or [em.get("body", "") + "\n" + em.get("subject", "")]
+        for text in texts:
+            for match in re.finditer(r"BEGIN:VEVENT(.+?)END:VEVENT", text, re.DOTALL):
+                evt = _parse_vevent_block(match.group(1))
+                if evt:
+                    events.append(evt)
+            if not em.get("calendar") and text.count("BEGIN:VEVENT") > text.count("END:VEVENT"):
+                incomplete += 1
+    if incomplete:
+        notes = [
+            *notes,
+            f"{incomplete} invitation(s) were cut short in the message body and could not be read; "
+            "fetch the mail again to read them whole.",
+        ]
+    return events, list(notes)
 
 
 def _parse_vevent_block(block: str) -> dict[str, Any] | None:

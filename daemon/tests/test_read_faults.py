@@ -179,3 +179,67 @@ async def test_git_diff_of_a_clean_tree_says_both_sides_are_empty(repo) -> None:
     work, _git = repo
     result = await GitAgent(repo_path=str(work))._handle_diff({"staged": False})
     assert result["output"] == "(no changes: nothing staged or unstaged)"
+
+
+# ── calendar_fetch ───────────────────────────────────────────────────
+
+
+def _invite(start, summary: str, description: str = "") -> str:
+    stamp = start.strftime("%Y%m%dT%H%M%SZ")
+    return (
+        "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\n"
+        f"UID:{summary}\r\nSUMMARY:{summary}\r\nDTSTART:{stamp}\r\nDESCRIPTION:{description}\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_calendar_fetch_reads_the_whole_invite_and_says_what_is_outside_its_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timedelta, timezone
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    from pilot.actions import CalendarParams
+    from pilot.agents import email_agent
+
+    now = datetime.now(timezone.utc)
+    soon = _invite(now + timedelta(hours=2), "soon", "x" * 3000)  # longer than the 2,000-character body cut
+    later = _invite(now + timedelta(days=3), "later")
+    mail = MIMEMultipart("mixed")
+    mail["Subject"] = "Invitation"
+    mail.attach(MIMEText("y" * 2500, "plain"))
+    mail.attach(MIMEText(soon, "calendar"))
+    mail.attach(MIMEText(later, "calendar"))
+    mailbox = _Mailbox({b"1": mail.as_bytes()})
+    fetched = await _fetch(monkeypatch, mailbox)
+
+    agent = object.__new__(email_agent.EmailAgent)
+    params = CalendarParams(emails_json=fetched.output, lookahead_hours=24)
+    result = await agent._fetch_calendar_events(
+        Action(action_type=ActionType.CALENDAR_FETCH, parameters=params), params
+    )
+
+    data = json.loads(result.output)
+    assert [e["summary"] for e in data["events"]] == ["soon"]
+    assert len(data["events"][0]["description"]) == 3000
+    assert data["outside_window"] == 1 and "outside the next 24 hours" in result.notice
+
+
+@pytest.mark.asyncio
+async def test_calendar_fetch_says_an_invite_cut_in_the_body_and_fails_on_text_that_is_not_mail() -> None:
+    from pilot.actions import CalendarParams
+    from pilot.agents import email_agent
+
+    agent = object.__new__(email_agent.EmailAgent)
+    cut = json.dumps([{"subject": "s", "body": "BEGIN:VEVENT\r\nSUMMARY:half", "body_cut": "cut"}])
+    params = CalendarParams(emails_json=cut)
+    result = await agent._fetch_calendar_events(
+        Action(action_type=ActionType.CALENDAR_FETCH, parameters=params), params
+    )
+    assert result.success and "1 invitation(s) were cut short" in result.notice
+
+    bad = CalendarParams(emails_json="not json")
+    failed = await agent._fetch_calendar_events(Action(action_type=ActionType.CALENDAR_FETCH, parameters=bad), bad)
+    assert failed.success is False and "Invalid emails_json" in (failed.error or "")
