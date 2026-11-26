@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pilot.actions import (
     AccessibilitySnapshotParams,
@@ -32,6 +32,7 @@ from pilot.actions import (
     ElementDetectionParams,
     EmptyParams,
     EnvParams,
+    Expectation,
     FileIntelParams,
     FileParams,
     GitParams,
@@ -356,6 +357,22 @@ Output STRICT JSON (no markdown, no explanation outside JSON):
     text that a file_write can hold, to set a level, or to copy, move or delete.
 19d. STEP ORDER: Steps run in the order you list them. A step that uses another step's output comes
     directly after that step, and a step that needs a file comes after the step that makes it.
+19e. DECLARED CHECKS ("expect"): Heliox cannot tell on its own whether ssh_command, ssh_script,
+    shell_command, shell_script, pty_exec, code_execute, code_generate_and_run, skill_run, wasm_call,
+    plugin_call, mcp_call_tool, dbus_call, browser_execute_js, or api_request/api_github with POST, PUT,
+    PATCH or DELETE did what was meant. When the request names an outcome that can be read back, add
+    "expect" to that step: {{"probe": <one read action>, "kind": "...", "value": ...}}. kind is exit_code
+    (value 0 to 255), equals, contains or pattern (text; pattern uses * and ?), json_equals (with
+    "field": "a.b"), exists or absent (no value). The probe only reads: for ssh steps an ssh_command on
+    the same host running one plain command such as test -f /path, cat /path, systemctl is-active name,
+    git -C /repo rev-parse HEAD (no ; | & > < $ quotes or backticks); for a page script browser_page_info
+    or browser_extract; for an API write a GET to the same host; for an MCP tool a read-only tool of the
+    same server; on this computer file_read, file_hash or file_list with a full path. Example:
+    {{"action_type": "ssh_command", "target": "prod-1", "parameters": {{"host": "prod-1", "command":
+    "touch /srv/app/ready"}}, "expect": {{"probe": {{"action_type": "ssh_command", "target": "prod-1",
+    "parameters": {{"host": "prod-1", "command": "test -f /srv/app/ready"}}}}, "kind": "exit_code",
+    "value": 0}}}}. Leave "expect" out when there is nothing definite to read back (a message, a one-off
+    calculation). At most 4 per plan. A check never changes anything and never replaces the step.
 20. You are POWERFUL — you can do ANYTHING the user asks. You have TIER 1 desktop automation!
 21. When writing Python code inside JSON, escape double quotes and newlines. Prefer single quotes in Python code.
 22. For browser_extract: ALWAYS use selector "p" with "multiple": true to extract article text. NEVER use "#content" or "body" — those return the ENTIRE page including navigation and menus. The "p" selector gives clean paragraphs.
@@ -477,6 +494,22 @@ def _strictly_inside(path: str, folder: str, flavour: type[PurePath] | None = No
     if not path or not folder:
         return False
     return is_strictly_inside(path, folder, flavour or _path_flavour())
+
+
+def _limit_expects(actions: list[Action]) -> list[Action]:
+    """Keep the first MAX_EXPECTS_PER_PLAN declared checks of a plan, so the time spent checking stays bounded."""
+    from pilot.actions import MAX_EXPECTS_PER_PLAN
+
+    kept = 0
+    for action in actions:
+        if action.expect is None:
+            continue
+        if kept >= MAX_EXPECTS_PER_PLAN:
+            logger.warning("Dropped a declared check beyond the %d a plan may hold", MAX_EXPECTS_PER_PLAN)
+            action.expect = None
+        else:
+            kept += 1
+    return actions
 
 
 def _embedded_plan_object(text: str) -> dict[str, Any] | None:
@@ -1456,6 +1489,7 @@ class Planner:
 
         # Post-process: fix common LLM structural errors
         actions = self._postprocess_actions(actions)
+        actions = _limit_expects(actions)
 
         missing_destination = next(
             (
@@ -1847,6 +1881,7 @@ class Planner:
             "reversible",
             "rollback_action",
             "use_previous_output",
+            "expect",
         }
         for k, v in raw.items():
             if k not in standard_keys and k not in params_raw:
@@ -1875,7 +1910,30 @@ class Planner:
             reversible=bool(raw.get("reversible", True)),
             rollback_action=rollback,
             use_previous_output=bool(raw.get("use_previous_output", False)),
+            expect=self._parse_expect(raw.get("expect")),
         )
+
+    def _parse_expect(self, raw: Any) -> Expectation | None:
+        """The action's declared check, or None. A malformed one is dropped and logged, never fatal to the plan:
+        the step then stays "reported", as it would without one. Whether the probe may run is decided later by
+        ``pilot.agents.postconditions.declared.probe_refusal``, which the plan card shows."""
+        if not raw:
+            return None
+        try:
+            if not isinstance(raw, dict) or not isinstance(raw.get("probe"), dict):
+                raise ValueError("expect needs a probe object")
+            if raw["probe"].get("expect") or raw["probe"].get("rollback_action"):
+                raise ValueError("a probe cannot carry its own expect or rollback_action")
+            probe = self._parse_action({k: v for k, v in raw["probe"].items() if k != "expect"})
+            return Expectation(
+                probe=probe,
+                kind=raw.get("kind"),
+                value=raw.get("value"),
+                field=str(raw.get("field") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Dropped a malformed expect: %s", str(exc)[:200])
+            return None
 
     @staticmethod
     def _normalize_params(action_type: ActionType, params: dict, target: str) -> dict:
