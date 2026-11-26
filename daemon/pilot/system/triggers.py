@@ -242,11 +242,42 @@ class TriggerEngine:
     def get_trigger(self, trigger_id: str) -> Trigger | None:
         return self._triggers.get(trigger_id)
 
+    def find_matching(
+        self,
+        name: str,
+        trigger_type: str,
+        condition: dict,
+        action_command: str,
+        max_fires: int,
+        cooldown_seconds: int,
+    ) -> Trigger | None:
+        """An enabled trigger that already has exactly these settings, if one exists."""
+        for trigger in self._triggers.values():
+            if (
+                trigger.enabled
+                and trigger.name == name.strip()
+                and trigger.trigger_type.value == trigger_type
+                and trigger.condition == condition
+                and trigger.action_command == action_command.strip()
+                and trigger.max_fires == max_fires
+                and trigger.cooldown_seconds == cooldown_seconds
+            ):
+                return trigger
+        return None
+
     # ── Engine Control ───────────────────────────────────────────────
 
+    def is_running(self) -> bool:
+        """Whether the evaluation loop is alive: its task exists and has not finished.
+
+        This looks at the asyncio task itself, so a loop that crashed or was
+        cancelled reads as stopped even though the ``_running`` flag is still set.
+        """
+        return self._running and self._task is not None and not self._task.done()
+
     async def start(self) -> None:
-        """Start the background trigger evaluation loop."""
-        if self._running:
+        """Start the background trigger evaluation loop (again, if a previous loop has ended)."""
+        if self.is_running():
             return
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
@@ -464,8 +495,15 @@ async def trigger_create(
     max_fires: int = 0,
     cooldown_seconds: int = 60,
 ) -> str:
-    """Create a reactive trigger."""
-    trigger = _engine.create_trigger(
+    """Create a reactive trigger.
+
+    Asking again for a trigger with exactly the same settings reuses the existing
+    one instead of adding a twin that would fire the same command twice; this keeps
+    a retry after a failed verification from doubling the trigger.
+    """
+    trigger = _engine.find_matching(
+        name, trigger_type, condition, action_command, max_fires, cooldown_seconds
+    ) or _engine.create_trigger(
         name,
         trigger_type,
         condition,
@@ -474,8 +512,8 @@ async def trigger_create(
         cooldown_seconds,
     )
 
-    # Auto-start engine if not running
-    if not _engine._running:
+    # Auto-start engine if not running (or if its loop has ended)
+    if not _engine.is_running():
         await _engine.start()
 
     return json.dumps(asdict(trigger), indent=2)

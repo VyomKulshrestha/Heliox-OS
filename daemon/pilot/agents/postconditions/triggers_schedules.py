@@ -13,7 +13,10 @@ trigger's command or a scheduled command.
 
 from __future__ import annotations
 
-from pilot.actions import ActionResult, ActionType, ScheduleParams
+import json
+from typing import Any
+
+from pilot.actions import ActionResult, ActionType, ScheduleParams, TriggerParams
 from pilot.agents.postconditions import Outcome, mismatch, register, verified
 
 
@@ -67,3 +70,84 @@ async def schedule_present(result: ActionResult) -> Outcome:
             f"Scheduled task {target} runs on {observed.schedule!r}, not on the requested {params.schedule!r}"
         )
     return verified(f"Scheduled task {target} is in the scheduler with the requested command")
+
+
+# ── Triggers ─────────────────────────────────────────────────────────
+
+
+def _created_id(result: ActionResult) -> str:
+    try:
+        record: Any = json.loads(result.output or "")
+    except ValueError:
+        return ""
+    value = record.get("id") if isinstance(record, dict) else None
+    return value if isinstance(value, str) else ""
+
+
+@register(ActionType.TRIGGER_CREATE, method="trigger_present_postcondition")
+async def trigger_present(result: ActionResult) -> Outcome:
+    """The engine's table holds the trigger with the requested settings, and the engine's loop is running."""
+    from pilot.system.triggers import get_engine
+
+    params: TriggerParams = result.action.parameters  # type: ignore[assignment]
+    engine = get_engine()
+    name = params.name.strip()
+    created = _created_id(result)
+    entries = engine.list_triggers()
+    if created:
+        candidates = [entry for entry in entries if entry.get("id") == created]
+    else:
+        candidates = [entry for entry in entries if entry.get("name") == name]
+    label = f"{name or created} ({created})" if created and name else (name or created)
+    if not candidates:
+        return mismatch(f"Trigger {label} is not in the trigger engine after it was created")
+    expected = {
+        "name": name,
+        "trigger_type": params.trigger_type,
+        "condition": params.condition,
+        "action_command": params.action_command.strip(),
+        "enabled": True,
+    }
+    matching = [entry for entry in candidates if all(entry.get(key) == value for key, value in expected.items())]
+    if not matching:
+        entry = candidates[0]
+        differing = sorted(key for key, value in expected.items() if entry.get(key) != value)
+        return mismatch(f"Trigger {label} exists but its {', '.join(differing)} differ from the request")
+    if not engine.is_running():
+        return mismatch(f"Trigger {label} exists but the trigger engine is not running, so it will never fire")
+    return verified(f"Trigger {label} is in the running trigger engine with the requested condition and command")
+
+
+@register(ActionType.TRIGGER_DELETE, method="trigger_absence_postcondition")
+async def trigger_absent(result: ActionResult) -> Outcome:
+    """No trigger with the given id or name is left in the engine's table."""
+    from pilot.system.triggers import get_engine
+
+    params: TriggerParams = result.action.parameters  # type: ignore[assignment]
+    target = (params.trigger_id or params.name).strip()
+    if not target:
+        raise ValueError("Trigger delete has no id or name to observe")
+    left = [entry for entry in get_engine().list_triggers() if target in (entry.get("id"), entry.get("name"))]
+    if left:
+        return mismatch(f"{len(left)} trigger(s) with id or name {target} are still in the trigger engine")
+    return verified(f"No trigger with id or name {target} is left in the trigger engine")
+
+
+@register(ActionType.TRIGGER_START, method="trigger_engine_running_postcondition", precheck=True)
+async def trigger_engine_running(result: ActionResult) -> Outcome:
+    """The engine's evaluation loop is alive."""
+    from pilot.system.triggers import get_engine
+
+    if get_engine().is_running():
+        return verified("The trigger engine's evaluation loop is running")
+    return mismatch("The trigger engine's evaluation loop is not running after the start")
+
+
+@register(ActionType.TRIGGER_STOP, method="trigger_engine_stopped_postcondition", precheck=True)
+async def trigger_engine_stopped(result: ActionResult) -> Outcome:
+    """The engine's evaluation loop has ended, so no trigger fires."""
+    from pilot.system.triggers import get_engine
+
+    if get_engine().is_running():
+        return mismatch("The trigger engine's evaluation loop is still running after the stop")
+    return verified("The trigger engine's evaluation loop is stopped")

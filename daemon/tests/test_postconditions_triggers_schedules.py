@@ -8,6 +8,7 @@ real Task Scheduler, launchd or crontab.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import plistlib
@@ -16,13 +17,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pilot.actions import Action, ActionPlan, ActionResult, ActionType, ScheduleParams
+from pilot.actions import Action, ActionPlan, ActionResult, ActionType, ScheduleParams, TriggerParams
 from pilot.agents.executor import Executor
 from pilot.agents.verifier import POSTCONDITION_VERIFIERS, Verifier
-from pilot.system import scheduler
+from pilot.system import scheduler, triggers
 from pilot.system.platform_detect import Platform
 
 _HANDLERS = {
+    ActionType.TRIGGER_CREATE: Executor._exec_trigger_create,
+    ActionType.TRIGGER_DELETE: Executor._exec_trigger_delete,
+    ActionType.TRIGGER_START: Executor._exec_trigger_start,
+    ActionType.TRIGGER_STOP: Executor._exec_trigger_stop,
     ActionType.SCHEDULE_CREATE: Executor._exec_schedule_create,
 }
 
@@ -56,7 +61,172 @@ def _assert_mismatch(verification, *words: str) -> None:
 
 
 def test_verifiers_are_registered() -> None:
+    assert POSTCONDITION_VERIFIERS[ActionType.TRIGGER_CREATE] == "trigger_present_postcondition"
+    assert POSTCONDITION_VERIFIERS[ActionType.TRIGGER_DELETE] == "trigger_absence_postcondition"
+    assert POSTCONDITION_VERIFIERS[ActionType.TRIGGER_START] == "trigger_engine_running_postcondition"
+    assert POSTCONDITION_VERIFIERS[ActionType.TRIGGER_STOP] == "trigger_engine_stopped_postcondition"
     assert POSTCONDITION_VERIFIERS[ActionType.SCHEDULE_CREATE] == "schedule_definition_postcondition"
+
+
+# ── Triggers ─────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+async def engine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    fresh = triggers.TriggerEngine()
+    monkeypatch.setattr(triggers, "_engine", fresh)
+    yield fresh
+    await fresh.stop()
+
+
+def _watch(tmp_path: Path, name: str = "watch-downloads", command: str = "notify new download") -> TriggerParams:
+    return TriggerParams(
+        name=name,
+        trigger_type="file_created",
+        condition={"path": str(tmp_path / "missing-folder")},
+        action_command=command,
+    )
+
+
+@pytest.mark.asyncio
+async def test_created_trigger_verifies(engine, tmp_path: Path) -> None:
+    result = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+
+    assert result.success is True
+    assert engine.is_running() is True
+    _assert_verified(await _verify(result))
+
+
+@pytest.mark.asyncio
+async def test_created_trigger_with_a_stopped_engine_is_a_mismatch(engine, tmp_path: Path) -> None:
+    result = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+    await engine.stop()
+
+    _assert_mismatch(await _verify(result), "not running")
+
+
+@pytest.mark.asyncio
+async def test_created_trigger_whose_loop_died_is_a_mismatch(engine, tmp_path: Path) -> None:
+    result = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+    engine._task.cancel()
+    await asyncio.gather(engine._task, return_exceptions=True)
+
+    assert engine._running is True
+    _assert_mismatch(await _verify(result), "not running")
+
+
+@pytest.mark.asyncio
+async def test_created_trigger_missing_from_the_engine_is_a_mismatch(engine, tmp_path: Path) -> None:
+    result = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+    engine._triggers.clear()
+
+    _assert_mismatch(await _verify(result), "not in the trigger engine")
+
+
+@pytest.mark.asyncio
+async def test_created_trigger_with_a_different_command_is_a_mismatch(engine, tmp_path: Path) -> None:
+    result = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+    created = json.loads(result.output)["id"]
+    engine._triggers[created].action_command = "something else"
+
+    _assert_mismatch(await _verify(result), "action_command")
+
+
+@pytest.mark.asyncio
+async def test_invalid_trigger_is_a_failed_action(engine) -> None:
+    result = await _run(
+        ActionType.TRIGGER_CREATE,
+        TriggerParams(name="x", trigger_type="not_a_type", action_command="notify"),
+    )
+
+    verification = await _verify(result)
+    assert result.success is False
+    assert "FAILED" in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_retried_create_reuses_the_same_trigger(engine, tmp_path: Path) -> None:
+    first = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+    await engine.stop()
+    second = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+
+    assert json.loads(first.output)["id"] == json.loads(second.output)["id"]
+    assert len(engine.list_triggers()) == 1
+    _assert_verified(await _verify(second))
+
+
+@pytest.mark.asyncio
+async def test_deleted_trigger_verifies(engine, tmp_path: Path) -> None:
+    await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+
+    result = await _run(ActionType.TRIGGER_DELETE, TriggerParams(name="watch-downloads"))
+
+    assert result.success is True
+    _assert_verified(await _verify(result))
+
+
+@pytest.mark.asyncio
+async def test_delete_leaving_a_trigger_of_that_name_is_a_mismatch(engine, tmp_path: Path) -> None:
+    engine.create_trigger("watch-downloads", "file_created", {"path": str(tmp_path / "a")}, "notify a")
+    engine.create_trigger("watch-downloads", "file_created", {"path": str(tmp_path / "b")}, "notify b")
+
+    result = await _run(ActionType.TRIGGER_DELETE, TriggerParams(name="watch-downloads"))
+
+    assert result.success is True
+    _assert_mismatch(await _verify(result), "still in the trigger engine")
+
+
+@pytest.mark.asyncio
+@pytest.mark.xfail(
+    strict=False,
+    reason="trigger_delete raises when nothing matched in the groundwork series (verify1); passes once stacked on it",
+)
+async def test_delete_by_a_wrong_name_is_not_a_success(engine, tmp_path: Path) -> None:
+    await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+
+    result = await _run(ActionType.TRIGGER_DELETE, TriggerParams(name="no-such-trigger"))
+    verification = await _verify(result)
+
+    assert result.success is False
+    assert verification.passed is False
+    assert len(engine.list_triggers()) == 1
+
+
+@pytest.mark.asyncio
+async def test_engine_start_and_stop_verify(engine) -> None:
+    started = await _run(ActionType.TRIGGER_START, TriggerParams())
+    _assert_verified(await _verify(started))
+
+    stopped = await _run(ActionType.TRIGGER_STOP, TriggerParams())
+    _assert_verified(await _verify(stopped))
+
+
+@pytest.mark.asyncio
+async def test_engine_start_then_stopped_again_is_a_mismatch(engine) -> None:
+    started = await _run(ActionType.TRIGGER_START, TriggerParams())
+    await engine.stop()
+
+    _assert_mismatch(await _verify(started), "not running")
+
+
+@pytest.mark.asyncio
+async def test_engine_stop_then_started_again_is_a_mismatch(engine) -> None:
+    stopped = await _run(ActionType.TRIGGER_STOP, TriggerParams())
+    await engine.start()
+
+    _assert_mismatch(await _verify(stopped), "still running")
+
+
+@pytest.mark.asyncio
+async def test_start_restarts_a_loop_that_ended(engine) -> None:
+    await engine.start()
+    engine._task.cancel()
+    await asyncio.gather(engine._task, return_exceptions=True)
+
+    started = await _run(ActionType.TRIGGER_START, TriggerParams())
+
+    assert engine.is_running() is True
+    _assert_verified(await _verify(started))
 
 
 # ── schedule_create, mirroring the schedule_delete tests ─────────────
