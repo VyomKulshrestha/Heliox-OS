@@ -58,6 +58,19 @@ def test_planner_parses_expect_with_typed_probe_parameters() -> None:
     assert "expect" not in action.parameters.model_dump()
 
 
+def test_planner_parses_ssh_steps_it_offers() -> None:
+    from pilot.actions import SshScriptParams
+
+    plan = _planner()._parse_response(
+        '{"explanation": "x", "actions": [{"action_type": "ssh_script", "target": "prod-1", '
+        '"parameters": {"host": "prod-1", "script": "uptime\\n", "timeout_seconds": 30}}]}',
+        "check prod-1",
+    )
+    assert plan.error is None
+    assert isinstance(plan.actions[0].parameters, SshScriptParams)
+    assert plan.actions[0].parameters.timeout_seconds == 30
+
+
 def test_a_plan_without_expect_parses_as_before() -> None:
     action = _planner()._parse_action(
         {"action_type": "ssh_command", "target": "h", "parameters": {"host": "h", "command": "uptime"}}

@@ -57,6 +57,8 @@ from pilot.actions import (
     ShellCommandParams,
     ShellScriptParams,
     SkillRunParams,
+    SshCommandParams,
+    SshScriptParams,
     SystemInfoParams,
     TriggerParams,
     VolumeParams,
@@ -2365,5 +2367,11 @@ class Planner:
             return WasmCallParams(**params)
         if action_type in {ActionType.MCP_LIST_TOOLS, ActionType.MCP_CALL_TOOL}:
             return McpToolParams(**_mcp_tool_params(params))
+        # The prompt has always offered ssh_command and ssh_script, but their parameters were never parsed,
+        # so any plan holding one was rejected whole.
+        if action_type == ActionType.SSH_COMMAND:
+            return SshCommandParams(**params)
+        if action_type == ActionType.SSH_SCRIPT:
+            return SshScriptParams(**params)
 
         raise ValueError(f"Unknown action type: {action_type}")
