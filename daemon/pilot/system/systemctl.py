@@ -6,35 +6,33 @@ System-level operations requiring root use pkexec for privilege escalation.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 logger = logging.getLogger("pilot.system.systemctl")
 
 
+# A read (is-active, status) answers at once; a change may first wait for the person at pkexec's password prompt
+# and then for the unit to start or stop, so it gets longer. Past either limit the command is killed and the call
+# reports a failure instead of hanging the task.
+READ_TIMEOUT_SECONDS = 15
+CHANGE_TIMEOUT_SECONDS = 120
+_CHANGES = ("start", "stop", "restart", "enable", "disable")
+
+
 async def _run_systemctl(action: str, unit: str, *, user_scope: bool = False) -> tuple[int, str, str]:
+    from pilot.system.platform_detect import run_command
+
     args = ["systemctl"]
     if user_scope:
         args.append("--user")
     args.extend([action, unit])
 
-    if not user_scope and action in ("start", "stop", "restart", "enable", "disable"):
+    if not user_scope and action in _CHANGES:
         args = ["pkexec"] + args
 
-    from pilot.system.system_guard import check_command
-
-    check_command(args, "service")  # never a real service change under the test suite
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    return (
-        proc.returncode or 0,
-        stdout.decode("utf-8", errors="replace"),
-        stderr.decode("utf-8", errors="replace"),
-    )
+    # run_command refuses a service change under the test suite (pilot.system.system_guard).
+    timeout = CHANGE_TIMEOUT_SECONDS if action in _CHANGES else READ_TIMEOUT_SECONDS
+    return await run_command(args, timeout=timeout)
 
 
 async def service_start(name: str, user_scope: bool = False) -> str:

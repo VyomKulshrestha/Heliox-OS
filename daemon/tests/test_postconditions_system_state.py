@@ -1298,3 +1298,152 @@ def test_approval_says_every_package_is_upgraded_on_each_platform(monkeypatch: p
     support = undo_support(_package_update_action())
     assert support.kind == "not_undoable" and "earlier versions" in support.reason
     assert _approval_effect(Action(action_type=ActionType.VOLUME_MUTE, target="x", parameters=_volume())) == ""
+
+
+# ── power_lock: a second signal when LockedHint says no ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("screensaver", "outcome", "words"),
+    [
+        ("(true,)\n", "reported", ""),
+        ("(false,)\n", "mismatch", "also reports itself inactive"),
+        (None, "mismatch", "no desktop screensaver interface answered"),
+    ],
+)
+async def test_linux_lock_hint_no_is_checked_against_the_desktop_screensaver(
+    monkeypatch: pytest.MonkeyPatch, screensaver, outcome, words
+) -> None:
+    from pilot.system import power
+
+    gdbus_calls: list[list[str]] = []
+
+    async def fake_run(args, **kwargs):
+        if args[0] == "loginctl":
+            return (0, "no\n", "")
+        gdbus_calls.append(args)
+        assert kwargs["timeout"] == 5
+        return (0, screensaver, "") if screensaver else (1, "", "The name is not activatable")
+
+    monkeypatch.setattr(power, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(power, "run_command", fake_run)
+
+    verification = await _verify(ActionType.POWER_LOCK, PowerParams())
+
+    if outcome == "reported":
+        _assert_reported(verification)
+        assert "Could not verify the lock" in await _detail(ActionType.POWER_LOCK, PowerParams())
+    else:
+        detail = _assert_mismatch(verification)
+        assert "does not report itself as locked" in detail and words in detail
+    # Only GetActive is ever called: a read.
+    assert all(call[-1].endswith(".GetActive") for call in gdbus_calls)
+
+
+# ── wifi_disconnect on Linux finds the Wi-Fi device ─────────────────────────────────────────────────────────────
+
+
+async def test_linux_disconnect_finds_a_newer_interface_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    run = AsyncMock(
+        side_effect=[
+            (
+                0,
+                "enp3s0:ethernet:connected\nwlp2s0:wifi:connected\np2p-dev-wlp2s0:wifi-p2p:disconnected\nlo:loopback:connected (externally)\n",
+                "",
+            ),
+            (0, "Device 'wlp2s0' successfully disconnected.\n", ""),
+        ]
+    )
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(network, "run_command", run)
+
+    assert await network.wifi_disconnect() == "Disconnected from WiFi"
+    assert run.await_args_list[0].args[0] == ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device"]
+    assert run.await_args_list[0].kwargs["env"]["LC_ALL"] == "C"
+    assert run.await_args_list[1].args[0] == ["nmcli", "device", "disconnect", "wlp2s0"]
+
+
+async def test_linux_disconnect_without_a_wifi_device_fails_plainly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(network, "run_command", AsyncMock(return_value=(0, "enp3s0:ethernet:connected\n", "")))
+
+    with pytest.raises(RuntimeError, match="no Wi-Fi device"):
+        await network.wifi_disconnect()
+
+
+async def test_linux_disconnect_when_not_connected_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    run = AsyncMock(return_value=(0, "wlp2s0:wifi:disconnected\n", ""))
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(network, "run_command", run)
+
+    assert await network.wifi_disconnect() == "WiFi was not connected"
+    assert run.await_count == 1
+
+
+async def test_linux_disconnect_of_a_named_interface_asks_nothing_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    run = AsyncMock(return_value=(0, "", ""))
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(network, "run_command", run)
+
+    await network.wifi_disconnect("wlx00c0ca123456")
+    run.assert_awaited_once_with(["nmcli", "device", "disconnect", "wlx00c0ca123456"])
+
+
+# ── systemctl calls are bounded ─────────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("call", "args", "timeout"),
+    [
+        ("is_active", ("backup.timer",), 15),
+        ("service_status", ("backup.timer",), 15),
+        ("service_start", ("backup.timer",), 120),
+        ("service_enable", ("backup.timer",), 120),
+    ],
+)
+async def test_every_systemctl_call_has_a_time_limit(monkeypatch: pytest.MonkeyPatch, call, args, timeout) -> None:
+    from pilot.system import platform_detect, systemctl
+
+    run = AsyncMock(return_value=(0, "active\n", ""))
+    monkeypatch.setattr(platform_detect, "run_command", run)
+
+    await getattr(systemctl, call)(*args)
+
+    assert run.await_args.kwargs["timeout"] == timeout
+    assert ("pkexec" in run.await_args.args[0]) is (timeout == 120)
+
+
+async def test_a_hung_systemctl_read_is_reported_as_inactive_not_waited_for(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import platform_detect, systemctl
+
+    monkeypatch.setattr(platform_detect, "run_command", AsyncMock(return_value=(-1, "", "Command timed out")))
+
+    assert await systemctl.is_active("backup.timer") is False
+
+
+# ── power_sleep says what was requested ─────────────────────────────────────────────────────────────────────────
+
+
+async def test_sleep_result_says_requested_not_slept(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.actions import PowerParams
+    from pilot.agents.postconditions._unobservable import UNOBSERVABLE_POSTCONDITION
+    from pilot.system import power
+
+    monkeypatch.setattr(power, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(power, "run_command", AsyncMock(return_value=(0, "", "")))
+
+    said = await power.sleep()
+
+    assert said.startswith("Sleep was requested") and "cannot be checked" in said
+    assert ActionType.POWER_SLEEP in UNOBSERVABLE_POSTCONDITION
+    assert ActionType.POWER_SLEEP not in POSTCONDITION_VERIFIERS
+    _assert_reported(await _verify(ActionType.POWER_SLEEP, PowerParams()))

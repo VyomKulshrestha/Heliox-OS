@@ -42,13 +42,30 @@ async def session_locked(result: ActionResult) -> Outcome:
     if reading.locked:
         return verified(f"The session is locked ({reading.source})")
     seconds = LOCK_READINGS * READING_INTERVAL_SECONDS
-    hint = (
-        " On Linux the lock command only asks a screen locker to act; none set the session's lock flag."
-        if CURRENT_PLATFORM == Platform.LINUX
-        else ""
+    if CURRENT_PLATFORM != Platform.LINUX:
+        return mismatch(
+            f"Expected the screen to be locked; the session does not report itself as locked ({reading.source}, "
+            f"after {seconds:g} s)"
+        )
+    # logind's hint is set by the screen locker. Some lockers lock without setting it, so ask the desktop's own
+    # screensaver interface before calling it a failure.
+    from pilot.system.power import linux_screensaver_active
+
+    active = await linux_screensaver_active()
+    if active:
+        return unobserved(
+            "Could not verify the lock: logind's LockedHint says unlocked, but the desktop's screensaver reports "
+            "itself active (a screen locker that does not set the hint may have locked the screen)"
+        )
+    second = (
+        "the desktop's screensaver also reports itself inactive"
+        if active is False
+        else "no desktop screensaver interface answered"
     )
     return mismatch(
-        f"Expected the screen to be locked; {reading.source} still says unlocked after {seconds:g} s.{hint}"
+        f"Expected the screen to be locked; the session does not report itself as locked (LockedHint is still no "
+        f"after {seconds:g} s, and {second}). The lock command only asks a screen locker to act; none did, or none "
+        "is running."
     )
 
 

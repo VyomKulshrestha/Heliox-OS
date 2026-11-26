@@ -138,7 +138,8 @@ async def sleep() -> str:
 
     if code != 0:
         raise RuntimeError(f"Sleep failed: {err.strip()}")
-    return "System sleep initiated"
+    # Requested, not observed: a sleeping computer cannot check its own sleep (postconditions/_unobservable.py).
+    return "Sleep was requested; whether the computer slept cannot be checked while it sleeps"
 
 
 async def lock_screen() -> str:
@@ -272,6 +273,28 @@ async def screen_locked() -> LockReading:
     if value not in {"yes", "no"}:
         return LockReading(None, "logind gave no LockedHint for this session")
     return LockReading(value == "yes", "logind's LockedHint for this session")
+
+
+# The desktop's own screensaver interfaces on the session bus, asked only when logind's LockedHint says "no": some
+# screen lockers lock without setting that hint, and these answer for them (KDE, Xfce, Cinnamon, MATE, GNOME).
+_SCREENSAVER_INTERFACES = (
+    ("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver"),
+    ("org.gnome.ScreenSaver", "/org/gnome/ScreenSaver"),
+)
+
+
+async def linux_screensaver_active() -> bool | None:
+    """Whether the desktop's screensaver reports itself active (GetActive over the session bus, via gdbus), or None
+    when no such interface answers. A read: no method that changes anything is called."""
+    for name, path in _SCREENSAVER_INTERFACES:
+        code, out, _err = await run_command(
+            ["gdbus", "call", "--session", "--dest", name, "--object-path", path, "--method", f"{name}.GetActive"],
+            timeout=5,
+        )
+        answer = out.strip().casefold()
+        if code == 0 and answer in {"(true,)", "(false,)"}:
+            return answer == "(true,)"
+    return None
 
 
 async def logout() -> str:

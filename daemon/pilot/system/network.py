@@ -83,12 +83,41 @@ async def wifi_disconnect(interface: str | None = None) -> str:
         if code == 0:
             return "Disconnected from WiFi (Wi-Fi is turned off; turn it on to join a network again)"
     else:  # Linux
-        iface = interface or "wlan0"
-        code, out, err = await run_command(["nmcli", "device", "disconnect", iface])
+        if interface:
+            devices = [interface]
+        else:
+            # Interface names differ by machine (wlp2s0, wlx..., wlan0): ask NetworkManager which are Wi-Fi.
+            wifi = await nm_wifi_devices()
+            if not wifi:
+                raise RuntimeError("WiFi disconnect failed: NetworkManager reports no Wi-Fi device on this computer")
+            devices = [name for name, state in wifi if state.startswith("connected")]
+            if not devices:
+                return "WiFi was not connected"
+        code, err = 0, ""
+        for device in devices:
+            code, out, err = await run_command(["nmcli", "device", "disconnect", device])
+            if code != 0:
+                break
 
     if code != 0:
         raise RuntimeError(f"WiFi disconnect failed: {err.strip()}")
     return "Disconnected from WiFi"
+
+
+async def nm_wifi_devices() -> list[tuple[str, str]]:
+    """(device, state) for each Wi-Fi device NetworkManager lists, states untranslated ("connected", "disconnected",
+    "unavailable"). Raises when nmcli fails."""
+    code, out, err = await run_command(
+        ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device"], timeout=10, env={**os.environ, "LC_ALL": "C"}
+    )
+    if code != 0:
+        raise RuntimeError(f"WiFi disconnect failed: {err.strip() or 'nmcli could not list devices'}")
+    devices = []
+    for line in out.splitlines():
+        parts = line.split(":")
+        if len(parts) >= 3 and parts[1] == "wifi":
+            devices.append((parts[0], ":".join(parts[2:])))
+    return devices
 
 
 # ── Which network is joined now: read-only, for the wifi_connect post-condition ──

@@ -26,6 +26,7 @@ from pilot.agents.agent_mesh import AgentMesh  # noqa: E402
 from pilot.agents.orchestrator import AgentOrchestrator  # noqa: E402
 from pilot.agents.registry import AgentRegistry  # noqa: E402
 from pilot.agents.postconditions._read_only import READ_ONLY_WITHOUT_POSTCONDITION  # noqa: E402
+from pilot.agents.postconditions._unobservable import UNOBSERVABLE_POSTCONDITION  # noqa: E402
 from pilot.agents.verifier import POSTCONDITION_VERIFIERS  # noqa: E402
 
 ALL_PLATFORMS = ("windows", "macos", "linux")
@@ -207,6 +208,14 @@ def _verification(action_type: ActionType, verifier: str | None) -> dict[str, An
                 "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails "
                 "fails its action instead of returning an error message as data."
             ),
+        }
+    if verifier is None and action_type in UNOBSERVABLE_POSTCONDITION:
+        return {
+            "method": "unobservable_at_run_time",
+            "postcondition": state,
+            "independent_postcondition": False,
+            "reason": UNOBSERVABLE_POSTCONDITION[action_type],
+            "note": "No check is possible when it would run; the result says the change was requested, not done.",
         }
     return {
         "method": verifier or "executor_result_only",
