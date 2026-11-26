@@ -118,6 +118,12 @@ Common terminal `status` values are `"success"`, `"partial_failure"`,
 `message` or `explanation` instead of reducing these outcomes to a generic
 failure.
 
+Every result, however it ended, carries a non-empty `message` to show and a
+`spoken` sentence to say (`pilot.task_reply.with_reply`): plain words, no file
+paths, raw system text or JSON. `spoken` is shorter than `message` when the
+shown reply holds details for the eye ("The details are on screen."); a client
+that speaks replies speaks `spoken`, never `message`.
+
 A conversational request may validly return no actions:
 
 ```json
@@ -3705,6 +3711,11 @@ off in Settings." when `[undo] enabled = false`.
 
 `index` is the action's position in `plan.actions` — pass it back (as part of `approved_indices`) in the `confirm` call for per-action granular approval. `irreversible` is true when the action can't be undone via snapshot rollback even if it isn't tier-"destructive" (e.g. an email send).
 
+`request` is what the person asked, on one line, with a token or webhook address in it masked and a long request
+cut at a word (`"request": "Delete note_backup.txt in my work folder"`). The dialog shows it as "You asked: …" above
+the steps, so a step that does something else stands out. It is absent when the plan has no readable request (a
+scheduled job's card carries the job's goal instead).
+
 The UI should present an approval dialog and call `confirm` with the `plan_id`.
 
 ---
@@ -4005,6 +4016,11 @@ Broadcast once per word per focus session, and spoken:
 #### `watch_fired`
 Broadcast once when a watcher sees its event or gives up after a day, and spoken:
 `{"id": "a1b2c3", "kind": "process", "label": "chrome closes", "text": "Chrome has closed."}`.
+A trigger's fire arrives the same way, with `"kind": "trigger"`, `"id": "trigger:<trigger id>-<fire count>"` and
+`trigger_id`: `{"text": "The trigger that watches notes.txt fired, and I did what it asks: add \"seen\" to
+log.txt."}`. A fire whose fixed steps the person did not approve when the trigger was made waits instead of
+running, and says so; the trigger keeps it as `pending`, and the sentence it last told as `last_outcome`, next to its
+`steps` and `steps_approved` (the `trigger_list` action's output).
 
 #### `verification_late`
 Broadcast, and spoken, when a check that went on behind a reply (the reply waits about 3 s for a plan's checks)
