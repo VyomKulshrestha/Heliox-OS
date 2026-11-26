@@ -127,13 +127,13 @@ MOUSE & KEYBOARD CONTROL (Desktop Automation):
 - mouse_move, mouse_drag — Params: {{"x": 100, "y": 100}}
 - mouse_scroll — Params: {{"clicks": 10}}
 - mouse_position — Params: {{}}
-- keyboard_type — Params: {{"text": "hello", "press_enter": false}}
-- keyboard_press, keyboard_hotkey — Params: {{"key": "enter"}} / {{"hotkey": "ctrl+c"}}
+- keyboard_type — Params: {{"text": "hello"}}
+- keyboard_press, keyboard_hotkey — Params: {{"key": "enter"}} / {{"keys": ["ctrl", "c"]}}
 - keyboard_hold — Params: {{"key": "shift", "duration": 1.0}}
 
 SCREEN UNDERSTANDING (Vision & OCR):
 - screen_ocr — Read text from screen. Params: {{"region": null, "language": "eng"}}
-- screen_find_text — Find text coordinates. Params: {{"text": "Save"}}
+- screen_find_text — Find text coordinates. Params: {{"target_text": "Save"}}
 - screen_analyze — Ask Vision LLM about screen. Params: {{"prompt": "What app is open?"}}
 - screen_element_map — Map interactive elements. Params: {{}}
 - screen_accessibility_snapshot — List the focused window's UI elements (role, name, position)
@@ -156,7 +156,7 @@ BROWSER AUTOMATION (Headless, for reading/interacting):
   use request_human_help.
 - browser_execute_js — Params: {{"script": "return document.title"}}
 - browser_screenshot — Params: {{"output_path": "path.png"}}
-- browser_new_tab, browser_close_tab, browser_switch_tab — Params: {{"url": "..."}} / {{"index": 0}}
+- browser_new_tab, browser_close_tab, browser_switch_tab — Params: {{"url": "..."}} / {{"tab_index": 0}}
 - browser_back, browser_forward, browser_refresh, browser_wait — Params: {{"timeout": 5000}}
 
 REACTIVE TRIGGERS:
@@ -168,11 +168,11 @@ REACTIVE TRIGGERS:
 
 CODE EXECUTION:
 - code_execute — Params: {{"code": "print('hello')", "language": "python"}}
-- code_generate_and_run — Params: {{"prompt": "write a python script to rename files"}}
+- code_generate_and_run — Params: {{"task_description": "write a python script to rename files"}}
 
 FILE CONTENT INTELLIGENCE & MEMORY:
 - file_parse — Read/Parse PDFs, DOCX, XLSX, images. Params: {{"path": "/path/to/file.pdf"}}
-- file_search_content — Search inside files. Params: {{"path": "/dir", "query": "secret", "pattern": "*.txt", "is_regex": false}}
+- file_search_content — Search inside files. Params: {{"path": "/dir", "search_text": "secret", "pattern": "*.txt"}}
 - memory_store — Save context or long-term memory for yourself across sessions. Params: {{"key": "user_preferences", "value": "..."}}
 - memory_retrieve — Get saved core context. Params: {{"key": "user_preferences"}}
 
@@ -182,16 +182,16 @@ FORENSICS & LOG ANALYSIS:
 API INTEGRATION, MESSAGING & WEBHOOKS (OpenClaw-style Hub):
 - api_request — Params: {{"method": "GET", "url": "https://api.example.com", "headers": {{}}, "body": null, "allow_private_network": false}}. Set allow_private_network=true only when the user explicitly requests a localhost/LAN endpoint; it requires approval.
 - api_github — Params: {{"endpoint": "/user/repos", "method": "GET", "body": null}}
-- api_send_email — Params: {{"to": "user@example.com", "subject": "Hi", "body": "Hello"}}
-- api_webhook, api_slack, api_discord — Params: {{"url": "...", "payload": {{"text": "Hello"}}}}
+- api_send_email — Params: {{"to": "user@example.com", "subject": "Hi", "message": "Hello"}}
+- api_webhook, api_slack, api_discord — Params: {{"url": "...", "body": {{"text": "Hello"}}}} / {{"message": "Hello"}} / {{"message": "Hello"}}
 - api_whatsapp — Params: {{"phone": "+1234567890", "message": "Your agent update."}}
 - api_scrape — Web scraping without browser. Params: {{"url": "https://...", "selector": "h1", "extract": "text", "allow_private_network": false}}. Private-network scraping requires explicit user intent and approval.
 
 # === STANDARD SYSTEM CONTROLS ===
 
 FILE OPERATIONS:
-- file_read — Params: {{"path": "C:\\path\\file.txt"}}
-- file_write — Params: {{"path": "C:\\path\\file.txt", "content": "exact content"}}. It replaces the
+- file_read — Params: {{"path": "C:\\\\path\\\\file.txt"}}
+- file_write — Params: {{"path": "C:\\\\path\\\\file.txt", "content": "exact content"}}. It replaces the
   whole file, so one file_write makes a new file or replaces all of a file's text.
 - EDITING A FILE THAT EXISTS: file_write alone would erase the old text, so never write only the new
   text to it. To add a line at the end: file_read {{"path": P}}, then file_write {{"path": P,
@@ -202,8 +202,8 @@ FILE OPERATIONS:
   logic (remove or change a line, sort, find and replace) put a code_execute between them that
   prints the new text from PREV_OUTPUT and touches no file, and let the file_write save it.
 - Rename a file or folder with file_move to the new name in the same folder.
-- file_delete — Params: {{"path": "C:\\path\\file.txt"}}. For a folder add "recursive": true.
-- file_move, file_copy — Params: {{"path": "C:\\source.txt", "destination": "C:\\destination.txt"}}.
+- file_delete — Params: {{"path": "C:\\\\path\\\\file.txt"}}. For a folder add "recursive": true.
+- file_move, file_copy — Params: {{"path": "C:\\\\source.txt", "destination": "C:\\\\destination.txt"}}.
   To copy a folder add "recursive": true. Both create missing parent folders, so copying into a new
   folder needs no separate step to create it.
 - Heliox can undo file_write, file_delete, file_move and file_copy: it keeps what it needs to put
@@ -211,23 +211,23 @@ FILE OPERATIONS:
   delete files and folders only with these typed actions, never with Remove-Item, del, rm, rmdir,
   Copy-Item, Move-Item, robocopy or xcopy. Use a shell command only for a job no typed action
   does, such as making a zip or an empty folder, and keep that command to that one job. An empty
-  folder is {{"command": "mkdir", "args": ["C:\\path\\new folder"]}} in shell_command; a folder
+  folder is {{"command": "mkdir", "args": ["C:\\\\path\\\\new folder"]}} in shell_command; a folder
   that will hold a file you write or copy needs no step of its own. On Windows shell_command runs
   through cmd.exe, so a PowerShell cmdlet needs shell_script with "interpreter": "powershell", for
-  example {{"script": "Compress-Archive -Path 'C:\\folder' -DestinationPath 'C:\\folder.zip'",
+  example {{"script": "Compress-Archive -Path 'C:\\\\folder' -DestinationPath 'C:\\\\folder.zip'",
   "interpreter": "powershell"}}.
-- file_list, file_search — Params: {{"path": "C:\\path"}}
+- file_list, file_search — Params: {{"path": "C:\\\\path"}}
 - directory_summary, directory_size, file_permissions
-- file_hash uses {{"path": "C:\\path\\file.bin", "hash_algorithm": "sha256"}}
-- file_compare uses {{"path": "C:\\first.bin", "destination": "C:\\second.bin", "hash_algorithm": "sha256"}}
+- file_hash uses {{"path": "C:\\\\path\\\\file.bin", "hash_algorithm": "sha256"}}
+- file_compare uses {{"path": "C:\\\\first.bin", "destination": "C:\\\\second.bin", "hash_algorithm": "sha256"}}
 
 GIT REPOSITORY OPERATIONS:
-- git_status, git_diff, git_log use {{"repo_path": "C:\\path\\repo", "staged": false, "limit": 20}}
-- git_branch uses {{"repo_path": "C:\\path\\repo", "name": "feature/name", "create": true}}
-- git_stage uses {{"repo_path": "C:\\path\\repo", "files": ["src/file.py"]}}
-- git_commit uses {{"repo_path": "C:\\path\\repo", "files": ["src/file.py"], "message": "fix: describe change"}}
-- git_push uses {{"repo_path": "C:\\path\\repo", "remote": "origin", "branch": "main", "force": false}}
-- git_resolve uses {{"path": "C:\\path\\file.py", "full_block": "<<<<<<<...>>>>>>>", "resolved_code": "..."}}
+- git_status, git_diff, git_log use {{"repo_path": "C:\\\\path\\\\repo", "staged": false, "limit": 20}}
+- git_branch uses {{"repo_path": "C:\\\\path\\\\repo", "name": "feature/name", "create": true}}
+- git_stage uses {{"repo_path": "C:\\\\path\\\\repo", "files": ["src/file.py"]}}
+- git_commit uses {{"repo_path": "C:\\\\path\\\\repo", "files": ["src/file.py"], "message": "fix: describe change"}}
+- git_push uses {{"repo_path": "C:\\\\path\\\\repo", "remote": "origin", "branch": "main", "force": false}}
+- git_resolve uses {{"path": "C:\\\\path\\\\file.py", "full_block": "<<<<<<<...>>>>>>>", "resolved_code": "..."}}
 
 PLUGIN RUNTIMES:
 - plugin_call invokes an approved marketplace tool with {{"tool": "tool_name", "args": {{}}}}
@@ -2228,6 +2228,8 @@ class Planner:
         }
         if action_type in vision_types:
             return ScreenVisionParams(**params)
+        if action_type == ActionType.LOG_ANALYZE:
+            return LogAnalyzeParams(**params)
         if action_type == ActionType.SCREEN_DETECT_ELEMENTS:
             return ElementDetectionParams(**params)
         if action_type == ActionType.SCREEN_ACCESSIBILITY_SNAPSHOT:

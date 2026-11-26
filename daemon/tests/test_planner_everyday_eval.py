@@ -208,7 +208,7 @@ def test_prompt_teaches_typed_text_edits_and_the_smallest_plan():
     assert "STEP ORDER" in prompt
     assert 'volume_set {"level": 30}' in prompt and 'clipboard_write {"content"' in prompt
     # An empty folder has no typed action; the shell is allowed for that one job.
-    assert '{"command": "mkdir", "args": ["C:\\path\\new folder"]}' in prompt
+    assert '{"command": "mkdir", "args": ["C:\\\\path\\\\new folder"]}' in prompt
     new_rules = prompt[prompt.index("19b.") : prompt.index("20. ")]
     assert "\u2014" not in new_rules
 
