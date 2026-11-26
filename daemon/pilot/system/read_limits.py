@@ -42,5 +42,15 @@ def with_notes(text: str, notes: list[str]) -> str:
     return OutputWithNotice(f"{text}\n{lines}" if text else lines, " ".join(notes))
 
 
+def noticed(text: str) -> str:
+    """``text`` with its cut lines (if any) also put in the notice, so the person sees what the next step sees."""
+    sentences = [
+        line[len(CUT_MARK) : -1] for line in text.splitlines() if line.startswith(CUT_MARK) and line.endswith("]")
+    ]
+    if not sentences or getattr(text, "notice", None):
+        return text
+    return OutputWithNotice(text, " ".join(sentences))
+
+
 def was_cut(text: str) -> bool:
     return CUT_MARK in (text or "")

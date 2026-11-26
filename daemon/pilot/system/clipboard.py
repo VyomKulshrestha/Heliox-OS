@@ -25,7 +25,9 @@ async def clipboard_read() -> str:
         code, out, err = await run_powershell("Get-Clipboard")
         if code != 0:
             raise RuntimeError(f"Clipboard read failed: {err.strip()}")
-        return out.strip() or "(clipboard is empty)"
+        # Remove only the line break PowerShell adds; the copied text's own spaces and line breaks stay.
+        text = out[:-2] if out.endswith("\r\n") else out.removesuffix("\n")
+        return text or "(clipboard is empty)"
 
     elif CURRENT_PLATFORM == Platform.MACOS:
         code, out, err = await run_command(["pbpaste"])

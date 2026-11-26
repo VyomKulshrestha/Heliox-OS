@@ -428,9 +428,8 @@ async def test_extract_of_several_elements_verifies(page) -> None:
     params = BrowserParams(selector=".item", multiple=True)
     returned = await browser.browser_extract(".item", "innerText", True)
 
-    outcome = await _verify(ActionType.BROWSER_EXTRACT, params, returned)
-    _verified(outcome)
-    assert "2 non-empty value(s) from 3 matching element(s)" in outcome.details[0]
+    _verified(await _verify(ActionType.BROWSER_EXTRACT, params, returned))
+    assert returned == "alpha\n\nbeta"
 
 
 @pytest.mark.asyncio
@@ -624,7 +623,7 @@ async def test_directory_summary_says_what_its_depth_hides(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_content_search_says_when_it_stopped_and_what_it_skipped(tmp_path: Path, monkeypatch) -> None:
     for i in range(5):
-        (tmp_path / f"t{i}.txt").write_text("needle\nneedle\n", encoding="utf-8")
+        (tmp_path / f"t{i}.txt").write_bytes(b"needle\nneedle\n")
     (tmp_path / "big.txt").write_bytes(b"x" * 20)
     monkeypatch.setattr(file_intel, "SEARCH_MAX_FILE_BYTES", 15)
     returned = await file_intel.search_file_contents(str(tmp_path), "needle", "*.txt", max_results=3)
@@ -795,3 +794,14 @@ async def test_screen_ocr_without_an_engine_fails_and_an_empty_screen_is_said(mo
     assert empty.success is True and empty.output == "No text was found on the screen."
     bad = await _ocr(monkeypatch, "text", region="10,20")
     assert bad.success is False and "x,y,width,height" in (bad.error or "")
+
+
+@pytest.mark.asyncio
+async def test_clipboard_read_on_windows_keeps_the_texts_own_whitespace(monkeypatch) -> None:
+    from pilot.system import clipboard
+    from pilot.system.platform_detect import Platform
+
+    monkeypatch.setitem(__import__("sys").modules, "pyperclip", None)  # use the PowerShell path
+    monkeypatch.setattr(clipboard, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(clipboard, "run_powershell", AsyncMock(return_value=(0, "  indented\r\nnext\r\n", "")))
+    assert await clipboard.clipboard_read() == "  indented\r\nnext"

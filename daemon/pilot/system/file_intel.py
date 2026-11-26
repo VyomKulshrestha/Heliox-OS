@@ -47,7 +47,13 @@ def _decode(data: bytes) -> tuple[str, str]:
 
 
 async def parse_file(file_path: str) -> str:
-    """Auto-detect file type and extract text/data content."""
+    """Auto-detect file type and extract text/data content. Every cut is said in the text and in the notice."""
+    from pilot.system.read_limits import noticed
+
+    return noticed(await _parse_file(file_path))
+
+
+async def _parse_file(file_path: str) -> str:
     p = Path(file_path)
     if not p.exists():
         raise FileNotFoundError(f"File not found: {file_path}")

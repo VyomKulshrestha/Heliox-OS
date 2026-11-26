@@ -15,7 +15,7 @@ from pilot.intelligence.world_model import EffectDomain, StructuredTransitionPre
 
 def _action(target: str) -> Action:
     return Action(
-        action_type=ActionType.FILE_READ,
+        action_type=ActionType.FILE_LIST,
         target=target,
         parameters=FileParams(path=target),
     )

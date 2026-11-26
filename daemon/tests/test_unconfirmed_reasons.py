@@ -66,7 +66,7 @@ async def test_a_plainly_verified_step_and_a_step_without_a_check_add_no_reason(
 ) -> None:
     _use(monkeypatch, ActionType.API_SEND_EMAIL, verified("found in Sent"))
     plan, results = _email()
-    read = Action(action_type=ActionType.FILE_READ, target="/tmp/a.txt", parameters=FileParams(path="/tmp/a.txt"))
+    read = Action(action_type=ActionType.FILE_LIST, target="/tmp/a.txt", parameters=FileParams(path="/tmp/a.txt"))
     plan = ActionPlan(actions=[*plan.actions, read])
     results = [*results, ActionResult(action=read, success=True, output="text")]
 

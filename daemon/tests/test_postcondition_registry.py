@@ -119,9 +119,9 @@ async def test_registered_outcomes_reach_the_verification_result(
     async def check(_result: ActionResult) -> Outcome:
         return outcome
 
-    register(ActionType.FILE_HASH, method="test_postcondition")(check)
+    register(ActionType.FILE_COMPARE, method="test_postcondition")(check)
     monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
-    action, result = _verify(ActionType.FILE_HASH)
+    action, result = _verify(ActionType.FILE_COMPARE)
 
     verification = await Verifier(MagicMock()).verify(ActionPlan(actions=[action]), [result])
 
@@ -135,9 +135,9 @@ async def test_a_raising_verifier_fails_closed(monkeypatch: pytest.MonkeyPatch, 
     async def broken(_result: ActionResult) -> Outcome:
         raise RuntimeError("observer unavailable")
 
-    register(ActionType.FILE_HASH, method="test_postcondition")(broken)
+    register(ActionType.FILE_COMPARE, method="test_postcondition")(broken)
     monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
-    action, result = _verify(ActionType.FILE_HASH)
+    action, result = _verify(ActionType.FILE_COMPARE)
 
     verification = await Verifier(MagicMock()).verify(ActionPlan(actions=[action]), [result])
 
@@ -157,15 +157,15 @@ async def test_a_verifier_past_its_time_limit_is_unverified(
         return verified("never")
 
     # A zero limit makes bounded() cancel at once: no real time passes.
-    register(ActionType.FILE_HASH, method="test_postcondition", timeout=1)(hangs)
-    registration = scratch_registry[ActionType.FILE_HASH]
+    register(ActionType.FILE_COMPARE, method="test_postcondition", timeout=1)(hangs)
+    registration = scratch_registry[ActionType.FILE_COMPARE]
     monkeypatch.setitem(
         scratch_registry,
-        ActionType.FILE_HASH,
+        ActionType.FILE_COMPARE,
         postconditions.Registration(**{**registration.__dict__, "timeout": 0}),
     )
     monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
-    action, result = _verify(ActionType.FILE_HASH)
+    action, result = _verify(ActionType.FILE_COMPARE)
 
     verification = await Verifier(MagicMock()).verify(ActionPlan(actions=[action]), [result])
 
@@ -184,9 +184,9 @@ async def test_a_failed_action_never_reaches_its_verifier(
         calls.append(result)
         return verified("seen")
 
-    register(ActionType.FILE_HASH, method="test_postcondition")(check)
+    register(ActionType.FILE_COMPARE, method="test_postcondition")(check)
     monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
-    action = Action(action_type=ActionType.FILE_HASH, target="x", parameters=FileParams(path="x"))
+    action = Action(action_type=ActionType.FILE_COMPARE, target="x", parameters=FileParams(path="x"))
 
     verification = await Verifier(MagicMock()).verify(
         ActionPlan(actions=[action]), [ActionResult(action=action, success=False, error="handler raised")]
@@ -245,14 +245,14 @@ async def test_an_observed_precheck_still_skips(monkeypatch: pytest.MonkeyPatch,
     async def present(_result: ActionResult) -> Outcome:
         return verified("already there")
 
-    register(ActionType.FILE_HASH, method="test_postcondition", precheck=True)(present)
+    register(ActionType.FILE_COMPARE, method="test_postcondition", precheck=True)(present)
     monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
     monkeypatch.setattr(
         verifier_module,
         "_PRECHECKABLE_POSTCONDITIONS",
-        verifier_module._PRECHECKABLE_POSTCONDITIONS | {ActionType.FILE_HASH},
+        verifier_module._PRECHECKABLE_POSTCONDITIONS | {ActionType.FILE_COMPARE},
     )
-    action = Action(action_type=ActionType.FILE_HASH, target="x", parameters=FileParams(path="x"))
+    action = Action(action_type=ActionType.FILE_COMPARE, target="x", parameters=FileParams(path="x"))
 
     assert await Verifier(MagicMock()).check_already_satisfied(action) == (True, "already there")
 
@@ -298,14 +298,14 @@ async def test_a_verifier_can_tell_a_precheck_from_a_check_after_the_action(
         seen.append(postconditions.is_precheck(result))
         return mismatch("not there yet")
 
-    register(ActionType.FILE_HASH, method="test_postcondition", precheck=True)(check)
+    register(ActionType.FILE_COMPARE, method="test_postcondition", precheck=True)(check)
     monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
     monkeypatch.setattr(
         verifier_module,
         "_PRECHECKABLE_POSTCONDITIONS",
-        verifier_module._PRECHECKABLE_POSTCONDITIONS | {ActionType.FILE_HASH},
+        verifier_module._PRECHECKABLE_POSTCONDITIONS | {ActionType.FILE_COMPARE},
     )
-    action = Action(action_type=ActionType.FILE_HASH, target="x", parameters=FileParams(path="x"))
+    action = Action(action_type=ActionType.FILE_COMPARE, target="x", parameters=FileParams(path="x"))
 
     await Verifier(MagicMock()).check_already_satisfied(action)
     await Verifier(MagicMock()).verify(ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
