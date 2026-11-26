@@ -1335,6 +1335,39 @@ class Executor:
                         undo_token = await self._undo_journal.before(action, task_key=task_key)
                     except Exception:
                         logger.warning("Undo capture failed", exc_info=True)
+                from pilot.agents.review_timing import (
+                    KEPT_COPY_FAILED_SKIP,
+                    kept_copy_failed_sentence,
+                    kept_copy_required,
+                )
+
+                if kept_copy_required(action) and (undo_token is None or undo_token.entry is None):
+                    # This step runs beside its review only because the journal keeps the earlier file; without that
+                    # copy it does not run (pilot.agents.review_timing).
+                    result = ActionResult(
+                        action=action,
+                        success=False,
+                        error=kept_copy_failed_sentence(action),
+                        executed=False,
+                        skip_reason=KEPT_COPY_FAILED_SKIP,
+                    )
+                    if claimed and self._durable_task_store is not None:
+                        from pilot.workflows.durable_tasks import ActionExecutionStatus
+
+                        await self._durable_task_store.finish_action(
+                            task_id=get_experience_context().task_id,
+                            action_key=action_key,
+                            lease_owner=claim_owner,
+                            status=ActionExecutionStatus.FAILED,
+                            result=result.model_dump(mode="json"),
+                            error=result.error or "",
+                        )
+                    await self._audit.log_action_result(result, plan_id)
+                    if on_action_complete:
+                        await on_action_complete(result)
+                    if self._narrator is not None:
+                        await self._narrator.on_action_complete(result)
+                    return idx, result
                 try:
                     suppress_manual = getattr(
                         self._recorded_workflow_store, "suppress_manual_during_heliox_action", nullcontext

@@ -227,11 +227,14 @@ private learned-persona context are not passed through this review path. The
 normal permission, confirmation, and verification gates remain authoritative.
 
 The review holds the person up only where its answer can still prevent harm
-(`pilot.agents.review_timing`). A plan of reads and of writes, copies and moves
+(`pilot.agents.review_timing`). A plan of reads, of steps with nothing at stake
+(a level, the window or tab in front, a page loaded by address:
+`pilot.agents.step_stakes`), and of writes, copies and moves
 of single files inside the person's home folder, whose earlier state the undo
 journal will keep (undo on, what they replace within the task's undo limit, a move
 on one drive), runs at once and is reviewed beside its run; a concern arrives
-afterwards as a remark in the window. A plan that shows an
+afterwards as a remark in the window. If the journal then cannot keep its copy,
+the executor stops that write before it changes anything. A plan that shows an
 approval card anyway is reviewed while the card is open, and a STOP or REVISE
 still holds once the person approves. Any other plan waits for the review for at
 most 4 s, and a review that does not answer makes it ask the person first: a

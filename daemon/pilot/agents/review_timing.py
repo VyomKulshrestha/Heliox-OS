@@ -3,7 +3,8 @@
 The companion (pilot.agents.execution_companion) asks a model whether the plan serves the request. On 26 November
 that took about 3 s of a 7 s note, every turn. Its answer only matters for what it could still prevent:
 
-- ``beside``: every step only reads, or is a write, copy or move inside the person's own folders whose previous
+- ``beside``: every step only reads, has nothing at stake (a level, the window or tab in front, a page loaded by
+  address: pilot.agents.step_stakes), or is a write, copy or move inside the person's own folders whose previous
   state Heliox's undo journal (pilot.workflows.undo_journal) will keep. Nothing here can hurt, so the plan runs at
   once and the review runs beside it; a concern it raises arrives afterwards as a remark in the window.
 - ``with_card``: the plan asks for approval anyway (a step that needs it, the world model's pause, an MCP client's
@@ -19,25 +20,28 @@ What the journal keeps, and so what counts as "can be put back" here (``_capture
 - a write: the file's earlier content when it exists (a copy), or nothing when the file is new (undo deletes it);
 - a copy or a move: the file it lands on when one exists (a copy), and where it came from;
 - the kept copies of one task together may not pass ``undo.max_task_mb``; a capture that fails (too large, inside
-  Heliox's own folders, a folder in the way) does not stop the step, which then runs without undo.
+  Heliox's own folders, a folder in the way) does not stop the step, which then runs without undo, except for a step
+  that runs beside its review because of that copy: the executor then stops it before it changes anything
+  (``kept_copy_required``).
 
 So a step is ``beside`` only when undo is on, every path it touches is inside the person's home folder (not a system
 or program folder, another user's folder, a network share or a removable drive) and outside Heliox's own folders,
 it acts on one file (not a folder), nothing it would replace is a folder, the files it would replace fit in the
-task's undo limit together, and a move stays on one drive. Clipboard, volume, brightness and environment changes
-are not ``beside``: the journal keeps the clipboard's earlier text in memory only (not an image, and not across a
-restart) and a level only when it can be read, and none of that can be known before the step runs.
+task's undo limit together, and a move stays on one drive. A clipboard write is not ``beside``: the journal keeps
+the clipboard's earlier text in memory only (not an image, and not across a restart).
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from contextvars import ContextVar
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from pilot.actions import READ_ONLY_ACTIONS, ActionType, PermissionTier
+from pilot.agents.step_stakes import Stake, stake_of
 
 # The longest a risky plan without a card waits for the review on its own. On 26 November the small cloud model
 # answered in 3.0 s; the configured limit (narration.companion_timeout_seconds) applies when it is shorter.
@@ -150,13 +154,18 @@ class _Probe:
 
 
 def step_cannot_hurt(action: Any, probe: _Probe) -> bool:
-    """A read, or a write, copy or move whose previous state the undo journal will keep."""
+    """A read, a step with nothing at stake, or a write, copy or move whose previous state the undo journal will
+    keep (pilot.agents.step_stakes)."""
     if action.requires_root or action.dangerous_flags or action.is_irreversible:
         return False
-    if _is_read(action):
+    stake = stake_of(action.action_type)
+    if stake is Stake.READ:
+        return _is_read(action)
+    if stake is Stake.NOTHING_AT_STAKE:
         return True
     if (
-        not probe.enabled
+        stake is not Stake.JOURNAL_KEEPS
+        or not probe.enabled
         or action.action_type not in _FILE_CHANGES
         or action.permission_tier > PermissionTier.USER_WRITE
     ):
@@ -185,4 +194,53 @@ def review_timing(
     return ReviewTiming.BEFORE
 
 
-__all__ = ["BEFORE_LIMIT_SECONDS", "UNANSWERED_REASON", "ReviewTiming", "review_timing", "step_cannot_hurt"]
+# Steps that run beside their review only because the undo journal will keep the earlier file: the executor stops
+# such a step when the journal then cannot keep its copy (a full disk, an earlier file it cannot read). Set by the
+# server for the plan it is about to run; every other step keeps the journal's own rule (a failed copy is listed as
+# not undoable and the step runs).
+_KEPT_COPY_REQUIRED: ContextVar[frozenset[str]] = ContextVar("kept_copy_required", default=frozenset())
+
+KEPT_COPY_FAILED_SKIP = "no_undo_copy"
+
+
+def _step_key(action: Any) -> str:
+    # Where the step writes, not its content: the executor may put an earlier step's output into the content.
+    params = action.parameters
+    return "|".join(
+        (
+            action.action_type.value,
+            str(getattr(params, "path", "") or ""),
+            str(getattr(params, "destination", "") or ""),
+        )
+    )
+
+
+def require_kept_copies(actions: Iterable[Any]) -> None:
+    """Mark the plan's journal-kept steps (those whose class is ``journal_keeps``) for the executor."""
+    _KEPT_COPY_REQUIRED.set(
+        frozenset(_step_key(action) for action in actions if stake_of(action.action_type) is Stake.JOURNAL_KEEPS)
+    )
+
+
+def kept_copy_required(action: Any) -> bool:
+    keys = _KEPT_COPY_REQUIRED.get()
+    return bool(keys) and _step_key(action) in keys
+
+
+def kept_copy_failed_sentence(action: Any) -> str:
+    """What the person reads for a step stopped because the journal could not keep the earlier file."""
+    verb = "overwrite" if action.action_type == ActionType.FILE_WRITE else "replace"
+    return f"Heliox could not keep a copy of the earlier file, so it did not {verb} it."
+
+
+__all__ = [
+    "BEFORE_LIMIT_SECONDS",
+    "KEPT_COPY_FAILED_SKIP",
+    "UNANSWERED_REASON",
+    "ReviewTiming",
+    "kept_copy_failed_sentence",
+    "kept_copy_required",
+    "require_kept_copies",
+    "review_timing",
+    "step_cannot_hurt",
+]

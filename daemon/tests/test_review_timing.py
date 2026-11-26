@@ -15,23 +15,32 @@ from types import SimpleNamespace
 import pytest
 
 from pilot.actions import (
+    READ_ONLY_ACTIONS,
     Action,
     ActionPlan,
     ActionResult,
     ActionType,
+    BrowserParams,
     ClipboardParams,
     FileParams,
     KeyboardParams,
+    MouseParams,
+    PowerParams,
     VerificationResult,
     VolumeParams,
+    WindowParams,
 )
 from pilot.agents.execution_companion import ExecutionCompanion
 from pilot.agents.review_timing import (
     BEFORE_LIMIT_SECONDS,
+    KEPT_COPY_FAILED_SKIP,
     UNANSWERED_REASON,
     ReviewTiming,
+    kept_copy_required,
+    require_kept_copies,
     review_timing,
 )
+from pilot.agents.step_stakes import _EXPLICIT, STAKES, Stake
 from tests.test_execute_tracked import _FakePermissionChecker, _FakeWs, _server_ready_for_handle_execute
 
 NOTE = os.path.abspath(os.path.join("work", "timing", "note_timing.txt"))
@@ -158,13 +167,117 @@ def test_outside_the_persons_own_folders_waits_even_where_the_journal_could_rest
     assert own is ReviewTiming.BEFORE
 
 
-def test_clipboard_and_level_changes_wait_because_their_earlier_state_may_not_be_kept(tmp_path):
+def test_a_clipboard_write_waits_because_its_earlier_content_can_be_lost(tmp_path):
     clipboard = Action(
         action_type=ActionType.CLIPBOARD_WRITE, target="clipboard", parameters=ClipboardParams(content="x")
     )
-    volume = Action(action_type=ActionType.VOLUME_SET, target="volume", parameters=VolumeParams(level=30))
     assert _timing(clipboard, home=tmp_path) is ReviewTiming.BEFORE
-    assert _timing(volume, home=tmp_path) is ReviewTiming.BEFORE
+
+
+def test_steps_with_nothing_at_stake_run_beside_their_review_whatever_the_journal_keeps(tmp_path):
+    volume = Action(action_type=ActionType.VOLUME_SET, target="volume", parameters=VolumeParams(level=30))
+    focus = Action(action_type=ActionType.WINDOW_FOCUS, target="Notepad", parameters=WindowParams(title="Notepad"))
+    page = Action(
+        action_type=ActionType.BROWSER_NAVIGATE,
+        target="https://example.com",
+        parameters=BrowserParams(url="https://example.com"),
+    )
+    off = SimpleNamespace(enabled=False, max_task_mb=0)  # undo off: these do not depend on it
+    assert _timing(volume, focus, page, home=tmp_path, undo=off) is ReviewTiming.BESIDE
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        Action(action_type=ActionType.WINDOW_CLOSE, target="Notepad", parameters=WindowParams(title="Notepad")),
+        Action(action_type=ActionType.BROWSER_REFRESH, target="page", parameters=BrowserParams()),
+        Action(action_type=ActionType.MOUSE_SCROLL, target="screen", parameters=MouseParams()),
+        Action(action_type=ActionType.POWER_LOCK, target="system", parameters=PowerParams()),
+    ],
+)
+def test_closing_reloading_a_wheel_over_a_program_or_locking_waits(tmp_path, action):
+    assert _timing(action, home=tmp_path) is ReviewTiming.BEFORE
+
+
+def test_every_action_type_is_in_exactly_one_class_with_a_reason():
+    # A new action type without an entry fails here: decide what is at stake in it.
+    assert set(STAKES) == set(ActionType)
+    explicit_reads = {action for action, (stake, _reason) in _EXPLICIT.items() if stake is Stake.READ}
+    assert not (set(_EXPLICIT) - explicit_reads) & READ_ONLY_ACTIONS  # a read is never also another class
+    assert all(reason.strip() for _stake, reason in STAKES.values())
+    journal_kept = {action for action, (stake, _reason) in STAKES.items() if stake is Stake.JOURNAL_KEEPS}
+    assert journal_kept == {ActionType.FILE_WRITE, ActionType.FILE_COPY, ActionType.FILE_MOVE}
+
+
+def test_only_journal_kept_steps_are_marked_for_the_executor(tmp_path):
+    write = _file_action(ActionType.FILE_WRITE, tmp_path / "a.txt")
+    volume = Action(action_type=ActionType.VOLUME_SET, target="volume", parameters=VolumeParams(level=30))
+    require_kept_copies([write, volume])
+    try:
+        # The content does not matter: the executor may put an earlier step's output into it.
+        assert kept_copy_required(
+            write.model_copy(update={"parameters": write.parameters.model_copy(update={"content": "y"})})
+        )
+        assert not kept_copy_required(volume)
+    finally:
+        require_kept_copies(())
+    assert not kept_copy_required(write)
+
+
+async def _write_with_a_failing_copy(tmp_path, *, required: bool):
+    from pilot.agents.executor import Executor
+    from pilot.config import PilotConfig
+    from pilot.security.audit import AuditLogger
+    from pilot.security.gateway import InvocationSource
+    from pilot.security.permissions import PermissionChecker
+    from pilot.security.validator import ActionValidator
+    from pilot.workflows.undo_journal import UndoJournal
+
+    config = PilotConfig()
+    executor = Executor(
+        config, ActionValidator(config), PermissionChecker(config), AuditLogger(audit_file=tmp_path / "audit.jsonl")
+    )
+    journal = UndoJournal(tmp_path / "undo-store", config=config.undo)
+
+    def full_disk(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    journal._keep_copy = full_disk  # the journal cannot keep its copy of the earlier file
+    executor.set_undo_journal(journal)
+    path = tmp_path / "note.txt"
+    path.write_text("earlier", encoding="utf-8")
+    write = Action(
+        action_type=ActionType.FILE_WRITE, target=str(path), parameters=FileParams(path=str(path), content="new")
+    )
+    plan = ActionPlan(actions=[write], raw_input="write the note")
+    require_kept_copies([write] if required else [])
+    try:
+        results = await executor.execute(
+            plan, invocation_source=InvocationSource.INTERACTIVE, user_confirmed=True, plan_id="plan-k"
+        )
+    finally:
+        require_kept_copies(())
+    return results[0], path.read_text(encoding="utf-8"), journal
+
+
+@pytest.mark.asyncio
+async def test_a_step_run_beside_its_review_does_not_overwrite_when_the_journal_cannot_keep_the_earlier_file(
+    tmp_path,
+):
+    result, content, _journal = await _write_with_a_failing_copy(tmp_path, required=True)
+
+    assert content == "earlier"  # nothing was changed
+    assert result.success is False and result.executed is False and result.skip_reason == KEPT_COPY_FAILED_SKIP
+    assert result.error == "Heliox could not keep a copy of the earlier file, so it did not overwrite it."
+
+
+@pytest.mark.asyncio
+async def test_every_other_step_keeps_the_journals_rule_and_runs_without_undo(tmp_path):
+    result, content, journal = await _write_with_a_failing_copy(tmp_path, required=False)
+
+    assert result.success is True and content == "new"
+    preview = await journal.preview("plan-k")
+    assert preview is not None and preview["not_undoable"]
 
 
 def test_a_delete_or_typing_into_another_app_waits(tmp_path):

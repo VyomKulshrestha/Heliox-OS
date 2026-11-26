@@ -5289,6 +5289,9 @@ class PilotServer:
                 interaction_id=self._active_interaction_id,
             )
             await ws.send(_notification("status", {"phase": "executing"}))
+            from pilot.agents.review_timing import require_kept_copies
+
+            require_kept_copies(plan.actions if beside_review_started else ())
             if beside_review_started:
                 self._start_review_beside(
                     ws, cancel_event, plan_id, reviewer_request, plan, review_screen_context, auto_revision_count
