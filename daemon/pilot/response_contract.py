@@ -65,7 +65,29 @@ def success_message(
     message = _success_message_body(plan, results, verification, dry_run=dry_run)
     notices = [] if dry_run else [_clean(result.notice) for result in results if result.success and result.notice]
     # A notice already in the message (an absent target's sentence is also its output) is not repeated.
-    return "\n".join([message, *(f"Note: {notice}" for notice in notices if notice and notice not in message)])
+    lines = [message, *(f"Note: {notice}" for notice in notices if notice and notice not in message)]
+    if not dry_run:
+        lines.extend(_unconfirmed_lines(results, verification))
+    return "\n".join(lines)
+
+
+MAX_UNCONFIRMED_LINES = 3
+
+
+def _unconfirmed_lines(results: Sequence[ActionResult], verification: VerificationResult) -> list[str]:
+    """One short sentence per step whose outcome was not confirmed, with the verifier's reason; at most three."""
+    reasons = getattr(verification, "reasons", None) or {}
+    lines = []
+    for index, result in enumerate(results):
+        reason = _clean(reasons.get(index, ""))
+        if not reason or not result.success:
+            continue
+        label = _clean(result.action.target) or result.action.action_type.value.replace("_", " ")
+        lines.append(f"Not confirmed, {_bound(label, 80)}: {_bound(reason, 200)}")
+    if len(lines) > MAX_UNCONFIRMED_LINES:
+        extra = len(lines) - MAX_UNCONFIRMED_LINES
+        lines = [*lines[:MAX_UNCONFIRMED_LINES], f"{extra} more step{'s' if extra != 1 else ''} not confirmed."]
+    return lines
 
 
 def _success_message_body(

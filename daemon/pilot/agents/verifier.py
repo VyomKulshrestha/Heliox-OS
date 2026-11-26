@@ -131,6 +131,9 @@ ALREADY_ABSENT_WORDING: dict[ActionType, Callable[[Any], str]] = {
 }
 
 
+NO_POSTCONDITION = "No independent postcondition for this action type"
+
+
 class Verifier:
     """Verifies execution results against expected outcomes."""
 
@@ -177,6 +180,7 @@ class Verifier:
         details: list[str] = []
         failed_indices: list[int] = []
         observed_indices: list[int] = []
+        reasons: dict[int, str] = {}
 
         if len(results) != len(plan.actions):
             details.append(
@@ -210,10 +214,15 @@ class Verifier:
                 observed_indices.append(i)
             if check_passed:
                 status = "VERIFIED" if independently_observed else "REPORTED — no independent postcondition"
+                if not independently_observed and check_detail and check_detail != NO_POSTCONDITION:
+                    # Why it was not confirmed (a receipt only, no credentials to look with, a time limit).
+                    status += f" ({check_detail})"
+                    reasons[i] = check_detail
                 details.append(f"Action {i} ({result.action.action_type.value}): {status}")
             else:
                 details.append(f"Action {i} ({result.action.action_type.value}): MISMATCH — {check_detail}")
                 failed_indices.append(i)
+                reasons[i] = check_detail
 
         for i, result in enumerate(results[len(plan.actions) :], start=len(plan.actions)):
             details.append(
@@ -228,6 +237,7 @@ class Verifier:
             failed_actions=failed_indices,
             independently_observed_actions=observed_indices,
             rollback_triggered=False,
+            reasons=reasons,
         )
 
     async def _verify_single(self, result: ActionResult) -> tuple[bool, str, bool]:
@@ -303,7 +313,7 @@ class Verifier:
 
             else:
                 # The executor callback alone is not evidence of a state transition.
-                return True, "No independent postcondition for this action type", False
+                return True, NO_POSTCONDITION, False
 
             return check[0], check[1], True
 

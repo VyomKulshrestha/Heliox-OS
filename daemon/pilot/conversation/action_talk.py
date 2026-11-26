@@ -176,6 +176,9 @@ def wont_change_sentence(change: str) -> str:
 _UNVERIFIED = re.compile(
     r"\s*Note: \d+ action effects? (?:was|were) reported successful but not independently verified\.\s*$"
 )
+_NOT_CONFIRMED = re.compile(
+    r"^Not confirmed, [^\n]*?: (?P<reason>[^\n]+)$\n?|^\d+ more steps? not confirmed\.$\n?", re.MULTILINE
+)
 _FAILED = re.compile(r"^Task did not complete successfully:[^.]*\.\s*")
 _SPOKEN_LIMIT = 20  # words; longer results stay in the window and are left to the server's own wording
 
@@ -186,11 +189,17 @@ def result_sentence(status: str, message: str) -> str:
     a refusal or cancel is already said in plain words, and a long or listed result is not read out here."""
     text = message.strip()
     if status == "success":
+        # "Not confirmed, <step>: <reason>" lines (response_contract): only the first reason is said aloud.
+        reasons = [found.group("reason") for found in _NOT_CONFIRMED.finditer(text) if found.group("reason")]
+        text = _NOT_CONFIRMED.sub("", text).strip()
         unverified = bool(_UNVERIFIED.search(text))
         body = _UNVERIFIED.sub("", text).strip()
         if not body or "\n" in body or len(body.split()) > _SPOKEN_LIMIT:
             return ""
         sentence = body if body.endswith((".", "!", "?")) else body + "."
+        if reasons:
+            reason = reasons[0].strip().rstrip(".")
+            return f"{sentence} I couldn't confirm it: {reason[:1].lower() + reason[1:]}."
         return f"{sentence} I couldn't check that it worked." if unverified else sentence
     if status in {"partial_failure", "partial", "error", "failed"}:
         found = _FAILED.match(text)

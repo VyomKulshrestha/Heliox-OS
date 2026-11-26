@@ -514,6 +514,6 @@ async def test_partly_refused_email_names_the_refused_recipients_to_the_person(
     assert result.success is True
     assert result.notice == "The mail server refused the email for: gone@example.com"
     assert type(result.output) is str
-    assert "Note: The mail server refused the email for: gone@example.com" in reply
+    assert "The mail server refused the email for: gone@example.com" in reply
     assert envelope["receipt"]["actions"][0]["notice"] == result.notice
     assert "Body text" not in json.dumps(envelope)

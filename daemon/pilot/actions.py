@@ -1159,3 +1159,6 @@ class VerificationResult(BaseModel):
     failed_actions: list[int] = Field(default_factory=list)
     independently_observed_actions: list[int] = Field(default_factory=list)
     rollback_triggered: bool = False
+    # Action index to the verifier's one-sentence reason, for every outcome that is not a plain VERIFIED and has a
+    # specific reason (a receipt only, a look that was refused or could not be made, a mismatch).
+    reasons: dict[int, str] = Field(default_factory=dict)
