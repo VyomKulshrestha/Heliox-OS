@@ -24,6 +24,8 @@ from pilot.config import PilotConfig
 from pilot.system.http_client import create_httpx_client
 
 logger = logging.getLogger("pilot.system.api_client")
+# The real client factory; a test that replaced it with a fake reaches no server (system_guard.check_http).
+_REAL_CLIENT_FACTORY = create_httpx_client
 
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _SENSITIVE_REDIRECT_HEADERS = frozenset({"authorization", "cookie", "proxy-authorization"})
@@ -178,6 +180,9 @@ async def api_request(
     if method not in SUPPORTED_HTTP_METHODS:
         supported = ", ".join(sorted(SUPPORTED_HTTP_METHODS))
         raise ValueError(f"Unsupported HTTP method {method!r}; expected one of: {supported}")
+    from pilot.system.system_guard import check_http
+
+    check_http(method, _origin(url)[1], real_client=create_httpx_client is _REAL_CLIENT_FACTORY)
     async with create_httpx_client(PilotConfig.load(), timeout=timeout, follow_redirects=False, verify=True) as client:
         kwargs: dict[str, Any] = {"params": params}
         if headers:
@@ -328,6 +333,9 @@ async def send_email(
             server.login(username, password)
             accepted["refused"] = server.sendmail(from_addr, to, msg.as_string())
 
+    from pilot.system.system_guard import check_mail
+
+    check_mail(smtp_server, smtplib.SMTP)
     try:
         await asyncio.to_thread(_do)
     except Exception as e:

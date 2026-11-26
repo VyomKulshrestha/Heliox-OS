@@ -400,6 +400,9 @@ class EmailAgent(BaseAgent):
             recipient,
         )
 
+        from pilot.system.system_guard import check_mail
+
+        check_mail(params.smtp_host, smtplib.SMTP)
         ssl_context = ssl.create_default_context()
         try:
             with smtplib.SMTP(params.smtp_host, params.smtp_port, timeout=30) as server:

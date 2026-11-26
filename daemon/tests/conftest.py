@@ -32,6 +32,7 @@ if os.environ.get("HELIOX_REAL_VOICE_MODELS") != "1":
     os.environ["HF_HUB_OFFLINE"] = "1"  # and nothing is fetched into it
 
 from pilot.config import PilotConfig  # noqa: E402
+from pilot.system import system_guard  # noqa: E402  (takes the real SMTP classes before any test replaces them)
 
 if os.environ.get("HELIOX_TEST_GPU") != "1":
     # nvidia-smi is the driver's own program and reads the card whatever CUDA_VISIBLE_DEVICES says. The GPU arbiter
@@ -49,6 +50,9 @@ if os.environ.get("HELIOX_TEST_REAL_TORCH") != "1":
 
 
 _folder_guard_lines: list[str] = []
+# Tests whose code tried to change the real system and was refused (pilot.system.system_guard), by node id.
+_system_refused: dict[str, list[tuple[str, str]]] = {}
+_system_snapshot_fakes: list[str] = []
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -86,6 +90,9 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if report.when == "teardown" and report.outcome == "passed":
         why = folder_guard.failure_for(item.nodeid)
+        if why is None and item.nodeid in _system_refused:
+            attempts = "; ".join(f"{kind}: {what}" for kind, what in _system_refused[item.nodeid])
+            why = f"SYSTEM-GUARD: this test tried to change the real system and was refused ({attempts})"
         if why is not None:
             report.outcome = "failed"
             report.longrepr = why
@@ -94,6 +101,37 @@ def pytest_runtest_makereport(item, call):
 def pytest_terminal_summary(terminalreporter):
     for line in _folder_guard_lines:
         terminalreporter.write_line(line)
+    terminalreporter.write_line(
+        f"SYSTEM-GUARD {len(_system_refused)} tests reached the real system and were refused; "
+        f"{len(_system_snapshot_fakes)} system snapshot requests went to the test fake"
+    )
+    for nodeid, attempts in sorted(_system_refused.items()):
+        terminalreporter.write_line(f"  {nodeid}: " + "; ".join(f"{kind}: {what}" for kind, what in attempts))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_system_changes(monkeypatch, request):
+    """No test changes the computer it runs on (pilot.system.system_guard refuses the commands; this records which
+    test asked). Executors built in a test get a snapshot manager whose system snapshot is a fake that takes nothing
+    and answers "no backend", as on a computer without one; file snapshots stay real (they live in the test's folder).
+    A test that truly needs the real system sets HELIOX_TEST_REAL_SYSTEM=1, honoured only where CI is set."""
+    if not system_guard.guarded():
+        yield
+        return
+    from pilot.agents import executor as executor_module
+    from pilot.system.snapshots import SnapshotManager
+
+    class GuardedSnapshotManager(SnapshotManager):
+        async def create_snapshot(self, action_id: str, description: str = "") -> str | None:
+            _system_snapshot_fakes.append(request.node.nodeid)
+            return None
+
+    monkeypatch.setattr(executor_module, "SnapshotManager", GuardedSnapshotManager)
+    before = len(system_guard.attempts())
+    yield
+    new = system_guard.attempts()[before:]
+    if new:
+        _system_refused[request.node.nodeid] = new
 
 
 @pytest.fixture(autouse=True)

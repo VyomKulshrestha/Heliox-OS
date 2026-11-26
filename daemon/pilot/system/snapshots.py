@@ -132,6 +132,9 @@ def rollback_request(snapshot_id: str, backend: str, taken_at: datetime | None) 
 
 async def _run(args: list[str], *, root: bool = False) -> tuple[int, str, str]:
     cmd = _as_root(args, root=root)
+    from pilot.system.system_guard import check_command
+
+    check_command(cmd, "snapshot")  # no restore point or snapshot is ever taken under the test suite
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,

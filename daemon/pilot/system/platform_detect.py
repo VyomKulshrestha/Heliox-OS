@@ -68,6 +68,9 @@ async def run_command(
     if root and CURRENT_PLATFORM == Platform.LINUX:
         args = ["pkexec"] + args
 
+    from pilot.system.system_guard import check_command
+
+    check_command(args)  # under the test suite, a command that changes the computer is refused here
     proc = None
     try:
         proc = await asyncio.create_subprocess_exec(

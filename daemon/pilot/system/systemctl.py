@@ -21,6 +21,9 @@ async def _run_systemctl(action: str, unit: str, *, user_scope: bool = False) ->
     if not user_scope and action in ("start", "stop", "restart", "enable", "disable"):
         args = ["pkexec"] + args
 
+    from pilot.system.system_guard import check_command
+
+    check_command(args, "service")  # never a real service change under the test suite
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
