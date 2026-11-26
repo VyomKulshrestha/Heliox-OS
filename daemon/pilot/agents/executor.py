@@ -1077,6 +1077,8 @@ class Executor:
                 ]
 
         batches = self._analyze_dependencies(plan.actions)
+        # Each step's next step: a typing step followed by Enter is worth reading back fully (desktop_observe).
+        self._next_actions = {id(action): following for action, following in zip(plan.actions, plan.actions[1:])}
         durable_action_indices = {id(action): index + action_index_offset for index, action in enumerate(plan.actions)}
         durable_task = (
             await self._durable_task_store.get(get_experience_context().task_id)
@@ -1585,7 +1587,7 @@ class Executor:
 
             # Desktop input read back right after it ran (focus, pointer, keys, clipboard) is kept for this action's
             # post-condition check, and a wrong window or pointer fails it here, before the next step runs.
-            with step(action):
+            with step(action, next_action=getattr(self, "_next_actions", {}).get(id(action))):
                 output = await handler(action)
             # Machine lines a browser handler added for its check never reach the reply, speech or a model.
             output, observation = split_machine_lines(action.action_type, output)
@@ -2528,19 +2530,19 @@ class Executor:
             said = await asyncio.to_thread(media_command, request)
             if said is not None:
                 return said
-        return await keyboard_press(p.key, p.presses)
+        return await keyboard_press(p.key, p.presses, target_window=p.window_title)
 
     async def _exec_keyboard_hotkey(self, action: Action) -> str:
         from pilot.system.input_control import keyboard_hotkey
 
         p: KeyboardParams = action.parameters  # type: ignore[assignment]
-        return await keyboard_hotkey(*p.keys)
+        return await keyboard_hotkey(*p.keys, target_window=p.window_title)
 
     async def _exec_keyboard_hold(self, action: Action) -> str:
         from pilot.system.input_control import keyboard_hold
 
         p: KeyboardParams = action.parameters  # type: ignore[assignment]
-        return await keyboard_hold(p.key, p.duration)
+        return await keyboard_hold(p.key, p.duration, target_window=p.window_title)
 
     # ======================================================================
     # TIER 1: SCREEN UNDERSTANDING / VISION

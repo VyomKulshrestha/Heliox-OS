@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pilot.actions import (
+    RECONCILE_NOT_RETRY_ACTIONS,
     Action,
     ActionPlan,
     ActionResult,
@@ -33,6 +34,7 @@ from pilot.system.platform_detect import Platform
 NOTEPAD = Foreground(("notepad.exe",), "notes.txt - Notepad", 42, 1001, "GetForegroundWindow")
 BROWSER = Foreground(("msedge.exe",), "Inbox - Mail", 77, 2002, "GetForegroundWindow")
 SECRET = "correct horse battery staple"
+REAL_FOCUSED_FIELD = observe.focused_field
 
 
 @pytest.fixture(autouse=True)
@@ -100,9 +102,7 @@ def raising(monkeypatch: pytest.MonkeyPatch, name: str, reason: str):
     monkeypatch.setattr(observe, name, MagicMock(side_effect=Unobservable(reason)))
 
 
-def test_every_desktop_action_is_registered_and_open_url_is_unobservable() -> None:
-    from pilot.agents.postconditions._unobservable import UNOBSERVABLE_POSTCONDITION
-
+def test_every_desktop_action_is_registered() -> None:
     assert POSTCONDITION_VERIFIERS[ActionType.WINDOW_FOCUS] == "focused_window_postcondition"
     assert POSTCONDITION_VERIFIERS[ActionType.KEYBOARD_TYPE] == "conditional_typed_text_postcondition"
     for action in (ActionType.KEYBOARD_PRESS, ActionType.KEYBOARD_HOTKEY, ActionType.KEYBOARD_HOLD):
@@ -118,8 +118,15 @@ def test_every_desktop_action_is_registered_and_open_url_is_unobservable() -> No
     assert POSTCONDITION_VERIFIERS[ActionType.MOUSE_MOVE] == "pointer_position_postcondition"
     assert POSTCONDITION_VERIFIERS[ActionType.WINDOW_MINIMIZE] == "window_state_postcondition"
     assert POSTCONDITION_VERIFIERS[ActionType.OPEN_APPLICATION] == "conditional_application_window_postcondition"
-    assert ActionType.OPEN_URL in UNOBSERVABLE_POSTCONDITION and ActionType.OPEN_URL not in POSTCONDITION_VERIFIERS
-    assert not set(UNOBSERVABLE_POSTCONDITION) & set(POSTCONDITION_VERIFIERS)
+    assert ActionType.OPEN_URL not in POSTCONDITION_VERIFIERS
+
+
+def test_open_url_is_listed_as_unobservable_once_the_list_exists() -> None:
+    """The list (postconditions/_unobservable.py) comes with the vsys series; the integrator adds open_url to it."""
+    unobservable = pytest.importorskip("pilot.agents.postconditions._unobservable")
+    if ActionType.OPEN_URL not in unobservable.UNOBSERVABLE_POSTCONDITION:
+        pytest.skip("open_url's entry is added when the vsys and vdesk series are stacked")
+    assert not set(unobservable.UNOBSERVABLE_POSTCONDITION) & set(POSTCONDITION_VERIFIERS)
 
 
 @pytest.mark.parametrize(
@@ -323,13 +330,18 @@ async def test_typed_text_found_in_the_focused_field_is_verified_and_never_repea
 
 
 async def test_the_window_changing_while_typing_stops_the_plan(monkeypatch, pag, clipboard_module) -> None:
-    with pytest.raises(DesktopStepMismatch, match="window in front changed while typing 28 characters"):
+    sentence = "The text may have been typed into msedge instead of notepad."
+    with pytest.raises(DesktopStepMismatch, match=re.escape(sentence)):
         await _type(monkeypatch, SECRET, _field(SECRET), NOTEPAD, BROWSER)
 
     action = next(iter(observe._RECORDS.values())).action
     verification = await verify(action)
     assert not verification.passed and "MISMATCH" in label(verification)
-    assert SECRET not in verification.reasons[0]
+    assert SECRET not in verification.reasons[0] and "Inbox - Mail" not in verification.reasons[0]
+    # The run stops here instead of typing again: the failed step's own record says where the keys may have gone.
+    failed = ActionResult(action=action, success=False, error=sentence)
+    assert observe.input_went_elsewhere([failed]) == sentence
+    assert ActionType.KEYBOARD_TYPE in RECONCILE_NOT_RETRY_ACTIONS
 
 
 async def test_a_window_change_after_enter_is_expected(monkeypatch, pag, clipboard_module) -> None:
@@ -385,6 +397,144 @@ async def test_typing_without_a_reading_is_reported(monkeypatch: pytest.MonkeyPa
     action = Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text=SECRET))
     verification = await verify(action)
     assert "REPORTED" in label(verification) and "28 typed characters" in verification.reasons[0]
+
+
+async def test_a_named_window_not_in_front_gets_no_key(monkeypatch, pag, clipboard_module) -> None:
+    monkeypatch.setattr(window_mgr, "window_set_text", AsyncMock(side_effect=RuntimeError("no UI Automation editor")))
+    monkeypatch.setattr(window_mgr, "window_focus", AsyncMock(return_value="Focused window: Notepad"))
+    reads(monkeypatch, "read_foreground_now", BROWSER)
+    action = Action(
+        action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text=SECRET, window_title="Notepad")
+    )
+
+    with (
+        observe.step(action),
+        pytest.raises(DesktopStepMismatch, match="No key was sent: msedge is in front, not Notepad"),
+    ):
+        await input_control.keyboard_type(SECRET, target_window="Notepad")
+
+    pag.hotkey.assert_not_called()
+    pag.typewrite.assert_not_called()
+    clipboard_module.copy.assert_not_called()
+    # Nothing was typed, so the step may be tried again (after focusing): it is not a "went elsewhere" stop.
+    assert observe.input_went_elsewhere([ActionResult(action=action, success=False, error="x")]) is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "params", "run"),
+    [
+        (
+            ActionType.KEYBOARD_PRESS,
+            {"key": "enter"},
+            lambda: input_control.keyboard_press("enter", target_window="Notepad"),
+        ),
+        (
+            ActionType.KEYBOARD_HOTKEY,
+            {"keys": ["ctrl", "s"]},
+            lambda: input_control.keyboard_hotkey("ctrl", "s", target_window="Notepad"),
+        ),
+        (
+            ActionType.KEYBOARD_HOLD,
+            {"key": "shift"},
+            lambda: input_control.keyboard_hold("shift", 0, target_window="Notepad"),
+        ),
+    ],
+)
+async def test_keys_for_a_named_window_are_refused_when_another_is_in_front(
+    monkeypatch, pag, kind, params, run
+) -> None:
+    reads(monkeypatch, "read_foreground_now", BROWSER)
+    action = Action(action_type=kind, parameters=KeyboardParams(window_title="Notepad", **params))
+
+    with observe.step(action), pytest.raises(DesktopStepMismatch, match="No key was sent"):
+        await run()
+
+    pag.press.assert_not_called()
+    pag.hotkey.assert_not_called()
+    pag.hold.assert_not_called()
+
+
+async def test_keys_for_a_named_window_in_front_go(monkeypatch, pag) -> None:
+    reads(monkeypatch, "read_foreground_now", NOTEPAD)
+    reads(monkeypatch, "read_keys_down_now", (set(), []))
+    action = Action(
+        action_type=ActionType.KEYBOARD_PRESS, parameters=KeyboardParams(key="enter", window_title="Notepad")
+    )
+    with observe.step(action):
+        await input_control.keyboard_press("enter", target_window="Notepad")
+    pag.press.assert_called_once_with("enter", presses=1)
+
+
+def test_a_focus_mismatch_stays_retryable(monkeypatch: pytest.MonkeyPatch) -> None:
+    action = Action(action_type=ActionType.WINDOW_FOCUS, parameters=WindowParams(title="Notepad"))
+    observe.remember(observe.StepRecord(action, "mismatch", "Expected Notepad in front", {"elsewhere": False}))
+    assert ActionType.WINDOW_FOCUS not in RECONCILE_NOT_RETRY_ACTIONS
+    assert observe.input_went_elsewhere([ActionResult(action=action, success=False, error="x")]) is None
+
+
+# ── reading the focused field cheaply on Windows ──
+
+
+def test_only_enter_counts_as_submitting() -> None:
+    assert observe.submits(Action(action_type=ActionType.KEYBOARD_PRESS, parameters=KeyboardParams(key="Enter")))
+    assert observe.submits(
+        Action(action_type=ActionType.KEYBOARD_HOTKEY, parameters=KeyboardParams(keys=["ctrl", "enter"]))
+    )
+    assert not observe.submits(Action(action_type=ActionType.KEYBOARD_PRESS, parameters=KeyboardParams(key="tab")))
+    assert not observe.submits(Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=1, y=1)))
+    assert not observe.submits(None)
+
+
+@pytest.fixture
+def windows_field(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(observe, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(observe, "focused_field", REAL_FOCUSED_FIELD)
+    once = AsyncMock(return_value=FieldReading(True, False, "typed", "UI Automation"))
+    monkeypatch.setattr(observe, "_win_field_once", once)
+    monkeypatch.setattr(observe, "_FIELD_READER", None)
+    return once
+
+
+async def test_lives_running_helper_is_reused_for_the_field(windows_field) -> None:
+    from pilot.live.focused_text_policy import FocusedText
+
+    reader = types.SimpleNamespace(
+        _proc=types.SimpleNamespace(returncode=None),
+        read=AsyncMock(return_value=FocusedText("hello", "Edit", 42, False, True, "field", "42.1")),
+    )
+    observe.set_field_reader(reader)
+
+    reading = await observe.focused_field(NOTEPAD)
+
+    assert reading.text == "hello" and reading.editable
+    windows_field.assert_not_awaited()
+
+
+async def test_without_a_running_helper_the_field_is_not_read_unless_enter_follows(windows_field) -> None:
+    observe.set_field_reader(types.SimpleNamespace(_proc=None, read=AsyncMock(side_effect=AssertionError("stopped"))))
+    with pytest.raises(Unobservable, match="the window was right; the field's content was not read"):
+        await observe.focused_field(NOTEPAD)
+    windows_field.assert_not_awaited()
+
+    typing = Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text="typed"))
+    enter = Action(action_type=ActionType.KEYBOARD_PRESS, parameters=KeyboardParams(key="enter"))
+    with observe.step(typing, next_action=enter):
+        reading = await observe.focused_field(NOTEPAD)
+    assert reading.text == "typed"
+    windows_field.assert_awaited_once()
+
+
+async def test_typing_without_the_field_read_is_reported_with_the_window_right(
+    monkeypatch, pag, clipboard_module, windows_field
+) -> None:
+    reads(monkeypatch, "read_foreground_now", NOTEPAD)
+    action = Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text=SECRET))
+    with observe.step(action):
+        await input_control.keyboard_type(SECRET)
+
+    verification = await verify(action)
+    assert verification.passed and verification.independently_observed_actions == []
+    assert "the window was right; the field's content was not read" in verification.reasons[0]
 
 
 # ── keyboard_press, keyboard_hotkey, keyboard_hold ──

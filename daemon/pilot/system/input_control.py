@@ -254,9 +254,10 @@ async def keyboard_type(
 
     before = None
     if observed:
-        from pilot.system.desktop_observe import typing_started
+        from pilot.system.desktop_observe import refuse_unless_in_front, typing_started
 
-        before = await typing_started()
+        # A named window that is not in front gets no key at all.
+        before = await refuse_unless_in_front(target_window) if target_window else await typing_started()
     typed = await _type_into_focus(pag, text, interval)
     if observed:
         from pilot.system.desktop_observe import confirm_typing
@@ -296,12 +297,21 @@ async def _type_into_focus(pag, text: str, interval: float) -> str:
     return f"Typed: {preview}"
 
 
-async def keyboard_press(key: str, presses: int = 1) -> str:
-    """Press a single key (enter, tab, escape, f1, etc.)."""
+async def keyboard_press(key: str, presses: int = 1, *, target_window: str | None = None) -> str:
+    """Press a single key (enter, tab, escape, f1, etc.). With ``target_window``, no key is sent when another
+    window is in front."""
     pag = _ensure_pyautogui()
+    await _refuse_unless_in_front(pag, target_window)
     await asyncio.to_thread(lambda: pag.press(key, presses=presses))
     await _keys_released(pag, [key])
     return f"Pressed '{key}' x{presses}"
+
+
+async def _refuse_unless_in_front(pag: object, target_window: str | None) -> None:
+    if target_window and _real_input(pag):
+        from pilot.system.desktop_observe import refuse_unless_in_front
+
+        await refuse_unless_in_front(target_window)
 
 
 async def _keys_released(pag: object, keys: list[str]) -> None:
@@ -313,21 +323,25 @@ async def _keys_released(pag: object, keys: list[str]) -> None:
         await confirm_keys_released(keys)
 
 
-async def keyboard_hotkey(*keys: str) -> str:
-    """Press a keyboard shortcut (e.g., ctrl+c, alt+tab, win+d).
+async def keyboard_hotkey(*keys: str, target_window: str | None = None) -> str:
+    """Press a keyboard shortcut (e.g., ctrl+c, alt+tab, win+d). With ``target_window``, no key is sent when another
+    window is in front.
 
     Examples: ('ctrl', 'c'), ('alt', 'tab'), ('win', 'd'), ('ctrl', 'shift', 'esc')
     """
     pag = _ensure_pyautogui()
+    await _refuse_unless_in_front(pag, target_window)
     await asyncio.to_thread(lambda: pag.hotkey(*keys))
     await _keys_released(pag, list(keys))
     return f"Pressed hotkey: {'+'.join(keys)}"
 
 
-async def keyboard_hold(key: str, duration: float = 0.5) -> str:
+async def keyboard_hold(key: str, duration: float = 0.5, *, target_window: str | None = None) -> str:
     """Hold a key down for a duration. The key goes through the same pyautogui as every other key (it was imported
-    a second time here, so a stand-in for pyautogui still held a real key)."""
+    a second time here, so a stand-in for pyautogui still held a real key). With ``target_window``, no key is sent
+    when another window is in front."""
     pag = _ensure_pyautogui()
+    await _refuse_unless_in_front(pag, target_window)
 
     def _do():
         with pag.hold(key):

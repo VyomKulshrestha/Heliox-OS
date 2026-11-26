@@ -450,9 +450,20 @@ IRREVERSIBLE_ACTIONS = {
 # Actions whose post-condition MISMATCH is settled by the person, never by running the action again: the action
 # succeeded and left something others can see (an event on a shared calendar), so a retry would add a second one
 # beside the wrong one. Unlike IRREVERSIBLE_ACTIONS this adds no approval prompt; it only stops the retry.
+# Desktop input that may have gone to another window than the one meant (keys typed or pressed, a click or a drag)
+# is in the same set: repeating it blindly could put the text there again or do the click's harm twice, so the run
+# stops and says which window was in front instead (pilot.system.desktop_observe.input_went_elsewhere).
 RECONCILE_NOT_RETRY_ACTIONS = frozenset(
     {
         ActionType.CALENDAR_CREATE_EVENT,
+        ActionType.KEYBOARD_TYPE,
+        ActionType.KEYBOARD_PRESS,
+        ActionType.KEYBOARD_HOTKEY,
+        ActionType.KEYBOARD_HOLD,
+        ActionType.MOUSE_CLICK,
+        ActionType.MOUSE_DOUBLE_CLICK,
+        ActionType.MOUSE_RIGHT_CLICK,
+        ActionType.MOUSE_DRAG,
     }
 )
 

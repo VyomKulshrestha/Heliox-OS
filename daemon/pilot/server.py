@@ -1741,6 +1741,10 @@ class PilotServer:
         from pilot.live.focused_text_policy import set_excluded_apps
 
         self._live_reader = create_reader()
+        # Typing steps read the focused field back through Live's UI Automation helper while it runs (Windows).
+        from pilot.system.desktop_observe import set_field_reader
+
+        set_field_reader(self._live_reader)
         # The readers ask an app to share its page (Electron on macOS, Chromium on Linux) only where Live may read;
         # they read the person's excluded apps from the live settings each time.
         set_excluded_apps(lambda: self.config.timeline.excluded_apps)
@@ -5333,6 +5337,13 @@ class PilotServer:
                 await emit.phase_error(
                     "verification", VERIFICATION_FAILED, "; ".join(verification.details[:3]), parent_id=verify_phase
                 )
+
+            from pilot.system.desktop_observe import input_went_elsewhere
+
+            if input_went_elsewhere(results):
+                # Keys, a click or a drag may have gone to another window: doing them again could do it twice.
+                logger.warning("Desktop input may have gone to another window; stopping instead of retrying")
+                break
 
             if _is_terminal_execution_failure(results):
                 logger.info("Terminal execution failure; returning the exact error without LLM retry")

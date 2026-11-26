@@ -16,18 +16,27 @@ keys held down      GetAsyncKeyState                       Quartz modifier flags
                                                            pyautogui's key table)                     query_keymap; Wayland: no
 clipboard text      Win32 GetClipboardData (own call,      pbpaste (a new process)                    X11: xclip or xsel; Wayland:
                     not pyperclip or Set-Clipboard)                                                   not observable
-focused field       UI Automation (one PowerShell          the Accessibility API, without waking      AT-SPI
-                    process, Live's rules)                 any app
+focused field       UI Automation through Live's running   the Accessibility API, without waking      AT-SPI
+                    helper (a new one only before Enter)   any app
 window state        IsIconic / IsZoomed                    AXMinimized, AXPosition/AXSize             X11: xprop _NET_WM_STATE
 window list         EnumWindows                            Quartz CGWindowListCopyWindowInfo          X11: wmctrl -lp
 ==================  =====================================  =========================================  ===========================
+
+Why the reading is made inside the step and kept, and must stay that way: a reading taken at verify time cannot tell
+"never focused" from "focused, then moved on". What makes a check independent is that the reading comes from a
+different call than the one that acted, taken at the moment it is true; that is what is kept here. Reading the same
+state again after the whole plan, when later steps or the person have changed it, is not a better check but a
+worse one.
 
 Desktop state is fleeting: the plan's next step, or the person, moves the focus and the pointer again within a
 second, and the verifier runs after the whole plan. So the checks that matter for the next keystroke run right after
 the step that changed the state, while the executor is still inside that step (``step`` marks it), and are kept
 here for the verifier (``recalled``). A wrong window, a pointer that is not where the click was sent, or a clipboard
 that does not hold what was copied fails that step at once, so the executor skips the steps after it: no more keys go
-to a window the plan did not mean. A read that cannot be made never fails a step.
+to a window the plan did not mean. A read that cannot be made never fails a step. Where keys, a click or a drag may
+already have gone to another window, the step's record says so (``input_went_elsewhere``) and the run stops instead
+of retrying (``RECONCILE_NOT_RETRY_ACTIONS``); where the action names its window and another one is in front before
+the first key, no key is sent at all (``refuse_unless_in_front``).
 
 Typed text and clipboard text are compared in memory and dropped; only lengths, hashes and yes/no answers are kept,
 logged or put in a message. A password field is never read.
@@ -110,6 +119,13 @@ class Foreground:
             return name
         return "no window" if self.window_id == 0 else "an unnamed window"
 
+    def app(self) -> str:
+        """The application, by name only: window titles can show what the person is writing."""
+        name = next((n for n in self.names if n), "")
+        if name:
+            return name.removesuffix(".exe").removesuffix(".EXE")
+        return "no window" if self.window_id == 0 else "an unnamed window"
+
     def same_window(self, other: Foreground) -> bool:
         if self.window_id is not None and other.window_id is not None:
             return self.window_id == other.window_id
@@ -149,18 +165,40 @@ class StepRecord:
 # ── the step the executor is running, and what was read after it ──
 
 _CURRENT_STEP: contextvars.ContextVar[Any] = contextvars.ContextVar("heliox_desktop_step", default=None)
+# True when the plan's next step submits what this one typed (Enter): only then is the slow field read worth it.
+_BEFORE_SUBMIT: contextvars.ContextVar[bool] = contextvars.ContextVar("heliox_desktop_before_submit", default=False)
 _RECORDS: OrderedDict[int, StepRecord] = OrderedDict()
 _MAX_RECORDS = 128
 
 
 @contextlib.contextmanager
-def step(action: Any) -> Iterator[None]:
-    """Mark ``action`` as the step being run, so the real input functions read the result right after it."""
+def step(action: Any, *, next_action: Any = None) -> Iterator[None]:
+    """Mark ``action`` as the step being run, so the real input functions read the result right after it.
+    ``next_action`` is the plan's next step, when the executor knows it."""
     token = _CURRENT_STEP.set(action)
+    submit = _BEFORE_SUBMIT.set(submits(next_action))
     try:
         yield
     finally:
+        _BEFORE_SUBMIT.reset(submit)
         _CURRENT_STEP.reset(token)
+
+
+SUBMIT_KEYS = frozenset({"enter", "return"})
+
+
+def submits(action: Any) -> bool:
+    """Whether a step presses Enter (alone or in a shortcut such as ctrl+enter): it sends what was typed before it.
+    A click is not counted: what a click does cannot be told from the plan. Pure."""
+    if action is None:
+        return False
+    kind = getattr(getattr(action, "action_type", None), "value", "")
+    params = getattr(action, "parameters", None)
+    if kind == "keyboard_press":
+        return str(getattr(params, "key", "")).casefold() in SUBMIT_KEYS
+    if kind == "keyboard_hotkey":
+        return any(str(key).casefold() in SUBMIT_KEYS for key in getattr(params, "keys", []) or [])
+    return False
 
 
 def current_step() -> Any:
@@ -847,7 +885,41 @@ def clipboard_holds(found: str, expected: str) -> str | None:
 # ── the focused field ──
 
 
+_FIELD_READER: Any = None
+
+FIELD_NOT_READ = (
+    "the window was right; the field's content was not read (no UI Automation reader was running, and starting one "
+    "takes about a second, spent only when the next step presses Enter)"
+)
+
+
+def set_field_reader(reader: Any) -> None:
+    """Live's focused-text reader, when the daemon has one; its UI Automation helper is reused while it runs."""
+    global _FIELD_READER
+    _FIELD_READER = reader
+
+
+def _running_helper(reader: Any) -> bool:
+    process = getattr(reader, "_proc", None)
+    return process is not None and getattr(process, "returncode", 0) is None
+
+
 async def _win_field() -> FieldReading:
+    """The focused field on Windows, cheaply: Live's UI Automation helper when it is already running (a read costs
+    milliseconds); else a new helper only when the next step presses Enter, since starting one takes about a
+    second; else not read."""
+    reader = _FIELD_READER
+    if reader is not None and _running_helper(reader):
+        found = await reader.read()
+        if found is None:
+            raise Unobservable("UI Automation did not describe the focused element")
+        return FieldReading(found.editable, found.password, found.text if found.editable else None, "UI Automation")
+    if not _BEFORE_SUBMIT.get():
+        raise Unobservable(FIELD_NOT_READ)
+    return await _win_field_once()
+
+
+async def _win_field_once() -> FieldReading:
     """One run of Live's UI Automation helper: the same rules (writable fields and terminals only, never a password
     field), started for this read and closed after it."""
     import base64
@@ -1094,6 +1166,52 @@ def _record(outcome: str, detail: str, **facts: Any) -> StepRecord | None:
     return record
 
 
+def _stop(detail: str, sentence: str, **facts: Any) -> None:
+    """Record the mismatch and fail the step with one plain sentence for the person. When the step is one whose input
+    may now sit in another window (keys, a click, a drag), the record says so and the run stops instead of
+    retrying."""
+    from pilot.actions import RECONCILE_NOT_RETRY_ACTIONS
+
+    action = current_step()
+    elsewhere = getattr(action, "action_type", None) in RECONCILE_NOT_RETRY_ACTIONS
+    _record("mismatch", detail, elsewhere=elsewhere, **facts)
+    raise DesktopStepMismatch(sentence)
+
+
+def input_went_elsewhere(results: list[Any]) -> str | None:
+    """The sentence of the first failed step whose keys, click or drag may have gone to another window than the one
+    meant, read from its own record; None when there is none. Such a step is not retried: the run stops and the
+    person is told what was in front instead."""
+    from pilot.actions import RECONCILE_NOT_RETRY_ACTIONS
+
+    for result in results:
+        if result.success or result.action.action_type not in RECONCILE_NOT_RETRY_ACTIONS:
+            continue
+        record = recalled(result.action)
+        if record is not None and record.outcome == "mismatch" and record.facts.get("elsewhere"):
+            return str(result.error or record.detail)
+    return None
+
+
+async def refuse_unless_in_front(target_window: str) -> Foreground | None:
+    """Before the first key of a step that names its window: when another window is read in front, no key is sent
+    and the step fails with that reason. Returns the reading (None when it cannot be made: then the keys go)."""
+    if current_step() is None or not target_window:
+        return None
+    try:
+        found = await foreground()
+        pids = await _safe_title_pids(target_window)
+    except Exception:
+        return None
+    by_title = focus_matches(found, title=target_window, title_pids=pids)
+    by_name = focus_matches(found, process_name=target_window)
+    if by_title is False and by_name is False:
+        detail = f"Before any key: expected {target_window} in front; {found.describe()} is in front ({found.source})"
+        _record("mismatch", detail, elsewhere=False, refused=True)
+        raise DesktopStepMismatch(f"No key was sent: {found.app()} is in front, not {target_window}.")
+    return found
+
+
 async def _settle_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
@@ -1136,7 +1254,7 @@ async def confirm_focus(*, window_id: str | None, title: str | None, process_nam
     detail = f"Expected {wanted} in front; {found.describe()} is in front ({found.source})"
     _record("mismatch", detail, source=found.source)
     raise DesktopStepMismatch(
-        f"The focus did not move to {wanted}: {found.describe()} is in front. The steps after this one were not run, "
+        f"The focus did not move to {wanted}: {found.app()} is in front. The steps after this one were not run, "
         "so no keys went to the wrong window."
     )
 
@@ -1181,13 +1299,13 @@ async def confirm_typing(text: str, before: Foreground | None, *, target_window:
         expected = target_window
     elif before is not None:
         window_ok = before.same_window(after)
-        expected = before.describe()
+        expected = before.app()
     if not window_ok and not ends_with_enter:
-        detail = f"The window in front changed while typing {len(text)} characters: expected {expected}, found {after.describe()}"
-        _record("mismatch", detail, typed_length=len(text))
-        raise DesktopStepMismatch(
-            f"{detail}. Some keys may have gone to that window; the steps after this one were not run."
+        detail = (
+            f"The window in front changed while typing {len(text)} characters: expected {expected}, found {after.app()}"
         )
+        meant = target_window or (before.app() if before is not None else expected)
+        _stop(detail, f"The text may have been typed into {after.app()} instead of {meant}.", typed_length=len(text))
     if not window_ok:
         _record(
             "partial",
@@ -1238,8 +1356,12 @@ def _record_field(after: Foreground, reading: FieldReading, text: str) -> None:
         )
     elif facts["field_length"] == 0 and text.strip() and "\n" not in text and "\t" not in text:
         detail = f"The focused field in {where} is empty after typing {len(text)} characters ({reading.source})"
-        _record("mismatch", detail, **facts)
-        raise DesktopStepMismatch(f"{detail}; the keys did not land there, so the steps after this one were not run.")
+        _stop(
+            detail,
+            f"The text may have been typed somewhere else in {after.app()}: the field in front is empty after typing "
+            f"{len(text)} characters.",
+            **facts,
+        )
     else:
         _record(
             "partial",
@@ -1300,12 +1422,13 @@ async def confirm_pointer(target: tuple[int, int], *, released: tuple[str, ...] 
     facts = {"target": list(target), "found": list(found), "held": sorted(held)}
     if not pointer_at(found, target):
         detail = f"The pointer is at {found}, not at {target} where it was sent"
-        _record("mismatch", detail, **facts)
-        raise DesktopStepMismatch(f"{detail}; the steps after this one were not run.")
+        _stop(
+            detail, f"The click may have landed somewhere else: the pointer was at {found}, not at {target}.", **facts
+        )
     if held:
-        detail = f"The {', '.join(sorted(held))} mouse button is still held down after the step"
-        _record("mismatch", detail, **facts)
-        raise DesktopStepMismatch(f"{detail}; the steps after this one were not run.")
+        buttons = ", ".join(sorted(held))
+        detail = f"The {buttons} mouse button is still held down after the step"
+        _stop(detail, f"{detail}, so whatever the pointer touches next could be dragged.", **facts)
     _record("match", f"The pointer is at {found}" + (", buttons released" if released else ""), **facts)
 
 
@@ -1325,10 +1448,7 @@ async def confirm_keys_released(keys: list[str]) -> None:
     facts = {"keys": list(keys), "held": sorted(held), "unknown": list(unknown)}
     if held:
         detail = f"{'+'.join(sorted(held))} is still held down after the step"
-        _record("mismatch", detail, **facts)
-        raise DesktopStepMismatch(
-            f"{detail}; every key after it would change, so the steps after this one were not run."
-        )
+        _stop(detail, f"{detail}, so every key after it would change.", **facts)
     if unknown and len(unknown) == len(keys):
         _record("unobservable", f"the state of {'+'.join(unknown)} cannot be read here", **facts)
         return
