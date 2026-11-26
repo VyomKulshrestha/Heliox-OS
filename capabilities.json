@@ -19,12 +19,78 @@
   "sources": {
     "action_registry": {
       "path": "daemon/pilot/actions.py",
-      "sha256": "594672877b54e965238e295b0a21628d64afb6c1c2b359f5bf4c063c890ea686"
+      "sha256": "054a8f6bd236ceeb82de7dbfcec88a2ed437fd1c4b7698e2cdf229e11bdb3e10"
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
-      "sha256": "0bb49152c0607df10c095cc19b8a290e0a3ee8dc51678e5e1dd0a223901881d7"
+      "sha256": "c38214640b9183bd6256f73773656a0e11c0c720c2788b04ca837fbc06b0c122"
     },
+    "postcondition_area_modules": [
+      {
+        "path": "daemon/pilot/agents/postconditions/__init__.py",
+        "sha256": "efa23947df6957ee87dc5c0ebd6efb34640fec73fc12cfeffd44324c5f486020"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/_read_only.py",
+        "sha256": "1585a36dd9dad6cacd30b50da3c370bc5fec1d01a7d3c167f55c3e28a8097831"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/_run_deletions.py",
+        "sha256": "ed960931bcdc9767b583047e23c5a2ece64fdf9c2d11710c8bfa39e9dd6cbefb"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/_unobservable.py",
+        "sha256": "7b9fdc8f0b13613bece4c1d59d1c3b3b4c17a082b78051a682917c82e5dc69a4"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/browser.py",
+        "sha256": "3aeeef769b2d0c986e2e66daa0ad2599db3def9b2f1864eda490fc6f53ff881c"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/browser_ui.py",
+        "sha256": "cf9f33caace87b77e6d7f73cdc9e208acb1cdc22f4a84e3b51436adf58a1a883"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/declared.py",
+        "sha256": "ac65e8e16535cbfbd1b6d64844860df2735fd07b0c2d192ba6c109b481c45bbf"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/desktop_input.py",
+        "sha256": "786f3c588a6935eecc3135b62b852580d710ccd062f4aabdb34b4e922d9004f8"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/files.py",
+        "sha256": "db14b81b9bbe59fd3988e1f56a9b70cf52f6c4f3adcb28887a8ba8cc270ae137"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/git_repo.py",
+        "sha256": "ccf3111c8d85ec5fc496841d34f7475cb11ceff64b30ab5f9a8d8b025bcb7ac9"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/local_state.py",
+        "sha256": "3f7c2127beb8da05c1f2697def4d420db1f7f2a6422efef95fa61359082626d7"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/mail_calendar.py",
+        "sha256": "c755e86becae17218222d98372e71ed571dd160f3d2f8b1823730303d5f62c17"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/messaging.py",
+        "sha256": "fd5aa5e2343ea8fa0a8f428a51d7a39e83257a7b1ec067db3aff1b49a2c0ce7f"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/reads.py",
+        "sha256": "3bd212a6744c0abaa3e018aecb33a7fafbb1c3114d8e6a35d9091db2eb651c95"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/system_state.py",
+        "sha256": "1dd223c4526b8f392da105da93133774e087b4eaa2ca61fe27e48ba5cedfd1c8"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/triggers_schedules.py",
+        "sha256": "75b210ab883ee563db3d22219910fe53a774ed11b906df7fcf473318910f76a8"
+      }
+    ],
     "plugin_manifests": [
       {
         "path": "daemon/pilot/plugins/developer/manifest.json",
@@ -90,7 +156,10 @@
       "system_modify": 36,
       "user_write": 58
     },
-    "independent_postcondition_verifiers": 22,
+    "independent_postcondition_verifiers": 85,
+    "declared_postcondition_verifiers": 15,
+    "read_only_actions": 56,
+    "effect_actions": 106,
     "plugins": 6,
     "mesh": {
       "specialists": 21,
@@ -157,9 +226,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "file_read_content_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -197,6 +267,7 @@
       ],
       "verification": {
         "method": "file_content_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -236,6 +307,7 @@
       ],
       "verification": {
         "method": "file_absence_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -275,6 +347,7 @@
       ],
       "verification": {
         "method": "move_source_and_destination_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -314,6 +387,7 @@
       ],
       "verification": {
         "method": "copy_destination_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -352,9 +426,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists a folder; a second reading would ask the same source, and a cut is said in the output.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -391,9 +467,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Searches file names in a folder; a second reading would ask the same source, and a cut is said in the output.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -430,9 +508,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Summarises a folder; a second reading would ask the same source, and what its limits leave out is said.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -463,9 +543,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Measures a folder; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -496,9 +578,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "file_hash_second_reading_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -529,9 +612,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Compares two files by hash; the comparison is the result.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -568,9 +653,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_file_mode_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -601,9 +687,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conflict_block_replaced_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -634,9 +721,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads the working tree through git; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -667,9 +756,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads a diff through git; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -700,9 +791,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads history through git; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -733,9 +826,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "current_branch_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -766,9 +860,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "index_matches_worktree_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -799,9 +894,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "commit_content_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -832,9 +928,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "remote_ref_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -872,6 +969,7 @@
       ],
       "verification": {
         "method": "package_installed_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -911,6 +1009,7 @@
       ],
       "verification": {
         "method": "package_removed_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -923,7 +1022,7 @@
         "name": "system_modify",
         "approval_required": true,
         "snapshot_required": false,
-        "irreversible": false
+        "irreversible": true
       },
       "platform_support": {
         "platforms": [
@@ -949,9 +1048,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "packages_current_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -988,9 +1088,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Searches the package index; a second reading would ask the same source, and a cut is said in the output.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -1028,6 +1130,7 @@
       ],
       "verification": {
         "method": "service_active_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -1067,6 +1170,7 @@
       ],
       "verification": {
         "method": "service_inactive_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -1106,6 +1210,7 @@
       ],
       "verification": {
         "method": "service_active_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -1144,9 +1249,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "service_enabled_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -1183,9 +1289,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "service_disabled_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -1222,9 +1329,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads a unit's state from systemd; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -1259,9 +1368,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads a GNOME setting; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -1297,6 +1408,7 @@
       ],
       "verification": {
         "method": "setting_value_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -1333,9 +1445,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -1372,9 +1485,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -1411,9 +1525,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -1444,9 +1559,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -1483,9 +1599,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "unobservable_at_run_time",
+        "postcondition": "none",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "The page opens in the person's default browser, which is not Heliox's: no program can ask it which pages it shows. A launcher that fails (ShellExecute, open, xdg-open) fails the action; beyond that nothing can be read.",
+        "note": "No check is possible when it would run; the result says the change was requested, not done."
       }
     },
     {
@@ -1522,9 +1640,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_application_window_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -1568,6 +1687,7 @@
       ],
       "verification": {
         "method": "executor_result_only",
+        "postcondition": "none",
         "independent_postcondition": false,
         "note": "No independent post-condition check is currently registered."
       }
@@ -1601,6 +1721,7 @@
       ],
       "verification": {
         "method": "executor_result_only",
+        "postcondition": "none",
         "independent_postcondition": false,
         "note": "No independent post-condition check is currently registered."
       }
@@ -1633,9 +1754,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists running processes; the value moves between two readings, and a cut is said in the output.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -1667,6 +1790,7 @@
       ],
       "verification": {
         "method": "process_absence_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -1699,9 +1823,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads one process's details; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -1738,9 +1864,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads the clipboard; there is no second source, and anyone can copy over it at any moment.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -1777,9 +1905,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "clipboard_text_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -1810,9 +1939,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads system details; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -1843,9 +1974,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads system health; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -1882,9 +2015,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads free disk space; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -1921,9 +2056,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads memory use; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -1960,9 +2097,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads CPU load; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -2005,9 +2144,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads network state; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -2044,9 +2185,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads battery state; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -2078,6 +2221,7 @@
       ],
       "verification": {
         "method": "shutdown_transition_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -2111,6 +2255,7 @@
       ],
       "verification": {
         "method": "restart_transition_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -2143,9 +2288,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "unobservable_at_run_time",
+        "postcondition": "none",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "A sleeping computer runs nothing, so it cannot look at its own sleep: on Linux and macOS the command returns before the computer sleeps, on Windows after it wakes. The result says sleep was requested.",
+        "note": "No check is possible when it would run; the result says the change was requested, not done."
       }
     },
     {
@@ -2176,9 +2323,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "session_locked_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -2210,6 +2358,7 @@
       ],
       "verification": {
         "method": "logout_transition_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -2248,9 +2397,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "schedule_definition_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -2287,9 +2437,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists scheduled tasks from the system scheduler; a second reading would ask the same source, and a cut is said in the output.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -2327,6 +2479,7 @@
       ],
       "verification": {
         "method": "schedule_absence_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -2359,9 +2512,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads an environment variable; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -2392,9 +2547,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_environment_value_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -2425,9 +2581,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists environment variables; a second reading would ask the same source, and a cut is said in the output.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -2464,9 +2622,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists open windows; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -2503,9 +2663,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "focused_window_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -2543,6 +2704,7 @@
       ],
       "verification": {
         "method": "window_absence_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -2581,9 +2743,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "window_state_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -2620,9 +2783,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "window_state_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -2659,9 +2823,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads the volume; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -2698,9 +2864,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_volume_level_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -2737,9 +2904,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_mute_state_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -2776,9 +2944,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads the brightness; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -2815,9 +2985,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_brightness_level_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -2854,9 +3025,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "image_file_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -2893,9 +3065,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists Wi-Fi networks; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -2932,9 +3106,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "wifi_network_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -2971,9 +3146,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "wifi_disconnected_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -3004,9 +3180,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists disks from the operating system; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3037,9 +3215,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "mount_presence_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -3071,6 +3250,7 @@
       ],
       "verification": {
         "method": "mount_absence_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -3103,9 +3283,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists user accounts; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3136,9 +3318,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads the current user's details; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3182,6 +3366,7 @@
       ],
       "verification": {
         "method": "download_file_exists_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks an observed post-condition."
       }
@@ -3212,9 +3397,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads a registry value; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3243,9 +3430,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "registry_value_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -3276,9 +3464,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads and summarises a log; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3315,9 +3505,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_pointer_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -3354,9 +3545,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_pointer_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -3393,9 +3585,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_pointer_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -3432,9 +3625,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "pointer_position_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -3471,9 +3665,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_pointer_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -3510,9 +3705,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_pointer_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -3549,9 +3745,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads the pointer position; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3588,9 +3786,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_typed_text_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -3627,9 +3826,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "keys_released_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -3666,9 +3866,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "keys_released_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -3705,9 +3906,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "keys_released_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -3744,9 +3946,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads screen text by OCR; the value moves between two readings, and no working OCR engine fails the action.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3783,9 +3987,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Finds text on screen; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3822,9 +4028,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Describes the screen with a model; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3861,9 +4069,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Maps on-screen elements; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3898,9 +4108,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads the accessibility tree; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -3932,6 +4144,7 @@
       ],
       "verification": {
         "method": "conditional_exact_url_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
@@ -3964,9 +4177,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_click_effect_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -3997,9 +4211,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_click_effect_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4031,6 +4246,7 @@
       ],
       "verification": {
         "method": "conditional_field_value_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
@@ -4064,6 +4280,7 @@
       ],
       "verification": {
         "method": "conditional_field_value_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
@@ -4096,9 +4313,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_pointer_over_element_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4129,9 +4347,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_scroll_position_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4162,9 +4381,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_extract_fresh_reading_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4195,9 +4415,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_table_fresh_reading_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4228,9 +4449,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads the links of the open page; a second reading would ask the same source, and a cut is said in the output.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -4261,9 +4484,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -4294,9 +4518,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "image_file_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -4328,6 +4553,7 @@
       ],
       "verification": {
         "method": "conditional_field_value_postcondition",
+        "postcondition": "independent",
         "independent_postcondition": true,
         "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
@@ -4360,9 +4586,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_new_tab_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4393,9 +4620,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_tab_closed_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4426,9 +4654,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists the browser's tabs; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -4459,9 +4689,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_front_tab_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4492,9 +4723,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_history_back_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4525,9 +4757,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_history_forward_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4558,9 +4791,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_reload_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4591,9 +4825,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Waits for a page condition; it fails when the condition does not arrive.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -4624,9 +4860,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_browser_exited_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4657,9 +4894,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads the open page's address and title; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -4690,9 +4929,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Reads the open page's structure; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -4729,9 +4970,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "trigger_present_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -4768,9 +5010,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists triggers from the daemon's trigger engine; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -4807,9 +5051,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "trigger_absence_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -4846,9 +5091,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "trigger_engine_running_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -4885,9 +5131,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "trigger_engine_stopped_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -4918,9 +5165,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -4951,9 +5199,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -4984,9 +5233,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Parses event text; the parsed fields are the result.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5018,6 +5269,7 @@
       ],
       "verification": {
         "method": "executor_result_only",
+        "postcondition": "none",
         "independent_postcondition": false,
         "note": "No independent post-condition check is currently registered."
       }
@@ -5050,9 +5302,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "caldav_event_fields_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -5083,9 +5336,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists events from the calendar server; a second reading would ask the same source, and calendars or events not read are said.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5116,9 +5371,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "caldav_event_absence_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -5155,9 +5411,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_file_parse_count_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -5194,9 +5451,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Searches file contents in a folder; a second reading would ask the same source, and where it stopped or what it skipped is said.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5239,9 +5498,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -5278,9 +5538,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -5323,9 +5584,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_sent_copy_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -5363,6 +5625,7 @@
       ],
       "verification": {
         "method": "executor_result_only",
+        "postcondition": "none",
         "independent_postcondition": false,
         "note": "No independent post-condition check is currently registered."
       }
@@ -5401,9 +5664,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_slack_read_back_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -5440,9 +5704,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "discord_message_read_back_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -5479,9 +5744,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Fetches a web page; the value moves between two readings, an error status fails the action, and a cut is said in the output.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5512,9 +5779,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "workspace_index_store_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks an observed post-condition."
       }
     },
     {
@@ -5545,9 +5813,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Searches the workspace index; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5578,9 +5848,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Fetches mail from the mail server; a second fetch would ask the same server and mark messages read, and messages or bodies left out are said.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5611,9 +5883,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Summarises fetched mail with a model; the summary is the result.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5644,9 +5918,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_threaded_reply_postcondition",
+        "postcondition": "independent",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -5677,9 +5952,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Fetches invitations from the calendar server; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5710,9 +5987,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Compares local and remote calendars; the comparison is the result.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5743,9 +6022,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -5776,9 +6056,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -5809,9 +6090,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Detects on-screen elements; the value moves between two readings.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5842,9 +6125,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -5875,9 +6159,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -5914,9 +6199,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     },
     {
@@ -5947,9 +6233,11 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "read_only",
+        "postcondition": "read_only",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "reason": "Lists the tools of configured MCP servers; a second reading would ask the same source.",
+        "note": "Read-only: it changes nothing, so there is no post-condition to observe; a read that fails fails its action instead of returning an error message as data."
       }
     },
     {
@@ -5980,9 +6268,10 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
+        "method": "declared_expect_postcondition",
+        "postcondition": "declared",
         "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "note": "Checked only when the plan declares a read-only probe of the effect; without one the outcome is the executor's word."
       }
     }
   ],

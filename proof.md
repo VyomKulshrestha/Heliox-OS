@@ -11,8 +11,10 @@ Product version: **0.16.0**
 - **162** declared action types are generated from `daemon/pilot/actions.py`.
 - **21** executable specialists register providers for all **162** action types.
 - Mesh coverage is **complete**; uncovered action types: **0**.
-- **22** action types have a separate observed post-condition verifier.
-- **140** action types currently rely on the executor result without an independent post-condition check.
+- **85** of the **106** action types that change something have a separate observed post-condition verifier.
+- **15** more are checked only when a plan declares a read-only check of their effect (shell commands, scripts, remote and API calls whose effect is arbitrary); without one, their outcome is the executor's word.
+- **6** action types that change something currently rely on the executor result without an independent post-condition check.
+- **56** read-only action types need none: they change nothing, so what they return is their result (`verification.method = "read_only"`, with a reason for each). A read that fails now fails its action instead of returning an error message as data, so a failed read cannot pass as an answer.
 - **6** plugin manifests are represented in the generated catalog.
 
 Source: [machine-readable capability catalog](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/capabilities.json). Platform declarations describe product targets; host tools, credentials, permissions, hardware, and integrations still determine runtime availability.
@@ -161,7 +163,7 @@ Neural details and the recorded EEGBCI snapshot are documented in [Neural Intent
 
 ## Known limitations
 
-1. Only 22 of 162 actions currently have an independent post-condition verifier; inspect `verification.independent_postcondition` in the capability catalog.
+1. Only 85 of the 106 actions that change something currently have an independent post-condition verifier; inspect `verification.independent_postcondition` in the capability catalog. A read returns what its source said: a source that is wrong, or changes right after, still feeds that answer to the next step.
 2. CI validates software contracts but cannot establish camera, microphone, speaker, accessibility-permission, EEG, or human-factors accuracy.
 3. Browser pages, third-party APIs, cloud models, and external applications can change independently of Heliox.
 4. Local-first operation does not mean every configured path is offline. Cloud model and integration tasks send necessary context to the selected provider.
