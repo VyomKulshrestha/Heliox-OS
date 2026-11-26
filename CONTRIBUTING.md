@@ -278,6 +278,20 @@ evidence must never be described as live-headset or human accuracy evidence;
 record physical hardware results separately. See
 [Neural Intent Research Controls](docs/NEURAL_INTENT.md).
 
+### Tests and time
+
+CI runs on loaded runners, and on Windows before Python 3.13 `time.monotonic()` moves in 15.6 ms steps, so a
+test's result must be a function of events, never of how fast the machine is:
+
+- Wait for the thing you mean: an `asyncio.Event` the fake sets, the task or thread itself, or a counted number of
+  `await asyncio.sleep(0)` turns. Never `sleep(x)` and hope it happened by then.
+- Give the code a clock or a sleep the test controls instead of asserting on `perf_counter`, `monotonic` or
+  `loop.time()` differences, and say "before" or "after" with an ordered log of events.
+- Describe the machine (memory, cores) to the code instead of letting it read the runner's.
+- A real timeout belongs only as a ceiling that ends a test which is already failing.
+
+`daemon/tests/test_execution_companion.py` and `daemon/tests/test_late_start.py` show the pattern.
+
 ## 📜 License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
