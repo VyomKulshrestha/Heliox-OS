@@ -139,7 +139,7 @@ def test_making_a_trigger_asks_for_the_approval_its_steps_need() -> None:
     assert shell.requires_confirmation is True
     assert write.requires_confirmation is False and words_only.requires_confirmation is False
     assert _approval_effect(shell) == (
-        "Each time this trigger fires, Heliox runs this without asking again: shell command echo seen a change."
+        'Each time this trigger fires, I\'ll run the command "echo seen a change" without asking you again.'
     )
 
 
@@ -184,7 +184,9 @@ async def test_a_fire_runs_exactly_the_approved_steps_and_says_so(engine, tmp_pa
     assert [a.model_dump(mode="json") for a in plan.actions] == made.steps  # what was approved, nothing else
     assert kwargs["user_confirmed"] is True and kwargs["plan_id"] == f"trigger-{made.id}-1"
     server._task_receipts.finalize.assert_awaited_once()
-    assert _told(server) == ["The trigger that watches watched.txt fired, and I ran its steps: echo seen a change."]
+    assert _told(server) == [
+        'The trigger that watches watched.txt fired, and I did what it asks: run the command "echo seen a change".'
+    ]
     assert engine.get_trigger(made.id).pending is None
     assert engine.get_trigger(made.id).last_outcome == _told(server)[0]
 
@@ -215,8 +217,8 @@ async def test_a_step_needing_an_approval_nobody_gave_waits_and_is_told_once_an_
 
     assert executor.plans == []  # nothing ran
     sentence = (
-        "The trigger that watches watched.txt fired, but I did not run its steps (echo seen a change), because they "
-        "need your approval and you did not give it when the trigger was made."
+        'The trigger that watches watched.txt fired, but I did not do what it asks (run the command "echo seen a '
+        'change"), because that needs your approval and you did not give it when the trigger was made.'
     )
     assert _told(server) == [sentence, sentence]  # the second fire, a minute later, was not said again
     pending = engine.get_trigger(made.id).pending
@@ -255,8 +257,8 @@ async def test_a_trigger_stored_as_words_does_not_hold_an_approval_card(engine) 
     methods = [call.args[0] for call in server._broadcast_notification.await_args_list]
     assert "confirm_required" not in methods
     assert _told(server) == [
-        'The trigger that watches the processor fired, but I did not run its steps (add "seen a change" to '
-        "fired.log), because they need your approval and you did not give it when the trigger was made."
+        'The trigger that watches the processor fired, but I did not do what it asks (add "seen a change" to '
+        "fired.log), because that needs your approval and you did not give it when the trigger was made."
     ]
     # The job's own end is not told a second time.
     server.__dict__["_trigger_jobs"] = {"job-1": made.id}

@@ -706,9 +706,10 @@ def _step_job(record: Any) -> str:
     except ValueError:
         return "a step that cannot be read"
     params = action.parameters
-    command = str(getattr(params, "command", "") or "")
+    command = " ".join(str(getattr(params, "command", "") or "").split())
     if command:
-        return _job(command)
+        # An echo into a file is said as adding the line; any other command is named as the command it is.
+        return _job(command) if _ECHO_INTO.match(command) else f"run the command {_quoted(command, 12)}"
     if action.action_type is ActionType.NOTIFY:
         return "tell you"
     path = str(getattr(params, "path", "") or "")
@@ -724,6 +725,16 @@ _PLACEHOLDER = "{PREV_OUTPUT}"
 
 def _record_of(record: Any) -> dict:
     return record.model_dump(mode="json") if hasattr(record, "model_dump") else dict(record or {})
+
+
+def hidden_commands(steps: Sequence[Any]) -> list[str]:
+    """The commands among a trigger's fixed steps that ``steps_job`` says in other words (an echo into a file)."""
+    found = []
+    for record in steps or []:
+        command = " ".join(str((_record_of(record).get("parameters") or {}).get("command") or "").split())
+        if command and _ECHO_INTO.match(command):
+            found.append(command)
+    return found
 
 
 def steps_job(steps: Sequence[Any]) -> str:
@@ -793,13 +804,13 @@ def trigger_fire_sentence(trigger: Any, outcome: str, *, error: str = "", second
     lead = named[:1].upper() + named[1:] + " fired"
     _watched, _when, job = _trigger_parts(entry)
     sentences = {
-        "ran": f"{lead}, and I ran its steps: {job}.",
+        "ran": f"{lead}, and I did what it asks: {job}.",
         "failed": f"{lead}, but a step did not work. {error}".strip(),
         "timeout": f"{lead}, but its steps took longer than {plural(seconds, 'second')}, so I stopped them.",
         "fault": f"{lead}, but something went wrong inside Heliox and its steps stopped.",
         "waits": (
-            f"{lead}, but I did not run its steps ({job}), because they need your approval and you did not give it "
-            "when the trigger was made."
+            f"{lead}, but I did not do what it asks ({job}), because that needs your approval and you did not give "
+            "it when the trigger was made."
         ),
         "unreadable": f"{lead}, but I could not read its stored steps, so nothing ran.",
         "unavailable": f"{lead}, but I could not run its steps just then.",

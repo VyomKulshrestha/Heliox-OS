@@ -846,10 +846,15 @@ def _approval_effect(action: Any) -> str:
         if names:
             return f"Sends a credential to {host} (the {', '.join(names)} header)."
     if getattr(action, "action_type", None) == ActionType.TRIGGER_CREATE and getattr(params, "steps", None):
-        from pilot.system.triggers import describe_steps
+        from pilot.result_sentences import hidden_commands, steps_job
 
         steps = [step.model_dump(mode="json") for step in params.steps]
-        return f"Each time this trigger fires, Heliox runs this without asking again: {describe_steps(steps)}."
+        line = f"Each time this trigger fires, I'll {steps_job(steps)} without asking you again."
+        # A command said in other words is also shown as it will run, so the person approves the command itself.
+        commands = hidden_commands(steps)
+        if commands:
+            line += f" That runs this command on this computer: {'; '.join(commands)}."
+        return line
     return ""
 
 
