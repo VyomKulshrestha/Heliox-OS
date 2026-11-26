@@ -151,6 +151,9 @@ class Trigger:
     last_fired: float = 0
     created_at: str = ""
     disabled_reason: str = ""  # why a stored trigger was loaded disabled; empty for a trigger that may fire
+    # Whether a condition that holds over time (a threshold, a process, an expression) held at the last look; kept in
+    # the store, so a restart does not fire again for a state that already fired. None: not looked at yet.
+    condition_held: bool | None = None
 
     def can_fire(self) -> bool:
         if not self.enabled:
@@ -161,6 +164,21 @@ class Trigger:
 
 
 STORE_VERSION = 1
+
+# Conditions that hold over time rather than happen once: they fire when they start to hold, not while they hold, and
+# not again after a restart while they still hold (Trigger.condition_held). File events compare with the last look the
+# engine made since it started; an interval fires by its time.
+LEVEL_TRIGGERS = frozenset(
+    {
+        TriggerType.CPU_THRESHOLD,
+        TriggerType.MEMORY_THRESHOLD,
+        TriggerType.DISK_THRESHOLD,
+        TriggerType.BATTERY_LOW,
+        TriggerType.PROCESS_STARTED,
+        TriggerType.PROCESS_STOPPED,
+        TriggerType.CUSTOM_CONDITION,
+    }
+)
 
 
 def validate_trigger(
@@ -378,6 +396,7 @@ class TriggerEngine:
             except ValueError:
                 return None
             reason = str(entry.get("disabled_reason") or "")
+            held = entry.get("condition_held")
             try:
                 validate_trigger(
                     name, resolved_type.value, condition, command, numbers["max_fires"], numbers["cooldown_seconds"]
@@ -397,6 +416,7 @@ class TriggerEngine:
                 last_fired=float(last_fired),
                 created_at=str(entry.get("created_at") or ""),
                 disabled_reason=reason,
+                condition_held=held if isinstance(held, bool) else None,
             )
         except (KeyError, TypeError):
             return None
@@ -492,40 +512,54 @@ class TriggerEngine:
         logger.info("Trigger engine stopped")
 
     async def _run_loop(self) -> None:
-        """Main evaluation loop — checks all triggers every 5 seconds."""
+        """Main evaluation loop: checks all triggers every 5 seconds."""
         while self._running:
             try:
-                for trigger in list(self._triggers.values()):
-                    if not trigger.can_fire():
-                        continue
-                    try:
-                        fired = await self._evaluate(trigger)
-                        if fired:
-                            trigger.fire_count += 1
-                            trigger.last_fired = time.time()
-                            try:
-                                self._save()  # keeps max_fires and the cooldown across a restart
-                            except OSError:
-                                logger.warning("The trigger store could not record a fire of %s", trigger.id)
-                            logger.info(
-                                "Trigger fired: %s (%s) — fire #%d",
-                                trigger.name,
-                                trigger.id,
-                                trigger.fire_count,
-                            )
-                            if self._fire_callback:
-                                task = asyncio.create_task(
-                                    self._fire_callback(trigger),
-                                    name=f"trigger_action_{trigger.id}",
-                                )
-                                self._callback_tasks.add(task)
-                                task.add_done_callback(self._callback_done)
-                    except Exception as e:
-                        logger.warning("Trigger %s eval error: %s", trigger.id, e)
-
+                await self.evaluate_once()
                 await asyncio.sleep(5)
             except asyncio.CancelledError:
                 break
+
+    async def evaluate_once(self) -> list[Trigger]:
+        """Look once at every trigger that may fire, and fire those whose condition started to hold. Returns them."""
+        fired_now: list[Trigger] = []
+        for trigger in list(self._triggers.values()):
+            if not trigger.can_fire():
+                continue
+            try:
+                holds = await self._evaluate(trigger)
+                if trigger.trigger_type in LEVEL_TRIGGERS:
+                    # On a change only: "CPU above 90 %" fires when it goes above, not every minute while it stays
+                    # there, and not again at the next start because it is still there.
+                    fired = holds and trigger.condition_held is not True
+                    changed = trigger.condition_held is not holds
+                    trigger.condition_held = holds
+                    if changed and not fired:
+                        try:
+                            self._save()
+                        except OSError:
+                            logger.warning("The trigger store could not record the state of %s", trigger.id)
+                else:
+                    fired = holds
+                if fired:
+                    trigger.fire_count += 1
+                    trigger.last_fired = time.time()
+                    try:
+                        self._save()  # keeps max_fires, the cooldown and the state that fired across a restart
+                    except OSError:
+                        logger.warning("The trigger store could not record a fire of %s", trigger.id)
+                    logger.info("Trigger fired: %s (%s), fire #%d", trigger.name, trigger.id, trigger.fire_count)
+                    fired_now.append(trigger)
+                    if self._fire_callback:
+                        task = asyncio.create_task(
+                            self._fire_callback(trigger),
+                            name=f"trigger_action_{trigger.id}",
+                        )
+                        self._callback_tasks.add(task)
+                        task.add_done_callback(self._callback_done)
+            except Exception as e:
+                logger.warning("Trigger %s eval error: %s", trigger.id, e)
+        return fired_now
 
     # ── Evaluation ───────────────────────────────────────────────────
 
