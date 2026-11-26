@@ -4386,6 +4386,7 @@ class PilotServer:
         _original_verification = None
         _successful_results: list = []
         _pending_retry_plan = None
+        from pilot.agents.late_checks import FollowUp as LateFollowUp
         from pilot.agents.plan_differ import PlanDiffer
         from pilot.agents.unconfirmed import masked_verification, receipt_checks
         from pilot.response_contract import (
@@ -5207,6 +5208,7 @@ class PilotServer:
                 interaction_id=self._active_interaction_id,
             )
             await ws.send(_notification("status", {"phase": "verifying"}))
+            late_checks = None  # checks still running when the verification budget was spent
             if dry_run:
                 from pilot.actions import VerificationResult
 
@@ -5225,10 +5227,12 @@ class PilotServer:
                 )
             else:
                 try:
-                    verification = await self._await_execution_tracked(self._verifier.verify(plan, results))
+                    verification, late_checks = await self._verify_before_reply(plan, results)
                 except asyncio.CancelledError:
                     return await _phase_cancelled("verification", results)
             if _original_plan is not None and _original_verification is not None:
+                await self._late_verifications_or_none().drop(late_checks)  # the merged plan is checked again
+                late_checks = None
                 results = PlanDiffer.merge_results(
                     _successful_results,
                     results,
@@ -5237,7 +5241,7 @@ class PilotServer:
                 )
                 plan = _original_plan
                 try:
-                    verification = await self._await_execution_tracked(self._verifier.verify(plan, results))
+                    verification, late_checks = await self._verify_before_reply(plan, results)
                 except asyncio.CancelledError:
                     return await _phase_cancelled("verification", results)
                 _original_plan = None
@@ -5277,9 +5281,15 @@ class PilotServer:
             if cancel_event.is_set() and self._live_correction:
                 revised = await _restart_with_live_correction(results)
                 if revised is not None:
+                    await self._late_verifications_or_none().drop(late_checks)
                     return revised
             if _original_plan is not None and _successful_results:
                 all_results = PlanDiffer.merge_results(_successful_results, results, _original_plan, verification)
+            if not verification.passed:
+                # A repair round or the failure reply follows: checks still running for this attempt are stopped
+                # (their steps stay "still being checked" in this attempt's record), never left to act on later.
+                await self._late_verifications_or_none().drop(late_checks)
+                late_checks = None
 
             if verification.passed:
                 if emit:
@@ -5356,6 +5366,18 @@ class PilotServer:
                 await _emit_task_complete(
                     "success", message, checks=None if dry_run else receipt_checks(results, verification)
                 )
+                if late_checks is not None:
+                    task_key = get_experience_context().task_id or last_plan_id or ""
+                    self._late_verifications_or_none().follow(
+                        late_checks,
+                        LateFollowUp(
+                            task_key=task_key,
+                            plan_id=plan_id,
+                            request=request_text,
+                            receipt_id=self._task_footers.get(task_key, {}).get("receipt_id"),
+                        ),
+                    )
+                    late_checks = None
 
                 if (
                     self.config.narration.follow_up_enabled
@@ -5580,6 +5602,79 @@ class PilotServer:
         task: asyncio.Task[None] = asyncio.create_task(coro)
         self._plan_history_tasks.add(task)
         task.add_done_callback(self._plan_history_tasks.discard)
+
+    # ── Checks that go on behind the reply (pilot.agents.late_checks) ──
+
+    def _late_verifications_or_none(self) -> Any:
+        """The daemon's follower of late checks, made on first use (a server built without __init__ in a test gets
+        one too)."""
+        late = self.__dict__.get("_late_verifications")
+        if late is None:
+            from pilot.agents.late_checks import LateVerifications
+
+            late = LateVerifications(record=self._record_late_checks, tell=self._tell_late_check)
+            self._late_verifications = late
+        return late
+
+    async def _verify_before_reply(self, plan: Any, results: list[Any]) -> tuple[Any, Any]:
+        """Verify within the reply's budget (pilot.agents.unconfirmed.VERIFY_BUDGET_SECONDS). A check still running
+        is held at once, so a stop cancels it even if this request ends on a path that does not follow it."""
+        from pilot.agents.unconfirmed import VERIFY_BUDGET_SECONDS
+
+        verify_within = getattr(self._verifier, "verify_within", None)
+        if verify_within is None:  # a verifier with no budget (tests pass one): every check before the reply
+            return await self._await_execution_tracked(self._verifier.verify(plan, results)), None
+        verification, late = await self._await_execution_tracked(
+            verify_within(plan, results, budget=VERIFY_BUDGET_SECONDS)
+        )
+        if late is not None:
+            self._late_verifications_or_none().hold(late)
+        return verification, late
+
+    async def _record_late_checks(self, report: Any) -> None:
+        """A late check's outcome: a receipt that follows the task's receipt, and an event on the timeline."""
+        follow_up = report.follow_up
+        receipts = self.__dict__.get("_task_receipts")
+        if receipts is not None:
+            try:
+                await receipts.record_late_checks(
+                    follow_up.task_key,
+                    request=follow_up.request,
+                    plan_id=follow_up.plan_id,
+                    follows=follow_up.receipt_id,
+                    summary=report.summary,
+                    checks=report.checks,
+                )
+            except Exception:
+                logger.warning("A late check could not be written to the receipts", exc_info=True)
+        await self._append_experience(
+            ExperienceEventType.OUTCOME_VERIFIED,
+            plan_id=follow_up.plan_id,
+            idempotency_key=f"plan:{follow_up.plan_id}:verification:late",
+            source="verifier",
+            payload={"late": True, "summary": report.summary, "checks": report.checks},
+            provenance={"component": "LateVerifications"},
+            privacy_class=PrivacyClass.SENSITIVE,
+        )
+
+    async def _tell_late_check(self, sentence: str, report: Any, speak: bool) -> None:
+        """A late check found that a step which sent something or cannot be undone did not turn out as asked: shown
+        and said, as a watcher that fired is. A notice of a late check that held (packages left behind) is shown
+        only."""
+        await self._broadcast_notification(
+            "verification_late",
+            {
+                "text": sentence,
+                "spoken": speak,
+                "task_key": report.follow_up.task_key,
+                "receipt_id": report.follow_up.receipt_id,
+                "checks": report.checks,
+            },
+        )
+        if speak:
+            await self._speak_companion_text(
+                sentence, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"late-check:{report.follow_up.plan_id}"
+            )
 
     @staticmethod
     def _spawn_post_execution_task(
@@ -15192,6 +15287,9 @@ def handle_tool(tool_name, params):
             task.cancel()
         if spawned:
             await self._bounded_stop_step("background tasks", asyncio.gather(*spawned, return_exceptions=True))
+        late_verifications = self.__dict__.get("_late_verifications")
+        if late_verifications is not None:  # checks that went on behind a reply: none runs while the daemon stops
+            await self._bounded_stop_step("late checks", late_verifications.stop())
         after_ready = self.__dict__.get("_after_ready_task")
         if after_ready is not None and not after_ready.done():
             after_ready.cancel()

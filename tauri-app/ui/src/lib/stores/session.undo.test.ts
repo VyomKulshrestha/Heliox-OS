@@ -367,5 +367,17 @@ describe("watchers in chat", () => {
       text: "Chrome has closed.",
     });
     expect(get(session).messages.at(-1)?.text).toBe("Chrome has closed.");
+
+    // A check that ran behind a reply found a sent mail not as asked: shown as a watcher's notice is.
+    notificationHandler!("verification_late", {
+      text: "I checked the mail I sent: its copy in Sent is not what was sent.",
+      spoken: true,
+      task_key: "t1",
+      receipt_id: "r1",
+      checks: [],
+    });
+    expect(get(session).messages.at(-1)?.text).toBe(
+      "I checked the mail I sent: its copy in Sent is not what was sent.",
+    );
   });
 });

@@ -1217,7 +1217,9 @@ function createSession() {
         break;
       }
 
-      case "watch_fired": {
+      // A check that ran behind a reply found a sent or irreversible step not as asked: shown as a watcher's notice.
+      case "watch_fired":
+      case "verification_late": {
         const text = String(p.text ?? "").trim();
         if (text) {
           addSystemMessage(text);

@@ -4005,6 +4005,14 @@ Broadcast once per word per focus session, and spoken:
 #### `watch_fired`
 Broadcast once when a watcher sees its event or gives up after a day, and spoken:
 `{"id": "a1b2c3", "kind": "process", "label": "chrome closes", "text": "Chrome has closed."}`.
+
+#### `verification_late`
+Broadcast, and spoken, when a check that went on behind a reply (the reply waits about 3 s for a plan's checks)
+finds that a step which sent something or cannot be undone did not turn out as asked. One sentence, never the
+verifier's detail: `{"text": "I checked the mail I sent: its copy in Sent is not what was sent.", "task_key": "…",
+"receipt_id": "…", "checks": [{"step": 1, "action_type": "api_send_email", "kind": "mismatch", "reason": "…",
+"late": true}]}`. Every late outcome, this one or a silent "verified", is also kept in a receipt of status
+`checked_later` that names the task's receipt in `follows_receipt_id`.
 `late` is true when it fell due while Heliox was not running (reminders more than a day
 late are dropped). The daemon also speaks it.
 

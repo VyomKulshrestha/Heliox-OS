@@ -18,8 +18,11 @@ from pilot.actions import ActionResult, ActionType, DownloadParams, FileParams
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
 
 CHUNK_BYTES = 1024 * 1024
-# A copy is compared in full however large it is, within this budget; past it the copy is "not verified".
-COPY_COMPARE_SECONDS = 240.0
+# A copied file is compared byte for byte up to this many bytes and within this time, whichever comes first; past
+# either the copy is "not verified in full", with what was compared. Sizes are always compared. The check runs behind
+# the reply once the reply's budget is spent (pilot.agents.late_checks), so these cap its cost, not the reply's wait.
+COPY_COMPARE_BYTES = 256 * 1024 * 1024
+COPY_COMPARE_SECONDS = 60.0
 _clock = time.monotonic
 
 _WRITTEN = re.compile(r"\(sha256 (?P<sha>[0-9a-f]{64}), (?P<size>\d+) bytes on disk\)")
@@ -156,15 +159,21 @@ async def file_has_content(result: ActionResult) -> Outcome:
 # ── file_copy ────────────────────────────────────────────────────────
 
 
-def _files_equal(source: Path, destination: Path, deadline: float) -> bool | None:
-    """Byte for byte, in chunks; None when the time budget ran out first."""
+def _files_equal(source: Path, destination: Path, deadline: float) -> tuple[bool | None, int]:
+    """Byte for byte, in chunks: (equal, bytes compared). Equal is None when the time or the size cap came first."""
+    compared = 0
     with source.open("rb") as original, destination.open("rb") as copied:
         for chunk in iter(lambda: original.read(CHUNK_BYTES), b""):
-            if _clock() > deadline:
-                return None
+            if _clock() > deadline or compared >= COPY_COMPARE_BYTES:
+                return None, compared
             if chunk != copied.read(len(chunk)):
-                return False
-        return not copied.read(1)
+                return False, compared
+            compared += len(chunk)
+        return not copied.read(1), compared
+
+
+def _amount(size: int) -> str:
+    return f"{size / (1024 * 1024):,.0f} MB" if size >= 1024 * 1024 else f"{size:,} bytes"
 
 
 def _tree(root: Path, deadline: float) -> tuple[dict[str, int], set[str]] | None:
@@ -190,7 +199,7 @@ def _tree(root: Path, deadline: float) -> tuple[dict[str, int], set[str]] | None
     return files, folders
 
 
-@register(ActionType.FILE_COPY, method="copy_destination_postcondition", timeout=COPY_COMPARE_SECONDS + 60.0)
+@register(ActionType.FILE_COPY, method="copy_destination_postcondition", timeout=COPY_COMPARE_SECONDS + 30.0)
 async def copy_matches_source(result: ActionResult) -> Outcome:
     """The destination holds what the source holds: every byte for a file; folders, names and sizes for a tree.
 
@@ -212,11 +221,13 @@ async def copy_matches_source(result: ActionResult) -> Outcome:
         destination_size = destination.stat().st_size
         if source_size != destination_size:
             return mismatch("Copy destination size mismatch")
-        same = await asyncio.to_thread(_files_equal, source, destination, deadline)
+        same, compared = await asyncio.to_thread(_files_equal, source, destination, deadline)
         if same is None:
             return unobserved(
-                f"Copy has the source's size ({source_size:,} bytes); comparing its content did not finish "
-                f"within {COPY_COMPARE_SECONDS:g} s"
+                f"Not verified in full: compared the first {_amount(compared)} and the sizes ({source_size:,} bytes "
+                f"each); the rest was not compared, to keep the check within {_amount(COPY_COMPARE_BYTES)} and "
+                f"{COPY_COMPARE_SECONDS:g} s",
+                kind="could_not_look",
             )
         if same:
             return verified(f"Copy content matches source ({source_size:,} bytes)")

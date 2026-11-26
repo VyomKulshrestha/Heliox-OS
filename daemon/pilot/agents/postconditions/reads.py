@@ -107,6 +107,8 @@ async def file_read_matches_file(result: ActionResult) -> Outcome:
 # ── file_hash ────────────────────────────────────────────────────────
 
 _HASH_OUTPUT = re.compile(r"^(sha256|sha512|blake2b):([0-9a-f]+)\s")
+# Files up to this size get a second digest through another reader; a larger one is checked by its size and time.
+HASH_AGAIN_UP_TO_BYTES = 64 * 1024 * 1024
 
 
 def _second_digest(p: Path, algorithm: str) -> str:
@@ -118,9 +120,18 @@ def _second_digest(p: Path, algorithm: str) -> str:
 
 
 def _compare_file_hash(path: str, algorithm: str, claimed: str) -> Outcome:
+    from pilot.system.filesystem import read_stamp
+
     p = Path(path)
     try:
         stat = p.stat()
+        if stat.st_size > HASH_AGAIN_UP_TO_BYTES and read_stamp(path) == (stat.st_size, stat.st_mtime_ns):
+            # A large file is not hashed twice: the handler's streaming digest stands when a cheap independent read
+            # finds the file with the size and the time it had when it was hashed.
+            return verified(
+                f"The file still has the {stat.st_size:,} bytes and the modification time it had when it was hashed; "
+                f"a file this large is not hashed a second time"
+            )
         digest = _second_digest(p, algorithm)
     except FileNotFoundError:
         return unobserved("The file was removed after it was hashed, so the digest could not be checked")
