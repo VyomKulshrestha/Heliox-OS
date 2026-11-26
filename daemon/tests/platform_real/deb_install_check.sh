@@ -26,6 +26,27 @@ tools="$2"
 label="$3"
 mode="$4"
 failed=0
+# apt in a fresh container. The image's package lists can be days old, and the archive drops a package file once a
+# newer one is published (apt then answers 404 and "maybe run apt-get update"). So every install refreshes the lists
+# first, a refresh that fails is tried once more, and an install that could not fetch a file refreshes the lists and
+# tries once more. The logs go to $RUNNER_TEMP, which the workflow prints after the container ends.
+apt_lists() {
+    timeout 300 apt-get update -q >> "$RUNNER_TEMP/apt-update.log" 2>&1 && return 0
+    echo "DIAG apt-get update failed; trying once more (log: apt-update.log)"
+    sleep 15
+    timeout 300 apt-get update -q >> "$RUNNER_TEMP/apt-update.log" 2>&1
+}
+apt_install() { # apt_install <log> <seconds> <apt-get install arguments...>
+    local log="$1" limit="$2"
+    shift 2
+    apt_lists
+    timeout "$limit" apt-get install -y -q "$@" > "$log" 2>&1 && return 0
+    grep -qE 'Failed to fetch|Unable to fetch|404 +Not Found|Hash Sum mismatch' "$log" || return 1
+    echo "DIAG apt-get install could not fetch a package file; refreshing the lists and trying once more"
+    cp "$log" "$RUNNER_TEMP/$(basename "$log" .log)-first-try.log"
+    apt_lists
+    timeout "$limit" apt-get install -y -q "$@" > "$log" 2>&1
+}
 check() { # check <name> <PASS|FAIL> <detail>
     echo "CHECK $label/$1: $2 - $3"
     [ "$2" = PASS ] || failed=$((failed + 1))
@@ -34,9 +55,8 @@ check() { # check <name> <PASS|FAIL> <detail>
 package="$(dpkg-deb -f "$deb" Package)"
 echo "DIAG $(grep PRETTY_NAME /etc/os-release); $package $(dpkg-deb -f "$deb" Version)"
 echo "DIAG Depends: $(dpkg-deb -f "$deb" Depends); Recommends: $(dpkg-deb -f "$deb" Recommends)"
-timeout 300 apt-get update -q > /tmp/apt-update.log 2>&1
 before="$(dpkg-query -W -f '${Package}\n' | sort)"
-if timeout 900 apt-get install -y -q "$deb" > /tmp/install.log 2>&1; then
+if apt_install /tmp/install.log 900 "$deb"; then
     added="$(comm -13 <(echo "$before") <(dpkg-query -W -f '${Package}\n' | sort))"
     python="$(command -v python3 > /dev/null && python3 --version 2>&1 || echo 'no python3')"
     check installs-with-declared-dependencies PASS \
@@ -57,8 +77,7 @@ dpkg -L "$package" > /tmp/package-files.txt
 
 # From here on only what the test needs, never what the app needs: a virtual display and a session bus for the
 # person's desktop, Python for the check itself, and WebKitWebDriver, which tauri-driver drives.
-if ! timeout 600 apt-get install -y -q --no-install-recommends xvfb dbus-x11 webkit2gtk-driver python3 \
-    > /tmp/harness.log 2>&1; then
+if ! apt_install /tmp/harness.log 600 --no-install-recommends xvfb dbus-x11 webkit2gtk-driver python3; then
     check test-tools FAIL "$(tail -5 /tmp/harness.log | tr '\n' ' ')"
     exit "$failed"
 fi

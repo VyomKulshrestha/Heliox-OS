@@ -22,9 +22,29 @@ set -u
 export DEBIAN_FRONTEND=noninteractive
 appimage="$1"
 tools="$2"
-timeout 300 apt-get update -q > /tmp/apt-update.log 2>&1
-if ! timeout 600 apt-get install -y -q --no-install-recommends xvfb dbus-x11 webkit2gtk-driver python3 ca-certificates \
-    > /tmp/harness.log 2>&1; then
+# apt in a fresh container. The image's package lists can be days old, and the archive drops a package file once a
+# newer one is published (apt then answers 404 and "maybe run apt-get update"). So every install refreshes the lists
+# first, a refresh that fails is tried once more, and an install that could not fetch a file refreshes the lists and
+# tries once more. The logs go to $RUNNER_TEMP, which the workflow prints after the container ends.
+apt_lists() {
+    timeout 300 apt-get update -q >> "$RUNNER_TEMP/apt-update.log" 2>&1 && return 0
+    echo "DIAG apt-get update failed; trying once more (log: apt-update.log)"
+    sleep 15
+    timeout 300 apt-get update -q >> "$RUNNER_TEMP/apt-update.log" 2>&1
+}
+apt_install() { # apt_install <log> <seconds> <apt-get install arguments...>
+    local log="$1" limit="$2"
+    shift 2
+    apt_lists
+    timeout "$limit" apt-get install -y -q "$@" > "$log" 2>&1 && return 0
+    grep -qE 'Failed to fetch|Unable to fetch|404 +Not Found|Hash Sum mismatch' "$log" || return 1
+    echo "DIAG apt-get install could not fetch a package file; refreshing the lists and trying once more"
+    cp "$log" "$RUNNER_TEMP/$(basename "$log" .log)-first-try.log"
+    apt_lists
+    timeout "$limit" apt-get install -y -q "$@" > "$log" 2>&1
+}
+if ! apt_install /tmp/harness.log 600 --no-install-recommends xvfb dbus-x11 webkit2gtk-driver python3 \
+    ca-certificates; then
     echo "CHECK appimage/test-tools: FAIL - $(tail -5 /tmp/harness.log | tr '\n' ' ')"
     exit 1
 fi
