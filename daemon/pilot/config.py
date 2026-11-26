@@ -1554,6 +1554,7 @@ def _validate_config_types(raw: dict) -> None:
             "smtp_port": int,
             "username": str,
             "password_provider": str,
+            "sent_mailbox": str,
         },
         "redis": {
             "enabled": bool,
