@@ -23,7 +23,8 @@ On a fixed week of 29 sentences (``python -m pilot.live.grounded_eval``) code al
 with no false alarm, and qwen3.5:4b added one paraphrase, at about 2 s per call on a laptop CPU.
 
 It runs only at a pause, only when the sentence mentions something checkable, at most once every few seconds. The
-model runs on this computer; the sentence and the facts never leave it. A correction is an ordinary Live card: it
+model is asked only while Ollama is on this computer (pilot.models.model_place); the sentence and the facts never
+leave it. With Ollama on another computer the steps in code still run and the model step is left out. A correction is an ordinary Live card: it
 waits for the pause and withdraws itself when the quoted words go away.
 """
 
@@ -615,9 +616,14 @@ class GroundedChecker:
     """Clash check in code, then a model link checked in code. ``facts`` reads the stores fresh each time."""
 
     def __init__(
-        self, complete: Complete | None, facts: Callable[[], list[Fact]], today: Callable[[], date] = date.today
+        self,
+        complete: Complete | None,
+        facts: Callable[[], list[Fact]],
+        today: Callable[[], date] = date.today,
+        model_here: Callable[[], bool] | None = None,
     ):
         self._complete = complete
+        self._model_here = model_here  # asked before each model call: False leaves the model step out
         self._facts = facts
         self._today = today
         self.checks = 0
@@ -657,6 +663,9 @@ class GroundedChecker:
             return [found] if found else []
         chosen = candidates(sentence, facts, today)
         if not chosen or self._complete is None:
+            return []
+        if self._model_here is not None and not self._model_here():
+            self.last_verdict = "left to code: the model is on another computer"
             return []
         self.model_calls += 1
         try:

@@ -8234,7 +8234,13 @@ class PilotServer:
                 reminders=self._reminders.list() if getattr(self, "_reminders", None) is not None else [],
             )
 
-        return GroundedChecker(complete, facts)
+        def model_here() -> bool:
+            # The sentence and the person's own facts go only to an Ollama on this computer.
+            from pilot.models.model_place import endpoint_on_this_computer
+
+            return endpoint_on_this_computer(self.config.model.ollama_base_url)
+
+        return GroundedChecker(complete, facts, model_here=model_here)
 
     def _refresh_live_events(self) -> None:
         """Re-read the calendar (local .ics files, and CalDAV when set up) at most every 15 minutes, off the loop."""
@@ -10367,6 +10373,10 @@ class PilotServer:
         data.pop("server", None)
         # Settings shows a banner: Heliox is running on defaults and will not overwrite the file.
         data["load_errors"] = self.config.load_errors
+        # Settings says once that a model on another computer follows the cloud sharing settings: its host, or "".
+        from pilot.models.model_place import model_elsewhere
+
+        data["model_elsewhere"] = model_elsewhere(self.config.model)
         return data
 
     async def _handle_get_security_status(self, params: dict, ws: ServerConnection) -> dict:
@@ -10979,6 +10989,9 @@ class PilotServer:
                 }
 
         if section == "model":
+            from pilot.models.model_place import PLACES
+
+            PLACES.forget()  # a host name in the model's address is looked up again, in the background
             model_router = self._model_router or (self._planner._model if self._planner is not None else None)
             try:
                 if model_router is not None:

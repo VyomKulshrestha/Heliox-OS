@@ -56,27 +56,46 @@ def host_of(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    parsed = urlparse(text if "://" in text else f"//{text}")
-    return (parsed.hostname or "").lower()
+    try:
+        parsed = urlparse(text if "://" in text else f"//{text}")
+        return (parsed.hostname or "").lower()
+    except ValueError:
+        return text.lower()
 
 
 def is_local(host: str) -> bool:
-    return not host or host in LOCAL_HOSTS or host.endswith(".localhost")
+    """A host on this computer without a lookup: loopback and unspecified addresses (IPv4, IPv6 and IPv4-mapped),
+    ``localhost`` and names under ``.localhost``. Any other name, a private network address among them, is not."""
+    from pilot.models.model_place import LOOPBACK_NAMES, address_on_this_computer
+
+    host = host.strip().lower().rstrip(".")
+    return (
+        not host
+        or host in LOCAL_HOSTS
+        or host in LOOPBACK_NAMES
+        or host.endswith(".localhost")
+        or address_on_this_computer(host) is True
+    )
 
 
 def model_destination(model: dict[str, Any]) -> str:
-    """Where the model's requests go: "" for this computer, else the host or service, in plain words."""
+    """Where the model's requests go: "" for this computer, else the host or service, in plain words. Ollama and the
+    local backend are on this computer only when their address is (pilot.models.model_place): one on another computer
+    is named by its host, like a cloud provider."""
     provider = str(model.get("provider") or "").lower()
-    if provider == "ollama":
-        host = host_of(model.get("ollama_base_url"))
-        return "" if is_local(host) else host
+    if provider in {"ollama", "local"}:
+        from pilot.models.model_place import model_on_this_computer
+
+        if model_on_this_computer(model):
+            return ""
+        return host_of(model.get("ollama_base_url")) or "another computer"
     if provider == "cloud":
         name = str(model.get("cloud_provider") or "").lower()
         return CLOUD_HOSTS.get(name, name or "a cloud model provider")
     if provider == "subscription":
         name = str(model.get("subscription_provider") or "").lower()
         return SUBSCRIPTION_HOSTS.get(name, name or "a subscription model provider")
-    return "" if provider in {"", "local"} else provider
+    return "" if provider == "" else provider
 
 
 def _bool(values: dict[str, Any], key: str, current: Any) -> bool:

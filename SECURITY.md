@@ -927,6 +927,23 @@ my profile to the cloud". Turning it back on with a cloud model asks in Heliox's
 goes; with a model on this computer it is free, since nothing about you leaves it. The words of reminders, notes,
 to-dos and other answers Heliox gives on this computer never go to a cloud model, whatever this setting says.
 
+**What counts as on this computer.** Ollama (or the local backend, which asks Ollama first) is on this computer only
+when `[model] ollama_base_url` names it: a loopback address (`127.0.0.0/8`, `::1`, `::ffff:127.x.x.x`), `0.0.0.0`,
+`localhost` or a name under `.localhost`, a Unix socket, or a host name that resolves to loopback addresses only.
+Any other address is another computer: a home network address such as `192.168.1.20`, `host.docker.internal`, a WSL
+or container bridge, a tunnel or overlay address, or a name that resolves elsewhere. A model on another computer is
+treated as a cloud model for every rule above and for the text on screen (`share_screen_text`), and Settings says so
+under the Ollama model: "This model runs on another computer: what Heliox sends to it follows the cloud sharing
+settings". Live's checks against your calendar, to-dos and reminders ask a model only when Ollama is on this
+computer; elsewhere the checks in code still run. A host name is looked up once in the background, the first time it is
+needed after Heliox starts or the model settings are saved, never while Heliox waits to answer you; until the answer is in, and when the lookup fails, the
+name counts as another computer. Pointing Ollama at another computer asks in the approval dialog first, naming the
+host. `pilot.models.model_place` holds the rule; `tests/test_model_place.py` checks each sharing rule against each
+kind of address, with a fake resolver.
+
+Two set-ups cannot be seen from Heliox and are your own to judge: a port on this computer that forwards to a server
+elsewhere (an SSH tunnel or a proxy), and a hosts file that sends a name somewhere else after Heliox looked it up.
+
 ## 📝 Notes, usage nudges and settings by voice
 
 - Notes stay in `DATA_DIR/notes.json`; taking, reading and searching them is handled in

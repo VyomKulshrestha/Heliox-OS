@@ -134,12 +134,14 @@ def people_meant(words: str, people: dict[str, str]) -> tuple[str, ...]:
 
 
 def screen_text_ok_for_planner(config: Any) -> bool:
-    """Whether ``share_screen_text`` lets the planner's model see screen text: ``on``, or ``auto`` with a local model."""
+    """Whether ``share_screen_text`` lets the planner's model see screen text: ``on``, or ``auto`` with a model on this
+    computer (pilot.models.model_place: Ollama on another computer counts as a cloud model)."""
     from pilot.conversation.adapters import share_setting
-    from pilot.conversation.fast_model import LOCAL_PROVIDERS
+    from pilot.models.model_place import model_on_this_computer
 
     setting = share_setting(getattr(getattr(config, "conversation", None), "share_screen_text", "auto"))
-    local = getattr(getattr(config, "model", None), "provider", "") in LOCAL_PROVIDERS
+    model = getattr(config, "model", None)
+    local = model is not None and model_on_this_computer(model)
     return setting == "on" or (setting == "auto" and local)
 
 

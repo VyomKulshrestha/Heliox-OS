@@ -464,8 +464,17 @@ class HttpFastModel(_StreamingBase):
     strict: bool = False  # the one retry after a reply with no text (stricter)
 
     @property
-    def local(self) -> bool:
+    def ollama(self) -> bool:
+        """Spoken to as Ollama (its own request and reply format, no price), wherever it runs."""
         return self.provider in LOCAL_PROVIDERS
+
+    @property
+    def local(self) -> bool:
+        """On this computer: Ollama at an address that is this computer (pilot.models.model_place). Ollama on
+        another computer is not local: it gets what a cloud model gets."""
+        from pilot.models.model_place import endpoint_on_this_computer
+
+        return self.ollama and endpoint_on_this_computer(self.base_url)
 
     def stricter(self) -> HttpFastModel:
         """The same model for one more try after a reply with no text: twice the output allowance (thinking and
@@ -480,7 +489,7 @@ class HttpFastModel(_StreamingBase):
 
     def _used_within(self, seconds: float) -> bool:
         """A warm-up or a call used the connection less than ``seconds`` ago."""
-        if self.local or self._client is None:
+        if self.ollama or self._client is None:
             return False
         last = self._warm_done_at
         if self.calls:
@@ -671,7 +680,7 @@ class HttpFastModel(_StreamingBase):
         and is not a provider fault. A request that starts while it runs does not wait for it: it opens its own
         connection, which is quicker than waiting for the warm-up's answer."""
         now = self.clock()
-        if self.local or now - self._warmed_at < WARM_EVERY_SECONDS or now < self._offline_until:
+        if self.ollama or now - self._warmed_at < WARM_EVERY_SECONDS or now < self._offline_until:
             return
         if self._used_within(WARM_SKIP_SECONDS):
             return
@@ -723,8 +732,8 @@ class HttpFastModel(_StreamingBase):
         try:
             import httpx
 
-            # A server on this machine accepts at once when it runs; Windows takes about 2 s to report a refused
-            # local connection, so the local wait for a connection is short.
+            # A server on this computer accepts at once when it runs; Windows takes about 2 s to report a refused
+            # local connection, so the local wait for a connection is short. Ollama elsewhere gets the network's wait.
             timeout = httpx.Timeout(self.request_timeout, connect=LOCAL_CONNECT_TIMEOUT if self.local else 10.0)
             async with self._client.stream("POST", url, json=body, headers=headers, timeout=timeout) as resp:
                 if resp.status_code != 200:
@@ -739,7 +748,7 @@ class HttpFastModel(_StreamingBase):
                     self.hold(OFFLINE_HOLD_SECONDS, "not_api")
                     raise FastModelUnavailable("not_api", f"not from the API ({kind})")
                 blank = ""  # spaces and line breaks before the first word: no text yet (the deadline still runs)
-                glued = GluedMessages() if self.provider in OPENAI_COMPATIBLE or self.local else None
+                glued = GluedMessages() if self.provider in OPENAI_COMPATIBLE or self.ollama else None
                 lines = aiter(resp.aiter_lines())
                 while True:
                     line = await anext(lines, None)
@@ -781,7 +790,7 @@ class HttpFastModel(_StreamingBase):
             if not isinstance(error, Exception):
                 raise
             reason = _classify(error, {})
-            if self.local:
+            if self.ollama:
                 status = getattr(getattr(error, "response", None), "status_code", None)
                 # No local server running, or the named model not pulled: say how to fix it, not "offline".
                 reason = "local_down" if reason == "offline" else "local_missing" if status == 404 else reason
@@ -794,7 +803,7 @@ class HttpFastModel(_StreamingBase):
                 # nothing is booked. Until 14 November it went through the abandoned-call estimate, which charged
                 # about 100 output tokens a second for the time the request was open (a refused Gemini call: 76).
                 record.usage_source = "refused"
-            elif not self.local:
+            elif not self.ollama:
                 await self._record(record, usage, body, finished)
             elif usage.reported or record.chars:
                 # A local model costs nothing, but its calls are counted like any other (at zero).
@@ -842,7 +851,7 @@ class RouterFastModel:
     router: Any
     name: str = "router"
     provider: str = ""
-    local: bool = False
+    local: bool = False  # on this computer (pilot.models.model_place.model_on_this_computer), decided when built
     clock: Callable[[], float] = time.monotonic
     streams: bool = False
     calls: list[CallRecord] = field(default_factory=list)
@@ -961,9 +970,11 @@ def build_fast_model(config: Any, *, vault: Any, router: Any, budget: Any, http_
             )
     if router is None or provider not in ("cloud", "subscription", *LOCAL_PROVIDERS):
         return None
+    from pilot.models.model_place import model_on_this_computer
+
     return RouterFastModel(
         router=router,
         name=f"{provider}:{cloud or 'default'}",
         provider=provider or "",
-        local=provider in LOCAL_PROVIDERS,
+        local=model_on_this_computer(model_cfg),
     )

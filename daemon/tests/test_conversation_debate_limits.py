@@ -391,4 +391,5 @@ def test_often_reads_local_the_way_the_conversation_decides_it(kind):
     local = _is_local_model(server, model)  # what decides sharing the profile and the screen with that model
     expected = dbt.system_prompt(SYSTEM_PROMPT, "when_it_matters" if local else "often")
     assert layer._talk_prompt(model, typed=False) == expected
-    assert local is (kind in ("ollama on this computer", "ollama at another host", "local through the router"))
+    # Ollama at another host is a model on another computer (pilot.models.model_place): it gets the cloud rules.
+    assert local is (kind in ("ollama on this computer", "local through the router"))

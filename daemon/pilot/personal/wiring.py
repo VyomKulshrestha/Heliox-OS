@@ -44,8 +44,12 @@ def call_watch_for(server: Any) -> Any:
 
 
 def model_is_local(server: Any) -> bool:
+    """The configured model runs on this computer: Ollama or the local backend at an address on this computer
+    (pilot.models.model_place). Ollama on another computer is not local."""
+    from pilot.models.model_place import model_on_this_computer
+
     model = getattr(getattr(server, "config", None), "model", None)
-    return str(getattr(model, "provider", "") or "").casefold() in LOCAL_PROVIDERS
+    return model is not None and model_on_this_computer(model)
 
 
 def _share_setting(server: Any) -> str:

@@ -678,6 +678,13 @@ other people's private details) holds under both.
 | Claude or another cloud model | the name and answer style with every turn; preferences, people, facts and the home only when the words bear on them; goals and habits that share words; the people meant, for the planner | nothing about the person: no name, no style line, no profile, goals, habits or people; offers enter the history as a neutral line |
 | No model | nothing is sent anywhere | the same |
 
+"On this computer" means the request cannot leave it: Ollama or the local backend at a loopback address, `localhost`,
+a Unix socket or a host name that resolved to loopback only (`pilot.models.model_place`). Ollama at any other address
+(a home network, `host.docker.internal`, a container or WSL bridge, a name that resolves elsewhere or could not be
+looked up) is a cloud model for this table, for the to-dos and reminders line, for the text on screen and for Live;
+Settings says so once under the Ollama model. Host names are looked up in the background the first time they are
+needed after a start or a save of the model settings, never on the reply path.
+
 - **In the window:** Settings, Cloud API, "Your profile and the model" says this in words and turns it off.
 - **When choosing a cloud model:** the approval line says, in one sentence, everything that goes with each request:
   "Your requests will go to <host>, together with the text Heliox reads for them", then the end of what the person

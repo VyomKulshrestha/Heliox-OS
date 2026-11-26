@@ -453,11 +453,15 @@ def layer_for(server: Any) -> Any:
         config = server.config
         model_cfg = config.model
         conv = settings()
+        from pilot.models.model_place import model_on_this_computer
+
         signature = (
             model_cfg.provider,
             model_cfg.cloud_provider,
             model_cfg.cloud_model,
             model_cfg.ollama_model,
+            getattr(model_cfg, "ollama_base_url", ""),
+            model_on_this_computer(model_cfg),  # a host name's lookup came in: built again with the answer
             tuple(sorted(vars(conv).items())) if conv is not None else (),
         )
         if cache.get("signature") != signature:
