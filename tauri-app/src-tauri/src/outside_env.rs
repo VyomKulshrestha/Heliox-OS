@@ -401,6 +401,9 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    /// One case: its name, the app's environment besides APPIMAGE and APPDIR, the variable, what a program sees.
+    type Row<'a> = (&'a str, Vec<(&'a str, &'a str)>, &'a str, Option<&'a str>);
+
     /// Before and after, one row per case: what the program the app starts sees.
     #[test]
     fn the_launchers_fixed_values_against_the_persons_own() {
@@ -409,7 +412,7 @@ mod tests {
             format!("{APP}/usr/share/:{APP}/usr/share:/usr/share:/usr/local/share:/usr/share");
         let pythonhome = format!("{APP}/usr/");
         let scanner = format!("{APP}/usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner");
-        let rows: Vec<(&str, Vec<(&str, &str)>, &str, Option<&str>)> = vec![
+        let rows: Vec<Row> = vec![
             // (case, the app's environment besides APPIMAGE and APPDIR, the name, what the program sees)
             (
                 "the hook's x11",
