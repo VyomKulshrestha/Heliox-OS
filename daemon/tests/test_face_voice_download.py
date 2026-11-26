@@ -18,6 +18,9 @@ from pilot.system.face_voice import plan_face_voice
 
 
 def _server(monkeypatch, *, engine="pocket_tts", voice="alba", models=("pocket_tts",), chosen=False, pack="off"):
+    # The Kokoro download flow, for a face of a kind Pocket has no approved voice for (the man's face before michael).
+    monkeypatch.setitem(face_voice.POCKET_BY_KIND, "masculine", "")
+    monkeypatch.setitem(face_voice.PACK_VOICES, "portrait-man", face_voice.PackVoices("am_michael", "masculine", ""))
     monkeypatch.setattr(voice_default, "voice_models_on_disk", lambda cache=None: frozenset(models))
     monkeypatch.setattr(voice_default, "pocket_voice_on_disk", lambda _voice, cache=None: True)
     monkeypatch.setattr(kokoro_tts, "voice_on_disk", lambda _voice: "kokoro_tts" in models)
@@ -263,7 +266,8 @@ def test_the_terms_table_reads_as_the_published_terms():
     assert {"alba", "michael", "george", "javert", "bill_boerst", "estelle"} <= allowed
     assert all(terms[name]["licence"] in {"CC0-1.0", "CC-BY-4.0"} for name in allowed)
     assert all(terms[name]["attribution"] for name in allowed if terms[name]["licence"] == "CC-BY-4.0")
-    assert voice_default.pocket_voices_offered() == ["alba"]  # the only one listened to and read back
+    assert voice_default.pocket_voices_offered() == ["alba", "michael"]  # listened to, or read back and measured
+    assert terms["michael"]["checked"] is True and terms["michael"]["listened"] is False  # no person heard it yet
 
 
 def test_every_built_in_voice_of_the_installed_pocket_tts_is_in_the_table():
@@ -317,3 +321,27 @@ async def test_the_settings_call_refuses_a_voice_not_on_the_list_but_keeps_one_a
     assert same["status"] == "ok" and other["status"] == "ok" and config.voice.tts_voice == "lola"
     moved = await update({"section": "voice", "values": {"tts_voice": "giovanni"}}, MagicMock())
     assert moved["status"] == "error" and config.voice.tts_voice == "lola"
+
+
+@pytest.mark.asyncio
+async def test_michael_s_file_is_fetched_with_the_same_question_and_its_own_size(monkeypatch):
+    server, config, configured = _server(monkeypatch, pack="portrait-man")
+    monkeypatch.setitem(face_voice.POCKET_BY_KIND, "masculine", "michael")
+    monkeypatch.setitem(
+        face_voice.PACK_VOICES, "portrait-man", face_voice.PackVoices("am_michael", "masculine", "michael")
+    )
+    monkeypatch.setattr(voice_default, "pocket_voice_on_disk", lambda voice, cache=None: voice != "michael")
+    ahead = await server._handle_face_voice({**MAN, "apply": ""}, None)
+    assert (ahead["action"], ahead["voice"], ahead["engine"], ahead["download_bytes"]) == (
+        "fetch",
+        "michael",
+        "pocket_tts",
+        7_128_888,
+    )
+    fetched: list[list[voice_fetch.HubFile]] = []
+    server._voice_fetcher = fetched.append
+    server._between_replies = lambda: True
+    await server._handle_face_voice({**MAN, "apply": "download"}, None)
+    await server._face_voice_fetch_task
+    assert [f.path for f in fetched[0]] == ["languages/english_2026-10/embeddings/michael.safetensors"]
+    assert (config.voice.tts_engine, config.voice.tts_voice) == ("pocket_tts", "michael")

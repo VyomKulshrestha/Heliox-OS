@@ -74,11 +74,15 @@ def wants_acknowledgement(
     return True
 
 
-def next_acknowledgement(last: str) -> str:
-    """The next one in turn, never the one said last."""
-    if last in ACKNOWLEDGEMENTS:
-        return ACKNOWLEDGEMENTS[(ACKNOWLEDGEMENTS.index(last) + 1) % len(ACKNOWLEDGEMENTS)]
-    return ACKNOWLEDGEMENTS[0]
+def next_acknowledgement(last: str, ready: Callable[[str], bool] | None = None) -> str:
+    """The next one in turn, never the one said last. With ``ready`` (whether a hum's audio is made in the voice
+    speaking now): the next ready one in turn; the one said last only when it is the only one ready (a voice whose
+    "Hmm." came out silent, as Pocket's michael did, hums "Mm." each time); "" when none is ready (no hum)."""
+    start = ACKNOWLEDGEMENTS.index(last) + 1 if last in ACKNOWLEDGEMENTS else 0
+    order = [ACKNOWLEDGEMENTS[(start + step) % len(ACKNOWLEDGEMENTS)] for step in range(len(ACKNOWLEDGEMENTS))]
+    if ready is None:
+        return order[0]
+    return next((hum for hum in order if ready(hum)), "")
 
 
 def hum_allowed(run: int, draw: Callable[[], float]) -> bool:

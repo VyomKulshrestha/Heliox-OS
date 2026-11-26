@@ -128,10 +128,12 @@ When a person chooses a face in Settings whose pack names a voice:
   the default may have been picked on purpose;
 - if they have chosen one, it is kept, and the row offers the face's voice with one button;
 - with Pocket TTS, the face uses the Pocket voice approved for its kind (`POCKET_BY_KIND` in
-  `pilot/system/face_voice.py`, one column per engine in `PACK_VOICES`): alba for a feminine face. No masculine Pocket
-  voice is approved yet, so a masculine face brings its Kokoro voice instead of keeping a voice of the wrong kind:
-  switched with the face when Kokoro and the voice are on disk and the person never chose a voice. Only Pocket voices
-  whose terms allow any use are ever used with a face (`voice_terms` in `speech_models.json`);
+  `pilot/system/face_voice.py`, one column per engine in `PACK_VOICES`): alba for a feminine face, michael (VCTK,
+  CC BY 4.0) for a masculine one. michael was chosen from nine candidates by read-back and measurement on 24 November
+  2026 and is marked "checked", not yet confirmed by a person's ear. A face of a kind with no approved Pocket voice
+  brings its Kokoro voice instead of keeping a voice of the wrong kind. Only Pocket voices whose terms allow any use
+  are ever used with a face (`voice_terms` in `speech_models.json`). A hum that comes out silent in a voice (michael's
+  "Hmm." did, at about -64 dBFS) is not kept, and that voice hums with the hum it has ("Mm.") or not at all;
 - a face whose voice is not on the computer says so in the list before it is chosen ("Portrait, man (its voice needs a
   download of about 330 MB)"), and choosing it asks in place, the same way for any face and engine, before anything
   is saved: "Use this face and download its voice" (the consent: Heliox fetches the files while the current voice

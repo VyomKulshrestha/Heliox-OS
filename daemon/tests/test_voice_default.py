@@ -211,7 +211,7 @@ def test_an_install_still_without_a_voice_follows_new_hardware():
 
 
 def test_a_face_without_an_approved_pocket_voice_keeps_kokoro_and_its_own_voice():
-    man = {"kokoro_tts": "am_michael", "pocket_tts": ""}
+    man = {"kokoro_tts": "am_michael", "pocket_tts": ""}  # a kind Pocket has no approved voice for
     woman = {"kokoro_tts": "af_heart", "pocket_tts": "alba"}
     assert fresh(face_voices=man) is None  # Kokoro stays; the face then brings am_michael
     back = fresh(engine="pocket_tts", voice="alba", face_voices=man)
@@ -316,10 +316,10 @@ def test_a_failed_save_changes_nothing(monkeypatch):
     assert (config.voice.tts_engine, config.voice.tts_voice) == ("kokoro_tts", "af_heart")
 
 
-def test_the_man_s_face_keeps_kokoro_at_first_run(monkeypatch):
+def test_the_man_s_face_starts_with_michael_at_first_run(monkeypatch):
     server, config = _server(monkeypatch, pack="portrait-man")
     _asked, probes = _probes()
-    assert server._choose_first_voice(**probes) is None and config.voice.tts_engine == "kokoro_tts"
+    assert server._choose_first_voice(**probes)["voice"] == "michael" and config.voice.tts_engine == "pocket_tts"
     server, config = _server(monkeypatch, pack="portrait-woman")
     assert server._choose_first_voice(**probes)["voice"] == "alba"
 

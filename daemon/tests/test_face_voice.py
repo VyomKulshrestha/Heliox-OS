@@ -12,7 +12,7 @@ import pytest
 
 from pilot.config import PilotConfig, _merge_config, _validate_config_types
 from pilot.server import PilotServer
-from pilot.system import kokoro_tts, local_tts_worker, voice_default
+from pilot.system import face_voice, kokoro_tts, local_tts_worker, voice_default
 from pilot.system.face_voice import PACK_VOICES, POCKET_BY_KIND, face_voices, pack_voice, plan_face_voice, pocket_voice
 
 HERE = lambda _voice: True  # noqa: E731
@@ -83,14 +83,14 @@ def test_with_pocket_a_face_without_an_approved_pocket_voice_brings_its_kokoro_v
     assert spanish.voice == "ef_dora" and spanish.engine == "kokoro_tts" and spanish.action == "fetch"
 
 
-def test_the_pocket_column_is_one_approved_voice_per_kind_and_the_masculine_slot_is_empty():
-    assert POCKET_BY_KIND == {"feminine": "alba", "masculine": ""}
-    assert PACK_VOICES["portrait-woman"].pocket == "alba" and PACK_VOICES["portrait-man"].pocket == ""
-    assert face_voices("portrait-man") == {"kokoro_tts": "am_michael", "pocket_tts": ""}
+def test_the_pocket_column_is_one_approved_voice_per_kind_alba_and_michael():
+    assert POCKET_BY_KIND == {"feminine": "alba", "masculine": "michael"}
+    assert PACK_VOICES["portrait-woman"].pocket == "alba" and PACK_VOICES["portrait-man"].pocket == "michael"
+    assert face_voices("portrait-man") == {"kokoro_tts": "am_michael", "pocket_tts": "michael"}
     assert face_voices("off") is None
     assert pocket_voice("portrait-woman", "af_heart", "feminine") == "alba"
     assert pocket_voice("someone-elses-pack", "bf_emma", "feminine") == "alba"  # a pack not shipped: by its kind
-    assert pocket_voice("someone-elses-pack", "bm_lewis", "masculine") == ""
+    assert pocket_voice("someone-elses-pack", "bm_lewis", "masculine") == "michael"
 
 
 def test_another_language_keeps_its_voice_or_offers_one_of_its_own_by_the_hint():
@@ -282,8 +282,9 @@ async def test_the_face_s_voice_is_not_switched_when_it_cannot_speak_or_cannot_b
     missing = await _set_face(server, "portrait-man")
     assert missing["face_voice"]["switched"] is False and missing["face_voice"]["action"] == "fetch"
     assert config.voice.tts_voice == "af_heart"
-    # Pocket TTS without Kokoro's model on disk: the man's face offers its Kokoro voice with the download, and
-    # nothing is fetched or switched until the person accepts.
+    # Pocket TTS without Kokoro's model on disk, for a face of a kind Pocket has no approved voice for: it offers
+    # its Kokoro voice with the download, and nothing is fetched or switched until the person accepts.
+    _no_masculine_pocket(monkeypatch)
     server, config, configured = _server(monkeypatch, engine="pocket_tts", voice="alba", models=("pocket_tts",))
     other = await _set_face(server, "portrait-man")
     assert other["face_voice"]["action"] == "fetch" and other["face_voice"]["engine"] == "kokoro_tts"
@@ -352,7 +353,8 @@ def test_a_face_chosen_by_editing_the_file_while_heliox_runs_brings_its_voice(mo
 
 
 @pytest.mark.asyncio
-async def test_with_pocket_the_man_s_face_switches_to_kokoro_and_the_woman_s_face_back_to_alba(monkeypatch):
+async def test_a_face_with_no_approved_pocket_voice_switches_to_kokoro_and_the_woman_s_face_back(monkeypatch):
+    _no_masculine_pocket(monkeypatch)
     server, config, configured = _server(monkeypatch, engine="pocket_tts", voice="alba", models=("kokoro_tts",))
     man = await _set_face(server, "portrait-man")
     assert man["face_voice"]["switched"] is True
@@ -366,6 +368,7 @@ async def test_with_pocket_the_man_s_face_switches_to_kokoro_and_the_woman_s_fac
 
 @pytest.mark.asyncio
 async def test_with_pocket_the_woman_s_face_keeps_alba_and_accepting_kokoro_for_the_man_is_a_choice(monkeypatch):
+    _no_masculine_pocket(monkeypatch)
     server, config, configured = _server(monkeypatch, engine="pocket_tts", voice="alba", models=("pocket_tts",))
     woman = await _set_face(server, "portrait-woman")
     assert woman["face_voice"]["action"] == "same" and config.voice.tts_voice == "alba" and not configured
@@ -377,3 +380,32 @@ async def test_with_pocket_the_woman_s_face_keeps_alba_and_accepting_kokoro_for_
     )
     assert config.voice.tts_voice_chosen is True
     assert "About 330 MB is fetched the first time it speaks." in accepted["say"]
+
+
+def _no_masculine_pocket(monkeypatch) -> None:
+    """A face of a kind Pocket has no approved voice for: what the man's face was before michael was approved."""
+    monkeypatch.setitem(face_voice.POCKET_BY_KIND, "masculine", "")
+    monkeypatch.setitem(face_voice.PACK_VOICES, "portrait-man", face_voice.PackVoices("am_michael", "masculine", ""))
+
+
+@pytest.mark.asyncio
+async def test_with_pocket_the_man_s_face_keeps_pocket_with_michael(monkeypatch):
+    """No Kokoro download asked: michael is the man's face's Pocket voice."""
+    server, config, configured = _server(monkeypatch, engine="pocket_tts", voice="alba", models=("pocket_tts",))
+    man = await _set_face(server, "portrait-man")
+    assert man["face_voice"]["switched"] is True and man["face_voice"]["engine"] == "pocket_tts"
+    assert (config.voice.tts_engine, config.voice.tts_voice, config.voice.tts_voice_chosen) == (
+        "pocket_tts",
+        "michael",
+        False,
+    )
+    assert configured == ["michael"]
+    woman = await _set_face(server, "portrait-woman")
+    assert woman["face_voice"]["switched"] is True and config.voice.tts_voice == "alba"
+
+
+def test_michael_s_file_not_here_asks_for_its_own_7_mb():
+    missing = plan(voice="am_michael", hint="masculine", engine="pocket_tts", current="alba", pocket="michael",
+                   pocket_on_disk=lambda _voice: False)  # fmt: skip
+    assert (missing.action, missing.voice, missing.engine) == ("fetch", "michael", "pocket_tts")
+    assert missing.download_bytes == 7_128_888 and "about 7 MB" in missing.say

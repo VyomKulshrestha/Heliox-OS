@@ -344,7 +344,8 @@ async def test_with_no_audio_made_ahead_nothing_is_said_and_nothing_waits():
         await turns.turn(n)
     assert turns.marks == ["-"] * 4
     assert [text for text, _ch in turns.ear.heard] == [f"Answer number {n} is here." for n in range(4)]
-    assert turns.asked == ["Mm."] * 4 and turns.drawn == 0
+    # Each turn looks for a hum made in the voice speaking, the next in turn first; none is: no hum, no draw.
+    assert turns.asked == ["Mm.", "Hmm."] * 4 and turns.drawn == 0
 
 
 async def test_once_the_audio_is_made_the_first_hum_comes():

@@ -725,12 +725,14 @@ class ConversationLayer:
         if held is not None and held.first_text_at is not None:
             _hum_stamp(turn_id, "turn end", "", "answer ready")
             return False  # the answer's first text is already there: it goes first
-        hum = next_acknowledgement(self._last_hum)
+        hum = next_acknowledgement(
+            self._last_hum, ready=lambda h: _safe_call(lambda: self._ready_made(h), False) is True
+        )
         if not (
             wants_acknowledgement(
                 words, typed=False, ended=ended, statement=decided.reason == "statement", enabled=True
             )
-            and _safe_call(lambda: self._ready_made(hum), False) is True
+            and bool(hum)
             and hum_allowed(self._hum_run, self._ack_draw)
         ):
             _hum_stamp(turn_id, "turn end", "", "rules")
@@ -1263,7 +1265,9 @@ class ConversationLayer:
             content_handed = [False]
             acked = asyncio.Event()
             ended = _safe_call(self._turn_ended, None)
-            hum = next_acknowledgement(self._last_hum)
+            hum = next_acknowledgement(
+                self._last_hum, ready=lambda h: _safe_call(lambda: self._ready_made(h), False) is True
+            )
             answer_ready = adopted is not None and adopted.first_text_at is not None
             if (
                 not answer_ready
@@ -1274,7 +1278,7 @@ class ConversationLayer:
                     statement=statement,
                     enabled=bool(_safe_call(self._acknowledge, False)),
                 )
-                and _safe_call(lambda: self._ready_made(hum), False) is True
+                and bool(hum)
                 and hum_allowed(self._hum_run, self._ack_draw)
             ):
                 # Only from audio made ahead: with the system voice, or before the local voice made it, nothing is

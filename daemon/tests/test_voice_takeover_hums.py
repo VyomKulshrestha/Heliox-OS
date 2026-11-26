@@ -17,7 +17,7 @@ import pytest
 
 from pilot.system import local_tts_worker as ltw
 from pilot.system import speech_trace
-from pilot.system.local_tts_worker import LocalTTSWorkerManager, SpeechStore
+from pilot.system.local_tts_worker import LocalTTSWorkerManager, Piece, SpeechStore
 
 GB = 1024**3
 AF_HEART = SpeechStore.signature("kokoro_tts", "af_heart")
@@ -96,7 +96,7 @@ class Maker:
         async def make(engine, text, voice, path, folder, **given):
             assert given["start_voice"] is False and given["rank"] == ltw.PIPE_AHEAD  # never a cold start, lowest rank
             self.events.append(f"made {voice} {text}")
-            return SimpleNamespace(path=None)
+            return Piece(text, audio=np.full(240, 0.3, dtype=np.float32), rate=24000)  # audible: a hum is kept
 
         async def too_warm_now():
             if self.warm_polls:

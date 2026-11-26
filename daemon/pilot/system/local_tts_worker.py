@@ -875,6 +875,30 @@ class SpeechStore:
         self._save()
         return True
 
+    def mark_silent(self, text: str, signature: str) -> None:
+        """``text`` came out (almost) silent in this voice: it is not kept and not made again (silent.json)."""
+        found = self._silent()
+        texts = found.setdefault(signature, [])
+        if text not in texts:
+            texts.append(text)
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            (self.folder / "silent.json").write_text(json.dumps(found, indent=1), encoding="utf-8")
+        except OSError:
+            logger.debug("Could not note a silent hum", exc_info=True)
+
+    def is_silent(self, text: str, signature: str) -> bool:
+        return text in self._silent().get(signature, [])
+
+    def _silent(self) -> dict[str, list[str]]:
+        try:
+            found = json.loads((self.folder / "silent.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(found, dict):
+            return {}
+        return {str(k): [str(t) for t in v] for k, v in found.items() if isinstance(v, list)}
+
     def trim_short_tails(self) -> int:
         """Shape every hum kept before hums were made short (shape_hum: its sound to HUM_SOUND_SECONDS with a fade,
         then ACK_TAIL_SECONDS), its phoneme timing with it, once: a hum already in the store is not made again.
@@ -1031,6 +1055,34 @@ def keeps_short_tail(text: str) -> bool:
 HUM_SOUND_SECONDS = 0.45
 HUM_FADE_SECONDS = 0.06
 HUM_SHAPE = 1  # the version of shape_hum, recorded beside a hum kept in the store
+
+
+# A hum quieter than this at its loudest is no hum. Measured 24 November: Pocket's michael made "Hmm." with a peak of
+# 0.008 (about -64 dBFS), where its sentences peaked at 0.49 to 0.71 and alba's at 0.74 to 0.77. Played, it would be
+# half a second of nothing before the answer.
+HUM_MIN_PEAK = 0.03
+
+
+def audible(audio: Any) -> bool:
+    """Whether ``audio`` (a Piece with samples, a Piece or path of a 16-bit WAV) rises above HUM_MIN_PEAK anywhere."""
+    import numpy as np
+
+    samples = getattr(audio, "audio", None)
+    if samples is None:
+        file = audio if isinstance(audio, Path) else getattr(audio, "path", None)
+        if not isinstance(file, Path) or not file.is_file():
+            return False
+        import wave
+
+        try:
+            with wave.open(str(file), "rb") as wav:
+                if wav.getsampwidth() != 2:
+                    return True  # not a format read here: kept as before
+                samples = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2").astype(np.float32) / 32768.0
+        except (OSError, EOFError, wave.Error):
+            return True
+    samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+    return bool(samples.size) and float(np.max(np.abs(samples))) >= HUM_MIN_PEAK
 
 
 def shape_hum(audio: Any, rate: int) -> Any:
@@ -2744,6 +2796,8 @@ class LocalTTSWorkerManager:
                     return made
                 if store.has(text, signature) or len(text.split()) > MAKE_AHEAD_MAX_WORDS:
                     continue
+                if getattr(store, "is_silent", lambda *_: False)(text, signature):
+                    continue  # came out silent in this voice before: no hum rather than a silent one
                 while not (
                     self.running
                     and self.loaded
@@ -2771,6 +2825,13 @@ class LocalTTSWorkerManager:
                     )
                 except LocalTTSUnavailable:
                     return made
+                if keeps_short_tail(text) and not audible(piece):
+                    getattr(store, "mark_silent", lambda *_: None)(text, signature)
+                    logger.info("The hum %r came out silent in %s %s: it is not kept", text, engine, voice)
+                    if piece.path is not None:
+                        with contextlib.suppress(OSError):
+                            piece.path.unlink()
+                    continue
                 if not store.add_fixed(text, signature, piece):
                     return made  # full
                 made += 1
@@ -3095,7 +3156,8 @@ def _hums_done(current: Handover) -> bool:
     if store is None:
         return True
     signature = SpeechStore.signature(current.engine, current.voice)
-    if all(store.has(text, signature) for text in hum_pieces()):
+    silent = getattr(store, "is_silent", lambda *_: False)
+    if all(store.has(text, signature) or silent(text, signature) for text in hum_pieces()):
         return True
     if current.hums is None:
         try:

@@ -13,8 +13,8 @@ the product's default voice, a woman's, because nothing paired a face with a voi
   Kokoro fetches the file (about half a megabyte) the first time it speaks, the way ``voice_for_language_apply``
   adds a voice ("fetch");
 - Heliox speaks with Pocket TTS: the face's approved Pocket voice is used the same way (``PACK_VOICES``' Pocket
-  column, ``POCKET_BY_KIND``). Where Pocket has no approved voice for the face yet (the man's face today), the face
-  brings its Kokoro voice instead of keeping a voice of the wrong kind: switched with the face while the person never
+  column, ``POCKET_BY_KIND``: alba for a feminine face, michael for a masculine one). Where Pocket has no approved
+  voice for a face (a kind with none), the face brings its Kokoro voice instead of keeping a voice of the wrong kind: switched with the face while the person never
   chose a voice and Kokoro's model and the voice are on disk, otherwise offered with the download it takes;
 - Heliox speaks with the system voice, or in a language the face's voice does not speak: nothing changes. In another
   language, a Kokoro voice of that language matching the hint is offered when there is one ("unavailable").
@@ -36,13 +36,20 @@ from pilot.system.voice_default import VOICES
 
 HINTS = {"feminine": "f", "masculine": "m"}
 
-# The Pocket TTS voice approved for each kind of face: listened to and read back (Whisper) before it is used with a
-# face. alba passed (numbers: 0 read wrong in 65 pieces once spoken as words). The masculine slot is EMPTY ON PURPOSE:
-# no masculine Pocket voice has been listened to or read back yet (michael and george, among kyutai/tts-voices, are
-# the first candidates). Until one passes, a man's face with Pocket TTS brings its Kokoro voice (am_michael).
-POCKET_BY_KIND: dict[str, str] = {"feminine": "alba", "masculine": ""}
-# A Pocket voice is about 6 MB, fetched by Pocket TTS the first time it speaks (speech_models.json, "voice_bytes").
+# The Pocket TTS voice approved for each kind of face, from voices whose terms allow any use. alba was listened to and
+# read back (numbers: 0 read wrong in 65 pieces once spoken as words). michael (VCTK, CC BY 4.0) was chosen from nine
+# masculine candidates by read-back and measurement on 24 November 2026: 5 of 5 sentences read back, the steadiest
+# loudness (1.1 dB apart), no clipping, pitch about 91 Hz; it is marked "checked", not yet heard by a person.
+POCKET_BY_KIND: dict[str, str] = {"feminine": "alba", "masculine": "michael"}
+# A Pocket voice is 3.6 to 7.1 MB, fetched by Pocket TTS the first time it speaks (speech_models.json: each voice's
+# "bytes", else "voice_bytes").
 POCKET_VOICE_BYTES = int(VOICES.get("pocket_tts", {}).get("voice_bytes", 6_000_000))
+
+
+def pocket_voice_bytes(voice: str) -> int:
+    """What fetching the Pocket voice ``voice`` downloads: its own size when known, else the usual one."""
+    term = VOICES.get("pocket_tts", {}).get("voice_terms", {}).get(voice, {})
+    return int(term.get("bytes") or POCKET_VOICE_BYTES)
 
 
 @dataclass(frozen=True)
@@ -164,9 +171,9 @@ def _plan(
         kept = f"Your voice, {current}, is kept. " if chosen else ""
         if not pocket_on_disk(pocket):
             return FaceVoicePlan(
-                pocket, "fetch", POCKET_VOICE_BYTES,
+                pocket, "fetch", pocket_voice_bytes(pocket),
                 f"{kept}This face's Pocket TTS voice, {pocket}, is not on this computer yet; using it fetches "
-                f"{_megabytes(POCKET_VOICE_BYTES)} the first time it speaks.", "pocket_tts",
+                f"{_megabytes(pocket_voice_bytes(pocket))} the first time it speaks.", "pocket_tts",
             )  # fmt: skip
         return FaceVoicePlan(pocket, "offer", 0, f"{kept}This face's Pocket TTS voice is {pocket}.", "pocket_tts")
     if engine == "pocket_tts":

@@ -366,7 +366,12 @@ export interface VoiceTerms {
   licence: string;
   attribution: string;
   use: "allowed" | "never" | "unknown";
+  /** A person heard it and approved it. */
   listened: boolean;
+  /** Read back by a recogniser and measured, not yet heard by a person. */
+  checked?: boolean;
+  /** Its embedding's size in bytes, when known. */
+  bytes?: number;
 }
 
 interface VoiceRule {
@@ -433,12 +438,15 @@ export function pocketVoiceTerms(name: string): VoiceTerms | undefined {
 }
 
 /**
- * The Pocket voices Settings offers: those whose terms allow any use and that were listened to and read back. A voice
- * the person already speaks with stays in the list (``current``), so a choice made before is never broken.
+ * The Pocket voices Settings offers: those whose terms allow any use and that a person listened to or that were read
+ * back and measured (checked). A voice the person already speaks with stays in the list (``current``), so a choice
+ * made before is never broken.
  */
 export function pocketVoicesOffered(current = ""): string[] {
   const terms = localVoices().find((v) => v.engine === "pocket_tts")?.voice_terms ?? {};
-  const offered = Object.keys(terms).filter((name) => terms[name].use === "allowed" && terms[name].listened);
+  const offered = Object.keys(terms).filter(
+    (name) => terms[name].use === "allowed" && (terms[name].listened || terms[name].checked),
+  );
   return current && !offered.includes(current) ? [...offered, current] : offered;
 }
 

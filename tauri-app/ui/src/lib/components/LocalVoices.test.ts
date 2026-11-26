@@ -122,10 +122,13 @@ describe("LocalVoices", () => {
     expect(screen.getByTestId("voice-credit").textContent).toContain("Heliox does not offer it");
   });
 
-  it("offers only listened-to Pocket voices whose terms allow any use, keeping one already chosen", () => {
-    expect(pocketVoicesOffered()).toEqual(["alba"]);
-    expect(pocketVoicesOffered("lola")).toEqual(["alba", "lola"]);
-    expect(pocketVoicesOffered("alba")).toEqual(["alba"]);
+  it("offers Pocket voices whose terms allow any use and that were listened to or checked, keeping one chosen", () => {
+    expect(pocketVoicesOffered()).toEqual(["alba", "michael"]); // michael: read back and measured, not yet heard
+    expect(pocketVoicesOffered("lola")).toEqual(["alba", "michael", "lola"]);
+    expect(pocketVoicesOffered("alba")).toEqual(["alba", "michael"]);
+    expect(pocketVoiceCredit("michael")).toBe(
+      "Voice michael: Voice from VCTK (the Voice Cloning Toolkit, datashare.ed.ac.uk/handle/10283/3443), CC BY 4.0.",
+    );
     expect(pocketVoiceCredit("bill_boerst")).toBe(
       "Voice bill_boerst: CC0 1.0, from kyutai/tts-voices voice-zero/bill_boerst.wav.",
     );

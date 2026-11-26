@@ -94,9 +94,14 @@ def pocket_voice_allowed(voice: str) -> bool:
 
 
 def pocket_voices_offered() -> list[str]:
-    """Allowed Pocket voices that were also listened to and read back: the ones Settings offers."""
+    """Allowed Pocket voices that a person listened to, or that were read back and measured ("checked"): the ones
+    Settings offers."""
     terms = VOICES.get("pocket_tts", {}).get("voice_terms", {})
-    return [name for name, term in terms.items() if term.get("use") == "allowed" and term.get("listened")]
+    return [
+        name
+        for name, term in terms.items()
+        if term.get("use") == "allowed" and (term.get("listened") or term.get("checked"))
+    ]
 
 
 def default_voice(engine: str) -> str:

@@ -43,10 +43,11 @@ def files_for(engine: str, voice: str, *, model_on_disk: bool, voices: Mapping[s
     return files
 
 
-def download_bytes(engine: str, *, model_on_disk: bool, voices: Mapping[str, Any] = VOICES) -> int:
-    """About how much ``files_for`` fetches (the manifest's "about" sizes)."""
+def download_bytes(engine: str, *, model_on_disk: bool, voice: str = "", voices: Mapping[str, Any] = VOICES) -> int:
+    """About how much ``files_for`` fetches (the manifest's sizes: the voice's own when listed)."""
     entry = voices.get(engine) or {}
-    size = int(entry.get("voice_bytes", 0))
+    own = (entry.get("voice_terms") or {}).get(voice, {}).get("bytes")
+    size = int(own or entry.get("voice_bytes", 0))
     return size if model_on_disk else size + int(entry.get("download_bytes", 0))
 
 

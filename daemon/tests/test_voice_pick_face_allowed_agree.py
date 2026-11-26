@@ -75,6 +75,8 @@ def test_the_first_voice_is_allowed_and_of_the_face_s_kind(machine, language, fa
             assert voice == pack.kokoro and voice[1] == _kind_letter(pack.hint)
         else:
             assert voice == pack.pocket and voice == face_voice.POCKET_BY_KIND[pack.hint]
+            terms = voice_default.pocket_voice_terms(voice)
+            assert terms["kind"] == pack.hint  # a face never speaks with a Pocket voice of the other kind
     elif found is not None:
         assert voice == default_voice(engine)
 
@@ -84,11 +86,13 @@ def test_a_face_never_brings_a_voice_off_the_list_or_of_the_other_kind(face):
     pack = PACK_VOICES[face]
     assert face_voice_valid(pack.kokoro) and pack.kokoro[1] == _kind_letter(pack.hint)
     brought = pocket_voice(face, pack.kokoro, pack.hint)
-    assert brought == pack.pocket  # "" while no Pocket voice of that kind is approved
+    assert brought == pack.pocket  # "" for a kind with no approved Pocket voice
     if brought:
         assert pocket_voice_allowed(brought) and brought == face_voice.POCKET_BY_KIND[pack.hint]
         terms = voice_default.pocket_voice_terms(brought)
-        assert terms.get("listened") is True
+        # Heard by a person (alba), or read back and measured and marked so (michael); and of the face's kind.
+        assert terms.get("listened") is True or terms.get("checked") is True
+        assert terms.get("kind") == pack.hint
 
 
 def test_every_default_on_the_screen_is_on_the_list():
