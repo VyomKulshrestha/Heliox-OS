@@ -205,7 +205,18 @@ async def resolve_windows_application(name: str) -> ApplicationTarget:
     )
 
 
+def launched_program(command: list[str]) -> str:
+    """The program a launch command starts: the app id after shell:AppsFolder (a Store app opened through
+    explorer.exe), else the executable. Pure."""
+    for part in command[1:]:
+        if part.casefold().startswith("shell:appsfolder\\"):
+            return part.split("\\", 1)[1]
+    return command[0] if command else ""
+
+
 async def _start_and_check(command: list[str], display_name: str) -> int:
+    from pilot.system.desktop_observe import note_launch
+
     try:
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -221,6 +232,7 @@ async def _start_and_check(command: list[str], display_name: str) -> int:
     except TimeoutError:
         # The process remained alive past startup, which is the normal GUI-app
         # case.  asyncio will reap it later without blocking the command.
+        note_launch(launched_program(command), process.pid)
         return process.pid
 
     stderr = b""
@@ -231,6 +243,9 @@ async def _start_and_check(command: list[str], display_name: str) -> int:
         raise ApplicationLaunchError(
             f"{display_name} exited during startup with code {return_code}" + (f": {detail}" if detail else ".")
         )
+    # A launcher that hands over and exits (explorer.exe for Store apps, a single-instance app's second copy): its
+    # pid is not the app's, so only the program's name is kept.
+    note_launch(launched_program(command), 0)
     return process.pid
 
 
@@ -344,6 +359,9 @@ async def _launch_linux(requested: str, arguments: list[str]) -> str:
             raise ApplicationLaunchError(f"{app.name} runs in a terminal, and no terminal program was found.")
         argv = [terminal, "--", *argv] if terminal.endswith("gnome-terminal") else [terminal, "-e", *argv]
     await _start_and_check(argv, app.name)
+    from pilot.system.desktop_observe import note_launch
+
+    note_launch(app.desktop_id.removesuffix(".desktop"), 0)
     return f"Launched {app.name} (resolved via its desktop entry {app.desktop_id})."
 
 
@@ -375,6 +393,9 @@ async def launch_application(name: str, args: list[str] | None = None) -> str:
         if code != 0:
             detail = stderr.strip() or "application is not registered with Launch Services"
             raise ApplicationResolutionError(f"Application {requested!r} was not found: {detail}")
+        from pilot.system.desktop_observe import note_launch
+
+        note_launch(Path(bundle).stem if bundle else requested, 0)
         if bundle:
             return f"Launched {Path(bundle).stem} (resolved via {bundle})."
         return f"Launched {requested} (resolved via macOS Launch Services)."

@@ -48,7 +48,6 @@ def _clean(monkeypatch: pytest.MonkeyPatch):
         "read_keys_down_now",
         "window_states_now",
         "window_rows_now",
-        "running_process_names_now",
         "read_clipboard_now",
     ):
         monkeypatch.setattr(observe, name, MagicMock(side_effect=AssertionError(f"real {name} reached")))
@@ -240,7 +239,8 @@ async def test_a_different_window_in_front_fails_the_step_and_is_a_mismatch(monk
     action = observe._RECORDS[next(iter(observe._RECORDS))].action
     verification = await verify(action)
     assert not verification.passed and "MISMATCH" in label(verification)
-    assert '"Inbox - Mail"' in verification.reasons[0] and "Notepad" in verification.reasons[0]
+    assert "msedge" in verification.reasons[0] and "Notepad" in verification.reasons[0]
+    assert "Inbox - Mail" not in verification.reasons[0]  # a window title never reaches a result
 
 
 async def test_focus_that_arrives_during_the_settle_time_passes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -356,8 +356,8 @@ async def test_a_window_change_after_enter_is_expected(monkeypatch, pag, clipboa
     [
         (_field(None, secure=True, editable=False), "REPORTED", "password field, which is never read"),
         (_field(None, editable=False), "REPORTED", "does not expose its text"),
-        (_field("", editable=True), "MISMATCH", "is empty after typing 28 characters"),
-        (_field("Dear Sam, correct horse battery Staple."), "REPORTED", "not called a failure"),
+        (_field("", editable=True), "REPORTED", "does not show the 28 typed characters"),
+        (_field("Dear Sam, correct horse battery Staple."), "REPORTED", "complete or reformat text"),
         (Unobservable("not verified: the Accessibility permission is not granted"), "REPORTED", "not granted"),
     ],
 )
@@ -475,24 +475,14 @@ def test_a_focus_mismatch_stays_retryable(monkeypatch: pytest.MonkeyPatch) -> No
 # ── reading the focused field cheaply on Windows ──
 
 
-def test_only_enter_counts_as_submitting() -> None:
-    assert observe.submits(Action(action_type=ActionType.KEYBOARD_PRESS, parameters=KeyboardParams(key="Enter")))
-    assert observe.submits(
-        Action(action_type=ActionType.KEYBOARD_HOTKEY, parameters=KeyboardParams(keys=["ctrl", "enter"]))
-    )
-    assert not observe.submits(Action(action_type=ActionType.KEYBOARD_PRESS, parameters=KeyboardParams(key="tab")))
-    assert not observe.submits(Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=1, y=1)))
-    assert not observe.submits(None)
-
-
 @pytest.fixture
 def windows_field(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(observe, "CURRENT_PLATFORM", Platform.WINDOWS)
     monkeypatch.setattr(observe, "focused_field", REAL_FOCUSED_FIELD)
-    once = AsyncMock(return_value=FieldReading(True, False, "typed", "UI Automation"))
-    monkeypatch.setattr(observe, "_win_field_once", once)
     monkeypatch.setattr(observe, "_FIELD_READER", None)
-    return once
+    started = MagicMock(side_effect=AssertionError("no PowerShell process may be started for a field read"))
+    monkeypatch.setattr(observe.asyncio, "create_subprocess_exec", started)
+    return started
 
 
 async def test_lives_running_helper_is_reused_for_the_field(windows_field) -> None:
@@ -507,21 +497,13 @@ async def test_lives_running_helper_is_reused_for_the_field(windows_field) -> No
     reading = await observe.focused_field(NOTEPAD)
 
     assert reading.text == "hello" and reading.editable
-    windows_field.assert_not_awaited()
 
 
-async def test_without_a_running_helper_the_field_is_not_read_unless_enter_follows(windows_field) -> None:
+async def test_without_a_running_helper_the_field_is_not_read_and_nothing_is_started(windows_field) -> None:
     observe.set_field_reader(types.SimpleNamespace(_proc=None, read=AsyncMock(side_effect=AssertionError("stopped"))))
     with pytest.raises(Unobservable, match="the window was right; the field's content was not read"):
         await observe.focused_field(NOTEPAD)
-    windows_field.assert_not_awaited()
-
-    typing = Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text="typed"))
-    enter = Action(action_type=ActionType.KEYBOARD_PRESS, parameters=KeyboardParams(key="enter"))
-    with observe.step(typing, next_action=enter):
-        reading = await observe.focused_field(NOTEPAD)
-    assert reading.text == "typed"
-    windows_field.assert_awaited_once()
+    windows_field.assert_not_called()
 
 
 async def test_typing_without_the_field_read_is_reported_with_the_window_right(
@@ -582,18 +564,36 @@ async def test_click_where_sent_with_the_button_up_is_verified(monkeypatch, pag)
     assert verification.passed and "what the target did with the click cannot be read" in await said(click)
 
 
-@pytest.mark.parametrize(
-    ("pointer", "held", "words"),
-    [((640, 10), set(), "not at (300, 200)"), ((300, 200), {"left"}, "left mouse button is still held")],
-)
-async def test_click_elsewhere_or_a_held_button_stops_the_plan(monkeypatch, pag, pointer, held, words) -> None:
+async def test_a_click_whose_pointer_is_not_at_its_target_is_not_made(monkeypatch, pag) -> None:
     click = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=300, y=200))
-    reads(monkeypatch, "read_pointer_now", pointer)
-    reads(monkeypatch, "read_buttons_down_now", held)
-    with observe.step(click), pytest.raises(DesktopStepMismatch, match=re.escape(words)):
+    reads(monkeypatch, "read_pointer_now", (640, 10))
+    with observe.step(click), pytest.raises(DesktopStepMismatch, match=re.escape("No click was made")):
         await input_control.mouse_click(300, 200)
+    pag.moveTo.assert_called_once_with(300, 200)
+    pag.click.assert_not_called()
+    # Nothing was clicked, so this is not a "went elsewhere" stop: the step may be tried again.
+    assert observe.input_went_elsewhere([ActionResult(action=click, success=False, error="x")]) is None
+
+
+async def test_a_pointer_moved_after_the_click_is_not_verified_not_a_stop(monkeypatch, pag) -> None:
+    click = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=300, y=200))
+    reads(monkeypatch, "read_pointer_now", (300, 200), (640, 10))  # at the event, then after it
+    reads(monkeypatch, "read_buttons_down_now", set())
+    with observe.step(click):
+        await input_control.mouse_click(300, 200)
+    pag.click.assert_called_once_with(button="left", clicks=1, interval=0.1)
     verification = await verify(click)
-    assert not verification.passed and words in verification.reasons[0]
+    assert verification.passed and "the mouse may have been moved since" in verification.reasons[0]
+
+
+async def test_a_button_still_held_after_the_click_stops_the_run(monkeypatch, pag) -> None:
+    click = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=300, y=200))
+    reads(monkeypatch, "read_pointer_now", (300, 200))
+    reads(monkeypatch, "read_buttons_down_now", {"left"})
+    with observe.step(click), pytest.raises(DesktopStepMismatch, match="left mouse button is still held"):
+        await input_control.mouse_click(300, 200)
+    failed = ActionResult(action=click, success=False, error="held")
+    assert observe.input_went_elsewhere([failed]) == "held"
 
 
 async def test_relative_move_is_compared_with_where_it_started(monkeypatch, pag) -> None:
@@ -718,27 +718,196 @@ async def test_a_window_of_the_app_appearing_is_verified(monkeypatch: pytest.Mon
     assert desktop_input._sleep.await_count == 1
 
 
-async def test_tray_only_app_is_reported_and_an_app_that_never_came_is_a_mismatch(
+async def test_an_app_whose_window_never_shows_is_not_verified_never_a_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    reads(monkeypatch, "window_rows_now", [observe.WindowRow(3, "explorer.exe", "Downloads")])
-    reads(monkeypatch, "running_process_names_now", {"explorer", "dropbox"})
+    reads(monkeypatch, "window_rows_now", [observe.WindowRow(3, "explorer.exe", "Downloads", 30)])
     action = Action(action_type=ActionType.OPEN_APPLICATION, parameters=OpenApplicationParams(name="Dropbox"))
 
     tray = await verify(action, output="Launched Dropbox (resolved via Start menu).")
-    assert "REPORTED" in label(tray) and "tray" in tray.reasons[0]
+
+    assert tray.passed and "REPORTED" in label(tray) and "tray" in tray.reasons[0]
     polls = round(desktop_input.APP_WINDOW_WAIT_SECONDS / desktop_input.APP_POLL_SECONDS)
-    assert desktop_input._sleep.await_count == polls
-
-    reads(monkeypatch, "running_process_names_now", {"explorer"})
-    never = await verify(action, output="Launched Dropbox (resolved via Start menu).")
-    assert not never.passed and "no window or process of it appeared" in never.reasons[0]
+    assert desktop_input._sleep.await_count == polls == 6  # 3 s at most, counted in steps
 
 
-async def test_app_whose_windows_cannot_be_listed_falls_back_to_its_process(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_app_whose_windows_cannot_be_listed_is_said_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
     raising(monkeypatch, "window_rows_now", "native Wayland windows are not listed to other programs")
-    reads(monkeypatch, "running_process_names_now", {"gnome-calculator"})
     action = Action(action_type=ActionType.OPEN_APPLICATION, parameters=OpenApplicationParams(name="gnome-calculator"))
 
     verification = await verify(action, output="Launched gnome-calculator (resolved via PATH).")
-    assert "REPORTED" in label(verification) and "Wayland" in verification.reasons[0]
+
+    assert verification.passed and "REPORTED" in label(verification)
+    assert "could not be looked for here" in verification.reasons[0]
+    desktop_input._sleep.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("name", "output", "programs", "row"),
+    [
+        # Windows Terminal: title "Windows PowerShell", process WindowsTerminal, started from its Store app id.
+        (
+            "Terminal",
+            "Launched Terminal (resolved via Windows app registry).",
+            ["Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"],
+            observe.WindowRow(5, "WindowsTerminal.exe", "Windows PowerShell", 51),
+        ),
+        # GNOME Terminal: title "user@host: ~", process gnome-terminal-server (cut to 15 characters by the kernel).
+        (
+            "terminal",
+            "Launched Terminal (resolved via its desktop entry org.gnome.Terminal.desktop).",
+            ["/usr/bin/gnome-terminal", "org.gnome.Terminal"],
+            observe.WindowRow(6, "gnome-terminal-", "user@host: ~", 61),
+        ),
+        # Files: title "Home", process nautilus, desktop entry org.gnome.Nautilus.
+        (
+            "files",
+            "Launched Files (resolved via its desktop entry org.gnome.Nautilus.desktop).",
+            ["/usr/bin/nautilus", "org.gnome.Nautilus"],
+            observe.WindowRow(7, "nautilus", "Home", 71),
+        ),
+        (
+            "calculator",
+            "Launched Calculator (resolved via PATH).",
+            [],
+            observe.WindowRow(8, "gnome-calculator", "", 81),
+        ),
+        # Edge: a zero-width space in its title, process msedge.
+        (
+            "Microsoft Edge",
+            "Launched Microsoft Edge (resolved via Start menu).",
+            [r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"],
+            observe.WindowRow(9, "msedge.exe", "New tab - Microsoft\u200b Edge", 91),
+        ),
+    ],
+)
+async def test_everyday_apps_are_found_by_their_process_or_program(monkeypatch, name, output, programs, row) -> None:
+    reads(monkeypatch, "window_rows_now", [observe.WindowRow(3, "explorer.exe", "Downloads", 30), row])
+    action = Action(action_type=ActionType.OPEN_APPLICATION, parameters=OpenApplicationParams(name=name))
+    observe.remember(observe.StepRecord(action, "launch", "", {"programs": programs}))
+
+    verification = await verify(action, output=output)
+
+    assert verification.passed and verification.independently_observed_actions == [0]
+    desktop_input._sleep.assert_not_awaited()
+
+
+async def test_a_new_window_after_the_launch_is_evidence_whatever_its_title(monkeypatch) -> None:
+    reads(
+        monkeypatch,
+        "window_rows_now",
+        [observe.WindowRow(3, "explorer.exe", "Downloads", 30), observe.WindowRow(44, "launcher-x", "Welcome", 440)],
+    )
+    action = Action(action_type=ActionType.OPEN_APPLICATION, parameters=OpenApplicationParams(name="Zed"))
+    observe.remember(observe.StepRecord(action, "launch", "", {"windows_before": [30]}))
+
+    verification = await verify(action, output="Launched Zed (resolved via PATH).")
+
+    assert verification.passed and verification.independently_observed_actions == [0]
+    assert "new window" in await said(action, output="Launched Zed (resolved via PATH).")
+
+
+async def test_a_repair_round_never_opens_the_app_a_second_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.agents.executor import Executor
+    from pilot.intelligence.experience import experience_scope
+    from pilot.system import applications
+
+    launch = AsyncMock(return_value="Launched Notepad (resolved via PATH).")
+    monkeypatch.setattr(applications, "launch_application", launch)
+    monkeypatch.setattr(observe, "window_rows_now", MagicMock(return_value=[]))
+    observe._LAUNCHED.clear()
+    action = Action(action_type=ActionType.OPEN_APPLICATION, parameters=OpenApplicationParams(name="Notepad"))
+
+    with experience_scope(task_id="task-1"):
+        first = await Executor._exec_open_application(None, action)
+        again = await Executor._exec_open_application(None, action)
+    with experience_scope(task_id="task-2"):
+        other_task = await Executor._exec_open_application(None, action)
+
+    assert first.startswith("Launched") and other_task.startswith("Launched")
+    assert again == "Notepad was opened a moment ago in this task, so it was not opened again"
+    assert launch.await_count == 2
+    assert (await verify(action, output=again)).passed
+    observe._LAUNCHED.clear()
+
+
+def test_the_launcher_names_the_program_it_started() -> None:
+    from pilot.system.applications import launched_program
+
+    assert launched_program(["explorer.exe", r"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"]) == (
+        "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"
+    )
+    assert launched_program(["/usr/bin/nautilus", "--new-window"]) == "/usr/bin/nautilus"
+
+
+# ── fix10desk: everyday false alarms ──
+
+
+START_MENU = Foreground(("StartMenuExperienceHost.exe",), "Start", 900, 9001, "GetForegroundWindow")
+SEARCH = Foreground(("SearchHost.exe",), "Search", 901, 9002, "GetForegroundWindow")
+TASKBAR = Foreground(("explorer.exe",), "", 4, 4001, "GetForegroundWindow")
+
+
+def test_the_shell_moving_focus_to_its_search_window_is_not_a_window_change() -> None:
+    assert observe.same_place(START_MENU, SEARCH)
+    assert observe.same_place(TASKBAR, SEARCH)
+    assert observe.same_place(NOTEPAD, Foreground(("notepad.exe",), "Save as", 42, 1009, ""))  # its own dialog
+    assert not observe.same_place(NOTEPAD, BROWSER)
+    assert not observe.same_place(TASKBAR, BROWSER)
+    assert not observe.same_place(NOTEPAD, SEARCH)
+
+
+async def test_typing_into_the_start_menu_goes_on(monkeypatch, pag, clipboard_module) -> None:
+    action, _ = await _type(monkeypatch, "notepad", _field(None, editable=False), START_MENU, SEARCH)
+    verification = await verify(action)
+    assert verification.passed and "does not expose its text" in verification.reasons[0]
+
+
+async def test_a_field_that_shows_the_paste_late_is_read_again(monkeypatch, pag, clipboard_module) -> None:
+    action = Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text=SECRET))
+    reads(monkeypatch, "read_foreground_now", NOTEPAD)
+    reader = AsyncMock(side_effect=[_field(""), _field(""), _field(f"Hi {SECRET}")])
+    monkeypatch.setattr(observe, "focused_field", reader)
+    with observe.step(action):
+        await input_control.keyboard_type(SECRET)
+    assert reader.await_count == 3 and observe._sleep.await_count == 2
+    assert "VERIFIED" in label(await verify(action))
+
+
+async def test_a_field_that_stays_empty_is_not_verified_and_the_run_goes_on(monkeypatch, pag, clipboard_module) -> None:
+    action, _ = await _type(monkeypatch, SECRET, _field(""), NOTEPAD, NOTEPAD)
+    assert observe.focused_field.await_count == observe.FIELD_READS
+    assert observe._sleep.await_count == observe.FIELD_READS - 1  # about 300 ms, counted in steps
+    verification = await verify(action)
+    assert verification.passed and "REPORTED" in label(verification)
+    assert observe.input_went_elsewhere([ActionResult(action=action, success=False, error="x")]) is None
+
+
+async def test_background_typing_is_not_read_again_and_never_stops(monkeypatch, pag) -> None:
+    monkeypatch.setattr(window_mgr, "window_set_text", AsyncMock(return_value="ok"))
+    monkeypatch.setattr(window_mgr, "window_read_text", AsyncMock(side_effect=AssertionError("no second process")))
+    action = Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text=SECRET, window_title="Notes"))
+    with observe.step(action):
+        await input_control.keyboard_type(SECRET, target_window="Notes")
+    verification = await verify(action)
+    assert verification.passed and "compared it in the same call" in verification.reasons[0]
+
+
+def test_a_linux_name_cut_to_fifteen_characters_still_matches() -> None:
+    cut = Foreground(("gnome-terminal-",), "user@host: ~", 7, 70, "xprop")
+    assert observe.focus_matches(cut, process_name="gnome-terminal-server") is True
+    assert observe.focus_matches(cut, process_name="gnome-text-editor") is False
+
+
+def test_window_titles_stay_out_of_results() -> None:
+    assert BROWSER.describe() == "msedge"
+    assert Foreground((), "Re: salary review", 1, 2).describe() == "a window"
+
+
+def test_pbpaste_runs_under_a_utf8_locale(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.undo()
+    calls = []
+    monkeypatch.setattr(observe, "CURRENT_PLATFORM", Platform.MACOS)
+    monkeypatch.setattr(observe, "_run", lambda args, **kw: calls.append((args, kw)) or "caf\u00e9")
+    assert observe.read_clipboard_now() == ("caf\u00e9", "pbpaste")
+    assert calls == [(["pbpaste"], {"utf8_locale": True})]

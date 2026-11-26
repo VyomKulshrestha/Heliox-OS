@@ -1081,8 +1081,6 @@ class Executor:
                 ]
 
         batches = self._analyze_dependencies(plan.actions)
-        # Each step's next step: a typing step followed by Enter is worth reading back fully (desktop_observe).
-        self._next_actions = {id(action): following for action, following in zip(plan.actions, plan.actions[1:])}
         durable_action_indices = {id(action): index + action_index_offset for index, action in enumerate(plan.actions)}
         durable_task = (
             await self._durable_task_store.get(get_experience_context().task_id)
@@ -1591,7 +1589,7 @@ class Executor:
 
             # Desktop input read back right after it ran (focus, pointer, keys, clipboard) is kept for this action's
             # post-condition check, and a wrong window or pointer fails it here, before the next step runs.
-            with step(action, next_action=getattr(self, "_next_actions", {}).get(id(action))):
+            with step(action):
                 output = await handler(action)
             # Machine lines a browser handler added for its check never reach the reply, speech or a model.
             output, observation = split_machine_lines(action.action_type, output)
@@ -1928,9 +1926,19 @@ class Executor:
 
     async def _exec_open_application(self, action: Action) -> str:
         params: OpenApplicationParams = action.parameters  # type: ignore[assignment]
+        from pilot.intelligence.experience import get_experience_context
+        from pilot.system import desktop_observe
         from pilot.system.applications import launch_application
 
-        return await launch_application(params.name, params.args or [])
+        # A repair round of the same task never opens a second copy of an app this task just opened.
+        context = get_experience_context()
+        task = context.task_id or context.plan_id
+        if desktop_observe.recently_launched(task, params.name):
+            return f"{params.name} was opened a moment ago in this task, so it was not opened again"
+        await desktop_observe.windows_before_launch()
+        said = await launch_application(params.name, params.args or [])
+        desktop_observe.remember_launch(task, params.name)
+        return said
 
     async def _exec_request_human_help(self, action: Action) -> str:
         """Give the desktop to the person; autonomous work waits until they hand it back."""

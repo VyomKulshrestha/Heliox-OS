@@ -24,9 +24,9 @@ from typing import Any
 from pilot.actions import ActionResult, ActionType
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
 
-APP_WINDOW_WAIT_SECONDS = 10.0
+APP_WINDOW_WAIT_SECONDS = 3.0  # the launch was earlier in the plan; this is extra time
 APP_POLL_SECONDS = 0.5
-MEDIA_KEYS = frozenset({"playpause", "nexttrack", "prevtrack"})
+MEDIA_KEYS = frozenset({"playpause", "nexttrack", "prevtrack", "volumeup", "volumedown", "volumemute"})
 
 NO_READING = "No reading was made right after the step"
 
@@ -233,10 +233,24 @@ async def window_state(result: ActionResult) -> Outcome:
 
 # ── open_application ──
 
+# Words that name a vendor or a platform, not an app: "Microsoft Edge" must not match every Microsoft process.
+GENERIC_WORDS = frozenset(
+    {"microsoft", "windows", "gnome", "kde", "org", "com", "app", "apps", "the", "desktop", "application", "google"}
+)
+_ZERO_WIDTH = dict.fromkeys(map(ord, "​‌‍⁠﻿"))
 
-def app_candidates(name: str, output: str) -> list[str]:
+
+def squeeze(text: str) -> str:
+    """Lower case without spaces, hyphens, underscores, dots, zero-width characters or ".exe" ("Microsoft​ Edge"
+    and "microsoft-edge" both become "microsoftedge"). Pure."""
+    plain = (text or "").translate(_ZERO_WIDTH).casefold().strip().removesuffix(".exe")
+    return re.sub(r"[\s\-_.]+", "", plain)
+
+
+def app_candidates(name: str, output: str, programs: list[str] | None = None) -> list[str]:
     """What "that application" is called: the name asked for, the name the launcher resolved (Start-menu label,
-    bundle, desktop entry) and a path's file name. Pure."""
+    bundle, desktop entry), and the programs the launcher actually started (an executable's file name, a Store app's
+    id, a desktop entry's id and its last part). Pure."""
     found = [name.strip()]
     launched = re.match(r"Launched (.+?) \((?:resolved via|file path)", output or "")
     if launched:
@@ -244,82 +258,90 @@ def app_candidates(name: str, output: str) -> list[str]:
     bundle = re.search(r"resolved via (/[^)]*?\.app)\)", output or "")
     if bundle:
         found.append(Path(bundle.group(1)).stem)
-    if "/" in name or "\\" in name:
-        found.append(Path(name.replace("\\", "/")).stem)
+    for program in [name, *(programs or [])]:
+        text = program.strip()
+        if "/" in text or "\\" in text:
+            text = Path(text.replace("\\", "/")).stem
+        if "!" in text:  # a Store app id: "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"
+            text = text.split("!", 1)[0].split("_", 1)[0]
+        found.append(text)
+        if "." in text:  # "Microsoft.WindowsTerminal", "org.gnome.Nautilus": its last part
+            found.append(text.rsplit(".", 1)[1])
     return [candidate for candidate in dict.fromkeys(found) if candidate]
 
 
-def _tokens(text: str) -> list[str]:
-    return [token for token in re.split(r"[^0-9a-z]+", text.casefold()) if len(token) >= 3]
+def _words(candidate: str) -> list[str]:
+    words = [squeeze(word) for word in re.split(r"[^0-9A-Za-z]+", candidate.translate(_ZERO_WIDTH))]
+    return [word for word in words if len(word) >= 4 and word not in GENERIC_WORDS]
 
 
 def process_matches(process: str, candidates: list[str]) -> bool:
-    """A process belongs to the app when its name is the app's name or one of its words, or starts with one of its
-    words of four letters or more ("CalculatorApp" for "Calculator", "code" for "Visual Studio Code"). Pure."""
-    from pilot.system.desktop_observe import bare_name
-
-    bare = bare_name(process).replace(" ", "")
+    """A process belongs to the app when the app's whole name, or one of its words of four letters or more, is
+    anywhere in the process name ("windowsterminal" in WindowsTerminal, "terminal" in gnome-terminal-server, "edge" in
+    msedge, "calculator" in CalculatorApp), ignoring case, spaces, hyphens and zero-width characters. A Linux name
+    of exactly 15 characters is the kernel's cut form, so a candidate that starts with it also matches. Pure."""
+    bare = squeeze(process)
     if not bare:
         return False
     for candidate in candidates:
-        whole = bare_name(candidate).replace(" ", "")
-        if bare == whole:
+        whole = squeeze(candidate)
+        if whole and (
+            whole == bare or (len(whole) >= 4 and whole in bare) or (len(process) == 15 and whole.startswith(bare))
+        ):
             return True
-        for token in _tokens(candidate):
-            if bare == token or (len(token) >= 4 and bare.startswith(token)):
-                return True
+        if any(word in bare for word in _words(candidate)):
+            return True
     return False
 
 
 def window_matches(row: Any, candidates: list[str]) -> bool:
-    title = (row.title or "").casefold()
+    title = squeeze(row.title)
     return process_matches(row.name, candidates) or any(
-        candidate.casefold() in title for candidate in candidates if len(candidate) >= 3
+        len(squeeze(candidate)) >= 3 and squeeze(candidate) in title for candidate in candidates
     )
 
 
-@register(ActionType.OPEN_APPLICATION, method="conditional_application_window_postcondition", timeout=20.0)
+@register(ActionType.OPEN_APPLICATION, method="conditional_application_window_postcondition", timeout=10.0)
 async def application_window(result: ActionResult) -> Outcome:
-    """A window of the application is on screen within a bounded time, read from the window list (EnumWindows,
-    Quartz, wmctrl), not from the launcher's exit code. An app that shows only a tray icon has a process and no
-    window: that is "could not verify", not a failure."""
+    """A window of the application is on screen, read from the window list (EnumWindows, Quartz, wmctrl), not from
+    the launcher's exit code: a window of the app by its process or title, the process the launcher started, or any
+    new top-level window that was not there before the launch, whatever its title.
+
+    This check says "verified" or "not verified", never a mismatch: the launcher's own failure already fails the
+    action, and a check that cannot tell must not make a repair round open the app a second time."""
     from pilot.system import desktop_observe as observe
 
     name = str(getattr(result.action.parameters, "name", "") or "")
-    candidates = app_candidates(name, str(result.output or ""))
+    record = observe.recalled(result.action)
+    facts = record.facts if record is not None else {}
+    candidates = app_candidates(name, str(result.output or ""), list(facts.get("programs", [])))
     if not candidates:
         raise ValueError("open_application has no application name to observe")
+    if str(result.output or "").endswith("so it was not opened again"):
+        return unobserved(f"{name} was opened a moment ago in this task")
+    before = facts.get("windows_before")
+    started_pid = int(facts.get("pid", 0) or 0)
     waited = 0.0
-    listing_reason = ""
     while True:
         try:
             rows = await observe.window_rows()
-        except observe.Unobservable as reason:
-            listing_reason = str(reason)
-            break
-        found = next((row for row in rows if window_matches(row, candidates)), None)
-        if found is not None:
-            label = f'"{found.title}"' if found.title else "a window"
-            return verified(f"{label} of {found.name or candidates[0]} is open (the window list)")
+        except observe.Unobservable:
+            # No window list here (Wayland without wmctrl, macOS without pyobjc): said at once, no waiting.
+            return unobserved(f"{candidates[0]} was started; its window could not be looked for here")
+        for row in rows:
+            if (started_pid and row.pid == started_pid) or window_matches(row, candidates):
+                return verified(f"A window of {row.name or candidates[0]} is open (the window list)")
+        if before is not None:
+            new = [row for row in rows if row.window_id and row.window_id not in set(before)]
+            if new:
+                return verified(
+                    f"A new window of {new[0].name or 'an app'} appeared after the launch (the window list)"
+                )
         if waited >= APP_WINDOW_WAIT_SECONDS:
             break
         await _sleep(APP_POLL_SECONDS)
         waited += APP_POLL_SECONDS
-    try:
-        processes = await observe.running_process_names()
-    except observe.Unobservable as reason:
-        return unobserved(f"Could not verify that {candidates[0]} opened: {listing_reason or reason}")
-    running = any(process_matches(process, candidates) for process in processes)
-    if listing_reason:
-        if running:
-            return unobserved(f"{candidates[0]} is running; its windows cannot be listed here: {listing_reason}")
-        return mismatch(f"Expected {candidates[0]} to be running; no process of it was found")
-    if running:
-        return unobserved(
-            f"{candidates[0]} is running but shows no window after {APP_WINDOW_WAIT_SECONDS:g} s: an app that "
-            "lives in the tray, or one still starting"
-        )
-    return mismatch(
-        f"Expected a window of {candidates[0]}; no window or process of it appeared within "
-        f"{APP_WINDOW_WAIT_SECONDS:g} s"
+    return unobserved(
+        f"{candidates[0]} was started, but its window was not seen within {APP_WINDOW_WAIT_SECONDS:g} s (an app that "
+        "lives in the tray, or one still starting)"
     )

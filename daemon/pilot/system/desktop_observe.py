@@ -17,7 +17,7 @@ keys held down      GetAsyncKeyState                       Quartz modifier flags
 clipboard text      Win32 GetClipboardData (own call,      pbpaste (a new process)                    X11: xclip or xsel; Wayland:
                     not pyperclip or Set-Clipboard)                                                   not observable
 focused field       UI Automation through Live's running   the Accessibility API, without waking      AT-SPI
-                    helper (a new one only before Enter)   any app
+                    helper only                            any app
 window state        IsIconic / IsZoomed                    AXMinimized, AXPosition/AXSize             X11: xprop _NET_WM_STATE
 window list         EnumWindows                            Quartz CGWindowListCopyWindowInfo          X11: wmctrl -lp
 ==================  =====================================  =========================================  ===========================
@@ -33,10 +33,12 @@ second, and the verifier runs after the whole plan. So the checks that matter fo
 the step that changed the state, while the executor is still inside that step (``step`` marks it), and are kept
 here for the verifier (``recalled``). A wrong window, a pointer that is not where the click was sent, or a clipboard
 that does not hold what was copied fails that step at once, so the executor skips the steps after it: no more keys go
-to a window the plan did not mean. A read that cannot be made never fails a step. Where keys, a click or a drag may
-already have gone to another window, the step's record says so (``input_went_elsewhere``) and the run stops instead
-of retrying (``RECONCILE_NOT_RETRY_ACTIONS``); where the action names its window and another one is in front before
-the first key, no key is sent at all (``refuse_unless_in_front``).
+to a window the plan did not mean. A read that cannot be made never fails a step. Only what shows input going to
+another window stops the run, and then without a retry (``input_went_elsewhere``, ``RECONCILE_NOT_RETRY_ACTIONS``):
+the window in front changed while typing, or a key or button is still held. A field that does not show the text, a
+pointer moved after the event, an editor that reformatted the text: those are "not verified", and the run goes on.
+Where the action names its window and another one is in front before the first key, no key is sent at all
+(``refuse_unless_in_front``); a click whose pointer is not at its target when the button would go down is not made.
 
 Typed text and clipboard text are compared in memory and dropped; only lengths, hashes and yes/no answers are kept,
 logged or put in a message. A password field is never read.
@@ -65,7 +67,6 @@ from pilot.timeouts import bounded
 logger = logging.getLogger("pilot.system.desktop_observe")
 
 READ_SECONDS = 2.0  # one read of the foreground, the pointer, the keys or the clipboard
-FIELD_READ_SECONDS = 8.0  # the focused field on Windows starts a PowerShell process with UI Automation
 FOCUS_SETTLE_SECONDS = 0.6  # how long a focus request may take to show (window managers act after wmctrl returns)
 SETTLE_STEP_SECONDS = 0.05
 POINTER_TOLERANCE = 2  # pixels: rounding between logical and physical coordinates
@@ -112,11 +113,13 @@ class Foreground:
     source: str = ""
 
     def describe(self) -> str:
+        """How a result names this window: by its application, never by its title (titles carry mail subjects,
+        document names and chat names)."""
         name = next((n for n in self.names if n), "")
-        if self.title:
-            return f'"{self.title}" ({name})' if name else f'"{self.title}"'
         if name:
-            return name
+            return name.removesuffix(".exe").removesuffix(".EXE")
+        if self.title:
+            return "a window"
         return "no window" if self.window_id == 0 else "an unnamed window"
 
     def app(self) -> str:
@@ -149,6 +152,7 @@ class WindowRow:
     pid: int
     name: str
     title: str
+    window_id: int = 0  # the platform's window handle or number; 0 when the list gives none
 
 
 @dataclass
@@ -165,40 +169,18 @@ class StepRecord:
 # ── the step the executor is running, and what was read after it ──
 
 _CURRENT_STEP: contextvars.ContextVar[Any] = contextvars.ContextVar("heliox_desktop_step", default=None)
-# True when the plan's next step submits what this one typed (Enter): only then is the slow field read worth it.
-_BEFORE_SUBMIT: contextvars.ContextVar[bool] = contextvars.ContextVar("heliox_desktop_before_submit", default=False)
 _RECORDS: OrderedDict[int, StepRecord] = OrderedDict()
 _MAX_RECORDS = 128
 
 
 @contextlib.contextmanager
-def step(action: Any, *, next_action: Any = None) -> Iterator[None]:
-    """Mark ``action`` as the step being run, so the real input functions read the result right after it.
-    ``next_action`` is the plan's next step, when the executor knows it."""
+def step(action: Any) -> Iterator[None]:
+    """Mark ``action`` as the step being run, so the real input functions read the result right after it."""
     token = _CURRENT_STEP.set(action)
-    submit = _BEFORE_SUBMIT.set(submits(next_action))
     try:
         yield
     finally:
-        _BEFORE_SUBMIT.reset(submit)
         _CURRENT_STEP.reset(token)
-
-
-SUBMIT_KEYS = frozenset({"enter", "return"})
-
-
-def submits(action: Any) -> bool:
-    """Whether a step presses Enter (alone or in a shortcut such as ctrl+enter): it sends what was typed before it.
-    A click is not counted: what a click does cannot be told from the plan. Pure."""
-    if action is None:
-        return False
-    kind = getattr(getattr(action, "action_type", None), "value", "")
-    params = getattr(action, "parameters", None)
-    if kind == "keyboard_press":
-        return str(getattr(params, "key", "")).casefold() in SUBMIT_KEYS
-    if kind == "keyboard_hotkey":
-        return any(str(key).casefold() in SUBMIT_KEYS for key in getattr(params, "keys", []) or [])
-    return False
 
 
 def current_step() -> Any:
@@ -270,7 +252,10 @@ def focus_matches(
             return None
         return found.window_id == wanted_id
     if process_name:
-        return bare_name(process_name) in {bare_name(name) for name in found.names if name}
+        wanted = bare_name(process_name)
+        names = {bare_name(name) for name in found.names if name}
+        # A name of exactly 15 characters may be the kernel's cut form of a longer one.
+        return wanted in names or any(len(name) == 15 and wanted[:15] == name for name in names)
     if title:
         if found.pid and found.pid in title_pids:
             return True
@@ -362,13 +347,23 @@ def wayland() -> bool:
     return wayland_session()
 
 
-def _run(args: list[str]) -> str | None:
-    """stdout of a short read-only command, or None when it is missing, fails or takes too long."""
+def _run(args: list[str], *, utf8_locale: bool = False) -> str | None:
+    """stdout of a short read-only command as UTF-8, or None when it is missing, fails or takes too long.
+    ``utf8_locale`` runs it under a UTF-8 locale (pbpaste writes text in the locale's encoding)."""
     if not shutil.which(args[0]):
         return None
+    env = {**os.environ, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"} if utf8_locale else None
     try:
         done = subprocess.run(
-            args, capture_output=True, text=True, timeout=SUBPROCESS_SECONDS, check=False, stdin=subprocess.DEVNULL
+            args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=SUBPROCESS_SECONDS,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -494,7 +489,7 @@ def _x11_foreground() -> Foreground:
             return Foreground((), "", 0, 0, "xprop _NET_ACTIVE_WINDOW")
         details = _run(["xprop", "-id", hex(window), "_NET_WM_PID", "_NET_WM_NAME", "WM_NAME"]) or ""
         pid, title = parse_xprop_window(details)
-        return Foreground((_comm(pid),) if pid else (), title, pid, window, "xprop _NET_ACTIVE_WINDOW")
+        return Foreground((_full_name(pid),) if pid else (), title, pid, window, "xprop _NET_ACTIVE_WINDOW")
     window_text = _run(["xdotool", "getactivewindow"])
     if window_text is None:
         raise Unobservable("reading the active X11 window needs xprop (x11-utils) or xdotool, and neither answered")
@@ -502,7 +497,13 @@ def _x11_foreground() -> Foreground:
     pid_text = _run(["xdotool", "getwindowpid", str(window)]) or ""
     title = (_run(["xdotool", "getwindowname", str(window)]) or "").rstrip("\n")
     pid = int(pid_text.strip()) if pid_text.strip().isdigit() else 0
-    return Foreground((_comm(pid),) if pid else (), title, pid, window, "xdotool getactivewindow")
+    return Foreground((_full_name(pid),) if pid else (), title, pid, window, "xdotool getactivewindow")
+
+
+def _full_name(pid: int) -> str:
+    """The process name, whole: psutil reads it from the command line when /proc/<pid>/comm is cut at 15
+    characters ("gnome-terminal-" for gnome-terminal-server)."""
+    return process_name(pid) or _comm(pid)
 
 
 def _comm(pid: int) -> str:
@@ -854,7 +855,7 @@ def read_clipboard_now() -> tuple[str, str]:
     if CURRENT_PLATFORM == Platform.WINDOWS:
         return _win_clipboard_text(), "Win32 GetClipboardData"
     if CURRENT_PLATFORM == Platform.MACOS:
-        text = _run(["pbpaste"])
+        text = _run(["pbpaste"], utf8_locale=True)
         if text is None:
             raise Unobservable("pbpaste did not answer")
         return text, "pbpaste"
@@ -887,10 +888,7 @@ def clipboard_holds(found: str, expected: str) -> str | None:
 
 _FIELD_READER: Any = None
 
-FIELD_NOT_READ = (
-    "the window was right; the field's content was not read (no UI Automation reader was running, and starting one "
-    "takes about a second, spent only when the next step presses Enter)"
-)
+FIELD_NOT_READ = "the window was right; the field's content was not read (Live's text reader was not running)"
 
 
 def set_field_reader(reader: Any) -> None:
@@ -905,55 +903,13 @@ def _running_helper(reader: Any) -> bool:
 
 
 async def _win_field() -> FieldReading:
-    """The focused field on Windows, cheaply: Live's UI Automation helper when it is already running (a read costs
-    milliseconds); else a new helper only when the next step presses Enter, since starting one takes about a
-    second; else not read."""
+    """The focused field on Windows, only when it is cheap: through Live's UI Automation helper while it is running
+    (a read costs milliseconds). Starting a helper for one read takes one to three seconds, which would hold up the
+    next step, so without one the field is not read."""
     reader = _FIELD_READER
-    if reader is not None and _running_helper(reader):
-        found = await reader.read()
-        if found is None:
-            raise Unobservable("UI Automation did not describe the focused element")
-        return FieldReading(found.editable, found.password, found.text if found.editable else None, "UI Automation")
-    if not _BEFORE_SUBMIT.get():
+    if reader is None or not _running_helper(reader):
         raise Unobservable(FIELD_NOT_READ)
-    return await _win_field_once()
-
-
-async def _win_field_once() -> FieldReading:
-    """One run of Live's UI Automation helper: the same rules (writable fields and terminals only, never a password
-    field), started for this read and closed after it."""
-    import base64
-
-    from pilot.live.focused_text import _HELPER, parse_reply
-
-    encoded = base64.b64encode(_HELPER.encode("utf-16-le")).decode("ascii")
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    process = await asyncio.create_subprocess_exec(
-        "powershell",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        encoded,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-        creationflags=flags,
-    )
-    try:
-        import json
-
-        raw, _ = await bounded(process.communicate(b"read\nquit\n"), timeout=FIELD_READ_SECONDS)
-        line = raw.decode("utf-8", errors="replace").strip().splitlines()
-        data = json.loads(line[0]) if line else {}
-    except TimeoutError as error:
-        raise Unobservable(f"UI Automation did not answer within {FIELD_READ_SECONDS:g} s") from error
-    finally:
-        if process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                process.kill()
-    found = parse_reply(data) if isinstance(data, dict) else None
+    found = await reader.read()
     if found is None:
         raise Unobservable("UI Automation did not describe the focused element")
     return FieldReading(found.editable, found.password, found.text if found.editable else None, "UI Automation")
@@ -1113,7 +1069,7 @@ async def window_states(target: str) -> list[tuple[bool, bool]]:
 def window_rows_now() -> list[WindowRow]:
     """Every application window on screen with its process: (pid, process or app name, title)."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        return [WindowRow(pid, process_name(pid), title) for _h, pid, title, _m, _x in _win_windows()]
+        return [WindowRow(pid, process_name(pid), title, handle) for handle, pid, title, _m, _x in _win_windows()]
     if CURRENT_PLATFORM == Platform.MACOS:
         try:
             import Quartz
@@ -1125,33 +1081,29 @@ def window_rows_now() -> list[WindowRow]:
             if int(info.get("kCGWindowLayer", 1)) != 0:
                 continue
             pid = int(info.get("kCGWindowOwnerPID", 0))
-            rows.append(WindowRow(pid, str(info.get("kCGWindowOwnerName", "")), str(info.get("kCGWindowName", ""))))
+            rows.append(
+                WindowRow(
+                    pid,
+                    str(info.get("kCGWindowOwnerName", "")),
+                    str(info.get("kCGWindowName", "")),
+                    int(info.get("kCGWindowNumber", 0)),
+                )
+            )
         return rows
     if CURRENT_PLATFORM == Platform.LINUX:
         listing = _run(["wmctrl", "-lp"])
         if listing is None:
             reason = "native Wayland windows are not listed to other programs, and " if wayland() else ""
             raise Unobservable(f"{reason}listing windows needs wmctrl, which did not answer")
-        return [WindowRow(pid, _comm(pid) if pid else "", title) for _w, pid, title in parse_wmctrl_lp(listing)]
+        return [
+            WindowRow(pid, _full_name(pid) if pid else "", title, window)
+            for window, pid, title in parse_wmctrl_lp(listing)
+        ]
     raise Unobservable(f"windows cannot be listed on {sys.platform}")
 
 
 async def window_rows() -> list[WindowRow]:
     return await _threaded(window_rows_now)
-
-
-def running_process_names_now() -> set[str]:
-    import psutil
-
-    names = set()
-    for process in psutil.process_iter(["name"]):
-        with contextlib.suppress(Exception):
-            names.add(bare_name(str(process.info.get("name") or "")))
-    return names
-
-
-async def running_process_names() -> set[str]:
-    return await _threaded(running_process_names_now, seconds=5.0)
 
 
 # ── the checks the input functions run right after a real step ──
@@ -1273,13 +1225,46 @@ async def typing_started() -> Foreground | None:
         return None
 
 
+# The Windows shell's own windows: typing into the Start menu or the taskbar's search box moves the focus from
+# StartMenuExperienceHost (or explorer, for the taskbar) to SearchHost as part of normal use, and the emoji panel and
+# input methods show TextInputHost. A move among these is not "the window changed while typing".
+SHELL_SEARCH_HOSTS = frozenset(
+    {"searchhost", "searchapp", "searchui", "startmenuexperiencehost", "shellexperiencehost", "textinputhost"}
+)
+
+
+def same_place(before: Foreground, after: Foreground) -> bool:
+    """Whether typing stayed where it started: the same window, a window of the same process (a dialog, a search
+    results pop-up), or the shell's own search windows. Pure."""
+    if before.same_window(after):
+        return True
+    if before.pid and before.pid == after.pid:
+        return True
+    names_before = {bare_name(name) for name in before.names if name}
+    names_after = {bare_name(name) for name in after.names if name}
+    if names_after & SHELL_SEARCH_HOSTS and names_before & (SHELL_SEARCH_HOSTS | {"explorer"}):
+        return True
+    return False
+
+
 async def confirm_typing(text: str, before: Foreground | None, *, target_window: str | None, background: bool) -> None:
     """After typing: the window that had the focus still has it (or the named one, when given), and, where the
-    focused field shows its text, the field holds what was typed. Only lengths and yes/no answers are kept."""
+    focused field shows its text, the field holds what was typed. Only lengths and yes/no answers are kept.
+
+    Only the window in front having changed stops the run. A field that does not show the text yet is read again a
+    few times over about 300 ms (Chromium and Electron apply a paste after it returns), and if it still does not
+    show it, the step is "not verified", never stopped: the run goes on to its Enter."""
     if current_step() is None:
         return
     if background and target_window:
-        await _confirm_background_text(text, target_window)
+        # The handler's own UI Automation call set the editor's text and compared it; reading it back in another
+        # PowerShell process would add half a second to every such step, so it is not read again here.
+        _record(
+            "partial",
+            f"The text was set in {target_window}'s editor through UI Automation, which compared it in the same call; "
+            "it was not read back separately",
+            typed_length=len(text),
+        )
         return
     try:
         after = await foreground()
@@ -1296,9 +1281,10 @@ async def confirm_typing(text: str, before: Foreground | None, *, target_window:
     expected = ""
     if target_window:
         window_ok = bool(focus_matches(after, title=target_window, title_pids=await _safe_title_pids(target_window)))
+        window_ok = window_ok or bool(focus_matches(after, process_name=target_window))
         expected = target_window
     elif before is not None:
-        window_ok = before.same_window(after)
+        window_ok = same_place(before, after)
         expected = before.app()
     if not window_ok and not ends_with_enter:
         detail = (
@@ -1309,32 +1295,43 @@ async def confirm_typing(text: str, before: Foreground | None, *, target_window:
     if not window_ok:
         _record(
             "partial",
-            f"After typing text that contains Enter, {after.describe()} is in front (Enter often opens or closes a window)",
+            f"After typing text that contains Enter, {after.app()} is in front (Enter often opens or closes a window)",
             typed_length=len(text),
         )
         return
+    reading = None
     try:
-        reading = await focused_field(after)
+        for attempt in range(FIELD_READS):
+            if attempt:
+                await _sleep(FIELD_REREAD_SECONDS)
+            reading = await focused_field(after)
+            if reading.secure or not reading.editable or reading.text is None:
+                break
+            if field_holds(reading.text, text)["contains"]:
+                break
     except Unobservable as reason:
         _record(
-            "partial",
-            f"{after.describe()} kept the focus; the field's text was not read: {reason}",
-            typed_length=len(text),
+            "partial", f"{after.app()} kept the focus; the field's text was not read: {reason}", typed_length=len(text)
         )
         return
     except Exception as error:
         logger.debug("Field read failed", exc_info=True)
         _record(
             "partial",
-            f"{after.describe()} kept the focus; the field could not be read ({type(error).__name__})",
+            f"{after.app()} kept the focus; the field could not be read ({type(error).__name__})",
             typed_length=len(text),
         )
         return
-    _record_field(after, reading, text)
+    if reading is not None:
+        _record_field(after, reading, text)
+
+
+FIELD_READS = 4  # the first read and three more
+FIELD_REREAD_SECONDS = 0.1
 
 
 def _record_field(after: Foreground, reading: FieldReading, text: str) -> None:
-    where = after.describe()
+    where = after.app()
     if reading.secure:
         _record(
             "partial",
@@ -1354,22 +1351,15 @@ def _record_field(after: Foreground, reading: FieldReading, text: str) -> None:
         _record(
             "match", f"The focused field in {where} holds the {len(text)} typed characters ({reading.source})", **facts
         )
-    elif facts["field_length"] == 0 and text.strip() and "\n" not in text and "\t" not in text:
-        detail = f"The focused field in {where} is empty after typing {len(text)} characters ({reading.source})"
-        _stop(
-            detail,
-            f"The text may have been typed somewhere else in {after.app()}: the field in front is empty after typing "
-            f"{len(text)} characters.",
-            **facts,
-        )
-    else:
-        _record(
-            "partial",
-            f"The focused field in {where} ({facts['field_length']} characters) does not show the {len(text)} typed "
-            "characters as typed; apps that complete, indent or reformat text change it, so this is not called a "
-            f"failure ({reading.source})",
-            **facts,
-        )
+        return
+    # Empty or different, with the same window in front: the paste may land later, a reader may see an unbuilt
+    # accessibility tree, or the app reformatted the text. None of that is evidence the keys went elsewhere.
+    _record(
+        "partial",
+        f"{where} kept the focus; its field ({facts['field_length']} characters) does not show the {len(text)} typed "
+        f"characters as typed, which apps that paste late, complete or reformat text also cause ({reading.source})",
+        **facts,
+    )
 
 
 async def _safe_title_pids(title: str) -> frozenset[int]:
@@ -1379,34 +1369,28 @@ async def _safe_title_pids(title: str) -> frozenset[int]:
         return frozenset()
 
 
-async def _confirm_background_text(text: str, target_window: str) -> None:
-    """Text set in a window's editor through UI Automation, read back in a new process (Windows only)."""
+def pointer_off_target_now(target: tuple[int, int]) -> tuple[int, int] | None:
+    """Right at a click, between moving the pointer and pressing the button (blocking): where the pointer is when
+    that is not the target, else None (also when it cannot be read)."""
+    if current_step() is None:
+        return None
     try:
-        from pilot.system.window_mgr import window_read_text
+        found = read_pointer_now()
+    except Exception:
+        return None
+    return None if pointer_at(found, target) else found
 
-        found = await bounded(window_read_text(title=target_window), timeout=FIELD_READ_SECONDS)
-    except Exception as error:
-        _record(
-            "partial",
-            f"The text of {target_window} could not be read back ({type(error).__name__})",
-            typed_length=len(text),
-        )
-        return
-    facts = field_holds(found, text)
-    if facts["contains"]:
-        _record(
-            "match", f"The editor of {target_window} holds the {len(text)} typed characters (UI Automation)", **facts
-        )
-    else:
-        _record(
-            "mismatch",
-            f"The editor of {target_window} ({facts['field_length']} characters) does not hold the {len(text)} typed characters",
-            **facts,
-        )
+
+def refuse_click(found: tuple[int, int], target: tuple[int, int]) -> None:
+    """The pointer was not at the target when the button would have been pressed: nothing was clicked."""
+    _record("mismatch", f"Before the click: the pointer was at {found}, not at {target}", elsewhere=False, refused=True)
+    raise DesktopStepMismatch(f"No click was made: the pointer was at {found}, not at {target}.")
 
 
 async def confirm_pointer(target: tuple[int, int], *, released: tuple[str, ...] = ()) -> None:
-    """After a pointer step: the pointer is where it was sent, and the buttons it pressed are up again."""
+    """After a pointer step: the pointer is where it was sent, and the buttons it pressed are up again. A pointer
+    elsewhere after the event is "not verified" (the person may have moved the mouse; a click is refused before the
+    button is pressed when the pointer is not at its target). A button still held stops the run."""
     if current_step() is None:
         return
     try:
@@ -1420,20 +1404,23 @@ async def confirm_pointer(target: tuple[int, int], *, released: tuple[str, ...] 
         _record("unobservable", f"the pointer could not be read ({type(error).__name__})", target=list(target))
         return
     facts = {"target": list(target), "found": list(found), "held": sorted(held)}
-    if not pointer_at(found, target):
-        detail = f"The pointer is at {found}, not at {target} where it was sent"
-        _stop(
-            detail, f"The click may have landed somewhere else: the pointer was at {found}, not at {target}.", **facts
-        )
     if held:
         buttons = ", ".join(sorted(held))
         detail = f"The {buttons} mouse button is still held down after the step"
         _stop(detail, f"{detail}, so whatever the pointer touches next could be dragged.", **facts)
+    if not pointer_at(found, target):
+        _record(
+            "partial",
+            f"The pointer was at {found} after the step, not at {target}; the mouse may have been moved since",
+            **facts,
+        )
+        return
     _record("match", f"The pointer is at {found}" + (", buttons released" if released else ""), **facts)
 
 
 async def confirm_keys_released(keys: list[str]) -> None:
-    """After a key step: none of its keys is still held down (a stuck modifier changes every key after it)."""
+    """After a key step: none of its keys is still held down (a stuck modifier changes every key after it). Keys
+    whose state no table here knows (media keys) are left out; a step of only such keys records nothing."""
     if current_step() is None:
         return
     try:
@@ -1450,7 +1437,6 @@ async def confirm_keys_released(keys: list[str]) -> None:
         detail = f"{'+'.join(sorted(held))} is still held down after the step"
         _stop(detail, f"{detail}, so every key after it would change.", **facts)
     if unknown and len(unknown) == len(keys):
-        _record("unobservable", f"the state of {'+'.join(unknown)} cannot be read here", **facts)
         return
     _record("match", f"{'+'.join(k for k in keys if k not in unknown)} released", **facts)
 
@@ -1476,3 +1462,68 @@ async def confirm_clipboard(content: str) -> None:
         raise DesktopStepMismatch(f"{detail}; the steps after this one were not run, so nothing stale was pasted.")
     note = "" if holds == "exact" else ", once line endings are set aside"
     _record("match", f"The clipboard holds the {len(content)} copied characters ({tool}{note})", **facts)
+
+
+# ── open_application: the window list before the launch, the program the launcher started ──
+
+LAUNCH_MEMORY_SECONDS = 120.0
+_LAUNCHED: OrderedDict[tuple[str, str], float] = OrderedDict()
+
+
+def _merge_facts(**facts: Any) -> None:
+    action = current_step()
+    if action is None:
+        return
+    record = recalled(action)
+    if record is None:
+        record = StepRecord(action, "launch", "", {})
+        remember(record)
+    record.facts.update(facts)
+
+
+async def windows_before_launch() -> None:
+    """Before a launch: the ids of the windows on screen, so a new one is evidence whatever its title."""
+    if current_step() is None:
+        return
+    try:
+        rows = await window_rows()
+    except Exception:
+        return
+    _merge_facts(windows_before=[row.window_id for row in rows if row.window_id])
+
+
+def note_launch(program: str, pid: int = 0) -> None:
+    """A program a launcher started (an executable, a Store app id, a bundle, a desktop entry) and its process id
+    when it is the app's own, for the check. Called once or more per launch."""
+    action = current_step()
+    if action is None or not program:
+        return
+    record = recalled(action)
+    programs = list(record.facts.get("programs", [])) if record is not None else []
+    if program not in programs:
+        programs.append(program)
+    facts: dict[str, Any] = {"programs": programs}
+    if pid:
+        facts["pid"] = int(pid)
+    _merge_facts(**facts)
+
+
+def recently_launched(task: str, name: str, *, clock: Callable[[], float] | None = None) -> bool:
+    """Whether this task already launched ``name`` a moment ago (a repair round must not open a second copy)."""
+    import time
+
+    now = (clock or time.monotonic)()
+    for key, when in list(_LAUNCHED.items()):
+        if now - when > LAUNCH_MEMORY_SECONDS:
+            _LAUNCHED.pop(key, None)
+    return bool(task) and (task, bare_name(name)) in _LAUNCHED
+
+
+def remember_launch(task: str, name: str, *, clock: Callable[[], float] | None = None) -> None:
+    import time
+
+    if not task:
+        return
+    _LAUNCHED[(task, bare_name(name))] = (clock or time.monotonic)()
+    while len(_LAUNCHED) > 64:
+        _LAUNCHED.popitem(last=False)

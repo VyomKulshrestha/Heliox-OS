@@ -94,14 +94,29 @@ async def mouse_click(
     try:
         pag = _ensure_pyautogui()
 
-        def _do():
-            pag.click(x=x, y=y, button=button, clicks=clicks, interval=interval)
+        from pilot.system import desktop_observe
 
-        await asyncio.to_thread(_do)
+        watched = _real_input(pag) and desktop_observe.current_step() is not None
+
+        def _do() -> tuple[int, int] | None:
+            if not watched:
+                pag.click(x=x, y=y, button=button, clicks=clicks, interval=interval)
+                return None
+            # Read the pointer right at the event, between the move and the press: a click whose pointer is not at
+            # its target is not made. A pointer moved after the press is the person's and only "not verified".
+            pag.moveTo(x, y)
+            off = desktop_observe.pointer_off_target_now((x, y))
+            if off is None:
+                pag.click(button=button, clicks=clicks, interval=interval)
+            return off
+
+        off_target = await asyncio.to_thread(_do)
     except Exception as error:
         if not (x11_session() and x_display_unreachable(error)):
             raise
         return await _xdotool_click(x, y, button, clicks, interval, error)
+    if off_target is not None:
+        desktop_observe.refuse_click(off_target, (x, y))
     if _real_input(pag):
         from pilot.system.desktop_observe import confirm_pointer
 
