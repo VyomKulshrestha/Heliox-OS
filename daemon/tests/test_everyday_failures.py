@@ -113,8 +113,43 @@ async def test_a_page_that_is_not_there_says_asking_again_gets_the_same_answer(h
     assert "the server has nothing at this address; the same request will get the same answer" in (result.error or "")
 
 
+def test_the_page_outline_names_the_title_ids_and_most_used_classes_never_the_text() -> None:
+    from pilot.system.api_client import page_outline
+
+    sentence = page_outline("  Daily\n prices ", ["main"], ["price-tag", "price-tag", "note"], 1234)
+
+    assert sentence == (
+        "The page loaded (1,234 characters, title 'Daily prices'). It has elements such as #main, .price-tag, .note."
+    )
+
+
+def test_a_page_with_no_ids_or_classes_suggests_the_whole_text() -> None:
+    from pilot.system.api_client import page_outline
+
+    assert page_outline("", [], [], 10) == (
+        "The page loaded (10 characters). It has no element ids or classes; its content may be drawn by a script, "
+        "so try the whole text."
+    )
+
+
+def test_a_scrape_that_needs_a_library_this_install_lacks_ends_the_run() -> None:
+    from pilot.server import _is_terminal_execution_failure
+
+    action = Action(
+        action_type=ActionType.API_SCRAPE, parameters=ApiRequestParams(url="https://example.com", selector=".x")
+    )
+    failed = ActionResult(
+        action=action,
+        success=False,
+        error="Extracting by selector, links, tables or HTML needs BeautifulSoup (pip install beautifulsoup4)",
+    )
+
+    assert _is_terminal_execution_failure([failed]) is True
+
+
 @pytest.mark.asyncio
 async def test_a_selector_that_matches_nothing_says_what_the_page_holds(http: dict) -> None:  # noqa: F811
+    pytest.importorskip("bs4")  # the page is parsed with BeautifulSoup (the documents extra; the packaged app has it)
     http["status"] = 200
     http["text"] = (
         "<html><head><title>Daily prices</title></head><body>"

@@ -197,14 +197,20 @@ def _connection_refused(error: HttpStatusError, service_name: str, what: str) ->
 
 
 def _page_found(soup: Any, size: int) -> str:
+    """What a page that a selector missed does hold (``page_outline``), read from the parsed page."""
+    title = soup.title.get_text() if soup.title else ""
+    ids = [str(tag.get("id")) for tag in soup.find_all(id=True)][:200]
+    classes = [str(name) for tag in soup.find_all(class_=True) for name in (tag.get("class") or [])]
+    return page_outline(title, ids, classes, size)
+
+
+def page_outline(title: str, ids: list[str], classes: list[str], size: int) -> str:
     """What a page that a selector missed does hold, in a sentence a planner can choose another selector from: its
     title and the most used element ids and classes. Never the page's text."""
     from collections import Counter
 
-    title = " ".join((soup.title.get_text() if soup.title else "").split())[:80]
-    ids = [str(tag.get("id")) for tag in soup.find_all(id=True)][:200]
-    classes = Counter(name for tag in soup.find_all(class_=True) for name in (tag.get("class") or []))
-    named = [f"#{name}" for name in ids[:5]] + [f".{name}" for name, _count in classes.most_common(8)]
+    title = " ".join(str(title or "").split())[:80]
+    named = [f"#{name}" for name in ids[:5]] + [f".{name}" for name, _count in Counter(classes).most_common(8)]
     parts = [f"The page loaded ({size:,} characters"]
     parts.append(f", title {title!r})" if title else ")")
     sentence = "".join(parts) + "."

@@ -729,6 +729,8 @@ def _is_terminal_execution_failure(results: list[Any]) -> bool:
         # The launcher refused or failed at once. Another plan would try the same opener, and one that opened a page
         # and still exited with an error must not open it twice.
         "open_url": ("the browser did not open",),
+        # A library this install lacks: another plan cannot add it.
+        "api_scrape": ("needs beautifulsoup",),
     }
     for result in failed:
         action_type = getattr(result.action.action_type, "value", str(result.action.action_type))
