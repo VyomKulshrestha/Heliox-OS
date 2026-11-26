@@ -327,8 +327,11 @@ async def test_hang_past_the_reviewers_own_limit_is_still_noticed():
     reviewer.warm()
     assert await _until(lambda: reviewer.status()["state"] == "ready")
     assert await reviewer.review_completion("t", "e", "r", "x") is None  # the reviewer gave up first
-    assert await _until(lambda: reviewer.status()["state"] != "ready", timeout=2.0)  # then the worker was killed
-    assert reviewer.status()["last_fault"]["kind"] == "hang"
+    # Then the worker was killed. Waited on the kill itself, which stays true: the "not ready" state between the
+    # kill and the restart lasts only the restart's 0.2 s, and a poll on a busy machine could miss all of it.
+    hung = spawner.started[0]
+    assert await _until(lambda: hung.returncode is not None)
+    assert await _until(lambda: (reviewer.status().get("last_fault") or {}).get("kind") == "hang")
     assert await _until(lambda: reviewer.status()["state"] == "ready")
     await reviewer.close()
 
