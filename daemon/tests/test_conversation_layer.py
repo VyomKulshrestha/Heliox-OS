@@ -206,7 +206,7 @@ async def test_a_plain_request_is_handed_over_without_a_model_call():
     assert model.calls == []
     assert result.intent.verb == "open" and result.intent.object == "notepad" and result.intent.source == "router"
     company = result.keep_company()
-    await asyncio.sleep(0.05)
+    await sink.started.wait()  # the acknowledgement is the first thing the company says, whatever the machine's speed
     company.cancel()
     assert sink.texts == ["Opening Notepad."]
     result.finish("success", "Notepad is open.")
@@ -261,31 +261,63 @@ async def test_the_model_can_hand_over_with_what_it_understood():
     assert result.intent.source == "model" and result.intent.words == "open it"
     assert sink.texts == []  # nothing of the ACT line is read aloud
     company = result.keep_company()
-    await asyncio.sleep(0.05)
+    await sink.started.wait()  # the first sentence the company says
     company.cancel()
     assert sink.texts == ["I'll open the launch notes."]
+
+
+class PolledPlanner:
+    """The planner's status as the company reads it, on a clock that moves only when it is read: each poll is
+    ``step`` seconds of the planner's work. ``script`` gives the state from a time on; ``done`` is set at poll
+    ``polls``, so a test ends after an exact number of polls on any machine (no real seconds anywhere)."""
+
+    def __init__(self, script, *, step=0.02, polls=28):
+        self.script = script
+        self.step = step
+        self.polls = polls
+        self.count = 0
+        self.now = 0.0
+        self.done = asyncio.Event()
+
+    def clock(self) -> float:
+        return self.now
+
+    def status(self) -> dict:
+        self.count += 1
+        self.now = round(self.count * self.step, 6)
+        if self.count >= self.polls:
+            self.done.set()
+        return dict(next(state for since, state in reversed(self.script) if self.now >= since))
+
+
+async def run_company(planner: PolledPlanner, sink, **kwargs) -> None:
+    company = asyncio.ensure_future(
+        handover.keep_company(
+            acknowledgement_text="Opening Notepad.",
+            speak=sink,
+            status=planner.status,
+            clock=planner.clock,
+            poll=0,
+            **kwargs,
+        )
+    )
+    await planner.done.wait()
+    company.cancel()
+    await asyncio.gather(company, return_exceptions=True)
 
 
 @pytest.mark.asyncio
 async def test_progress_then_the_approval_pointer_while_the_planner_works():
     sink = FakeSink()
-    state = {"phase": "planning", "message": "Planning the safest useful action"}
-    company = asyncio.ensure_future(
-        handover.keep_company(
-            acknowledgement_text="Opening Notepad.",
-            speak=sink,
-            status=lambda: state,
-            progress_after=0.1,
-            spacing=0.1,
-            poll=0.02,
-        )
+    planner = PolledPlanner(
+        [
+            (0.0, {"phase": "planning", "message": "Planning the safest useful action"}),
+            (0.2, {"phase": "planning", "message": "Reviewing the plan for risks"}),
+            (0.4, {"phase": "awaiting_approval", "message": "Waiting for your approval"}),
+        ],
+        polls=28,  # 0.56 s of planning in 0.02 s polls
     )
-    await asyncio.sleep(0.2)
-    state.update(phase="planning", message="Reviewing the plan for risks")
-    await asyncio.sleep(0.2)
-    state.update(phase="awaiting_approval", message="Waiting for your approval")
-    await asyncio.sleep(0.15)
-    company.cancel()
+    await run_company(planner, sink, progress_after=0.1, spacing=0.1)
     texts = sink.texts
     assert texts[0] == "Opening Notepad."
     assert texts[1] == "I'm working out the steps."
@@ -298,12 +330,11 @@ async def test_progress_then_the_approval_pointer_while_the_planner_works():
 @pytest.mark.asyncio
 async def test_a_quick_plan_hears_only_the_acknowledgement():
     sink = FakeSink()
-    company = asyncio.ensure_future(
-        handover.keep_company(acknowledgement_text="Opening Notepad.", speak=sink, status=dict, poll=0.01)
-    )
-    await asyncio.sleep(0.1)
-    company.cancel()
+    # The planner returns after 1.9 s of polls, short of the first progress line (PROGRESS_AFTER_SECONDS, 2 s).
+    planner = PolledPlanner([(0.0, {})], step=0.1, polls=19)
+    await run_company(planner, sink)
     assert sink.texts == ["Opening Notepad."]
+    assert planner.now < handover.PROGRESS_AFTER_SECONDS
 
 
 # ── offline and failure ──
