@@ -439,6 +439,12 @@ class GitAgent(BaseAgent):
             commit_message = "chore: update files"
             logger.warning("GitAgent: no LLM client — using fallback commit message")
 
+        # What HEAD and the branch were before, so the verifier can tell a new commit from none.
+        before_result = await _run_git(["rev-parse", "--verify", "--quiet", "HEAD"], cwd=self.repo_path)
+        head_before = before_result["stdout"] if before_result["success"] else ""
+        branch_result = await _run_git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=self.repo_path)
+        branch = branch_result["stdout"] if branch_result["success"] else ""
+
         # Execute the commit
         commit_result = await _run_git(
             ["commit", "-m", commit_message],
@@ -455,33 +461,56 @@ class GitAgent(BaseAgent):
 
         # Get the commit hash for reference
         hash_result = await _run_git(
-            ["rev-parse", "--short", "HEAD"],
+            ["rev-parse", "--verify", "HEAD"],
             cwd=self.repo_path,
         )
-        commit_hash = hash_result["stdout"] if hash_result["success"] else "unknown"
+        commit_sha = hash_result["stdout"] if hash_result["success"] else ""
+        commit_hash = commit_sha[:7] if commit_sha else "unknown"
 
         return {
             "success": True,
             "output": f"Committed as {commit_hash}: {commit_message}",
             "commit_message": commit_message,
             "commit_hash": commit_hash,
+            "commit_sha": commit_sha,
+            "head_before": head_before,
+            "branch": branch,
         }
 
     # Tool: git_push
 
     async def _handle_push(self, params: dict[str, Any]) -> dict[str, Any]:
         """Push the current branch to a remote."""
-        remote = params.get("remote", "origin")
+        remote = (params.get("remote") or "origin").strip()
         force = params.get("force", False)
 
-        # Get current branch if not specified
-        branch = params.get("branch", "")
+        # Get current branch if not specified. Never guess one: pushing a branch
+        # nobody named (for example "main" when HEAD is detached) sends the wrong work.
+        branch = (params.get("branch") or "").strip()
         if not branch:
             branch_result = await _run_git(
-                ["rev-parse", "--abbrev-ref", "HEAD"],
+                ["symbolic-ref", "--quiet", "--short", "HEAD"],
                 cwd=self.repo_path,
             )
-            branch = branch_result["stdout"] if branch_result["success"] else "main"
+            if not branch_result["success"] or not branch_result["stdout"]:
+                return {
+                    "success": False,
+                    "output": (
+                        "git_push: no branch was named and HEAD is not on a branch (detached HEAD, "
+                        "or the repository could not be read); name the branch to push"
+                    ),
+                }
+            branch = branch_result["stdout"]
+
+        source, _, destination = branch.removeprefix("+").partition(":")
+        if not source:
+            return {
+                "success": False,
+                "output": "git_push: a refspec with no source would delete the remote branch; git_push does not delete",
+            }
+
+        # Record what is being pushed, so the verifier can ask the remote whether it landed.
+        pushed_sha, remote_ref = await self._push_target(source, destination)
 
         args = ["push", remote, branch]
         if force:
@@ -494,7 +523,31 @@ class GitAgent(BaseAgent):
         return {
             "success": result["success"],
             "output": result["stdout"] or result["stderr"],
+            "remote": remote,
+            "branch": branch,
+            "pushed_sha": pushed_sha,
+            "remote_ref": remote_ref,
         }
+
+    async def _push_target(self, source: str, destination: str) -> tuple[str, str]:
+        """The object a push of ``source[:destination]`` sends and the remote ref it updates ("" when unknown)."""
+        full_result = await _run_git(["rev-parse", "--symbolic-full-name", source], cwd=self.repo_path)
+        source_ref = full_result["stdout"] if full_result["success"] else ""
+        if not source_ref.startswith(("refs/heads/", "refs/tags/")):
+            source_ref = ""
+        sha_result = await _run_git(
+            ["rev-parse", "--verify", "--quiet", source_ref or source],
+            cwd=self.repo_path,
+        )
+        pushed_sha = sha_result["stdout"] if sha_result["success"] else ""
+        if not destination:
+            return pushed_sha, source_ref
+        if destination.startswith("refs/"):
+            return pushed_sha, destination
+        if source_ref:
+            prefix = "refs/tags/" if source_ref.startswith("refs/tags/") else "refs/heads/"
+            return pushed_sha, prefix + destination
+        return pushed_sha, ""
 
     # Tool: git_log
 
