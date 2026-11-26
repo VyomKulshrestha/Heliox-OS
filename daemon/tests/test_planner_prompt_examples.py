@@ -38,10 +38,6 @@ def _entries(prompt: str) -> list[str]:
 # "Params: {...}" or "uses {...}" / "use {...}" introduces the examples of an entry.
 _EXAMPLE_START = re.compile(r"(Params:?|\buses?)\s*(?=\{)")
 
-# Parsed by the planner once the series that adds ssh parameter parsing is merged; until then the planner refuses
-# them with "Unknown action type", which is what this test exists to catch.
-_PARSED_BY_ANOTHER_SERIES = {"ssh_command", "ssh_script"}
-
 
 def _objects_after(text: str, start: int) -> list[str]:
     """The JSON objects written one after another (separated by "/") from ``start``."""
@@ -122,22 +118,12 @@ def _problem(name: str, text: str) -> str:
 def test_the_prompt_shows_examples_for_the_common_actions() -> None:
     shown = {name for name, _text, _entry in _examples()}
     assert {"api_send_email", "file_write", "browser_navigate", "git_commit", "file_hash", "notify"} <= shown
+    # The planner parses ssh parameters, so their examples are checked like every other.
+    assert {"ssh_command", "ssh_script"} <= shown
     assert len(shown) > 60
 
 
-@pytest.mark.parametrize(
-    ("name", "text"),
-    [
-        pytest.param(
-            name,
-            text,
-            marks=[pytest.mark.xfail(reason="ssh parameter parsing lands with another series", strict=False)]
-            if name in _PARSED_BY_ANOTHER_SERIES
-            else [],
-        )
-        for name, text, _entry in _examples()
-    ],
-)
+@pytest.mark.parametrize(("name", "text"), [(name, text) for name, text, _entry in _examples()])
 def test_every_prompt_example_is_accepted_by_its_action(name: str, text: str) -> None:
     problem = _problem(name, text)
     assert not problem, f"{name} example {text}: {problem}"
