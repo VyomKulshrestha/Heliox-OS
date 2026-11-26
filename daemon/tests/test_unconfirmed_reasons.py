@@ -28,6 +28,8 @@ def _use(monkeypatch: pytest.MonkeyPatch, action_type: ActionType, outcome: Outc
     async def check(_result: ActionResult) -> Outcome:
         return outcome
 
+    # The scratch copy may already hold the action's real verifier (api_send_email has one): replace it here.
+    postconditions._REGISTRY.pop(action_type, None)
     register(action_type, method="test_postcondition")(check)
     monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
 

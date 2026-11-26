@@ -19,7 +19,10 @@ the security gate will always prompt the user before anything is transmitted.
 
 from __future__ import annotations
 
+import asyncio
 import email as email_lib
+import email.header
+import email.utils
 import imaplib
 import json
 import logging
@@ -36,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 from pilot.actions import ActionPlan, ActionResult, ActionType, CalendarParams, EmailParams
 from pilot.agents.base_agent import AgentCapability, AgentRole, AgentStatus, BaseAgent
+from pilot.system.mail_readback import message_id_note, new_message_id
 
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
@@ -281,6 +285,7 @@ class EmailAgent(BaseAgent):
                 emails.append(
                     {
                         "uid": uid.decode(),
+                        "message_id": msg.get("Message-ID", ""),
                         "from": msg.get("From", ""),
                         "to": msg.get("To", ""),
                         "subject": msg.get("Subject", "(no subject)"),
@@ -359,9 +364,29 @@ class EmailAgent(BaseAgent):
                 error="smtp_host, username, and app_password are required to send email",
             )
 
-        recipient = params.to or params.reply_to_uid  # reply_to_uid doubles as To: for API_SEND_EMAIL
+        original: dict[str, str] = {}
+        if action.action_type == ActionType.EMAIL_REPLY:
+            try:
+                original = await asyncio.to_thread(_original_message, params)
+            except (OSError, imaplib.IMAP4.error, ValueError) as exc:
+                return ActionResult(
+                    action=action,
+                    success=False,
+                    error=f"Could not read the message being replied to, so nothing was sent: {exc}",
+                )
+            recipient = params.to or original.get("reply_to", "") or original.get("from", "")
+            if not recipient and "@" in params.reply_to_uid:  # earlier plans put the address here
+                recipient = params.reply_to_uid
+        else:
+            recipient = params.to or params.reply_to_uid  # reply_to_uid doubles as To: for API_SEND_EMAIL
         if not recipient:
             return ActionResult(action=action, success=False, error="No recipient specified (set 'to')")
+
+        subject = params.subject
+        if not subject and original.get("subject"):
+            subject = original["subject"]
+            if not subject.casefold().startswith("re:"):
+                subject = f"Re: {subject}"
 
         body = params.reply_body
 
@@ -370,7 +395,7 @@ class EmailAgent(BaseAgent):
             draft_prompt = (
                 f"Draft a professional email reply.\n"
                 f"To: {recipient}\n"
-                f"Subject: {params.subject}\n"
+                f"Subject: {subject}\n"
                 f"Write only the email body, no greeting header."
             )
             try:
@@ -389,7 +414,17 @@ class EmailAgent(BaseAgent):
         msg = MIMEMultipart("alternative")
         msg["From"] = params.username
         msg["To"] = recipient
-        msg["Subject"] = params.subject or "Re: (no subject)"
+        msg["Subject"] = subject or "Re: (no subject)"
+        # The verifier finds the sender's copy in Sent by this Message-ID (pilot.system.mail_readback).
+        message_id = new_message_id(params.username)
+        msg["Message-ID"] = message_id
+        msg["Date"] = email_lib.utils.formatdate(localtime=True)
+        original_id = original.get("message_id", "")
+        if original_id:
+            # A reply threads under the original in every mail program only with both headers (RFC 5322 3.6.4).
+            references = original.get("references", "").split()
+            msg["In-Reply-To"] = original_id
+            msg["References"] = " ".join([*references, original_id] if original_id not in references else references)
         msg.attach(MIMEText(body, "plain", "utf-8"))
 
         logger.info(
@@ -418,7 +453,7 @@ class EmailAgent(BaseAgent):
         return ActionResult(
             action=action,
             success=True,
-            output=f"Email sent to {recipient} with subject '{msg['Subject']}'",
+            output=f"Email sent to {recipient} with subject '{msg['Subject']}'{message_id_note(message_id, original_id)}",
         )
 
     # ── Calendar: fetch events from ICS in emails ─────────────────────────────
@@ -507,6 +542,62 @@ class EmailAgent(BaseAgent):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _original_message(params: EmailParams) -> dict[str, str]:
+    """Headers of the message being replied to: its Message-ID (to thread under), References, sender and subject.
+
+    From ``in_reply_to`` when the plan names the original's Message-ID (email_fetch reports it as ``message_id``).
+    Otherwise read over IMAP from message ``reply_to_uid`` of ``mailbox``, the number email_fetch reported, with the
+    folder opened read-only and BODY.PEEK so the original is not marked as read. Empty when the plan names no
+    original. Raises ValueError (or an IMAP or network error) when the original cannot be read: a reply that would
+    not thread is not sent.
+    """
+    if params.in_reply_to.strip():
+        return {"message_id": params.in_reply_to.strip()}
+    number = params.reply_to_uid.strip()
+    if not number or "@" in number:
+        return {}
+    if not number.isdigit():
+        raise ValueError(f"reply_to_uid {number!r} is not a message number from email_fetch")
+    if not params.imap_host:
+        raise ValueError("no IMAP host is set up to read it")
+    connection = imaplib.IMAP4_SSL(params.imap_host, ssl_context=ssl.create_default_context(), timeout=30)
+    try:
+        connection.login(params.username, params.app_password)
+        status, _ = connection.select(params.mailbox, readonly=True)
+        if status != "OK":
+            raise ValueError(f"the folder {params.mailbox} could not be opened")
+        status, data = connection.fetch(
+            number, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES FROM REPLY-TO SUBJECT)])"
+        )
+        raw = next(
+            (
+                part[1]
+                for part in data or []
+                if isinstance(part, tuple) and len(part) > 1 and isinstance(part[1], bytes)
+            ),
+            None,
+        )
+        if status != "OK" or raw is None:
+            raise ValueError(f"message {number} is not in {params.mailbox}")
+        headers = email_lib.message_from_bytes(raw)
+        message_id = str(headers.get("Message-ID", "") or "").strip()
+        if not message_id:
+            raise ValueError(f"message {number} has no Message-ID to reply under")
+        subject = str(headers.get("Subject", "") or "")
+        return {
+            "message_id": message_id,
+            "references": " ".join(str(headers.get("References", "") or "").split()),
+            "reply_to": email_lib.utils.parseaddr(str(headers.get("Reply-To", "") or ""))[1],
+            "from": email_lib.utils.parseaddr(str(headers.get("From", "") or ""))[1],
+            "subject": str(email_lib.header.make_header(email_lib.header.decode_header(subject))) if subject else "",
+        }
+    finally:
+        try:
+            connection.logout()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _extract_body(msg: email_lib.message.Message) -> str:

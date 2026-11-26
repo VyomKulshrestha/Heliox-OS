@@ -818,6 +818,10 @@ class EmailConfig:
     smtp_port: int = 587
     username: str = ""
     password_provider: str = "email"
+    # The IMAP folder where the provider keeps sent mail, read back to verify a send. Empty: the folder the server
+    # marks \Sent, else one with a usual name ("Sent", "Sent Items", "[Gmail]/Sent Mail"). Set it only for a server
+    # that marks none, for example a localised name such as "INBOX.Gesendet".
+    sent_mailbox: str = ""
 
 
 @dataclass

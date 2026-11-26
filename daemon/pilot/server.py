@@ -1789,6 +1789,10 @@ class PilotServer:
         self._executor.set_durable_task_store(self._durable_tasks)
         self._verifier = Verifier(model_router)
         self._executor.set_step_checker(self._verifier)
+        from pilot.agents.postconditions.mail_calendar import configure_read_back
+
+        # The mail and calendar verifiers sign in afresh with the saved IMAP and CalDAV settings to read back.
+        configure_read_back(self.config, self._vault)
 
         # Destructive Critic Agent — secondary safety reviewer for Tier 4 plans.
         from pilot.agents.destructive_critic import DestructiveCriticAgent

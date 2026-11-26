@@ -867,6 +867,7 @@ class EmailParams(BaseModel):
 
     # Reply / send options
     reply_to_uid: str = ""  # UID of the email to reply to
+    in_reply_to: str = ""  # Message-ID of the email to reply to (email_fetch reports it as message_id)
     reply_body: str = ""  # pre-written reply body (empty = LLM drafts it)
     subject: str = ""  # subject override for new emails
     to: str = ""  # recipient for new emails
