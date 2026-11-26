@@ -131,7 +131,7 @@ async def test_the_joined_sentence_replaces_the_first_half_and_its_acknowledgeme
             break
         await asyncio.sleep(0.01)
     release.set()
-    await asyncio.sleep(0.05)
+    await asyncio.gather(*server._background_dispatches)  # the joined request, to its spoken result
     assert calls == ["Open Notepad", "Open Notepad please"]
     assert heard.count("Opening Notepad.") == 1  # not said again for the joined sentence
     assert heard[-1] == "Notepad is open."  # its result is said as usual
@@ -187,6 +187,6 @@ async def test_a_sentence_already_acknowledged_is_not_acknowledged_again_whateve
             break
         await asyncio.sleep(0.01)
     release.set()
-    await asyncio.sleep(0.05)
+    await asyncio.gather(*server._background_dispatches)  # the joined request, to its spoken result
     assert calls == ["Open Notepad", "Open Spotify"]
     assert not any(line.startswith("Opening Spotify") for line in heard)  # one acknowledgement per sentence
