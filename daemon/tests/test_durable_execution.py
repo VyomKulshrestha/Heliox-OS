@@ -112,7 +112,9 @@ async def test_executor_replays_completed_durable_action_without_second_side_eff
         assert replayed[0].skip_reason == "durable_replay"
         assert replayed[0].output == first[0].output
         effect.assert_awaited_once()
-        outcome_recorder.assert_called_once_with(ActionType.CPU_USAGE, True)
+        outcome_recorder.assert_called_once()
+        (recorded,) = outcome_recorder.call_args.args  # the first run's result; the replay records nothing
+        assert recorded.action.action_type is ActionType.CPU_USAGE and recorded.success is True
         audit_entries = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text("utf-8").splitlines()]
         assert [entry["event_type"] for entry in audit_entries] == [
             "action_start",

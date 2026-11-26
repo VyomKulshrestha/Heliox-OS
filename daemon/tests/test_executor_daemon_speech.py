@@ -177,7 +177,9 @@ async def test_real_action_outcome_feeds_historical_world_model(tmp_path):
     results = await ex.execute(ActionPlan(actions=[_action()], raw_input="cpu"))
 
     assert results[0].success is True
-    recorder.assert_called_once_with(ActionType.CPU_USAGE, True)
+    recorder.assert_called_once()
+    (recorded,) = recorder.call_args.args  # the whole result: a failure says whether it changed anything
+    assert recorded.action.action_type is ActionType.CPU_USAGE and recorded.success is True
 
 
 @pytest.mark.asyncio
