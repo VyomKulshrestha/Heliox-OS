@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -224,6 +225,9 @@ async def test_streamed_text_is_the_caption_and_the_final_pass_gives_the_words(m
         listener._recorder._queue = asyncio.Queue()
         listener._recorder._stream = object()  # is_active
         listener._transcribe_path = whisper
+        # The microphone check runs in a worker thread as an untracked task (test_mic_quality.py covers it); here it
+        # would still be running when the test ends.
+        listener._schedule_mic_quality = lambda _path: None
         return listener
 
     monkeypatch.setattr(streaming_asr, "PARTIAL_EVERY_SECONDS", 0.0)
@@ -396,6 +400,10 @@ async def test_the_listener_uses_the_pass_started_at_the_pause_when_the_turn_end
     config.voice.transcription_engine = "whisper"
     listener = ContinuousVoiceListener(wake_words=["hey heliox"], config=config)
     listener._recorder._soundcard_recorder = object()  # the stream is "open"
+    # A detector that is not ready: the plain path, as before Smart Turn loads, without starting the real load in a
+    # worker thread that would still be running when the test ends.
+    listener._turn_detector = SimpleNamespace(ready=False)
+    listener._schedule_mic_quality = lambda _path: None  # an untracked worker-thread task; test_mic_quality.py
     calls = []
 
     async def transcribe(path, *, speculative=False):
