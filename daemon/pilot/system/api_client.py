@@ -7,6 +7,7 @@ and interact with custom webhooks — all from natural language.
 from __future__ import annotations
 
 import asyncio
+import email.utils
 import ipaddress
 import json
 import logging
@@ -22,6 +23,7 @@ from urllib.parse import urljoin, urlsplit
 from pilot.actions import SUPPORTED_HTTP_METHODS, OutputWithNotice
 from pilot.config import PilotConfig
 from pilot.system.http_client import create_httpx_client
+from pilot.system.mail_readback import message_id_note, new_message_id
 
 logger = logging.getLogger("pilot.system.api_client")
 # The real client factory; a test that replaced it with a fake reaches no server (system_guard.check_http).
@@ -318,6 +320,10 @@ async def send_email(
     msg["Subject"] = subject
     msg["From"] = from_addr
     msg["To"] = to
+    # The verifier finds the sender's copy in Sent by this Message-ID (pilot.system.mail_readback).
+    message_id = new_message_id(from_addr)
+    msg["Message-ID"] = message_id
+    msg["Date"] = email.utils.formatdate(localtime=True)
 
     if html:
         msg.attach(MIMEText(body, "html"))
@@ -349,8 +355,8 @@ async def send_email(
         # A success for the accepted recipients (failing would invite a resend to them); the refused ones go
         # to the person through ActionResult.notice, into the reply and the task receipt.
         notice = f"The mail server refused the email for: {', '.join(sorted(refused))}"
-        return OutputWithNotice(f"Email sent to {to}: {subject}. {notice}.", notice)
-    return f"Email sent to {to}: {subject}"
+        return OutputWithNotice(f"Email sent to {to}: {subject}{message_id_note(message_id)}. {notice}.", notice)
+    return f"Email sent to {to}: {subject}{message_id_note(message_id)}"
 
 
 # ── Webhook ──────────────────────────────────────────────────────────
