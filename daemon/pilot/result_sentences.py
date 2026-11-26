@@ -693,10 +693,116 @@ def _job(command: str) -> str:
     return words_cut(command[:1].lower() + command[1:], 10).rstrip(".")
 
 
+def _step_job(record: Any) -> str:
+    """One fixed step of a trigger in plain words: "add "seen" to fired.log", "write notes.txt", "tell you"."""
+    from pilot.actions import Action
+
+    try:
+        action = Action.model_validate(record)
+    except ValueError:
+        return "a step that cannot be read"
+    params = action.parameters
+    command = str(getattr(params, "command", "") or "")
+    if command:
+        return _job(command)
+    if action.action_type is ActionType.NOTIFY:
+        return "tell you"
+    path = str(getattr(params, "path", "") or "")
+    what = name_of(path) if path else name_of(str(action.target or ""))
+    verb = action.action_type.value.replace("_", " ")
+    if action.action_type is ActionType.FILE_WRITE:
+        verb = "write"
+    return f"{verb} {what}".strip()
+
+
+_PLACEHOLDER = "{PREV_OUTPUT}"
+
+
+def _record_of(record: Any) -> dict:
+    return record.model_dump(mode="json") if hasattr(record, "model_dump") else dict(record or {})
+
+
+def steps_job(steps: Sequence[Any]) -> str:
+    """What a trigger's fixed steps do, in a few words; "" when it has none. A read of a file followed by a write of
+    it around the earlier text is an append (the planner's form of one): said as "add "<text>" to <file>"."""
+    records = [_record_of(record) for record in steps or []]
+    jobs: list[str] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        following = records[index + 1] if index + 1 < len(records) else {}
+        path = str((record.get("parameters") or {}).get("path") or "")
+        content = str((following.get("parameters") or {}).get("content") or "")
+        if (
+            record.get("action_type") == "file_read"
+            and following.get("action_type") == "file_write"
+            and path
+            and str((following.get("parameters") or {}).get("path") or "") == path
+            and _PLACEHOLDER in content
+        ):
+            added = " ".join(content.replace(_PLACEHOLDER, " ").split())
+            jobs.append(f"add {_quoted(added)} to {name_of(path)}" if added else f"write {name_of(path)}")
+            index += 2
+            continue
+        jobs.append(_step_job(record))
+        index += 1
+    if not jobs:
+        return ""
+    more = f", and {plural(len(jobs) - 3, 'more step')}" if len(jobs) > 3 else ""
+    return " and ".join(jobs[:3]) + more
+
+
+def trigger_entry(trigger: Any) -> dict:
+    """A trigger as the store keeps it (pilot.system.triggers), from the stored dict or the engine's object."""
+    if isinstance(trigger, dict):
+        return trigger
+    from dataclasses import asdict, is_dataclass
+
+    entry = asdict(trigger) if is_dataclass(trigger) else dict(getattr(trigger, "__dict__", {}))
+    kind = entry.get("trigger_type")
+    entry["trigger_type"] = getattr(kind, "value", kind)
+    return entry
+
+
 def _trigger_parts(entry: dict) -> tuple[str, str, str]:
+    """(what it watches, when it fires, what it does): the fixed steps when it has them, else its words."""
     condition = entry.get("condition") if isinstance(entry.get("condition"), dict) else {}
     watched, when = _watch(str(entry.get("trigger_type") or ""), condition)
-    return watched, when, _job(str(entry.get("action_command") or ""))
+    steps = entry.get("steps") if isinstance(entry.get("steps"), list) else []
+    return watched, when, steps_job(steps) or _job(str(entry.get("action_command") or ""))
+
+
+def trigger_named(trigger: Any) -> str:
+    """How every sentence names a trigger: by what it watches, never by its id or a made-up name."""
+    entry = trigger_entry(trigger)
+    if entry.get("trigger_type") == "time_interval":
+        return "the trigger that runs on an interval"
+    watched, _when, _job_words = _trigger_parts(entry)
+    return f"the trigger that watches {watched}"
+
+
+def trigger_fire_sentence(trigger: Any, outcome: str, *, error: str = "", seconds: int = 0) -> str:
+    """What the person is told about one fire. ``outcome``: ran, failed (``error`` is already a plain sentence),
+    timeout, fault, waits (a step needs an approval nobody gave), unreadable, unavailable, job_done, job_failed."""
+    entry = trigger_entry(trigger)
+    named = trigger_named(entry)
+    lead = named[:1].upper() + named[1:] + " fired"
+    _watched, _when, job = _trigger_parts(entry)
+    sentences = {
+        "ran": f"{lead}, and I ran its steps: {job}.",
+        "failed": f"{lead}, but a step did not work. {error}".strip(),
+        "timeout": f"{lead}, but its steps took longer than {plural(seconds, 'second')}, so I stopped them.",
+        "fault": f"{lead}, but something went wrong inside Heliox and its steps stopped.",
+        "waits": (
+            f"{lead}, but I did not run its steps ({job}), because they need your approval and you did not give it "
+            "when the trigger was made."
+        ),
+        "unreadable": f"{lead}, but I could not read its stored steps, so nothing ran.",
+        "unavailable": f"{lead}, but I could not run its steps just then.",
+        "job_done": f"{lead}, and its job finished.",
+        "job_failed": f"{lead}, but its job did not finish.",
+    }
+    return sentences[outcome]
 
 
 def _trigger_create(step: Step) -> Said:
@@ -715,14 +821,18 @@ def _trigger_create(step: Step) -> Said:
         sentence = f"I'll watch {watched} and {job} {when}."
     if data.get("note"):
         sentence = f"I was already set to watch {watched}, so nothing changed."
+    elif entry.get("steps") and not entry.get("steps_approved"):
+        # A step that needs approval waits at a fire for the person (pilot.server._trigger_waits).
+        sentence += " If a step needs your approval, I'll ask you when it fires instead of running it."
     return _said(sentence)
 
 
 def _what_it_watches(entry: dict) -> str:
     watched, when, _job_words = _trigger_parts(entry)
+    waiting = ", and a fire is waiting for your approval" if entry.get("pending") else ""
     if entry.get("trigger_type") == "time_interval":
-        return "it runs on an interval"
-    return f"it watches {watched} {when.replace('when it changes', 'for changes')}"
+        return f"it runs on an interval{waiting}"
+    return f"it watches {watched} {when.replace('when it changes', 'for changes')}{waiting}"
 
 
 def _trigger_list(step: Step) -> Said:
@@ -743,8 +853,14 @@ def _trigger_list(step: Step) -> Said:
 
 
 def _trigger_delete(step: Step) -> Said:
-    # The handler says only the id or name it deleted; what the trigger watched is the step's target when the
-    # planner named it there ("watched.txt").
+    # The handler answers with the removed entry (pilot.system.triggers.deleted_record): say what it watched.
+    removed = step.data if isinstance(step.data, dict) and step.data.get("deleted") is True else None
+    if removed is not None:
+        if removed.get("trigger_type") == "time_interval":
+            return _said("I've removed the trigger that ran on an interval.")
+        watched, _when, _job_words = _trigger_parts(removed)
+        return _said(f"I've stopped watching {removed.get('watched') or watched}.")
+    # An older answer names only the id; what the trigger watched is the step's target when the planner named it.
     target = step.target
     if target and re.search(r"\.\w{1,6}$|[\/]", target):
         return _said(f"I've stopped watching {name_of(target)}.")

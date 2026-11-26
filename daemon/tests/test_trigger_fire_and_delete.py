@@ -184,9 +184,7 @@ async def test_a_fire_runs_exactly_the_approved_steps_and_says_so(engine, tmp_pa
     assert [a.model_dump(mode="json") for a in plan.actions] == made.steps  # what was approved, nothing else
     assert kwargs["user_confirmed"] is True and kwargs["plan_id"] == f"trigger-{made.id}-1"
     server._task_receipts.finalize.assert_awaited_once()
-    assert _told(server) == [
-        'The trigger "fired_log" (file modified: watched.txt) fired and ran: shell command echo seen a change.'
-    ]
+    assert _told(server) == ["The trigger that watches watched.txt fired, and I ran its steps: echo seen a change."]
     assert engine.get_trigger(made.id).pending is None
     assert engine.get_trigger(made.id).last_outcome == _told(server)[0]
 
@@ -217,8 +215,8 @@ async def test_a_step_needing_an_approval_nobody_gave_waits_and_is_told_once_an_
 
     assert executor.plans == []  # nothing ran
     sentence = (
-        'The trigger "fired_log" (file modified: watched.txt) fired but did not run shell command echo seen a '
-        "change, because that needs your approval and none was given when the trigger was made."
+        "The trigger that watches watched.txt fired, but I did not run its steps (echo seen a change), because they "
+        "need your approval and you did not give it when the trigger was made."
     )
     assert _told(server) == [sentence, sentence]  # the second fire, a minute later, was not said again
     pending = engine.get_trigger(made.id).pending
@@ -239,7 +237,7 @@ async def test_a_fire_is_bounded_in_time(engine, tmp_path: Path, monkeypatch: py
     await server._dispatch_reactive_trigger(made)
 
     assert _told(server) == [
-        'The trigger "slow" (cpu threshold) fired, but its steps did not finish within 0 seconds, so they were stopped.'
+        "The trigger that watches the processor fired, but its steps took longer than 0 seconds, so I stopped them."
     ]
 
 
@@ -257,8 +255,8 @@ async def test_a_trigger_stored_as_words_does_not_hold_an_approval_card(engine) 
     methods = [call.args[0] for call in server._broadcast_notification.await_args_list]
     assert "confirm_required" not in methods
     assert _told(server) == [
-        'The trigger "fired_log" (cpu threshold) fired but did not run shell command echo seen a change>>fired.log, '
-        "because that needs your approval and none was given when the trigger was made."
+        'The trigger that watches the processor fired, but I did not run its steps (add "seen a change" to '
+        "fired.log), because they need your approval and you did not give it when the trigger was made."
     ]
     # The job's own end is not told a second time.
     server.__dict__["_trigger_jobs"] = {"job-1": made.id}
