@@ -56,7 +56,12 @@ def _changed_detail(then: tuple[int, int], size_now: int) -> str:
 # ── file_read ────────────────────────────────────────────────────────
 
 
-def _compare_file_read(path: str, returned: str) -> Outcome:
+def _compare_file_read(
+    path: str, returned: str, head_lines: int | None = None, tail_lines: int | None = None
+) -> Outcome:
+    """``head_lines`` / ``tail_lines``: the read returned only those lines, so they are what is compared."""
+    from pilot.system.filesystem import some_lines
+
     p = Path(path)
     try:
         stat = p.stat()
@@ -72,12 +77,18 @@ def _compare_file_read(path: str, returned: str) -> Outcome:
         )
     then = _changed_since(path, stat.st_size, stat.st_mtime_ns)
     try:
-        expected = _universal_newlines(data.decode("utf-8"))
+        expected = some_lines(_universal_newlines(data.decode("utf-8")), head_lines, tail_lines)
     except UnicodeDecodeError:
         if then is not None:
             return unobserved(_changed_detail(then, len(data)), kind=Kind.CHANGED_LATER)
         return unobserved(
             "The file is no longer valid UTF-8, so it may have changed after it was read", kind=Kind.CHANGED_LATER
+        )
+    if returned == expected and (head_lines is not None or tail_lines is not None):
+        which = f"first {head_lines}" if head_lines is not None else f"last {tail_lines}"
+        return verified(
+            f"The {which} line(s) returned ({len(returned):,} characters) match the file read again as UTF-8 "
+            f"(sha256 {_short_sha(returned)})"
         )
     if returned == expected:
         return verified(
@@ -106,10 +117,17 @@ def _compare_file_read(path: str, returned: str) -> Outcome:
 @register(ActionType.FILE_READ, method="file_read_content_postcondition", timeout=20.0)
 async def file_read_matches_file(result: ActionResult) -> Outcome:
     """Length and sha256 of the returned text against the file's own bytes, decoded the way file_read decodes."""
-    path = str(getattr(result.action.parameters, "path", "") or "")
+    params = result.action.parameters
+    path = str(getattr(params, "path", "") or "")
     if not path:
         raise ValueError("file_read has no path to observe")
-    return await asyncio.to_thread(_compare_file_read, path, str(result.output or ""))
+    return await asyncio.to_thread(
+        _compare_file_read,
+        path,
+        str(result.output or ""),
+        getattr(params, "head_lines", None),
+        getattr(params, "tail_lines", None),
+    )
 
 
 # ── file_hash ────────────────────────────────────────────────────────

@@ -39,8 +39,19 @@ def read_stamp(path: str) -> tuple[int, int] | None:
     return _READ_STAMPS.get(os.path.normcase(str(Path(path).resolve())))
 
 
-async def file_read(path: str) -> str:
-    """Read file contents (UTF-8, strict, universal newlines). The whole file is returned; there is no size cap."""
+def some_lines(text: str, head_lines: int | None = None, tail_lines: int | None = None) -> str:
+    """The first ``head_lines`` or the last ``tail_lines`` lines of ``text``, line ends kept; all of it when neither
+    is given. file_read returns this, and its check compares the file read again the same way."""
+    if head_lines is None and tail_lines is None:
+        return text
+    lines = text.splitlines(keepends=True)
+    picked = lines[:head_lines] if head_lines is not None else lines[-tail_lines:]  # type: ignore[operator]
+    return "".join(picked)
+
+
+async def file_read(path: str, *, head_lines: int | None = None, tail_lines: int | None = None) -> str:
+    """Read file contents (UTF-8, strict, universal newlines). The whole file is returned, or only its first
+    ``head_lines`` or last ``tail_lines`` lines; there is no size cap."""
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"File not found: {path}")
@@ -51,7 +62,7 @@ async def file_read(path: str) -> str:
         before = p.stat()
         text = p.read_text("utf-8")
         _stamp(p, before)
-        return text
+        return some_lines(text, head_lines, tail_lines)
 
     return await asyncio.to_thread(_read)
 

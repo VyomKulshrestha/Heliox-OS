@@ -482,6 +482,15 @@ class FileParams(BaseModel):
     ignore_dirs: list[str] = Field(default_factory=lambda: [".git", "node_modules"])  # For directory_summary
     permissions: str | None = None  # e.g. "755" for file_permissions
     hash_algorithm: Literal["sha256", "sha512", "blake2b"] = "sha256"
+    # file_read only: the first or the last N lines instead of the whole file ("show the last lines of this log").
+    head_lines: int | None = Field(default=None, ge=1, le=100_000)
+    tail_lines: int | None = Field(default=None, ge=1, le=100_000)
+
+    @model_validator(mode="after")
+    def _one_line_limit(self) -> FileParams:
+        if self.head_lines is not None and self.tail_lines is not None:
+            raise ValueError("give head_lines or tail_lines, not both")
+        return self
 
 
 class GitResolveParams(BaseModel):

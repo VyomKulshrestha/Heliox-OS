@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger("pilot.system.file_intel")
@@ -428,6 +429,19 @@ async def _parse_archive(path: str) -> str:
 SEARCH_MAX_FILE_BYTES = 10_000_000
 
 
+def search_folder(directory: str, path: str = "", target: str = "") -> str:
+    """The folder a content search looks in: ``directory``, or ``path`` when a plan gave the folder under the name
+    the other file actions use, or the step's target. Two different folders is an error, and so is none: an empty
+    folder name would search the daemon's own working folder."""
+    directory, path = (directory or "").strip(), (path or "").strip()
+    if directory and path and os.path.normcase(os.path.normpath(directory)) != os.path.normcase(os.path.normpath(path)):
+        raise ValueError(f"The search was given two folders, {directory} and {path}; it needs one.")
+    folder = directory or path or (target or "").strip()
+    if not folder:
+        raise ValueError("The search was not given a folder to look in.")
+    return folder
+
+
 async def search_file_contents(
     directory: str,
     search_text: str,
@@ -439,6 +453,8 @@ async def search_file_contents(
     Searches recursively through files matching the glob pattern.
     """
     results = []
+    if not str(directory or "").strip():
+        raise ValueError("The search was not given a folder to look in.")
     p = Path(directory)
     if not p.exists():
         raise FileNotFoundError(f"Directory not found: {directory}")
@@ -488,5 +504,9 @@ async def search_file_contents(
     if skipped["unreadable"]:
         notes.append(f"{skipped['unreadable']} file(s) could not be read and were not searched.")
     if not results:
-        return with_notes(f"No matches for '{search_text}' in {directory} ({pattern})", notes)
+        which = "any file" if pattern in ("*", "", None) else f"files matching {pattern}"
+        return with_notes(
+            f"No matches for '{search_text}' in {which} in {p.resolve()} and its subfolders.",
+            notes,
+        )
     return with_notes(json.dumps({"matches": results, "count": len(results)}, indent=2), notes)

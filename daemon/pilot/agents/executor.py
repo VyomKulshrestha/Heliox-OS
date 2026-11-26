@@ -1677,7 +1677,9 @@ class Executor:
         from pilot.system.filesystem import file_read
 
         params: FileParams = action.parameters  # type: ignore[assignment]
-        return await file_read(params.path)
+        if params.head_lines is None and params.tail_lines is None:
+            return await file_read(params.path)
+        return await file_read(params.path, head_lines=params.head_lines, tail_lines=params.tail_lines)
 
     async def _exec_file_write(self, action: Action) -> str:
         from pilot.system.filesystem import file_write
@@ -3068,10 +3070,11 @@ class Executor:
         return await parse_file(p.path)
 
     async def _exec_file_search_content(self, action: Action) -> str:
-        from pilot.system.file_intel import search_file_contents
+        from pilot.system.file_intel import search_file_contents, search_folder
 
         p: FileIntelParams = action.parameters  # type: ignore[assignment]
-        return await search_file_contents(p.directory, p.search_text, p.pattern, p.max_results)
+        folder = search_folder(p.directory, p.path, action.target)
+        return await search_file_contents(folder, p.search_text, p.pattern, p.max_results)
 
     # ======================================================================
     # TIER 2: API INTEGRATION
