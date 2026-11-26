@@ -75,6 +75,17 @@ class _Locator:
         return dict(self.page.elements[self.selector])
 
 
+class _Mouse:
+    def __init__(self, page: _Page) -> None:
+        self.page = page
+
+    async def move(self, x: float, y: float) -> None:
+        self.page.actions.append(f"move:{x},{y}")
+
+    async def wheel(self, dx: float, dy: float) -> None:
+        await self.page._act(f"wheel:{dy}")
+
+
 class _Page:
     """Answers reads; an action runs ``effect`` (what the real page would do) and is logged."""
 
@@ -92,7 +103,8 @@ class _Page:
         effect: Callable[[_Page], None] | None = None,
     ) -> None:
         self.state = {"href": href, "ready": "complete", "visibility": visibility, "origin": origin}
-        self.state.update({"x": 0, "y": y, "max_y": max_y})
+        self.state.update({"x": 0, "y": y, "max_y": max_y, "width": 1280, "height": 720, "panel": None})
+        self.mouse = _Mouse(self)
         self.nodes = nodes if nodes is not None else [_node("main", "app"), _node("button", "pay", "Pay")]
         self.elements = elements or {}
         self.history = history
@@ -741,34 +753,97 @@ async def test_smooth_scroll_is_waited_for_by_counted_reads(monkeypatch, _no_rea
 
 
 @pytest.mark.asyncio
-async def test_scroll_that_did_not_move_is_a_mismatch(monkeypatch) -> None:
+async def test_scroll_that_did_not_move_is_reported_and_never_fails_the_run(monkeypatch) -> None:
     _open(monkeypatch, _Page(y=300))
     output = await browser.browser_scroll("up", 200)
 
-    label, observed, _ = await _verify(_action(ActionType.BROWSER_SCROLL, direction="up"), output)
+    label, observed, passed = await _verify(_action(ActionType.BROWSER_SCROLL, direction="up"), output)
 
-    assert label == "Action 0 (browser_scroll): MISMATCH — The page did not move: it is still 300 px from the top"
-    assert observed is True
+    assert label == (
+        "Action 0 (browser_scroll): REPORTED — no independent postcondition (The page did not move when scrolled up)"
+    )
+    assert observed is False and passed is True
 
 
 @pytest.mark.asyncio
-async def test_scroll_down_on_a_window_with_nothing_to_scroll_is_a_mismatch(monkeypatch) -> None:
-    _open(monkeypatch, _Page(y=0, max_y=0))
+async def test_a_page_that_fits_the_window_is_not_a_failure(monkeypatch) -> None:
+    page = _Page(y=0, max_y=0)
+    _open(monkeypatch, page)
+    output = await browser.browser_scroll("down")
+
+    assert output.notice == "The page fits in the window, so there was nothing to scroll"
+    label, observed, passed = await _verify(_action(ActionType.BROWSER_SCROLL, direction="down"), output)
+    assert (label, observed, passed) == ("Action 0 (browser_scroll): VERIFIED", True, True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("direction", "y", "notice"),
+    [
+        ("down", 2000, "The page is already at the bottom, so it did not move"),
+        ("bottom", 2000, "The page is already at the bottom, so it did not move"),
+        ("up", 0, "The page is already at the top, so it did not move"),
+        ("top", 0, "The page is already at the top, so it did not move"),
+    ],
+)
+async def test_a_page_already_at_that_end_is_verified_with_a_notice(monkeypatch, direction, y, notice) -> None:
+    _open(monkeypatch, _Page(y=y, max_y=2000))
+    output = await browser.browser_scroll(direction)
+
+    assert output.notice == notice
+    outcome = await _check(_action(ActionType.BROWSER_SCROLL, direction=direction), output)
+    assert outcome == browser_ui.verified(notice)
+
+
+def _panel(top: int, room: int = 3000) -> dict[str, Any]:
+    return {"key": "div#messages@600", "top": top, "max": room}
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_scrolls_inside_a_panel_is_scrolled_there_and_read_there(monkeypatch) -> None:
+    page = _Page(y=0, max_y=0)
+    page.state["panel"] = _panel(0)
+    page.effect = lambda p: p.state.__setitem__("panel", _panel(p.state["panel"]["top"] + 500))
+    _open(monkeypatch, page)
+    output = await browser.browser_scroll("down", 500)
+
+    assert page.actions == ["move:640,360", "wheel:500"]  # a wheel over the middle, not window.scrollBy
+    label, observed, passed = await _verify(_action(ActionType.BROWSER_SCROLL, direction="down"), output)
+    assert (label, observed, passed) == ("Action 0 (browser_scroll): VERIFIED", True, True)
+    outcome = await _check(_action(ActionType.BROWSER_SCROLL, direction="down"), output)
+    assert outcome.detail == "The scrolling area moved down by 500 px"
+
+
+@pytest.mark.asyncio
+async def test_a_panel_that_did_not_move_is_reported_not_failed(monkeypatch) -> None:
+    page = _Page(y=0, max_y=0)
+    page.state["panel"] = _panel(100)
+    _open(monkeypatch, page)
+    output = await browser.browser_scroll("down")
+
+    label, observed, passed = await _verify(_action(ActionType.BROWSER_SCROLL, direction="down"), output)
+
+    assert passed is True and observed is False and "did not move" in label
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "jump",
+    [
+        lambda p: p.state.update(y=p.state["y"] - 120, max_y=p.state["max_y"] + 4000),  # a feed loads and re-anchors
+        lambda p: p.state.update(max_y=p.state["max_y"] + 4000),  # it grew, the position held
+        lambda p: p.state.__setitem__("panel", {"key": "div#feed@700", "top": 0, "max": 900}),  # the list was replaced
+    ],
+)
+async def test_a_page_that_grows_or_jumps_is_not_called_unmoved(monkeypatch, jump) -> None:
+    page = _Page(y=400, max_y=3000, effect=jump)
+    _open(monkeypatch, page)
     output = await browser.browser_scroll("down")
 
     outcome = await _check(_action(ActionType.BROWSER_SCROLL, direction="down"), output)
 
-    assert not outcome.passed and "nothing to scroll" in outcome.detail
-
-
-@pytest.mark.asyncio
-async def test_scroll_at_the_bottom_already_is_verified(monkeypatch) -> None:
-    _open(monkeypatch, _Page(y=2000, max_y=2000))
-    output = await browser.browser_scroll("down")
-
-    outcome = await _check(_action(ActionType.BROWSER_SCROLL, direction="down"), output)
-
-    assert outcome == browser_ui.verified("The page was already at the bottom; there was nothing further to scroll")
+    assert outcome.passed is True and outcome.observed is False
+    assert "moved or grew" in outcome.detail
 
 
 @pytest.mark.asyncio
@@ -923,10 +998,10 @@ async def test_the_reading_right_after_the_step_is_what_the_verifier_reports(mon
     result = await _read_right_after(ActionResult(action=action, success=True, output=await browser.browser_scroll()))
     page.state.update(y=900)  # later the page moves by itself; the step's own reading stands
 
-    label, observed, _ = await _verify_stored(result)
+    label, observed, passed = await _verify_stored(result)
 
-    assert label == "Action 0 (browser_scroll): MISMATCH — The page did not move: it is still 0 px from the top"
-    assert observed is True
+    assert label.endswith("(The page did not move when scrolled down)")
+    assert observed is False and passed is True
 
 
 async def _verify_stored(result: ActionResult) -> tuple[str, bool, bool]:

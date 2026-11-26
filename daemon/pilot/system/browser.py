@@ -305,8 +305,24 @@ def _follow_new_tab(tabs_before: list[Any], output: str, notice: str = NEW_TAB_N
 
 PAGE_BEFORE_MARKER = "[PAGE_BEFORE]"
 
+# ``panel``: the scrollable element under the middle of the window, the one a mouse wheel there scrolls (Gmail's
+# message list, a chat history, a document editor), or null when the document itself is what scrolls there.
 _PAGE_STATE_SCRIPT = """() => {
   const root = document.scrollingElement || document.documentElement;
+  let panel = null;
+  let el = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+  while (el && el !== document.body && el !== document.documentElement) {
+    const overflow = getComputedStyle(el).overflowY;
+    if (/(auto|scroll|overlay)/.test(overflow) && el.scrollHeight > el.clientHeight + 1) {
+      panel = {
+        key: el.tagName.toLowerCase() + '#' + (el.id || '') + '@' + el.clientHeight,
+        top: Math.round(el.scrollTop),
+        max: Math.max(0, Math.round(el.scrollHeight - el.clientHeight)),
+      };
+      break;
+    }
+    el = el.parentElement;
+  }
   return {
     href: location.href,
     ready: document.readyState,
@@ -315,6 +331,9 @@ _PAGE_STATE_SCRIPT = """() => {
     x: window.scrollX,
     y: window.scrollY,
     max_y: Math.max(0, Math.round((root ? root.scrollHeight : 0) - window.innerHeight)),
+    width: window.innerWidth,
+    height: window.innerHeight,
+    panel,
   };
 }"""
 
@@ -964,8 +983,16 @@ async def browser_scroll(direction: str = "down", amount: int = 500) -> str:
         raise ValueError(f"Unknown scroll direction {direction!r}: use down, up, top or bottom")
     page = await _get_page()
     state = await read_page_state(page)
-    record = {key: state.get(key) for key in ("y", "max_y")} | _page_identity(state) if state else None
-    if direction == "down":
+    record = {key: state.get(key) for key in ("y", "max_y", "panel")} | _page_identity(state) if state else None
+    panel = state.get("panel") if state else None
+    if panel:
+        # The content scrolls inside an element (a mail list, a chat, a document editor) and window.scrollBy would
+        # move nothing: a wheel over the middle of the window scrolls it, as a person's wheel would.
+        towards_end = direction in {"down", "bottom"}
+        distance = amount if direction in {"down", "up"} else int(panel.get("max") or 0) + int(state.get("height") or 0)
+        await page.mouse.move(int(state.get("width") or 0) // 2, int(state.get("height") or 0) // 2)
+        await page.mouse.wheel(0, distance if towards_end else -distance)
+    elif direction == "down":
         await page.evaluate(f"window.scrollBy(0, {amount})")
     elif direction == "up":
         await page.evaluate(f"window.scrollBy(0, -{amount})")
@@ -973,7 +1000,30 @@ async def browser_scroll(direction: str = "down", amount: int = 500) -> str:
         await page.evaluate("window.scrollTo(0, 0)")
     elif direction == "bottom":
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-    return _with_before(f"Scrolled {direction} by {amount}px", record)
+    output = _with_before(f"Scrolled {direction} by {amount}px", record)
+    at_end = scroll_end_already_reached(direction, state)
+    if not at_end:
+        return output
+    from pilot.actions import OutputWithNotice
+
+    return OutputWithNotice(output, at_end)
+
+
+def scroll_end_already_reached(direction: str, state: dict[str, Any] | None) -> str | None:
+    """A sentence when the page could not move the way asked before the scroll (it is at that end, or fits the
+    window), else None. Reads both the document and the scrolling element under the middle of the window."""
+    if not state or state.get("y") is None or state.get("max_y") is None:
+        return None
+    y, room, panel = float(state["y"]), float(state["max_y"]), state.get("panel")
+    if direction in {"down", "bottom"}:
+        if room <= 0 and not panel:
+            return "The page fits in the window, so there was nothing to scroll"
+        document_at_end = y >= room - 1
+        panel_at_end = not panel or float(panel.get("top") or 0) >= float(panel.get("max") or 0) - 1
+        return "The page is already at the bottom, so it did not move" if document_at_end and panel_at_end else None
+    document_at_top = y <= 1
+    panel_at_top = not panel or float(panel.get("top") or 0) <= 1
+    return "The page is already at the top, so it did not move" if document_at_top and panel_at_top else None
 
 
 # ── Data Extraction ──────────────────────────────────────────────────

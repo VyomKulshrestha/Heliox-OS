@@ -410,29 +410,73 @@ async def pointer_is_over_element(result: ActionResult) -> Outcome:
     return unobserved("The element is visible but not under the pointer now; the pointer may have moved since")
 
 
+def _same_panel(before: dict[str, Any], now: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """The scrolling element under the middle of the window before and now, when it is the same one; else Nones."""
+    panel_before, panel_now = before.get("panel"), now.get("panel")
+    if (
+        isinstance(panel_before, dict)
+        and isinstance(panel_now, dict)
+        and panel_before.get("key") == panel_now.get("key")
+    ):
+        return panel_before, panel_now
+    return None, None
+
+
 def _scroll_outcome(direction: str, before: dict[str, Any], now: dict[str, Any]) -> Outcome | None:
-    """VERIFIED when the scroll position answers the direction; None when it does not (yet)."""
-    y_before, y_now, room = float(before["y"]), float(now.get("y") or 0), float(before["max_y"])
-    if direction == "down":
-        if y_now > y_before:
-            return verified(f"The page moved down by {round(y_now - y_before)} px")
-        if y_before >= room - 1:
-            return verified("The page was already at the bottom; there was nothing further to scroll")
-    elif direction == "up":
-        if y_now < y_before:
-            return verified(f"The page moved up by {round(y_before - y_now)} px")
-        if y_before <= 1:
-            return verified("The page was already at the top")
-    elif direction == "top" and y_now <= 1:
+    """VERIFIED when the document or the scrolling element under the pointer answers the direction, or the page
+    could not move that way to begin with; None when the reading does not show it (yet)."""
+    from pilot.system.browser import scroll_end_already_reached
+
+    sign = 1 if direction in {"down", "bottom"} else -1
+    word = "down" if sign > 0 else "up"
+    y_before, y_now = float(before["y"]), float(now.get("y") or 0)
+    if sign * (y_now - y_before) > 0:
+        return verified(f"The page moved {word} by {round(abs(y_now - y_before))} px")
+    panel_before, panel_now = _same_panel(before, now)
+    if panel_before and panel_now:
+        moved = float(panel_now.get("top") or 0) - float(panel_before.get("top") or 0)
+        if sign * moved > 0:
+            return verified(f"The scrolling area moved {word} by {round(abs(moved))} px")
+    already = scroll_end_already_reached(direction, before)
+    if already:
+        return verified(already)
+    if direction == "top" and y_now <= 1 and (not panel_now or float(panel_now.get("top") or 0) <= 1):
         return verified("The page is at the top")
-    elif direction == "bottom" and y_now >= room - 1:
-        return verified("The page is at the bottom")
+    if direction == "bottom" and y_now >= float(now.get("max_y") or 0) - 1:
+        if not panel_now or float(panel_now.get("top") or 0) >= float(panel_now.get("max") or 0) - 1:
+            return verified("The page is at the bottom")
     return None
+
+
+def _moved_or_grew(before: dict[str, Any], now: dict[str, Any]) -> bool:
+    """Any change of position in either direction, or a page or scrolling area that grew (a feed loading more)."""
+    if round(float(now.get("y") or 0)) != round(float(before["y"])):
+        return True
+    if float(now.get("max_y") or 0) > float(before["max_y"]) + 1:
+        return True
+    panel_before, panel_now = before.get("panel"), now.get("panel")
+    if (panel_before or None) != (panel_now or None) and not (
+        isinstance(panel_before, dict)
+        and isinstance(panel_now, dict)
+        and panel_before.get("key") == panel_now.get("key")
+    ):
+        return True  # the scrolling area under the pointer appeared, went or was replaced
+    if isinstance(panel_before, dict) and isinstance(panel_now, dict):
+        if round(float(panel_now.get("top") or 0)) != round(float(panel_before.get("top") or 0)):
+            return True
+        if float(panel_now.get("max") or 0) > float(panel_before.get("max") or 0) + 1:
+            return True
+    return False
 
 
 @register(ActionType.BROWSER_SCROLL, method="conditional_scroll_position_postcondition")
 async def page_scrolled(result: ActionResult) -> Outcome:
-    """The window's scroll position moved the way asked (or was already at that edge), read afresh."""
+    """The document or the scrolling element under the pointer moved the way asked, or the page could not move that
+    way (already at that end, or it fits the window), read right after the step.
+
+    A scroll that did not move is reported with its reason and never fails the run: a scroll is not worth a repair
+    round or a stop, and nothing in a plan says whether the next step depends on how far the page moved.
+    """
     from pilot.system import browser
 
     direction = str(getattr(result.action.parameters, "direction", "down") or "down")
@@ -442,15 +486,9 @@ async def page_scrolled(result: ActionResult) -> Outcome:
     page = browser.current_tab()
     if page is None:
         return unobserved("No browser tab is open now, so the scroll position could not be read")
-    first = await browser.read_page_state(page)
-    if _left_since(before, first):
+    now = await browser.read_page_state(page)
+    if _left_since(before, now):
         return unobserved(LEFT_THE_PAGE)
-    if before["max_y"] <= 0 and direction in {"down", "bottom"}:
-        return mismatch(
-            "The page did not move: the window has nothing to scroll on this page "
-            "(its content may scroll inside a panel instead)"
-        )
-    now = first
     for attempt in range(SCROLL_READS):  # smooth scrolling takes a moment to arrive
         if attempt:
             await _pause(SCROLL_INTERVAL_SECONDS)
@@ -461,6 +499,6 @@ async def page_scrolled(result: ActionResult) -> Outcome:
                 return outcome
     if now is None:
         return unobserved("The scroll position could not be read after the scroll")
-    if round(float(now.get("y") or 0)) == round(float(before["y"])):
-        return mismatch(f"The page did not move: it is still {round(float(before['y']))} px from the top")
-    return unobserved("The page moved, but not the way asked; it may scroll by itself")
+    if _moved_or_grew(before, now):
+        return unobserved("The page moved or grew, but not simply the way asked; it may load more as it scrolls")
+    return unobserved(f"The page did not move when scrolled {direction}")
