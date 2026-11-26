@@ -113,6 +113,13 @@ def test_captions_and_smart_turn_open_only_local_files(monkeypatch):
     assert calls and all(kwargs.get("local_files_only") is True for kwargs in calls)
 
 
+async def scheduled_statuses_ran() -> None:
+    """The listener sends a status with call_soon_threadsafe, then ensure_future: two turns of the event loop. Ten
+    turns, counted, whatever the machine's speed."""
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
 def listener_with(present: dict[str, bool]):
     from pilot.system.voice import ContinuousVoiceListener
 
@@ -143,7 +150,7 @@ async def test_with_no_recogniser_the_voice_bar_says_so_once_and_points_to_setti
     item, statuses = listener_with(present)
     item._note_recogniser_missing()
     item._note_recogniser_missing()
-    await asyncio.sleep(0.05)
+    await scheduled_statuses_ran()
     missing = [data for name, data in statuses if name == "recogniser_missing"]
     assert len(missing) == (1 if said else 0)
     if said:
@@ -167,7 +174,7 @@ async def test_with_only_parakeet_its_words_still_count_and_the_wake_phrase_come
     text = await item._transcribe_path("utterance.wav")
     assert text == "Hey Heliox, what time is it?"
     assert voice.loose_wake_prefix(text) == "Hey Heliox"
-    await asyncio.sleep(0.05)
+    await scheduled_statuses_ran()
     assert not [name for name, _ in statuses if name == "recogniser_missing"]  # Parakeet hears: nothing to say
 
 
@@ -179,7 +186,7 @@ async def test_with_no_recogniser_an_utterance_gives_no_words_and_no_download(mo
     monkeypatch.setattr(item, "_parakeet", lambda: None)
     monkeypatch.setattr(voice, "_transcribe_speech", AsyncMock(side_effect=SpeechModelMissing("no whisper")))
     assert await item._transcribe_path("utterance.wav") == ""
-    await asyncio.sleep(0.05)
+    await scheduled_statuses_ran()
     assert [name for name, _ in statuses] == ["recogniser_missing"]
 
 
