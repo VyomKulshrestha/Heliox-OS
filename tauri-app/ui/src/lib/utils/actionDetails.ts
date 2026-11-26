@@ -75,6 +75,8 @@ export function describeAction(action: PlanAction): ActionDetail[] {
     if (!isEmpty(value)) details.push({ label, value: clip(asText(value)), code });
   };
   const str = (key: string) => (typeof p[key] === "string" ? (p[key] as string) : "");
+  // The daemon's own sentence for a step whose type and target undersell it, such as upgrading every package.
+  if (typeof action.effect === "string") add("Does", action.effect);
 
   switch (action.action_type) {
     case "shell_command":

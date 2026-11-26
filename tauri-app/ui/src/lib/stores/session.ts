@@ -39,6 +39,8 @@ export interface PlanAction {
   description?: string;
   /** A "setting_change" line: the setting it changes ("security.root_enabled"). */
   setting?: string;
+  /** What the step does on this computer, when its type and target undersell it ("Upgrade every installed package"). */
+  effect?: string;
 }
 
 export interface UndoSupport {

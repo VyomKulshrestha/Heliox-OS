@@ -104,6 +104,7 @@ REASON_EXTERNAL = (
     "This reaches outside your computer (a message, a web page or a remote command); Heliox cannot take it back."
 )
 REASON_UNSUPPORTED = "Heliox cannot reverse this kind of change automatically."
+REASON_PACKAGE_UPGRADE = "Every installed package is upgraded; Heliox cannot put the earlier versions back."
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,8 @@ def undo_support(action: Action) -> UndoSupport:
         return UndoSupport("undoable", REASON_UNDOABLE)
     if action.action_type in EXTERNAL_TYPES:
         return UndoSupport("not_undoable", REASON_EXTERNAL)
+    if action.action_type == ActionType.PACKAGE_UPDATE:
+        return UndoSupport("not_undoable", REASON_PACKAGE_UPGRADE)
     if action.permission_tier == PermissionTier.READ_ONLY:
         return UndoSupport("no_change", REASON_NO_CHANGE)
     return UndoSupport("not_undoable", REASON_UNSUPPORTED)

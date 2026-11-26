@@ -337,6 +337,7 @@ class SimulationSandbox:
             "service_restart": f"Restart system service: {target}",
             "package_install": f"Install package: {target}",
             "package_remove": f"Remove package: {target}",
+            "package_update": "Upgrade every installed package",
             "power_shutdown": "Shut down the system",
             "power_restart": "Restart the system",
             "registry_write": f"Modify Windows registry: {target}",

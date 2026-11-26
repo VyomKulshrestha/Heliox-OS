@@ -436,6 +436,8 @@ IRREVERSIBLE_ACTIONS = {
     ActionType.POWER_LOGOUT,
     # Package removal can lose config/data a simple reinstall won't restore
     ActionType.PACKAGE_REMOVE,
+    # Upgrading every installed package: nothing Heliox keeps can put the earlier versions back
+    ActionType.PACKAGE_UPDATE,
     # Arbitrary script execution can exfiltrate data before a snapshot
     # rollback would ever have a chance to matter.
     ActionType.BROWSER_EXECUTE_JS,

@@ -115,6 +115,17 @@ APT_UPGRADE_SCRIPT = (
 )
 
 
+def update_effect() -> str:
+    """What package_update does on this computer, in the words the approval dialog shows before it runs."""
+    if CURRENT_PLATFORM == Platform.WINDOWS:
+        how = "with winget (Chocolatey when winget is not installed)"
+    elif CURRENT_PLATFORM == Platform.MACOS:
+        how = "with Homebrew (formulae and casks; pinned ones stay)"
+    else:
+        how = "with apt, dnf or pacman, after refreshing the package lists, as administrator"
+    return f"Upgrade every installed package {how}. Heliox cannot put the earlier versions back."
+
+
 async def package_update() -> str:
     """Bring the installed packages up to date: what a person means by "update my packages".
 

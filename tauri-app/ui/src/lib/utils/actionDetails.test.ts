@@ -7,6 +7,21 @@ function action(action_type: string, parameters: Record<string, unknown>, target
 }
 
 describe("describeAction", () => {
+  it("says what a package update does before anything else", () => {
+    const update = {
+      ...action("package_update", { name: "", version: null, repository: null }),
+      effect: "Upgrade every installed package with winget. Heliox cannot put the earlier versions back.",
+    };
+
+    expect(describeAction(update)).toEqual([
+      {
+        label: "Does",
+        value: "Upgrade every installed package with winget. Heliox cannot put the earlier versions back.",
+        code: false,
+      },
+    ]);
+  });
+
   it("shows the whole script and the interpreter for shell scripts", () => {
     const details = describeAction(
       action("shell_script", {

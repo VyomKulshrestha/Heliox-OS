@@ -1236,3 +1236,65 @@ SYSTEM_STATE_VERIFIERS = {
     ActionType.VOLUME_SET: "conditional_volume_level_postcondition",
     ActionType.BRIGHTNESS_SET: "conditional_brightness_level_postcondition",
 }
+
+
+# ── package_update is irreversible ──────────────────────────────────────────────────────────────────────────────
+
+
+def _package_update_action() -> Action:
+    from pilot.actions import PackageParams
+
+    return Action(action_type=ActionType.PACKAGE_UPDATE, target="all installed packages", parameters=PackageParams())
+
+
+def test_package_update_is_irreversible_and_always_asks() -> None:
+    from pilot.actions import IRREVERSIBLE_ACTIONS, PermissionTier
+    from pilot.security.permissions import PermissionChecker
+
+    action = _package_update_action()
+
+    assert ActionType.PACKAGE_UPDATE in IRREVERSIBLE_ACTIONS
+    assert action.is_irreversible is True
+    assert action.permission_tier >= PermissionTier.SYSTEM_MODIFY
+    assert ActionPlan(actions=[action]).needs_confirmation_unconditional is True
+    decision = PermissionChecker(MagicMock()).check_action(action)
+    assert decision.requires_confirmation is True and decision.irreversible is True
+
+
+def test_a_spoken_yes_cannot_approve_a_package_update() -> None:
+    """Said back as destructive before any dialog; the dialog still needs the click, and silence waits it out."""
+    from pilot.conversation import say_back, turns
+
+    action = _package_update_action()
+
+    assert say_back.destructive([action]) is True
+    assert turns.must_wait_out_window([action]) is True
+
+
+def test_package_update_mismatch_goes_to_reconciliation_not_a_retry() -> None:
+    from pilot.actions import VerificationResult
+    from pilot.server import _postcondition_failure_requires_reconciliation
+
+    results = [ActionResult(action=_package_update_action(), success=True, output="done")]
+    verification = VerificationResult(passed=False, failed_actions=[0], details=["Action 0 (package_update): MISMATCH"])
+
+    assert _postcondition_failure_requires_reconciliation(results, verification) is True
+
+
+@pytest.mark.parametrize(
+    ("platform", "words"),
+    [(Platform.WINDOWS, "winget"), (Platform.MACOS, "Homebrew"), (Platform.LINUX, "apt, dnf or pacman")],
+)
+def test_approval_says_every_package_is_upgraded_on_each_platform(monkeypatch: pytest.MonkeyPatch, platform, words):
+    from pilot.server import _approval_effect
+    from pilot.system import package_mgr
+    from pilot.workflows.undo_journal import undo_support
+
+    monkeypatch.setattr(package_mgr, "CURRENT_PLATFORM", platform)
+    effect = _approval_effect(_package_update_action())
+
+    assert effect.startswith("Upgrade every installed package") and words in effect
+    assert "cannot put the earlier versions back" in effect
+    support = undo_support(_package_update_action())
+    assert support.kind == "not_undoable" and "earlier versions" in support.reason
+    assert _approval_effect(Action(action_type=ActionType.VOLUME_MUTE, target="x", parameters=_volume())) == ""

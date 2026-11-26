@@ -287,6 +287,8 @@ def describe_action(action: Any) -> str:
         return f"{_WINDOW_VERBS[kind]} the {value('title') or target} window"
     if kind == "package_install":
         return f"Install the {value('name') or target} package"
+    if kind == "package_update":
+        return "Upgrade every installed package on this computer"
     if kind == "download_file":
         return f"Download {target} to {value('destination') or 'the Downloads folder'}"
     label = kind.replace("_", " ")

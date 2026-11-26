@@ -725,6 +725,18 @@ def _is_terminal_execution_failure(results: list[Any]) -> bool:
     return True
 
 
+def _approval_effect(action: Any) -> str:
+    """A sentence for the approval dialog saying what a step does on this platform, for steps whose type and
+    target alone undersell it; "" for the rest."""
+    from pilot.actions import ActionType
+
+    if getattr(action, "action_type", None) == ActionType.PACKAGE_UPDATE:
+        from pilot.system.package_mgr import update_effect
+
+        return update_effect()
+    return ""
+
+
 def _postcondition_failure_requires_reconciliation(results: list[Any], verification: Any) -> bool:
     """Stop before repeating a destructive action whose effect is uncertain."""
     for index in getattr(verification, "failed_actions", []):
@@ -6554,6 +6566,9 @@ class PilotServer:
             payload["irreversible"] = a.is_irreversible
             payload["undo"] = self._undo_badge(a)
             payload["index"] = idx
+            effect = _approval_effect(a)
+            if effect:
+                payload["effect"] = effect  # what the step does on this computer, shown in the dialog
             return payload
 
         approval_request = {
