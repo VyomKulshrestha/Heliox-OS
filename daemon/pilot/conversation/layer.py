@@ -354,6 +354,37 @@ def offered_request(sentence: str) -> str:
     return rest[:1].upper() + rest[1:]
 
 
+_POLITE_LEAD = frozenset({"please", "can", "could", "would", "will", "you", "kindly", "just", "go", "ahead", "and"})
+_TO_THEIRS = {"my": "your", "me": "you", "mine": "yours", "myself": "yourself", "i": "you", "i'm": "you're"}
+_SAY_LEAD = re.compile(r"^(?:okay,?\s+|sure,?\s+)?(?:i'?ll|i will|let me)\s+(?P<rest>.+?)[.!]?$", re.IGNORECASE)
+
+
+def _imperative(text: str, *, theirs: bool) -> str:
+    """ "Check my disk space." -> "check your disk space": what would be done, as an imperative Heliox can offer; ""
+    when the words are a question or do not start with a verb Heliox acts on (then nothing is spliced in)."""
+    from pilot.conversation import catalog_words
+    from pilot.conversation.router import ACTION_VERBS
+
+    words = " ".join(str(text or "").split()).rstrip(".!?").split()
+    while words and words[0].casefold().strip(",") in _POLITE_LEAD:
+        words = words[1:]
+    if not words or words[0].casefold() not in ACTION_VERBS.keys() | catalog_words.VERBS:
+        return ""
+    if theirs:
+        words = [_TO_THEIRS.get(word.casefold(), word) for word in words]
+    return " ".join([words[0].casefold(), *words[1:]])
+
+
+def offer_sentence(intent: HandoverIntent, *, still: bool = False) -> str:
+    """ "Do you want me to check your disk space?": built from an imperative form of what would be done (the request,
+    or the model's own "I'll ..." sentence), never by splicing a question in ("Do you want me to how do I ...?"). When
+    neither is one, the neutral "Do you want me to do that?"."""
+    ask = "Do you still want me to" if still else "Do you want me to"
+    said = _SAY_LEAD.match(" ".join((intent.say or "").split()))
+    action = _imperative(intent.request, theirs=True) or (_imperative(said.group("rest"), theirs=False) if said else "")
+    return f"{ask} {action}?" if action else f"{ask} do that?"
+
+
 RECENT_REPLIES = 3  # a sentence Heliox said in its last three replies is not said again unprompted
 SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
@@ -1863,10 +1894,7 @@ class ConversationLayer:
     ) -> None:
         """Ask "Do you want me to ...?" and keep the request for a yes in the next minute. ``still``: after Heliox
         said why it would not ("Do you still want me to ...?")."""
-        request = intent.request.strip().rstrip(".?!")
-        ask = "Do you still want me to" if still else "Do you want me to"
-        sentence = f"{ask} {request[:1].lower()}{request[1:]}?" if request else f"{ask} do that?"
-        await self._say_one(result, clean_for_speech(sentence), started)
+        await self._say_one(result, clean_for_speech(offer_sentence(intent, still=still)), started)
         self._offer = (self._clock(), intent, quick)
         self._debate_offer = still
         result.done = True
