@@ -159,7 +159,7 @@ def _success_message_body(
     if any(result.success for result in results):
         from pilot.result_sentences import plan_said
 
-        return plan_said(results).shown + caveat
+        return plan_said(results, plan.raw_input).shown + caveat
 
     count = len(results)
     noun = "action" if count == 1 else "actions"
@@ -178,36 +178,74 @@ def partial_failure_message(
     results: Sequence[ActionResult],
     verification: VerificationResult | None,
 ) -> str:
-    """Build a failure summary without presenting the original intent as fact."""
+    """The failure reply as shown: the failed step's sentence first (pilot.failure_sentences), for a plan of several
+    steps one plain count after it ("1 of 3 steps failed; the other 2 are done."), then on lines of their own what the
+    system said or what the check found. Nothing in it is read for meaning: the reply's status and results carry that.
+    The first line alone is the sentence."""
+    return failure_parts(results, verification)[0]
+
+
+def failure_parts(
+    results: Sequence[ActionResult],
+    verification: VerificationResult | None,
+) -> tuple[str, str]:
+    """(shown, spoken) of a failed plan, both built from its results and the check, never from each other."""
+    from pilot.agents.unconfirmed import SPOKEN_PHRASES, Kind, mask
+    from pilot.failure_sentences import SYSTEM_SAID, failure_sentence
+    from pilot.reply_rules import for_ear, name_of
+
     total = len(results)
-    failed_indices = set(verification.failed_actions if verification else [])
-    failed_indices.update(i for i, result in enumerate(results) if not result.success)
-    failed = len(failed_indices)
-
-    if total:
-        noun = "action" if total == 1 else "actions"
-        prefix = (
-            f"Task did not complete successfully: {failed or total} of {total} {noun} failed or could not be verified."
+    failed_by_check = {i for i in (verification.failed_actions if verification else []) if isinstance(i, int)}
+    failed = sorted(failed_by_check | {i for i, result in enumerate(results) if not result.success})
+    sentence, spoken, detail = "", "", ""
+    for index in failed:
+        if index >= total:
+            continue
+        result = results[index]
+        if result.error:
+            shown_sentence, spoken = failure_sentence(result.action, result.error)
+            sentence, _newline, detail = shown_sentence.partition("\n")
+            break
+        if index in failed_by_check:
+            phrase = SPOKEN_PHRASES[Kind.MISMATCH]
+            what = name_of(str(getattr(result.action.parameters, "destination", "") or result.action.target or ""))
+            lead = f"That didn't work for {what}" if what else "That didn't work"
+            sentence = f"{lead}: {phrase[:1].lower()}{phrase[1:]}."
+            spoken = for_ear(sentence)
+            # What the check read, a window title masked (it can be a mail subject or a document's name).
+            found = next(
+                (
+                    mask(item, files=False)
+                    for item in (verification.details if verification else [])
+                    if item.startswith(f"Action {index} ") and ("MISMATCH" in item or "FAILED" in item)
+                ),
+                "",
+            )
+            reason = re.split(r"\s(?:MISMATCH|FAILED)\s\S\s", found, maxsplit=1)[-1].strip() if found else ""
+            detail = f"What the check found: {reason}" if reason else ""
+            break
+    if not sentence:
+        sentence = "That didn't work." if total else "Nothing was done, so nothing could be checked."
+        spoken = sentence
+        reasons = [
+            mask(item, files=False)
+            for item in (verification.details if verification else [])
+            if "FAILED" in item or "MISMATCH" in item or "error" in item.lower()
+        ]
+        if reasons:
+            detail = f"{SYSTEM_SAID}{_clean(reasons[0])}"
+    count = ""
+    if total > 1:
+        others = sum(1 for i, result in enumerate(results) if result.success and i not in failed_by_check)
+        count = (
+            f"{len(failed)} of {total} steps failed; "
+            + ("the other is done." if others == 1 else f"the other {others} are done.")
+            if others
+            else f"{len(failed)} of {total} steps failed."
         )
-    else:
-        prefix = "Task did not complete successfully: no action result was verified."
-
-    # A failed step's own sentence (pilot.failure_sentences): a common system failure in plain words that name the
-    # thing, any other with the error as the system wrote it, backslashes as written.
-    from pilot.failure_sentences import failure_sentence
-
-    issues = [failure_sentence(result.action, result.error)[0] for result in results if result.error]
-    if verification:
-        from pilot.agents.unconfirmed import mask
-
-        # What a check read can name a window by its title (a mail subject, a document): the title is masked here.
-        issues.extend(
-            mask(detail, files=False)
-            for detail in verification.details
-            if "FAILED" in detail or "MISMATCH" in detail or "error" in detail.lower()
-        )
-    first_issue = next((_clean(issue) for issue in issues if _clean(issue)), "")
-    return f"{prefix} {first_issue}" if first_issue else prefix
+    first = f"{sentence} {count}".strip()
+    shown = "\n".join(line for line in (first, detail) if line)
+    return shown, (for_ear(f"{spoken} {count}") if count else spoken) or spoken
 
 
 def success_reply(
@@ -229,7 +267,7 @@ def success_reply(
     elif exact_labeled_finding_count(plan) is not None and any(result.success for result in results):
         spoken = "The findings are on screen."
     elif any(result.success for result in results):
-        spoken = plan_said(results).spoken
+        spoken = plan_said(results, plan.raw_input).spoken
     else:
         spoken = for_ear(shown.splitlines()[0] if shown else "") or "Done."
     _rest, phrase = spoken_from_window_line(shown)
@@ -244,43 +282,19 @@ def failure_reply(
     *,
     follow_up: str = "",
 ) -> Said:
-    """The failure reply in both forms: ``shown`` is ``partial_failure_message``; ``spoken`` is the failed step's own
-    sentence (never the system's raw text), or, when a check found something else, that the step did not check out,
-    and how many other steps were done. ``follow_up``: a repair round's answer in prose (it asks which file was
-    meant, say), shown after the failure; its first question is also said."""
-    from pilot.agents.unconfirmed import SPOKEN_PHRASES, Kind
-    from pilot.failure_sentences import failure_sentence
-    from pilot.reply_rules import for_ear, name_of
+    """The failure reply in both forms (``failure_parts``): the failed step's own sentence, never the system's raw
+    text aloud. ``follow_up``: a repair round's answer in prose (it asks which file was meant, say), shown after the
+    failure; its first question is also said."""
+    from pilot.reply_rules import for_ear
 
-    shown = partial_failure_message(results, verification)
+    shown, spoken = failure_parts(results, verification)
     prose = " ".join(str(follow_up or "").split())
     if prose:
         shown = f"{shown}\n{prose}"
-    failed_by_check = set(verification.failed_actions if verification else [])
-    spoken = ""
-    for index, result in enumerate(results):
-        if result.error:
-            spoken = failure_sentence(result.action, result.error)[1]
-            break
-        if index in failed_by_check:
-            phrase = SPOKEN_PHRASES[Kind.MISMATCH]
-            what = name_of(str(getattr(result.action.parameters, "destination", "") or result.action.target or ""))
-            lead = f"That didn't work for {what}" if what else "That didn't work"
-            spoken = for_ear(f"{lead}: {phrase[:1].lower()}{phrase[1:]}.")
-            break
-    if not spoken:
-        spoken = "That didn't work. The details are on screen."
-    others = sum(1 for index, result in enumerate(results) if result.success and index not in failed_by_check)
-    if others:
-        spoken = for_ear(f"{spoken} {plural_steps(others)} done.") or spoken
     question = next((part for part in re.split(r"(?<=[.!?])\s+", prose) if part.endswith("?")), "")
     if question:
         spoken = for_ear(f"{spoken} {question}") or spoken
     return Said(shown=shown, spoken=spoken)
-
-
-def plural_steps(count: int) -> str:
-    return "The other step is" if count == 1 else f"The other {count} steps are"
 
 
 def _clean(value: object) -> str:

@@ -88,19 +88,28 @@ def test_a_sentence_said_again_keeps_the_capital_i():
         # A step that could not be checked and is not worth saying aloud stays in the window.
         ("success", "Typed it\nNote: 1 step could not be checked; details in the receipt.", "Typed it."),
         ("success", "Notepad is open.", "Notepad is open."),
+        # A failure reply's first line is its sentence (pilot.response_contract.failure_parts); what the check read or
+        # what the system said is on the lines after it and is never said.
         (
             "partial_failure",
-            "Task did not complete successfully: 1 of 1 action failed or could not be verified. "
-            'Action 0 (keyboard_type): MISMATCH — Slack window "Gen…" was in front',
-            "That didn't work: the check afterwards found something else.",
+            "That didn't work for Slack: the check afterwards found something else.\n"
+            'What the check found: Slack window "Gen…" was in front',
+            "That didn't work for Slack: the check afterwards found something else.",
         ),
         ("success", "Execution results:\n- a: one\n- b: two", ""),  # a list stays in the window
         (
             "partial_failure",
-            "Task did not complete successfully: 1 of 1 action failed or could not be verified. Access is denied.",
-            "That didn't work: access is denied.",
+            "I couldn't open notes.txt: permission was denied. You can change its permissions, or choose another "
+            "place. 1 of 2 steps failed; the other is done.",
+            "I couldn't open notes.txt: permission was denied. You can change its permissions, or choose another "
+            "place. 1 of 2 steps failed; the other is done.",
         ),
-        ("error", "Task did not complete successfully: no action result was verified.", "That didn't work."),
+        (
+            "partial_failure",
+            "I couldn't write note.txt.\nThe system said: Process exited with code 125: C:\\tmp\\x",
+            "I couldn't write note.txt.",
+        ),
+        ("error", "Nothing was done, so nothing could be checked.", "Nothing was done, so nothing could be checked."),
         ("denied", "Okay, I've dropped that. Nothing ran.", ""),  # the refusal is already said in plain words
     ],
 )

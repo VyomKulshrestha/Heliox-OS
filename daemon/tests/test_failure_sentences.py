@@ -107,7 +107,9 @@ def test_the_sentence_names_the_thing_and_what_to_do(action: Action, error: str,
 
 def test_an_unknown_failure_is_shown_as_written_and_not_said() -> None:
     shown, said = failure_sentence(_write(WIN), "Process exited with code 125: C:\\\\tmp\\\\x")
-    assert shown == "I couldn't write blocked.txt in readonly: Process exited with code 125: C:\\tmp\\x"
+    assert (
+        shown == "I couldn't write blocked.txt in readonly.\nThe system said: Process exited with code 125: C:\\tmp\\x"
+    )
     assert said == "I couldn't write blocked.txt in readonly. The details are on screen."
 
 

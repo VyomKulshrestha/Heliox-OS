@@ -795,8 +795,18 @@ def test_a_plan_of_several_steps_is_one_or_two_sentences_about_its_outcome() -> 
         ),
         (
             ActionType.TRIGGER_CREATE,
-            "Made the trigger watched txt seen a change, watching changes to watched.txt.",
-            "Made the trigger watched txt seen a change, watching changes to watched.txt.",
+            'I\'ll watch watched.txt and add "seen a change" to fired.log when it changes.',
+            'I\'ll watch watched.txt and add "seen a change" to fired.log when it changes.',
+        ),
+        (
+            ActionType.TRIGGER_LIST,
+            "You have 1 trigger: it watches watched.txt for changes.",
+            "You have 1 trigger: it watches watched.txt for changes.",
+        ),
+        (
+            ActionType.TRIGGER_DELETE,
+            "I've removed that trigger.",
+            "I've removed that trigger.",
         ),
         (
             ActionType.BATTERY_INFO,
@@ -841,3 +851,110 @@ def test_a_long_answer_is_said_as_its_length_and_beginning() -> None:
 def test_the_speech_rules(text: str, spoken: str) -> None:
     assert for_ear(text) == spoken
     assert len(for_ear(text)) <= SPOKEN_LIMIT
+
+
+# ── a read's content passes the secret rules before it is said ───────────────────────────────────────────────────
+
+GITHUB_TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
+SECRET_READS = [
+    (ActionType.CLIPBOARD_READ, ClipboardParams(), "", "Tr0ub4dor&3xY!", "Your clipboard"),
+    (ActionType.CLIPBOARD_READ, ClipboardParams(), "", "my bank PIN is 4471", "Your clipboard"),
+    (ActionType.FILE_READ, FileParams(path=NOTE), NOTE, f"api token: {GITHUB_TOKEN}\nnotes for Friday", "note.txt"),
+    (
+        ActionType.FILE_READ,
+        FileParams(path=W + r"\logs\app.log"),
+        W + r"\logs\app.log",
+        f"18:40 started\n18:41 sent header Authorization: Bearer {GITHUB_TOKEN}",
+        "app.log",
+    ),
+    (
+        ActionType.API_REQUEST,
+        ApiRequestParams(url="https://example.com/me"),
+        "https://example.com/me",
+        json.dumps({"status": 200, "url": "https://example.com/me", "headers": {}, "body": f"key={GITHUB_TOKEN}"}),
+        "The answer from example.com",
+    ),
+    (ActionType.ENV_GET, EnvParams(name="GH_TOKEN"), "GH_TOKEN", f"GH_TOKEN={GITHUB_TOKEN}", "GH TOKEN"),
+    (ActionType.SCREEN_OCR, ScreenVisionParams(), "", "Your verification code is 482913", "The screen"),
+]
+
+
+@pytest.mark.parametrize(("kind", "params", "target", "output", "lead"), SECRET_READS)
+def test_content_holding_a_secret_is_not_read_out(kind, params, target, output, lead) -> None:
+    said = step_said(_result(kind, params, target, output))
+
+    assert said.spoken.casefold().startswith(f"{lead} holds something that looks like".casefold()), said.spoken
+    assert said.spoken.endswith("so I haven't read it out.")
+    for secret in (GITHUB_TOKEN, "4471", "482913", "Tr0ub4dor"):
+        assert secret not in said.spoken and secret not in said.shown, (secret, said)
+    assert ear_faults(said.spoken) == [] and screen_faults(said.shown) == []
+
+
+def test_ordinary_content_is_still_said() -> None:
+    said = step_said(_result(ActionType.CLIPBOARD_READ, ClipboardParams(), "", "Buy milk on Friday"))
+    assert said.spoken == "Your clipboard: Buy milk on Friday."
+
+
+# ── a question's answer is said before the change ────────────────────────────────────────────────────────────────
+
+
+def test_read_the_note_tell_me_what_it_says_then_delete_it() -> None:
+    read = _result(ActionType.FILE_READ, *CASES[ActionType.FILE_READ])
+    delete = _result(ActionType.FILE_DELETE, *CASES[ActionType.FILE_DELETE])
+    verified = VerificationResult(passed=True)
+    asked = ActionPlan(
+        actions=[read.action, delete.action], raw_input="Read note.txt, tell me what it says, then delete it"
+    )
+
+    said = success_reply(asked, [read, delete], verified, dry_run=False)
+
+    assert said.spoken == "Note.txt: Buy milk and call the plumber on Friday. Deleted note.txt in notes."
+    assert said.shown.splitlines() == ["Buy milk and call the plumber on Friday.", "Deleted note.txt in notes."]
+
+    # Not asked for: only the change is said.
+    plain = ActionPlan(actions=[read.action, delete.action], raw_input="Back up note.txt then delete it")
+    assert success_reply(plain, [read, delete], verified, dry_run=False).spoken == "Deleted note.txt in notes."
+
+
+# ── triggers are said from what they watch, never from their generated name ──────────────────────────────────────
+
+
+def test_trigger_sentences() -> None:
+    cpu = json.dumps({"id": "9a8b7c6d", "name": "cpu_high_alert", "trigger_type": "cpu_threshold",
+                      "condition": {"threshold": 85}, "action_command": ""})  # fmt: skip
+    said = step_said(_result(ActionType.TRIGGER_CREATE, TriggerParams(trigger_type="cpu_threshold"), "", cpu))
+    assert said.spoken == "I'll watch the processor and tell you when it goes above 85 percent."
+
+    both = f"[{RUN_TRIGGER}, {cpu}]"
+    said = step_said(_result(ActionType.TRIGGER_LIST, TriggerParams(), "", both))
+    assert said.spoken == (
+        "You have 2 triggers: one watches watched.txt for changes; one watches the processor when it goes above 85 "
+        "percent."
+    )
+    deleted = step_said(_result(ActionType.TRIGGER_DELETE, TriggerParams(trigger_id="cb220aa1"), "watched.txt",
+                                "Deleted trigger: cb220aa1"))  # fmt: skip
+    assert deleted.spoken == "I've stopped watching watched.txt."
+    for text in (said.spoken, deleted.spoken):
+        assert "cb220aa1" not in text and "cpu high alert" not in text
+
+
+# ── a failure is its sentence first, then one plain count for a plan of several steps ────────────────────────────
+
+
+def test_a_failure_reply_has_no_prefix_and_counts_only_several_steps() -> None:
+    write = Action(action_type=ActionType.FILE_WRITE, target=NOTE, parameters=FileParams(path=NOTE, content="x"))
+    denied = ActionResult(action=write, success=False, error=f"[Errno 13] Permission denied: {NOTE!r}")
+    one = failure_reply([denied], None)
+    assert (
+        one.shown
+        == one.spoken
+        == (
+            "I couldn't write note.txt in notes: permission was denied. You can change its permissions, or choose "
+            "another place."
+        )
+    )
+    copied = _result(ActionType.FILE_COPY, *CASES[ActionType.FILE_COPY])
+    listed = _result(ActionType.FILE_LIST, *CASES[ActionType.FILE_LIST])
+    three = failure_reply([copied, denied, listed], None)
+    assert three.shown.endswith("1 of 3 steps failed; the other 2 are done.")
+    assert "did not complete" not in three.shown and "actions failed" not in three.shown

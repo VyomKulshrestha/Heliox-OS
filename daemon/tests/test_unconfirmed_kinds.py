@@ -274,7 +274,9 @@ def test_a_mismatch_is_said_in_its_fixed_phrase_and_the_window_title_is_masked()
     assert "General - Acme" not in message
     assert 'slack.exe window "Gen…"' in message
     phrase = SPOKEN_PHRASES[Kind.MISMATCH]
-    assert result_sentence("partial_failure", message) == f"That didn't work: {phrase[:1].lower()}{phrase[1:]}."
+    assert (
+        result_sentence("partial_failure", message) == f"That didn't work for Slack: {phrase[:1].lower()}{phrase[1:]}."
+    )
 
 
 def test_kinds_named_by_the_verifier_win_over_the_sentence() -> None:

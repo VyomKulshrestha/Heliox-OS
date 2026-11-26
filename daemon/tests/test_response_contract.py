@@ -95,7 +95,9 @@ def test_partial_failure_message_surfaces_real_error_instead_of_plan_intent():
 
     message = partial_failure_message([result], verification)
 
-    assert "1 of 1 action failed" in message
+    # The failed step's sentence first; no "Task did not complete" prefix, and no count for a single step.
+    assert message.startswith("The system info step failed.")
+    assert "of 1" not in message and "did not complete" not in message
     assert "Process exited with code 125" in message
 
 

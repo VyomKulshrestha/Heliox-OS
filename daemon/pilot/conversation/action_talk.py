@@ -173,16 +173,19 @@ def wont_change_sentence(change: str) -> str:
     return f"Okay, I won't change it to {named}." if named else "Okay, I won't change it."
 
 
-_FAILED = re.compile(r"^Task did not complete successfully:[^.]*\.\s*")
 _SPOKEN_LIMIT = 20  # words; longer results stay in the window and are left to the server's own wording
+_FAILURE_WORDS = 40  # a failure's first line longer than this is not read out
 
 
 def result_sentence(status: str, message: str) -> str:
     """The planner road's outcome in a sentence, from its end state: done (the result's one line, and the fixed
-    phrase of a doubt worth saying, pilot.agents.unconfirmed), or failed (what went wrong). "" leaves the server's
-    wording: a refusal or cancel is already said in plain words, and a long or listed result is not read out here.
-    The verifier's own reason is never said: it can hold a window title or a file name."""
-    from pilot.agents.unconfirmed import SPOKEN_PHRASES, Kind, spoken_from_window_line
+    phrase of a doubt worth saying, pilot.agents.unconfirmed), or failed: the first line of a failure reply, which is
+    the failed step's own sentence (pilot.response_contract.failure_parts puts what the system said or what a check
+    read on the lines after it). "" leaves the server's wording: a refusal or cancel is already said in plain words,
+    and a long or listed result is not read out here. The daemon's reply carries its own spoken sentence; this is for
+    a reply that has none."""
+    from pilot.agents.unconfirmed import spoken_from_window_line
+    from pilot.reply_rules import for_ear
 
     text = message.strip()
     if status == "success":
@@ -192,17 +195,8 @@ def result_sentence(status: str, message: str) -> str:
         sentence = body if body.endswith((".", "!", "?")) else body + "."
         return f"{sentence} {phrase}." if phrase else sentence
     if status in {"partial_failure", "partial", "error", "failed"}:
-        found = _FAILED.match(text)
-        if found is None:
-            return ""
-        issue = text[found.end() :].strip()
-        if " MISMATCH — " in issue or issue.startswith("Verification error"):
-            # What the check read is in the window and the receipt; aloud, only that it did not match.
-            phrase = SPOKEN_PHRASES[Kind.MISMATCH]
-            return f"That didn't work: {phrase[:1].lower()}{phrase[1:]}."
-        if not issue or "\n" in issue or len(issue.split()) > _SPOKEN_LIMIT:
+        first = text.splitlines()[0].strip() if text else ""
+        if not first or len(first.split()) > _FAILURE_WORDS:
             return "That didn't work."
-        if re.match(r"I\b", issue):
-            return issue  # a failure sentence of its own (pilot.failure_sentences): "I couldn't write ..."
-        return f"That didn't work: {issue[:1].lower() + issue[1:]}"
+        return for_ear(first) or "That didn't work."
     return ""

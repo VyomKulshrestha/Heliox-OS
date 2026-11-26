@@ -14,6 +14,7 @@ type added without an entry here fails it.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -646,52 +647,118 @@ def _log_analyze(step: Step) -> Said:
 
 
 # ── triggers ─────────────────────────────────────────────────────────
-
-_TRIGGER_WORDS = {
-    "file_modified": "changes to",
-    "file_created": "new files in",
-    "file_deleted": "deletions in",
-    "file_change": "changes to",
-}
+# Said from what a trigger watches and what it does, never from its generated name or id.
 
 
-def _trigger_name(value: object) -> str:
-    return str(value or "").replace("_", " ").strip()
+def _watch(kind: str, condition: dict) -> tuple[str, str]:
+    """(what is watched, when it fires) in plain words: ("watched.txt", "when it changes")."""
+    path = name_of(str(condition.get("path") or ""))
+    threshold = condition.get("threshold")
+    process = str(condition.get("name") or "").strip()
+    above = f" goes above {threshold} percent" if threshold is not None else " runs high"
+    table = {
+        "file_modified": (path or "that file", "when it changes"),
+        "file_change": (path or "that file", "when it changes"),
+        "file_created": (path or "that folder", "when a new file appears in it"),
+        "file_deleted": (path or "that file", "when it is deleted"),
+        "cpu_threshold": ("the processor", f"when it{above}"),
+        "memory_threshold": ("the memory", f"when its use{above}"),
+        "disk_threshold": (f"the disk{f' {path}' if path else ''}", f"when it fills{above.replace('goes', '')}"),
+        "battery_low": (
+            "the battery",
+            f"when it drops below {threshold if threshold is not None else 20} percent",
+        ),
+        "process_started": (process or "that program", "when it starts"),
+        "process_stopped": (process or "that program", "when it stops"),
+        "network_change": ("the network", "when it changes"),
+        "custom_condition": ("your condition", "when it holds"),
+    }
+    return table.get(kind, ("it", "when it fires"))
+
+
+_ECHO_INTO = re.compile(r"""^\s*echo\s+(?P<text>.+?)\s*>>?\s*(?P<file>\S+)\s*$""", re.IGNORECASE)
+
+
+def _job(command: str) -> str:
+    """What a trigger does when it fires, in plain words: "add "seen a change" to fired.log", "tell you"."""
+    command = " ".join(str(command or "").split())
+    if not command:
+        return "tell you"
+    found = _ECHO_INTO.match(command)
+    if found:
+        text = found.group("text").strip("'\"")
+        return f'add "{words_cut(text, 8)}" to {name_of(found.group("file"))}'
+    if re.search(r"[|&;<>$`\\/{}=]|^\S+\.(?:exe|sh|ps1|py|bat)\b", command):
+        return "run its command"
+    return words_cut(command[:1].lower() + command[1:], 10).rstrip(".")
+
+
+def _trigger_parts(entry: dict) -> tuple[str, str, str]:
+    condition = entry.get("condition") if isinstance(entry.get("condition"), dict) else {}
+    watched, when = _watch(str(entry.get("trigger_type") or ""), condition)
+    return watched, when, _job(str(entry.get("action_command") or ""))
 
 
 def _trigger_create(step: Step) -> Said:
     data = step.data if isinstance(step.data, dict) else {}
-    name = _trigger_name(data.get("name") or step.param("name")) or "the trigger"
-    kind = str(data.get("trigger_type") or step.param("trigger_type") or "")
-    condition = data.get("condition") if isinstance(data.get("condition"), dict) else getattr(step.p, "condition", {})
-    path = str((condition or {}).get("path") or "") if isinstance(condition, dict) else ""
+    entry = data or {
+        "trigger_type": step.param("trigger_type"),
+        "condition": getattr(step.p, "condition", None) or {},
+        "action_command": step.param("action_command"),
+    }
+    watched, when, job = _trigger_parts(entry)
+    if entry.get("trigger_type") == "time_interval":
+        seconds = int(getattr(step.p, "cooldown_seconds", 0) or 0)
+        every = f"every {plural(seconds // 60, 'minute')}" if seconds >= 60 else "on its interval"
+        sentence = f"I'll {job} {every}."
+    else:
+        sentence = f"I'll watch {watched} and {job} {when}."
     if data.get("note"):
-        return _said(f"The trigger {name} already existed, so I kept it.")
-    watches = f", watching {_TRIGGER_WORDS.get(kind, 'changes to')} {name_of(path)}" if path else ""
-    return _said(f"Made the trigger {name}{watches}.")
+        sentence = f"I was already set to watch {watched}, so nothing changed."
+    return _said(sentence)
+
+
+def _what_it_watches(entry: dict) -> str:
+    watched, when, _job_words = _trigger_parts(entry)
+    if entry.get("trigger_type") == "time_interval":
+        return "it runs on an interval"
+    return f"it watches {watched} {when.replace('when it changes', 'for changes')}"
 
 
 def _trigger_list(step: Step) -> Said:
     if not step.data or step.out.startswith("No triggers"):
         return _said("You have no triggers.")
-    items = step.data if isinstance(step.data, list) else []
-    names = [_trigger_name(item.get("name")) for item in items if isinstance(item, dict) and item.get("name")]
-    spoken = f"You have {plural(len(items), 'trigger')}" + (f": {_names(names)}." if names else ".")
-    return Said(shown=for_screen(f"{spoken}\n{_listing(items)}"), spoken=spoken)
+    items = [item for item in (step.data if isinstance(step.data, list) else []) if isinstance(item, dict)]
+    if len(items) == 1:
+        spoken = f"You have 1 trigger: {_what_it_watches(items[0])}."
+    else:
+        parts = [_what_it_watches(item).replace("it ", "one ", 1) for item in items[:3]]
+        more = f", and {len(items) - 3:,} more" if len(items) > 3 else ""
+        spoken = f"You have {plural(len(items), 'trigger')}: {'; '.join(parts)}{more}."
+    lines = []
+    for item in items[:50]:
+        watched, when, job = _trigger_parts(item)
+        lines.append(f"- {watched}, {when}: {job} ({item.get('name') or item.get('id')})")
+    return Said(shown=for_screen("\n".join([spoken, *lines])), spoken=spoken)
 
 
 def _trigger_delete(step: Step) -> Said:
-    found = re.search(r"Deleted trigger: (.+)$", step.out)
-    name = _trigger_name(step.param("name") or (found.group(1) if found else "")) or "the trigger"
-    if re.fullmatch(r"[0-9a-f]{6,}", name):
-        name = "the trigger"
-    return _said(f"Deleted {name if name == 'the trigger' else 'the trigger ' + name}.")
+    # The handler says only the id or name it deleted; what the trigger watched is the step's target when the
+    # planner named it there ("watched.txt").
+    target = step.target
+    if target and re.search(r"\.\w{1,6}$|[\/]", target):
+        return _said(f"I've stopped watching {name_of(target)}.")
+    return _said("I've removed that trigger.")
 
 
 def _trigger_start(step: Step) -> Said:
     found = re.search(r"with (\d+) triggers", step.out)
     count = int(found.group(1)) if found else 0
-    return _said(f"Started the trigger engine with {plural(count, 'trigger')}.")
+    return _said(
+        f"Your {plural(count, 'trigger')} {'is' if count == 1 else 'are'} on again."
+        if count
+        else "Triggers are on again."
+    )
 
 
 # ── calendar, mail, tools ────────────────────────────────────────────
@@ -970,7 +1037,7 @@ SENTENCES: dict[ActionType, Callable[[Step], Said]] = {
     ActionType.TRIGGER_LIST: _trigger_list,
     ActionType.TRIGGER_DELETE: _trigger_delete,
     ActionType.TRIGGER_START: _trigger_start,
-    ActionType.TRIGGER_STOP: _fixed("Stopped the trigger engine."),
+    ActionType.TRIGGER_STOP: _fixed("Your triggers are paused until you turn them on again."),
     # calendar
     ActionType.CALENDAR_PARSE: _count_lines("Events in the file", "event"),
     ActionType.CALENDAR_SYNC: _fixed("Synced your calendar."),
@@ -1017,10 +1084,92 @@ def step_said(result: ActionResult, *, limit: int = SPOKEN_LIMIT) -> Said:
         return Said(shown=for_screen(step.out), spoken=for_ear(step.out, limit=limit) or "It was already done.")
     build = SENTENCES.get(step.type)
     said = build(step) if build is not None else _plain("Done.")(step)
+    said = _kept_private(step, said)
     shown = for_screen(said.shown) or for_screen(said.spoken)
     if looks_like_json(shown):
         shown = said.spoken
     return Said(shown=shown, spoken=for_ear(said.spoken, limit=limit) or for_ear(shown, limit=limit) or "Done.")
+
+
+# Reads whose content is the answer, and what the sentence calls that content. Before any of it is said or shown as
+# the reply, it goes through the detectors Heliox uses for a secret said or typed (pilot.conversation.withheld).
+_CONTENT_LEADS: dict[ActionType, Callable[[Step], str]] = {
+    ActionType.CLIPBOARD_READ: lambda s: "Your clipboard",
+    ActionType.FILE_READ: lambda s: name_of(s.param("path") or s.target) or "That file",
+    ActionType.FILE_PARSE: lambda s: name_of(s.param("path") or s.target) or "That file",
+    ActionType.LOG_ANALYZE: lambda s: name_of(s.param("log_path") or s.target) or "That log",
+    ActionType.ENV_GET: lambda s: s.param("name") or "That variable",
+    ActionType.ENV_LIST: lambda s: "Your environment",
+    ActionType.API_REQUEST: lambda s: "The answer from " + (host_of(s.param("url") or s.target) or "that address"),
+    ActionType.API_GITHUB: lambda s: "GitHub's answer",
+    ActionType.API_SCRAPE: lambda s: "The page",
+    ActionType.BROWSER_EXTRACT: lambda s: "The page",
+    ActionType.BROWSER_EXECUTE_JS: lambda s: "The page script's answer",
+    ActionType.SCREEN_OCR: lambda s: "The screen",
+    ActionType.SCREEN_ANALYZE: lambda s: "The screen",
+    ActionType.SHELL_COMMAND: lambda s: "The output",
+    ActionType.SHELL_SCRIPT: lambda s: "The output",
+    ActionType.PTY_EXEC: lambda s: "The output",
+    ActionType.SSH_COMMAND: lambda s: "The output",
+    ActionType.SSH_SCRIPT: lambda s: "The output",
+    ActionType.CODE_EXECUTE: lambda s: "The output",
+    ActionType.CODE_GENERATE_AND_RUN: lambda s: "The output",
+    ActionType.EMAIL_SUMMARIZE: lambda s: "Your email",
+    ActionType.REGISTRY_READ: lambda s: s.param("value_name") or "That registry value",
+    ActionType.GNOME_SETTING_READ: lambda s: s.param("key") or "That setting",
+    ActionType.MCP_CALL_TOOL: lambda s: "The tool's answer",
+    ActionType.SKILL_RUN: lambda s: "The skill's answer",
+}
+
+
+def _content(step: Step) -> str:
+    """The content a read returned: an HTTP answer's body, a log's lines, or the output itself."""
+    data = step.data if isinstance(step.data, dict) else {}
+    if step.type in {ActionType.API_REQUEST, ActionType.API_GITHUB} and "body" in data:
+        body = data.get("body")
+        return body if isinstance(body, str) else json.dumps(body)
+    if step.type is ActionType.LOG_ANALYZE and data:
+        return "\n".join(str(line) for line in data.get("timeline") or [])
+    return step.out
+
+
+def private_kind(text: str, *, content: bool = True) -> str:
+    """What a text holds that must not be read out ("a password", "a key", "a card number"), or "". The detectors of
+    a secret said or typed (pilot.conversation.withheld), and a single token that looks like a key or password."""
+    from pilot.conversation.withheld import withhold
+    from pilot.workflows.clipboard_history import looks_secret
+
+    found = withhold(text or "")
+    if found is not None:
+        return found.kind
+    token = (text or "").strip()
+    # A single token (a clipboard holding only a password) is judged by its shape; a sentence Heliox wrote is not.
+    single = content and token and " " not in token and looks_secret(token)
+    return "a password or a code" if single else ""
+
+
+def _masked(text: str) -> str:
+    """The content as the window may show it: each secret replaced by "[left out: a password]"."""
+    from pilot.conversation.withheld import withhold
+
+    found = withhold(text or "")
+    return found.text if found is not None else "[left out: something that looks like a password or a code]"
+
+
+def _kept_private(step: Step, said: Said) -> Said:
+    """A read whose content holds a secret is not said, and is shown masked (the full output stays in the details);
+    any other sentence that would say one is replaced the same way."""
+    lead = _CONTENT_LEADS.get(step.type)
+    if lead is not None:
+        kind = private_kind(_content(step))
+        if kind:
+            sentence = f"{lead(step)} holds something that looks like {kind}, so I haven't read it out."
+            return Said(shown=f"{sentence}\n{for_screen(_masked(_content(step)))}", spoken=sentence)
+    kind = private_kind(said.spoken, content=False) or private_kind(said.shown, content=False)
+    if kind:
+        sentence = f"The result holds something that looks like {kind}, so I haven't read it out."
+        return Said(shown=f"{sentence}\n{for_screen(_masked(said.shown))}", spoken=sentence)
+    return said
 
 
 # Steps that change files, grouped: "Copied 3 files into big."
@@ -1041,9 +1190,24 @@ def _group(results: Sequence[ActionResult]) -> str:
     return f"{verb} {plural(len(results), 'file')}{where}."
 
 
-def plan_said(results: Sequence[ActionResult]) -> Said:
-    """One or two sentences about a plan's outcome: the step the person asked for (the last one that changed
-    something, else the last read), and how many steps it took when more than one changed something."""
+# A request that asks for an answer: a question, or "tell me", "what", "show me", "read me". Decided from the request's
+# own words, in code, the same for every provider.
+_ASKS = re.compile(
+    r"\?|\b(?:tell me|show me|read (?:me|it|out|aloud)|what(?:'s| is| are| does| did)?|which|how (?:much|many|"
+    r"long|big)|who|when|where|is there|are there|does|do i have)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_an_answer(request: str) -> bool:
+    return bool(_ASKS.search(str(request or "")))
+
+
+def plan_said(results: Sequence[ActionResult], request: str = "") -> Said:
+    """One or two sentences about a plan's outcome: the step the person asked for (the one with the widest reach that
+    changed something, else the last read), and how many steps it took when more than one changed something. When
+    the request asks for an answer and a read gave one, the answer is said first and the change after it ("read the
+    note and tell me what it says, then delete it"), within the spoken limit."""
     done = [result for result in results if result.success]
     if not done:
         return Said(shown="Nothing was done.", spoken="Nothing was done.")
@@ -1061,5 +1225,12 @@ def plan_said(results: Sequence[ActionResult]) -> Said:
     outcome = step_said(chosen[-1] if chosen else done[-1])
     if len(effects) > 1:
         tail = f" All {len(done)} steps are done."
-        return Said(shown=outcome.shown + tail, spoken=for_ear(outcome.spoken + tail))
+        outcome = Said(shown=outcome.shown + tail, spoken=for_ear(outcome.spoken + tail))
+    answers = [result for result in done if result.action.action_type in _CONTENT_LEADS and result not in effects]
+    if effects and answers and asks_for_an_answer(request):
+        answer = step_said(answers[-1])
+        return Said(
+            shown=f"{answer.shown}\n{outcome.shown}",
+            spoken=for_ear(f"{answer.spoken} {outcome.spoken}") or answer.spoken,
+        )
     return outcome

@@ -19,6 +19,10 @@ from enum import StrEnum
 
 from pilot.reply_rules import folder_of, for_screen, host_of, name_of
 
+# A failure's shown form: its sentence on the first line, then what the system said, as it said it, on a line that
+# starts with this. The first line alone is the sentence (pilot.conversation.action_talk.result_sentence says it).
+SYSTEM_SAID = "The system said: "
+
 
 class FailureKind(StrEnum):
     NO_PERMISSION = "no_permission"
@@ -320,7 +324,7 @@ def failure_sentence(action: object, error: str, *, platform: str | None = None)
         # No verb for this action: say which step failed, in its own words ("The system info step failed").
         raw = for_screen(" ".join(str(error or "").split()), limit=400)
         lead = f"The {action_type.replace('_', ' ') or 'last'} step failed"
-        return (f"{lead}: {raw}" if raw else f"{lead}."), for_ear(
+        return (f"{lead}.\n{SYSTEM_SAID}{raw}" if raw else f"{lead}."), for_ear(
             f"{lead}. The details are on screen." if raw else f"{lead}."
         )
     did = f"{verb} {thing}{where}" if verb != "do" else f"do that with {thing}" if thing != "it" else "do that"
@@ -347,7 +351,7 @@ def failure_sentence(action: object, error: str, *, platform: str | None = None)
         return sentence, for_ear(sentence)
     raw = for_screen(" ".join(str(error or "").split()), limit=400)
     lead = f"I couldn't {did}."
-    shown = f"{lead[:-1]}: {raw}" if raw else lead
+    shown = f"{lead}\n{SYSTEM_SAID}{raw}" if raw else lead
     return shown, for_ear(f"{lead} The details are on screen." if raw else lead)
 
 
