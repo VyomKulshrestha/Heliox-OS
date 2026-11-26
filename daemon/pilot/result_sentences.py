@@ -694,7 +694,12 @@ def _job(command: str) -> str:
         return f'add "{words_cut(text, 8)}" to {name_of(found.group("file"))}'
     if re.search(r"[|&;<>$`\\/{}=]|^\S+\.(?:exe|sh|ps1|py|bat)\b", command):
         return "run its command"
-    return words_cut(command[:1].lower() + command[1:], 10).rstrip(".")
+    job = words_cut(command[:1].lower() + command[1:], 10).rstrip(".")
+    # The person wrote the job about themselves ("tell me", "remind me of my notes"); Heliox says it back to them.
+    return re.sub(r"\b(me|my|mine|myself)\b", lambda m: _TO_YOU[m.group(1).lower()], job, flags=re.IGNORECASE)
+
+
+_TO_YOU = {"me": "you", "my": "your", "mine": "yours", "myself": "yourself"}
 
 
 def _step_job(record: Any) -> str:
