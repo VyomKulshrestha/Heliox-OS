@@ -1581,7 +1581,12 @@ class Executor:
             )
 
         try:
-            output = await handler(action)
+            from pilot.system.desktop_observe import step
+
+            # Desktop input read back right after it ran (focus, pointer, keys, clipboard) is kept for this action's
+            # post-condition check, and a wrong window or pointer fails it here, before the next step runs.
+            with step(action):
+                output = await handler(action)
             # Machine lines a browser handler added for its check never reach the reply, speech or a model.
             output, observation = split_machine_lines(action.action_type, output)
             notice = getattr(output, "notice", None)

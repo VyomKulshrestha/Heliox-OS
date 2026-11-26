@@ -18,7 +18,7 @@ async def test_keyboard_type_pastes_exact_case_and_restores_clipboard(monkeypatc
 
     result = await input_control.keyboard_type("HELIOX Exact Test")
 
-    keyboard.hotkey.assert_called_once_with("ctrl", "v")
+    keyboard.hotkey.assert_called_once_with(*input_control.paste_keys())  # command+V on macOS
     clipboard.copy.assert_has_calls([call("HELIOX Exact Test"), call("user clipboard")])
     assert result == "Typed exactly: HELIOX Exact Test"
 

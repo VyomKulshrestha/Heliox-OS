@@ -314,7 +314,20 @@ async def window_exists(
 
 
 async def window_focus(window_id: str | None = None, title: str | None = None, process_name: str | None = None) -> str:
-    """Focus/activate a window by ID, title, or process name."""
+    """Focus/activate a window by ID, title, or process name.
+
+    Inside an executor step the window in front is then read through a different call (``desktop_observe``:
+    GetForegroundWindow, the Accessibility API or LaunchServices, xprop or AT-SPI), and a different window in front
+    fails the step, so the plan's next keystrokes never go to it. ``wmctrl -a`` and AppleScript's activate return
+    before the window manager acts and say nothing when it refuses."""
+    said = await _focus_request(window_id, title, process_name)
+    from pilot.system.desktop_observe import confirm_focus
+
+    await confirm_focus(window_id=window_id, title=title, process_name=process_name)
+    return said
+
+
+async def _focus_request(window_id: str | None, title: str | None, process_name: str | None) -> str:
     if CURRENT_PLATFORM == Platform.WINDOWS:
         if not (process_name or title):
             raise ValueError("Provide process_name or title to focus a window")

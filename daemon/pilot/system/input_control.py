@@ -22,6 +22,19 @@ def _ensure_pyautogui():
     return pyautogui
 
 
+def _real_input(pag: object) -> bool:
+    """Whether the input went to the real desktop through pyautogui (not a stand-in), so its effect can be read
+    back right after the step (``pilot.system.desktop_observe``)."""
+    return getattr(pag, "__name__", "") == "pyautogui"
+
+
+def paste_keys(platform: str | None = None) -> tuple[str, str]:
+    """The paste shortcut: command+V on macOS, where control+V pastes nothing in most apps; control+V elsewhere."""
+    import sys
+
+    return ("command", "v") if (platform or sys.platform) == "darwin" else ("ctrl", "v")
+
+
 # ── Mouse ────────────────────────────────────────────────────────────
 
 
@@ -89,6 +102,10 @@ async def mouse_click(
         if not (x11_session() and x_display_unreachable(error)):
             raise
         return await _xdotool_click(x, y, button, clicks, interval, error)
+    if _real_input(pag):
+        from pilot.system.desktop_observe import confirm_pointer
+
+        await confirm_pointer((x, y), released=(button,))
     return f"Clicked ({button}, {clicks}x) at ({x}, {y})"
 
 
@@ -110,6 +127,18 @@ async def mouse_move(
 ) -> str:
     """Move mouse to coordinates (or relative offset)."""
     pag = _ensure_pyautogui()
+    target: tuple[int, int] | None = (x, y)
+    if relative:
+        target = None
+        if _real_input(pag):
+            from pilot.system.desktop_observe import current_step, pointer
+
+            if current_step() is not None:
+                try:
+                    start = await pointer()
+                    target = (start[0] + x, start[1] + y)
+                except Exception:
+                    target = None
 
     def _do():
         if relative:
@@ -118,6 +147,10 @@ async def mouse_move(
             pag.moveTo(x, y, duration=duration)
 
     await asyncio.to_thread(_do)
+    if target is not None and _real_input(pag):
+        from pilot.system.desktop_observe import confirm_pointer
+
+        await confirm_pointer(target)
     mode = "relative" if relative else "absolute"
     return f"Moved mouse to ({x}, {y}) [{mode}]"
 
@@ -138,6 +171,10 @@ async def mouse_drag(
         pag.drag(end_x - start_x, end_y - start_y, duration=duration, button=button)
 
     await asyncio.to_thread(_do)
+    if _real_input(pag):
+        from pilot.system.desktop_observe import confirm_pointer
+
+        await confirm_pointer((end_x, end_y), released=(button,))
     return f"Dragged from ({start_x},{start_y}) to ({end_x},{end_y})"
 
 
@@ -159,6 +196,10 @@ async def mouse_scroll(
             pag.scroll(amount)
 
     await asyncio.to_thread(_do)
+    if x is not None and y is not None and _real_input(pag):
+        from pilot.system.desktop_observe import confirm_pointer
+
+        await confirm_pointer((x, y))
     direction = "horizontal" if horizontal else "vertical"
     return f"Scrolled {direction} by {amount}"
 
@@ -186,12 +227,17 @@ async def keyboard_type(
     restore the user's prior clipboard value immediately afterward.
     """
     pag = _ensure_pyautogui()
+    observed = _real_input(pag)
 
     if target_window:
         try:
             from pilot.system.window_mgr import window_set_text
 
             await window_set_text(text, title=target_window)
+            if observed:
+                from pilot.system.desktop_observe import confirm_typing
+
+                await confirm_typing(text, None, target_window=target_window, background=True)
             preview = text[:80] + "..." if len(text) > 80 else text
             return f"Typed exactly in {target_window}: {preview}"
         except Exception as error:
@@ -206,14 +252,30 @@ async def keyboard_type(
             # never paste into whichever unrelated window happens to be active.
             await window_focus(title=target_window)
 
+    before = None
+    if observed:
+        from pilot.system.desktop_observe import typing_started
+
+        before = await typing_started()
+    typed = await _type_into_focus(pag, text, interval)
+    if observed:
+        from pilot.system.desktop_observe import confirm_typing
+
+        await confirm_typing(text, before, target_window=target_window, background=False)
+    return typed
+
+
+async def _type_into_focus(pag, text: str, interval: float) -> str:
     try:
         import pyperclip
+
+        keys = paste_keys()
 
         def _paste_exact() -> None:
             previous = pyperclip.paste()
             try:
                 pyperclip.copy(text)
-                pag.hotkey("ctrl", "v")
+                pag.hotkey(*keys)
                 # Give the foreground application time to consume WM_PASTE
                 # before restoring the clipboard that belongs to the user.
                 time.sleep(0.05)
@@ -238,7 +300,17 @@ async def keyboard_press(key: str, presses: int = 1) -> str:
     """Press a single key (enter, tab, escape, f1, etc.)."""
     pag = _ensure_pyautogui()
     await asyncio.to_thread(lambda: pag.press(key, presses=presses))
+    await _keys_released(pag, [key])
     return f"Pressed '{key}' x{presses}"
+
+
+async def _keys_released(pag: object, keys: list[str]) -> None:
+    """Read right after a key step that none of its keys is still held down (a stuck modifier changes every key
+    after it); a held key fails the step so the plan's later steps do not run."""
+    if _real_input(pag):
+        from pilot.system.desktop_observe import confirm_keys_released
+
+        await confirm_keys_released(keys)
 
 
 async def keyboard_hotkey(*keys: str) -> str:
@@ -248,20 +320,21 @@ async def keyboard_hotkey(*keys: str) -> str:
     """
     pag = _ensure_pyautogui()
     await asyncio.to_thread(lambda: pag.hotkey(*keys))
+    await _keys_released(pag, list(keys))
     return f"Pressed hotkey: {'+'.join(keys)}"
 
 
 async def keyboard_hold(key: str, duration: float = 0.5) -> str:
-    """Hold a key down for a duration."""
-    _ensure_pyautogui()
+    """Hold a key down for a duration. The key goes through the same pyautogui as every other key (it was imported
+    a second time here, so a stand-in for pyautogui still held a real key)."""
+    pag = _ensure_pyautogui()
 
     def _do():
-        import pyautogui
-
-        with pyautogui.hold(key):
+        with pag.hold(key):
             time.sleep(duration)
 
     await asyncio.to_thread(_do)
+    await _keys_released(pag, [key])
     return f"Held '{key}' for {duration}s"
 
 

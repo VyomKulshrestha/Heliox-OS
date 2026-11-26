@@ -45,7 +45,17 @@ async def clipboard_read() -> str:
 
 
 async def clipboard_write(content: str) -> str:
-    """Write text to the system clipboard."""
+    """Write text to the system clipboard. Inside an executor step the clipboard is then read back through a
+    different tool (``desktop_observe.confirm_clipboard``) and compared by hash; different text fails the step,
+    so the plan's next step never pastes a stale clipboard."""
+    said = await _write(content)
+    from pilot.system.desktop_observe import confirm_clipboard
+
+    await confirm_clipboard(content)
+    return said
+
+
+async def _write(content: str) -> str:
     try:
         import pyperclip
 
