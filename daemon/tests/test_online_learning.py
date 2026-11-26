@@ -405,7 +405,8 @@ async def test_real_verifier_result_trains_only_checked_file_transition(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_directory_copy_existence_does_not_train_world_transition(tmp_path, occurred_at):
+async def test_empty_directory_copy_trains_only_from_its_observed_structure(tmp_path, occurred_at):
+    """An empty folder's copy is compared by its folder structure now, so it is an observed outcome."""
     from unittest.mock import MagicMock
 
     learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
@@ -452,8 +453,8 @@ async def test_directory_copy_existence_does_not_train_world_transition(tmp_path
     await ledger.drain_subscribers()
 
     assert verification.passed is True
-    assert verification.independently_observed_actions == []
-    assert learner.status()["transitions"]["labels"] == 0
+    assert verification.independently_observed_actions == [0]
+    assert learner.status()["transitions"]["labels"] == 1
     await ledger.close()
 
 

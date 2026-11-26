@@ -269,10 +269,10 @@ async def test_copy_with_wrong_content_is_not_verified(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_directory_copy_existence_does_not_count_as_independent_outcome(tmp_path) -> None:
+async def test_empty_folder_copy_is_compared_by_its_structure(tmp_path) -> None:
     source = tmp_path / "source"
     destination = tmp_path / "destination"
-    source.mkdir()
+    (source / "empty").mkdir(parents=True)
     destination.mkdir()
     action = Action(
         action_type=ActionType.FILE_COPY,
@@ -280,20 +280,25 @@ async def test_directory_copy_existence_does_not_count_as_independent_outcome(tm
         parameters=FileParams(path=str(source), destination=str(destination), recursive=True),
     )
 
-    verification = await Verifier(MagicMock()).verify(
+    missing = await Verifier(MagicMock()).verify(
+        ActionPlan(actions=[action]), [ActionResult(action=action, success=True)]
+    )
+    (destination / "empty").mkdir()
+    copied = await Verifier(MagicMock()).verify(
         ActionPlan(actions=[action]), [ActionResult(action=action, success=True)]
     )
 
-    assert verification.passed is True
-    assert verification.independently_observed_actions == []
-    assert "REPORTED" in verification.details[0]
+    assert missing.passed is False
+    assert "missing 1 folder" in missing.details[0]
+    assert copied.passed is True
+    assert copied.independently_observed_actions == [0]
 
 
 @pytest.mark.asyncio
-async def test_large_copy_is_not_labeled_independently_verified(tmp_path, monkeypatch) -> None:
+async def test_large_copy_is_compared_and_past_the_time_budget_is_not_verified(tmp_path, monkeypatch) -> None:
     from pilot.agents.postconditions import files
 
-    monkeypatch.setattr(files, "MAX_COPY_CONTENT_VERIFY_BYTES", 4)
+    monkeypatch.setattr(files, "CHUNK_BYTES", 2)  # many chunks, as for a file over the old 64 MB cap
     source = tmp_path / "source.txt"
     destination = tmp_path / "destination.txt"
     source.write_text("sample", encoding="utf-8")
@@ -304,10 +309,16 @@ async def test_large_copy_is_not_labeled_independently_verified(tmp_path, monkey
         parameters=FileParams(path=str(source), destination=str(destination)),
     )
 
-    verification = await Verifier(MagicMock()).verify(
+    compared = await Verifier(MagicMock()).verify(
+        ActionPlan(actions=[action]), [ActionResult(action=action, success=True)]
+    )
+    ticks = iter(range(0, 10_000, 100))  # each reading of the clock is 100 s later
+    monkeypatch.setattr(files, "_clock", lambda: float(next(ticks)))
+    out_of_time = await Verifier(MagicMock()).verify(
         ActionPlan(actions=[action]), [ActionResult(action=action, success=True)]
     )
 
-    assert verification.passed is True
-    assert verification.independently_observed_actions == []
-    assert "REPORTED" in verification.details[0]
+    assert compared.independently_observed_actions == [0]
+    assert out_of_time.passed is True
+    assert out_of_time.independently_observed_actions == []
+    assert "REPORTED" in out_of_time.details[0]

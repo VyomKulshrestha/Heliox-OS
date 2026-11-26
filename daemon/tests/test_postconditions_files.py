@@ -142,3 +142,103 @@ def test_file_write_puts_the_same_bytes_as_text_mode(tmp_path) -> None:
 
     assert (tmp_path / "new.txt").read_bytes() == (tmp_path / "old.txt").read_bytes()
     assert files._expected_text_bytes(content) == (tmp_path / "old.txt").read_bytes()
+
+
+# ── file_copy ────────────────────────────────────────────────────────
+
+
+def _copy_action(source, destination) -> Action:
+    return Action(
+        action_type=ActionType.FILE_COPY,
+        target=str(source),
+        parameters=FileParams(path=str(source), destination=str(destination), recursive=True),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_sparse_file_copy_verifies(tmp_path) -> None:
+    import shutil
+
+    source = tmp_path / "disk.img"
+    with source.open("wb") as handle:
+        handle.seek(3 * 1024 * 1024)  # a hole of zeros where the file system allows one
+        handle.write(b"end")
+    destination = tmp_path / "copy.img"
+    shutil.copy2(source, destination)
+
+    verification = await _verify(_copy_action(source, destination))
+
+    assert verification.independently_observed_actions == [0]
+
+
+@pytest.mark.asyncio
+async def test_a_tree_with_a_symbolic_link_verifies(tmp_path) -> None:
+    import shutil
+
+    source = tmp_path / "project"
+    (source / "real").mkdir(parents=True)
+    (source / "real" / "a.txt").write_text("a", encoding="utf-8")
+    try:
+        (source / "linked").symlink_to(source / "real", target_is_directory=True)
+        (source / "b.txt").symlink_to(source / "real" / "a.txt")
+    except OSError:
+        pytest.skip("this account may not create symbolic links")
+    destination = tmp_path / "copy"
+    shutil.copytree(source, destination)  # what file_copy does: links are followed and copied as real files
+
+    verification = await _verify(_copy_action(source, destination))
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0]
+
+
+@pytest.mark.asyncio
+async def test_a_tree_missing_a_nested_empty_folder_is_a_mismatch(tmp_path) -> None:
+    import shutil
+
+    source = tmp_path / "src"
+    (source / "logs" / "old").mkdir(parents=True)
+    (source / "keep.txt").write_text("k", encoding="utf-8")
+    destination = tmp_path / "dst"
+    shutil.copytree(source, destination)
+    assert (await _verify(_copy_action(source, destination))).independently_observed_actions == [0]
+
+    (destination / "logs" / "old").rmdir()
+    verification = await _verify(_copy_action(source, destination))
+
+    assert verification.passed is False
+    assert "logs/old" in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_a_large_tree_is_walked_without_a_file_cap_and_stops_at_the_time_budget(tmp_path, monkeypatch) -> None:
+    import shutil
+
+    source = tmp_path / "many"
+    for index in range(30):
+        (source / f"d{index}").mkdir(parents=True)
+        (source / f"d{index}" / "f.txt").write_text(str(index), encoding="utf-8")
+    destination = tmp_path / "copy"
+    shutil.copytree(source, destination)
+    assert (await _verify(_copy_action(source, destination))).independently_observed_actions == [0]
+
+    ticks = iter(range(0, 100_000, 50))  # each reading of the clock is 50 s later
+    monkeypatch.setattr(files, "_clock", lambda: float(next(ticks)))
+    verification = await _verify(_copy_action(source, destination))
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == []
+    assert "REPORTED" in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_a_copied_file_with_different_bytes_is_a_mismatch(tmp_path) -> None:
+    source = tmp_path / "a.bin"
+    destination = tmp_path / "b.bin"
+    source.write_bytes(b"\x00" * 4096 + b"A")
+    destination.write_bytes(b"\x00" * 4096 + b"B")
+
+    verification = await _verify(_copy_action(source, destination))
+
+    assert verification.passed is False
+    assert verification.independently_observed_actions == [0]

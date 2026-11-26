@@ -94,40 +94,13 @@ _NOT_HTML_SUFFIXES = frozenset(
 )
 
 
-MAX_COPY_CONTENT_VERIFY_BYTES = 64 * 1024 * 1024
-MAX_COPY_TREE_VERIFY_FILES = 20_000
-
-
-def _tree_listing(root: Path) -> dict[str, int] | None:
-    """Relative path to size for every file under ``root``, or None past the file limit."""
-    import os
-
-    listing: dict[str, int] = {}
-    for dirpath, _dirs, names in os.walk(root):
-        for name in names:
-            path = Path(dirpath) / name
-            try:
-                listing[path.relative_to(root).as_posix()] = path.stat().st_size
-            except OSError:
-                continue
-            if len(listing) > MAX_COPY_TREE_VERIFY_FILES:
-                return None
-    return listing
-
-
 # ── helpers ──────────────────────────────────────────────────────────
 
 
-class _OutOfTime(Exception):
-    pass
-
-
-def _sha256(path: Path, deadline: float | None = None) -> str:
+def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(CHUNK_BYTES), b""):
-            if deadline is not None and _clock() > deadline:
-                raise _OutOfTime
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -179,12 +152,50 @@ async def file_has_content(result: ActionResult) -> Outcome:
     return unobserved("File exists; no content was given or recorded to compare it with")
 
 
-# ── file_copy and download_file ─────────────────────────────────────
+# ── file_copy ────────────────────────────────────────────────────────
 
 
-@register(ActionType.FILE_COPY, method="copy_destination_postcondition", timeout=300.0)
+def _files_equal(source: Path, destination: Path, deadline: float) -> bool | None:
+    """Byte for byte, in chunks; None when the time budget ran out first."""
+    with source.open("rb") as original, destination.open("rb") as copied:
+        for chunk in iter(lambda: original.read(CHUNK_BYTES), b""):
+            if _clock() > deadline:
+                return None
+            if chunk != copied.read(len(chunk)):
+                return False
+        return not copied.read(1)
+
+
+def _tree(root: Path, deadline: float) -> tuple[dict[str, int], set[str]] | None:
+    """Files (relative path to size) and folders under ``root``; None when the time budget ran out.
+
+    Symbolic links are not followed into folders (a link loop cannot trap the walk); a linked file counts with
+    the size of what it points to, as ``shutil.copytree`` copies it.
+    """
+    files: dict[str, int] = {}
+    folders: set[str] = set()
+    for dirpath, dirnames, names in os.walk(root):
+        if _clock() > deadline:
+            return None
+        here = Path(dirpath)
+        for name in dirnames:
+            folders.add((here / name).relative_to(root).as_posix())
+        for name in names:
+            path = here / name
+            try:
+                files[path.relative_to(root).as_posix()] = path.stat().st_size
+            except OSError:
+                continue
+    return files, folders
+
+
+@register(ActionType.FILE_COPY, method="copy_destination_postcondition", timeout=COPY_COMPARE_SECONDS + 60.0)
 async def copy_matches_source(result: ActionResult) -> Outcome:
-    """The destination holds what the source holds: bytes for a file, names and sizes for a folder."""
+    """The destination holds what the source holds: every byte for a file; folders, names and sizes for a tree.
+
+    The destination may hold more than the source (a linked folder in the source is copied as a real one); it
+    may not hold less. Past the time budget the copy is not verified, never passed.
+    """
     params: FileParams = result.action.parameters  # type: ignore[assignment]
     if not params.path or not params.destination:
         raise ValueError("File copy has no source or destination to observe")
@@ -194,41 +205,48 @@ async def copy_matches_source(result: ActionResult) -> Outcome:
         return mismatch(f"Source does not exist after copy: {params.path}")
     if not destination.exists():
         return mismatch(f"Destination does not exist after copy: {params.destination}")
+    deadline = _clock() + COPY_COMPARE_SECONDS
     if source.is_file() and destination.is_file():
         source_size = source.stat().st_size
         destination_size = destination.stat().st_size
         if source_size != destination_size:
             return mismatch("Copy destination size mismatch")
-        if source_size > MAX_COPY_CONTENT_VERIFY_BYTES:
-            return unobserved("Copy destination exists; file is too large to compare within verifier budget")
-
-        def contents_match() -> bool:
-            with source.open("rb") as original, destination.open("rb") as copied:
-                for chunk in iter(lambda: original.read(1024 * 1024), b""):
-                    if chunk != copied.read(len(chunk)):
-                        return False
-                return not copied.read(1)
-
-        if await asyncio.to_thread(contents_match):
-            return verified("Copy content matches source")
+        same = await asyncio.to_thread(_files_equal, source, destination, deadline)
+        if same is None:
+            return unobserved(
+                f"Copy has the source's size ({source_size:,} bytes); comparing its content did not finish "
+                f"within {COPY_COMPARE_SECONDS:g} s"
+            )
+        if same:
+            return verified(f"Copy content matches source ({source_size:,} bytes)")
         return mismatch("Copy destination content mismatch")
     if source.is_dir() and destination.is_dir():
-        source_files, destination_files = await asyncio.gather(
-            asyncio.to_thread(_tree_listing, source), asyncio.to_thread(_tree_listing, destination)
+        source_tree, destination_tree = await asyncio.gather(
+            asyncio.to_thread(_tree, source, deadline), asyncio.to_thread(_tree, destination, deadline)
         )
-        if source_files is None or destination_files is None:
-            return unobserved("Copy destination exists; the folder is too large to compare file by file")
-        if not source_files:
-            return unobserved("Copy destination exists; the source folder has no files to compare")
+        if source_tree is None or destination_tree is None:
+            return unobserved(
+                f"Copy destination exists; listing the folders did not finish within {COPY_COMPARE_SECONDS:g} s"
+            )
+        source_files, source_folders = source_tree
+        destination_files, destination_folders = destination_tree
         missing = sorted(set(source_files) - set(destination_files))
         if missing:
             return mismatch(f"Copy is missing {len(missing)} file(s), for example {missing[0]}")
+        missing_folders = sorted(source_folders - destination_folders - set(destination_files))
+        if missing_folders:
+            return mismatch(f"Copy is missing {len(missing_folders)} folder(s), for example {missing_folders[0]}")
         different = sorted(name for name, size in source_files.items() if destination_files[name] != size)
         if different:
             return mismatch(f"Copied file size differs for {len(different)} file(s), for example {different[0]}")
+        if not source_files:
+            return verified(f"Copy has all {len(source_folders)} folder(s) of the source, which holds no files")
         total = sum(source_files.values())
         return verified(f"Copy has all {len(source_files)} files of the source ({total} bytes), sizes match")
     return mismatch("Copy destination type does not match source")
+
+
+# ── download_file ────────────────────────────────────────────────────
 
 
 @register(ActionType.DOWNLOAD_FILE, method="download_file_exists_postcondition")
