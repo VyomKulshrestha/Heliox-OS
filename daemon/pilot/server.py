@@ -758,6 +758,18 @@ def _repair_error_context(failed_details: list[str], errors: list[str]) -> str:
     return redact_text("\n".join([*failed_details, *errors])) or ""
 
 
+def _later_browser_step_ran(results: list[Any], index: int) -> bool:
+    """Whether results[index] is a browser step and a later browser step of the same run went ahead after it."""
+    from pilot.agents.postconditions._in_step import IN_STEP_ACTIONS
+
+    if results[index].action.action_type not in IN_STEP_ACTIONS:
+        return False
+    return any(
+        later.success and later.executed and later.action.action_type.value.startswith("browser_")
+        for later in results[index + 1 :]
+    )
+
+
 def _postcondition_failure_requires_reconciliation(results: list[Any], verification: Any) -> bool:
     """Stop before repeating a destructive action whose effect is uncertain, or one the person must reconcile."""
     from pilot.actions import RECONCILE_NOT_RETRY_ACTIONS
@@ -771,6 +783,10 @@ def _postcondition_failure_requires_reconciliation(results: list[Any], verificat
             or result.action.is_irreversible
             or result.action.action_type in RECONCILE_NOT_RETRY_ACTIONS
         ):
+            return True
+        if result.success and _later_browser_step_ran(results, index):
+            # A browser step's check was read right after it ran, but later steps have moved the page on since:
+            # repeating it now would act on another page, so the run stops and says what was found.
             return True
         if result.success and result.action.expect is not None:
             # A declared check found something else after an arbitrary command or script ran. Running it again is
