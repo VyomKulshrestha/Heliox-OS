@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,6 +15,7 @@ import icalendar
 from pilot.actions import Action, ActionPlan, ActionResult, ActionType
 from pilot.agents.base_agent import AgentCapability, AgentRole, BaseAgent
 from pilot.agents.registry import auto_register
+from pilot.system.calendar_readback import event_uid_note
 
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
@@ -238,12 +240,15 @@ class CalendarAgent(BaseAgent):
         try:
             client = await self._get_caldav_client()
             calendar = self._select_calendar(client, payload.get("calendar_id"))
+            # Heliox names the event itself, so the verifier can read this one event back by its UID.
+            uid = str(uuid.uuid4())
             calendar.save_event(
                 dtstart=datetime.fromisoformat(start),
                 dtend=datetime.fromisoformat(end) if end else None,
                 summary=summary,
+                uid=uid,
             )
-            return ActionResult(action=action, success=True, output="Event created")
+            return ActionResult(action=action, success=True, output=f"Event created{event_uid_note(uid)}")
         except Exception as e:
             logger.error(f"Failed to create event: {e}")
             return ActionResult(action=action, success=False, error=str(e))

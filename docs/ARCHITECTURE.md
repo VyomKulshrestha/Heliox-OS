@@ -462,6 +462,16 @@ dedicated adapters with hard domain restrictions. A declared
 `AgentCapability` describes routing and resource scope; it is not by itself an
 operating-system sandbox.
 
+Sent mail and calendar changes are read back over a new session
+(`pilot/agents/postconditions/mail_calendar.py`). A sent message or reply is
+looked for by its Message-ID in the sender's Sent folder over IMAP, so reading
+mail must be set up in Settings (IMAP host, user name and app password) for the
+account that sends; without it a send stays an SMTP receipt and is reported as
+not verified. The Sent folder is the one the server marks `\Sent`, else one with
+a usual name; for a server that marks none, set `sent_mailbox` in the `[email]`
+section of `config.toml`. A created or deleted event is looked up by its UID
+with a fresh CalDAV client.
+
 ### Adaptive browser and desktop execution
 
 `AutonomousExecutor` and durable voice/gesture workflows share a bounded

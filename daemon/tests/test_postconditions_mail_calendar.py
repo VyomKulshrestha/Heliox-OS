@@ -7,6 +7,7 @@ small fakes, and the pauses between Sent-folder searches are recorded instead of
 from __future__ import annotations
 
 import imaplib
+from datetime import date, datetime, timedelta, timezone
 from email.parser import Parser
 from unittest.mock import AsyncMock, MagicMock
 
@@ -18,6 +19,7 @@ from pilot.actions import (
     ActionResult,
     ActionType,
     ApiRequestParams,
+    CalendarParams,
     EmailParams,
 )
 from pilot.agents.email_agent import EmailAgent
@@ -495,3 +497,273 @@ async def test_fetched_mail_reports_its_message_id_for_a_later_reply(imap_mock) 
     )
 
     assert all("message_id" in message for message in json.loads(result.output))
+
+
+# ── calendar_create_event and calendar_delete_event ────────────────────────
+
+
+class FakeCalendarServer:
+    """One CalDAV calendar, shared by every client the handler and the verifier open. Events are iCalendar text."""
+
+    def __init__(self) -> None:
+        self.events: dict[str, str] = {}
+        self.clients = 0
+        self.unreachable = False
+        self.ignore_deletes = False
+        self.store_under_own_uid = False
+        self.shift_start = timedelta(0)
+
+    def put(self, uid: str, *, summary: str, start: datetime, end: datetime | None = None) -> None:
+        """Store the event as a server does: times in UTC (a time without a zone is taken in this computer's zone)."""
+        from caldav.lib.vcal import create_ical
+
+        utc_end = end.astimezone(timezone.utc) if end else None
+        self.events[uid] = create_ical(dtstart=start.astimezone(timezone.utc), dtend=utc_end, summary=summary, uid=uid)
+
+    def client_class(self) -> type:
+        from caldav.lib.error import NotFoundError
+
+        server = self
+
+        class FakeEvent:
+            def __init__(self, uid: str) -> None:
+                self.uid = uid
+                self.data = server.events[uid]
+
+            def delete(self) -> None:
+                if not server.ignore_deletes:
+                    server.events.pop(self.uid, None)
+
+        class FakeCalendar:
+            name = "Work"
+
+            def save_event(self, *, dtstart: datetime, dtend: datetime | None, summary: str, uid: str) -> None:
+                stored_uid = f"server-{len(server.events) + 1}" if server.store_under_own_uid else uid
+                server.put(stored_uid, summary=summary, start=dtstart + server.shift_start, end=dtend)
+
+            def event_by_uid(self, uid: str) -> FakeEvent:
+                if uid not in server.events:
+                    raise NotFoundError(f"{uid} not found on server")
+                return FakeEvent(uid)
+
+            def search(self, **_criteria: object) -> list[FakeEvent]:
+                return [FakeEvent(uid) for uid in server.events]
+
+        class FakePrincipal:
+            def calendars(self) -> list[FakeCalendar]:
+                if server.unreachable:
+                    raise ConnectionError("calendar.example.test did not answer")
+                return [FakeCalendar()]
+
+        class FakeClient:
+            def __init__(self, url: str, username: str, password: str) -> None:
+                server.clients += 1
+
+            def principal(self) -> FakePrincipal:
+                return FakePrincipal()
+
+        return FakeClient
+
+
+@pytest.fixture
+def calendar_server(monkeypatch: pytest.MonkeyPatch) -> FakeCalendarServer:
+    import caldav
+
+    server = FakeCalendarServer()
+    monkeypatch.setattr(caldav, "DAVClient", server.client_class())
+    return server
+
+
+@pytest.fixture
+def calendar_settings(monkeypatch: pytest.MonkeyPatch) -> PilotConfig:
+    config = PilotConfig()
+    config.calendar.enabled = True
+    config.calendar.caldav_url = "https://calendar.example.test/dav"
+    config.calendar.caldav_username = "person"
+    config.calendar.caldav_password_provider = "caldav"
+    vault = MagicMock()
+    vault.get_key = AsyncMock(return_value="calendar-password")
+    monkeypatch.setattr(mail_calendar, "_config", config)
+    monkeypatch.setattr(mail_calendar, "_vault", vault)
+    return config
+
+
+async def _calendar_action(config: PilotConfig, action_type: ActionType, **fields: str) -> ActionResult:
+    from pilot.agents.calendar_agent import CalendarAgent
+
+    agent = CalendarAgent(MagicMock(), config, mail_calendar._vault)
+    action = Action(action_type=action_type, parameters=CalendarParams(calendar_id="Work", **fields))
+    [result] = await agent.handle_task("calendar", ActionPlan(actions=[action]))
+    return result
+
+
+async def _create(config: PilotConfig, **fields: str) -> ActionResult:
+    values = {"summary": "Dentist", "start": "2026-12-01T10:00:00+05:30", "end": "2026-12-01T11:00:00+05:30"}
+    return await _calendar_action(config, ActionType.CALENDAR_CREATE_EVENT, **{**values, **fields})
+
+
+def test_calendar_verifiers_are_registered() -> None:
+    assert POSTCONDITION_VERIFIERS[ActionType.CALENDAR_CREATE_EVENT] == "caldav_event_fields_postcondition"
+    assert POSTCONDITION_VERIFIERS[ActionType.CALENDAR_DELETE_EVENT] == "caldav_event_absence_postcondition"
+
+
+@pytest.mark.asyncio
+async def test_created_event_read_back_by_uid_with_a_fresh_client_verifies(calendar_server, calendar_settings) -> None:
+    result = await _create(calendar_settings)
+
+    verification = await _verify(result)
+
+    assert result.success is True
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0]
+    assert "VERIFIED" in verification.details[0]
+    assert calendar_server.clients == 2
+
+
+@pytest.mark.asyncio
+async def test_created_event_with_a_wrong_start_is_a_mismatch(calendar_server, calendar_settings) -> None:
+    calendar_server.shift_start = timedelta(hours=1)
+    result = await _create(calendar_settings)
+
+    verification = await _verify(result)
+
+    assert verification.passed is False
+    assert verification.independently_observed_actions == [0]
+    assert "start 2026-12-01T05:30+00:00 instead of 2026-12-01T10:00+05:30" in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_same_instant_in_another_zone_or_without_a_zone_matches(calendar_server, calendar_settings) -> None:
+    from pilot.system.calendar_readback import same_moment
+
+    in_kolkata = datetime(2026, 12, 1, 10, 0, tzinfo=timezone(timedelta(hours=5, minutes=30)))
+    assert same_moment(in_kolkata, datetime(2026, 12, 1, 4, 30, tzinfo=timezone.utc))
+    assert not same_moment(in_kolkata, datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc))
+    assert same_moment(datetime(2026, 12, 1, 9, 0), datetime(2026, 12, 1, 9, 0).astimezone(timezone.utc))
+    assert same_moment(datetime(2026, 12, 1, 0, 0), date(2026, 12, 1))
+    assert not same_moment(datetime(2026, 12, 1, 0, 0), date(2026, 12, 2))
+
+    naive = await _create(calendar_settings, start="2026-12-01T09:00:00", end="2026-12-01T09:30:00")
+    verification = await _verify(naive)
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0]
+
+
+@pytest.mark.asyncio
+async def test_event_kept_under_the_servers_own_uid_still_verifies(calendar_server, calendar_settings) -> None:
+    calendar_server.store_under_own_uid = True
+    result = await _create(calendar_settings)
+
+    verification = await _verify(result)
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0]
+    assert "kept under the UID server-1" in (await _detail(result))
+
+
+@pytest.mark.asyncio
+async def test_created_event_missing_from_the_server_is_a_mismatch(calendar_server, calendar_settings) -> None:
+    result = await _create(calendar_settings)
+    calendar_server.events.clear()
+
+    verification = await _verify(result)
+
+    assert verification.passed is False
+    assert 'none called "Dentist"' in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_unreachable_calendar_is_not_verified(calendar_server, calendar_settings) -> None:
+    created = await _create(calendar_settings)
+    calendar_server.unreachable = True
+
+    verification = await _verify(created)
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == []
+    assert "Not verified" in (await _detail(created))
+    assert "calendar-password" not in (await _detail(created))
+
+
+@pytest.mark.asyncio
+async def test_calendar_without_settings_is_not_verified(calendar_server, calendar_settings) -> None:
+    created = await _create(calendar_settings)
+    calendar_settings.calendar.enabled = False
+
+    verification = await _verify(created)
+
+    assert verification.independently_observed_actions == []
+    assert "REPORTED" in verification.details[0]
+    assert calendar_server.clients == 1
+
+
+@pytest.mark.asyncio
+async def test_create_output_without_a_uid_is_not_verified(calendar_server, calendar_settings) -> None:
+    action = Action(
+        action_type=ActionType.CALENDAR_CREATE_EVENT,
+        parameters=CalendarParams(summary="Dentist", start="2026-12-01T10:00:00"),
+    )
+
+    verification = await _verify(ActionResult(action=action, success=True, output="Event created"))
+
+    assert verification.independently_observed_actions == []
+    assert calendar_server.clients == 0
+
+
+@pytest.mark.asyncio
+async def test_create_without_a_start_is_a_failed_action(calendar_server, calendar_settings) -> None:
+    result = await _calendar_action(calendar_settings, ActionType.CALENDAR_CREATE_EVENT, summary="Dentist")
+
+    verification = await _verify(result)
+
+    assert result.success is False
+    assert "FAILED" in verification.details[0]
+    assert calendar_server.events == {}
+
+
+@pytest.mark.asyncio
+async def test_deleted_event_verifies_as_gone(calendar_server, calendar_settings) -> None:
+    calendar_server.put("event-1", summary="Dentist", start=datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc))
+    result = await _calendar_action(calendar_settings, ActionType.CALENDAR_DELETE_EVENT, event_uid="event-1")
+
+    verification = await _verify(result)
+
+    assert result.success is True
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0]
+    assert calendar_server.clients == 2
+
+
+@pytest.mark.asyncio
+async def test_event_still_present_after_delete_is_a_mismatch(calendar_server, calendar_settings) -> None:
+    calendar_server.put("event-1", summary="Dentist", start=datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc))
+    calendar_server.ignore_deletes = True
+    result = await _calendar_action(calendar_settings, ActionType.CALENDAR_DELETE_EVENT, event_uid="event-1")
+
+    verification = await _verify(result)
+
+    assert verification.passed is False
+    assert verification.independently_observed_actions == [0]
+    assert "Event event-1 is still on the CalDAV server" in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_delete_that_cannot_be_checked_is_not_verified(calendar_server, calendar_settings) -> None:
+    calendar_server.put("event-1", summary="Dentist", start=datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc))
+    result = await _calendar_action(calendar_settings, ActionType.CALENDAR_DELETE_EVENT, event_uid="event-1")
+    calendar_server.unreachable = True
+
+    verification = await _verify(result)
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == []
+
+
+@pytest.mark.asyncio
+async def test_delete_of_an_unknown_event_is_a_failed_action(calendar_server, calendar_settings) -> None:
+    result = await _calendar_action(calendar_settings, ActionType.CALENDAR_DELETE_EVENT, event_uid="no-such-event")
+
+    verification = await _verify(result)
+
+    assert result.success is False
+    assert "FAILED" in verification.details[0]
