@@ -120,3 +120,62 @@ async def test_email_fetch_output_says_what_was_left_out_and_its_readers_take_it
         Action(action_type=ActionType.CALENDAR_FETCH, parameters=calendar), calendar
     )
     assert events.success
+
+
+# ── git_diff ─────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def repo(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    import shutil
+    import subprocess
+
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    empty = tmp_path / "empty-gitconfig"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    work = tmp_path / "work"
+    work.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=work, check=True, capture_output=True)
+
+    git("init")
+    git("config", "user.name", "Heliox Test")
+    git("config", "user.email", "heliox-test@example.invalid")
+    git("config", "commit.gpgsign", "false")
+    (work / "a.txt").write_bytes(b"one\n")
+    git("add", "a.txt")
+    git("commit", "-m", "start")
+    return work, git
+
+
+@pytest.mark.asyncio
+async def test_git_diff_of_unstaged_shows_the_staged_changes_when_that_is_all_there_is(repo) -> None:
+    from pilot.agents.git_agent import GitAgent
+
+    work, git = repo
+    (work / "a.txt").write_bytes(b"one\ntwo\n")
+    git("add", "a.txt")
+    (work / "new.txt").write_bytes(b"x")
+    agent = GitAgent(repo_path=str(work))
+
+    unstaged = await agent._handle_diff({"staged": False})
+    assert unstaged["output"].startswith("Nothing unstaged; 1 file(s) staged:")
+    assert "+two" in unstaged["output"] and "1 untracked file(s)" in unstaged["output"]
+    assert unstaged["diff"] == ""
+
+    (work / "a.txt").write_bytes(b"one\ntwo\nthree\n")
+    both = await agent._handle_diff({"staged": True})
+    assert "+two" in both["diff"] and "Also 1 file(s) with unstaged changes" in both["output"]
+
+
+@pytest.mark.asyncio
+async def test_git_diff_of_a_clean_tree_says_both_sides_are_empty(repo) -> None:
+    from pilot.agents.git_agent import GitAgent
+
+    work, _git = repo
+    result = await GitAgent(repo_path=str(work))._handle_diff({"staged": False})
+    assert result["output"] == "(no changes: nothing staged or unstaged)"

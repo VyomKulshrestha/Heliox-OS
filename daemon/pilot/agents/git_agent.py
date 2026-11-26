@@ -385,19 +385,39 @@ class GitAgent(BaseAgent):
     # Tool: git_diff
 
     async def _handle_diff(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Get the diff of staged or unstaged changes."""
+        """The diff of staged or unstaged changes, saying what is on the other side too.
+
+        A diff of one side alone answered "(no changes)" when every change was on the other side (a commit message
+        or a review then saw nothing). The output now names both sides, and when the side asked for is empty it shows
+        the other one. ``diff`` stays the raw diff of the side asked for, which git_commit reads.
+        """
         staged = params.get("staged", True)
-        args = ["diff"]
-        if staged:
-            args.append("--staged")
+        asked, other = (["diff", "--staged"], ["diff"]) if staged else (["diff"], ["diff", "--staged"])
+        asked_name, other_name = ("staged", "unstaged") if staged else ("unstaged", "staged")
 
-        result = await _run_git(args, cwd=self.repo_path)
+        result = await _run_git(asked, cwd=self.repo_path)
+        if not result["success"]:
+            return {"success": False, "output": result["stderr"] or "git diff failed", "diff": ""}
+        other_files = await _run_git([*other, "--name-only"], cwd=self.repo_path)
+        other_count = len(other_files["stdout"].splitlines()) if other_files["success"] else 0
+        untracked = await _run_git(["ls-files", "--others", "--exclude-standard"], cwd=self.repo_path)
+        untracked_count = len(untracked["stdout"].splitlines()) if untracked["success"] else 0
+        tail = f"\n{untracked_count} untracked file(s) are in no diff." if untracked_count else ""
 
-        return {
-            "success": result["success"],
-            "output": result["stdout"] or "(no changes)",
-            "diff": result["stdout"],
-        }
+        if result["stdout"]:
+            also = (
+                f"\nAlso {other_count} file(s) with {other_name} changes, not shown (set staged to "
+                f"{str(not staged).lower()} to see them)."
+                if other_count
+                else ""
+            )
+            output = result["stdout"] + also + tail
+        elif other_count:
+            shown = await _run_git(other, cwd=self.repo_path)
+            output = f"Nothing {asked_name}; {other_count} file(s) {other_name}:\n{shown['stdout']}" + tail
+        else:
+            output = "(no changes: nothing staged or unstaged)" + tail
+        return {"success": True, "output": output, "diff": result["stdout"]}
 
     # Tool: git_commit
     async def _handle_commit(self, params: dict[str, Any]) -> dict[str, Any]:
