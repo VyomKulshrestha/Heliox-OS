@@ -241,7 +241,7 @@ async def _get_page(tab_index: int = -1):
         page = await ctx.new_page()
         return page
     if tab_index < 0:
-        return _current_of(pages)
+        return _hold_current(pages)
     return pages[min(tab_index, len(pages) - 1)]
 
 
@@ -254,10 +254,46 @@ def _page_closed(page: Any) -> bool:
 
 
 def _current_of(pages: list[Any]) -> Any:
-    """The tab Heliox acts on: the one browser_switch_tab chose while it is open, else the newest."""
+    """The tab Heliox acts on: the one it holds while that is open, else the newest. Changes nothing."""
     if _active_page is not None and any(page is _active_page for page in pages) and not _page_closed(_active_page):
         return _active_page
     return pages[-1]
+
+
+def _hold_current(pages: list[Any]) -> Any:
+    """The tab Heliox acts on, held from now on.
+
+    Holding it means a tab a page opens by itself later (a timer, an advert, a dry run's scratch tab) does not take
+    over. Only browser_new_tab, browser_switch_tab and a tab opened by Heliox's own click or submit
+    (``_follow_new_tab``) change it.
+    """
+    global _active_page
+    _active_page = _current_of(pages)
+    return _active_page
+
+
+NEW_TAB_NOTICE = "The click opened a new tab; Heliox is now working in it"
+SUBMIT_NEW_TAB_NOTICE = "Sending the form opened a new tab; Heliox is now working in it"
+
+
+def _tabs_now() -> list[Any]:
+    return open_tabs() or []
+
+
+def _follow_new_tab(tabs_before: list[Any], output: str, notice: str = NEW_TAB_NOTICE) -> str:
+    """When the action just taken opened a tab, work in it from now on, as a person's browser brings it forward.
+
+    A tab is the action's when it was not there just before the action and is there right after it. The result
+    then says so in words through a notice.
+    """
+    global _active_page
+    opened = [page for page in _tabs_now() if not any(page is old for old in tabs_before) and not _page_closed(page)]
+    if not opened:
+        return output
+    _active_page = opened[-1]
+    from pilot.actions import OutputWithNotice
+
+    return OutputWithNotice(str(output), notice)
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +505,7 @@ async def _click_baseline(page: Any, selector: str, before: Any) -> dict[str, An
         "o": state.get("origin") if state else None,
         "s": structure_fingerprint(before),
         "t": _element_summary(target),
+        "n": len(tabs) if (tabs := open_tabs()) is not None else None,
     }
 
 
@@ -712,12 +749,14 @@ async def browser_click(
     page = await _get_page()
     before = await _snap(page)
     record = await _click_baseline(page, selector, before)
+    tabs_before = _tabs_now()
 
     await page.click(selector, button=button, click_count=click_count, timeout=timeout)
     await page.wait_for_timeout(300)
     after = await _snap(page)
 
-    return _with_before(_append_diff(f"Clicked: {selector}", before, after, f"click:{selector}"), record)
+    output = _with_before(_append_diff(f"Clicked: {selector}", before, after, f"click:{selector}"), record)
+    return _follow_new_tab(tabs_before, output)
 
 
 async def browser_click_text(text: str, exact: bool = False) -> str:
@@ -730,6 +769,7 @@ async def browser_click_text(text: str, exact: bool = False) -> str:
     page = await _get_page()
     before = await _snap(page)
     record = await _click_baseline(page, click_text_selector(text, exact), before)
+    tabs_before = _tabs_now()
     matched_text = text
     used_fallback = False
 
@@ -755,7 +795,9 @@ async def browser_click_text(text: str, exact: bool = False) -> str:
         if used_fallback
         else f"Clicked element with text: {text}"
     )
-    return _with_before(_append_diff(output, before, after, f"click_text:{matched_text}"), record)
+    return _follow_new_tab(
+        tabs_before, _with_before(_append_diff(output, before, after, f"click_text:{matched_text}"), record)
+    )
 
 
 def click_text_selector(text: str, exact: bool = False) -> str:
@@ -856,6 +898,7 @@ async def browser_type(
     page = await _get_page(tab_index)
     await _refuse_sensitive_field(page, selector)
     before = await _snap(page)
+    tabs_before = _tabs_now()
 
     if clear_first:
         await page.fill(selector, text)
@@ -866,7 +909,8 @@ async def browser_type(
     await page.wait_for_timeout(200)
     after = await _snap(page)
 
-    return _append_diff(f"Typed into {selector}", before, after, f"type:{selector}")
+    output = _append_diff(f"Typed into {selector}", before, after, f"type:{selector}")
+    return _follow_new_tab(tabs_before, output, SUBMIT_NEW_TAB_NOTICE) if press_enter else output
 
 
 async def browser_select(selector: str, value: str, tab_index: int = -1) -> str:
@@ -1078,7 +1122,7 @@ async def browser_new_tab(url: str | None = None) -> str:
     ctx = await _ensure_browser()
     record = {"n": len(ctx.pages)}
     page = await ctx.new_page()
-    _active_page = None  # the newest tab, this one, is now the one Heliox acts on
+    _active_page = page  # the tab just opened is the one Heliox acts on
     if url:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
@@ -1182,6 +1226,7 @@ async def browser_fill_form(fields: dict[str, str], submit_selector: str | None 
     for selector in fields:
         await _refuse_sensitive_field(page, selector)
     before_form = await _snap(page)
+    tabs_before = _tabs_now()
 
     for selector, value in fields.items():
         await page.fill(selector, value)
@@ -1193,7 +1238,8 @@ async def browser_fill_form(fields: dict[str, str], submit_selector: str | None 
 
     after_form = await _snap(page)
     base = f"Filled {len(fields)} form field(s)" + (" and submitted form" if submit_selector else "")
-    return _append_diff(base, before_form, after_form, "fill_form")
+    output = _append_diff(base, before_form, after_form, "fill_form")
+    return _follow_new_tab(tabs_before, output, SUBMIT_NEW_TAB_NOTICE) if submit_selector else output
 
 
 # ── Cleanup ──────────────────────────────────────────────────────────
