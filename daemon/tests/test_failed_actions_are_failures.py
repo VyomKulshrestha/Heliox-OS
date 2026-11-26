@@ -151,7 +151,8 @@ async def test_send_email_without_smtp_credentials_fails(monkeypatch: pytest.Mon
     result = await _run(ActionType.API_SEND_EMAIL, "_exec_api_send_email", _email())
 
     assert result.success is False
-    assert "SMTP credentials are not configured" in (result.error or "")
+    assert "no mail account is connected" in (result.error or "")
+    assert "Settings > Email integration" in (result.error or "")
 
 
 @pytest.mark.asyncio
@@ -203,7 +204,8 @@ async def test_chat_message_without_webhook_url_fails(
     result = await _run(action_type, handler, ApiRequestParams(message="Deploy finished"))
 
     assert result.success is False
-    assert f"The {service} message was not sent: no webhook URL is configured" in (result.error or "")
+    assert f"The {service} message was not sent: {service} is not connected" in (result.error or "")
+    assert f"Settings > Connections > {service}" in (result.error or "")
     assert http["requests"] == []
 
 

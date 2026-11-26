@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_validator, model_validator
 
-from pilot.security.secret_urls import mask_if_secret, mask_url, redact_text
+from pilot.security.secret_urls import mask_if_secret, mask_secret, mask_url, redact_text
 
 
 class ActionType(StrEnum):
@@ -853,12 +853,18 @@ class ApiRequestParams(BaseModel):
     def _mask_secret_url(self, value: str) -> str:
         return mask_if_secret(value) or ""
 
+    @field_serializer("token")
+    def _mask_token(self, value: str | None) -> str | None:
+        return mask_secret(value)
+
     def __repr_args__(self):  # type: ignore[no-untyped-def]
         for name, value in super().__repr_args__():
             if name == "webhook_url":
                 yield name, mask_url(value)
             elif name == "url":
                 yield name, mask_if_secret(value)
+            elif name == "token":
+                yield name, mask_secret(value)
             else:
                 yield name, value
 
@@ -871,6 +877,8 @@ class ApiRequestParams(BaseModel):
     allow_private_network: bool = False
     # GitHub specific
     endpoint: str = ""  # e.g. /user/repos
+    # Not for new plans: the token comes from the GitHub connection (pilot.system.connections). A plan that still
+    # carries one works; every dump shows it masked.
     token: str | None = None
     # Email specific
     to: str = ""
@@ -899,7 +907,19 @@ class WorkspaceParams(BaseModel):
 
 
 class EmailParams(BaseModel):
-    """Parameters for IMAP/SMTP email operations."""
+    """Parameters for IMAP/SMTP email operations.
+
+    The daemon fills the connection fields from the Email settings and the credential store just before a step
+    runs; ``app_password`` is masked in every dump and repr, so it never reaches a plan card, log or saved plan.
+    """
+
+    @field_serializer("app_password")
+    def _mask_app_password(self, value: str) -> str:
+        return mask_secret(value) or ""
+
+    def __repr_args__(self):  # type: ignore[no-untyped-def]
+        for name, value in super().__repr_args__():
+            yield name, (mask_secret(value) if name == "app_password" else value)
 
     # Connection settings
     imap_host: str = ""  # e.g. imap.gmail.com

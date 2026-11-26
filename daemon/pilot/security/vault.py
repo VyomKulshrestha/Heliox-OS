@@ -30,6 +30,14 @@ KNOWN_PROVIDERS = (
     "caldav",
     "email",
     "heliox_mesh",
+    # Settings > Connections (pilot.system.connections)
+    "slack_webhook",
+    "slack_bot_token",
+    "slack_channel_id",
+    "discord_webhook",
+    "github_token",
+    # The list of kept plans' secret entries (pilot.security.plan_secrets); the entries are "plan_secret:<id>".
+    "plan_secret:index",
 )
 
 

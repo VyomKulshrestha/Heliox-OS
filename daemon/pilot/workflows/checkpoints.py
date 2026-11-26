@@ -15,6 +15,7 @@ import aiosqlite
 
 from pilot import config as pilot_config
 from pilot.actions import ActionPlan, ActionResult
+from pilot.security.plan_secrets import PlanSecretKeeper
 from pilot.security.secret_urls import redact_text
 
 WORKFLOW_DB_FILENAME = "workflow_checkpoints.db"
@@ -43,13 +44,27 @@ class PlanCheckpoint:
         return self.completed_count >= len(self.plan.actions)
 
 
-class WorkflowCheckpointStore:
-    """Persists enough execution state to resume plans without replaying steps."""
+# Statuses after which a plan never runs again, so its kept secrets are removed (pilot.security.plan_secrets).
+# "failed" and "interrupted" stay resumable.
+FINISHED_STATUSES = frozenset({"complete", "cancelled", "superseded", "blocked_by_companion", "quick_declined"})
 
-    def __init__(self, db_file: str | Path | None = None) -> None:
+
+class WorkflowCheckpointStore:
+    """Persists enough execution state to resume plans without replaying steps.
+
+    The plan is stored masked, the way it is shown. With a ``PlanSecretKeeper`` its secret values are kept apart in
+    the credential store and put back when the checkpoint is read, so a resumed plan can still run the step that
+    needs them.
+    """
+
+    def __init__(self, db_file: str | Path | None = None, *, secrets: PlanSecretKeeper | None = None) -> None:
         self._db_file = Path(db_file) if db_file is not None else pilot_config.DATA_DIR / WORKFLOW_DB_FILENAME
         self._initialized = False
         self._init_lock = asyncio.Lock()
+        self._secrets = secrets
+
+    def set_secret_keeper(self, secrets: PlanSecretKeeper | None) -> None:
+        self._secrets = secrets
 
     @asynccontextmanager
     async def _connect(self) -> AsyncIterator[aiosqlite.Connection]:
@@ -210,9 +225,18 @@ class WorkflowCheckpointStore:
             await cursor.close()
         if row is None:
             return None
-        return self._from_row(row)
+        checkpoint = self._from_row(row)
+        if self._secrets is not None and checkpoint.status not in FINISHED_STATUSES:
+            checkpoint = replace(checkpoint, plan=await self._secrets.restore(plan_id, checkpoint.plan))
+        return checkpoint
 
     async def _upsert(self, checkpoint: PlanCheckpoint) -> None:
+        if self._secrets is not None:
+            # Kept before the masked row is written, so no stored plan ever lacks the secrets it needs.
+            if checkpoint.status in FINISHED_STATUSES or checkpoint.approval == "denied":
+                await self._secrets.forget(checkpoint.plan_id)
+            else:
+                await self._secrets.keep(checkpoint.plan_id, checkpoint.plan)
         async with self._connect() as db:
             await db.execute(
                 """

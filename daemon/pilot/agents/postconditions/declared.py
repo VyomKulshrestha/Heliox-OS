@@ -581,7 +581,17 @@ async def _read_http(probe: Action) -> Reading:
     if probe.action_type == ActionType.API_GITHUB:
         url = f"https://api.github.com{p.endpoint}"
         headers.setdefault("Accept", "application/vnd.github+json")
-        token = os.environ.get("GITHUB_TOKEN", "")
+        from pilot.system import connections
+
+        try:
+            token = connections.choose(
+                getattr(p, "token", None),
+                (await connections.service("github")).get(connections.GITHUB_TOKEN),
+                service_name="github",
+                what="GitHub token",
+            )
+        except ValueError:
+            token = ""
         if token and not any(name.lower() == "authorization" for name in headers):
             headers["Authorization"] = f"Bearer {token}"
         private = False

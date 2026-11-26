@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Callable
 from typing import Any
 
@@ -44,14 +43,16 @@ def configure_read_back(config: Any, vault: Any) -> None:
 _RECEIPT = "The mail server accepted the message"
 
 
-def _sender(result: ActionResult) -> str:
+async def _sender(result: ActionResult) -> str:
     """The account the message went out from, as the handler chose it."""
     params = result.action.parameters
     if isinstance(params, EmailParams):
         return params.username or (getattr(getattr(_config, "email", None), "username", "") or "")
     if isinstance(params, ApiRequestParams):
-        # pilot.system.api_client.send_email signs in to SMTP as SMTP_USER and sends from it.
-        return os.environ.get("SMTP_USER", "")
+        # pilot.system.api_client.send_email sends from the connected mail account (Settings, else SMTP_USER).
+        from pilot.system import connections
+
+        return await connections.mail_sender()
     return ""
 
 
@@ -92,7 +93,7 @@ async def _sent_copy_outcome(result: ActionResult, *, original: str = "", is_rep
         return unobserved(
             f"{_RECEIPT}, but the send named no Message-ID, so Heliox could not look for its copy in Sent."
         )
-    account, why = await _imap_account(_sender(result))
+    account, why = await _imap_account(await _sender(result))
     if account is None:
         return unobserved(f"{_RECEIPT}, but Heliox could not check its copy in Sent: {why}.")
     copy = await mail_readback.find_sent_copy(account, message_id)

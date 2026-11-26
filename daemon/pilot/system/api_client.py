@@ -11,7 +11,6 @@ import email.utils
 import ipaddress
 import json
 import logging
-import os
 import smtplib
 import socket
 import ssl
@@ -167,6 +166,27 @@ class HttpStatusError(RuntimeError):
         super().__init__(f"{message}: {excerpt}" if excerpt else message)
         self.status = status
 
+    @classmethod
+    def with_reason(cls, error: HttpStatusError, text: str) -> HttpStatusError:
+        """The same failure with a plain sentence for the person in place of the service's raw answer."""
+        replaced = cls.__new__(cls)
+        RuntimeError.__init__(replaced, text)
+        replaced.status = error.status
+        return replaced
+
+
+def _connection_refused(error: HttpStatusError, service_name: str, what: str) -> HttpStatusError:
+    """A 401, 403 or 404 from a chat webhook or GitHub means the stored secret no longer works: say where to fix it."""
+    from pilot.system import connections
+
+    if error.status not in {401, 403, 404, 410}:
+        return error
+    return HttpStatusError.with_reason(
+        error,
+        f"{connections.TITLE[service_name]} refused the {what} (HTTP {error.status}), so nothing was sent: it was "
+        f"removed, revoked or has expired. Replace it in {connections.WHERE[service_name]}.",
+    )
+
 
 async def api_request(
     method: str,
@@ -245,9 +265,17 @@ async def github_api(
     """Call the GitHub API.
 
     endpoint: e.g., '/user/repos', '/repos/owner/repo/issues'
-    Uses GITHUB_TOKEN env var if token not provided.
+    The token comes from the GitHub connection (Settings, else ``GITHUB_TOKEN``; pilot.system.connections). A token
+    given here is used as given; one hidden when the plan was kept is replaced by the connected token when they
+    match. Without any token a GET goes out unauthenticated (public data only) and any other method fails, saying
+    where to connect GitHub.
     """
-    token = token or os.environ.get("GITHUB_TOKEN", "")
+    from pilot.system import connections
+
+    stored = (await connections.service("github")).get(connections.GITHUB_TOKEN)
+    token = connections.choose(token, stored, service_name="github", what="GitHub token")
+    if not token and method.upper() != "GET":
+        raise ValueError(f"Nothing was sent to GitHub: {connections.not_connected('github')}")
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
@@ -256,8 +284,22 @@ async def github_api(
         headers["Authorization"] = f"Bearer {token}"
 
     url = f"https://api.github.com{endpoint}" if endpoint.startswith("/") else endpoint
+    if token and urlsplit(url).hostname != "api.github.com":
+        # The connected token belongs to api.github.com only; a full URL elsewhere never receives it.
+        raise ValueError("Nothing was sent: api_github calls api.github.com only. Use api_request for other hosts.")
 
-    return await api_request(method, url, headers=headers, body=body)
+    try:
+        return await api_request(method, url, headers=headers, body=body)
+    except HttpStatusError as exc:
+        if exc.status == 401 and token:
+            raise _connection_refused(exc, "github", "token") from None
+        if exc.status in {401, 403, 404} and not token:
+            raise HttpStatusError.with_reason(
+                exc,
+                f"{exc}. GitHub answers this way for private data when no token is sent. "
+                f"{connections.not_connected('github')}",
+            ) from None
+        raise
 
 
 async def github_list_repos(username: str | None = None) -> str:
@@ -306,19 +348,24 @@ async def send_email(
 ) -> str:
     """Send an email via SMTP.
 
-    Uses environment variables SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASS
-    if not provided.
+    Without explicit credentials it sends from the one mail account (pilot.system.connections.mail_account): the
+    Email settings with the app password from the credential store, else ``SMTP_SERVER``, ``SMTP_PORT``,
+    ``SMTP_USER`` and ``SMTP_PASS``. The email agent sends from the same account.
     """
-    smtp_server = smtp_server or os.environ.get("SMTP_SERVER", "smtp.gmail.com")
-    smtp_port = int(os.environ.get("SMTP_PORT", str(smtp_port)))
-    username = username or os.environ.get("SMTP_USER", "")
-    password = password or os.environ.get("SMTP_PASS", "")
-    from_addr = from_addr or username
+    from pilot.system import connections
 
+    source = "the given account"
     if not username or not password:
-        raise ValueError(
-            "The email was not sent: SMTP credentials are not configured. Set SMTP_USER and SMTP_PASS for the daemon."
-        )
+        account = await connections.mail_account()
+        if account is None:
+            raise ValueError(
+                f"The email was not sent: no mail account is connected. Set up the account in {connections.WHERE['mail']}."
+            )
+        smtp_server, smtp_port = account.host, account.port
+        username, password = account.username, account.password
+        source = connections.WHERE["mail"] if account.source == connections.SETTINGS else "SMTP_USER and SMTP_PASS"
+    smtp_server = smtp_server or "smtp.gmail.com"
+    from_addr = from_addr or username
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -350,6 +397,11 @@ async def send_email(
         await asyncio.to_thread(_do)
     except Exception as e:
         if "refused" not in accepted:
+            if isinstance(e, smtplib.SMTPAuthenticationError):
+                raise RuntimeError(
+                    f"The email to {to} was not sent: the mail server refused the sign-in for {username}. Check the "
+                    f"app password in {source}."
+                ) from None
             raise RuntimeError(f"The email to {to} was not sent: {e}") from e
         # The server already took the message; only closing the connection failed. Reporting a failure
         # here would invite a retry that sends it twice.
@@ -420,23 +472,27 @@ async def send_slack_message(
 ) -> str:
     """Send a message to Slack via webhook.
 
-    Uses SLACK_WEBHOOK_URL env var if not provided. Returns a receipt (status, host, send time, Slack's
-    answer) without the webhook URL. An incoming webhook gives no message id; the post-condition check reads
-    the message back only when SLACK_BOT_TOKEN and SLACK_CHANNEL_ID are set (see
-    pilot.agents.postconditions.messaging).
+    The webhook comes from the Slack connection (Settings, else ``SLACK_WEBHOOK_URL``; pilot.system.connections)
+    when the plan gives none. Returns a receipt (status, host, send time, Slack's answer) without the webhook URL.
+    An incoming webhook gives no message id; the post-condition check reads the message back only when a bot token
+    and channel ID are connected too (see pilot.agents.postconditions.messaging).
     """
-    webhook_url = webhook_url or os.environ.get("SLACK_WEBHOOK_URL", "")
+    from pilot.system import connections
+
+    stored = (await connections.service("slack")).get(connections.SLACK_WEBHOOK)
+    webhook_url = connections.choose(webhook_url, stored, service_name="slack", what="Slack webhook address")
     if not webhook_url:
-        raise ValueError(
-            "The Slack message was not sent: no webhook URL is configured. Set SLACK_WEBHOOK_URL or give webhook_url."
-        )
+        raise ValueError(f"The Slack message was not sent: {connections.not_connected('slack')}")
 
     payload: dict[str, str] = {"text": message}
     if channel:
         payload["channel"] = channel
 
     sent_at = time.time()
-    answer = await api_request("POST", webhook_url, body=payload)
+    try:
+        answer = await api_request("POST", webhook_url, body=payload)
+    except HttpStatusError as exc:
+        raise _connection_refused(exc, "slack", "webhook address") from None
     return _chat_receipt(answer, webhook_url, sent_at)
 
 
@@ -449,19 +505,23 @@ async def send_discord_message(
 ) -> str:
     """Send a message to Discord via webhook.
 
-    Uses DISCORD_WEBHOOK_URL env var if not provided. Returns a receipt (status, host, send time and the id
-    of the message Discord created) without the webhook URL.
+    The webhook comes from the Discord connection (Settings, else ``DISCORD_WEBHOOK_URL``) when the plan gives
+    none. Returns a receipt (status, host, send time and the id of the message Discord created) without the
+    webhook URL.
     """
-    webhook_url = webhook_url or os.environ.get("DISCORD_WEBHOOK_URL", "")
+    from pilot.system import connections
+
+    stored = (await connections.service("discord")).get(connections.DISCORD_WEBHOOK)
+    webhook_url = connections.choose(webhook_url, stored, service_name="discord", what="Discord webhook address")
     if not webhook_url:
-        raise ValueError(
-            "The Discord message was not sent: no webhook URL is configured. "
-            "Set DISCORD_WEBHOOK_URL or give webhook_url."
-        )
+        raise ValueError(f"The Discord message was not sent: {connections.not_connected('discord')}")
 
     sent_at = time.time()
     # wait=true makes Discord answer with the message it created, so its id can be read back later.
-    answer = await api_request("POST", _with_query(webhook_url, wait="true"), body={"content": message})
+    try:
+        answer = await api_request("POST", _with_query(webhook_url, wait="true"), body={"content": message})
+    except HttpStatusError as exc:
+        raise _connection_refused(exc, "discord", "webhook address") from None
     return _chat_receipt(answer, webhook_url, sent_at)
 
 

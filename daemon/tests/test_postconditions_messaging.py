@@ -174,7 +174,7 @@ async def test_slack_without_a_token_is_an_honest_receipt(monkeypatch) -> None:
     detail = await messaging.slack_message_in_channel(
         ActionResult(action=_action(ActionType.API_SLACK), success=True, output=_receipt(body="ok"))
     )
-    assert "receipt, no read-back" in detail.detail and "SLACK_BOT_TOKEN" in detail.detail
+    assert "receipt, no read-back" in detail.detail and "Settings > Connections > Slack" in detail.detail
 
 
 @pytest.mark.asyncio

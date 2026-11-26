@@ -19,6 +19,9 @@ from urllib.parse import parse_qsl, urlsplit
 MASK = "***"
 
 # Query keys whose value is a credential (compared case-insensitively, also as a suffix such as "x-amz-signature").
+# "code", "session" and "sessionid" are left out: they name promotion codes, page sessions and similar ordinary
+# values far more often than a secret. A value masked by mistake still resumes (pilot.security.plan_secrets keeps
+# the real value for the plan), but it hides an address a person would want to read in a receipt.
 _SECRET_QUERY_KEYS = (
     "token",
     "access_token",
@@ -36,9 +39,6 @@ _SECRET_QUERY_KEYS = (
     "sig",
     "signature",
     "credential",
-    "code",
-    "session",
-    "sessionid",
 )
 # Paths that are a webhook's address and therefore its secret.
 _WEBHOOK_PATHS = (
@@ -95,6 +95,14 @@ def mask_if_secret(url: str | None) -> str | None:
     return mask_url(url) if carries_secret(url) else url
 
 
+def mask_secret(value: str | None) -> str | None:
+    """A token or password that is not a URL: ``***`` and its last four characters (none for a short value)."""
+    if not value or is_masked(value):
+        return value
+    text = str(value).strip()
+    return f"{MASK}{text[-4:]}" if len(text) > 12 else MASK
+
+
 def redact_text(text: str | None) -> str | None:
     """The text with every URL that carries a secret masked; other text unchanged."""
     if not text or "://" not in text:
@@ -132,8 +140,8 @@ def refuse_masked(url: str) -> None:
     """Raise when asked to send to an address that was masked: its secret is no longer known."""
     if is_masked(url):
         raise ValueError(
-            f"The address {url} was masked when the plan was kept, so its secret is no longer known and nothing "
-            "was sent. Give the address again, or set it in the daemon's settings."
+            f"The address {url} was hidden when the plan was kept and its secret could not be restored, so nothing "
+            "was sent. Give the address again, or connect the service in Settings > Connections."
         )
 
 

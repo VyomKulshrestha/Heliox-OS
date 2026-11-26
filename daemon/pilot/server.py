@@ -306,6 +306,8 @@ CONFIG_MUTATING_RPC_METHODS = frozenset(
         "mesh_configure",
         "store_api_key",
         "delete_api_key",
+        "connection_save",
+        "connection_remove",
         "co_adaptation_config_update",
         "co_adaptation_consent_grant",
         "co_adaptation_consent_revoke",
@@ -325,6 +327,7 @@ SETTINGS_RPC_METHODS = CONFIG_MUTATING_RPC_METHODS | frozenset(
         "mesh_status",
         "air_handoff_status",
         "list_api_keys",
+        "connections_status",
         "autonomy_review_status",
         "get_security_status",
         "co_adaptation_status",
@@ -336,8 +339,10 @@ SETTINGS_RPC_METHODS = CONFIG_MUTATING_RPC_METHODS | frozenset(
     }
 )
 # Vault entries owned by other features; the generic API-key RPCs must not overwrite or delete them.
-RESERVED_VAULT_NAMES = frozenset({"heliox_mesh"})
-RESERVED_VAULT_PREFIXES = ("ssh:", "air_handoff:")
+RESERVED_VAULT_NAMES = frozenset(
+    {"heliox_mesh", "slack_webhook", "slack_bot_token", "slack_channel_id", "discord_webhook", "github_token"}
+)
+RESERVED_VAULT_PREFIXES = ("ssh:", "air_handoff:", "plan_secret:")
 # Settings that are only read when Heliox starts; changing them returns restart_required.
 RESTART_REQUIRED_KEYS = {
     "screen_vision": {"capture_timeout_seconds", "max_consecutive_timeouts", "auto_resume_after_seconds"},
@@ -1527,8 +1532,17 @@ class PilotServer:
         self._audit_logger = audit  # the archive action holds its write lock (pilot.security.audit_archive)
         self._permission_audit = PermissionEscalationAuditStore()
         await self._permission_audit.initialize()
-        self._checkpoint_store = WorkflowCheckpointStore()
+        from pilot.security.plan_secrets import PlanSecretKeeper
+
+        # A kept plan is stored masked; its webhook addresses and tokens wait in the credential store so a resume
+        # can still run the step that needs them (pilot.security.plan_secrets).
+        plan_secrets = PlanSecretKeeper(self._vault)
+        self._checkpoint_store = WorkflowCheckpointStore(secrets=plan_secrets)
         await self._checkpoint_store.initialize()
+        try:
+            await plan_secrets.sweep()
+        except Exception:  # noqa: BLE001 - an old entry left until the next start is no reason to stop starting
+            logger.warning("Could not remove expired plan secrets", exc_info=True)
         self._durable_tasks = DurableTaskStore()
         await self._durable_tasks.initialize()
         recovery = await self._durable_tasks.recover_incomplete()
@@ -1844,6 +1858,10 @@ class PilotServer:
 
         # The mail and calendar verifiers sign in afresh with the saved IMAP and CalDAV settings to read back.
         configure_read_back(self.config, self._vault)
+        from pilot.system import connections
+
+        # Mail, Slack, Discord and GitHub: Settings (credential store) first, then environment variables.
+        connections.configure(self.config, self._vault)
 
         # Destructive Critic Agent — secondary safety reviewer for Tier 4 plans.
         from pilot.agents.destructive_critic import DestructiveCriticAgent
@@ -2452,6 +2470,10 @@ class PilotServer:
             "subscription_login": self._handle_subscription_login,
             "calendar_test_connection": self._handle_calendar_test_connection,
             "email_test_connection": self._handle_email_test_connection,
+            "connections_status": self._handle_connections_status,
+            "connection_save": self._handle_connection_save,
+            "connection_remove": self._handle_connection_remove,
+            "connection_test": self._handle_connection_test,
             "ssh_list_hosts": self._handle_ssh_list_hosts,
             "ssh_set_enabled": self._handle_ssh_set_enabled,
             "ssh_save_host": self._handle_ssh_save_host,
@@ -11720,6 +11742,127 @@ class PilotServer:
                 else "Secure OS credential storage is unavailable; API keys cannot be persisted."
             ),
         }
+
+    # -- Connections: mail, Slack, Discord and GitHub (pilot.system.connections) --
+    # Values only travel from the window to the daemon; the answers carry whether each connection is set, where
+    # from, and for a webhook its host and last four characters. Opening Settings sends nothing anywhere.
+
+    _CONNECTION_FIELDS: dict[str, dict[str, str]] = {
+        "slack": {"webhook_url": "slack_webhook", "bot_token": "slack_bot_token", "channel_id": "slack_channel_id"},
+        "discord": {"webhook_url": "discord_webhook"},
+        "github": {"token": "github_token"},
+    }
+
+    async def _handle_connections_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Whether mail, Slack, Discord and GitHub are connected, and from Settings or an environment variable."""
+        from pilot.system import connections
+
+        return await connections.status()
+
+    async def _handle_connection_save(self, params: dict, ws: ServerConnection) -> dict:
+        """Save or replace a connection's values in the credential store; only the fields given change."""
+        from pilot.security.vault import VaultUnavailableError
+        from pilot.system import connections
+
+        service = params.get("service")
+        values = params.get("values")
+        fields = self._CONNECTION_FIELDS.get(service) if isinstance(service, str) else None
+        if fields is None:
+            return {"status": "error", "message": "Mail is set up in Settings > Email integration."}
+        if not isinstance(values, dict) or not values:
+            return {"status": "error", "message": "Nothing to save."}
+        cleaned: dict[str, str] = {}
+        for key, value in values.items():
+            name = fields.get(str(key))
+            if name is None or not isinstance(value, str):
+                return {"status": "error", "message": f"{key} is not a {connections.TITLE[service]} setting."}
+            if not value.strip():
+                continue
+            problem = connections.check_value(name, value)
+            if problem:
+                return {"status": "error", "message": problem, "field": key}
+            cleaned[name] = value.strip()
+        if not cleaned:
+            return {"status": "error", "message": "Nothing to save."}
+        if not self._vault.available:
+            return {
+                "status": "error",
+                "available": False,
+                "message": (await connections.status())["message"],
+            }
+        if service == "slack" and connections.SLACK_WEBHOOK not in cleaned:
+            saved = (await connections.service("slack")).source == connections.SETTINGS
+            if not saved or not (await connections.service("slack")).get(connections.SLACK_WEBHOOK):
+                # A bot token or channel alone would hide a webhook set in the environment and connect nothing.
+                return {"status": "error", "message": "Save the Slack webhook address first.", "field": "webhook_url"}
+        try:
+            for name, value in cleaned.items():
+                await self._vault.store_key(name, value)
+        except VaultUnavailableError as exc:
+            return {"status": "error", "available": False, "message": str(exc)}
+        return await connections.status()
+
+    async def _handle_connection_remove(self, params: dict, ws: ServerConnection) -> dict:
+        """Remove what Settings saved for one connection. Environment variables are not touched."""
+        from pilot.security.vault import VaultUnavailableError
+        from pilot.system import connections
+
+        service = params.get("service")
+        if service == "mail":
+            names: tuple[str, ...] = (self.config.email.password_provider or "email",)
+        elif isinstance(service, str) and service in connections.SERVICE_NAMES:
+            names = connections.SERVICE_NAMES[service]
+        else:
+            return {"status": "error", "message": "Unknown connection."}
+        if not self._vault.available:
+            return {"status": "error", "available": False, "message": (await connections.status())["message"]}
+        try:
+            for name in names:
+                await self._vault.delete_key(name)
+        except VaultUnavailableError as exc:
+            return {"status": "error", "available": False, "message": str(exc)}
+        return await connections.status()
+
+    async def _handle_connection_test(self, params: dict, ws: ServerConnection) -> dict:
+        """Test one connection, only when the person asked.
+
+        Slack and Discord post a real message to the connected channel, so the window must pass
+        ``confirm_post: true`` from the person's own click. GitHub reads the token's own user. Mail has no test here:
+        "Test IMAP" in Settings > Email integration signs in without sending anything.
+        """
+        from pilot.system import api_client, connections
+
+        service = params.get("service")
+        try:
+            if service in {"slack", "discord"}:
+                if params.get("confirm_post") is not True:
+                    return {
+                        "status": "error",
+                        "message": "A test posts a real message to the connected channel; confirm it first.",
+                    }
+                text = "Heliox connection test: this channel is connected."
+                if service == "slack":
+                    await api_client.send_slack_message(text)
+                else:
+                    await api_client.send_discord_message(text)
+                return {"status": "ok", "message": f"{connections.TITLE[service]} accepted the test message."}
+            if service == "github":
+                if not (await connections.service("github")).get(connections.GITHUB_TOKEN):
+                    return {"status": "error", "message": connections.not_connected("github")}
+                answer = json.loads(await api_client.github_api("/user"))
+                body = answer.get("body") if isinstance(answer, dict) else None
+                login = body.get("login") if isinstance(body, dict) else None
+                return {
+                    "status": "ok",
+                    "message": f"GitHub accepted the token for {login}." if login else "GitHub accepted the token.",
+                }
+            if service == "mail":
+                return {"status": "error", "message": "Use Test IMAP in Settings > Email integration."}
+            return {"status": "error", "message": "Unknown connection."}
+        except Exception as exc:  # noqa: BLE001 - the person sees why the test failed; secrets are masked in it
+            from pilot.security.secret_urls import redact_text
+
+            return {"status": "error", "message": redact_text(str(exc)) or "The test failed."}
 
     # -- Subscription-authenticated official CLIs --
 

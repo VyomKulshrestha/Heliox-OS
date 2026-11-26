@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **339 WebSocket RPC methods**. That is the API
+The daemon currently registers **343 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1072,7 +1072,8 @@ defaults are never saved over the person's file; fix the file or use
 
 Settings RPCs (`get_config`, `update_config`, `reset_config`, the dedicated
 `*_config_update` / `*_status` RPCs listed below, `store_api_key`,
-`delete_api_key`, `list_api_keys`) are dispatched out of band, so they answer
+`delete_api_key`, `list_api_keys`, `connections_status`, `connection_save`,
+`connection_remove`) are dispatched out of band, so they answer
 while an `execute` on the same socket is waiting for approval. Writes run one at
 a time under a daemon-wide lock. Before each write the daemon reloads
 `config.toml` if it was edited by hand since the last read; values set only for
@@ -1218,8 +1219,10 @@ keyring and fails closed if the platform store is unavailable.
 
 Saving the key for the selected cloud provider rebuilds the cloud client through
 the model router; generations already using the old client finish before it is
-closed. Entries owned by other features (`heliox_mesh`, and names starting
-with `ssh:` or `air_handoff:`) are refused with
+closed. Entries owned by other features (`heliox_mesh`, the connection names
+`slack_webhook`, `slack_bot_token`, `slack_channel_id`, `discord_webhook` and
+`github_token`, and names starting with `ssh:`, `air_handoff:` or
+`plan_secret:`) are refused with
 `{ "status": "error", "message": "<name> is managed by its own feature" }`.
 
 #### `delete_api_key`
@@ -1235,6 +1238,48 @@ List all providers with stored keys.
 
 **Params:** `{}`
 **Result:** `{ "providers": ["openai", "claude"] }`
+
+---
+
+### Connections (mail, Slack, Discord, GitHub)
+
+Each connection is read from what Settings saved in the operating-system
+credential store, then from the environment variable older setups use
+(`SMTP_*`, `SLACK_WEBHOOK_URL`, `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`,
+`DISCORD_WEBHOOK_URL`, `GITHUB_TOKEN`). A stored secret never comes back to the
+window: the answers say whether a connection is set and where from, and for a
+webhook its host and last four characters.
+
+#### `connections_status`
+**Params:** `{}`
+**Result:** `{ "status": "ok", "available": true, "backend": "WinVaultKeyring", "message": "", "connections": { "mail": { "connected": true, "source": "settings", "account": "me@example.com", "environment_also_set": false, "settings_enabled": true }, "slack": { "connected": true, "source": "settings", "webhook": { "host": "hooks.slack.com", "last4": "x9Qa" }, "read_back": true, "bot_token": true, "channel_id": "C0123ABCD", "environment_also_set": true }, "discord": { "connected": false, "source": "", "webhook": null, "environment_also_set": false }, "github": { "connected": true, "source": "environment", "environment_also_set": false } } }`
+
+`source` is `"settings"`, `"environment"` or `""`. `available` is false when the
+computer has no usable credential store (for example Linux without a Secret
+Service); saving is then refused and environment variables still work.
+
+#### `connection_save`
+Save or replace values of one connection; fields left out or empty keep what is saved.
+
+**Params:** `{ "service": "slack", "values": { "webhook_url": "https://hooks.slack.com/services/...", "bot_token": "xoxb-...", "channel_id": "C0123ABCD" } }`
+(`discord`: `webhook_url`; `github`: `token`.)
+**Result:** the same as `connections_status`, or `{ "status": "error", "message": "...", "field": "webhook_url" }`.
+Mail is saved through `update_config` (`email`) and `store_api_key` (`email`), as before.
+
+#### `connection_remove`
+Remove what Settings saved for `mail` (the app password), `slack`, `discord` or `github`.
+Environment variables are not touched.
+
+**Params:** `{ "service": "discord" }`
+**Result:** the same as `connections_status`.
+
+#### `connection_test`
+Runs only on the person's click. Slack and Discord post a real test message to
+the connected channel and need `"confirm_post": true`; GitHub reads the token's
+own user (`GET /user`); mail has no test here (use `email_test_connection`).
+
+**Params:** `{ "service": "slack", "confirm_post": true }`
+**Result:** `{ "status": "ok", "message": "Slack accepted the test message." }`
 
 ---
 

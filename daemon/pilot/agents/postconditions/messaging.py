@@ -6,9 +6,10 @@ observed difference is a MISMATCH: a read path that cannot look (no token, no ne
 as not verified with its reason and never fails the send. Nothing here raises on purpose.
 
 Slack: an incoming webhook answers ``ok`` and gives no message id. That answer is a receipt, not a read-back,
-and is reported as such. When a bot token and a channel id are configured (``SLACK_BOT_TOKEN``,
-``SLACK_CHANNEL_ID``; the token needs the ``channels:history`` scope, or ``groups:history`` for a private
-channel, and the app must be a member of the channel), the check reads the channel with
+and is reported as such. When a bot token and a channel id are connected (Settings > Connections > Slack, else
+``SLACK_BOT_TOKEN`` and ``SLACK_CHANNEL_ID``; pilot.system.connections; the token needs the ``channels:history``
+scope, or ``groups:history`` for a private channel, and the app must be a member of the channel), the check reads
+the channel with
 ``conversations.history`` from the send time and looks for the text.
 
 Discord: the handler posts with ``?wait=true``, so Discord answers with the message it created. The check reads
@@ -23,7 +24,6 @@ import asyncio
 import html
 import json
 import logging
-import os
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -31,6 +31,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from pilot.actions import ActionResult, ActionType, ApiRequestParams
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.system import connections
 
 logger = logging.getLogger("pilot.agents.postconditions.messaging")
 
@@ -128,23 +129,29 @@ async def slack_message_in_channel(result: ActionResult) -> Outcome:
     if str(answer).strip() != "ok":
         return mismatch(f"Slack answered HTTP {status} but not 'ok' ({str(answer).strip()[:60]!r})")
 
-    configured_webhook = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
-    webhook = (params.webhook_url or configured_webhook).strip()
+    slack = await connections.service("slack")
+    configured_webhook = slack.get(connections.SLACK_WEBHOOK)
+    try:
+        webhook = connections.choose(
+            params.webhook_url, configured_webhook, service_name="slack", what="Slack webhook address"
+        )
+    except ValueError:
+        webhook = ""
     if not urlsplit(webhook).path.startswith("/services/"):
         return unobserved(
             "Slack accepted the message (receipt, no read-back): a workflow webhook decides the text it posts"
         )
-    token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
-    channel = os.environ.get("SLACK_CHANNEL_ID", "").strip()
+    token = slack.get(connections.SLACK_BOT_TOKEN)
+    channel = slack.get(connections.SLACK_CHANNEL)
     if not token or not channel:
         return unobserved(
-            "Slack accepted the message (receipt, no read-back); set SLACK_BOT_TOKEN and SLACK_CHANNEL_ID "
-            "to have it read back"
+            "Slack accepted the message (receipt, no read-back); add a bot token and the channel ID in "
+            f"{connections.WHERE['slack']} to have it read back"
         )
-    if params.webhook_url and params.webhook_url.strip() != configured_webhook:
+    if webhook != configured_webhook:
         return unobserved(
             "Slack accepted the message (receipt, no read-back): the plan used its own webhook, which may "
-            "post to a channel other than SLACK_CHANNEL_ID"
+            f"post to a channel other than the one connected in {connections.WHERE['slack']}"
         )
     sent_at = receipt.get("sent_at")
     if not isinstance(sent_at, int | float):
@@ -208,7 +215,11 @@ async def discord_message_in_channel(result: ActionResult) -> Outcome:
     message_id = str(receipt.get("message_id") or "")
     if not message_id.isdigit():
         return unobserved("Discord accepted the message (receipt) but gave no message id to read back")
-    webhook = (params.webhook_url or os.environ.get("DISCORD_WEBHOOK_URL", "")).strip()
+    stored = (await connections.service("discord")).get(connections.DISCORD_WEBHOOK)
+    try:
+        webhook = connections.choose(params.webhook_url, stored, service_name="discord", what="Discord webhook address")
+    except ValueError:
+        webhook = ""
     target = _discord_message_url(webhook, message_id)
     if target is None:
         return unobserved(

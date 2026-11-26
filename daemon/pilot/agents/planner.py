@@ -187,6 +187,7 @@ API INTEGRATION, MESSAGING & WEBHOOKS (OpenClaw-style Hub):
 - api_github — Params: {{"endpoint": "/user/repos", "method": "GET", "body": null}}
 - api_send_email — Params: {{"to": "user@example.com", "subject": "Hi", "message": "Hello"}}
 - api_webhook, api_slack, api_discord — Params: {{"url": "...", "body": {{"text": "Hello"}}}} / {{"message": "Hello"}} / {{"message": "Hello"}}
+- api_github, api_send_email, api_slack and api_discord use the connections the user set in Settings (mail account, GitHub token, Slack and Discord webhooks). Never put a token, password or webhook_url in their params; if a service is not connected, the step says where to connect it.
 - api_whatsapp — Params: {{"phone": "+1234567890", "message": "Your agent update."}}
 - api_scrape — Web scraping without browser. Params: {{"url": "https://...", "selector": "h1", "extract": "text", "allow_private_network": false}}. Private-network scraping requires explicit user intent and approval.
 
