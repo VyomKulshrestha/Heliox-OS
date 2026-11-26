@@ -270,18 +270,28 @@ async def test_a_call_skips_notifications_and_late_replies_and_returns_its_own()
 
 
 @pytest.mark.asyncio
-async def test_notifications_alone_end_in_a_timeout_within_one_limit() -> None:
+async def test_notifications_alone_end_in_a_timeout_within_one_limit(monkeypatch) -> None:
     import json
-    import time
+    from types import SimpleNamespace
 
+    from pilot.neural import rpc_client
     from pilot.neural.rpc_client import NeuralRpcError, NeuralRpcTransport
 
-    transport = NeuralRpcTransport(url="ws://unused", token="t", timeout_seconds=0.3)
-    transport._connection = QueuedConnection(
-        [json.dumps({"jsonrpc": "2.0", "method": "startup_status", "params": {}})] * 3 + [None]
-    )
-    started = time.monotonic()
+    # The transport's clock moves only as messages arrive, one notification every 0.125 s; the limit is 0.375 s.
+    # One limit for the whole wait gives up after the third notification. A limit per message would read all ten
+    # and then wait again.
+    clock = [100.0]
+    monkeypatch.setattr(rpc_client, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    notification = json.dumps({"jsonrpc": "2.0", "method": "startup_status", "params": {}})
+
+    def arrives_later(_sent: list[str]) -> str:
+        clock[0] += 0.125
+        return notification
+
+    connection = QueuedConnection([arrives_later] * 10)
+    transport = NeuralRpcTransport(url="ws://unused", token="t", timeout_seconds=0.375)
+    transport._connection = connection
 
     with pytest.raises(NeuralRpcError, match="timed out: neural_status"):
         await transport.call("neural_status")
-    assert time.monotonic() - started < 1.5  # one limit for the whole wait, not one per message
+    assert len(connection.messages) == 7  # three read, then the one limit had run out
