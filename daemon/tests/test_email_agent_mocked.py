@@ -120,7 +120,7 @@ async def test_calendar_fetch_reaches_calendar_handler(email_agent):
     results = await email_agent.handle_task("find calendar invitations", plan)
 
     assert results[0].success is True
-    assert json.loads(results[0].output) == []
+    assert json.loads(results[0].output)["events"] == []
 
 
 @pytest.mark.asyncio
