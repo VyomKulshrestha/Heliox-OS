@@ -19,16 +19,20 @@
   "sources": {
     "action_registry": {
       "path": "daemon/pilot/actions.py",
-      "sha256": "054a8f6bd236ceeb82de7dbfcec88a2ed437fd1c4b7698e2cdf229e11bdb3e10"
+      "sha256": "eb09947bfdb19a2f07ca5d235c358f9fa79a7f608516c291adb6b6807a46d384"
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
-      "sha256": "c38214640b9183bd6256f73773656a0e11c0c720c2788b04ca837fbc06b0c122"
+      "sha256": "42d7db38ee3df6f43fa1808c4fe3b9cda1d7cf0ccb877e0cc3e52dc2334c6ed1"
     },
     "postcondition_area_modules": [
       {
         "path": "daemon/pilot/agents/postconditions/__init__.py",
-        "sha256": "efa23947df6957ee87dc5c0ebd6efb34640fec73fc12cfeffd44324c5f486020"
+        "sha256": "eb102b62de6851b951547451f4de87b6a656c9ec05b7388f36c3e18973661ce1"
+      },
+      {
+        "path": "daemon/pilot/agents/postconditions/_in_step.py",
+        "sha256": "d329e569ac499501249ae89ff5553f5dc6dabd5fd3c5818479fde59a13e5ff4d"
       },
       {
         "path": "daemon/pilot/agents/postconditions/_read_only.py",
@@ -44,51 +48,51 @@
       },
       {
         "path": "daemon/pilot/agents/postconditions/browser.py",
-        "sha256": "3aeeef769b2d0c986e2e66daa0ad2599db3def9b2f1864eda490fc6f53ff881c"
+        "sha256": "94b83cf3cf76c73257bf1df9e718d54edb6dc71a664d3652688037a6fb4c4e1d"
       },
       {
         "path": "daemon/pilot/agents/postconditions/browser_ui.py",
-        "sha256": "cf9f33caace87b77e6d7f73cdc9e208acb1cdc22f4a84e3b51436adf58a1a883"
+        "sha256": "5f6d9261b1e41001f4a10f71eb1dd372d11e3d4c98c140375fd0a111eee803f1"
       },
       {
         "path": "daemon/pilot/agents/postconditions/declared.py",
-        "sha256": "ac65e8e16535cbfbd1b6d64844860df2735fd07b0c2d192ba6c109b481c45bbf"
+        "sha256": "eb609e57400effbf372e0938a25c0ffee61e766ce3152fab3028ff9ba6216278"
       },
       {
         "path": "daemon/pilot/agents/postconditions/desktop_input.py",
-        "sha256": "786f3c588a6935eecc3135b62b852580d710ccd062f4aabdb34b4e922d9004f8"
+        "sha256": "e73e70294c79833f052c991d476fa2baf1e68362ab5f13876e4e74687d878a87"
       },
       {
         "path": "daemon/pilot/agents/postconditions/files.py",
-        "sha256": "db14b81b9bbe59fd3988e1f56a9b70cf52f6c4f3adcb28887a8ba8cc270ae137"
+        "sha256": "51174acd904d84f8b3109d18da5ad8bb108de3847080cb620800f3636ac82a21"
       },
       {
         "path": "daemon/pilot/agents/postconditions/git_repo.py",
-        "sha256": "ccf3111c8d85ec5fc496841d34f7475cb11ceff64b30ab5f9a8d8b025bcb7ac9"
+        "sha256": "f6b690ddcd661c9f02ae0f8c60a9169bae9042b78b1ab60cad9bceaadf80fe8c"
       },
       {
         "path": "daemon/pilot/agents/postconditions/local_state.py",
-        "sha256": "3f7c2127beb8da05c1f2697def4d420db1f7f2a6422efef95fa61359082626d7"
+        "sha256": "2a328b27b9cc45de122d1fb6ebf2d0cc886b369956e3a09eb7623c753414c6e2"
       },
       {
         "path": "daemon/pilot/agents/postconditions/mail_calendar.py",
-        "sha256": "c755e86becae17218222d98372e71ed571dd160f3d2f8b1823730303d5f62c17"
+        "sha256": "90f4d2623e9131507d0a5bfbc175f9eb90ee75bfe255e4049ac8d0b29b4a87b9"
       },
       {
         "path": "daemon/pilot/agents/postconditions/messaging.py",
-        "sha256": "fd5aa5e2343ea8fa0a8f428a51d7a39e83257a7b1ec067db3aff1b49a2c0ce7f"
+        "sha256": "3affecbd0378d41b3ac348a7130dfc5e4bbdb09acc3d09d6550e31f9d5d4dfe7"
       },
       {
         "path": "daemon/pilot/agents/postconditions/reads.py",
-        "sha256": "3bd212a6744c0abaa3e018aecb33a7fafbb1c3114d8e6a35d9091db2eb651c95"
+        "sha256": "5ee978120059c46751b65da0d3e84e56cfa3da670cf986baca16ce04524b6d30"
       },
       {
         "path": "daemon/pilot/agents/postconditions/system_state.py",
-        "sha256": "1dd223c4526b8f392da105da93133774e087b4eaa2ca61fe27e48ba5cedfd1c8"
+        "sha256": "1f81f599a79bec526cb8a1ac15700f34f4c0eda06d9ce0f4dfd074af999f2c5b"
       },
       {
         "path": "daemon/pilot/agents/postconditions/triggers_schedules.py",
-        "sha256": "75b210ab883ee563db3d22219910fe53a774ed11b906df7fcf473318910f76a8"
+        "sha256": "c4df8b88dcd0ddf8ce0bae2b4dfd09ea744869288aa9a7940ea1232b261678b6"
       }
     ],
     "plugin_manifests": [
