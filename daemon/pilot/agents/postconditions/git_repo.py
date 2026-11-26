@@ -228,3 +228,72 @@ async def push_landed(result: ActionResult) -> Outcome:
         f"Remote {shown} {remote_ref} points at {_short(found)}, a commit this repository does not have, "
         f"instead of the pushed commit {_short(pushed)}"
     )
+
+
+# ── git_stage, git_branch, git_resolve ───────────────────────────────
+
+
+@register(ActionType.GIT_STAGE, method="index_matches_worktree_postcondition")
+async def stage_landed(result: ActionResult) -> Outcome:
+    """For the requested paths the index holds what is in the working tree: no unstaged change, no untracked file."""
+
+    params: GitParams = result.action.parameters  # type: ignore[assignment]
+    repo = _repo(params)
+    files = [name for name in params.files if name] or ["."]
+    code, _ = await _git(repo, "diff", "--quiet", "--no-ext-diff", "--no-textconv", "--", *files)
+    if code == 1:
+        return mismatch("Some of the requested files still have changes that are not staged")
+    if code != 0:
+        return unobserved("git could not compare the working tree with the index")
+    code, untracked = await _git(repo, "ls-files", "--others", "--exclude-standard", "--", *files)
+    if code != 0:
+        return unobserved("git could not list untracked files")
+    left = [line for line in untracked.splitlines() if line.strip()]
+    if left:
+        return mismatch(f"{len(left)} requested file(s) are still untracked, for example {left[0]}")
+    return verified(f"The index holds the working tree's content for {len(files)} requested path(s)")
+
+
+@register(ActionType.GIT_BRANCH, method="current_branch_postcondition")
+async def branch_landed(result: ActionResult) -> Outcome:
+    """The branch exists and HEAD is on it."""
+
+    params: GitParams = result.action.parameters  # type: ignore[assignment]
+    repo = _repo(params)
+    # The handler turns spaces and slashes into dashes; the check expects the same name.
+    name = params.name.strip().replace(" ", "-").replace("/", "-")
+    if not name:
+        raise ValueError("Branch action has no branch name to observe")
+    code, _ = await _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}")
+    if code == -1:
+        return unobserved("git could not be run to read the branch back")
+    if code != 0:
+        return mismatch(f"Branch {name} does not exist")
+    code, current = await _git(repo, "symbolic-ref", "--quiet", "--short", "HEAD")
+    current = current.strip() if code == 0 else ""
+    if current != name:
+        return mismatch(f"HEAD is on {current or 'a detached commit'}, not on branch {name}")
+    return verified(f"HEAD is on branch {name}")
+
+
+@register(ActionType.GIT_RESOLVE, method="conflict_block_replaced_postcondition")
+async def resolve_landed(result: ActionResult) -> Outcome:
+    """The file on disk no longer holds the conflict block and holds the resolved code in its place."""
+    import asyncio
+
+    from pilot.actions import GitResolveParams
+
+    params: GitResolveParams = result.action.parameters  # type: ignore[assignment]
+    if not params.path or not params.full_block:
+        raise ValueError("Conflict resolution has no file or conflict block to observe")
+    path = Path(params.path)
+    if not path.is_file():
+        return mismatch(f"{params.path} does not exist after the conflict was resolved")
+    content = await asyncio.to_thread(path.read_text, "utf-8")
+    if params.full_block in params.resolved_code:
+        return unobserved("The resolved code contains the conflict block itself; the two cannot be told apart")
+    if params.full_block in content:
+        return mismatch(f"{params.path} still holds the conflict block")
+    if params.resolved_code and params.resolved_code not in content:
+        return mismatch(f"{params.path} does not hold the resolved code")
+    return verified(f"{params.path} holds the resolved code in place of the conflict block")

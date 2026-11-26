@@ -104,6 +104,9 @@ def _assert_mismatch(verification, *words: str) -> None:
 def test_git_verifiers_are_registered() -> None:
     assert POSTCONDITION_VERIFIERS[ActionType.GIT_COMMIT] == "commit_content_postcondition"
     assert POSTCONDITION_VERIFIERS[ActionType.GIT_PUSH] == "remote_ref_postcondition"
+    assert POSTCONDITION_VERIFIERS[ActionType.GIT_STAGE] == "index_matches_worktree_postcondition"
+    assert POSTCONDITION_VERIFIERS[ActionType.GIT_BRANCH] == "current_branch_postcondition"
+    assert POSTCONDITION_VERIFIERS[ActionType.GIT_RESOLVE] == "conflict_block_replaced_postcondition"
 
 
 # ── git_commit ───────────────────────────────────────────────────────
@@ -413,3 +416,88 @@ def test_remote_reads_never_wait_for_a_person(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i custom-key")
     assert git_repo.non_interactive_git_env()["GIT_SSH_COMMAND"] == "ssh -i custom-key"
     assert os.environ["GIT_SSH_COMMAND"] == "ssh -i custom-key"
+
+
+# ── git_stage, git_branch, git_resolve ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stage_verifies_and_a_later_edit_is_a_mismatch(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _commit_file(repo, "a.txt", "one", "start")
+    (repo / "a.txt").write_text("two", encoding="utf-8")
+    (repo / "new.txt").write_text("new", encoding="utf-8")
+
+    result = await _run(ActionType.GIT_STAGE, GitParams(repo_path=str(repo), files=["a.txt", "new.txt"]))
+
+    assert result.success is True
+    _assert_verified(await _verify(result))
+    (repo / "a.txt").write_text("three", encoding="utf-8")
+    _assert_mismatch(await _verify(result), "not staged")
+
+
+@pytest.mark.asyncio
+async def test_stage_leaving_an_untracked_file_is_a_mismatch(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _commit_file(repo, "a.txt", "one", "start")
+    (repo / "new.txt").write_text("new", encoding="utf-8")
+    action = Action(action_type=ActionType.GIT_STAGE, parameters=GitParams(repo_path=str(repo), files=["new.txt"]))
+
+    verification = await _verify(ActionResult(action=action, success=True, output="{}"))
+
+    _assert_mismatch(verification, "untracked")
+
+
+@pytest.mark.asyncio
+async def test_stage_of_a_missing_file_is_a_failed_action(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+
+    result = await _run(ActionType.GIT_STAGE, GitParams(repo_path=str(repo), files=["missing.txt"]))
+
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_branch_create_verifies_and_switching_away_is_a_mismatch(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _commit_file(repo, "a.txt", "one", "start")
+
+    result = await _run(ActionType.GIT_BRANCH, GitParams(repo_path=str(repo), name="feature/login", create=True))
+
+    assert json.loads(result.output)["branch"] == "feature-login"
+    _assert_verified(await _verify(result))
+    _git(repo, "switch", "main")
+    _assert_mismatch(await _verify(result), "not on branch feature-login")
+
+
+@pytest.mark.asyncio
+async def test_branch_that_does_not_exist_is_a_mismatch_and_a_failed_switch_fails(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _commit_file(repo, "a.txt", "one", "start")
+    action = Action(
+        action_type=ActionType.GIT_BRANCH, parameters=GitParams(repo_path=str(repo), name="nope", create=False)
+    )
+
+    _assert_mismatch(await _verify(ActionResult(action=action, success=True, output="{}")), "does not exist")
+    assert (await _run(ActionType.GIT_BRANCH, action.parameters)).success is False
+
+
+_CONFLICT = "<<<<<<< HEAD\nx = 1\n=======\nx = 2\n>>>>>>> other\n"
+
+
+@pytest.mark.asyncio
+async def test_resolve_verifies_and_a_restored_block_is_a_mismatch(tmp_path: Path) -> None:
+    from pilot.actions import GitResolveParams
+
+    path = tmp_path / "code.py"
+    path.write_text("a = 0\n" + _CONFLICT + "b = 3\n", encoding="utf-8")
+    params = GitResolveParams(path=str(path), full_block=_CONFLICT, resolved_code="x = 2\n")
+    action = Action(action_type=ActionType.GIT_RESOLVE, parameters=params)
+    output = await Executor._exec_git_resolve(MagicMock(), action)
+    result = ActionResult(action=action, success=True, output=output)
+
+    _assert_verified(await _verify(result))
+    path.write_text("a = 0\n" + _CONFLICT + "b = 3\n", encoding="utf-8")
+    _assert_mismatch(await _verify(result), "still holds the conflict block")
+    path.write_text("a = 0\nb = 3\n", encoding="utf-8")
+    _assert_mismatch(await _verify(result), "does not hold the resolved code")
