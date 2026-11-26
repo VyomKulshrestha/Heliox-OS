@@ -13,12 +13,20 @@ the whole series; the fields compared are those of the series itself (the VEVENT
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
 _UID_NOTE = re.compile(r"\(UID ([^\s()]+)\)")
+
+# Pauses before each look for a new event: a server may take a moment to show what it accepted. Three looks and 3 s
+# of waiting, inside the verifier's own time limit.
+LOOK_PAUSES_SECONDS = (0.0, 1.0, 2.0)
+
+# Replaced in tests by a recorder, so no test waits in real time.
+_pause = asyncio.sleep
 
 
 def event_uid_note(uid: str) -> str:

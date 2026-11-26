@@ -444,6 +444,15 @@ IRREVERSIBLE_ACTIONS = {
     ActionType.GIT_PUSH,
 }
 
+# Actions whose post-condition MISMATCH is settled by the person, never by running the action again: the action
+# succeeded and left something others can see (an event on a shared calendar), so a retry would add a second one
+# beside the wrong one. Unlike IRREVERSIBLE_ACTIONS this adds no approval prompt; it only stops the retry.
+RECONCILE_NOT_RETRY_ACTIONS = frozenset(
+    {
+        ActionType.CALENDAR_CREATE_EVENT,
+    }
+)
+
 
 # -- Parameter models --
 

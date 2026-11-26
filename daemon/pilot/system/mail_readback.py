@@ -50,7 +50,9 @@ SENT_FOLDER_NAMES = (
 )
 
 # IMAP hosts whose provider files every message sent through its SMTP server in the Sent folder by itself. For other
-# providers a missing copy proves nothing: many keep one only when the mail program appends it.
+# providers a missing copy proves nothing: many keep one only when the mail program appends it. Gmail's filing is its
+# documented behaviour; for the Microsoft hosts (Outlook.com, Microsoft 365) it is the expected behaviour, not yet
+# confirmed against a live account.
 FILES_SMTP_MAIL_IN_SENT = frozenset(
     {
         "imap.gmail.com",

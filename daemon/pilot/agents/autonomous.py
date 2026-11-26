@@ -26,7 +26,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
-from pilot.actions import ActionPlan, ActionType
+from pilot.actions import RECONCILE_NOT_RETRY_ACTIONS, ActionPlan, ActionType
 from pilot.security.gateway import InvocationSource, TaskScopeOverride
 from pilot.security.human_control import agent_initiated
 
@@ -1297,6 +1297,14 @@ class AutonomousExecutor:
                 failure = "; ".join(errors) or verification_details or "verification failed"
                 progress.append(f"Round {round_index + 1} failed verification: {failure}")
                 step.error = failure
+                if any(
+                    0 <= index < len(results)
+                    and results[index].success
+                    and results[index].action.action_type in RECONCILE_NOT_RETRY_ACTIONS
+                    for index in verification.failed_actions
+                ):
+                    # The action worked but left the wrong thing behind; another round would add a second one.
+                    break
             else:
                 step.error = f"Goal was not verified complete after {MAX_AUTONOMOUS_ROUNDS_PER_STEP} adaptive rounds."
         except asyncio.CancelledError:

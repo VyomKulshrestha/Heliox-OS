@@ -738,12 +738,18 @@ def _approval_effect(action: Any) -> str:
 
 
 def _postcondition_failure_requires_reconciliation(results: list[Any], verification: Any) -> bool:
-    """Stop before repeating a destructive action whose effect is uncertain."""
+    """Stop before repeating a destructive action whose effect is uncertain, or one the person must reconcile."""
+    from pilot.actions import RECONCILE_NOT_RETRY_ACTIONS
+
     for index in getattr(verification, "failed_actions", []):
         if not isinstance(index, int) or index < 0 or index >= len(results):
             continue
         result = results[index]
-        if result.success and (result.action.requires_snapshot or result.action.is_irreversible):
+        if result.success and (
+            result.action.requires_snapshot
+            or result.action.is_irreversible
+            or result.action.action_type in RECONCILE_NOT_RETRY_ACTIONS
+        ):
             return True
     return False
 

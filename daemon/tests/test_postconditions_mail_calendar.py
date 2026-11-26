@@ -316,7 +316,7 @@ async def test_a_search_that_cannot_be_made_is_not_verified_never_a_mismatch(
 
     assert verification.passed is True
     assert verification.independently_observed_actions == []
-    assert "Not verified" in (await _detail(result))
+    assert "could not check its copy in Sent" in (await _detail(result))
     assert "app-password" not in (await _detail(result))
     assert pauses == []
 
@@ -512,6 +512,8 @@ class FakeCalendarServer:
         self.ignore_deletes = False
         self.store_under_own_uid = False
         self.shift_start = timedelta(0)
+        self.hidden_looks = 0
+        self.lookups = 0
 
     def put(self, uid: str, *, summary: str, start: datetime, end: datetime | None = None) -> None:
         """Store the event as a server does: times in UTC (a time without a zone is taken in this computer's zone)."""
@@ -542,11 +544,14 @@ class FakeCalendarServer:
                 server.put(stored_uid, summary=summary, start=dtstart + server.shift_start, end=dtend)
 
             def event_by_uid(self, uid: str) -> FakeEvent:
-                if uid not in server.events:
+                server.lookups += 1
+                if uid not in server.events or server.lookups <= server.hidden_looks:
                     raise NotFoundError(f"{uid} not found on server")
                 return FakeEvent(uid)
 
             def search(self, **_criteria: object) -> list[FakeEvent]:
+                if server.lookups <= server.hidden_looks:
+                    return []
                 return [FakeEvent(uid) for uid in server.events]
 
         class FakePrincipal:
@@ -569,7 +574,14 @@ class FakeCalendarServer:
 def calendar_server(monkeypatch: pytest.MonkeyPatch) -> FakeCalendarServer:
     import caldav
 
+    from pilot.system import calendar_readback
+
+    async def no_wait(seconds: float) -> None:
+        server.pauses.append(seconds)
+
     server = FakeCalendarServer()
+    server.pauses = []
+    monkeypatch.setattr(calendar_readback, "_pause", no_wait)
     monkeypatch.setattr(caldav, "DAVClient", server.client_class())
     return server
 
@@ -662,14 +674,47 @@ async def test_event_kept_under_the_servers_own_uid_still_verifies(calendar_serv
 
 
 @pytest.mark.asyncio
-async def test_created_event_missing_from_the_server_is_a_mismatch(calendar_server, calendar_settings) -> None:
+async def test_created_event_not_found_after_the_wait_is_not_verified_and_not_created_again(
+    calendar_server, calendar_settings
+) -> None:
     result = await _create(calendar_settings)
     calendar_server.events.clear()
 
     verification = await _verify(result)
 
-    assert verification.passed is False
-    assert 'none called "Dentist"' in verification.details[0]
+    assert verification.passed is True
+    assert verification.independently_observed_actions == []
+    assert calendar_server.pauses == [1.0, 2.0]
+    assert "Heliox did not create it again" in (await _detail(result))
+
+
+@pytest.mark.asyncio
+async def test_created_event_shown_late_by_a_slow_server_verifies(calendar_server, calendar_settings) -> None:
+    result = await _create(calendar_settings)
+    calendar_server.hidden_looks = calendar_server.lookups + 2
+
+    verification = await _verify(result)
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0]
+    assert calendar_server.pauses == [1.0, 2.0]
+
+
+def test_a_wrong_created_event_stops_the_run_instead_of_creating_it_again() -> None:
+    from pilot.actions import FileParams, VerificationResult
+    from pilot.server import _postcondition_failure_requires_reconciliation
+
+    create = Action(
+        action_type=ActionType.CALENDAR_CREATE_EVENT,
+        parameters=CalendarParams(summary="Dentist", start="2026-12-01T10:00:00"),
+    )
+    write = Action(action_type=ActionType.FILE_WRITE, parameters=FileParams(path="notes.txt", content="x"))
+    failed = VerificationResult(passed=False, failed_actions=[0])
+
+    assert create.is_irreversible is False
+    assert create.requires_snapshot is False
+    assert _postcondition_failure_requires_reconciliation([ActionResult(action=create, success=True)], failed)
+    assert not _postcondition_failure_requires_reconciliation([ActionResult(action=write, success=True)], failed)
 
 
 @pytest.mark.asyncio
@@ -681,7 +726,7 @@ async def test_unreachable_calendar_is_not_verified(calendar_server, calendar_se
 
     assert verification.passed is True
     assert verification.independently_observed_actions == []
-    assert "Not verified" in (await _detail(created))
+    assert "could not read the new event back" in (await _detail(created))
     assert "calendar-password" not in (await _detail(created))
 
 

@@ -41,7 +41,7 @@ def configure_read_back(config: Any, vault: Any) -> None:
 
 # ── Mail ─────────────────────────────────────────────────────────────────────
 
-_RECEIPT = "The mail server accepted the message (an SMTP receipt)"
+_RECEIPT = "The mail server accepted the message"
 
 
 def _sender(result: ActionResult) -> str:
@@ -63,7 +63,7 @@ async def _imap_account(sender: str) -> tuple[Any, str]:
     if settings is None or _vault is None:
         return None, "mail read-back is not set up in this process"
     if not settings.enabled or not settings.imap_host or not settings.username:
-        return None, "reading mail (IMAP) is not set up in Settings, so the copy in Sent was not looked for"
+        return None, "reading mail (IMAP) is not set up in Settings"
     if sender and sender.strip().casefold() != settings.username.strip().casefold():
         return None, "the message went out from a different account than the one set up for reading mail"
     try:
@@ -89,13 +89,15 @@ async def _sent_copy_outcome(result: ActionResult, *, original: str = "", is_rep
 
     message_id = mail_readback.message_id_from_output(result.output)
     if not message_id:
-        return unobserved(f"{_RECEIPT}; the send named no Message-ID, so its copy in Sent could not be looked up")
+        return unobserved(
+            f"{_RECEIPT}, but the send named no Message-ID, so Heliox could not look for its copy in Sent."
+        )
     account, why = await _imap_account(_sender(result))
     if account is None:
-        return unobserved(f"{_RECEIPT}; {why}. Not verified.")
+        return unobserved(f"{_RECEIPT}, but Heliox could not check its copy in Sent: {why}.")
     copy = await mail_readback.find_sent_copy(account, message_id)
     if copy.state == "unavailable":
-        return unobserved(f"{_RECEIPT}; its copy in Sent could not be checked: {copy.reason}. Not verified.")
+        return unobserved(f"{_RECEIPT}, but Heliox could not check its copy in Sent: {copy.reason}.")
     if copy.state == "absent":
         looked = f'no copy with Message-ID {message_id} is in "{copy.folder}" after {copy.searches} searches'
         if account.host.casefold() in mail_readback.FILES_SMTP_MAIL_IN_SENT:
@@ -104,8 +106,8 @@ async def _sent_copy_outcome(result: ActionResult, *, original: str = "", is_rep
                 "sends there. Heliox did not send it again: look in Sent before sending it again."
             )
         return unobserved(
-            f"{_RECEIPT}; {looked}, and {account.host} may not keep a copy of mail sent over SMTP. Not verified; "
-            "Heliox did not send it again."
+            f"{_RECEIPT}, but {looked}, and {account.host} may not keep a copy of mail sent this way. Heliox "
+            "did not send it again."
         )
     where = f'"{copy.folder}" ({copy.found_by})'
     if not is_reply:
@@ -218,7 +220,7 @@ async def event_absent(result: ActionResult) -> Outcome:
 
     answer, why = await _read_calendar(getattr(params, "calendar_id", None), still_there)
     if answer is None:
-        return unobserved(f"Could not check that event {uid} is gone: {why}. Not verified.")
+        return unobserved(f"Heliox could not check that event {uid} is gone from the calendar, because {why}.")
     if answer:
         return mismatch(f"Event {uid} is still on the CalDAV server after the delete")
     return verified(f"No event with UID {uid} remains on the CalDAV server")
@@ -238,7 +240,9 @@ async def event_matches(result: ActionResult) -> Outcome:
     params = result.action.parameters
     uid = readback.event_uid_from_output(result.output)
     if not uid:
-        return unobserved("The create named no event UID, so the event could not be read back")
+        return unobserved(
+            "The calendar server accepted the event, but the create named no UID, so Heliox could not read it back."
+        )
     summary = str(getattr(params, "summary", "") or "")
     start = datetime.fromisoformat(str(getattr(params, "start", "")))
     end_text = getattr(params, "end", None)
@@ -250,20 +254,30 @@ async def event_matches(result: ActionResult) -> Outcome:
             return "uid", readback.series_component(event)
         return "similar", readback.events_like(calendar, summary, start)
 
-    answer, why = await _read_calendar(getattr(params, "calendar_id", None), look)
-    if answer is None:
-        return unobserved(f"Could not read event {uid} back: {why}. Not verified.")
-    kind, found = answer
     when = readback.describe(start)
+    looks = len(readback.LOOK_PAUSES_SECONDS)
+    waited = 0.0
+    for pause in readback.LOOK_PAUSES_SECONDS:
+        if pause:
+            await readback._pause(pause)
+            waited += pause
+        answer, why = await _read_calendar(getattr(params, "calendar_id", None), look)
+        if answer is None:
+            return unobserved(f"Heliox could not read the new event back from the calendar, because {why}.")
+        kind, found = answer
+        if kind == "uid" or found:
+            break
     if kind == "similar":
         if found:
             # Some servers keep an event under a UID of their own; the event itself is what was asked for.
-            return verified(f'"{summary}" is on the CalDAV server at {when}, kept under the UID {found[0]}')
-        return mismatch(
-            f'No event with UID {uid}, and none called "{summary}" at {when}, is on the CalDAV server after the create'
+            return verified(f'"{summary}" is on the calendar at {when}, kept under the UID {found[0]}')
+        # A slow server can still be filing it: "not there yet" is no reason to create a second event.
+        return unobserved(
+            f'The calendar server accepted "{summary}" at {when}, but it was not found there after {looks} looks over '
+            f"{waited:g} s. Heliox did not create it again; check the calendar before adding it again."
         )
     if found is None:
-        return mismatch(f"Event {uid} on the CalDAV server holds no VEVENT")
+        return mismatch(f"Event {uid} on the calendar server holds no event data")
     differences = []
     found_summary = str(found.get("summary", ""))
     if found_summary != summary:
@@ -276,8 +290,9 @@ async def event_matches(result: ActionResult) -> Outcome:
         if not readback.same_moment(end, found_end):
             differences.append(f"end {readback.describe(found_end)} instead of {readback.describe(end)}")
     if differences:
+        # This action is in RECONCILE_NOT_RETRY_ACTIONS, so the run stops here and the person sees this text.
         return mismatch(
-            f"Event {uid} is on the CalDAV server with {'; '.join(differences)}. Correct or delete it before "
-            "creating it again."
+            f'The calendar now holds "{found_summary}" with {"; ".join(differences)}. Heliox did not create it '
+            "again: correct or delete that event yourself."
         )
-    return verified(f'Event {uid} "{summary}" is on the CalDAV server at {when} as requested')
+    return verified(f'Event {uid} "{summary}" is on the calendar at {when} as requested')
