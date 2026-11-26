@@ -214,11 +214,11 @@ async def test_the_service_downloads_on_request_reports_progress_and_switches_wh
     assert started["status"] == "started"
     assert (await service.download(model.id))["status"] == "started"  # already under way: not started twice
     assert service.list()["waiting"] == []
-    for _ in range(200):
-        if ready:
-            break
-        await asyncio.sleep(0.02)
-    await asyncio.sleep(0.05)
+    await service._task  # the download itself, in its worker thread, to its end
+    # Progress reaches the window by call_soon_threadsafe and a task, scheduled before the thread ended: counted
+    # turns of the event loop let the last of them run.
+    for _ in range(10):
+        await asyncio.sleep(0)
     states = [params["state"] for method, params in sent if method == "speech_model_progress"]
     assert states[0] == "queued" and states[-1] == "ready" and "verifying" in states
     assert ready == [model.id] and service.list()["active"] == ""
@@ -318,10 +318,8 @@ async def test_a_second_model_asked_for_during_a_download_waits_its_turn(tmp_pat
     assert (await service.download(first.id))["status"] == "started"
     assert (await service.download(second.id))["status"] == "queued"
     assert service.list()["waiting"] == [second.id]
-    for _ in range(300):
-        if len(ready) == 2:
-            break
-        await asyncio.sleep(0.02)
+    await service._task  # the first download; as it ends it starts the one waiting, which is then the service's task
+    await service._task
     assert ready == [first.id, second.id]  # in the order asked, one at a time
 
 
