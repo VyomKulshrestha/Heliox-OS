@@ -2758,6 +2758,7 @@
   <LazyPanel load={() => import("./PassingNotesPanel.svelte")} />
   <LazyPanel load={() => import("./OptionalParts.svelte")} />
   <LazyPanel load={() => import("./RemoveHelioxFiles.svelte")} />
+  <LazyPanel load={() => import("./ConnectionsPanel.svelte")} />
 </div>
 
 <style>
