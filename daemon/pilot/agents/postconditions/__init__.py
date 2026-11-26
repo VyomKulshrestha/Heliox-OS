@@ -33,6 +33,8 @@ from typing import NamedTuple
 from pilot.actions import ActionResult, ActionType
 
 DEFAULT_TIMEOUT_SECONDS = 20.0
+# skip_reason of the synthetic result a pre-check passes to a verifier, before the action has run.
+PRECHECK = "precheck"
 
 
 class Outcome(NamedTuple):
@@ -41,6 +43,11 @@ class Outcome(NamedTuple):
     passed: bool
     detail: str
     observed: bool
+
+
+def is_precheck(result: ActionResult) -> bool:
+    """True when the executor asks before running the action whether its state already holds."""
+    return result.skip_reason == PRECHECK and not result.executed
 
 
 def verified(detail: str) -> Outcome:

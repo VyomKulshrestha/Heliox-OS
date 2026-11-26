@@ -286,3 +286,28 @@ async def test_a_delete_of_a_name_that_matches_nothing_is_never_skipped(
     state = await Verifier(MagicMock()).check_already_satisfied(action)
 
     assert state is None or state[0] is False
+
+
+@pytest.mark.asyncio
+async def test_a_verifier_can_tell_a_precheck_from_a_check_after_the_action(
+    monkeypatch: pytest.MonkeyPatch, scratch_registry: dict
+) -> None:
+    seen: list[bool] = []
+
+    async def check(result: ActionResult) -> Outcome:
+        seen.append(postconditions.is_precheck(result))
+        return mismatch("not there yet")
+
+    register(ActionType.FILE_HASH, method="test_postcondition", precheck=True)(check)
+    monkeypatch.setattr(verifier_module, "_AREA_VERIFIERS", postconditions.registrations())
+    monkeypatch.setattr(
+        verifier_module,
+        "_PRECHECKABLE_POSTCONDITIONS",
+        verifier_module._PRECHECKABLE_POSTCONDITIONS | {ActionType.FILE_HASH},
+    )
+    action = Action(action_type=ActionType.FILE_HASH, target="x", parameters=FileParams(path="x"))
+
+    await Verifier(MagicMock()).check_already_satisfied(action)
+    await Verifier(MagicMock()).verify(ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
+
+    assert seen == [True, False]

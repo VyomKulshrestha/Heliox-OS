@@ -27,6 +27,7 @@ from pilot.actions import (
     WindowParams,
 )
 from pilot.agents import postconditions
+from pilot.agents.postconditions import PRECHECK
 from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
@@ -166,7 +167,8 @@ class Verifier:
             params: PackageParams = action.parameters  # type: ignore[assignment]
             if params.version or params.repository:
                 return None
-        passed, detail, observed = await self._verify_single(ActionResult(action=action, success=True))
+        probe = ActionResult(action=action, success=True, executed=False, skip_reason=PRECHECK)
+        passed, detail, observed = await self._verify_single(probe)
         if not observed:
             # Could not look (no credentials, no probe on this platform, time limit, an error): that is not
             # evidence the state is already there, so the action runs.
