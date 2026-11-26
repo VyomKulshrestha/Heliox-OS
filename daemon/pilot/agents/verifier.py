@@ -30,7 +30,7 @@ from pilot.actions import (
 )
 from pilot.agents import postconditions
 from pilot.agents.postconditions import PRECHECK
-from pilot.agents.unconfirmed import Kind, classify, no_check_kind
+from pilot.agents.unconfirmed import VERIFY_GRACE_SECONDS, Kind, classify, no_check_kind
 from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
@@ -269,7 +269,8 @@ class Verifier:
         else:
             task = asyncio.create_task(run_checks(), name="verification-checks")
             try:
-                await self._wait_budget(task, budget)
+                # The grace covers the last read of a check whose own wait ends inside the budget.
+                await self._wait_budget(task, budget + VERIFY_GRACE_SECONDS)
             except asyncio.CancelledError:
                 task.cancel()
                 await asyncio.wait({task})

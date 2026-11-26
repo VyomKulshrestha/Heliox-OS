@@ -25,8 +25,13 @@ from pilot.actions import ActionResult, ActionType
 from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
 from pilot.agents.unconfirmed import Kind
 
-APP_WINDOW_WAIT_SECONDS = 3.0  # the launch was earlier in the plan; this is extra time
+# How long after its launch an app's window is looked for. Counted from the launch (desktop_observe.launch_done),
+# not from when the check starts, so a check that starts later waits only what is left: an app that never
+# shows a window (one that lives in the tray) costs the reply at most this long after the launch, inside the
+# reply's own budget (pilot.agents.unconfirmed.VERIFY_BUDGET_SECONDS).
+APP_WINDOW_WAIT_SECONDS = 3.0
 APP_POLL_SECONDS = 0.5
+APP_POLLS = round(APP_WINDOW_WAIT_SECONDS / APP_POLL_SECONDS)
 MEDIA_KEYS = frozenset({"playpause", "nexttrack", "prevtrack", "volumeup", "volumedown", "volumemute"})
 
 NO_READING = "No reading was made right after the step"
@@ -340,7 +345,12 @@ async def application_window(result: ActionResult) -> Outcome:
         return unobserved(f"{name} was already opened in this task", kind=Kind.NOT_OBSERVABLE)
     before = facts.get("windows_before")
     started_pid = int(facts.get("pid", 0) or 0)
-    waited = 0.0
+    launched_at = facts.get("launched_at")
+    # The wait ends APP_WINDOW_WAIT_SECONDS after the launch, whatever the reads of the window list cost on the way;
+    # the number of pauses is capped as well, so a clock that does not move cannot make it wait longer.
+    start = float(launched_at) if isinstance(launched_at, int | float) else observe.clock()
+    deadline = min(start, observe.clock()) + APP_WINDOW_WAIT_SECONDS
+    pauses = 0
     while True:
         try:
             rows = await observe.window_rows()
@@ -358,12 +368,14 @@ async def application_window(result: ActionResult) -> Outcome:
                 return verified(
                     f"A new window of {new[0].name or 'an app'} appeared after the launch (the window list)"
                 )
-        if waited >= APP_WINDOW_WAIT_SECONDS:
+        left = deadline - observe.clock()
+        if left <= 0 or pauses >= APP_POLLS:
             break
-        await _sleep(APP_POLL_SECONDS)
-        waited += APP_POLL_SECONDS
+        await _sleep(min(APP_POLL_SECONDS, left))
+        pauses += 1
     return unobserved(
-        f"{candidates[0]} was started, but its window was not seen within {APP_WINDOW_WAIT_SECONDS:g} s (an app that "
+        f"{candidates[0]} was started, but its window was not seen within {APP_WINDOW_WAIT_SECONDS:g} s of its launch "
+        "(an app that "
         "lives in the tray, or one still starting)",
         kind=Kind.COULD_NOT_LOOK,
     )

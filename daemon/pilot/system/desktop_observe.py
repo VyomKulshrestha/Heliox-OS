@@ -56,6 +56,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -1514,6 +1515,14 @@ _TASK_LAUNCHES: OrderedDict[str, _TaskLaunches] = OrderedDict()
 _MAX_TASKS = 32
 
 
+def clock() -> float:
+    """The clock a launch is timed by (tests give it a counted one)."""
+    return _clock()
+
+
+_clock = time.monotonic
+
+
 def _merge_facts(**facts: Any) -> None:
     action = current_step()
     if action is None:
@@ -1577,7 +1586,8 @@ def launch_allowed(task: str, action: Any, name: str, wanted: int) -> bool:
 
 
 def launch_done(task: str, action: Any, name: str) -> None:
-    """The step's launcher succeeded."""
+    """The step's launcher succeeded. Its time is kept for the window check, whose wait counts from here."""
+    _merge_facts(launched_at=clock())
     entry = _TASK_LAUNCHES.get(task)
     if not task or entry is None:
         return

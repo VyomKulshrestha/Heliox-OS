@@ -3,7 +3,8 @@ as the reply rules say, with the sentences the desktop and browser checks write 
 
 The kind decides what the person hears, sees and finds in the receipt (pilot.agents.unconfirmed). Reading it from the
 verifier's sentence (DETAIL_KINDS) is kept only as a fallback for results built elsewhere: a reworded sentence must
-never change what is said.
+never change what is said. Also here: the app window check's wait, counted from the launch, against the reply's
+budget, with a counted clock.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ from pilot.agents import verifier as verifier_module
 from pilot.agents.postconditions import Outcome, register, unobserved, verified
 from pilot.agents.unconfirmed import (
     SPOKEN_PHRASES,
+    VERIFY_BUDGET_SECONDS,
+    VERIFY_GRACE_SECONDS,
     Kind,
 )
 from pilot.agents.verifier import Verifier
@@ -280,3 +283,101 @@ async def test_a_page_that_fits_the_window_is_verified_and_its_notice_is_shown_n
     assert kinds == {}
     assert f"Note: {sentence}" in reply
     assert "fits" not in heard
+
+
+# ── The app window wait against the reply's budget, on a counted clock ───────────────────────
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def counted(monkeypatch: pytest.MonkeyPatch):
+    """A counted clock for the launch and the polls; each read of the window list costs 40 ms of it."""
+    from pilot.agents.postconditions import desktop_input
+    from pilot.system import desktop_observe
+
+    clock = _Clock()
+    state = {"window_at": None, "reads": 0}
+
+    async def sleep(seconds: float) -> None:
+        clock.now += seconds
+
+    async def window_rows():
+        state["reads"] += 1
+        clock.now += 0.04
+        if state["window_at"] is not None and clock.now >= state["window_at"]:
+            return [SimpleNamespace(pid=4242, name="Notes", window_id="w1", title="Notes")]
+        return []
+
+    monkeypatch.setattr(desktop_observe, "_clock", clock)
+    monkeypatch.setattr(desktop_observe, "window_rows", window_rows)
+    monkeypatch.setattr(desktop_input, "_sleep", sleep)
+    return clock, state
+
+
+async def _check_after_launch(counted, *, starts_after: float) -> tuple[Outcome, float]:
+    from pilot.agents.postconditions import desktop_input
+    from pilot.system import desktop_observe
+
+    clock, _state = counted
+    action = Action(action_type=ActionType.OPEN_APPLICATION, target="Notes", parameters=OpenApplicationParams(name="x"))
+    with desktop_observe.step(action):
+        desktop_observe.note_launch("notes", 4242)
+        desktop_observe.launch_done("", action, "Notes")
+    launched = clock.now
+    clock.now += starts_after  # the rest of the plan ran; verification starts now
+    started = clock.now
+    try:
+        outcome = await desktop_input.application_window(ActionResult(action=action, success=True, output="Opened"))
+    finally:
+        desktop_observe.forget_all()
+    assert started - launched == pytest.approx(starts_after)
+    return outcome, clock.now - launched
+
+
+@pytest.mark.asyncio
+async def test_an_app_that_shows_its_window_after_two_seconds_is_verified_inside_the_budget(counted) -> None:
+    clock, state = counted
+    state["window_at"] = clock.now + 2.0
+
+    outcome, since_launch = await _check_after_launch(counted, starts_after=0.0)
+
+    assert outcome.passed and outcome.observed
+    assert since_launch < VERIFY_BUDGET_SECONDS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("starts_after", [0.0, 1.0, 2.9, 5.0])
+async def test_a_tray_app_costs_at_most_the_window_wait_from_its_launch(counted, starts_after) -> None:
+    from pilot.agents.postconditions import desktop_input
+
+    outcome, since_launch = await _check_after_launch(counted, starts_after=starts_after)
+
+    assert outcome.kind == Kind.COULD_NOT_LOOK and not outcome.observed
+    # Measured from the moment verification started, the check fits the budget and its grace, whenever it started.
+    spent = since_launch - starts_after
+    assert spent <= max(0.0, desktop_input.APP_WINDOW_WAIT_SECONDS - starts_after) + 0.05
+    assert spent < VERIFY_BUDGET_SECONDS + VERIFY_GRACE_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_the_reply_budget_gives_a_check_its_grace(monkeypatch) -> None:
+    waited: list[float] = []
+
+    async def wait(task, budget: float) -> None:
+        waited.append(budget)
+        await task
+
+    monkeypatch.setattr(Verifier, "_wait_budget", staticmethod(wait))
+    action = Action(action_type=ActionType.FILE_LIST, target="x", parameters={})
+    await Verifier(MagicMock()).verify_within(
+        ActionPlan(actions=[action]), [ActionResult(action=action, success=True, output="a")], budget=3.0
+    )
+
+    assert waited == [3.0 + VERIFY_GRACE_SECONDS]

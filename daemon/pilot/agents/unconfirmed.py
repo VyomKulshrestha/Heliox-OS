@@ -49,6 +49,9 @@ class Kind(StrEnum):
 # Seconds the reply waits for the checks of a plan, all together. A check still running then goes on behind the reply
 # (bounded by its own time limit) and its outcome reaches the receipt when it arrives.
 VERIFY_BUDGET_SECONDS = 3.0
+# Added to the budget for the last read of a check whose own wait ends inside it (the app window check counts
+# its 3 s from the launch): that read's few milliseconds must not push it to "still being checked".
+VERIFY_GRACE_SECONDS = 0.5
 
 # Steps that send something to other people or cannot be undone: a doubt about these is worth saying aloud.
 CONSEQUENTIAL_ACTIONS: frozenset[ActionType] = frozenset(
@@ -336,6 +339,7 @@ __all__ = [
     "SPOKEN_PHRASES",
     "Step",
     "VERIFY_BUDGET_SECONDS",
+    "VERIFY_GRACE_SECONDS",
     "classify",
     "late_sentence",
     "mask",
