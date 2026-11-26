@@ -66,6 +66,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.agents.orchestrator")
 
+# A step whose specialist agent raised: what the person is told about that step (the exception is in the log).
+AGENT_FAULT_ERROR = "A fault inside Heliox stopped this step before it finished."
+
 
 class AgentOrchestrator:
     """Central coordinator that manages specialist agents and routes tasks.
@@ -661,14 +664,22 @@ class AgentOrchestrator:
                     cancel_event.set()
                 break
             except Exception as exc:
+                # A specialist that raises is a fault inside Heliox, not an answer to the request: its steps fail
+                # with a plain error (the detail goes to the log), later steps are not run, and the request still
+                # ends with a reply. It once raised out of here and the window got RPC error -32603 instead.
+                logger.exception("Agent %s raised while running %d step(s)", agent_key or role.value, len(indices))
                 if lease is not None:
                     await self._mesh.complete_assignment(
                         lease,
                         success=False,
-                        error=str(exc),
+                        error=f"{type(exc).__name__}: {exc}"[:500],
                     )
-                raise
+                results = [
+                    ActionResult(action=plan.actions[idx], success=False, error=AGENT_FAULT_ERROR) for idx in indices
+                ]
+                agent_failed = True
             else:
+                agent_failed = False
                 if lease is not None:
                     await self._mesh.complete_assignment(
                         lease,
@@ -691,6 +702,17 @@ class AgentOrchestrator:
                         self._circuit_breaker.record_failure()
                 if on_action_complete:
                     await on_action_complete(result)
+            if agent_failed:
+                for idx, action in enumerate(plan.actions):
+                    if all_results[idx] is None:
+                        all_results[idx] = ActionResult(
+                            action=action,
+                            success=False,
+                            error="Skipped due to earlier batch failure",
+                            executed=False,
+                            skip_reason="dependency_failed",
+                        )
+                break
 
         # Fill any gaps with error results
         final: list[ActionResult] = []

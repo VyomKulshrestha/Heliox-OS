@@ -171,9 +171,11 @@ async def test_task_cleaned_up_even_on_unexpected_exception(orchestrator, tracke
     orchestrator._action_registry[plan.actions[0].action_type] = AgentRole.SYSTEM
     orchestrator._agents[AgentRole.SYSTEM] = raising_agent
 
-    # Non-budget exceptions should propagate, but the task must still be cleaned up
-    with pytest.raises(RuntimeError, match=r"unrelated boom"):
-        await orchestrator.execute_plan("test", plan, plan_id="t-cleanup")
+    # Any other exception becomes a failed step (a fault inside Heliox, said plainly), and the task is cleaned up.
+    from pilot.agents.orchestrator import AGENT_FAULT_ERROR
 
+    results = await orchestrator.execute_plan("test", plan, plan_id="t-cleanup")
+
+    assert [(r.success, r.error) for r in results] == [(False, AGENT_FAULT_ERROR)] * len(plan.actions)
     assert tracker.get_task_budget("t-cleanup") is None
     assert current_task_id.get() is None

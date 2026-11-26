@@ -605,6 +605,53 @@ def _storage_answer(req_id: str | int | None, method: str, kind: str, sentence: 
     return _error_response(req_id, STORAGE_ERROR_CODE, sentence, {"storage_problem": True, "kind": kind})
 
 
+# A request that failed inside Heliox (a crashed agent, a handler that raised): the person gets a failed result with
+# this sentence and the detail goes to the log. -32603 "Internal error" is left for a call that could not be handled
+# at all; a method that runs a person's request never answers with it.
+REQUEST_FAULT_SENTENCE = (
+    "Something inside Heliox failed while it was doing that, so it stopped there. The details are in Heliox's log."
+)
+# The methods that run a request (typed, queued, resumed, from a phone, an MCP client, a schedule, a recording or a
+# background job). Each answers with a {status, message} result already, so a fault answers in that shape too.
+REQUEST_RUNNING_METHODS = TASK_RESULT_METHODS | frozenset(
+    {
+        "queue_execute",
+        "resume_plan",
+        "mcp_submit_task",
+        "phone_request_run",
+        "autonomous_submit",
+        "autonomous_resume",
+        "scheduled_run_now",
+        "recorded_workflow_run",
+        "voice_gesture_workflow_submit",
+    }
+)
+
+
+def request_fault_answer(what: str, error: BaseException) -> dict[str, Any]:
+    """The reply for a request that raised: the storage sentence for a full or read-only disk, otherwise the plain
+    fault sentence. The exception and its traceback are logged here, once."""
+    from pilot.system.storage_health import classify, storage
+
+    said = storage().report(what, error)
+    if said is not None:
+        return {
+            "status": "error",
+            "message": said,
+            "explanation": said,
+            "storage_problem": True,
+            "kind": str(classify(error)),
+        }
+    logger.error("%s failed inside Heliox", what, exc_info=error)
+    return {
+        "status": "error",
+        "message": REQUEST_FAULT_SENTENCE,
+        "explanation": REQUEST_FAULT_SENTENCE,
+        "request_fault": True,
+        "error_type": type(error).__name__,
+    }
+
+
 # Answers Heliox gives in code that may go to a model in the cloud as part of the conversation: they hold nothing of
 # the person's own data. Every other code answer (the profile, goals, the day, the timeline, to-dos, reminders, notes,
 # memory talk, workspaces, suggestions, Live, settings, and any handler added later) stays on this computer: a cloud
@@ -2959,6 +3006,14 @@ class PilotServer:
                 # as the answer, never "Internal error: database or disk is full" (pilot.system.storage_health).
                 from pilot.system.storage_health import classify, storage
 
+                if request.method in REQUEST_RUNNING_METHODS and request.id is not None:
+                    # A request that raised ends as a failed result with a plain sentence, never -32603.
+                    answer = request_fault_answer(f"request {request.method}", e)
+                    try:
+                        await websocket.send(_success_response(request.id, answer))
+                    except websockets.exceptions.ConnectionClosed:
+                        logger.warning("Could not send the failed result; the connection is closed: %s", remote)
+                    return
                 said = storage().report(f"request {request.method}", e)
                 if said is not None and request.id is not None:
                     try:
@@ -3833,37 +3888,16 @@ class PilotServer:
                     )
                     return response
                 except Exception as exc:
-                    await self._interaction_runtime.transition(
-                        InteractionPhase.FAILED,
-                        message="The task failed before a verified result was available",
-                        interaction_id=interaction_id,
-                    )
-                    await self._append_experience(
-                        ExperienceEventType.OUTCOME_VERIFIED,
-                        idempotency_key=f"task:{context.task_id}:unhandled_error",
-                        source="interactive",
-                        payload={
-                            "status": "internal_error",
-                            "error_type": type(exc).__name__,
-                            "message": str(exc)[:1000],
-                        },
-                        provenance={"component": "PilotServer._handle_execute"},
-                        privacy_class=PrivacyClass.SENSITIVE,
-                    )
+                    # Anything that raised between the request arriving and the reply going out: the person gets a
+                    # failed result with a plain sentence (the detail is logged), never an RPC internal error.
+                    answer = request_fault_answer("A request", exc)
+                    try:
+                        await self._record_request_fault(context.task_id, interaction_id, exc, answer)
+                    except Exception:
+                        logger.warning("Could not record the failed request", exc_info=True)
                     if self._durable_tasks is not None:
-                        task = await self._durable_tasks.get(context.task_id)
-                        if task is not None and not task.is_terminal:
-                            await self._durable_tasks.transition(
-                                context.task_id,
-                                TaskStatus.FAILED,
-                                reason=f"unhandled {type(exc).__name__}",
-                                plan_id=self._active_plan_id or task.plan_id,
-                                terminal_response={
-                                    "status": "error",
-                                    "message": "Internal error while executing task.",
-                                },
-                            )
-                    raise
+                        answer = {**answer, "task_id": context.task_id}
+                    return answer
         finally:
             self._active_plan_id = ""
             self._active_task_id = ""
@@ -3872,6 +3906,39 @@ class PilotServer:
             self._live_correction = None
             self._cancel_event = None
             self._active_experience_context = ExperienceContext()
+
+    async def _record_request_fault(
+        self, task_id: str, interaction_id: str, exc: BaseException, answer: dict[str, Any]
+    ) -> None:
+        """A request that raised: the window's phase, the experience ledger and the durable task say it failed, the
+        task's stored reply being the same plain sentence the person got."""
+        await self._interaction_runtime.transition(
+            InteractionPhase.FAILED,
+            message=str(answer.get("message") or "")[:160],
+            interaction_id=interaction_id,
+        )
+        await self._append_experience(
+            ExperienceEventType.OUTCOME_VERIFIED,
+            idempotency_key=f"task:{task_id}:unhandled_error",
+            source="interactive",
+            payload={
+                "status": "internal_error",
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:1000],
+            },
+            provenance={"component": "PilotServer._handle_execute"},
+            privacy_class=PrivacyClass.SENSITIVE,
+        )
+        if self._durable_tasks is not None:
+            task = await self._durable_tasks.get(task_id)
+            if task is not None and not task.is_terminal:
+                await self._durable_tasks.transition(
+                    task_id,
+                    TaskStatus.FAILED,
+                    reason=f"unhandled {type(exc).__name__}",
+                    plan_id=self._active_plan_id or task.plan_id,
+                    terminal_response={"status": "error", "message": str(answer.get("message") or "")},
+                )
 
     async def _handle_execute_inner(
         self,
@@ -6403,37 +6470,41 @@ class PilotServer:
                 task_id=context.task_id,
                 user_id=context.user_id,
             ):
-                if task.plan_id:
-                    if task.status != TaskStatus.EXECUTING:
-                        await self._durable_tasks.transition(
-                            task.task_id,
-                            TaskStatus.EXECUTING,
-                            reason="authenticated task resume",
-                            plan_id=task.plan_id,
+                try:
+                    if task.plan_id:
+                        if task.status != TaskStatus.EXECUTING:
+                            await self._durable_tasks.transition(
+                                task.task_id,
+                                TaskStatus.EXECUTING,
+                                reason="authenticated task resume",
+                                plan_id=task.plan_id,
+                            )
+                        response = await self._handle_resume_plan(
+                            {"plan_id": task.plan_id},
+                            ws,
+                            denied_indices=denied_indices,
+                            authorized_task_id=task.task_id,
                         )
-                    response = await self._handle_resume_plan(
-                        {"plan_id": task.plan_id},
-                        ws,
-                        denied_indices=denied_indices,
-                        authorized_task_id=task.task_id,
-                    )
-                else:
-                    if task.status != TaskStatus.PLANNING:
-                        await self._durable_tasks.transition(
-                            task.task_id,
-                            TaskStatus.PLANNING,
-                            reason="restart interrupted planning",
+                    else:
+                        if task.status != TaskStatus.PLANNING:
+                            await self._durable_tasks.transition(
+                                task.task_id,
+                                TaskStatus.PLANNING,
+                                reason="restart interrupted planning",
+                            )
+                        response = await self._handle_execute_inner(
+                            {
+                                "input": task.user_input,
+                                "session_id": task.session_id,
+                                # A task being restarted is a request already under way, not a new chat message: it
+                                # is planned as before and never goes through the conversation layer.
+                                "source": "resume",
+                            },
+                            ws,
                         )
-                    response = await self._handle_execute_inner(
-                        {
-                            "input": task.user_input,
-                            "session_id": task.session_id,
-                            # A task being restarted is a request already under way, not a new chat message: it
-                            # is planned as before and never goes through the conversation layer.
-                            "source": "resume",
-                        },
-                        ws,
-                    )
+                except Exception as exc:
+                    # A resumed request that raised ends like a typed one: a failed result, a plain sentence.
+                    response = request_fault_answer("A resumed request", exc)
                 await self._finalize_durable_task(task.task_id, response)
                 return {**response, "task_id": task.task_id, "resumed": True}
         finally:
@@ -17548,18 +17619,15 @@ def handle_tool(tool_name, params):
                     interaction_id=interaction_id,
                 )
         except Exception as error:
-            logger.error("Voice command execution failed: %s", error)
-            from pilot.system.storage_health import storage
-
-            # A full disk or a read-only data folder is said in plain words, aloud and in the window.
-            said = storage().report("voice request", error)
-            message = said or "Something went wrong while executing your request."
+            # A full disk or a read-only data folder is said in plain words, aloud and in the window; any other fault
+            # as the same plain sentence a typed request gets, the exception itself in the log only.
+            message = str(request_fault_answer("A spoken request", error)["message"])
             await self._broadcast_notification(
                 "voice_result",
                 {
                     "command": spoken_command,
                     "status": "error",
-                    "message": said or str(error),
+                    "message": message,
                     "language": language,
                 },
             )

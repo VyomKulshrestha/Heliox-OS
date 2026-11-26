@@ -402,20 +402,25 @@ async def test_empty_interactive_request_still_has_terminal_trace(ledger):
 
 
 @pytest.mark.asyncio
-async def test_unhandled_interactive_error_is_recorded_before_propagation(ledger):
+async def test_unhandled_interactive_error_is_recorded_and_answered(ledger):
+    """The error is recorded, and the person gets a failed result with a plain sentence (never the exception)."""
+    from pilot.server import REQUEST_FAULT_SENTENCE
+
     server = PilotServer(PilotConfig())
     server._experience_ledger = ledger
     server._handle_execute_inner = AsyncMock(side_effect=RuntimeError("planner exploded"))
 
-    with pytest.raises(RuntimeError, match="planner exploded"):
-        await server._handle_execute(
-            {
-                "input": "do something",
-                "session_id": "error-session",
-                "task_id": "error-task",
-            },
-            ws=AsyncMock(),
-        )
+    answer = await server._handle_execute(
+        {
+            "input": "do something",
+            "session_id": "error-session",
+            "task_id": "error-task",
+        },
+        ws=AsyncMock(),
+    )
+
+    assert answer["status"] == "error" and answer["message"] == REQUEST_FAULT_SENTENCE
+    assert "planner exploded" not in str(answer)
 
     events = await ledger.list_events(task_id="error-task")
     assert len(events) == 1
