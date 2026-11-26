@@ -1140,7 +1140,10 @@ mod tests {
     fn the_linux_processor_pytorch_comes_from_the_shared_file() {
         let (version, index) = linux_torch_cpu();
         let data: serde_json::Value = serde_json::from_str(PYTHON_VERSIONS).unwrap();
-        assert_eq!(version, data["linux_torch_cpu"]["version"].as_str().unwrap());
+        assert_eq!(
+            version,
+            data["linux_torch_cpu"]["version"].as_str().unwrap()
+        );
         assert_eq!(index, data["linux_torch_cpu"]["index"].as_str().unwrap());
         assert!(index.starts_with("https://"));
         assert!(!version.is_empty() && !version.contains('+'));

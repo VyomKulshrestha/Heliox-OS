@@ -412,7 +412,7 @@ mod tests {
             format!("{APP}/usr/share/:{APP}/usr/share:/usr/share:/usr/local/share:/usr/share");
         let pythonhome = format!("{APP}/usr/");
         let scanner = format!("{APP}/usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner");
-        let rows: Vec<Row> = vec![
+        let rows: [Row; 14] = [
             // (case, the app's environment besides APPIMAGE and APPDIR, the name, what the program sees)
             (
                 "the hook's x11",
