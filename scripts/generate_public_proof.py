@@ -100,8 +100,9 @@ def build_proof() -> str:
     action_total = summary["action_types"]
     independent_total = summary["independent_postcondition_verifiers"]
     read_only_total = summary.get("read_only_actions", 0)
+    declared_total = summary.get("declared_postcondition_verifiers", 0)
     effect_total = summary.get("effect_actions", action_total)
-    executor_only = effect_total - independent_total
+    executor_only = effect_total - independent_total - declared_total
     before = legacy_latency["before"]
     after = legacy_latency["after"]
     mean_reduction = _percent_reduction(before["mean_ms"], after["mean_ms"])
@@ -156,6 +157,7 @@ Product version: **{capabilities["product"]["version"]}**
 - **{summary["mesh"]["specialists"]}** executable specialists register providers for all **{summary["mesh"]["registered_action_types"]}** action types.
 - Mesh coverage is **{"complete" if summary["mesh"]["coverage_complete"] else "incomplete"}**; uncovered action types: **{len(summary["mesh"]["uncovered_action_types"])}**.
 - **{independent_total}** of the **{effect_total}** action types that change something have a separate observed post-condition verifier.
+- **{declared_total}** more are checked only when a plan declares a read-only check of their effect (shell commands, scripts, remote and API calls whose effect is arbitrary); without one, their outcome is the executor's word.
 - **{executor_only}** action types that change something currently rely on the executor result without an independent post-condition check.
 - **{read_only_total}** read-only action types need none: they change nothing, so what they return is their result (`verification.method = "read_only"`, with a reason for each). A read that fails now fails its action instead of returning an error message as data, so a failed read cannot pass as an answer.
 - **{summary["plugins"]}** plugin manifests are represented in the generated catalog.

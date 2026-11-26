@@ -174,10 +174,33 @@ def _plugin_catalog() -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     return plugins, sources
 
 
+DECLARED_PREFIX = "declared_"
+
+
+def _postcondition_state(action_type: ActionType, verifier: str | None) -> str:
+    """independent: always checked; declared: checked only when a plan declares a read-only probe;
+    read_only: changes nothing, needs no check; none: the executor's word only."""
+    if verifier is not None:
+        return "declared" if verifier.startswith(DECLARED_PREFIX) else "independent"
+    return "read_only" if action_type in READ_ONLY_WITHOUT_POSTCONDITION else "none"
+
+
 def _verification(action_type: ActionType, verifier: str | None) -> dict[str, Any]:
-    if verifier is None and action_type in READ_ONLY_WITHOUT_POSTCONDITION:
+    state = _postcondition_state(action_type, verifier)
+    if state == "declared":
+        return {
+            "method": verifier,
+            "postcondition": state,
+            "independent_postcondition": False,
+            "note": (
+                "Checked only when the plan declares a read-only probe of the effect; without one the outcome "
+                "is the executor's word."
+            ),
+        }
+    if state == "read_only":
         return {
             "method": "read_only",
+            "postcondition": state,
             "independent_postcondition": False,
             "reason": READ_ONLY_WITHOUT_POSTCONDITION[action_type],
             "note": (
@@ -187,6 +210,7 @@ def _verification(action_type: ActionType, verifier: str | None) -> dict[str, An
         }
     return {
         "method": verifier or "executor_result_only",
+        "postcondition": state,
         "independent_postcondition": verifier is not None,
         "note": (
             "Verifier checks this post-condition only when the live state is unambiguous; "
@@ -210,6 +234,7 @@ async def build_catalog() -> dict[str, Any]:
     tier_counts: dict[str, int] = defaultdict(int)
     family_counts: dict[str, int] = defaultdict(int)
     independently_verified = 0
+    declared_verified = 0
     both = sorted(
         action.value
         for action in set(READ_ONLY_WITHOUT_POSTCONDITION) & set(POSTCONDITION_VERIFIERS)
@@ -222,8 +247,9 @@ async def build_catalog() -> dict[str, Any]:
         action = Action(action_type=action_type, parameters={})
         platforms, platform_basis = _platforms(action_type)
         verifier = POSTCONDITION_VERIFIERS.get(action_type)
-        independent = verifier is not None
-        independently_verified += int(independent)
+        state = _postcondition_state(action_type, verifier)
+        independently_verified += int(state == "independent")
+        declared_verified += int(state == "declared")
         tier_counts[action.permission_tier.name.lower()] += 1
         family = _action_family(action_type)
         family_counts[family] += 1
@@ -293,6 +319,7 @@ async def build_catalog() -> dict[str, Any]:
             "families": dict(sorted(family_counts.items())),
             "permission_tiers": dict(sorted(tier_counts.items())),
             "independent_postcondition_verifiers": independently_verified,
+            "declared_postcondition_verifiers": declared_verified,
             "read_only_actions": len(READ_ONLY_WITHOUT_POSTCONDITION),
             "effect_actions": len(actions) - len(READ_ONLY_WITHOUT_POSTCONDITION),
             "plugins": len(plugins),
@@ -309,7 +336,9 @@ async def build_catalog() -> dict[str, Any]:
 README_VERIFICATION_ROW = "| Outcome verification |"
 
 
-def readme_with_verifier_counts(text: str, verified: int, effects: int, read_only: int) -> str:
+def readme_with_verifier_counts(
+    text: str, verified: int, effects: int, read_only: int, declared: int = 0
+) -> str:
     """Rewrite the README's outcome-verification row from the catalog, keeping each cell's width where it fits."""
 
     lines = text.split("\n")
@@ -323,12 +352,13 @@ def readme_with_verifier_counts(text: str, verified: int, effects: int, read_onl
         raise ValueError("README outcome-verification row must have three cells")
     contents = {
         2: (
-            f"{verified} of {effects} actions that change something have an independent post-condition check; "
-            f"{read_only} read-only actions need none"
+            f"{verified} of {effects} actions that change something have an independent post-condition check"
+            + (f", plus {declared} checked when a plan declares a check" if declared else "")
+            + f"; {read_only} read-only actions need none"
         ),
         3: (
-            f"The other {effects - verified} rely on the executor result; a read that fails now fails its action "
-            "instead of returning an error message as data"
+            f"The other {effects - verified - declared} rely on the executor result; a read that fails now fails "
+            "its action instead of returning an error message as data"
         ),
     }
     for index, content in contents.items():
@@ -375,6 +405,7 @@ def main() -> int:
             summary["independent_postcondition_verifiers"],
             summary["effect_actions"],
             summary["read_only_actions"],
+            summary.get("declared_postcondition_verifiers", 0),
         )
         if updated != original:
             readme.write_bytes(updated.encode("utf-8"))

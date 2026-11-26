@@ -55,8 +55,15 @@ def test_generated_capability_catalog_matches_runtime(tmp_path: Path) -> None:
     assert all(entry["providers"] for entry in generated["actions"])
     assert all(entry["platform_support"]["platforms"] for entry in generated["actions"])
     assert generated["summary"]["independent_postcondition_verifiers"] > 0
-    # New verifiers only add to the 22 that existed when the area registry was introduced.
-    assert generated["summary"]["independent_postcondition_verifiers"] == len(POSTCONDITION_VERIFIERS) >= 22
+    # Every registered verifier is either independent or declared (checked only when a plan declares a probe);
+    # new ones only add to the 22 independent verifiers that existed when the area registry was introduced.
+    summary = generated["summary"]
+    assert summary["independent_postcondition_verifiers"] + summary["declared_postcondition_verifiers"] == len(
+        POSTCONDITION_VERIFIERS
+    )
+    assert summary["independent_postcondition_verifiers"] >= 22
+    states = {entry["verification"]["postcondition"] for entry in generated["actions"]}
+    assert states <= {"independent", "declared", "read_only", "none"}
     high_risk = {
         ActionType.PROCESS_KILL,
         ActionType.POWER_SHUTDOWN,
@@ -107,6 +114,7 @@ def test_readme_verifier_counts_come_from_the_committed_catalog() -> None:
             summary["independent_postcondition_verifiers"],
             summary["effect_actions"],
             summary["read_only_actions"],
+            summary["declared_postcondition_verifiers"],
         )
         == readme
     )
@@ -158,3 +166,22 @@ def test_read_only_actions_are_a_category_of_their_own(tmp_path: Path) -> None:
     for action in ("file_read", "file_parse", "file_hash", "browser_extract", "browser_extract_table"):
         assert entries[action]["method"] != "read_only"
     assert entries["browser_screenshot"]["method"] != "read_only"
+
+
+def test_a_declared_check_is_its_own_state_and_is_said_so() -> None:
+    module = _generator_module()
+
+    assert module._postcondition_state(ActionType.SHELL_COMMAND, "declared_expect_postcondition") == "declared"
+    assert module._postcondition_state(ActionType.FILE_WRITE, "file_content_postcondition") == "independent"
+    assert module._postcondition_state(ActionType.CPU_USAGE, None) == "read_only"
+    assert module._postcondition_state(ActionType.NOTIFY, None) == "none"
+    declared = module._verification(ActionType.SHELL_COMMAND, "declared_expect_postcondition")
+    assert declared["independent_postcondition"] is False and declared["postcondition"] == "declared"
+
+    row = "| Outcome verification | old | old |"
+    new_row = module.readme_with_verifier_counts(row + "\n", 31, 106, 56, 15).split("\n")[0]
+    assert (
+        "31 of 106 actions that change something have an independent post-condition check, plus 15 checked "
+        "when a plan declares a check; 56 read-only actions need none"
+    ) in new_row
+    assert "The other 60 rely on the executor result" in new_row
