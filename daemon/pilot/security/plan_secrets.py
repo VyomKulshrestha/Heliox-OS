@@ -100,6 +100,7 @@ class PlanSecretKeeper:
         self._clock = clock
         self._memory: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+        self._index: dict[str, Any] | None = None  # read once, then kept in step with every write
 
     def _store_usable(self) -> bool:
         return self._vault is not None and bool(getattr(self._vault, "available", False))
@@ -136,6 +137,15 @@ class PlanSecretKeeper:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not remove a kept plan's secrets: %s", type(exc).__name__)
 
+    async def _load_index(self) -> dict[str, Any]:
+        if self._index is None:
+            self._index = await self._read_json(INDEX_NAME)
+        return dict(self._index)
+
+    async def _save_index(self, index: dict[str, Any]) -> None:
+        if await self._write_json(INDEX_NAME, index):
+            self._index = dict(index)
+
     async def keep(self, plan_id: str, plan: ActionPlan) -> None:
         """Hold the plan's secret values (merged with what is held already) before the plan is stored."""
         values = secrets_of(plan)
@@ -150,10 +160,10 @@ class PlanSecretKeeper:
             entry = {"created": created, "values": merged}
             self._memory[plan_id] = entry
             if await self._write_json(PREFIX + plan_id, entry):
-                index = await self._read_json(INDEX_NAME)
+                index = await self._load_index()
                 if plan_id not in index:
                     index[plan_id] = created
-                    await self._write_json(INDEX_NAME, index)
+                    await self._save_index(index)
 
     async def values(self, plan_id: str) -> dict[str, str]:
         """The kept values of a plan, or {} when none are kept or they expired."""
@@ -180,16 +190,16 @@ class PlanSecretKeeper:
     async def forget(self, plan_id: str) -> None:
         async with self._lock:
             had = self._memory.pop(plan_id, None) is not None
-            index = await self._read_json(INDEX_NAME)
+            index = await self._load_index()
             if plan_id in index or had:
                 await self._delete(PREFIX + plan_id)
             if plan_id in index:
                 index.pop(plan_id)
-                await self._write_json(INDEX_NAME, index)
+                await self._save_index(index)
 
     async def sweep(self) -> int:
         """Remove every entry older than KEEP_DAYS days. Called when the daemon starts; returns how many went."""
-        index = await self._read_json(INDEX_NAME)
+        index = await self._load_index()
         now = self._clock()
         expired = [
             plan_id
