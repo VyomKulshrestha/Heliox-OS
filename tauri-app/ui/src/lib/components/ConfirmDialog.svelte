@@ -13,6 +13,8 @@
     /** Called on mount and on every toggle with the indices that are checked, so a gesture approves only these. */
     onselectionchange?: (approvedIndices: number[]) => void;
     reason?: string;
+    /** What the person asked, from the daemon; shown above the steps so a step that does something else stands out. */
+    request?: string;
     riskAssessment?: Record<string, unknown> | null;
     gnomon?: Record<string, unknown> | null;
     /** What the world model and Gnomon reported for this plan; the dialog covers the plan card that shows it. */
@@ -27,6 +29,7 @@
     ondeny,
     onselectionchange,
     reason = "",
+    request = "",
     riskAssessment = null,
     gnomon = null,
     checks = null,
@@ -287,6 +290,10 @@
         stepsShownElsewhere={stepsWithFindings}
         compact
       />
+
+      {#if request.trim()}
+        <p class="confirm-request">{$_("confirm.you_asked", { values: { request: request.trim() } })}</p>
+      {/if}
 
       <ul class="confirm-list">
         {#each actions as action, i}
@@ -637,6 +644,14 @@
     border-radius: var(--radius-sm);
     font-size: 12px;
     line-height: 1.4;
+  }
+
+  .confirm-request {
+    margin: 0 0 10px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
   }
 
   .confirm-reason {

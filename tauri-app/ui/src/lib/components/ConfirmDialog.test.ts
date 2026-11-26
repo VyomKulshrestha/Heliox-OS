@@ -27,6 +27,25 @@ describe("ConfirmDialog", () => {
     expect(onconfirm).toHaveBeenCalledWith([2]);
   });
 
+  it("shows what the person asked above the steps, so a step that does something else stands out", () => {
+    const copy = { ...script, action_type: "file_copy", target: "C:\\w\\notes\\does_not_exist.txt", parameters: {} };
+    render(ConfirmDialog, {
+      actions: [copy],
+      request: "Delete C:\\w\\archive\\note_backup.txt",
+      onconfirm: vi.fn(),
+      ondeny: vi.fn(),
+    });
+
+    const asked = screen.getByText("You asked: Delete C:\\w\\archive\\note_backup.txt");
+    const step = screen.getByText("file_copy");
+    expect(asked.compareDocumentPosition(step) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows no request line when the daemon sent none", () => {
+    render(ConfirmDialog, { actions: [script], onconfirm: vi.fn(), ondeny: vi.fn() });
+    expect(screen.queryByText(/^You asked:/)).toBeNull();
+  });
+
   it("leaves actions without parameters as a single line", () => {
     render(ConfirmDialog, {
       actions: [{ ...script, action_type: "screenshot", parameters: {} }],
@@ -263,6 +282,7 @@ describe("ConfirmDialog keyboard and selection safety", () => {
       "ondeny",
       "onselectionchange",
       "reason",
+      "request", // what the person asked, as text: content, not a way of presenting the approval
       "riskAssessment",
       "gnomon",
       "checks",

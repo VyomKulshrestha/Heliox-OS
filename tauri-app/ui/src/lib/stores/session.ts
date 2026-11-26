@@ -392,6 +392,8 @@ interface SessionState {
   confirmPlanId: string;
   confirmActions: PlanAction[];
   confirmReason: string;
+  /** What the person asked, as the daemon shows it above the steps ("You asked: ..."); "" when not sent. */
+  confirmRequest: string;
   confirmRiskAssessment: Record<string, unknown> | null;
   /** Gnomon's review of a plan an autonomous job wants to run (advisory; can only ask for approval). */
   confirmGnomon: Record<string, unknown> | null;
@@ -534,6 +536,7 @@ const initialState: SessionState = {
   confirmPlanId: "",
   confirmActions: [],
   confirmReason: "",
+  confirmRequest: "",
   confirmRiskAssessment: null,
   confirmGnomon: null,
   confirmBackground: false,
@@ -649,6 +652,7 @@ const NO_APPROVAL = {
   confirmPlanId: "",
   confirmActions: [] as PlanAction[],
   confirmReason: "",
+  confirmRequest: "",
   confirmRiskAssessment: null,
   confirmGnomon: null,
   confirmSubmitting: false,
@@ -686,6 +690,7 @@ function backgroundApproval(s: SessionState): Partial<SessionState> {
     confirmPlanId: s.confirmPlanId,
     confirmActions: s.confirmActions,
     confirmReason: s.confirmReason,
+    confirmRequest: s.confirmRequest,
     confirmRiskAssessment: s.confirmRiskAssessment,
     confirmGnomon: s.confirmGnomon,
     confirmSubmitting: s.confirmSubmitting,
@@ -1136,6 +1141,7 @@ function createSession() {
           confirmPlanId: String(p.plan_id ?? ""),
           confirmActions: (p.actions ?? []) as PlanAction[],
           confirmReason: String(p.reason ?? ""),
+          confirmRequest: String(p.request ?? ""),
           confirmRiskAssessment:
             p.risk_assessment && typeof p.risk_assessment === "object"
               ? (p.risk_assessment as Record<string, unknown>)
@@ -1599,6 +1605,7 @@ function createSession() {
           confirmPlanId: String(result.plan_id ?? ""),
           confirmActions: (approval.actions ?? []) as PlanAction[],
           confirmReason: String(approval.reason ?? ""),
+          confirmRequest: String(approval.request ?? ""),
           confirmRiskAssessment:
             approval.risk_assessment && typeof approval.risk_assessment === "object"
               ? (approval.risk_assessment as Record<string, unknown>)
@@ -1683,6 +1690,7 @@ function createSession() {
       confirmPlanId: "",
       confirmActions: [],
       confirmReason: "",
+      confirmRequest: "",
       confirmRiskAssessment: null,
       confirmGnomon: null,
       confirmSubmitting: false,
@@ -1907,6 +1915,7 @@ function createSession() {
       confirmPlanId: "",
       confirmActions: [],
       confirmReason: "",
+      confirmRequest: "",
       confirmRiskAssessment: null,
       confirmGnomon: null,
       confirmSubmitting: false,
@@ -1968,6 +1977,7 @@ function createSession() {
         confirmPlanId: "",
         confirmActions: [],
         confirmReason: "",
+        confirmRequest: "",
         confirmRiskAssessment: null,
         confirmGnomon: null,
         confirmSubmitting: false,
@@ -2063,6 +2073,7 @@ function createSession() {
               confirmPlanId: "",
               confirmActions: [],
               confirmReason: "",
+              confirmRequest: "",
               confirmRiskAssessment: null,
               confirmGnomon: null,
               confirmSubmitting: false,

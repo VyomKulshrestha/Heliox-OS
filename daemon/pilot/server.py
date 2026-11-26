@@ -868,6 +868,22 @@ def _declared_check_line(action: Any) -> dict[str, str]:
     return {"check": line} if line else {}
 
 
+APPROVAL_REQUEST_CHARS = 240
+
+
+def approval_request_line(text: str) -> str:
+    """The request an approval card shows as "You asked: ...": the stored, readable request (a revision's planner
+    headings cut off), a token or webhook URL in it masked, on one line, cut at a word for a long request."""
+    from pilot.task_request import readable_request
+
+    flat = " ".join(redact_text(readable_request(str(text or ""))).split())
+    if len(flat) <= APPROVAL_REQUEST_CHARS:
+        return flat
+    cut = flat[: APPROVAL_REQUEST_CHARS - 1]
+    space = cut.rfind(" ")
+    return (cut[:space] if space > APPROVAL_REQUEST_CHARS // 2 else cut).rstrip(" ,.;:") + "…"
+
+
 def _repair_error_context(failed_details: list[str], errors: list[str]) -> str:
     """What went wrong, as the model reads it in the repair round; a webhook or token URL in it is masked."""
     return redact_text("\n".join([*failed_details, *errors])) or ""
@@ -5174,6 +5190,7 @@ class PilotServer:
                             or mcp_requires_visible_approval
                             or review_unanswered
                         ),
+                        request=request_text,
                     )
                     if card_review is not None and confirmed:
                         # Its own time limit bounds this wait; usually it answered while the card was open.
@@ -6911,6 +6928,7 @@ class PilotServer:
                 ws,
                 reason="This plan was never approved. Approve what is left before Heliox runs it.",
                 force_all_actions=True,
+                request=approved_plan.raw_input,
             )
             if not confirmed:
                 await self._checkpoint_store.mark_approval(plan_id, "denied")
@@ -7091,6 +7109,7 @@ class PilotServer:
         risk_assessment: dict[str, Any] | None = None,
         force_all_actions: bool = False,
         shown: list[dict[str, Any]] | None = None,
+        request: str = "",
     ) -> tuple[bool, set[int], set[int]]:
         """Send a confirmation request and block until the user responds or timeout.
 
@@ -7146,6 +7165,10 @@ class PilotServer:
             "reason": reason,
             "risk_assessment": risk_assessment,
         }
+        # What the person asked, shown above the steps so a step that does something else stands out.
+        request_line = approval_request_line(request)
+        if request_line:
+            approval_request["request"] = request_line
         if self._durable_tasks is not None and self._active_task_id:
             await self._durable_tasks.create_approval(
                 task_id=self._active_task_id,
@@ -7186,6 +7209,7 @@ class PilotServer:
                     "actions": [_dump_confirm_action(i, plan.actions[i]) for i in confirm_indices],
                     "reason": reason,
                     "risk_assessment": risk_assessment,
+                    **({"request": request_line} if request_line else {}),
                 },
             )
         )
@@ -13025,6 +13049,7 @@ class PilotServer:
                     "task_id": job.job_id,
                     "plan_id": plan_id,
                     "source": job.source,
+                    **({"request": line} if (line := approval_request_line(getattr(job, "goal", ""))) else {}),
                     "actions": [
                         {
                             **plan.actions[index].model_dump(mode="json"),

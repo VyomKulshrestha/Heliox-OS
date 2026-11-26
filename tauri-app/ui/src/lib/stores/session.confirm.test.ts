@@ -192,6 +192,19 @@ describe("confirmation input channels and the reported selection", () => {
     });
   });
 
+  it("keeps what the person asked for the dialog, and no line for an approval that sent none", async () => {
+    const { session } = await import("./session");
+    notificationHandler!("confirm_required", {
+      plan_id: "plan-asked",
+      request: "Delete C:\\w\\archive\\note_backup.txt",
+      actions: [{ index: 0, action_type: "file_copy", target: "C:\\w\\notes\\does_not_exist.txt" }],
+    });
+    expect(get(session).confirmRequest).toBe("Delete C:\\w\\archive\\note_backup.txt");
+
+    requireConfirmation("plan-without-request");
+    expect(get(session).confirmRequest).toBe("");
+  });
+
   it("resets the reported selection on every confirm_required", async () => {
     const { session } = await import("./session");
     requirePlan("plan-a");

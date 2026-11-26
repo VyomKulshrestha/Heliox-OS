@@ -308,6 +308,7 @@
     <ConfirmDialog
       actions={$session.confirmActions}
       reason={$session.confirmReason}
+      request={$session.confirmRequest}
       riskAssessment={$session.confirmRiskAssessment}
       gnomon={$session.confirmGnomon}
       checks={$session.currentPlan?.plan_id === $session.confirmPlanId ? $session.currentPlan?.checks : null}
