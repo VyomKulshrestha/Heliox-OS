@@ -56,6 +56,35 @@ async def brightness_get() -> str:
         return f"Brightness info:\n{out.strip()}"
 
 
+async def brightness_percent() -> int | None:
+    """The built-in display's brightness (0-100) read from the system, or None where it cannot be read: a desktop
+    monitor without WMI brightness on Windows, no brightnessctl on Linux (the xrandr fallback changes gamma, which
+    is not readable as brightness), no ``brightness`` tool on macOS. Raises when a present reader fails oddly."""
+    import re
+
+    if CURRENT_PLATFORM == Platform.WINDOWS:
+        code, out, _err = await run_powershell(
+            "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction SilentlyContinue |"
+            " Select-Object -First 1).CurrentBrightness",
+            timeout=20,
+        )
+        value = out.strip()
+        return int(value) if code == 0 and value.isdigit() else None
+
+    if CURRENT_PLATFORM == Platform.MACOS:
+        code, out, _err = await run_command(["brightness", "-l"], timeout=10)
+        found = re.search(r"display 0: brightness ([0-9.]+)", out) if code == 0 else None
+        return round(float(found.group(1)) * 100) if found else None
+
+    code, out, _err = await run_command(["brightnessctl", "get"], timeout=10)
+    if code != 0:
+        return None
+    max_code, max_out, _ = await run_command(["brightnessctl", "max"], timeout=10)
+    if max_code != 0 or not out.strip().isdigit() or not max_out.strip().isdigit() or int(max_out.strip()) == 0:
+        return None
+    return round(int(out.strip()) / int(max_out.strip()) * 100)
+
+
 async def brightness_set(level: int) -> str:
     """Set screen brightness (0-100)."""
     level = max(0, min(100, level))

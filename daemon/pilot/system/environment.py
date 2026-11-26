@@ -52,19 +52,69 @@ async def env_set(name: str, value: str, persistent: bool = False) -> str:
                 raise RuntimeError(f"setx failed: {err.strip()}")
             return f"Set {name}={value} (persistent, user scope)"
 
-        elif CURRENT_PLATFORM == Platform.MACOS:
-            # Write to ~/.zshrc (default macOS shell)
-            profile = os.path.expanduser("~/.zshrc")
+        else:
+            # ~/.zshrc on macOS (its default shell), ~/.bashrc on Linux.
+            profile = persistent_profile()
             await _append_env_to_profile(profile, name, value)
-            return f"Set {name}={value} (persistent, added to ~/.zshrc)"
-
-        else:  # Linux
-            # Write to ~/.bashrc
-            profile = os.path.expanduser("~/.bashrc")
-            await _append_env_to_profile(profile, name, value)
-            return f"Set {name}={value} (persistent, added to ~/.bashrc)"
+            shown = "~/.zshrc" if CURRENT_PLATFORM == Platform.MACOS else "~/.bashrc"
+            return f"Set {name}={value} (persistent, added to {shown})"
 
     return f"Set {name}={value} (session only)"
+
+
+def persistent_profile() -> str:
+    """The shell profile a persistent variable is written to on macOS and Linux."""
+    return os.path.expanduser("~/.zshrc" if CURRENT_PLATFORM == Platform.MACOS else "~/.bashrc")
+
+
+# Reads the user's own variable as Windows stores it (HKCU\Environment, environment names unexpanded) in a new
+# process; the name is data. Answers JSON so nothing depends on Windows' language.
+_WINDOWS_USER_VARIABLE = (
+    "$key = Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\\Environment' -ErrorAction SilentlyContinue; "
+    "$name = [string]$HelioxArgs['name']; "
+    "if (-not $key -or -not ($key.GetValueNames() | Where-Object { $_ -eq $name })) { '{\"present\":false}'; exit 0 }; "
+    "[pscustomobject]@{ present = $true; value = [string]$key.GetValue($name, $null, "
+    "[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } | ConvertTo-Json -Compress"
+)
+
+
+async def persistent_value(name: str) -> str | None:
+    """The value a new shell or program will see for a persistent variable, read from where it is stored:
+    the user's environment in the registry on Windows (a new PowerShell process), the shell profile on macOS and
+    Linux (the last assignment of the name in it). None when it is not there. Raises when the read fails."""
+    import asyncio
+    import json
+
+    _validate_env_name(name)
+    if CURRENT_PLATFORM == Platform.WINDOWS:
+        from pilot.system.platform_detect import run_powershell
+
+        code, out, err = await run_powershell(_WINDOWS_USER_VARIABLE, values={"name": name}, timeout=20)
+        if code != 0:
+            raise RuntimeError(f"Reading the user environment failed: {err.strip()}")
+        answer = json.loads(out.strip().splitlines()[-1]) if out.strip() else {}
+        return str(answer["value"]) if answer.get("present") else None
+
+    def read() -> str | None:
+        try:
+            with open(persistent_profile(), encoding="utf-8") as handle:
+                lines = handle.readlines()
+        except FileNotFoundError:
+            return None
+        assignment = re.compile(rf"^\s*(?:export\s+)?{name}=")
+        value = None
+        for line in lines:
+            if assignment.match(line):
+                try:
+                    words = shlex.split(line, comments=True)
+                except ValueError:
+                    value = None
+                    continue
+                word = words[-1] if words else ""
+                value = word.split("=", 1)[1] if word.startswith(f"{name}=") else None
+        return value
+
+    return await asyncio.to_thread(read)
 
 
 async def _append_env_to_profile(profile_path: str, name: str, value: str) -> None:

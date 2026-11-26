@@ -251,3 +251,107 @@ async def packages_up_to_date(result: ActionResult) -> Outcome:
         return verified("The package manager lists no upgrades left to install")
     shown = ", ".join(pending[:5]) + (f" and {len(pending) - 5} more" if len(pending) > 5 else "")
     return mismatch(f"Expected every installed package to be up to date; {len(pending)} still have upgrades: {shown}")
+
+
+@register(ActionType.WIFI_DISCONNECT, method="wifi_disconnected_postcondition", timeout=20.0)
+async def wifi_left(result: ActionResult) -> Outcome:
+    """No Wi-Fi network is joined any more (on the named interface when one was given)."""
+    from pilot.actions import WifiParams
+    from pilot.system.network import connected_ssids
+
+    params: WifiParams = result.action.parameters  # type: ignore[assignment]
+    reading = await connected_ssids(params.interface)
+    for _ in range(WIFI_READINGS - 1):
+        if reading.ssids is None or not reading.ssids:
+            break
+        await _pause()
+        reading = await connected_ssids(params.interface)
+    if reading.ssids is None:
+        return unobserved(f"Could not read which network is joined: {reading.reason}")
+    if reading.ssids:
+        return mismatch(f"Expected no Wi-Fi network; still joined to {', '.join(reading.ssids)}")
+    return verified("No Wi-Fi network is joined")
+
+
+@register(ActionType.ENV_SET, method="conditional_environment_value_postcondition", timeout=25.0)
+async def environment_value_stored(result: ActionResult) -> Outcome:
+    """A persistent variable is stored with the requested value where new programs read it (the user's registry
+    environment on Windows, the shell profile elsewhere). The value never appears in the sentence."""
+    from pilot.actions import EnvParams
+    from pilot.system.environment import persistent_value
+
+    params: EnvParams = result.action.parameters  # type: ignore[assignment]
+    if not params.persistent:
+        return unobserved("A session-only variable lives in Heliox's own process; nothing outside it to read")
+    if not params.name:
+        raise ValueError("Environment change has no variable name to observe")
+    found = await persistent_value(params.name)
+    wanted = params.value or ""
+    where = "the user environment" if CURRENT_PLATFORM == Platform.WINDOWS else "the shell profile"
+    if found is None:
+        return mismatch(f"Expected {params.name} in {where}; it is not there")
+    if found != wanted:
+        return mismatch(
+            f"Expected {params.name} in {where} with the requested value ({len(wanted)} characters); "
+            f"it holds a different one ({len(found)} characters)"
+        )
+    return verified(f"{params.name} is stored in {where} with the requested value")
+
+
+@register(ActionType.VOLUME_MUTE, method="conditional_mute_state_postcondition", timeout=20.0)
+async def mute_state_matches(result: ActionResult) -> Outcome:
+    """The output is muted (or unmuted) as asked, read from the system's mixer afresh."""
+    from pilot.actions import VolumeParams
+    from pilot.system.volume import volume_state
+
+    params: VolumeParams = result.action.parameters  # type: ignore[assignment]
+    wanted = params.mute if params.mute is not None else True
+    state = await volume_state()
+    if state.muted is None:
+        return unobserved("This system's mixer did not say whether the sound is muted")
+    if state.muted != wanted:
+        return mismatch(f"Expected the sound {'muted' if wanted else 'on'}; it is {'muted' if state.muted else 'on'}")
+    return verified(f"The sound is {'muted' if wanted else 'on'}")
+
+
+# Mixers round a percentage to their own steps (pactl, Core Audio's scalar, osascript): one point either way.
+VOLUME_TOLERANCE = 1
+# Backlights have coarse steps (WMI brightness levels, brightnessctl's raw range).
+BRIGHTNESS_TOLERANCE = 5
+
+
+@register(ActionType.VOLUME_SET, method="conditional_volume_level_postcondition", timeout=20.0)
+async def volume_level_matches(result: ActionResult) -> Outcome:
+    """The output level is the one asked for, read from the system's mixer afresh. A relative step is not
+    observed: its target depends on the level before, which nothing recorded."""
+    from pilot.actions import VolumeParams
+    from pilot.system.volume import volume_state
+
+    params: VolumeParams = result.action.parameters  # type: ignore[assignment]
+    if params.step is not None or params.level is None:
+        return unobserved("A volume step has no fixed target to compare with")
+    wanted = max(0, min(100, int(params.level)))
+    state = await volume_state()
+    if state.level is None:
+        return unobserved("This system's mixer did not report the volume")
+    if abs(state.level - wanted) > VOLUME_TOLERANCE:
+        return mismatch(f"Expected the volume at {wanted}; it is at {state.level}")
+    return verified(f"The volume is at {state.level}")
+
+
+@register(ActionType.BRIGHTNESS_SET, method="conditional_brightness_level_postcondition", timeout=25.0)
+async def brightness_level_matches(result: ActionResult) -> Outcome:
+    """The built-in display's brightness is the level asked for, within the backlight's steps."""
+    from pilot.actions import BrightnessParams
+    from pilot.system.screen import brightness_percent
+
+    params: BrightnessParams = result.action.parameters  # type: ignore[assignment]
+    if params.level is None:
+        raise ValueError("Brightness change has no level to observe")
+    wanted = max(0, min(100, int(params.level)))
+    found = await brightness_percent()
+    if found is None:
+        return unobserved("This display's brightness cannot be read here (an external monitor, or no reader)")
+    if abs(found - wanted) > BRIGHTNESS_TOLERANCE:
+        return mismatch(f"Expected brightness {wanted}%; it is {found}%")
+    return verified(f"Brightness is {found}%")

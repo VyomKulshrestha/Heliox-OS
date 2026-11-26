@@ -974,3 +974,265 @@ def test_package_update_keeps_its_approval_tier() -> None:
 
     # It now upgrades on every platform: never lower than the system-modify tier that asks first.
     assert ActionType.PACKAGE_UPDATE in SYSTEM_MODIFY_ACTIONS
+
+
+# ── wifi_disconnect ─────────────────────────────────────────────────────────────────────────────────────────────
+
+
+async def test_wifi_disconnect_verified_when_no_network_is_joined(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    run = AsyncMock(side_effect=[(0, "yes:Home\n", ""), (0, "no:Home\n", "")])
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(network, "run_command", run)
+
+    _assert_verified(await _verify(ActionType.WIFI_DISCONNECT, _wifi(interface="wlan0")))
+
+
+async def test_wifi_still_joined_after_disconnect_is_a_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(network, "_windows_connected_ssids", lambda: network.WifiReading(["Home"]))
+
+    assert "still joined to Home" in _assert_mismatch(await _verify(ActionType.WIFI_DISCONNECT, _wifi()))
+
+
+async def test_wifi_disconnect_unreadable_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(network, "_windows_connected_ssids", lambda: network.WifiReading(None, "no WLAN service"))
+
+    _assert_reported(await _verify(ActionType.WIFI_DISCONNECT, _wifi()))
+
+
+async def test_macos_disconnect_leaves_wifi_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turning Wi-Fi back on rejoins the preferred network at once, so the handler leaves it off."""
+    from pilot.system import network
+
+    run = AsyncMock(return_value=(0, "", ""))
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.MACOS)
+    monkeypatch.setattr(network, "run_command", run)
+
+    assert "turned off" in await network.wifi_disconnect()
+    assert [call.args[0] for call in run.await_args_list] == [["networksetup", "-setairportpower", "en0", "off"]]
+
+
+async def test_failed_disconnect_never_reaches_the_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(network, "run_command", AsyncMock(return_value=(10, "", "Device 'wlan0' not found")))
+
+    with pytest.raises(RuntimeError, match="WiFi disconnect failed"):
+        await network.wifi_disconnect()
+    _assert_failed(await _verify(ActionType.WIFI_DISCONNECT, _wifi(), success=False))
+
+
+# ── env_set ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+def _env(name: str = "HELIOX_TEST_VAR", value: str = "s3cret value", persistent: bool = True):
+    from pilot.actions import EnvParams
+
+    return EnvParams(name=name, value=value, persistent=persistent)
+
+
+async def test_persistent_variable_read_from_the_shell_profile(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from pilot.system import environment
+
+    profile = tmp_path / ".bashrc"
+    profile.write_text("alias ll='ls -l'\n", encoding="utf-8")
+    monkeypatch.setattr(environment, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(environment, "persistent_profile", lambda: str(profile))
+    monkeypatch.delenv("HELIOX_TEST_VAR", raising=False)
+
+    await environment.env_set("HELIOX_TEST_VAR", "s3cret value", persistent=True)
+    _assert_verified(await _verify(ActionType.ENV_SET, _env()))
+
+    # A later line in the profile overrides it: what a new shell sees differs.
+    with profile.open("a", encoding="utf-8") as handle:
+        handle.write("export HELIOX_TEST_VAR=other\n")
+    detail = _assert_mismatch(await _verify(ActionType.ENV_SET, _env()))
+    assert "s3cret" not in detail and "other" not in detail
+
+    profile.write_text("", encoding="utf-8")
+    assert "not there" in _assert_mismatch(await _verify(ActionType.ENV_SET, _env()))
+    monkeypatch.delenv("HELIOX_TEST_VAR", raising=False)
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome"),
+    [
+        ('{"present":true,"value":"s3cret value"}', "verified"),
+        ('{"present":true,"value":"truncated"}', "mismatch"),
+        ('{"present":false}', "mismatch"),
+    ],
+)
+async def test_windows_user_variable_read_in_a_new_process(monkeypatch: pytest.MonkeyPatch, answer, outcome) -> None:
+    from pilot.system import environment, platform_detect
+
+    run = AsyncMock(return_value=(0, answer, ""))
+    monkeypatch.setattr(environment, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(platform_detect, "run_powershell", run)
+
+    verification = await _verify(ActionType.ENV_SET, _env())
+
+    if outcome == "verified":
+        _assert_verified(verification)
+    else:
+        assert "s3cret" not in _assert_mismatch(verification)
+    assert run.await_args.kwargs["values"] == {"name": "HELIOX_TEST_VAR"}
+
+
+async def test_session_only_variable_is_reported() -> None:
+    _assert_reported(await _verify(ActionType.ENV_SET, _env(persistent=False)))
+
+
+async def test_failed_setx_is_a_failed_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import environment
+
+    monkeypatch.setattr(environment, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(environment, "run_command", AsyncMock(return_value=(1, "", "ERROR: Invalid syntax.")))
+    monkeypatch.delenv("HELIOX_TEST_VAR", raising=False)
+
+    with pytest.raises(RuntimeError, match="setx failed"):
+        await environment.env_set("HELIOX_TEST_VAR", "x", persistent=True)
+    monkeypatch.delenv("HELIOX_TEST_VAR", raising=False)
+    _assert_failed(await _verify(ActionType.ENV_SET, _env(), success=False))
+
+
+# ── volume_mute, volume_set, brightness_set ─────────────────────────────────────────────────────────────────────
+
+
+def _volume(**kwargs):
+    from pilot.actions import VolumeParams
+
+    return VolumeParams(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("params", "state", "outcome"),
+    [
+        ({"mute": True}, (30, True), "verified"),
+        ({}, (30, True), "verified"),
+        ({"mute": False}, (30, False), "verified"),
+        ({"mute": True}, (30, False), "mismatch"),
+        ({"mute": True}, (None, None), "reported"),
+    ],
+)
+async def test_volume_mute_read_from_the_mixer(monkeypatch: pytest.MonkeyPatch, params, state, outcome) -> None:
+    from pilot.system import volume
+
+    monkeypatch.setattr(volume, "volume_state", AsyncMock(return_value=volume.VolumeState(*state)))
+
+    verification = await _verify(ActionType.VOLUME_MUTE, _volume(**params))
+
+    {"verified": _assert_verified, "mismatch": _assert_mismatch, "reported": _assert_reported}[outcome](verification)
+
+
+@pytest.mark.parametrize(
+    ("params", "level", "outcome"),
+    [
+        ({"level": 30}, 30, "verified"),
+        ({"level": 30}, 31, "verified"),
+        ({"level": 30}, 45, "mismatch"),
+        ({"level": 30}, None, "reported"),
+        ({"step": 10}, 40, "reported"),
+    ],
+)
+async def test_volume_level_read_from_the_mixer(monkeypatch: pytest.MonkeyPatch, params, level, outcome) -> None:
+    from pilot.system import volume
+
+    monkeypatch.setattr(volume, "volume_state", AsyncMock(return_value=volume.VolumeState(level, False)))
+
+    verification = await _verify(ActionType.VOLUME_SET, _volume(**params))
+
+    {"verified": _assert_verified, "mismatch": _assert_mismatch, "reported": _assert_reported}[outcome](verification)
+
+
+async def test_failed_mute_is_a_failed_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import volume
+
+    monkeypatch.setattr(volume, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(volume, "volume_state", AsyncMock(return_value=volume.VolumeState(30, False)))
+    monkeypatch.setattr(volume.shutil, "which", lambda name: None)
+
+    with pytest.raises(RuntimeError, match="cannot be muted"):
+        await volume.volume_mute(True)
+    _assert_failed(await _verify(ActionType.VOLUME_MUTE, _volume(mute=True), success=False))
+
+
+@pytest.mark.parametrize(
+    ("platform", "answers", "outcome"),
+    [
+        (Platform.LINUX, [(0, "960\n", ""), (0, "1920\n", "")], "verified"),
+        (Platform.LINUX, [(0, "192\n", ""), (0, "1920\n", "")], "mismatch"),
+        (Platform.LINUX, [(-1, "", "Command not found: brightnessctl")], "reported"),
+        (
+            Platform.MACOS,
+            [(0, "display 0: main, active, awake, online, built-in, ID 0x1\ndisplay 0: brightness 0.500000\n", "")],
+            "verified",
+        ),
+        (Platform.MACOS, [(-1, "", "Command not found: brightness")], "reported"),
+    ],
+)
+async def test_brightness_read_back(monkeypatch: pytest.MonkeyPatch, platform, answers, outcome) -> None:
+    from pilot.actions import BrightnessParams
+    from pilot.system import screen
+
+    monkeypatch.setattr(screen, "CURRENT_PLATFORM", platform)
+    monkeypatch.setattr(screen, "run_command", AsyncMock(side_effect=answers))
+
+    verification = await _verify(ActionType.BRIGHTNESS_SET, BrightnessParams(level=50))
+
+    {"verified": _assert_verified, "mismatch": _assert_mismatch, "reported": _assert_reported}[outcome](verification)
+
+
+@pytest.mark.parametrize(("answer", "outcome"), [((0, "52\n", ""), "verified"), ((0, "", ""), "reported")])
+async def test_windows_brightness_read_from_wmi(monkeypatch: pytest.MonkeyPatch, answer, outcome) -> None:
+    from pilot.actions import BrightnessParams
+    from pilot.system import screen
+
+    monkeypatch.setattr(screen, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(screen, "run_powershell", AsyncMock(return_value=answer))
+
+    verification = await _verify(ActionType.BRIGHTNESS_SET, BrightnessParams(level=50))
+
+    {"verified": _assert_verified, "reported": _assert_reported}[outcome](verification)
+
+
+async def test_failed_brightness_set_is_a_failed_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.actions import BrightnessParams
+    from pilot.system import screen
+
+    monkeypatch.setattr(screen, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(screen, "run_command", AsyncMock(return_value=(1, "", "no backlight")))
+
+    with pytest.raises(RuntimeError, match="Brightness set failed"):
+        await screen.brightness_set(50)
+    _assert_failed(await _verify(ActionType.BRIGHTNESS_SET, BrightnessParams(level=50), success=False))
+
+
+def test_every_system_state_verifier_is_registered_under_its_catalog_name() -> None:
+    assert {action: POSTCONDITION_VERIFIERS[action] for action in SYSTEM_STATE_VERIFIERS} == SYSTEM_STATE_VERIFIERS
+
+
+SYSTEM_STATE_VERIFIERS = {
+    ActionType.POWER_LOCK: "session_locked_postcondition",
+    ActionType.FILE_PERMISSIONS: "conditional_file_mode_postcondition",
+    ActionType.REGISTRY_WRITE: "registry_value_postcondition",
+    ActionType.SERVICE_ENABLE: "service_enabled_postcondition",
+    ActionType.SERVICE_DISABLE: "service_disabled_postcondition",
+    ActionType.DISK_MOUNT: "mount_presence_postcondition",
+    ActionType.WIFI_CONNECT: "wifi_network_postcondition",
+    ActionType.PACKAGE_UPDATE: "packages_current_postcondition",
+    ActionType.WIFI_DISCONNECT: "wifi_disconnected_postcondition",
+    ActionType.ENV_SET: "conditional_environment_value_postcondition",
+    ActionType.VOLUME_MUTE: "conditional_mute_state_postcondition",
+    ActionType.VOLUME_SET: "conditional_volume_level_postcondition",
+    ActionType.BRIGHTNESS_SET: "conditional_brightness_level_postcondition",
+}

@@ -76,10 +76,12 @@ async def wifi_disconnect(interface: str | None = None) -> str:
     if CURRENT_PLATFORM == Platform.WINDOWS:
         code, out, err = await run_command(["netsh", "wlan", "disconnect"])
     elif CURRENT_PLATFORM == Platform.MACOS:
+        # macOS has no command-line "leave this network" that stays left: turning Wi-Fi back on rejoins the
+        # preferred network at once. So disconnecting turns Wi-Fi off, and says so.
         iface = interface or "en0"
         code, out, err = await run_command(["networksetup", "-setairportpower", iface, "off"])
-        # Re-enable but disconnected
-        await run_command(["networksetup", "-setairportpower", iface, "on"])
+        if code == 0:
+            return "Disconnected from WiFi (Wi-Fi is turned off; turn it on to join a network again)"
     else:  # Linux
         iface = interface or "wlan0"
         code, out, err = await run_command(["nmcli", "device", "disconnect", iface])
