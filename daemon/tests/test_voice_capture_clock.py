@@ -41,9 +41,11 @@ class NoSpeculation:
         return None
 
 
-async def run(script: list[tuple[list, str]], backlog: float, monkeypatch) -> list[tuple[str, str]]:
+async def run(script: list[tuple[list, str]], backlog: float, monkeypatch, expect: int) -> list[tuple[str, str]]:
     """Play ``script`` (audio pieces, and the words for each voiced piece) through the listener. With ``backlog``,
-    every frame is captured first and the listener only starts ``backlog`` seconds after the last one."""
+    every frame is captured first and the listener only starts ``backlog`` seconds after the last one. Returns once
+    ``expect`` requests were dispatched and every frame was taken, then gives the listener its turns, so a wrong
+    extra dispatch would still be seen; how long the machine takes for that does not matter."""
     clock = SimpleNamespace(now=1000.0)
     monkeypatch.setattr(
         voice,
@@ -63,6 +65,9 @@ async def run(script: list[tuple[list, str]], backlog: float, monkeypatch) -> li
     listener._wake_calibrator.check_near_miss.return_value = None
     listener._addressing.clock = lambda: clock.now
     listener._speculate_final_pass = lambda: NoSpeculation()
+    # The microphone check runs in a worker thread as an untracked task (test_mic_quality.py covers it); here it
+    # would still be running when the test ends.
+    listener._schedule_mic_quality = lambda _path: None
     words = iter([text for _audio, text in script if text])
 
     async def transcribe(_path, speculative=False):
@@ -90,13 +95,16 @@ async def run(script: list[tuple[list, str]], backlog: float, monkeypatch) -> li
         for frame, at in zip(frames, captured, strict=True):
             recorder.feed(frame, captured=at)
         clock.now = captured[-1] + backlog
-        await asyncio.sleep(0.2)
     else:
         for frame, at in zip(frames, captured, strict=True):
             clock.now = at
             recorder.feed(frame, captured=at)
             await settle()
-    await asyncio.sleep(0.3)
+    for _ in range(1000):  # a wait for the event, polled: the cap only ends a test that is already failing
+        if len(dispatched) >= expect and recorder._queue.empty():
+            break
+        await asyncio.sleep(0.01)
+    await settle()
     listener._running = False
     recorder._queue.put_nowait(voice._RECORDER_STOP)
     loop_task.cancel()
@@ -126,7 +134,7 @@ NEW_TURN = [
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backlog", [0.0, 7.0, 25.0])
 async def test_a_continuation_is_the_same_with_and_without_a_recognition_backlog(backlog, monkeypatch):
-    dispatched = await run(SPLIT, backlog, monkeypatch)
+    dispatched = await run(SPLIT, backlog, monkeypatch, expect=2)
     assert dispatched == [("set a reminder", "wake"), ("call the bank tomorrow morning", "follow_up")]
 
 
@@ -138,7 +146,7 @@ HELD = [(quiet(0.3), ""), (tone(1.0), "Hey Heliox, remind me to"), *SPLIT[2:]]
 async def test_words_that_stop_mid_sentence_wait_for_the_rest_with_and_without_a_backlog(backlog, monkeypatch):
     """ "Remind me to" is not dispatched: the rest, 1.4 s later, is heard and the sentence goes once, whole, however
     far behind the recogniser is (the wait is for speech to begin, and speech already captured counts)."""
-    dispatched = await run(HELD, backlog, monkeypatch)
+    dispatched = await run(HELD, backlog, monkeypatch, expect=1)
     assert dispatched == [("remind me to call the bank tomorrow morning", "wake")]
 
 
@@ -146,14 +154,17 @@ async def test_words_that_stop_mid_sentence_wait_for_the_rest_with_and_without_a
 @pytest.mark.parametrize("backlog", [0.0, 7.0])
 async def test_a_late_second_sentence_is_refused_the_same_with_and_without_a_backlog(backlog, monkeypatch):
     # 4.5 s after the turn and Heliox never answered: not a continuation, and no follow-up window either way.
-    dispatched = await run(NEW_TURN, backlog, monkeypatch)
+    dispatched = await run(NEW_TURN, backlog, monkeypatch, expect=1)
     assert dispatched == [("what time is it", "wake")]
 
 
-def test_portaudio_s_capture_time_is_moved_onto_the_monotonic_clock():
+def test_portaudio_s_capture_time_is_moved_onto_the_monotonic_clock(monkeypatch):
+    # The monotonic clock held at 700 s: the buffer ended 20 ms before PortAudio's "now", plus its own 50 ms. Read
+    # on the real clock, the two reads could sit either side of one of Windows' 15.6 ms steps.
+    monkeypatch.setattr(voice, "time", SimpleNamespace(monotonic=lambda: 700.0, time=real_time.time))
     info = SimpleNamespace(inputBufferAdcTime=50.0, currentTime=50.02)
     end = voice._portaudio_capture_end(info, 800, 16000)
-    assert end is not None and abs((real_time.monotonic() - 0.02 + 0.05) - end) < 0.01
+    assert end == pytest.approx(700.0 - 0.02 + 0.05, abs=1e-9)
     assert voice._portaudio_capture_end(SimpleNamespace(inputBufferAdcTime=0.0, currentTime=0.0), 800, 16000) is None
 
 
