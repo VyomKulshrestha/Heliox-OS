@@ -793,10 +793,13 @@ class TriggerParams(BaseModel):
     name: str = ""
     trigger_type: str = ""  # cpu_threshold, file_created, etc.
     condition: dict = Field(default_factory=dict)  # Type-specific conditions
-    action_command: str = ""  # What to do when triggered
+    action_command: str = ""  # What to do when triggered, in words
     trigger_id: str = ""  # For delete
     max_fires: int = 0  # 0 = unlimited
     cooldown_seconds: int = 60
+    # trigger_create: the exact steps a fire runs, fixed now (at most 5; no trigger or schedule steps). Their
+    # approval is asked for with this step (Action.permission_tier), and a fire runs these and nothing else.
+    steps: list[Action] = Field(default_factory=list, max_length=5)
 
 
 # ======= TIER 2: MULTIPLIER PARAMS =======
@@ -1120,6 +1123,12 @@ class Action(BaseModel):
         }
         if self.action_type in ALWAYS_SAFE:
             return PermissionTier.USER_WRITE
+        if self.action_type == ActionType.TRIGGER_CREATE:
+            # Making a trigger approves what it will run unattended: its steps' approval is asked for now. Capped
+            # at SYSTEM_MODIFY (an approval, no snapshot: making the trigger changes no file).
+            steps = getattr(self.parameters, "steps", None) or []
+            tiers = [PermissionTier.USER_WRITE, *(step.permission_tier for step in steps)]
+            return min(max(tiers), PermissionTier.SYSTEM_MODIFY)
         if self.action_type in {ActionType.API_REQUEST, ActionType.API_GITHUB}:
             if self.action_type == ActionType.API_REQUEST and bool(
                 getattr(self.parameters, "allow_private_network", False)
@@ -1166,6 +1175,11 @@ class Action(BaseModel):
         an irreversible action regardless of global config toggles.
         """
         if self.permission_tier == PermissionTier.ROOT_CRITICAL:
+            return True
+        if self.action_type == ActionType.TRIGGER_CREATE and any(
+            step.is_irreversible or step.permission_tier == PermissionTier.ROOT_CRITICAL
+            for step in getattr(self.parameters, "steps", None) or []
+        ):
             return True
         if self.dangerous_flags:
             return True
@@ -1228,6 +1242,7 @@ class Expectation(BaseModel):
         return self
 
 
+TriggerParams.model_rebuild()
 Action.model_rebuild()
 Expectation.model_rebuild()
 

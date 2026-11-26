@@ -13,10 +13,11 @@ import json
 import logging
 import operator
 import os
+import re
 import time
 import uuid
 from collections.abc import Callable, Coroutine
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -143,7 +144,8 @@ class Trigger:
     name: str
     trigger_type: TriggerType
     condition: dict[str, Any]  # Type-specific condition params
-    action_command: str  # Natural language command to execute
+    # What the trigger does, in words: shown, and planned at a fire when the trigger has no fixed steps.
+    action_command: str
     enabled: bool = True
     fire_count: int = 0
     max_fires: int = 0  # 0 = unlimited
@@ -154,6 +156,14 @@ class Trigger:
     # Whether a condition that holds over time (a threshold, a process, an expression) held at the last look; kept in
     # the store, so a restart does not fire again for a state that already fired. None: not looked at yet.
     condition_held: bool | None = None
+    # The exact steps a fire runs (Action records), fixed when the trigger was made, and whether the person approved
+    # them then. A fire runs these and nothing else; no model plans anything at a fire of a trigger that has them.
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    steps_approved: bool = False
+    # A fire that is waiting for the person because a step needs an approval nobody gave: when, why, and how many
+    # fires since. None: nothing waits.
+    pending: dict[str, Any] | None = None
+    last_outcome: str = ""  # the sentence the person was told about the last fire
 
     def can_fire(self) -> bool:
         if not self.enabled:
@@ -204,13 +214,158 @@ def validate_trigger(
         raise ValueError("Trigger max_fires cannot be negative")
     if cooldown_seconds < 0:
         raise ValueError("Trigger cooldown_seconds cannot be negative")
-    resolved_type = TriggerType(trigger_type)
+    try:
+        resolved_type = TriggerType(trigger_type)
+    except ValueError:
+        known = ", ".join(item.value for item in TriggerType)
+        raise ValueError(f"{trigger_type!r} is not a trigger type; the types are {known}") from None
     if resolved_type == TriggerType.CUSTOM_CONDITION:
         expression = str(condition.get("expression") or "").strip()
         if not expression:
             raise ValueError("Custom trigger expression is required")
         _parse_custom_expression(expression)
     return resolved_type
+
+
+MAX_TRIGGER_STEPS = 5
+FILE_TRIGGERS = frozenset({TriggerType.FILE_CREATED, TriggerType.FILE_MODIFIED, TriggerType.FILE_DELETED})
+# A fire never makes or changes automation: a trigger that made triggers or schedules could grow without the person.
+_NOT_A_TRIGGER_STEP = frozenset(
+    {
+        "trigger_create",
+        "trigger_delete",
+        "trigger_start",
+        "trigger_stop",
+        "schedule_create",
+        "schedule_delete",
+    }
+)
+
+
+def validate_steps(steps: Any) -> list[dict[str, Any]]:
+    """The fixed steps of a trigger as stored records (``Action.model_dump(mode="json")``). Raises ValueError."""
+    from pilot.actions import Action
+
+    if steps is None:
+        return []
+    if not isinstance(steps, list):
+        raise ValueError("Trigger steps must be a list")
+    if len(steps) > MAX_TRIGGER_STEPS:
+        raise ValueError(f"A trigger runs at most {MAX_TRIGGER_STEPS} steps")
+    records = []
+    for item in steps:
+        action = item if isinstance(item, Action) else Action.model_validate(item)
+        if action.action_type.value in _NOT_A_TRIGGER_STEP:
+            raise ValueError(f"A trigger cannot run {action.action_type.value}")
+        if action.rollback_action is not None or action.expect is not None:
+            action = action.model_copy(update={"rollback_action": None, "expect": None})
+        records.append(action.model_dump(mode="json"))
+    return records
+
+
+def fire_actions(trigger: Trigger) -> list[Any]:
+    """The trigger's fixed steps as actions (validated again: the store is a file anyone may edit)."""
+    from pilot.actions import Action
+
+    return [Action.model_validate(record) for record in validate_steps(trigger.steps)]
+
+
+def describe_steps(steps: list[dict[str, Any]]) -> str:
+    """The fixed steps in a few words each, for the approval card and the sentences about a fire."""
+    from pilot.actions import Action
+
+    parts = []
+    for record in steps:
+        try:
+            action = Action.model_validate(record)
+        except ValueError:
+            parts.append("a step that cannot be read")
+            continue
+        command = str(getattr(action.parameters, "command", "") or "").strip()
+        what = command or action.target or ""
+        parts.append(f"{action.action_type.value.replace('_', ' ')} {what}".strip())
+    return "; ".join(parts)
+
+
+def describe_trigger(trigger: Trigger) -> str:
+    """'"name" (file modified: watched.txt)': how a sentence names one trigger."""
+    watched = trigger.condition.get("path") or trigger.condition.get("name") or trigger.condition.get("expression")
+    kind = trigger.trigger_type.value.replace("_", " ")
+    target = Path(str(watched)).name if trigger.condition.get("path") else str(watched or "")
+    return f'"{trigger.name}" ({kind}: {target})' if target else f'"{trigger.name}" ({kind})'
+
+
+# Words a description of a trigger uses that say nothing about which trigger it is.
+_DESCRIPTION_FILLER = frozenset(
+    [
+        "a",
+        "an",
+        "the",
+        "my",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "trigger",
+        "triggers",
+        "one",
+        "ones",
+        "which",
+        "who",
+        "whose",
+        "what",
+        "for",
+        "on",
+        "of",
+        "in",
+        "at",
+        "to",
+        "from",
+        "with",
+        "and",
+        "or",
+        "called",
+        "named",
+        "name",
+        "watch",
+        "watches",
+        "watching",
+        "watcher",
+        "delete",
+        "remove",
+        "cancel",
+        "stop",
+        "drop",
+        "get",
+        "rid",
+        "please",
+        "file",
+        "files",
+        "folder",
+        "when",
+        "whenever",
+        "every",
+        "each",
+        "if",
+        "changes",
+        "change",
+        "changed",
+        "fires",
+        "fire",
+        "runs",
+        "run",
+    ]
+)
+
+
+def _words(text: str) -> set[str]:
+    raw = str(text or "").lower()
+    words = set(re.findall(r"[a-z0-9]+(?:[._-][a-z0-9]+)*", raw))
+    for word in list(words):
+        words.update(part for part in re.split(r"[._-]", word) if part)
+    return words
 
 
 def _entry_for_store(trigger: Trigger) -> dict[str, Any]:
@@ -276,11 +431,14 @@ class TriggerEngine:
         action_command: str,
         max_fires: int = 0,
         cooldown_seconds: int = 60,
+        steps: list[Any] | None = None,
+        steps_approved: bool = False,
     ) -> Trigger:
         """Create a new trigger (and keep it in the store, when one is attached)."""
         name = name.strip()
         action_command = action_command.strip()
         resolved_type = validate_trigger(name, trigger_type, condition, action_command, max_fires, cooldown_seconds)
+        records = validate_steps(steps)
         trigger = Trigger(
             id=str(uuid.uuid4())[:8],
             name=name,
@@ -290,6 +448,8 @@ class TriggerEngine:
             max_fires=max_fires,
             cooldown_seconds=cooldown_seconds,
             created_at=datetime.now().isoformat(),
+            steps=records,
+            steps_approved=bool(steps_approved and records),
         )
         self._triggers[trigger.id] = trigger
         try:
@@ -299,6 +459,57 @@ class TriggerEngine:
             raise RuntimeError(f"The trigger could not be saved, so it was not created: {error}") from error
         logger.info("Created trigger: %s (%s)", name, trigger.id)
         return trigger
+
+    def resolve(self, description: str) -> list[Trigger]:
+        """The triggers a description names: its id or name exactly (any case), else the triggers whose name, type
+        and target share the most telling words with it ("the trigger that watches watched.txt"). [] when none do."""
+        wanted = str(description or "").strip()
+        if not wanted:
+            return []
+        exact = [
+            trigger
+            for trigger in self._triggers.values()
+            if wanted == trigger.id or wanted.casefold() == trigger.name.casefold()
+        ]
+        if exact:
+            return exact
+        words = _words(wanted) - _DESCRIPTION_FILLER
+        if not words:
+            # "delete the trigger", "stop watching that file": the one trigger there is (of that kind), if only one.
+            pool = list(self._triggers.values())
+            if _words(wanted) & {"file", "files", "folder"}:
+                pool = [trigger for trigger in pool if trigger.trigger_type in FILE_TRIGGERS]
+            return pool
+        # Every telling word must be the trigger's: one shared word ("alert") never picks a trigger to delete.
+        matches = []
+        for trigger in self._triggers.values():
+            haystack = (
+                _words(trigger.name)
+                | _words(trigger.trigger_type.value)
+                | _words(trigger.action_command)
+                | {trigger.id.lower()}
+            )
+            for value in trigger.condition.values():
+                if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                    haystack |= _words(str(value))
+                    if isinstance(value, str) and value:
+                        haystack |= _words(Path(value).name)
+            if words <= haystack:
+                matches.append(trigger)
+        return matches
+
+    def set_pending(self, trigger_id: str, pending: dict[str, Any] | None, outcome: str = "") -> None:
+        """Record a fire that waits for the person (or clear it), and the sentence the person was told."""
+        trigger = self._triggers.get(trigger_id)
+        if trigger is None:
+            return
+        trigger.pending = pending
+        if outcome:
+            trigger.last_outcome = outcome
+        try:
+            self._save()
+        except OSError:
+            logger.warning("The trigger store could not record the outcome of a fire of %s", trigger_id)
 
     def delete_trigger(self, trigger_id: str) -> bool:
         found = self._triggers.get(trigger_id)
@@ -398,6 +609,12 @@ class TriggerEngine:
             reason = str(entry.get("disabled_reason") or "")
             held = entry.get("condition_held")
             try:
+                steps = validate_steps(entry.get("steps") or [])
+            except ValueError as error:
+                steps = []
+                reason = reason or f"Its steps were refused when loaded: {error}"
+            pending = entry.get("pending")
+            try:
                 validate_trigger(
                     name, resolved_type.value, condition, command, numbers["max_fires"], numbers["cooldown_seconds"]
                 )
@@ -417,6 +634,10 @@ class TriggerEngine:
                 created_at=str(entry.get("created_at") or ""),
                 disabled_reason=reason,
                 condition_held=held if isinstance(held, bool) else None,
+                steps=steps,
+                steps_approved=entry.get("steps_approved") is True and bool(steps),
+                pending=pending if isinstance(pending, dict) else None,
+                last_outcome=str(entry.get("last_outcome") or ""),
             )
         except (KeyError, TypeError):
             return None
@@ -463,8 +684,10 @@ class TriggerEngine:
         action_command: str,
         max_fires: int,
         cooldown_seconds: int,
+        steps: list[Any] | None = None,
     ) -> Trigger | None:
         """An enabled trigger that already has exactly these settings, if one exists."""
+        records = validate_steps(steps)
         for trigger in self._triggers.values():
             if (
                 trigger.enabled
@@ -474,6 +697,7 @@ class TriggerEngine:
                 and trigger.action_command == action_command.strip()
                 and trigger.max_fires == max_fires
                 and trigger.cooldown_seconds == cooldown_seconds
+                and trigger.steps == records
             ):
                 return trigger
         return None
@@ -725,14 +949,22 @@ async def trigger_create(
     action_command: str,
     max_fires: int = 0,
     cooldown_seconds: int = 60,
+    steps: list[Any] | None = None,
+    steps_approved: bool = False,
 ) -> str:
     """Create a reactive trigger.
+
+    ``steps``: the exact steps a fire runs, fixed now; ``steps_approved``: the person approved them in this request.
+    A step that needs approval and was not approved here is not run at a fire: the fire waits for the person.
 
     Asking again for a trigger with exactly the same settings reuses the existing
     one instead of adding a twin that would fire the same command twice; this keeps
     a retry after a failed verification from doubling the trigger.
     """
-    existing = _engine.find_matching(name, trigger_type, condition, action_command, max_fires, cooldown_seconds)
+    existing = _engine.find_matching(name, trigger_type, condition, action_command, max_fires, cooldown_seconds, steps)
+    if existing is not None and steps_approved and existing.steps and not existing.steps_approved:
+        existing.steps_approved = True  # the same steps, approved this time
+        _engine._save()
     trigger = existing or _engine.create_trigger(
         name,
         trigger_type,
@@ -740,6 +972,8 @@ async def trigger_create(
         action_command,
         max_fires,
         cooldown_seconds,
+        steps,
+        steps_approved,
     )
 
     # Auto-start engine if not running (or if its loop has ended), and remember that it should run.
@@ -762,11 +996,56 @@ async def trigger_list() -> str:
     return json.dumps(triggers, indent=2)
 
 
-async def trigger_delete(trigger_id: str) -> str:
-    """Delete a trigger by ID or name."""
-    if _engine.delete_trigger(trigger_id):
-        return f"Deleted trigger: {trigger_id}"
-    raise LookupError(f"No trigger has the id or name {trigger_id!r}, so nothing was deleted. List the triggers first.")
+DELETED_ID = re.compile(r"\(id ([^)\s]+)\)\.?$")
+
+
+def deleted_record(trigger: Trigger) -> dict[str, Any]:
+    """What a delete answers: the whole stored entry of the trigger it removed (its name, type, condition, what it
+    watched, its words and its fixed steps), plus ``deleted`` and a plain ``text`` that ends with "(id <id>)"."""
+    record = _entry_for_store(trigger)
+    path = trigger.condition.get("path")
+    record["watched"] = Path(str(path)).name if path else ""
+    record["deleted"] = True
+    record["text"] = f"Deleted the trigger {describe_trigger(trigger)} (id {trigger.id})."
+    return record
+
+
+def deleted_id(output: str) -> str:
+    """The id a delete's answer names: its JSON ``id``, or the "(id <id>)" its text ends with; "" when none."""
+    try:
+        record = json.loads(output or "")
+    except ValueError:
+        record = None
+    if isinstance(record, dict) and record.get("deleted") is True and isinstance(record.get("id"), str):
+        return record["id"]
+    found = DELETED_ID.search((output or "").strip())
+    return found.group(1) if found else ""
+
+
+class TriggerNotFound(LookupError):
+    """No trigger, or more than one, matches what the person said: nothing was deleted, and another plan would not
+    know better (the sentence lists the triggers there are)."""
+
+
+async def trigger_delete(description: str) -> str:
+    """Delete the one trigger ``description`` names: its id, its name, or words such as "the trigger that watches
+    watched.txt" (resolved against the stored triggers by name, type and target). Several matches or none: nothing
+    is deleted and the sentence says which there are. The answer ends with "(id <id>)" for the post-condition."""
+    wanted = str(description or "").strip()
+    matches = _engine.resolve(wanted)
+    if len(matches) == 1:
+        found = matches[0]
+        if not _engine.delete_trigger(found.id):
+            raise TriggerNotFound(f"The trigger {describe_trigger(found)} was already gone, so nothing was deleted.")
+        return json.dumps(deleted_record(found), indent=2, ensure_ascii=False)
+    if matches:
+        listed = ", ".join(describe_trigger(trigger) for trigger in matches)
+        raise TriggerNotFound(
+            f'{len(matches)} triggers match "{wanted}": {listed}. Nothing was deleted; say which one to delete.'
+        )
+    there = [describe_trigger(trigger) for trigger in _engine._triggers.values()]
+    known = f" The triggers there are: {', '.join(there)}." if there else " There are no triggers."
+    raise TriggerNotFound(f'No trigger matches "{wanted}", so nothing was deleted.{known}')
 
 
 async def trigger_start_engine() -> str:

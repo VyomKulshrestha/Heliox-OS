@@ -9,6 +9,7 @@ Now cross-platform with 50+ action types covering full system control.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import re
 import typing
@@ -88,6 +89,9 @@ if TYPE_CHECKING:
     from pilot.workflows.durable_tasks import DurableTaskStore
 
 logger = logging.getLogger("pilot.agents.executor")
+# Whether the person approved the plan the running step belongs to (set around each handler call): a trigger made
+# in an approved plan keeps its steps as approved.
+STEP_APPROVED: contextvars.ContextVar[bool] = contextvars.ContextVar("heliox_step_approved", default=False)
 
 # registry_write's value type: the REG_ names a plan uses (the default is "REG_SZ") and PowerShell's own names, mapped
 # to the RegistryValueKind that Set-ItemProperty -Type takes. Anything else is refused, never passed on.
@@ -1603,8 +1607,12 @@ class Executor:
 
             # Desktop input read back right after it ran (focus, pointer, keys, clipboard) is kept for this action's
             # post-condition check, and a wrong window or pointer fails it here, before the next step runs.
-            with step(action):
-                output = await handler(action)
+            approved_token = STEP_APPROVED.set(bool(user_confirmed))
+            try:
+                with step(action):
+                    output = await handler(action)
+            finally:
+                STEP_APPROVED.reset(approved_token)
             # Machine lines a browser handler added for its check never reach the reply, speech or a model.
             output, observation = split_machine_lines(action.action_type, output)
             notice = getattr(output, "notice", None)
@@ -2831,6 +2839,11 @@ class Executor:
             p.action_command,
             p.max_fires,
             p.cooldown_seconds,
+            steps=list(p.steps),
+            # Approved: the person approved this plan, whose approval card held these steps (trigger_create takes
+            # their tier). Steps that need no approval are approved by being what Heliox runs without asking.
+            steps_approved=STEP_APPROVED.get()
+            or not any(s.requires_confirmation or s.is_irreversible for s in p.steps),
         )
 
     async def _exec_trigger_list(self, action: Action) -> str:
@@ -2842,7 +2855,8 @@ class Executor:
         from pilot.system.triggers import trigger_delete
 
         p: TriggerParams = action.parameters  # type: ignore[assignment]
-        return await trigger_delete(p.trigger_id or p.name)
+        # An id, a name, or the person's description of the trigger ("the one that watches watched.txt").
+        return await trigger_delete(p.trigger_id or p.name or action.target)
 
     async def _exec_trigger_start(self, action: Action) -> str:
         from pilot.system.triggers import trigger_start_engine

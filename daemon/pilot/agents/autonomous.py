@@ -661,7 +661,12 @@ class AutonomousExecutor:
         so the frontend shows a matching text bubble (session.ts's
         addSystemMessage) -- without it, the announcement has zero visual
         trace. daemon_speech is display-only; the frontend must never also
-        call speakText() for it, or the phrase would be spoken twice."""
+        call speakText() for it, or the phrase would be spoken twice.
+
+        A fired trigger's job is told by the daemon in one sentence that names the trigger (or says the fire waits
+        for an approval), so it is not announced here as well."""
+        if job.source == "trigger":
+            return
         try:
             if job.status == JobStatus.SUCCESS:
                 announcement = f"Task complete. {job.result_summary}"

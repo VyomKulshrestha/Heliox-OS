@@ -628,6 +628,12 @@ REQUEST_RUNNING_METHODS = TASK_RESULT_METHODS | frozenset(
 )
 
 
+# A trigger's fixed steps run for at most this long at a fire; a fire that waits for an approval is told again at most
+# this often (the file it watches may change every minute).
+TRIGGER_FIRE_SECONDS = 120.0
+TRIGGER_RETELL_SECONDS = 3600.0
+
+
 def request_fault_answer(what: str, error: BaseException) -> dict[str, Any]:
     """The reply for a request that raised: the storage sentence for a full or read-only disk, otherwise the plain
     fault sentence. The exception and its traceback are logged here, once."""
@@ -778,6 +784,8 @@ def _is_terminal_execution_failure(results: list[Any]) -> bool:
         "open_url": ("the browser did not open",),
         # A library this install lacks: another plan cannot add it.
         "api_scrape": ("needs beautifulsoup",),
+        # No trigger, or several, match what the person said: another plan would only guess which to delete.
+        "trigger_delete": ("no trigger matches", "triggers match"),
     }
     for result in failed:
         action_type = getattr(result.action.action_type, "value", str(result.action.action_type))
@@ -807,6 +815,11 @@ def _approval_effect(action: Any) -> str:
         host = urlsplit(str(getattr(params, "url", "") or "")).hostname or "the address in this step"
         if names:
             return f"Sends a credential to {host} (the {', '.join(names)} header)."
+    if getattr(action, "action_type", None) == ActionType.TRIGGER_CREATE and getattr(params, "steps", None):
+        from pilot.system.triggers import describe_steps
+
+        steps = [step.model_dump(mode="json") for step in params.steps]
+        return f"Each time this trigger fires, Heliox runs this without asking again: {describe_steps(steps)}."
     return ""
 
 
@@ -7730,6 +7743,13 @@ class PilotServer:
         await self._broadcast_notification(method, params)
         if method in {"autonomous_complete", "autonomous_cancelled"} and isinstance(params, dict):
             await self._finish_phone_request(params)
+            if params.get("source") == "trigger" or str(params.get("job_id") or "") in self.__dict__.get(
+                "_trigger_jobs", {}
+            ):
+                try:
+                    await self._finish_trigger_job(params)
+                except Exception:
+                    logger.warning("Telling how a trigger's job ended failed", exc_info=True)
 
     def _wire_air_handoff_requests(self) -> None:
         set_handler = getattr(self._air_handoff_manager, "set_request_handler", None)
@@ -12439,7 +12459,12 @@ class PilotServer:
         return await self._reflector.get_stats()
 
     async def _dispatch_reactive_trigger(self, trigger: Any) -> None:
-        """Submit one fired trigger through guarded autonomous execution."""
+        """One fired trigger. With fixed steps (made and approved with the trigger): exactly those run, nothing is
+        planned. Without (a trigger stored as words only): the words go through guarded autonomous execution, where a
+        step that needs approval is not waited for at the keyboard (``_wait_for_autonomous_confirmation``)."""
+        if getattr(trigger, "steps", None):
+            await self._run_trigger_steps(trigger)
+            return
         if not self._running or self._autonomous is None:
             logger.warning("Trigger %s fired while autonomous execution was unavailable", trigger.id)
             await self._broadcast_notification(
@@ -12457,6 +12482,7 @@ class PilotServer:
             source="trigger",
             session_id=f"trigger:{trigger.id}",
         )
+        self.__dict__.setdefault("_trigger_jobs", {})[job.job_id] = trigger.id
         await self._broadcast_notification(
             "trigger_dispatched",
             {
@@ -12465,6 +12491,171 @@ class PilotServer:
                 "job_id": job.job_id,
             },
         )
+
+    async def _run_trigger_steps(self, trigger: Any) -> None:
+        """Run a fired trigger's fixed steps through the Executor, bounded in time, with a receipt, and say how it
+        went in one sentence. A step that needs approval and was not approved when the trigger was made: nothing
+        runs, and the fire waits for the person (``_trigger_waits``)."""
+        from pilot.actions import ActionPlan
+        from pilot.security.gateway import InvocationSource
+        from pilot.system.triggers import describe_steps, describe_trigger, fire_actions
+
+        named = describe_trigger(trigger)
+        what = describe_steps(trigger.steps)
+        try:
+            actions = fire_actions(trigger)
+        except ValueError:
+            logger.warning("The stored steps of trigger %s could not be read", trigger.id, exc_info=True)
+            await self._trigger_told(
+                trigger,
+                f"The trigger {named} fired, but its stored steps could not be read, so nothing ran.",
+                key=f"{trigger.id}:unreadable",
+            )
+            return
+        if any(action.requires_confirmation or action.is_irreversible for action in actions) and not getattr(
+            trigger, "steps_approved", False
+        ):
+            await self._trigger_waits(trigger, what)
+            return
+        fire_key = f"trigger-{trigger.id}-{trigger.fire_count}"
+        if self._executor is None or not self._running:
+            await self._trigger_told(
+                trigger, f"The trigger {named} fired, but Heliox could not run its steps just then.", key=fire_key
+            )
+            return
+        plan = ActionPlan(
+            actions=actions, explanation=f"Trigger {trigger.name} fired", raw_input=trigger.action_command
+        )
+        approved = bool(getattr(trigger, "steps_approved", False))
+        results: list[Any] | None = None
+        with experience_scope(session_id=f"trigger:{trigger.id}", task_id=fire_key, user_id="local"):
+            try:
+                results = await bounded(
+                    self._executor.execute(
+                        plan,
+                        plan_id=fire_key,
+                        invocation_source=InvocationSource.AUTONOMOUS,
+                        user_confirmed=approved,
+                        critic_already_reviewed=approved,
+                    ),
+                    TRIGGER_FIRE_SECONDS,
+                )
+                failed = [result for result in results if not result.success]
+                if failed:
+                    error = " ".join(str(failed[0].error or "it did not succeed").split())[:200]
+                    sentence = f"The trigger {named} fired, but a step did not finish: {error}"
+                    status = "failed"
+                else:
+                    sentence = f"The trigger {named} fired and ran: {what}."
+                    status = "success"
+            except TimeoutError:
+                sentence = (
+                    f"The trigger {named} fired, but its steps did not finish within {int(TRIGGER_FIRE_SECONDS)} "
+                    "seconds, so they were stopped."
+                )
+                status = "failed"
+            except Exception:
+                logger.exception("The steps of trigger %s raised", trigger.id)
+                sentence = f"The trigger {named} fired, but a fault inside Heliox stopped its steps."
+                status = "failed"
+        if self._task_receipts is not None:
+            try:
+                await self._task_receipts.finalize(
+                    fire_key, request=trigger.action_command or named, status=status, summary=sentence, source="trigger"
+                )
+            except Exception:
+                logger.warning("The receipt of a trigger fire could not be written", exc_info=True)
+        await self._append_experience(
+            ExperienceEventType.OUTCOME_VERIFIED,
+            idempotency_key=f"task:{fire_key}:trigger_fire",
+            source="trigger",
+            payload={"status": status, "trigger_id": trigger.id, "steps": len(actions)},
+            provenance={"component": "PilotServer._run_trigger_steps"},
+        )
+        await self._trigger_told(trigger, sentence, key=fire_key, pending=None)
+
+    async def _trigger_waits(self, trigger: Any, what: str) -> None:
+        """A fire whose step needs an approval nobody gave: nothing runs, the trigger records the waiting fire, and the
+        person is told in one sentence (again at most once an hour while it keeps firing)."""
+        from pilot.system.triggers import describe_trigger
+
+        now = time.time()
+        previous = dict(getattr(trigger, "pending", None) or {})
+        told_at = float(previous.get("told_at") or 0.0)
+        retell = now - told_at >= TRIGGER_RETELL_SECONDS
+        pending = {
+            "fired_at": now,
+            "fires": int(previous.get("fires") or 0) + 1,
+            "why": "needs approval",
+            "steps": what,
+            "told_at": now if retell else told_at,
+        }
+        sentence = (
+            f"The trigger {describe_trigger(trigger)} fired but did not run {what or 'its action'}, because that needs "
+            "your approval and none was given when the trigger was made."
+        )
+        await self._append_experience(
+            ExperienceEventType.OUTCOME_VERIFIED,
+            idempotency_key=f"task:trigger-{trigger.id}-{getattr(trigger, 'fire_count', 0)}:trigger_waits",
+            source="trigger",
+            payload={"status": "waiting_for_approval", "trigger_id": trigger.id},
+            provenance={"component": "PilotServer._trigger_waits"},
+        )
+        await self._trigger_told(
+            trigger,
+            sentence,
+            key=f"trigger-{trigger.id}-{getattr(trigger, 'fire_count', 0)}",
+            pending=pending,
+            say=retell,
+        )
+
+    async def _trigger_told(
+        self, trigger: Any, sentence: str, *, key: str, pending: dict[str, Any] | None = None, say: bool = True
+    ) -> None:
+        """Keep the fire's outcome on the trigger, and tell the person the way a watcher's notice arrives."""
+        from pilot.system.triggers import get_engine
+
+        get_engine().set_pending(trigger.id, pending, outcome=sentence)
+        logger.info("Trigger %s: %s", trigger.id, sentence)
+        if say:
+            await self._deliver_watch(
+                {"id": f"trigger:{key}", "text": sentence, "kind": "trigger", "trigger_id": trigger.id}
+            )
+
+    async def _trigger_job_waits(self, job: Any, plan: Any, required: set[int]) -> None:
+        """A trigger's autonomous job reached steps that need approval: the fire waits instead of the job."""
+        from pilot.system.triggers import get_engine
+
+        trigger_id = str(getattr(job, "session_id", "") or "").removeprefix("trigger:")
+        trigger = get_engine().get_trigger(trigger_id)
+        self.__dict__.setdefault("_trigger_jobs_told", set()).add(job.job_id)
+        if trigger is None:
+            return
+        what = "; ".join(
+            f"{plan.actions[index].action_type.value.replace('_', ' ')} {plan.actions[index].target}".strip()
+            for index in sorted(required)
+        )
+        await self._trigger_waits(trigger, what)
+
+    async def _finish_trigger_job(self, params: dict[str, Any]) -> None:
+        """A trigger's autonomous job ended: one sentence, unless the person was already told it waits."""
+        from pilot.system.triggers import describe_trigger, get_engine
+
+        job_id = str(params.get("job_id") or "")
+        trigger_id = self.__dict__.setdefault("_trigger_jobs", {}).pop(job_id, None)
+        told = self.__dict__.setdefault("_trigger_jobs_told", set())
+        if trigger_id is None or job_id in told:
+            told.discard(job_id)
+            return
+        trigger = get_engine().get_trigger(trigger_id)
+        if trigger is None:
+            return
+        named = describe_trigger(trigger)
+        if str(params.get("status") or "") in {"success", "partial"}:
+            sentence = f"The trigger {named} fired and its action finished."
+        else:
+            sentence = f"The trigger {named} fired, but its action did not finish."
+        await self._trigger_told(trigger, sentence, key=f"job-{job_id}")
 
     async def _handle_background_tasks(self, params: dict, ws: ServerConnection) -> dict:
         """List all registered background monitoring tasks.
@@ -12540,6 +12731,11 @@ class PilotServer:
             required = set(range(len(plan.actions)))
         if not required:
             return True
+        if getattr(job, "source", "") == "trigger":
+            # Nobody is asked at the keyboard for a fired trigger: the fire waits as a request the person is told
+            # about, and the job ends instead of holding a card for five minutes.
+            await self._trigger_job_waits(job, plan, required)
+            return False
         reason = (
             review.summary()
             if escalated and review.summary()

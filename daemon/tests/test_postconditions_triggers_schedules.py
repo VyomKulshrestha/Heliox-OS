@@ -211,14 +211,29 @@ async def test_deleted_trigger_verifies(engine, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_leaving_a_trigger_of_that_name_is_a_mismatch(engine, tmp_path: Path) -> None:
+async def test_a_name_two_triggers_share_asks_which_and_deletes_neither(engine, tmp_path: Path) -> None:
     engine.create_trigger("watch-downloads", "file_created", {"path": str(tmp_path / "a")}, "notify a")
     engine.create_trigger("watch-downloads", "file_created", {"path": str(tmp_path / "b")}, "notify b")
 
     result = await _run(ActionType.TRIGGER_DELETE, TriggerParams(name="watch-downloads"))
 
-    assert result.success is True
-    _assert_mismatch(await _verify(result), "still in the trigger store")
+    assert result.success is False
+    assert (result.error or "").startswith('2 triggers match "watch-downloads"')
+    assert len(_stored(engine)["triggers"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_delete_whose_trigger_is_still_stored_is_a_mismatch(engine, tmp_path: Path) -> None:
+    """The check looks for the id the delete named, so a delete that said it removed a trigger still there fails."""
+    kept = engine.create_trigger("watch-downloads", "file_created", {"path": str(tmp_path / "a")}, "notify a")
+    action = Action(
+        action_type=ActionType.TRIGGER_DELETE,
+        target="the downloads trigger",
+        parameters=TriggerParams(name="the downloads trigger"),
+    )
+    claimed = ActionResult(action=action, success=True, output=f'Deleted the trigger "watch-downloads" (id {kept.id}).')
+
+    _assert_mismatch(await _verify(claimed), "still in the trigger store")
 
 
 @pytest.mark.asyncio

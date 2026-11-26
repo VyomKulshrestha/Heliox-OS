@@ -11,7 +11,6 @@ import json
 import os
 import smtplib
 import stat
-from types import SimpleNamespace
 
 import pytest
 
@@ -286,30 +285,32 @@ async def test_scrape_of_an_error_page_fails(http: dict) -> None:
 async def test_trigger_delete_of_an_unknown_trigger_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     from pilot.system import triggers
 
-    asked: list[str] = []
-
-    def delete_trigger(trigger_id: str) -> bool:
-        asked.append(trigger_id)
-        return False
-
-    monkeypatch.setattr(triggers, "_engine", SimpleNamespace(delete_trigger=delete_trigger))
+    engine = triggers.TriggerEngine()
+    engine.create_trigger("disk-alert", "disk_threshold", {"threshold": 95}, "tell me")
+    monkeypatch.setattr(triggers, "_engine", engine)
 
     result = await _run(ActionType.TRIGGER_DELETE, "_exec_trigger_delete", TriggerParams(name="cpu-alert"))
 
     assert result.success is False
-    assert "No trigger has the id or name 'cpu-alert'" in (result.error or "")
-    assert asked == ["cpu-alert"]
+    assert 'No trigger matches "cpu-alert", so nothing was deleted.' in (result.error or "")
+    assert [t["name"] for t in engine.list_triggers()] == ["disk-alert"]
 
 
 @pytest.mark.asyncio
 async def test_trigger_delete_of_a_known_trigger_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     from pilot.system import triggers
 
-    monkeypatch.setattr(triggers, "_engine", SimpleNamespace(delete_trigger=lambda _id: True))
+    engine = triggers.TriggerEngine()
+    made = engine.create_trigger("cpu-alert", "cpu_threshold", {"threshold": 90}, "tell me")
+    monkeypatch.setattr(triggers, "_engine", engine)
 
     result = await _run(ActionType.TRIGGER_DELETE, "_exec_trigger_delete", TriggerParams(name="cpu-alert"))
 
     assert result.success is True
+    record = json.loads(result.output)
+    assert record["id"] == made.id and record["name"] == "cpu-alert" and record["trigger_type"] == "cpu_threshold"
+    assert record["text"] == f'Deleted the trigger "cpu-alert" (cpu threshold) (id {made.id}).'
+    assert engine.list_triggers() == []
 
 
 # ── Row 7: registry_write (and registry_read) off Windows ───────────

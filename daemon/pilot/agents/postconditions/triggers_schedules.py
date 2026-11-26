@@ -121,7 +121,7 @@ def _store(engine: Any) -> dict[str, Any] | None:
 @register(ActionType.TRIGGER_CREATE, method="trigger_present_postcondition")
 async def trigger_present(result: ActionResult) -> Outcome:
     """The stored trigger has the requested settings, the engine holds the same one, and the engine runs."""
-    from pilot.system.triggers import get_engine
+    from pilot.system.triggers import get_engine, validate_steps
 
     params: TriggerParams = result.action.parameters  # type: ignore[assignment]
     engine = get_engine()
@@ -144,6 +144,7 @@ async def trigger_present(result: ActionResult) -> Outcome:
         "condition": params.condition,
         "action_command": params.action_command.strip(),
         "enabled": True,
+        "steps": validate_steps(list(params.steps)),
     }
     matching = [entry for entry in candidates if all(entry.get(key) == value for key, value in expected.items())]
     if not matching:
@@ -161,15 +162,19 @@ async def trigger_present(result: ActionResult) -> Outcome:
 
 @register(ActionType.TRIGGER_DELETE, method="trigger_absence_postcondition", precheck=True)
 async def trigger_absent(result: ActionResult) -> Outcome:
-    """No trigger with the given id or name is left in the trigger store or in the engine."""
-    from pilot.system.triggers import get_engine
+    """No trigger with the given id or name is left in the trigger store or in the engine. A delete by description
+    names the trigger it deleted in its answer (its "id"): that id is the one looked for."""
+    from pilot.system.triggers import deleted_id, get_engine
 
     params: TriggerParams = result.action.parameters  # type: ignore[assignment]
-    target = (params.trigger_id or params.name).strip()
+    asked = target = (params.trigger_id or params.name or result.action.target).strip()
     if not target:
         raise ValueError("Trigger delete has no id or name to observe")
     engine = get_engine()
     precheck = is_precheck(result)
+    deleted = deleted_id(result.output or "") if not precheck else ""
+    if deleted:
+        target = deleted
     store = _store(engine)
     if store is None:
         if precheck:
@@ -190,6 +195,8 @@ async def trigger_absent(result: ActionResult) -> Outcome:
     if held:
         return mismatch(f"{len(held)} trigger(s) with id or name {target} are still held by the trigger engine")
     _run_deletions.note_verified_deletion(ActionType.TRIGGER_DELETE, target)
+    if asked != target:
+        _run_deletions.note_verified_deletion(ActionType.TRIGGER_DELETE, asked)
     return verified(f"No trigger with id or name {target} is left in the trigger store or the engine")
 
 
