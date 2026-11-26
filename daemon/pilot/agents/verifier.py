@@ -21,11 +21,12 @@ from pilot.actions import (
     GnomeSettingParams,
     PackageParams,
     ProcessParams,
-    ScheduleParams,
     ServiceParams,
     VerificationResult,
     WindowParams,
 )
+from pilot.agents import postconditions
+from pilot.timeouts import bounded
 
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
@@ -53,9 +54,9 @@ def _tree_listing(root: Any) -> dict[str, int] | None:
     return listing
 
 
-# Public evidence generation imports this registry so the catalog cannot claim
-# an independent verifier that is absent from the runtime verification path.
-POSTCONDITION_VERIFIERS: dict[ActionType, str] = {
+# Verifiers written before the area registry. New verifiers go in a module of
+# pilot.agents.postconditions and register themselves there.
+_BUILTIN_POSTCONDITION_VERIFIERS: dict[ActionType, str] = {
     ActionType.BROWSER_NAVIGATE: "conditional_exact_url_postcondition",
     ActionType.BROWSER_TYPE: "conditional_field_value_postcondition",
     ActionType.BROWSER_SELECT: "conditional_field_value_postcondition",
@@ -77,7 +78,18 @@ POSTCONDITION_VERIFIERS: dict[ActionType, str] = {
     ActionType.POWER_LOGOUT: "logout_transition_postcondition",
     ActionType.WINDOW_CLOSE: "window_absence_postcondition",
     ActionType.DISK_UNMOUNT: "mount_absence_postcondition",
-    ActionType.SCHEDULE_DELETE: "schedule_absence_postcondition",
+}
+
+_AREA_VERIFIERS = postconditions.load_area_modules()
+_DOUBLY_REGISTERED = sorted(action.value for action in set(_AREA_VERIFIERS) & set(_BUILTIN_POSTCONDITION_VERIFIERS))
+if _DOUBLY_REGISTERED:
+    raise RuntimeError(f"Post-condition verifiers registered twice: {', '.join(_DOUBLY_REGISTERED)}")
+
+# Public evidence generation imports this registry so the catalog cannot claim
+# an independent verifier that is absent from the runtime verification path.
+POSTCONDITION_VERIFIERS: dict[ActionType, str] = {
+    **_BUILTIN_POSTCONDITION_VERIFIERS,
+    **{action: registration.method for action, registration in _AREA_VERIFIERS.items()},
 }
 
 _PRECHECKABLE_POSTCONDITIONS = frozenset(
@@ -92,8 +104,8 @@ _PRECHECKABLE_POSTCONDITIONS = frozenset(
         ActionType.PROCESS_KILL,
         ActionType.WINDOW_CLOSE,
         ActionType.DISK_UNMOUNT,
-        ActionType.SCHEDULE_DELETE,
     }
+    | {action for action, registration in _AREA_VERIFIERS.items() if registration.precheck}
 )
 
 
@@ -195,6 +207,18 @@ class Verifier:
         action = result.action
 
         try:
+            registration = _AREA_VERIFIERS.get(action.action_type)
+            if registration is not None:
+                try:
+                    outcome = await bounded(registration.check(result), registration.timeout)
+                except TimeoutError:
+                    return (
+                        True,
+                        f"Post-condition check did not finish within {registration.timeout:g} s; outcome unverified",
+                        False,
+                    )
+                return outcome.passed, outcome.detail, outcome.observed
+
             if action.action_type in {
                 ActionType.BROWSER_NAVIGATE,
                 ActionType.BROWSER_TYPE,
@@ -248,9 +272,6 @@ class Verifier:
 
             elif action.action_type == ActionType.DISK_UNMOUNT:
                 check = await self._verify_disk_unmount(action.parameters)  # type: ignore[arg-type]
-
-            elif action.action_type == ActionType.SCHEDULE_DELETE:
-                check = await self._verify_schedule_delete(action.parameters)  # type: ignore[arg-type]
 
             else:
                 # The executor callback alone is not evidence of a state transition.
@@ -461,13 +482,3 @@ class Verifier:
         if await mount_exists(device=params.device, mount_point=params.mount_point):
             return False, f"Mount is still active: {target}"
         return True, f"Mount is absent: {target}"
-
-    async def _verify_schedule_delete(self, params: ScheduleParams) -> tuple[bool, str]:
-        from pilot.system.scheduler import schedule_exists
-
-        target = params.task_id or params.name
-        if not target:
-            raise ValueError("Schedule delete has no task identifier to observe")
-        if await schedule_exists(target):
-            return False, f"Scheduled task still exists: {target}"
-        return True, f"Scheduled task is absent: {target}"
