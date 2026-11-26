@@ -273,7 +273,8 @@ class EmailAgent(BaseAgent):
             emails: list[dict[str, str]] = []
             unreadable = 0
             for uid in uid_list:
-                fetch_status, msg_data = mail.fetch(uid, "(RFC822)")
+                # BODY.PEEK[] leaves the message unread on the server; (RFC822) would set \Seen on every fetch.
+                fetch_status, msg_data = mail.fetch(uid, "(BODY.PEEK[])")
                 if fetch_status != "OK" or not msg_data or not msg_data[0]:
                     unreadable += 1
                     continue
