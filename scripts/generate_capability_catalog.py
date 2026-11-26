@@ -259,6 +259,10 @@ async def build_catalog() -> dict[str, Any]:
                 "path": verifier_path.relative_to(REPO_ROOT).as_posix(),
                 "sha256": _sha256(verifier_path),
             },
+            "postcondition_area_modules": [
+                {"path": path.relative_to(REPO_ROOT).as_posix(), "sha256": _sha256(path)}
+                for path in sorted((verifier_path.parent / "postconditions").glob("*.py"))
+            ],
             "plugin_manifests": plugin_sources,
         },
         "summary": {

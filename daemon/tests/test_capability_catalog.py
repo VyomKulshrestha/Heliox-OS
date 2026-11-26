@@ -69,6 +69,9 @@ def test_generated_capability_catalog_matches_runtime(tmp_path: Path) -> None:
     generated_actions = {entry["id"]: entry for entry in generated["actions"]}
     assert all(generated_actions[action.value]["verification"]["independent_postcondition"] for action in high_risk)
     assert generated["sources"]["postcondition_verifier"]["path"] == "daemon/pilot/agents/verifier.py"
+    area_paths = {entry["path"] for entry in generated["sources"]["postcondition_area_modules"]}
+    assert "daemon/pilot/agents/postconditions/__init__.py" in area_paths
+    assert "daemon/pilot/agents/postconditions/triggers_schedules.py" in area_paths
     assert generated["plugins"]
 
 
