@@ -182,6 +182,13 @@ def clock_words(moment: Any) -> str:
     return f"{hour % 12 or 12}:{minute:02d} {part}"
 
 
+# Said to the talk model when the task state is known and empty: the truth it must not contradict, since its reply is
+# all that happens unless it writes the ACT line (pilot.conversation.work_claims checks the reply too).
+NOTHING_RUNNING = (
+    "Heliox has no task running or queued: nothing is being done about these words unless your reply is the ACT line."
+)
+
+
 def describe_task(state: dict[str, Any]) -> list[str]:
     lines = []
     if state.get("approval_waiting"):
@@ -194,6 +201,11 @@ def describe_task(state: dict[str, Any]) -> list[str]:
         lines.append(
             f"Heliox is working on: {state['running']}" + (f" ({state['phase']})" if state.get("phase") else "")
         )
+    queued = [str(item) for item in state.get("queued") or [] if str(item).strip()]
+    if queued:
+        lines.append("Waiting in Heliox's queue: " + "; ".join(queued))
+    if state.get("known") and not state.get("running") and not queued:
+        lines.append(NOTHING_RUNNING)
     if state.get("last_result"):
         lines.append(f"Heliox's last task result: {state['last_result']}")
     return lines

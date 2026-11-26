@@ -23,6 +23,7 @@ managers and apps excluded from the timeline nothing is sent at all, in every ro
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import re
 from collections.abc import Callable
@@ -191,16 +192,35 @@ def _offer_in_reply(server: Any, text: str, request: str, why: str) -> str:
     return str(offer_in_reply(server, _offer_kind(request), text, request, why) or "")
 
 
+# The interaction a typed turn is being answered in (typed_turn sets it). The server starts the interaction and marks
+# the request active before the conversation layer is asked, so without this the talk model was told "Heliox is
+# working on: <the very words it was answering> (Planning the safest useful action)", and in the live run of 26
+# November it answered "Heliox is already on that, it will show on screen" while no task existed.
+_ANSWERING: contextvars.ContextVar[str] = contextvars.ContextVar("heliox_answering_interaction", default="")
+
+
 def _task_state(server: Any, layer: Any) -> dict[str, Any]:
-    state: dict[str, Any] = {}
+    """What Heliox is really doing, for the talk model and for the check on its reply: a request being worked on
+    (never the turn being answered), the requests queued behind it, an approval waiting, and the last result.
+    ``"known": True`` says the lists are the truth, so their being empty means nothing runs."""
+    state: dict[str, Any] = {"known": True, "queued": []}
     runtime = getattr(server, "_interaction_runtime", None)
     snapshot = runtime.status() if runtime is not None else {}
     pending = getattr(server, "_pending_confirms", None) or {}
     if pending:
         state["approval_waiting"] = True
-    if getattr(server, "_interactive_request_active", False) and snapshot.get("active"):
+    own = _ANSWERING.get()
+    if (
+        getattr(server, "_interactive_request_active", False)
+        and snapshot.get("active")
+        and not (own and str(snapshot.get("interaction_id") or "") == own)
+    ):
         state["running"] = str(snapshot.get("user_input") or "")[:160]
         state["phase"] = str(snapshot.get("message") or "")[:80]
+    reserved = str(getattr(server, "_queued_reserved_task_id", "") or "")
+    for task_id, _token, params in list(getattr(server, "_queued_execute_requests", None) or ())[:5]:
+        if task_id != reserved and isinstance(params, dict):
+            state["queued"].append(str(params.get("input") or "")[:120])
     if layer is not None and layer.last_result:
         state["last_result"] = layer.last_result[:240]
     return state
@@ -565,7 +585,11 @@ async def typed_turn(server: Any, text: str, ws: Any, notify: Any) -> TypedTurn 
         await ws.send(notify("token_stream", {"token": chunk}))
         return "spoken"
 
-    turn = await layer_for(server).take(text, source="typed", sink=chat_sink)
+    answering = _ANSWERING.set(str(getattr(server, "_active_interaction_id", "") or ""))
+    try:
+        turn = await layer_for(server).take(text, source="typed", sink=chat_sink)
+    finally:
+        _ANSWERING.reset(answering)
     if turn is None:
         return None
     if turn.done:

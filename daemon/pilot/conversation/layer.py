@@ -32,7 +32,7 @@ from typing import Any
 
 from pilot.conversation import debate as dbt
 from pilot.conversation import provisional as prov
-from pilot.conversation import trace
+from pilot.conversation import trace, work_claims
 from pilot.conversation.acknowledge import (
     ACK_AFTER_SECONDS,
     hum_allowed,
@@ -67,7 +67,15 @@ from pilot.conversation.quick import (
     quick_result_sentence,
     valid_search_url,
 )
-from pilot.conversation.router import Route, TurnKind, misheard_command, normalize, route
+from pilot.conversation.router import (
+    READ_REASON,
+    Route,
+    TurnKind,
+    asks_for_work,
+    misheard_command,
+    normalize,
+    route,
+)
 from pilot.conversation.style import (
     SYSTEM_PROMPT,
     TYPED_SYSTEM_PROMPT,
@@ -145,6 +153,10 @@ _SOUNDS_KEPT = re.compile(r"\b(?:noted|saved|stored|kept|remembered|got it|i'?ll
 SECRET_NOT_USED = (
     "I don't use a PIN, password or code said aloud, so I left it out. Type it in yourself where it's needed."
 )
+# Said when the talk model's whole reply claimed work that does not exist (work_claims) and the words were not a
+# request: the truth instead, in a few words.
+NOTHING_RUNNING_SAID = "Nothing is running for that right now."
+NOTHING_RUNNING_ASK = "Nothing is running for that yet. What would you like me to do?"
 # Asked after Heliox pushed back on a costly step the person asked for and the reply asked nothing (debate).
 STILL_GO_AHEAD = "Do you still want me to go ahead?"
 # Said on a turn that gives way when every sentence the model wrote still pushed back (debate.pushes_back).
@@ -1011,7 +1023,8 @@ class ConversationLayer:
             concern = self._direct_concern(text, decided, result)  # asked before this turn joins the conversation
             self.memory.add_user(text)
             self.debate.close(settle=True)  # a direct request: done as asked, nothing argued before it starts
-            handed = self._hand_over(result, intent_from_route(decided, text))
+            read_subject = decided.target if decided.reason == READ_REASON else None
+            handed = self._hand_over(result, intent_from_route(decided, text), quick_words=read_subject)
             handed._concern = concern
             return handed
         # LOCAL here means the server's own handlers had no answer ("why did you say that?" with no card to
@@ -1145,6 +1158,8 @@ class ConversationLayer:
         held_back: list[str] = []  # sentences not said because this turn gives way and they still pushed back
         written: list[str] = []  # every sentence the reply wrote, said or not: the second signal reads them
         stance_topics: list[str] = []  # the same line written in another case, as a sentence of its own
+        false_claims: list[str] = []  # sentences claiming work that does not exist: never said (work_claims)
+        truth = _safe_call(self.sources.task_state, {})  # what Heliox is really doing, as the model was told
 
         async def put(sentence: str) -> None:
             trace.mark_once("first sentence complete")
@@ -1370,6 +1385,14 @@ class ConversationLayer:
                     if clean:
                         logger.info("Dropped a sentence claiming an action the fast model cannot take: %r", clean)
                     continue
+                # Work said to be under way, queued, coming or done, when no such task exists (work_claims): never
+                # said or shown. What happens instead is decided once the reply has ended (false_claims below).
+                clean, gone = work_claims.without_unbacked(clean, truth)
+                if gone:
+                    logger.info("Dropped a sentence claiming work that does not exist: %r", gone)
+                    false_claims.extend(gone)
+                if not clean.strip():
+                    continue
                 if ((self.debate.giving or fact) and dbt.pushes_back(clean)) or (
                     holding_course and self.debate.giving and not dbt.gives_way(clean)
                 ):
@@ -1577,6 +1600,21 @@ class ConversationLayer:
                 self.memory.add_heliox(" ".join(said))
             self.debate.close(settle=True)
             return self._hand_over(result, intent)
+        elif false_claims and not failure:
+            # The reply said work was under way, queued, coming or done, and no such task exists: those sentences
+            # were not said. The model took the words for a request; when they start with a verb Heliox acts on (or
+            # the router read one), the planner gets them, through the usual road with every review and approval.
+            # Otherwise (a question about something that is not running) one plain sentence says so.
+            if decided.kind is not TurnKind.UNCLEAR and not result.own_plan and asks_for_work(text, decided):
+                logger.info("A reply claimed work that does not exist; the request goes to the planner")
+                intent = HandoverIntent(verb="do", object="", words=text, request=text, source="model")
+                self.debate.close(settle=True)
+                return self._hand_over(result, intent)
+            if not said:
+                line = NOTHING_RUNNING_ASK if decided.kind is TurnKind.UNCLEAR else NOTHING_RUNNING_SAID
+                await self._say_one(result, line, started)
+            result.done = True
+            return result
         if not (failure or said or dropped or act_text or promised or held_back):
             # Nothing to say came back (only spaces, only a STANCE line, or nothing left once cleaned for the ear):
             # said as an empty reply, never silence. A reply held back on a turn that gives way had words: its
@@ -2001,11 +2039,23 @@ class ConversationLayer:
         task.add_done_callback(self._background.discard)
         return task
 
-    def _hand_over(self, result: TurnResult, intent: HandoverIntent, *, quick: QuickPlan | None = None) -> TurnResult:
+    def _hand_over(
+        self,
+        result: TurnResult,
+        intent: HandoverIntent,
+        *,
+        quick: QuickPlan | None = None,
+        quick_words: str | None = None,
+    ) -> TurnResult:
+        """``quick_words``: the words the quick road reads instead of the whole request (a read the catalog net found:
+        only the subject it named, so a path holding "disk" never becomes a disk reading)."""
         if quick is None and intent.source == "router" and intent.verb:
             try:
                 quick = from_words(
-                    normalize(intent.words), intent.verb, intent.object, search_url=valid_search_url(self._search_url())
+                    normalize(intent.words if quick_words is None else quick_words),
+                    intent.verb,
+                    intent.object,
+                    search_url=valid_search_url(self._search_url()),
                 )
             except Exception:
                 logger.debug("No quick plan for %r", intent.words, exc_info=True)
