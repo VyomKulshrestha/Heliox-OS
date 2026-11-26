@@ -66,6 +66,22 @@ class WorkspaceIndex:
         self._file_hashes: dict[str, str] = {}
         self._ready = False
 
+    def unavailable_reason(self) -> str | None:
+        """Why a search cannot run at all (a library missing, nothing indexed yet), or None when it can try."""
+        import importlib.util
+
+        missing = [
+            name for name in ("faiss", "numpy", "sentence_transformers") if importlib.util.find_spec(name) is None
+        ]
+        if missing:
+            return (
+                f"Workspace search needs {', '.join(missing)}, which is not installed "
+                "(pip install faiss-cpu sentence-transformers)."
+            )
+        if self._index is None and not Path(self._faiss_file).exists():
+            return "No workspace has been indexed yet: index the folder with workspace_index first."
+        return None
+
     def _load_model(self) -> bool:
         if self._model is not None:
             return True

@@ -322,3 +322,50 @@ async def test_log_analyze_timeline_shows_the_newest_events_and_says_how_many(tm
     assert report["events_total"] == 40
     assert report["timeline_note"] == "The timeline shows the newest 15 of 40 events."
     assert "over 40 events" in report["summary"]
+
+
+# ── workspace_search ─────────────────────────────────────────────────
+
+
+async def _workspace_search(monkeypatch, tmp_path):
+    from pilot import config
+    from pilot.actions import WorkspaceParams
+    from pilot.agents.executor import Executor
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    executor = object.__new__(Executor)
+    action = Action(action_type=ActionType.WORKSPACE_SEARCH, parameters=WorkspaceParams(query="where is the parser"))
+    return await executor._exec_workspace_search(action)
+
+
+@pytest.mark.asyncio
+async def test_workspace_search_fails_with_what_is_missing(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    import importlib.util
+
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util, "find_spec", lambda name, *a: None if name == "faiss" else real_find_spec("json")
+    )
+    with pytest.raises(RuntimeError, match="needs faiss"):
+        await _workspace_search(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: real_find_spec("json"))
+    with pytest.raises(RuntimeError, match="index the folder with workspace_index first"):
+        await _workspace_search(monkeypatch, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_workspace_search_fails_when_the_model_does_not_load(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from pilot.memory.workspace_index import WorkspaceIndex
+
+    monkeypatch.setattr(WorkspaceIndex, "unavailable_reason", lambda self: None)
+    monkeypatch.setattr(WorkspaceIndex, "search", lambda self, query, n: [])
+    with pytest.raises(RuntimeError, match="embedding model could not be loaded"):
+        await _workspace_search(monkeypatch, tmp_path)
+
+    def found(self, query, n):
+        self._model = object()
+        return [{"file": "a.py", "start_line": 1, "end_line": 9, "score": 0.9, "text": "def parse(): ..."}]
+
+    monkeypatch.setattr(WorkspaceIndex, "search", found)
+    assert (await _workspace_search(monkeypatch, tmp_path)).startswith("File: a.py (lines 1-9")

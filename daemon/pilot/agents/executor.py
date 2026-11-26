@@ -3089,9 +3089,17 @@ class Executor:
 
         index_dir = DATA_DIR / "workspace_index"
         idx = WorkspaceIndex(index_dir)
+        # A search that cannot run must fail, not answer "no results": the next step would take that as an answer.
+        reason = idx.unavailable_reason()
+        if reason:
+            raise RuntimeError(reason)
         results = await asyncio.to_thread(idx.search, p.query, p.n_results)
         if not results:
-            return "No results found in workspace index."
+            if getattr(idx, "_model", None) is None:
+                raise RuntimeError(
+                    "The embedding model could not be loaded, so the workspace was not searched (see the daemon log)."
+                )
+            raise RuntimeError("The workspace index is empty: index a folder with workspace_index first.")
 
         lines = []
         for r in results:
