@@ -16,6 +16,7 @@ action type without an entry fails):
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from pilot.actions import READ_ONLY_ACTIONS, ActionType
 
@@ -155,4 +156,29 @@ def stake_of(action_type: ActionType) -> Stake:
     return STAKES.get(ActionType(action_type), (Stake.WAITS, ""))[0]
 
 
-__all__ = ["STAKES", "Stake", "stake_of"]
+# Keys that only control what is playing or how loud: play or pause, next, previous, stop, volume up, down and mute
+# (pyautogui's names). A key press made only of these goes to the media player, not into the program in front.
+MEDIA_KEYS = frozenset({"playpause", "nexttrack", "prevtrack", "stop", "volumeup", "volumedown", "volumemute"})
+
+
+def media_keys_only(action: Any) -> bool:
+    """A key press or hotkey whose keys are all media or volume keys."""
+    if action.action_type not in (ActionType.KEYBOARD_PRESS, ActionType.KEYBOARD_HOTKEY):
+        return False
+    params = action.parameters
+    keys = [str(key) for key in (getattr(params, "keys", None) or [])]
+    if action.action_type is ActionType.KEYBOARD_PRESS:
+        keys = [str(getattr(params, "key", "") or "")]
+    keys = [key.strip().lower() for key in keys if key and key.strip()]
+    return bool(keys) and all(key in MEDIA_KEYS for key in keys)
+
+
+def step_stake(action: Any) -> Stake:
+    """The class of one step: its action type's, except that a key press made only of media or volume keys has
+    nothing at stake (every other key press waits, as its type does)."""
+    if media_keys_only(action):
+        return Stake.NOTHING_AT_STAKE
+    return stake_of(action.action_type)
+
+
+__all__ = ["MEDIA_KEYS", "STAKES", "Stake", "media_keys_only", "stake_of", "step_stake"]

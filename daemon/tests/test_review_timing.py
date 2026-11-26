@@ -285,6 +285,26 @@ def test_a_delete_or_typing_into_another_app_waits(tmp_path):
     assert _timing(_type(), home=tmp_path) is ReviewTiming.BEFORE
 
 
+@pytest.mark.parametrize(
+    ("kind", "keys", "beside"),
+    [
+        (ActionType.KEYBOARD_PRESS, {"key": "playpause"}, True),
+        (ActionType.KEYBOARD_PRESS, {"key": "volumeup"}, True),
+        (ActionType.KEYBOARD_PRESS, {"key": "stop"}, True),
+        (ActionType.KEYBOARD_HOTKEY, {"keys": ["volumedown", "volumemute"]}, True),
+        (ActionType.KEYBOARD_PRESS, {"key": "enter"}, False),
+        (ActionType.KEYBOARD_HOTKEY, {"keys": ["ctrl", "volumeup"]}, False),
+        (ActionType.KEYBOARD_HOTKEY, {"keys": ["ctrl", "s"]}, False),
+    ],
+)
+def test_a_key_press_of_only_media_or_volume_keys_runs_beside_its_review(tmp_path, kind, keys, beside):
+    """Play or pause, next, previous, stop and the volume keys go to the media player, not into the program in
+    front: nothing at stake. Every other key press waits for the review, as typing does."""
+    press = Action(action_type=kind, target="media", parameters=KeyboardParams(**keys))
+    expected = ReviewTiming.BESIDE if beside else ReviewTiming.BEFORE
+    assert _timing(press, home=tmp_path) is expected
+
+
 def test_a_plan_with_a_card_is_reviewed_while_the_card_is_open(tmp_path):
     plan = _plan(_file_action(ActionType.FILE_DELETE, tmp_path / "a.txt"))
     assert review_timing(plan, card_anyway=True, undo=UNDO, home=tmp_path) is ReviewTiming.WITH_CARD

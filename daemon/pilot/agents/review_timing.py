@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from pilot.actions import READ_ONLY_ACTIONS, ActionType, PermissionTier
-from pilot.agents.step_stakes import Stake, stake_of
+from pilot.agents.step_stakes import Stake, stake_of, step_stake
 
 # The longest a risky plan without a card waits for the review on its own. On 26 November the small cloud model
 # answered in 3.0 s; the configured limit (narration.companion_timeout_seconds) applies when it is shorter.
@@ -158,7 +158,7 @@ def step_cannot_hurt(action: Any, probe: _Probe) -> bool:
     keep (pilot.agents.step_stakes)."""
     if action.requires_root or action.dangerous_flags or action.is_irreversible:
         return False
-    stake = stake_of(action.action_type)
+    stake = step_stake(action)
     if stake is Stake.READ:
         return _is_read(action)
     if stake is Stake.NOTHING_AT_STAKE:
