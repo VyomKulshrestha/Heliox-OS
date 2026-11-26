@@ -73,26 +73,26 @@ async def hear(
     expect: int = 1,
     *,
     task_open: bool = False,
-    real_wait: bool = False,
     on_command=None,
-    elapsed: list[float] | None = None,
+    order: list[tuple[str, object]] | None = None,
 ):
     """Feed the listener utterances (text, seconds after the previous one ended) and return what it dispatched,
     the withdraw calls it made and the waits it asked the recorder for. The recorder's stamps start from the
-    monotonic clock, as the listener's own do. ``real_wait``: a wait for the rest of a sentence takes its full
-    time, as with a microphone that hears nothing more; ``elapsed`` gets the seconds to each dispatch."""
+    monotonic clock, as the listener's own do. A wait for the rest of a sentence runs out with nothing heard, as
+    with a microphone that hears nothing more, without taking its seconds. ``order`` gets the events in the order
+    they happened: ("wait", seconds) for each timed wait the listener asked for, ("dispatch", words) for each
+    dispatch, so "at once" and "after the wait" are facts about order, not about a machine's speed."""
     item = listener()
     dispatched: list[tuple[str, str, str]] = []
     calls: list[tuple[str, str]] = []
     waits: list[float | None] = []
     done = asyncio.Event()
 
-    began = time.monotonic()
     forward = on_command
 
     async def on_command(text: str) -> None:
-        if elapsed is not None:
-            elapsed.append(time.monotonic() - began)
+        if order is not None:
+            order.append(("dispatch", text))
         dispatched.append((text, voice.voice_turn_addressed.get(), voice.voice_turn_id.get()))
         if forward is not None:
             await forward(text)
@@ -116,12 +116,12 @@ async def hear(
 
     async def transcribe(**kwargs):
         waits.append(kwargs.get("timeout"))
+        if order is not None and kwargs.get("timeout") is not None:
+            order.append(("wait", kwargs["timeout"]))
         try:
             text, after = next(pending)
         except StopIteration:
             if kwargs.get("timeout") is not None:
-                if real_wait:
-                    await asyncio.sleep(kwargs["timeout"])
                 return "No speech detected"  # the wait for the rest of a sentence ran out
             await asyncio.wait_for(done.wait(), 2)
             item._running = False
@@ -136,7 +136,8 @@ async def hear(
     item._record_and_transcribe = transcribe
     item._running = True
     await asyncio.wait_for(item._listen_loop(), timeout=8)
-    await asyncio.sleep(0.05)
+    for _ in range(50):  # anything the last dispatch scheduled has its turns
+        await asyncio.sleep(0)
     return dispatched, calls, waits
 
 
@@ -224,6 +225,12 @@ async def test_a_request_that_began_before_the_wait_ran_out_is_heard_to_its_end(
     os.remove(path)
 
 
+def waits_before_dispatch(order: list) -> list:
+    """The timed waits the listener asked for before its first dispatch, in order."""
+    first = next(index for index, (kind, _value) in enumerate(order) if kind == "dispatch")
+    return [value for kind, value in order[:first] if kind == "wait"]
+
+
 WHOLE_ALREADY = [
     "Stop,",
     "stop -",
@@ -255,17 +262,17 @@ def test_a_mark_after_words_that_cannot_stand_alone_still_waits(text):
 async def test_a_stop_word_or_an_answer_with_a_trailing_mark_is_dispatched_at_once(text):
     """Said with the wake phrase, the recogniser ending it on a comma or a dash: dispatched at once, not after the
     2.5 s wait for a rest that never comes."""
-    elapsed: list[float] = []
-    dispatched, _calls, waits = await hear([(f"Hey Heliox, {text}", 0.0)], real_wait=True, elapsed=elapsed)
-    assert len(dispatched) == 1 and elapsed[0] < 1.0
+    order: list = []
+    dispatched, _calls, waits = await hear([(f"Hey Heliox, {text}", 0.0)], order=order)
+    assert len(dispatched) == 1 and waits_before_dispatch(order) == []  # no wait of any length came first
     assert voice.UNFINISHED_WAIT_SECONDS not in waits
 
 
 @pytest.mark.asyncio
 async def test_stop_while_a_task_runs_silently_is_dispatched_at_once():
-    elapsed: list[float] = []
-    dispatched, _calls, waits = await hear([("Stop,", 0.0)], task_open=True, real_wait=True, elapsed=elapsed)
-    assert [d[0] for d in dispatched] == ["Stop"] and elapsed[0] < 1.0
+    order: list = []
+    dispatched, _calls, waits = await hear([("Stop,", 0.0)], task_open=True, order=order)
+    assert [d[0] for d in dispatched] == ["Stop"] and waits_before_dispatch(order) == []
     assert voice.UNFINISHED_WAIT_SECONDS not in waits
 
 
@@ -280,11 +287,11 @@ async def test_no_while_an_approval_waits_reaches_the_denial_at_once():
     server._speak_voice_response = AsyncMock()
     server._pending_confirms["plan-1"] = {"plan": None}
     server._handle_confirm = AsyncMock(return_value={"status": "ok"})
-    elapsed: list[float] = []
+    order: list = []
     dispatched, _calls, waits = await hear(
-        [("No,", 0.0)], task_open=True, real_wait=True, on_command=server._voice_command_dispatch, elapsed=elapsed
+        [("No,", 0.0)], task_open=True, on_command=server._voice_command_dispatch, order=order
     )
-    assert [d[0] for d in dispatched] == ["No"] and elapsed[0] < 1.0
+    assert [d[0] for d in dispatched] == ["No"] and waits_before_dispatch(order) == []
     server._handle_confirm.assert_awaited_once()
     assert server._handle_confirm.await_args.args[0] == {
         "plan_id": "plan-1", "confirmed": False, "input_channel": "voice_deny"
@@ -296,12 +303,10 @@ async def test_no_while_an_approval_waits_reaches_the_denial_at_once():
 async def test_a_finished_request_ending_on_about_waits_and_then_goes_as_it_was():
     """The cost of the rule: "Tell me what this is about." waits the full UNFINISHED_WAIT_SECONDS for a rest that
     never comes, then goes unchanged."""
-    elapsed: list[float] = []
-    dispatched, _calls, _waits = await hear(
-        [("Hey Heliox, tell me what this is about.", 0.0)], real_wait=True, elapsed=elapsed
-    )
+    order: list = []
+    dispatched, _calls, _waits = await hear([("Hey Heliox, tell me what this is about.", 0.0)], order=order)
     assert [d[0] for d in dispatched] == ["tell me what this is about"]
-    assert elapsed[0] >= voice.UNFINISHED_WAIT_SECONDS - 0.05
+    assert waits_before_dispatch(order) == [voice.UNFINISHED_WAIT_SECONDS]  # the whole wait ran out first
 
 
 @pytest.mark.parametrize(
