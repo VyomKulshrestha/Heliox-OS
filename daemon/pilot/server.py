@@ -712,9 +712,11 @@ def _is_terminal_execution_failure(results: list[Any]) -> bool:
             "is registered, but its executable is missing",
         ),
         # Missing integration settings: another plan cannot supply them, so report instead of replanning.
-        "api_send_email": ("smtp credentials are not configured",),
-        "api_slack": ("no webhook url is configured",),
-        "api_discord": ("no webhook url is configured",),
+        # Missing or rejected connections (pilot.system.connections) are the same: the person fixes them in Settings.
+        "api_send_email": ("no mail account is connected", "refused the sign-in"),
+        "api_slack": ("is not connected. connect it in", "hidden when the plan was kept", "replace it in settings"),
+        "api_discord": ("is not connected. connect it in", "hidden when the plan was kept", "replace it in settings"),
+        "api_github": ("is not connected. connect it in", "hidden when the plan was kept", "replace it in settings"),
         # The platform or runtime lacks the facility; a different plan would hit the same wall.
         "registry_read": ("the registry exists only on windows",),
         "registry_write": ("the registry exists only on windows",),

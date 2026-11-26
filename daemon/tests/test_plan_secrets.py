@@ -84,9 +84,21 @@ def _no_connections(monkeypatch: pytest.MonkeyPatch):
 def _plan() -> ActionPlan:
     return ActionPlan(
         actions=[
-            Action(action_type=ActionType.API_SLACK, target="post", parameters=ApiRequestParams(message="hi", webhook_url=SLACK)),
-            Action(action_type=ActionType.API_DISCORD, target="post", parameters=ApiRequestParams(message="hi", webhook_url=DISCORD)),
-            Action(action_type=ActionType.API_GITHUB, target="read", parameters=ApiRequestParams(endpoint="/user", token=TOKEN)),
+            Action(
+                action_type=ActionType.API_SLACK,
+                target="post",
+                parameters=ApiRequestParams(message="hi", webhook_url=SLACK),
+            ),
+            Action(
+                action_type=ActionType.API_DISCORD,
+                target="post",
+                parameters=ApiRequestParams(message="hi", webhook_url=DISCORD),
+            ),
+            Action(
+                action_type=ActionType.API_GITHUB,
+                target="read",
+                parameters=ApiRequestParams(endpoint="/user", token=TOKEN),
+            ),
             Action(action_type=ActionType.API_REQUEST, target="weather", parameters=ApiRequestParams(url=KEYED)),
         ],
         explanation="post and read",
@@ -270,7 +282,11 @@ async def test_a_task_approved_later_from_a_phone_or_mcp_continues_with_its_webh
         await durable.transition("task-1", TaskStatus.AWAITING_APPROVAL, plan_id="plan-1")
         plan = ActionPlan(
             actions=[
-                Action(action_type=ActionType.API_SLACK, target="post", parameters=ApiRequestParams(message="hi", webhook_url=SLACK))
+                Action(
+                    action_type=ActionType.API_SLACK,
+                    target="post",
+                    parameters=ApiRequestParams(message="hi", webhook_url=SLACK),
+                )
             ],
             explanation="post",
             raw_input="post it",

@@ -236,7 +236,9 @@ async def test_chat_message_without_webhook_url_fails(
         (
             ActionType.API_GITHUB,
             "_exec_api_github",
-            ApiRequestParams(method="POST", endpoint="/repos/o/r/issues", body={"title": "x"}),
+            ApiRequestParams(
+                method="POST", endpoint="/repos/o/r/issues", body={"title": "x"}, token="ghp_fake-token-in-plan"
+            ),
         ),
     ],
 )

@@ -165,6 +165,7 @@ class HttpStatusError(RuntimeError):
         message = f"{method} to {scheme}://{host} failed with HTTP {status}{reason}"
         super().__init__(f"{message}: {excerpt}" if excerpt else message)
         self.status = status
+        self.excerpt = excerpt
 
     @classmethod
     def with_reason(cls, error: HttpStatusError, text: str) -> HttpStatusError:
@@ -172,6 +173,7 @@ class HttpStatusError(RuntimeError):
         replaced = cls.__new__(cls)
         RuntimeError.__init__(replaced, text)
         replaced.status = error.status
+        replaced.excerpt = error.excerpt
         return replaced
 
 
@@ -184,7 +186,8 @@ def _connection_refused(error: HttpStatusError, service_name: str, what: str) ->
     return HttpStatusError.with_reason(
         error,
         f"{connections.TITLE[service_name]} refused the {what} (HTTP {error.status}), so nothing was sent: it was "
-        f"removed, revoked or has expired. Replace it in {connections.WHERE[service_name]}.",
+        f"removed, revoked or has expired. Replace it in {connections.WHERE[service_name]}."
+        + (f" The service answered: {error.excerpt}" if error.excerpt else ""),
     )
 
 

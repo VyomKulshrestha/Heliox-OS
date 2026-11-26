@@ -174,9 +174,9 @@ async def test_a_restored_plan_never_sends_to_a_masked_address(monkeypatch) -> N
     restored = ActionPlan.model_validate_json(ActionPlan(actions=[_slack_action()]).model_dump_json())
     masked = restored.actions[0].parameters.webhook_url  # type: ignore[union-attr]
 
-    with pytest.raises(ValueError, match="masked when the plan was kept"):
+    with pytest.raises(ValueError, match="hidden when the plan was kept"):
         await api_client.send_slack_message("Deploy finished", masked)
-    with pytest.raises(ValueError, match="masked"):
+    with pytest.raises(ValueError, match="hidden when the plan was kept"):
         await api_client.api_request("GET", mask_url(WITH_TOKEN) or "")
     assert sent == []
 
