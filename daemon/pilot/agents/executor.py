@@ -1576,7 +1576,14 @@ class Executor:
 
         try:
             output = await handler(action)
-            return ActionResult(action=action, success=True, output=output, snapshot_id=snapshot_id)
+            notice = getattr(output, "notice", None)
+            return ActionResult(
+                action=action,
+                success=True,
+                output=str(output) if notice else output,
+                snapshot_id=snapshot_id,
+                notice=notice,
+            )
         except Exception as e:
             logger.exception("Action execution failed: %s", action.action_type)
             return ActionResult(action=action, success=False, error=str(e), snapshot_id=snapshot_id)
@@ -1918,11 +1925,14 @@ class Executor:
 
     async def _exec_notify(self, action: Action) -> str:
         params: NotifyParams = action.parameters  # type: ignore[assignment]
-        from pilot.system.notify import notification_result, show
+        from pilot.system.notify import NotificationNotShown, notification_result, show
         from pilot.system.platform_detect import CURRENT_PLATFORM
 
         code, err = await show(CURRENT_PLATFORM.value, params.summary, params.body or "")
-        return notification_result(CURRENT_PLATFORM.value, code, err, params.summary, params.body or "")
+        text = notification_result(CURRENT_PLATFORM.value, code, err, params.summary, params.body or "")
+        if code != 0:
+            raise NotificationNotShown(text)
+        return text
 
     # ======================================================================
     # PROCESS MANAGEMENT

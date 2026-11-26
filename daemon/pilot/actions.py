@@ -1132,6 +1132,20 @@ class ActionResult(BaseModel):
     snapshot_id: str | None = None
     executed: bool = True
     skip_reason: str | None = None
+    # A success with a part the person must see, such as recipients the mail server refused. The reply and the
+    # task receipt carry it in full; the output itself is kept in the receipt only as a hash.
+    notice: str | None = None
+
+
+class OutputWithNotice(str):
+    """A handler's output that succeeded with a caveat; the executor moves ``notice`` into ``ActionResult.notice``."""
+
+    notice: str
+
+    def __new__(cls, text: str, notice: str) -> OutputWithNotice:
+        output = super().__new__(cls, text)
+        output.notice = notice
+        return output
 
 
 class VerificationResult(BaseModel):

@@ -40,8 +40,12 @@ def notify() -> str:
     from pilot.agents.executor import Executor
 
     action = SimpleNamespace(parameters=NotifyParams(summary=SUMMARY, body=BODY))
+    from pilot.system.notify import NotificationNotShown
+
     try:
         return one_loop.run(Executor._exec_notify(SimpleNamespace(), action))
+    except NotificationNotShown as exc:
+        return str(exc)  # a failed notification fails the action; its message carries the text
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
 

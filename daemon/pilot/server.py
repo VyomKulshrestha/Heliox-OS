@@ -714,6 +714,8 @@ def _is_terminal_execution_failure(results: list[Any]) -> bool:
         "registry_write": ("the registry exists only on windows",),
         "file_permissions": ("windows has no unix permission modes",),
         "request_human_help": ("could not hand the desktop over",),
+        # The reply quotes the notification's text; showing it again would fail the same way.
+        "notify": ("could not show a desktop notification",),
     }
     for result in failed:
         action_type = getattr(result.action.action_type, "value", str(result.action.action_type))

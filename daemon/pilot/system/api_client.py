@@ -19,7 +19,7 @@ from email.mime.text import MIMEText
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
-from pilot.actions import SUPPORTED_HTTP_METHODS
+from pilot.actions import SUPPORTED_HTTP_METHODS, OutputWithNotice
 from pilot.config import PilotConfig
 from pilot.system.http_client import create_httpx_client
 
@@ -338,7 +338,10 @@ async def send_email(
         logger.warning("SMTP connection closed with an error after the message was accepted: %s", type(e).__name__)
     refused = accepted.get("refused") or {}
     if refused:
-        return f"Email sent to {to}: {subject} (the server refused: {', '.join(sorted(refused))})"
+        # A success for the accepted recipients (failing would invite a resend to them); the refused ones go
+        # to the person through ActionResult.notice, into the reply and the task receipt.
+        notice = f"The mail server refused the email for: {', '.join(sorted(refused))}"
+        return OutputWithNotice(f"Email sent to {to}: {subject}. {notice}.", notice)
     return f"Email sent to {to}: {subject}"
 
 

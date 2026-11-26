@@ -240,6 +240,8 @@ class TaskReceipts:
                 "success": bool(getattr(result, "success", False)),
                 "error": str(getattr(result, "error", "") or "")[:300],
                 "output_sha256": _sha256(str(output).encode("utf-8")) if output else None,
+                # Kept in plain text, unlike the output: a part of a success the person must be able to look up.
+                "notice": str(getattr(result, "notice", "") or "")[:500],
                 "undo": undo_kind,
                 "at": _iso(time.time()),
             }

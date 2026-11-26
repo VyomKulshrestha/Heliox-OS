@@ -7,6 +7,7 @@ posted or changed.
 
 from __future__ import annotations
 
+import json
 import os
 import smtplib
 import stat
@@ -415,3 +416,104 @@ async def test_an_http_error_is_left_to_the_normal_repair_path(http: dict) -> No
     result = await _run(ActionType.API_REQUEST, "_exec_api_request", ApiRequestParams(url="https://8.8.8.8/x"))
 
     assert _is_terminal_execution_failure([result]) is False
+
+
+# ── Row 10: notify when the desktop notification could not be shown ──
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", [Platform.WINDOWS, Platform.MACOS, Platform.LINUX])
+async def test_notification_not_shown_fails_and_the_reply_quotes_its_text(
+    monkeypatch: pytest.MonkeyPatch, platform: Platform
+) -> None:
+    from pilot.actions import NotifyParams
+    from pilot.response_contract import partial_failure_message
+    from pilot.server import _is_terminal_execution_failure
+
+    async def refused(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        return 1, "", "no notification service"
+
+    monkeypatch.setattr(platform_detect, "CURRENT_PLATFORM", platform)
+    monkeypatch.setattr(platform_detect, "run_command", refused)
+    monkeypatch.setattr(platform_detect, "run_powershell", refused)
+    action = Action(
+        action_type=ActionType.NOTIFY,
+        target="all",
+        parameters=NotifyParams(summary="Backup", body="finished at 14:00"),
+    )
+    result = await _executor(ActionType.NOTIFY, "_exec_notify")._execute_single(action, snapshot_id=None)
+    verification = await Verifier(object()).verify(ActionPlan(actions=[action]), [result])
+
+    assert result.success is False
+    assert "Could not show a desktop notification (no notification service)" in (result.error or "")
+    reply = partial_failure_message([result], verification)
+    assert "Backup: finished at 14:00" in reply
+    assert _is_terminal_execution_failure([result]) is True
+
+
+@pytest.mark.asyncio
+async def test_notification_shown_still_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.actions import NotifyParams
+
+    async def shown(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        return 0, "", ""
+
+    monkeypatch.setattr(platform_detect, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(platform_detect, "run_command", shown)
+
+    result = await _run(ActionType.NOTIFY, "_exec_notify", NotifyParams(summary="Backup", body="done"))
+
+    assert result.success is True
+    assert result.output == "Notification sent: Backup"
+
+
+# ── A partly refused email: a success whose refused recipients reach the reply and the receipt ──
+
+
+class _PartlyRefusingSMTP(_SMTP):
+    def sendmail(self, sender: str, to: str, message: str) -> dict:
+        return {"gone@example.com": (550, b"No such user")}
+
+
+@pytest.mark.asyncio
+async def test_partly_refused_email_names_the_refused_recipients_to_the_person(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from pilot.config import ReceiptsConfig
+    from pilot.response_contract import success_message
+    from pilot.workflows.task_receipts import TaskReceipts
+
+    class _Vault:
+        available = True
+
+        def __init__(self) -> None:
+            self.keys: dict[str, str] = {}
+
+        async def get_key(self, name: str) -> str | None:
+            return self.keys.get(name)
+
+        async def store_key(self, name: str, value: str) -> None:
+            self.keys[name] = value
+
+    monkeypatch.setenv("SMTP_USER", "sender@example.com")
+    monkeypatch.setenv("SMTP_PASS", "app-password")
+    monkeypatch.setattr(api_client.smtplib, "SMTP", _PartlyRefusingSMTP(None))
+    parameters = ApiRequestParams(to="friend@example.com, gone@example.com", subject="Hello", message="Body text")
+    action = Action(action_type=ActionType.API_SEND_EMAIL, target="friend@example.com", parameters=parameters)
+
+    result = await _executor(ActionType.API_SEND_EMAIL, "_exec_api_send_email")._execute_single(
+        action, snapshot_id=None
+    )
+    verification = await Verifier(object()).verify(ActionPlan(actions=[action]), [result])
+    reply = success_message(ActionPlan(actions=[action]), [result], verification, dry_run=False)
+    receipts = TaskReceipts(tmp_path / "receipts", config=ReceiptsConfig(), vault=_Vault())
+    receipts.record_action("task-1", "plan-1", action, result, user_confirmed=True)
+    short = await receipts.finalize("task-1", request="send it", status="success", summary="Sent.", source="voice")
+    envelope = await receipts.get(short["receipt_id"])
+
+    assert result.success is True
+    assert result.notice == "The mail server refused the email for: gone@example.com"
+    assert type(result.output) is str
+    assert "Note: The mail server refused the email for: gone@example.com" in reply
+    assert envelope["receipt"]["actions"][0]["notice"] == result.notice
+    assert "Body text" not in json.dumps(envelope)

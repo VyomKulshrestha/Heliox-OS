@@ -62,6 +62,18 @@ def success_message(
     dry_run: bool,
 ) -> str:
     """Build a terminal success message from verified execution state."""
+    message = _success_message_body(plan, results, verification, dry_run=dry_run)
+    notices = [] if dry_run else [_clean(result.notice) for result in results if result.success and result.notice]
+    return "\n".join([message, *(f"Note: {notice}" for notice in notices if notice)])
+
+
+def _success_message_body(
+    plan: ActionPlan,
+    results: Sequence[ActionResult],
+    verification: VerificationResult,
+    *,
+    dry_run: bool,
+) -> str:
     if dry_run:
         intent = _clean(plan.explanation)
         return (

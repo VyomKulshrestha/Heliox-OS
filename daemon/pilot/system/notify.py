@@ -4,8 +4,8 @@ Windows shows a balloon through PowerShell, macOS a notification through ``osasc
 ``notify-send`` (libnotify; it needs a notification daemon, which every desktop session has). The title and the
 text are data on every system, never part of the code that shows them: PowerShell reads them from
 ``$HelioxArgs`` and AppleScript from its arguments (``script_values``); notify-send takes them as arguments after
-``--``. When the command fails, the result says the notification was not shown and why, and carries the message so
-it still reaches the person in the conversation.
+``--``. When the command fails, the action fails with a message that says the notification was not shown and why,
+and carries the text, so the reply quotes it and the message still reaches the person in the conversation.
 """
 
 from __future__ import annotations
@@ -44,12 +44,14 @@ async def show(platform: str, summary: str, body: str) -> tuple[int, str]:
     return code, err
 
 
+class NotificationNotShown(RuntimeError):
+    """The notification was not shown; the message names why and carries the text, so the reply still delivers it."""
+
+
 def notification_result(platform: str, code: int, error: str, summary: str, body: str) -> str:
     """What the action reports: "Notification sent" only when the command succeeded."""
     if code == 0:
         return f"Notification sent: {summary}"
-    if platform == "windows":
-        return f"Notification: {summary} — {body}"  # unchanged: the balloon failed, the text carries the message
     reason = (error or "").strip().splitlines()[0] if (error or "").strip() else f"exit code {code}"
     if "not found" in reason.casefold() and platform == "linux":
         reason = "notify-send is not installed (package libnotify-bin or libnotify)"

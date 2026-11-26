@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from pilot.security.path_rules import LINUX, MACOS, WINDOWS, path_within, rules_for
 from pilot.system import linux_voice
 from pilot.system.notify import notification_command, notification_result
@@ -25,7 +27,8 @@ def test_notification_result_reports_failure_on_macos_and_linux():
     assert "Could not show" in missing and "libnotify" in missing and "Backup finished" in missing
     failed = notification_result("macos", 1, "execution error: Not authorised (-1743)", "Done", "x")
     assert "Could not show" in failed and "-1743" in failed and not failed.startswith("Notification sent")
-    assert notification_result("windows", 1, "boom", "Done", "x") == "Notification: Done — x"
+    windows = notification_result("windows", 1, "boom", "Done", "x")
+    assert windows == "Could not show a desktop notification (boom). Done: x"
 
 
 def test_notify_action_on_linux_without_notify_send(monkeypatch):
@@ -40,8 +43,11 @@ def test_notify_action_on_linux_without_notify_send(monkeypatch):
     monkeypatch.setattr(platform_detect, "CURRENT_PLATFORM", Platform.LINUX)
     monkeypatch.setattr(platform_detect, "run_command", missing)
     action = Action(action_type=ActionType.NOTIFY, target="all", parameters=NotifyParams(summary="Hi", body="there"))
-    result = asyncio.run(executor_module.Executor._exec_notify(object(), action))  # type: ignore[arg-type]
-    assert result.startswith("Could not show a desktop notification")
+    from pilot.system.notify import NotificationNotShown
+
+    with pytest.raises(NotificationNotShown, match="Could not show a desktop notification") as failure:
+        asyncio.run(executor_module.Executor._exec_notify(object(), action))  # type: ignore[arg-type]
+    assert "Hi: there" in str(failure.value)  # the text travels in the failure, so the reply can quote it
 
 
 # ── the Linux system voice ──
