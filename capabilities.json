@@ -19,7 +19,7 @@
   "sources": {
     "action_registry": {
       "path": "daemon/pilot/actions.py",
-      "sha256": "054a8f6bd236ceeb82de7dbfcec88a2ed437fd1c4b7698e2cdf229e11bdb3e10"
+      "sha256": "939dbcdda5b903cd34a433440763f6dcd72620f772b1583166ae9ec95eae2746"
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
@@ -52,7 +52,7 @@
       },
       {
         "path": "daemon/pilot/agents/postconditions/declared.py",
-        "sha256": "ac65e8e16535cbfbd1b6d64844860df2735fd07b0c2d192ba6c109b481c45bbf"
+        "sha256": "9e7857bcbe8a8d5f5a01ea8de25671f8e52e3c3ba25f64e6091c84e42bf08c1e"
       },
       {
         "path": "daemon/pilot/agents/postconditions/desktop_input.py",
@@ -72,11 +72,11 @@
       },
       {
         "path": "daemon/pilot/agents/postconditions/mail_calendar.py",
-        "sha256": "c755e86becae17218222d98372e71ed571dd160f3d2f8b1823730303d5f62c17"
+        "sha256": "0c95c9bc1e5af262db2d7f6fab75e10d6231142b711ab73aa3636b13da81a1a8"
       },
       {
         "path": "daemon/pilot/agents/postconditions/messaging.py",
-        "sha256": "fd5aa5e2343ea8fa0a8f428a51d7a39e83257a7b1ec067db3aff1b49a2c0ce7f"
+        "sha256": "0a1e33e0002eb497d85d12b32e3f535b393d05c784339f2c61cb476ecd502c60"
       },
       {
         "path": "daemon/pilot/agents/postconditions/reads.py",

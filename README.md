@@ -400,17 +400,21 @@ learn_across_sessions = false
 ambiguity_threshold = 0.25   # may only be made stricter; never learned
 ```
 
-Mail, GitHub and chat actions read their settings from the daemon's environment:
+Mail, GitHub and chat actions are connected in Settings. Mail uses the account under **Settings > Email integration** (both mail actions send from it); Slack, Discord and GitHub are under **Settings > Connections**. Every secret goes to the operating system's credential store (Windows Credential Manager, macOS Keychain, or a Secret Service keyring on Linux) and is never shown again: Settings shows only whether a connection is set and, for a webhook, its host and last four characters. A plan never needs a token, password or webhook address.
 
-| Variable | Used by |
-| --- | --- |
-| `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | `api_send_email` |
-| `GITHUB_TOKEN` | `api_github` |
-| `SLACK_WEBHOOK_URL` | `api_slack` (an incoming webhook) |
-| `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID` | optional: read a sent Slack message back from the channel to confirm it arrived. The token needs `channels:history` (or `groups:history` for a private channel) and the app must be in the channel the webhook posts to. Without them a Slack send is reported, not verified |
-| `DISCORD_WEBHOOK_URL` | `api_discord` |
+The daemon's environment variables still work for setups that already use them. Settings comes first; a variable is read only when nothing is saved in Settings for that service, and Settings says when both are set. On Linux with no Secret Service (a headless or minimal desktop) Settings cannot save a connection and says so; the variables are then the way to connect.
 
-A webhook address is itself a password: anyone who has it can post. Wherever Heliox shows or keeps a plan (the approval, the audit log, receipts, task history, a saved plan, its logs) the address appears masked as the host and its last four characters, and so does any address with a user, a password or a token in it.
+| Settings | Environment variable (fallback) | Used by |
+| --- | --- | --- |
+| Email integration: SMTP host, port, user name, app password | `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | `api_send_email`, `email_reply` (the email agent uses Settings only) |
+| Connections > GitHub: personal access token | `GITHUB_TOKEN` | `api_github`; without a token only public reads work |
+| Connections > Slack: webhook address | `SLACK_WEBHOOK_URL` | `api_slack` (an incoming webhook) |
+| Connections > Slack: bot token and channel ID | `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID` | optional: read a sent Slack message back from the channel to confirm it arrived. The token needs `channels:history` (or `groups:history` for a private channel) and the app must be in the channel the webhook posts to. Without them a Slack send is reported, not verified |
+| Connections > Discord: webhook address | `DISCORD_WEBHOOK_URL` | `api_discord` |
+
+When a service is not connected, or it refuses the saved secret, the action fails and names the Settings place to fix it. "Post a test message" in Connections posts a real message to the connected Slack or Discord channel and asks first; the GitHub check only reads the token's own user; opening Settings sends nothing.
+
+A webhook address is itself a password: anyone who has it can post. Wherever Heliox shows or keeps a plan (the approval, the audit log, receipts, task history, a saved plan, its logs) the address appears masked as the host and its last four characters, and so does any address with a user, a password or a token in it, and any GitHub token or mail password a plan carries. A saved plan that holds such a value keeps the real value in the credential store, tied to that plan, so the plan can be continued after an interruption or a later approval; the entry is removed when the plan finishes or is turned down, and after seven days at most. Without a credential store the value is kept in memory until Heliox restarts.
 
 OpenRouter uses its OpenAI-compatible endpoint. Settings and first-run setup offer automatic routing, DeepSeek V4 Pro, the latest DeepSeek V4 Flash alias, and other current aliases; an exact OpenRouter catalog model ID can also be entered manually. Provider keys remain in the operating-system credential store.
 

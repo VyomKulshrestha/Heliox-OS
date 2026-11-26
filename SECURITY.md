@@ -1101,6 +1101,24 @@ to keep the saved safety settings intact:
   when it was submitted and keeps that mode until it ends; turning dry run off
   mid-job does not let that job start changing the system.
 
+## Connections: mail, Slack, Discord and GitHub
+
+- **Secrets live in the OS credential store.** The mail app password, Slack and Discord webhook addresses, the Slack
+  bot token and the GitHub token are saved through Settings into Windows Credential Manager, macOS Keychain or a
+  Secret Service keyring, under the names `email`, `slack_webhook`, `slack_bot_token`, `slack_channel_id`,
+  `discord_webhook` and `github_token`. The generic API-key RPCs cannot write or delete them. With no credential
+  store nothing is saved to a file instead; environment variables still work.
+- **Write-only.** Settings never receives a saved secret back: only whether a connection is set, where from, and
+  for a webhook its host and last four characters (`connections_status`). Opening Settings sends nothing.
+- **Plans hold no secret.** The senders take the stored connection. A literal token or webhook in an older plan
+  still works and is masked wherever the plan is shown or kept. The connected GitHub token is sent to
+  `api.github.com` only.
+- **Kept plans.** A saved plan that holds a secret stores it in the credential store as `plan_secret:<plan id>`,
+  removed when the plan finishes, is cancelled or turned down, and after seven days at most (the start-up sweep).
+  Mesh peers never receive steps that need a secret.
+- **Tests ask first.** "Post a test message" posts a real message to the connected Slack or Discord channel only
+  after a second click that says so; the GitHub check reads the token's own user; there is no mail test send.
+
 ## 🔌 Tools from the person's MCP servers
 
 `pilot.mcp_client` starts only the servers listed in `mcp_servers.json`, each
