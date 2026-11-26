@@ -200,19 +200,19 @@ async def test_a_folder_copy_is_verified_file_by_file(tmp_path):
         action=Action(action_type=ActionType.FILE_COPY, target=str(source), parameters=params), success=True
     )
 
-    passed, detail, independent = await copy_matches_source(copied)
-    assert (passed, independent) == (False, True)
-    assert "missing 1 file" in detail and "sub/b.png" in detail
+    outcome = await copy_matches_source(copied)
+    assert (outcome.passed, outcome.observed) == (False, True)
+    assert "missing 1 file" in outcome.detail and "sub/b.png" in outcome.detail
 
     (destination / "sub").mkdir()
     (destination / "sub" / "b.png").write_bytes(b"1")
-    passed, detail, _ = await copy_matches_source(copied)
-    assert passed is False and "size differs" in detail
+    outcome = await copy_matches_source(copied)
+    assert outcome.passed is False and "size differs" in outcome.detail
 
     (destination / "sub" / "b.png").write_bytes(b"12")
-    passed, detail, independent = await copy_matches_source(copied)
-    assert (passed, independent) == (True, True)
-    assert "all 2 files" in detail
+    outcome = await copy_matches_source(copied)
+    assert (outcome.passed, outcome.observed) == (True, True)
+    assert "all 2 files" in outcome.detail
 
 
 # --- provider circuit --------------------------------------------------------------------------------
