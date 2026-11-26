@@ -747,6 +747,12 @@ def _conversation_model_local(conversation: Any) -> bool:
         return False
 
 
+def _log_review_failure(task: asyncio.Task[Any]) -> None:
+    """A companion review run beside a task ended with an error its own handling did not catch: log it."""
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning("Companion review beside the run failed", exc_info=task.exception())
+
+
 def _notification(method: str, params: Any) -> str:
     return json.dumps({"jsonrpc": "2.0", "method": method, "params": params})
 
@@ -4876,14 +4882,43 @@ class PilotServer:
                 + (ATTACHED_CONTEXT_MARKER + review_attachments if review_attachments else "")
             )
             reviews: list[tuple[str, str, Any]] = []
-            if run_companion and companion_review is None:
+            # When the companion's model review may hold the person up (pilot.agents.review_timing): only a plan that
+            # could hurt and would run without a card waits for it. A plan that cannot hurt runs while it is reviewed;
+            # a plan that shows a card anyway is reviewed while the card is open.
+            from pilot.agents.review_timing import (
+                BEFORE_LIMIT_SECONDS,
+                UNANSWERED_REASON,
+                ReviewTiming,
+                review_timing,
+            )
+
+            mcp_requires_visible_approval = str(params.get("source") or "").strip().lower() == "mcp"
+            model_review_due = bool(run_companion and companion_review is None)
+            timing = ReviewTiming.BEFORE
+            if model_review_due:
+                card_anyway = not dry_run and bool(
+                    self._permission_checker.plan_requires_confirmation(plan)
+                    or world_model_interrupt
+                    or mcp_requires_visible_approval
+                )
+                timing = review_timing(plan, card_anyway=card_anyway, undo_enabled=bool(self.config.undo.enabled))
+            beside_review_started = False
+            if model_review_due and timing is ReviewTiming.BEFORE:
                 reviews.append(
                     (
                         "companion",
                         "double-check",
-                        functools.partial(self._companion_plan_review, reviewer_request, plan, review_screen_context),
+                        functools.partial(
+                            self._companion_plan_review,
+                            reviewer_request,
+                            plan,
+                            review_screen_context,
+                            limit_seconds=BEFORE_LIMIT_SECONDS,
+                        ),
                     )
                 )
+            elif model_review_due and timing is ReviewTiming.BESIDE:
+                beside_review_started = True  # started as the plan starts to run, below
             if run_critic:
                 reviews.append(
                     ("critic", "safety review", functools.partial(self._critic_plan_review, reviewer_request, plan))
@@ -4916,8 +4951,13 @@ class PilotServer:
                 # Stop or a correction landed as the reviews finished; this plan is dropped, not acted on.
                 return await _phase_cancelled("plan review")
 
-            if run_companion:
+            review_unanswered = False
+            if run_companion and companion_review is None and "companion" not in review_results:
+                pass  # reviewed beside the run or while the card is open (pilot.agents.review_timing)
+            elif run_companion:
                 companion_review = review_results.get("companion", companion_review)
+                # A risky plan without a card whose review did not answer asks the person first.
+                review_unanswered = timing is ReviewTiming.BEFORE and not companion_review.reviewed
                 review_payload = {
                     "plan_id": plan_id,
                     **companion_review.to_dict(),
@@ -5031,7 +5071,6 @@ class PilotServer:
                 }
                 await ws.send(_notification("critic_verdict", {"plan_id": plan_id, **critic_verdict_payload}))
 
-            mcp_requires_visible_approval = str(params.get("source") or "").strip().lower() == "mcp"
             gnomon_interrupt, gnomon_reasons = False, []
             if "gnomon" in review_results:
                 gnomon_interrupt, gnomon_reasons, gnomon_review = review_results["gnomon"]
@@ -5042,6 +5081,7 @@ class PilotServer:
                 or world_model_interrupt
                 or gnomon_interrupt
                 or mcp_requires_visible_approval
+                or review_unanswered
             ) and not dry_run
             if quick_attempt and (needs_confirm or run_critic):
                 logger.info("Quick road declined by the permission check or the world model; planning normally")
@@ -5093,14 +5133,59 @@ class PilotServer:
                 if gnomon_interrupt:
                     gnomon_reason = " ".join(gnomon_reasons) or "Gnomon asked to check this plan with you first."
                     world_model_reason = f"{world_model_reason} {gnomon_reason}".strip()
-                confirmed, approved_indices, required_indices = await self._wait_for_confirmation(
-                    plan_id,
-                    plan,
-                    ws,
-                    reason=world_model_reason,
-                    risk_assessment=risk_assessment.to_dict() if show_world_model_block else None,
-                    force_all_actions=world_model_interrupt or gnomon_interrupt or mcp_requires_visible_approval,
-                )
+                if review_unanswered:
+                    world_model_reason = f"{world_model_reason} {UNANSWERED_REASON}".strip()
+                card_review = None
+                if model_review_due and not beside_review_started and "companion" not in review_results:
+                    # Reviewed while the card is open: the person's time on the card is the review's time.
+                    card_review = self._start_review_with_card(
+                        ws, plan_id, reviewer_request, plan, review_screen_context, auto_revision_count
+                    )
+                try:
+                    confirmed, approved_indices, required_indices = await self._wait_for_confirmation(
+                        plan_id,
+                        plan,
+                        ws,
+                        reason=world_model_reason,
+                        risk_assessment=risk_assessment.to_dict() if show_world_model_block else None,
+                        force_all_actions=(
+                            world_model_interrupt
+                            or gnomon_interrupt
+                            or mcp_requires_visible_approval
+                            or review_unanswered
+                        ),
+                    )
+                    if card_review is not None and confirmed:
+                        # Its own time limit bounds this wait; usually it answered while the card was open.
+                        companion_review = await card_review
+                except BaseException:
+                    if card_review is not None and not card_review.done():
+                        card_review.cancel()
+                        await asyncio.gather(card_review, return_exceptions=True)
+                    raise
+                if card_review is not None and not card_review.done():
+                    card_review.cancel()  # denied: the review is no longer wanted
+                    await asyncio.gather(card_review, return_exceptions=True)
+                if card_review is not None and confirmed and companion_review is not None:
+                    review_payload = {"plan_id": plan_id, **companion_review.to_dict(), "revision": auto_revision_count}
+                    await ws.send(_notification("companion_plan_review", review_payload))
+                    if companion_review.should_stop:
+                        message = f"Interactive companion stopped this plan: {companion_review.reason}"
+                        await self._broadcast_notification(
+                            "companion_plan_intervention",
+                            {**review_payload, "decision": "STOP", "reason": message},
+                        )
+                        if self._checkpoint_store:
+                            await self._checkpoint_store.mark_status(plan_id, "blocked_by_companion")
+                        await _emit_task_complete("blocked_by_companion", message)
+                        return {
+                            "status": "blocked_by_companion",
+                            "message": message,
+                            "companion_review": companion_review.to_dict(),
+                            "results": [],
+                        }
+                    if companion_review.should_revise:
+                        return await _restart_from_companion_review(companion_review)
 
                 if emit:
                     if confirmed:
@@ -5203,6 +5288,10 @@ class PilotServer:
                 interaction_id=self._active_interaction_id,
             )
             await ws.send(_notification("status", {"phase": "executing"}))
+            if beside_review_started:
+                self._start_review_beside(
+                    ws, cancel_event, plan_id, reviewer_request, plan, review_screen_context, auto_revision_count
+                )
             action_idx = 0
             _total_actions = len(plan.actions)
             completed_results: list[Any] = []
@@ -12962,11 +13051,72 @@ class PilotServer:
         outcomes = await asyncio.gather(*(one(key, start) for key, _label, start in reviews), return_exceptions=True)
         return {key: outcome for (key, _label, _start), outcome in zip(reviews, outcomes, strict=True)}
 
-    async def _companion_plan_review(self, user_input: str, plan: Any, screen_context: str, others_running: Any) -> Any:
+    async def _companion_plan_review(
+        self, user_input: str, plan: Any, screen_context: str, others_running: Any, *, limit_seconds: Any = None
+    ) -> Any:
         """The companion's intent check; while other reviews still run its model may take longer than its limit."""
         return await self._execution_companion.review(
-            user_input, plan, screen_context=screen_context, others_running=others_running
+            user_input, plan, screen_context=screen_context, others_running=others_running, limit_seconds=limit_seconds
         )
+
+    def _start_review_beside(
+        self,
+        ws: Any,
+        cancel_event: asyncio.Event,
+        plan_id: str,
+        user_input: str,
+        plan: Any,
+        screen_context: str,
+        revision: int,
+    ) -> None:
+        """Review a plan that cannot hurt while it runs (pilot.agents.review_timing). Its answer can no longer
+        change the plan: a concern is shown afterwards as a remark, never spoken as a stop or a revision. The task is
+        tracked with the companion's follow-ups, so a stop cancels and awaits it."""
+
+        async def _review() -> None:
+            review = await self._execution_companion.review(user_input, plan, screen_context=screen_context)
+            if cancel_event.is_set():
+                return  # stopped or corrected: a remark about this plan is no longer wanted
+            payload = {"plan_id": plan_id, **review.to_dict(), "revision": revision, "beside_run": True}
+            with contextlib.suppress(Exception):
+                await ws.send(_notification("companion_plan_review", payload))
+            if review.reviewed and review.decision in {"WARN", "REVISE", "STOP"}:
+                await self._broadcast_notification(
+                    "companion_plan_intervention",
+                    {**payload, "decision": "REMARK", "original_decision": review.decision},
+                )
+
+        task = asyncio.create_task(_review(), name=f"companion-review-beside-{plan_id}")
+        self._companion_follow_up_tasks.add(task)
+        task.add_done_callback(self._companion_follow_up_tasks.discard)
+        task.add_done_callback(_log_review_failure)
+
+    def _start_review_with_card(
+        self, ws: Any, plan_id: str, user_input: str, plan: Any, screen_context: str, revision: int
+    ) -> asyncio.Task[Any]:
+        """Review a plan while its approval card is open. A concern that arrives while the card is still open is
+        shown beside it at once; the caller applies a STOP or REVISE once the person approves."""
+
+        async def _review() -> Any:
+            review = await self._execution_companion.review(user_input, plan, screen_context=screen_context)
+            if review.decision in {"WARN", "REVISE", "STOP"} and plan_id in self._pending_confirms:
+                await self._broadcast_notification(
+                    "companion_plan_intervention",
+                    {
+                        "plan_id": plan_id,
+                        **review.to_dict(),
+                        "revision": revision,
+                        "decision": "WARN",
+                        "original_decision": review.decision,
+                        "while_approval_open": True,
+                    },
+                )
+            return review
+
+        task = asyncio.create_task(_review(), name=f"companion-review-card-{plan_id}")
+        self._companion_follow_up_tasks.add(task)
+        task.add_done_callback(self._companion_follow_up_tasks.discard)
+        return task
 
     async def _critic_plan_review(self, user_input: str, plan: Any, _others_running: Any) -> Any:
         return await self._destructive_critic.review(user_input, plan)

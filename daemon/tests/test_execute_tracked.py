@@ -1360,7 +1360,7 @@ async def test_proactive_companion_revises_plan_before_any_action_runs():
             self.calls = 0
             self.contexts = []
 
-        async def review(self, user_input, plan, *, screen_context="", others_running=None):
+        async def review(self, user_input, plan, *, screen_context="", others_running=None, **_options):
             self.calls += 1
             self.contexts.append(screen_context)
             if self.calls == 1:
@@ -1375,14 +1375,17 @@ async def test_proactive_companion_revises_plan_before_any_action_runs():
     plan = ActionPlan(
         actions=[
             Action(
-                action_type=ActionType.FILE_READ,
+                action_type=ActionType.FILE_WRITE,
                 target="notes.txt",
-                parameters=FileParams(path="notes.txt"),
+                parameters=FileParams(path="notes.txt", content="notes"),
             )
         ],
-        explanation="Read the requested notes.",
+        explanation="Write the requested notes.",
     )
     server = _server_ready_for_handle_execute(executor, plan)
+    # Without undo a write could hurt, so it waits for the review (pilot.agents.review_timing); a plan that cannot
+    # hurt is reviewed beside its run instead and is never revised (tests/test_review_timing.py).
+    server.config.undo.enabled = False
     server._verifier = _Verifier()
     companion = _Companion()
     server._execution_companion = companion
@@ -1479,7 +1482,7 @@ async def test_mismatched_local_plan_revises_to_one_approved_truthful_result(
             )
 
     class _Companion:
-        async def review(self, user_input, plan, *, screen_context="", others_running=None):
+        async def review(self, user_input, plan, *, screen_context="", others_running=None, **_options):
             return CompanionReview(decision="CONTINUE", reason="Corrected plan matches the request.")
 
     server = _server_ready_for_handle_execute(_Executor(), plans[0])
@@ -1530,7 +1533,7 @@ async def test_companion_revision_preserves_mcp_approval_boundary():
         def __init__(self):
             self.calls = 0
 
-        async def review(self, user_input, plan, *, screen_context="", others_running=None):
+        async def review(self, user_input, plan, *, screen_context="", others_running=None, **_options):
             self.calls += 1
             if self.calls == 1:
                 return CompanionReview(
@@ -1591,7 +1594,7 @@ class _ReviewRecorder:
         recorder = self
 
         class _Companion:
-            async def review(self, user_input, plan, *, screen_context="", others_running=None):
+            async def review(self, user_input, plan, *, screen_context="", others_running=None, **_options):
                 await recorder._run("companion")
                 recorder.companion_others.append(bool(others_running and others_running()))
                 return CompanionReview(decision="CONTINUE", reason="Matches the request.")
@@ -1664,16 +1667,19 @@ async def test_plan_reviews_run_at_the_same_time_and_every_result_still_counts()
 
     result = await server._handle_execute({"input": "shut down the computer"}, ws)
 
-    assert set(recorder.spans) == {"companion", "critic", "gnomon"}
-    # Together, not one after another: all three were in flight at once (counted, so a slow runner cannot fail it).
-    assert recorder.most_at_once == 3, "plan reviews ran one after another"
+    # A shutdown asks for approval anyway, so the companion reviews while the card is open (pilot.agents.review_timing)
+    # and the declined card ends that review before it ran: no model call for a plan that will not run.
+    assert set(recorder.spans) == {"critic", "gnomon"}
+    # Together, not one after another: both were in flight at once (counted, so a slow runner cannot fail it).
+    assert recorder.most_at_once == 2, "plan reviews ran one after another"
     # Gnomon's escalation and the critic's warning both reached the approval, and the person's "no" stands.
     assert "Gnomon graded the harm" in seen["reason"] and seen["force_all_actions"] is True
     assert result["status"] != "success"
     methods = [json.loads(message).get("method") for message in ws.sent]
-    assert {"companion_plan_review", "critic_verdict", "gnomon_review"} <= set(methods)
+    assert {"critic_verdict", "gnomon_review"} <= set(methods)
+    assert "companion_plan_review" not in methods
     phases = [json.loads(m)["params"]["phase"] for m in ws.sent if json.loads(m).get("method") == "status"]
-    assert "reviewing plan (double-check, safety review, Gnomon)" in phases
+    assert "reviewing plan (safety review, Gnomon)" in phases
 
 
 @pytest.mark.asyncio
@@ -1688,7 +1694,8 @@ async def test_a_critic_block_still_blocks_when_the_reviews_run_together():
     result = await server._handle_execute({"input": "shut down the computer"}, _FakeWs())
 
     assert result["status"] == "blocked_by_critic"
-    assert set(recorder.spans) == {"companion", "critic", "gnomon"}
+    # The companion would have reviewed while the card was open; a blocked plan never gets a card.
+    assert set(recorder.spans) == {"critic", "gnomon"}
 
 
 @pytest.mark.asyncio
@@ -1710,7 +1717,7 @@ async def test_stop_during_the_plan_reviews_cancels_all_of_them():
     assert stop_response["status"] == "aborted"
     assert result["status"] == "cancelled"
     assert result["message"] == "Execution stopped by user during plan review."
-    assert recorder.cancelled == {"companion", "critic", "gnomon"}
+    assert recorder.cancelled == {"critic", "gnomon"}  # the companion waits for the card, which never opened
     assert recorder.spans == {}
 
 

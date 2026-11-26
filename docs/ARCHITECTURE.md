@@ -226,6 +226,15 @@ untrusted observation, not an instruction or approval; stale captures and
 private learned-persona context are not passed through this review path. The
 normal permission, confirmation, and verification gates remain authoritative.
 
+The review holds the person up only where its answer can still prevent harm
+(`pilot.agents.review_timing`). A plan of reads and of local changes Heliox's
+undo can put back (no delete) runs at once and is reviewed beside its run; a
+concern arrives afterwards as a remark in the window. A plan that shows an
+approval card anyway is reviewed while the card is open, and a STOP or REVISE
+still holds once the person approves. Any other plan waits for the review for at
+most 4 s, and a review that does not answer makes it ask the person first: a
+failed review is never read as approval.
+
 The daemon coordinator covers autonomous completion, cognitive warnings,
 continuous voice, and frontend speech RPCs. Browser speech synthesis is a
 fallback, not a second narrator.
@@ -340,7 +349,18 @@ transition labels. Evidence from distinct plans for the same action type and
 invocation source is required before promotion. The session plan risk gate uses the
 resolved executor source and can apply a promoted low-success estimate only to
 add caution. Other risk paths without an explicit source remain at their
-existing deterministic and callback-history assessments.
+existing deterministic and outcome-history assessments.
+
+The outcome history (`pilot.security.outcome_evidence`) gives every finished step
+one outcome: failed and changed nothing, failed and possibly half done, reported
+success and its check found a mismatch, undone by the person, verified, approved
+by the person, or unchecked. Only the harmful ones (half done, mismatch, undone)
+may add an approval, and only for the same action in the same place (the folder a
+file lands in, a site, a repository), with at least two of them, outweighing the
+verified runs and approvals there, fading with a three-day half-life. The card
+then says what happened in plain words ("The last two copies into this folder
+ended with a different file than the source."). Failures that changed nothing
+never add an approval. The history lives in memory for the daemon's lifetime.
 
 Bounded replay and ADWIN drift detection decay obsolete behavior. Resetting the
 learner creates a checkpoint without rewriting the immutable audit ledger.

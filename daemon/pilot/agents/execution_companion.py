@@ -164,6 +164,10 @@ class ExecutionCompanion:
         self._wait = wait
         self._limit_clock = limit_clock
         self._waited = 0.0
+        # The limit the last wait ended on, and whether that review only rode along with the other reviews (after
+        # a timeout): the log's sentence is built from these, not from the configured limit.
+        self._limit_used = self._timeout_seconds
+        self._rode_along = False
         self._timeout_streak = 0
         self._skip_until = 0.0
 
@@ -181,28 +185,40 @@ class ExecutionCompanion:
 
     def _failure_reason(self, exc: BaseException, elapsed: float) -> str:
         if isinstance(exc, TimeoutError):
+            if self._rode_along:
+                # After a review ran out of time the next one only waits as long as the other reviews of its plan.
+                return (
+                    f"{self._model_name()} had not answered when the other plan reviews finished, after "
+                    f"{elapsed:.1f} s (the last review ran out of time, so this one only waited as long as they did)"
+                )
             return (
                 f"{self._model_name()} did not answer within {elapsed:.1f} s "
-                f"(limit {self._timeout_seconds:g} s, longer only while other plan reviews were still running)"
+                f"(limit {self._limit_used:g} s, longer only while other plan reviews were still running)"
             )
         return f"{type(exc).__name__}: {str(exc)[:200] or 'no message'} after {elapsed:.1f} s"
 
-    async def _generate_within_limit(self, prompt: str, others_running: Callable[[], bool] | None) -> str:
-        """The model call, given its own limit or, while other reviews of the same plan still run, up to
-        ``SHARED_WAIT_CEILING_SECONDS``: the person waits for those anyway, so waiting with them costs nothing."""
+    async def _generate_within_limit(
+        self, prompt: str, others_running: Callable[[], bool] | None, own_limit: float | None = None
+    ) -> str:
+        """The model call, given its own limit (``own_limit`` when shorter) or, while other reviews of the same plan
+        still run, up to ``SHARED_WAIT_CEILING_SECONDS``: the person waits for those anyway, so waiting with them
+        costs nothing."""
         now = self._limit_clock or asyncio.get_running_loop().time
         started = now()
+        own = self._timeout_seconds if own_limit is None else max(0.1, min(self._timeout_seconds, own_limit))
+        self._rode_along = others_running is not None and bool(self._timeout_streak)
         task = asyncio.ensure_future(self._model.generate(prompt, system=_SYSTEM_PROMPT, json_mode=True))
         try:
             while True:
                 elapsed = self._waited = now() - started
-                limit = self._timeout_seconds
-                if others_running is not None and self._timeout_streak:
+                limit = own
+                if self._rode_along:
                     # The last review ran out of time: this one only rides along with the other reviews and never
                     # holds the person up after they finish (10 November: +1.8 s on a revised plan otherwise).
                     limit = 0.0
                 if others_running is not None and others_running():
                     limit = max(limit, SHARED_WAIT_CEILING_SECONDS)
+                self._limit_used = limit
                 if elapsed >= limit:
                     raise TimeoutError
                 done, _ = await self._wait({task}, timeout=min(SHARED_WAIT_POLL_SECONDS, limit - elapsed))
@@ -220,9 +236,11 @@ class ExecutionCompanion:
         *,
         screen_context: str = "",
         others_running: Callable[[], bool] | None = None,
+        limit_seconds: float | None = None,
     ) -> CompanionReview:
         """Review a plan. ``others_running`` says whether other reviews of this plan are still running; while
-        they are, the model gets more time than its own limit (see ``_generate_within_limit``)."""
+        they are, the model gets more time than its own limit (see ``_generate_within_limit``). ``limit_seconds``
+        shortens the limit for a plan that waits for this review (pilot.agents.review_timing)."""
         riding_along_with_nothing = others_running is not None and self._timeout_streak and not others_running()
         if self._clock() < self._skip_until or riding_along_with_nothing:
             logger.info("Interactive companion review skipped: recent reviews timed out")
@@ -240,7 +258,7 @@ class ExecutionCompanion:
         raw = ""
         started = self._clock()
         try:
-            raw = await self._generate_within_limit(prompt, others_running)
+            raw = await self._generate_within_limit(prompt, others_running, limit_seconds)
             latency = round(self._clock() - started, 2)
             self._timeout_streak = 0
             self._skip_until = 0.0

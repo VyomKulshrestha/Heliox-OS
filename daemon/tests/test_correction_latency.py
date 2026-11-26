@@ -396,6 +396,10 @@ class _Model:
         return self.reply
 
 
+async def _reviews_beside_finished(server: PilotServer) -> None:
+    await asyncio.gather(*list(server._companion_follow_up_tasks), return_exceptions=True)
+
+
 def _companion(model, timeout: float = 0.05, clock=None) -> ExecutionCompanion:
     companion = ExecutionCompanion(model, **({"clock": clock} if clock else {}))
     companion._timeout_seconds = timeout
@@ -482,6 +486,7 @@ async def test_the_ui_event_reports_a_skipped_review_and_the_task_still_runs_wit
         ws = _FakeWs()
         result = await asyncio.wait_for(server._handle_execute({"input": "read notes"}, ws), 10)
         assert result["status"] == "success"
+        await _reviews_beside_finished(server)  # a read is reviewed beside its run (pilot.agents.review_timing)
         reviews.append(
             next(m["params"] for m in map(json.loads, ws.sent) if m.get("method") == "companion_plan_review")
         )
@@ -501,6 +506,7 @@ async def test_the_ui_event_reports_a_real_review_from_a_fast_provider():
     ws = _FakeWs()
 
     result = await asyncio.wait_for(server._handle_execute({"input": "read notes"}, ws), 10)
+    await _reviews_beside_finished(server)
 
     event = next(m["params"] for m in map(json.loads, ws.sent) if m.get("method") == "companion_plan_review")
     assert result["status"] == "success"
