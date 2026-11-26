@@ -327,3 +327,133 @@ async def test_permissions_on_a_missing_path_fail_in_the_handler(tmp_path) -> No
         await file_permissions(str(tmp_path / "absent"), "600")
     params = FileParams(path=str(tmp_path / "absent"), permissions="600")
     _assert_failed(await _verify(ActionType.FILE_PERMISSIONS, params, success=False))
+
+
+# ── registry_write ──────────────────────────────────────────────────────────────────────────────────────────────
+
+
+def _registry_answer(kind: str | None, data=None, expected=None, *, key: bool = True) -> tuple[int, str, str]:
+    import json
+
+    if kind is None:
+        return (0, json.dumps({"key": key, "present": False}), "")
+    return (0, json.dumps({"key": True, "present": True, "kind": kind, "data": data, "expected": expected}), "")
+
+
+def _registry(value_type: str, data: str):
+    from pilot.actions import RegistryParams
+
+    return RegistryParams(
+        key_path=r"HKCU\Software\Controlled", value_name="Setting", value_data=data, value_type=value_type
+    )
+
+
+@pytest.mark.parametrize(
+    ("value_type", "data", "answer", "outcome"),
+    [
+        ("REG_DWORD", "0x10", _registry_answer("DWord", [16], [16]), "verified"),
+        ("REG_DWORD", "4294967295", _registry_answer("DWord", [-1], [4294967295]), "verified"),
+        ("REG_SZ", "hello", _registry_answer("String", ["hello"], [None]), "verified"),
+        ("REG_MULTI_SZ", "one", _registry_answer("MultiString", ["one"], ["one"]), "verified"),
+        ("REG_QWORD", "5", _registry_answer("QWord", [5], [5]), "verified"),
+        ("REG_DWORD", "16", _registry_answer("DWord", [15], [16]), "mismatch"),
+        ("REG_DWORD", "16", _registry_answer("String", ["16"], [16]), "mismatch"),
+        ("REG_SZ", "hello", _registry_answer("String", ["other"], None), "mismatch"),
+        ("REG_SZ", "hello", _registry_answer(None), "mismatch"),
+        ("REG_SZ", "hello", _registry_answer(None, key=False), "mismatch"),
+        ("REG_DWORD", "ten", _registry_answer("DWord", [10], None), "reported"),
+    ],
+)
+async def test_registry_value_read_back(monkeypatch: pytest.MonkeyPatch, value_type, data, answer, outcome) -> None:
+    from pilot.system import registry_readback
+
+    run = AsyncMock(return_value=answer)
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(registry_readback, "run_powershell", run)
+
+    verification = await _verify(ActionType.REGISTRY_WRITE, _registry(value_type, data))
+
+    if outcome == "verified":
+        _assert_verified(verification)
+    elif outcome == "mismatch":
+        detail = _assert_mismatch(verification)
+        assert "hello" not in detail and "other" not in detail  # stored text never appears in the sentence
+    else:
+        _assert_reported(verification)
+    # The key, name and data are values, never script text.
+    assert run.await_args.kwargs["values"]["key"] == r"HKCU\Software\Controlled"
+    assert "Controlled" not in run.await_args.args[0]
+
+
+async def test_registry_powershell_failure_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import registry_readback
+
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(registry_readback, "run_powershell", AsyncMock(return_value=(1, "", "Access denied")))
+
+    verification = await _verify(ActionType.REGISTRY_WRITE, _registry("REG_SZ", "x"))
+
+    assert verification.passed is False and "Verification error" in verification.details[0]
+
+
+@pytest.mark.parametrize("platform", [Platform.LINUX, Platform.MACOS])
+async def test_registry_off_windows_is_reported(monkeypatch: pytest.MonkeyPatch, platform) -> None:
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", platform)
+
+    _assert_reported(await _verify(ActionType.REGISTRY_WRITE, _registry("REG_SZ", "x")))
+
+
+async def test_registry_write_failure_is_a_failed_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.agents.executor import Executor
+    from pilot.system import platform_detect
+
+    monkeypatch.setattr(platform_detect, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(platform_detect, "run_powershell", AsyncMock(return_value=(1, "", "Requested registry access")))
+    action = Action(action_type=ActionType.REGISTRY_WRITE, target="x", parameters=_registry("REG_SZ", "x"))
+
+    with pytest.raises(RuntimeError, match="Registry write failed"):
+        await Executor._exec_registry_write(MagicMock(), action)
+    _assert_failed(await _verify(ActionType.REGISTRY_WRITE, _registry("REG_SZ", "x"), success=False))
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32" or not os.environ.get("CI"),
+    reason="writes the real registry: only on a Windows CI runner, under a key the test creates and removes",
+)
+async def test_registry_write_reads_back_dword_and_string_on_windows_ci() -> None:
+    import uuid
+    import winreg
+
+    from pilot.actions import RegistryParams
+    from pilot.agents.executor import Executor
+
+    subkey = rf"Software\HelioxVerifierTest\{uuid.uuid4().hex}"
+    winreg.CreateKey(winreg.HKEY_CURRENT_USER, subkey).Close()
+    try:
+        for value_type, data in (("REG_DWORD", "0x10"), ("REG_SZ", "hello")):
+            params = RegistryParams(
+                key_path=rf"HKCU\{subkey}", value_name=value_type, value_data=data, value_type=value_type
+            )
+            action = Action(action_type=ActionType.REGISTRY_WRITE, target="x", parameters=params)
+            await Executor._exec_registry_write(MagicMock(), action)
+            _assert_verified(await _verify(ActionType.REGISTRY_WRITE, params))
+
+        # Changed behind Heliox's back: the read-back sees it.
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "REG_DWORD", 0, winreg.REG_DWORD, 17)
+            winreg.SetValueEx(key, "REG_SZ", 0, winreg.REG_EXPAND_SZ, "hello")
+        params = RegistryParams(
+            key_path=rf"HKCU\{subkey}", value_name="REG_DWORD", value_data="0x10", value_type="REG_DWORD"
+        )
+        assert "found 17" in _assert_mismatch(await _verify(ActionType.REGISTRY_WRITE, params))
+        params = RegistryParams(
+            key_path=rf"HKCU\{subkey}", value_name="REG_SZ", value_data="hello", value_type="REG_SZ"
+        )
+        assert "REG_EXPAND_SZ" in _assert_mismatch(await _verify(ActionType.REGISTRY_WRITE, params))
+    finally:
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, subkey)
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, r"Software\HelioxVerifierTest", 0, winreg.KEY_ALL_ACCESS
+        ) as parent:
+            if winreg.QueryInfoKey(parent)[0] == 0:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, r"Software\HelioxVerifierTest")
