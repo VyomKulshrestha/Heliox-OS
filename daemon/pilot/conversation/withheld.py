@@ -172,7 +172,37 @@ def _card_number(run: str) -> bool:
 # A web address's host and port ("http://127.0.0.1:8797/hook"), with no user name or password before an "@": its
 # digits are an address, never a secret's value. In the live run of 26 November a typed request naming a bearer token
 # had "127.0.0.1" and "8797" taken out as keys too.
-_URL_HOST = re.compile(r"\bhttps?://(?P<host>[^\s/@?#]+)(?=[/\s?#]|$)", re.IGNORECASE)
+_URL_HOST = re.compile(r"\b[a-z][a-z0-9+.-]*://(?:[^\s/@?#]*@)?(?P<host>[^\s/@?#]+)(?=[/\s?#]|$)", re.IGNORECASE)
+# The user name and password a web address carries before its host: "https://sam:hunter2@host:8080/",
+# "ftp://:4471@host", "https://ghp_...:x-oauth-basic@github.com/...". Only before the first "/", "?" or "#" after
+# "://", so an "@" later in the path or query ("/users/@sam", "?to=sam@example.com") is never taken for one.
+_URL_USERINFO = re.compile(
+    r"\b(?P<scheme>[a-z][a-z0-9+.-]*://)(?P<user>[^\s:/@?#]*)(?::(?P<password>[^\s/@?#]*))?@(?=[\w\[])",
+    re.IGNORECASE,
+)
+# Words that stand where a password or user name goes and are not secrets: GitHub's old token form puts the token
+# as the user name and "x-oauth-basic" as the password; its newer form puts "x-access-token" as the user name.
+_PLACEHOLDERS = frozenset({"", "x-oauth-basic", "x-access-token", "oauth2", "token", "git"})
+# A secret already taken out of a web address's user name or password ("https://sam:[left out: a password]@host").
+_LEFT_OUT_USERINFO = re.compile(r"://[^\s/?#@]*\[left out: [^\]]+\][^\s/?#@]*@")
+
+
+def _url_credentials(text: str) -> list[tuple[int, int]]:
+    """The spans of the secrets a web address carries: its password (all of it: digits only, percent-encoded or not),
+    or its user name when that is a token and the password is empty or a placeholder."""
+    spans: list[tuple[int, int]] = []
+    for match in _URL_USERINFO.finditer(text):
+        user, password = match.group("user") or "", match.group("password")
+        if password is not None and password.casefold() not in _PLACEHOLDERS:
+            spans.append(match.span("password"))
+        elif user.casefold() not in _PLACEHOLDERS and (len(user) >= 20 or _token_secret(user, True)):
+            spans.append(match.span("user"))  # the token is the user name
+    return spans
+
+
+def holds_url_credential(text: str) -> bool:
+    """Words with a password or token inside a web address, still there or already taken out."""
+    return bool(_url_credentials(text or "") or _LEFT_OUT_USERINFO.search(text or ""))
 
 
 def _in_address(text: str, span: tuple[int, int]) -> bool:
@@ -180,9 +210,13 @@ def _in_address(text: str, span: tuple[int, int]) -> bool:
 
 
 def _values(text: str, named: bool) -> list[tuple[int, int]]:
-    spans: list[tuple[int, int]] = []
+    spans: list[tuple[int, int]] = _url_credentials(text)
     for match in re.finditer(r"\S+", text):
         token = match.group(0).strip(".,;:!?\"'()[]")
+        if _URL_USERINFO.search(token):
+            # A web address with a user name and password: those are taken out above, and the rest (host, port,
+            # path, the user name) stays readable unless it is itself shaped like a key.
+            token = _URL_USERINFO.sub(lambda found: found.group("scheme"), token)
         if len(token) >= 8 and _token_secret(token, named):
             spans.append((match.start(), match.end()))
     for match in _DIGIT_RUN.finditer(text):
@@ -216,7 +250,12 @@ def withhold(text: str) -> Withheld | None:
     spans = _merge(_values(text, named))
     if not spans:
         return None
-    kind = _kind(text) if named else ("a card number" if any(_card_number(text[a:b]) for a, b in spans) else "a key")
+    if named:
+        kind = _kind(text)
+    elif any(_card_number(text[a:b]) for a, b in spans):
+        kind = "a card number"
+    else:
+        kind = "a password" if _url_credentials(text) else "a key"
     mark = MARK.format(kind=kind)
     out, last, values = [], 0, []
     for start, end in spans:
@@ -279,13 +318,67 @@ def forget_recent() -> None:
     _recent.clear()
 
 
+# What is said when a request held a secret and nothing was done (pilot.conversation.layer, the server's gates,
+# the autonomous engine).
+SECRET_NOT_USED = (
+    "I don't use a PIN, password or code said aloud, so I left it out. Type it in yourself where it's needed."
+)
+# The services whose secret has its own place in Settings (pilot.system.connections.WHERE), by the words that name
+# them in a request. Checked in order.
+_SERVICE_WORDS = (
+    ("slack", re.compile(r"\bslack\b", re.IGNORECASE)),
+    ("discord", re.compile(r"\bdiscord\b", re.IGNORECASE)),
+    ("github", re.compile(r"\bgit ?hub\b|\bgh_|\bpull request", re.IGNORECASE)),
+    ("mail", re.compile(r"\b(?:e-?mail|mail|smtp|imap|inbox|gmail|outlook)\b", re.IGNORECASE)),
+)
+_LEFT_OUT_KIND = re.compile(r"\[left out: (?:a sentence holding )?(?:an? )?(?P<kind>[^\]]+)\]")
+
+
+def secret_not_used(words: str, *, typed: bool, sent: bool = False) -> str:
+    """What Heliox says when a request held a secret and nothing was done (the secret never goes to a model, and a
+    request whose point was the secret cannot be done without it). Worded for how it arrived: typed, said aloud, or
+    ``sent`` from somewhere else (a phone, another app through MCP, a trigger's stored words).
+    When the request names a service with a place for its secret in Settings (mail, Slack, Discord, GitHub), it says
+    where; for anything else, that Heliox does not take secrets inside a request. ``words`` is the request with the
+    secret already left out; nothing of the secret is in the sentence."""
+    from pilot.system.connections import TITLE, WHERE
+
+    service = next((name for name, pattern in _SERVICE_WORDS if pattern.search(words or "")), "")
+    found = _LEFT_OUT_KIND.search(words or "")
+    kind = found.group("kind") if found else "secret"
+    kind = {"code": "code", "something private": "secret"}.get(kind, kind)
+    if sent:
+        where = f"Connect {TITLE[service]} once in {WHERE[service]}" if service else "Send it again without it"
+        return f"I left out the {kind} in that request and did nothing: Heliox never puts a secret into a request. {where}."
+    if not typed:
+        if service:
+            place = WHERE[service].replace(" > ", ", ")
+            return (
+                f"I don't use a PIN, password or code said aloud, so I left it out. Connect {TITLE[service]} once "
+                f"in {place}, then ask again without it."
+            )
+        return SECRET_NOT_USED
+    if service:
+        return (
+            f"I left out the {kind} you typed and did nothing: Heliox never puts a secret into a request. Connect "
+            f"{TITLE[service]} once in {WHERE[service]}, then ask again without it."
+        )
+    return (
+        f"I left out the {kind} you typed and did nothing: Heliox doesn't take passwords, keys or tokens inside a "
+        "request, because the request is read by the language model that plans it. Ask again without it, or do this "
+        "step yourself."
+    )
+
+
 __all__ = [
     "MARK_START",
+    "SECRET_NOT_USED",
     "Withheld",
     "forget_recent",
     "holds_left_out",
     "holds_secret",
     "left_out",
+    "secret_not_used",
     "withhold",
     "without_values",
 ]

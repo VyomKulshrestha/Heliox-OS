@@ -400,6 +400,13 @@ class AutonomousExecutor:
         if allowed_actions is not None:
             allowed_actions = sorted({ActionType(name).value for name in allowed_actions})
             scope_override = restrict_scope_to_actions(scope_override, allowed_actions)
+        from pilot.conversation.withheld import holds_url_credential, left_out, secret_not_used
+
+        # A trigger's stored words, a proactive or neural goal, a background request: the planner, the job store and
+        # working memory get them only with secrets taken out. A password inside a web address stops the job before it
+        # runs: the address cannot be used without it.
+        stopped = holds_url_credential(goal)
+        goal = left_out(goal)
         job = AutonomousJob(
             goal=goal,
             source=source,
@@ -408,6 +415,14 @@ class AutonomousExecutor:
             allowed_actions=allowed_actions,
             dry_run=self._dry_run_now(),
         )
+        if stopped:
+            job.status = JobStatus.FAILED
+            job.result_summary = secret_not_used(goal, typed=False, sent=True)
+            job.completed_at = time.time()
+            self._jobs[job.job_id] = job
+            await self._persist(job)
+            logger.info("Autonomous job %s stopped: a password inside a web address", job.job_id)
+            return job
         self._jobs[job.job_id] = job
         await self._persist(job)
         await self._remember_active_goal(job)

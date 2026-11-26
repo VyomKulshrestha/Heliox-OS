@@ -3598,6 +3598,17 @@ class PilotServer:
         user_input = str(params.get("input") or "").strip()
         if not user_input or len(user_input) > 20_000:
             return {"status": "error", "message": "Task input must contain 1-20,000 characters."}
+        from pilot.conversation.adapters import TYPED_SOURCES
+        from pilot.conversation.withheld import holds_url_credential, left_out, secret_not_used
+
+        # The queue keeps the words in the task store and shows them to every window: only with secrets taken out,
+        # and a password inside a web address stops the request here, as on the interactive road.
+        source = str(params.get("source") or "text").strip().lower()
+        stopped = holds_url_credential(user_input)
+        user_input = left_out(user_input)
+        if stopped:
+            said = secret_not_used(user_input, typed=source in TYPED_SOURCES, sent=source not in TYPED_SOURCES)
+            return {"status": "error", "message": said}
         session_id = str(params.get("session_id") or "default")
         user_id = str(params.get("user_id") or "local")
         async with self._queued_submission_lock:
@@ -3779,15 +3790,34 @@ class PilotServer:
         it. A secret merely mentioned is left out everywhere. Returns the request to go on with and, when a store
         kept it, the reply that ends it."""
         from pilot.conversation.adapters import TYPED_SOURCES
-        from pilot.conversation.withheld import left_out, withhold
+        from pilot.conversation.withheld import holds_url_credential, left_out, secret_not_used, withhold
 
         text = params.get("input")
         if not isinstance(text, str) or not text.strip():
             return params, None
         found = withhold(text)
+        source = str(params.get("source") or "text").strip().lower()
+        if holds_url_credential(text):
+            # A password or token inside a web address ("https://sam:...@host/"), typed, said, or already taken out
+            # where the words arrived (a phone): the address cannot be used without it, and it never goes to a model,
+            # so nothing is planned or kept. The sentence says what to do instead.
+            kept = left_out(text)
+            said = secret_not_used(kept, typed=source != "voice", sent=source not in TYPED_SOURCES | {"voice"})
+            if ws is not None:
+                with contextlib.suppress(Exception):
+                    await ws.send(_notification("conversation_response", {"explanation": said}))
+            logger.info("A request holding a password inside a web address was stopped before planning")
+            return {**params, "input": kept}, {
+                "status": "success",
+                "conversational": True,
+                "dry_run": False,
+                "results": [],
+                "message": said,
+                "explanation": said,
+            }
         if found is None:
             return params, None
-        if str(params.get("source") or "text").strip().lower() in TYPED_SOURCES:
+        if source in TYPED_SOURCES:
             for store in (self._notes, self._todos, self._reminders):
                 if store is None:
                     continue
@@ -5952,7 +5982,14 @@ class PilotServer:
             raise ValueError("input is required")
         if len(value) > 20_000:
             raise ValueError("input exceeds the 20,000 character limit")
-        return value
+        from pilot.conversation.withheld import holds_url_credential, left_out, secret_not_used
+
+        # Another app's words reach the planner (a preview) and the task store only with secrets taken out; a password
+        # inside a web address stops the request, as on every other road.
+        kept = left_out(value)
+        if holds_url_credential(value):
+            raise ValueError(secret_not_used(kept, typed=False, sent=True))
+        return kept
 
     @staticmethod
     def _mcp_session_id(params: dict[str, Any]) -> str:

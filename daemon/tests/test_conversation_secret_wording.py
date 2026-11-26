@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from pilot.conversation.layer import SECRET_NOT_USED, ConversationLayer, secret_not_used
-from pilot.conversation.withheld import left_out, withhold
+from pilot.conversation.withheld import forget_recent, left_out, withhold
 from pilot.system.connections import WHERE
 
 TOKEN = "live10-test-token-7f3a9c21e5"
@@ -17,6 +17,13 @@ WEBHOOK = (
     'Send a POST request to http://127.0.0.1:8797/hook with the JSON body {"event": "live10", "ok": true} and the '
     f"header Authorization: Bearer {TOKEN}"
 )
+
+
+@pytest.fixture(autouse=True)
+def _nothing_remembered():
+    forget_recent()  # values taken out here are not looked for in other tests
+    yield
+    forget_recent()
 
 
 def test_an_address_and_port_are_not_taken_for_a_secret():
