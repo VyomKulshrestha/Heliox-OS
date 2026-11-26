@@ -114,6 +114,22 @@ def into_the_appimage(env: dict[str, str], appdir: str) -> dict[str, str]:
 
 
 APPDIR: list[str] = [""]  # where the AppImage's files are for the app, read at its first start
+PERSON_ENV: list[dict[str, str]] = [{}]  # the environment the person started the app with
+
+# What the AppImage's start-up sets that a program the app starts must not see unless the person set it to the same
+# value: the runtime's own names, and the fixed toolkit settings of linuxdeploy's GTK hook and AppRun.c (the app's
+# outside_env rule, "rule by value"). On f9b5089 the daemon carried GDK_BACKEND=x11, GTK_THEME=Adwaita:light,
+# PYTHONDONTWRITEBYTECODE=1 and XDG_DATA_DIRS=/usr/share: although the person had none of them.
+LAUNCHER_SETTINGS = ("APPIMAGE", "APPDIR", "ARGV0", "OWD", "GDK_BACKEND", "GTK_THEME", "PYTHONDONTWRITEBYTECODE")
+
+
+def launcher_settings(env: dict[str, str], person: dict[str, str]) -> dict[str, str]:
+    """The launcher's settings in ``env`` that the person's own environment does not have with the same value, and
+    XDG_DATA_DIRS when it differs from the person's."""
+    found = {name: env[name] for name in LAUNCHER_SETTINGS if name in env and person.get(name) != env[name]}
+    if env.get("XDG_DATA_DIRS") != person.get("XDG_DATA_DIRS"):
+        found["XDG_DATA_DIRS"] = env.get("XDG_DATA_DIRS", "(not set)")
+    return found
 
 
 def image_folder(pid: int, env: dict[str, str]) -> str:
@@ -173,6 +189,12 @@ def the_daemons_environment() -> None:
         "daemon-environment-outside-the-appimage",
         not any(leftovers.values()),
         f"APPDIR {APPDIR[0]}; the daemon's entries pointing into it: {leftovers}",
+    )
+    settings = {pid: launcher_settings(env, PERSON_ENV[0]) for pid, env in environments.items()}
+    base.check(
+        "daemon-environment-without-the-launchers-settings",
+        bool(PERSON_ENV[0]) and not any(settings.values()),
+        f"the daemon's values the person did not set: {settings}",
     )
 
 
@@ -239,6 +261,7 @@ def main(appimage: str, tools: str) -> int:
     try:
         person = base.Person()
         person.env["APPIMAGE_EXTRACT_AND_RUN"] = "1"  # no FUSE in the container
+        PERSON_ENV[0] = dict(person.env)
         log = base.DaemonLog(person.home)
         first = person.start([appimage], "app-first-start.log")
         time.sleep(20)
@@ -256,6 +279,7 @@ def main(appimage: str, tools: str) -> int:
         else:
             for name in (
                 "daemon-environment-outside-the-appimage",
+                "daemon-environment-without-the-launchers-settings",
                 "page-reaches-daemon",
                 "daemon-answers-with-token",
                 "removal-names-the-appimage-file",

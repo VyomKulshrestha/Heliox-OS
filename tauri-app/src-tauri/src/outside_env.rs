@@ -20,7 +20,20 @@
 //!   (APPIMAGE_ORIGINAL_<NAME> or <NAME>_ORIG), when one was recorded; else its entries under the folder are removed;
 //!   a variable with nothing left, or still mentioning the folder, is unset;
 //! - a variable that does not point into the folder is kept as it is, whatever its name: a person's own value stays;
-//! - PYTHONHOME and PYTHONPATH are dropped whatever they hold, so the daemon's Python searches only its environment.
+//! - PYTHONHOME and PYTHONPATH are dropped whatever they hold, so the daemon's Python searches only its environment;
+//! - the AppImage runtime's own names (APPIMAGE, APPDIR, ARGV0, OWD) are dropped: a program the app starts is not
+//!   the AppImage, and some programs take APPIMAGE as their own (an Electron app's updater would replace that file);
+//! - a toolkit setting the launcher sets to a fixed value, with no path in it, is told apart by that value and by a
+//!   mark the same launcher leaves (see `set_by_the_launcher`): GDK_BACKEND=x11 and GTK_THEME=Adwaita[:light|:dark]
+//!   from linuxdeploy's GTK hook (its mark: GTK_DATA_PREFIX in the folder), PYTHONDONTWRITEBYTECODE=1 from AppRun.c
+//!   (its mark: PYTHONHOME in the folder), GST_REGISTRY_REUSE_PLUGIN_SCANNER=no from the GStreamer hook (its mark:
+//!   GST_PLUGIN_SCANNER in the folder). Such a value gets the recorded value from before the start-up when there is
+//!   one, else it is unset, so the program sees the desktop's own setting. The hook replaced whatever the person had
+//!   for these names before the app started, so no value of theirs is in the app's environment to keep; a value other
+//!   than the hook's (a person's GDK_BACKEND=wayland) is theirs and stays;
+//! - the GTK hook also puts /usr/share after its own folder in XDG_DATA_DIRS
+//!   ("$APPDIR/usr/share:/usr/share:$XDG_DATA_DIRS"); that entry goes with the folder's, leaving the person's list,
+//!   or nothing (unset: the desktop's default) when they had none.
 //!
 //! The folder is $APPDIR; when the runtime did not set it (an AppImage extracted to run), it is the folder the app's
 //! own program runs from, the part before /usr/bin/. `apply` gives the result to a `Command`; `open_browser` and
@@ -31,6 +44,64 @@ use std::process::Command;
 
 /// Python's own search settings: the daemon's Python and the system's python3 look only in their own folders.
 const DROPPED: [&str; 2] = ["PYTHONHOME", "PYTHONPATH"];
+
+/// What the AppImage runtime sets for the app itself.
+const RUNTIME: [&str; 4] = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"];
+
+/// Whether the launcher that leaves `mark` ran: `mark` points into the folder.
+fn ran(env: &BTreeMap<String, String>, mark: &str, folder: &str) -> bool {
+    env.get(mark).is_some_and(|value| mentions(value, folder))
+}
+
+/// Whether NAME=VALUE is a fixed toolkit setting the AppImage's launcher made (see the module's comment).
+fn set_by_the_launcher(
+    name: &str,
+    value: &str,
+    env: &BTreeMap<String, String>,
+    folder: &str,
+) -> bool {
+    match name {
+        // linuxdeploy-plugin-gtk.sh: export GDK_BACKEND=x11; export GTK_THEME="$APPIMAGE_GTK_THEME", which is
+        // "Adwaita:light" or "Adwaita:dark" (older hooks: "Adwaita") unless APPIMAGE_GTK_THEME was set.
+        "GDK_BACKEND" => ran(env, "GTK_DATA_PREFIX", folder) && value == "x11",
+        "GTK_THEME" => {
+            ran(env, "GTK_DATA_PREFIX", folder)
+                && (matches!(value, "Adwaita" | "Adwaita:light" | "Adwaita:dark")
+                    || env
+                        .get("APPIMAGE_GTK_THEME")
+                        .is_some_and(|theme| theme == value))
+        }
+        // AppImageKit's AppRun.c sets PYTHONHOME="$APPDIR/usr/" and PYTHONDONTWRITEBYTECODE=1 together.
+        "PYTHONDONTWRITEBYTECODE" => ran(env, "PYTHONHOME", folder) && value == "1",
+        // linuxdeploy-plugin-gstreamer.sh sets the scanner under the folder and turns its reuse off.
+        "GST_REGISTRY_REUSE_PLUGIN_SCANNER" => {
+            (ran(env, "GST_PLUGIN_SCANNER", folder) || ran(env, "GST_PLUGIN_SCANNER_1_0", folder))
+                && value == "no"
+        }
+        _ => false,
+    }
+}
+
+/// Whether one ':' entry is the GTK hook's own "$APPDIR/usr/share" (any number of '/' around "usr/share").
+fn the_hooks_share(entry: &str, folder: &str) -> bool {
+    entry
+        .strip_prefix(folder)
+        .is_some_and(|rest| rest.starts_with('/') && rest.trim_matches('/') == "usr/share")
+}
+
+/// XDG_DATA_DIRS without the /usr/share the GTK hook put straight after its own "$APPDIR/usr/share".
+fn without_the_hooks_share(value: &str, folder: &str) -> String {
+    let entries: Vec<&str> = value.split(':').collect();
+    let mut kept = Vec::with_capacity(entries.len());
+    for (at, entry) in entries.iter().enumerate() {
+        let after_the_hooks = at > 0 && the_hooks_share(entries[at - 1], folder);
+        if after_the_hooks && entry.trim_end_matches('/') == "/usr/share" {
+            continue;
+        }
+        kept.push(*entry);
+    }
+    kept.join(":")
+}
 
 /// Where an AppImage's start-up may have recorded the value NAME had before it ran, in the order they are tried.
 /// The AppRun Tauri bundles records none; other AppRun scripts do, and the rule uses a record where there is one.
@@ -105,21 +176,34 @@ pub fn outside_with(
     let folder = image_folder(env, program);
     let mut result = BTreeMap::new();
     for (name, value) in env {
-        if DROPPED.contains(&name.as_str()) {
+        if DROPPED.contains(&name.as_str()) || RUNTIME.contains(&name.as_str()) {
             continue;
         }
         let Some(folder) = folder.as_deref() else {
             result.insert(name.clone(), value.clone());
             continue;
         };
+        let recorded = recorded_originals(name)
+            .iter()
+            .find_map(|record| env.get(record));
+        if set_by_the_launcher(name, value, env, folder) {
+            if let Some(before) = recorded.filter(|before| !before.is_empty()) {
+                result.insert(name.clone(), before.clone());
+            }
+            continue;
+        }
         if !mentions(value, folder) {
             result.insert(name.clone(), value.clone());
             continue;
         }
-        let recorded = recorded_originals(name)
-            .iter()
-            .find_map(|record| env.get(record));
-        if let Some(kept) = cleaned(recorded.unwrap_or(value), folder) {
+        let source = match recorded {
+            Some(before) => before.clone(),
+            None if name == "XDG_DATA_DIRS" && ran(env, "GTK_DATA_PREFIX", folder) => {
+                without_the_hooks_share(value, folder)
+            }
+            None => value.clone(),
+        };
+        if let Some(kept) = cleaned(&source, folder) {
             if !kept.is_empty() {
                 result.insert(name.clone(), kept);
             }
@@ -268,8 +352,8 @@ mod tests {
         ]));
         assert_eq!(result["PATH"], "/usr/local/bin:/usr/bin:/bin");
         assert_eq!(result["HOME"], "/home/sam");
-        assert_eq!(result["APPIMAGE"], "/home/sam/Apps/Heliox-OS.AppImage"); // the file, outside the folder
         for name in [
+            "APPIMAGE", // the runtime's, for the app itself
             "APPDIR",
             "LD_LIBRARY_PATH",
             "PERLLIB",
@@ -284,6 +368,172 @@ mod tests {
         assert!(
             result.values().all(|value| !value.contains(APP)),
             "{result:?}"
+        );
+    }
+
+    /// The whole environment the Linux package job read from the app and from the daemon it started on f9b5089
+    /// (19 November 2026): the GTK hook's and AppRun.c's fixed values reached the daemon until this rule.
+    #[test]
+    fn the_launchers_fixed_values_as_ci_read_them() {
+        let data = format!("{APP}/usr/share/:{APP}/usr/share:/usr/share:");
+        let pythonhome = format!("{APP}/usr/");
+        let schemas = format!("{APP}//usr/share/glib-2.0/schemas");
+        let result = outside(&appimage(&[
+            ("ARGV0", "/home/sam/Apps/Heliox-OS.AppImage"),
+            ("APPIMAGE_EXTRACT_AND_RUN", "1"),
+            ("GTK_DATA_PREFIX", APP),
+            ("GSETTINGS_SCHEMA_DIR", schemas.as_str()),
+            ("GDK_BACKEND", "x11"),
+            ("GTK_THEME", "Adwaita:light"),
+            ("XDG_DATA_DIRS", data.as_str()),
+            ("PYTHONHOME", pythonhome.as_str()),
+            ("PYTHONDONTWRITEBYTECODE", "1"),
+            ("DISPLAY", ":99"),
+            ("HOME", "/home/sam"),
+            ("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        ]));
+        let expected = env(&[
+            ("APPIMAGE_EXTRACT_AND_RUN", "1"), // the person's (here the check's) own setting
+            ("DISPLAY", ":99"),
+            ("HOME", "/home/sam"),
+            ("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        ]);
+        assert_eq!(result, expected);
+    }
+
+    /// Before and after, one row per case: what the program the app starts sees.
+    #[test]
+    fn the_launchers_fixed_values_against_the_persons_own() {
+        let gtk = [("GTK_DATA_PREFIX", APP)];
+        let share =
+            format!("{APP}/usr/share/:{APP}/usr/share:/usr/share:/usr/local/share:/usr/share");
+        let pythonhome = format!("{APP}/usr/");
+        let scanner = format!("{APP}/usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner");
+        let rows: Vec<(&str, Vec<(&str, &str)>, &str, Option<&str>)> = vec![
+            // (case, the app's environment besides APPIMAGE and APPDIR, the name, what the program sees)
+            (
+                "the hook's x11",
+                vec![gtk[0], ("GDK_BACKEND", "x11")],
+                "GDK_BACKEND",
+                None,
+            ),
+            (
+                "a person's wayland",
+                vec![gtk[0], ("GDK_BACKEND", "wayland")],
+                "GDK_BACKEND",
+                Some("wayland"),
+            ),
+            (
+                "x11 with no GTK hook: the person's",
+                vec![("GDK_BACKEND", "x11")],
+                "GDK_BACKEND",
+                Some("x11"),
+            ),
+            (
+                "the hook's x11, recorded before",
+                vec![
+                    gtk[0],
+                    ("GDK_BACKEND", "x11"),
+                    ("GDK_BACKEND_ORIG", "wayland"),
+                ],
+                "GDK_BACKEND",
+                Some("wayland"),
+            ),
+            (
+                "the hook's dark theme",
+                vec![gtk[0], ("GTK_THEME", "Adwaita:dark")],
+                "GTK_THEME",
+                None,
+            ),
+            (
+                "an old hook's theme",
+                vec![gtk[0], ("GTK_THEME", "Adwaita")],
+                "GTK_THEME",
+                None,
+            ),
+            (
+                "the theme asked of the AppImage",
+                vec![gtk[0], ("APPIMAGE_GTK_THEME", "Arc"), ("GTK_THEME", "Arc")],
+                "GTK_THEME",
+                None,
+            ),
+            (
+                "a person's theme, no hook",
+                vec![("GTK_THEME", "Adwaita:dark")],
+                "GTK_THEME",
+                Some("Adwaita:dark"),
+            ),
+            (
+                "AppRun.c's bytecode switch",
+                vec![
+                    ("PYTHONHOME", pythonhome.as_str()),
+                    ("PYTHONDONTWRITEBYTECODE", "1"),
+                ],
+                "PYTHONDONTWRITEBYTECODE",
+                None,
+            ),
+            (
+                "a person's bytecode switch, no AppRun.c",
+                vec![("PYTHONDONTWRITEBYTECODE", "1")],
+                "PYTHONDONTWRITEBYTECODE",
+                Some("1"),
+            ),
+            (
+                "the GStreamer hook's scanner reuse",
+                vec![
+                    ("GST_PLUGIN_SCANNER", scanner.as_str()),
+                    ("GST_REGISTRY_REUSE_PLUGIN_SCANNER", "no"),
+                ],
+                "GST_REGISTRY_REUSE_PLUGIN_SCANNER",
+                None,
+            ),
+            (
+                "data folders: the person's list comes back",
+                vec![gtk[0], ("XDG_DATA_DIRS", share.as_str())],
+                "XDG_DATA_DIRS",
+                Some("/usr/local/share:/usr/share"),
+            ),
+            (
+                "the runtime's ARGV0",
+                vec![("ARGV0", "Heliox.AppImage")],
+                "ARGV0",
+                None,
+            ),
+            ("the runtime's OWD", vec![("OWD", "/home/sam")], "OWD", None),
+        ];
+        for (case, extra, name, sees) in rows {
+            let result = outside(&appimage(&extra));
+            assert_eq!(result.get(name).map(String::as_str), sees, "{case}");
+        }
+    }
+
+    #[test]
+    fn a_person_who_sets_the_toolkit_without_an_appimage_keeps_it_all() {
+        let plain = env(&[
+            ("GDK_BACKEND", "x11"),
+            ("GTK_THEME", "Adwaita:dark"),
+            ("PYTHONDONTWRITEBYTECODE", "1"),
+            ("XDG_DATA_DIRS", "/usr/share:/usr/share"),
+            ("APPIMAGE", ""),
+        ]);
+        assert_eq!(outside_with(&plain, Some("/usr/bin/heliox-os")), plain);
+    }
+
+    #[test]
+    fn the_hooks_share_is_only_the_entry_right_after_its_own() {
+        let folder = APP;
+        assert_eq!(
+            without_the_hooks_share(&format!("{APP}/usr/share:/usr/share:"), folder),
+            format!("{APP}/usr/share:")
+        );
+        // the person's own /usr/share, elsewhere in the list, stays
+        assert_eq!(
+            without_the_hooks_share("/usr/share:/opt/share", folder),
+            "/usr/share:/opt/share"
+        );
+        assert_eq!(
+            without_the_hooks_share(&format!("{APP}//usr/share/:/usr/share/:/usr/share"), folder),
+            format!("{APP}//usr/share/:/usr/share")
         );
     }
 

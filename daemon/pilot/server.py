@@ -19057,6 +19057,9 @@ def main() -> None:
     enter_as_daemon()  # the one process that uses the person's real folders without a flag
     ensure_dirs()
     _setup_logging()
+    from pilot.system.outside_env import clean_this_process
+
+    clean_this_process()  # an AppImage's start-up settings never reach a program the daemon starts
     config = PilotConfig.load()
     if args.export_logs:
         export_logs()
