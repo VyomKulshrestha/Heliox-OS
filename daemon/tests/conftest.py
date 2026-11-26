@@ -32,6 +32,7 @@ if os.environ.get("HELIOX_REAL_VOICE_MODELS") != "1":
     os.environ["HF_HUB_OFFLINE"] = "1"  # and nothing is fetched into it
 
 from pilot.config import PilotConfig  # noqa: E402
+from pilot.security import credential_store  # noqa: E402
 from pilot.system import system_guard  # noqa: E402  (takes the real SMTP classes before any test replaces them)
 
 if os.environ.get("HELIOX_TEST_GPU") != "1":
@@ -55,6 +56,8 @@ _system_refused: dict[str, list[tuple[str, str]]] = {}
 # CI-only tests marked real_system(...) that made the changes they named, by node id.
 _system_opted_in: dict[str, list[tuple[str, str]]] = {}
 _system_snapshot_fakes: list[str] = []
+# Tests whose code reached this computer's credential store and was refused (pilot.security.credential_store).
+_credential_refused: dict[str, list[str]] = {}
 
 
 def pytest_configure(config):
@@ -103,6 +106,9 @@ def pytest_runtest_makereport(item, call):
         if why is None and item.nodeid in _system_refused:
             attempts = "; ".join(f"{kind}: {what}" for kind, what in _system_refused[item.nodeid])
             why = f"SYSTEM-GUARD: this test tried to change the real system and was refused ({attempts})"
+        if why is None and item.nodeid in _credential_refused:
+            reached = "; ".join(_credential_refused[item.nodeid][:5])
+            why = f"CREDENTIAL-GUARD: this test reached this computer's credential store and was refused ({reached})"
         if why is not None:
             report.outcome = "failed"
             report.longrepr = why
@@ -123,6 +129,27 @@ def pytest_terminal_summary(terminalreporter):
         )
         for nodeid, uses in sorted(_system_opted_in.items()):
             terminalreporter.write_line(f"  {nodeid}: " + "; ".join(f"{kind}: {what}" for kind, what in uses))
+    outside = [what for where, what in credential_store.attempts() if where == "outside the test suite"]
+    terminalreporter.write_line(
+        f"CREDENTIAL-GUARD {len(_credential_refused)} tests reached this computer's credential store and were "
+        f"refused (store in use: {credential_store.mode() or 'not isolated'})"
+        + (f"; {len(outside)} more reaches outside any test" if outside else "")
+    )
+    for nodeid, reached in sorted(_credential_refused.items()):
+        terminalreporter.write_line(f"  {nodeid}: " + "; ".join(reached[:5]))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_credential_store(request):
+    """No test reads or writes this computer's credential store (Credential Manager, the keychain, the Secret
+    Service). keyring's fail backend stands in for it (tests/folder_guard.py), and a system backend or Windows'
+    credential functions reached another way refuse (pilot.security.credential_store); this records which test asked,
+    and the test fails at its teardown even when the code it ran swallowed the refusal."""
+    before = len(credential_store.attempts())
+    yield
+    new = credential_store.attempts()[before:]
+    if new:
+        _credential_refused[request.node.nodeid] = [what for _where, what in new]
 
 
 @pytest.fixture(autouse=True)

@@ -56,6 +56,12 @@ def _test_root() -> Path | None:
 
 
 _TEST_ROOT = _test_root()
+if _TEST_ROOT is not None:
+    # The credential store follows the folders: the scratch root's own, never this computer's
+    # (pilot.security.credential_store). Here, so no daemon or tool under a scratch root can miss it.
+    from pilot.security.credential_store import isolate as _isolate_credentials
+
+    _isolate_credentials(_TEST_ROOT)
 
 
 def _heliox_dir(env_var: str, fallback: str) -> Path:

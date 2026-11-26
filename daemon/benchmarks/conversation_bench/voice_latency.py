@@ -579,9 +579,10 @@ async def _configured_model(config: Any, exits: contextlib.AsyncExitStack) -> An
     """The person's talk model; its spend goes to their budget (pilot.real_folders.real_budget_tracker), a block
     entered on ``exits`` and closed with it when the run ends."""
     from pilot.conversation.fast_model import build_fast_model
-    from pilot.real_folders import real_budget_tracker
+    from pilot.real_folders import allow_owner_model_key, real_budget_tracker
     from pilot.security.vault import KeyVault
 
+    allow_owner_model_key(config)  # the model key, read only, from this computer's store (scratch folders)
     budget = await exits.enter_async_context(real_budget_tracker(config.model, "the voice latency bench"))
     return build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
 

@@ -125,13 +125,14 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     from pilot.conversation.layer import ConversationLayer
     from pilot.conversation.planner_context import planner_sees
     from pilot.conversation.promises import promised_action
-    from pilot.real_folders import apply_owner_settings, real_budget_tracker
+    from pilot.real_folders import allow_owner_model_key, apply_owner_settings, real_budget_tracker
     from pilot.security.vault import KeyVault
 
     from . import OWNER_CONVERSATION_FIELDS
 
     config = PilotConfig()  # the run's own: its files are under the scratch root
     apply_owner_settings(config, ("model", "conversation"), only=OWNER_CONVERSATION_FIELDS)
+    allow_owner_model_key(config)  # the model key, read only, from this computer's store (scratch folders)
     async with real_budget_tracker(config.model, "the handover check") as budget:  # the one write to their folders
         before = budget._monthly_cost
         model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)

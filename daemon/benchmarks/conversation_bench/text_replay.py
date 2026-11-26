@@ -297,8 +297,10 @@ async def _main(args: argparse.Namespace) -> int:
         """A new model for each turn (a new connection), so no arm inherits another's."""
         if args.model == "configured":
             from pilot.conversation.fast_model import build_fast_model
+            from pilot.real_folders import allow_owner_model_key
             from pilot.security.vault import KeyVault
 
+            allow_owner_model_key(config)  # the model key, read only, from this computer's store (scratch folders)
             made = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)
             if made is None:
                 raise SystemExit("no talk model is set up in these settings")

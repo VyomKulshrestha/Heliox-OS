@@ -40,9 +40,11 @@ async def _configured_model() -> tuple[Any, Any]:
     from pilot.config import DB_FILE, PilotConfig
     from pilot.conversation.fast_model import build_fast_model
     from pilot.models.budget_tracker import BudgetTracker
+    from pilot.real_folders import allow_owner_model_key
     from pilot.security.vault import KeyVault
 
     config = PilotConfig.load()
+    allow_owner_model_key(config)  # the model key, read only, from this computer's store (scratch folders)
     budget = BudgetTracker(config.model, str(DB_FILE))
     await budget.initialize()
     return build_fast_model(config, vault=KeyVault(config), router=None, budget=budget), budget

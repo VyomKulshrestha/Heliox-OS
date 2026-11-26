@@ -63,7 +63,7 @@ def require_real_folders_flag(tool: str, argv: list[str] | None = None) -> None:
         )
 
 
-def use_scratch_folders(root: Path | None = None) -> Path:
+def use_scratch_folders(root: Path | None = None, *, real_credentials: tuple[str, ...] = ()) -> Path:
     """Lay every Heliox folder out under ``root`` for this process and the processes it starts.
 
     Two lines at the top of a script, before anything imports pilot.config (the folders are fixed when it loads):
@@ -75,10 +75,21 @@ def use_scratch_folders(root: Path | None = None) -> Path:
     its downloaded models between runs), that folder, kept. Writes the marker pilot.config looks for, so a stray
     HELIOX_TEST_ROOT without it is still ignored. Under a test root already (a tool imported by the test suite, or
     started by a tool that set one up), that root stays and is returned.
+
+    The credential store goes with the folders: secrets are kept in the root's own store, and this computer's store
+    (Credential Manager, the keychain, the Secret Service) is refused (pilot.security.credential_store).
+    ``real_credentials`` names the model provider keys a trial run may read from this computer's store, read only,
+    such as ``("claude",)``; nothing else is read from it, and the processes this one starts get none (they name
+    their own). The default is none. Under the test suite there is no store at all, and nothing is read.
     """
+    from pilot.security import credential_store
+
+    credential_store.check_readable(real_credentials)
     from_config = sys.modules.get("pilot.config")
     active = getattr(from_config, "_TEST_ROOT", None) if from_config is not None else _marked_root()
     if active is not None:
+        credential_store.isolate(active)
+        credential_store.allow_real_reads(real_credentials)
         return active
     if from_config is not None:
         raise RuntimeError("use_scratch_folders() must run before pilot.config is imported")
@@ -94,6 +105,8 @@ def use_scratch_folders(root: Path | None = None) -> Path:
         (root / layout / "heliox-os").mkdir(parents=True, exist_ok=True)
     (root / ".heliox-test-root").write_text("A scratch root for a Heliox tool; see pilot/real_folders.py", "utf-8")
     os.environ["HELIOX_TEST_ROOT"] = str(root)
+    credential_store.isolate(root)
+    credential_store.allow_real_reads(real_credentials)
     return root
 
 
@@ -409,3 +422,16 @@ def owner_model_settings() -> dict[str, Any]:
 def apply_owner_model_settings(config: Any) -> list[str]:
     """The person's [model] settings copied onto ``config``; returns the bare names (see apply_owner_settings)."""
     return [name.split(".", 1)[1] for name in apply_owner_settings(config, ("model",))]
+
+
+def allow_owner_model_key(config: Any) -> tuple[str, ...]:
+    """For a paid run under scratch folders that learns its provider from the settings: the key of
+    ``config.model.cloud_provider`` (and its backup keys) may be read, read only, from this computer's credential
+    store (pilot.security.credential_store.allow_real_reads). Returns the names; () for a local model, under the test
+    suite, where nothing is read, and outside scratch folders, where the store is this computer's anyway."""
+    from pilot.security import credential_store
+
+    provider = str(getattr(getattr(config, "model", None), "cloud_provider", "") or "")
+    if credential_store.isolated() is None or provider not in credential_store.MODEL_PROVIDERS:
+        return ()
+    return credential_store.allow_real_reads([provider, *(f"{provider}_backup_{n}" for n in range(1, 6))])

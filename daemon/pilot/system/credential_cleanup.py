@@ -130,6 +130,16 @@ def linux_entries(service: str, search: Callable[[dict], list[dict]] | None = No
     return [str(attrs.get("username", "")) for attrs in search({"service": service}) if attrs.get("username")]
 
 
+def _finder(platform: str) -> Callable[[str], list[str]]:
+    """How the store is searched by service: this computer's, or under scratch folders and the test suite the scratch
+    root's own (pilot.security.credential_store), so a scratch run never lists this computer's entries."""
+    from pilot.security import credential_store
+
+    if credential_store.isolated() is not None:
+        return credential_store.scratch_accounts
+    return {"win32": windows_entries, "darwin": macos_entries}.get(platform, linux_entries)
+
+
 @dataclass
 class Cleanup:
     removed: list[str] = field(default_factory=list)
@@ -166,7 +176,7 @@ def remove_all(
     if keyring_module is None:
         import keyring as keyring_module
     if entries is None:
-        finder = {"win32": windows_entries, "darwin": macos_entries}.get(platform, linux_entries)
+        finder = _finder(platform)
 
         def entries(service: str) -> list[str]:
             return finder(service)
@@ -215,7 +225,7 @@ def main(argv: list[str]) -> int:
         print(json.dumps(services()))
         return 0
     found: dict[str, list[str]] = {}
-    finder = {"win32": windows_entries, "darwin": macos_entries}.get(sys.platform, linux_entries)
+    finder = _finder(sys.platform)
     for service in services():
         try:
             found[service] = finder(service)

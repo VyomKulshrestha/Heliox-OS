@@ -9,7 +9,8 @@
    so ``pilot.config`` lays all of Heliox's folders out there (config, data, state, runtime, ``~/.cache/heliox`` and
    setup's ``~/.config/heliox-os``), for this process and every daemon a test starts. Without the marker the variable
    is ignored, so a real install never picks it up.
-3. The system keyring is replaced by keyring's fail backend, here and in every process the suite starts.
+3. The system keyring is replaced by keyring's fail backend, here and in every process the suite starts, and the
+   backends that reach a system store refuse (pilot.security.credential_store; counted as CREDENTIAL-GUARD).
 4. An audit hook refuses (PermissionError) any open, SQLite connect, folder creation, rename or removal under the
    real folders, and records which test asked. A refused open never touches the file.
 
@@ -187,11 +188,13 @@ def listing(roots) -> dict[str, tuple[int, int]]:
 KEYRING_BACKEND = "keyring.backends.fail.Keyring"
 
 
-def _keep_off_the_keyring() -> None:
+def _keep_off_the_keyring(session: Path) -> None:
     """The system keyring (Windows Credential Manager, the macOS keychain, the Secret Service) holds the person's
     provider keys and Heliox's own signing keys; it is not a folder, so the audit hook cannot see it. The suite and
     every process it starts get keyring's fail backend instead: a test that needs a key stores it in a fake it sets
-    up, and code that reaches for the real keyring meets "no keyring", which Heliox handles (keyring_guard)."""
+    up, and code that reaches for the real keyring meets "no keyring", which Heliox handles (keyring_guard). A test
+    that goes round it (a system backend class, Windows' credential functions) is refused and counted
+    (pilot.security.credential_store, CREDENTIAL-GUARD in conftest.py)."""
     os.environ["PYTHON_KEYRING_BACKEND"] = KEYRING_BACKEND  # read by keyring in this process and in subprocesses
     try:
         import keyring
@@ -199,6 +202,9 @@ def _keep_off_the_keyring() -> None:
     except ImportError:
         return
     keyring.set_keyring(keyring.backends.fail.Keyring())
+    from pilot.security import credential_store  # imports nothing of Heliox's configuration
+
+    credential_store.isolate(session)
 
 
 def install() -> Path:
@@ -224,7 +230,7 @@ def install() -> Path:
         "Heliox's test suite; see daemon/tests/folder_guard.py", encoding="utf-8"
     )
     os.environ["HELIOX_TEST_ROOT"] = str(session)
-    _keep_off_the_keyring()
+    _keep_off_the_keyring(session)
     session_key = _key(session)
     # A real folder that contains the session folder (TMPDIR under ~/.pilot, say) would refuse the session itself.
     kept = [root for root in roots if not session_key.startswith(_key(root) + os.sep)]

@@ -102,7 +102,7 @@ async def build_planner(provider: str, model: str, *, record_usage: bool = True)
     from pilot.agents.planner import Planner
     from pilot.config import PilotConfig
     from pilot.models.router import ModelRouter
-    from pilot.real_folders import real_budget_tracker
+    from pilot.real_folders import allow_owner_model_key, real_budget_tracker
     from pilot.security.vault import KeyVault
     from pilot.skills.loader import SkillRegistry
 
@@ -110,6 +110,7 @@ async def build_planner(provider: str, model: str, *, record_usage: bool = True)
     config.model.provider = "cloud"
     config.model.cloud_provider = provider
     config.model.cloud_model = model
+    allow_owner_model_key(config)  # the model key, read only, from this computer's store (scratch folders)
     router = ModelRouter(config, KeyVault(config))
     router._cache = _NoCache()
     exits = contextlib.AsyncExitStack()

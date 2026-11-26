@@ -256,7 +256,7 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
         return summary
     from pilot.config import PilotConfig
     from pilot.conversation.fast_model import build_fast_model
-    from pilot.real_folders import apply_owner_settings, real_budget_tracker
+    from pilot.real_folders import allow_owner_model_key, apply_owner_settings, real_budget_tracker
     from pilot.security.vault import KeyVault
 
     from . import OWNER_CONVERSATION_FIELDS
@@ -269,6 +269,7 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
         config.model.provider, config.model.cloud_provider = "cloud", args.provider
     if args.model:
         setattr(config.conversation, f"{args.provider or config.model.cloud_provider or 'ollama'}_model", args.model)
+    allow_owner_model_key(config)  # the model key, read only, from this computer's store (scratch folders)
     async with real_budget_tracker(config.model, "the more-turns eval") as budget:  # the one write to their folders
         before = budget._monthly_cost
         model = build_fast_model(config, vault=KeyVault(config), router=None, budget=budget)

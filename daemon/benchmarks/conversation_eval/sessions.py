@@ -1213,7 +1213,12 @@ async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     """The Claude road against the real fast model, once, with the budget tracker on; scored by the same rules."""
     from pilot.config import PilotConfig
     from pilot.conversation.fast_model import build_fast_model
-    from pilot.real_folders import apply_owner_settings, describe_changes, real_budget_tracker
+    from pilot.real_folders import (
+        allow_owner_model_key,
+        apply_owner_settings,
+        describe_changes,
+        real_budget_tracker,
+    )
     from pilot.security.vault import KeyVault
 
     from . import OWNER_CONVERSATION_FIELDS
@@ -1223,6 +1228,7 @@ async def _real_run(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     print("copied from the person's settings:", ", ".join(copied) or "nothing", flush=True)
     if config.model.provider != "cloud" or config.model.cloud_provider != "claude":
         raise SystemExit("--real runs the Claude road only; the copied provider is not Claude")
+    allow_owner_model_key(config)  # the model key, read only, from this computer's store (scratch folders)
     # The one intended write to the person's own folders: the budget tracker records what the run spent.
     async with real_budget_tracker(config.model, "the session eval") as budget:
         before = budget._monthly_cost

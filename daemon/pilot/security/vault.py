@@ -13,12 +13,14 @@ from typing import TYPE_CHECKING
 
 from pilot.config import DATA_DIR
 
+# "pilot-ai-command-center", defined where the store is kept apart from this computer's under scratch folders and the
+# test suite (pilot.security.credential_store); a real install uses it unchanged.
+from pilot.security.credential_store import VAULT_SERVICE as VAULT_SERVICE
+
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
 logger = logging.getLogger("pilot.security.vault")
-
-VAULT_SERVICE = "pilot-ai-command-center"
 LEGACY_VAULT_FILE = DATA_DIR / "vault.enc"
 KNOWN_PROVIDERS = (
     "openai",
