@@ -19,7 +19,7 @@
   "sources": {
     "action_registry": {
       "path": "daemon/pilot/actions.py",
-      "sha256": "eb09947bfdb19a2f07ca5d235c358f9fa79a7f608516c291adb6b6807a46d384"
+      "sha256": "2d34c2b104d2164e0becd503a84a57956a5570afb19918449c1c342f16547e26"
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
@@ -84,7 +84,7 @@
       },
       {
         "path": "daemon/pilot/agents/postconditions/reads.py",
-        "sha256": "5ee978120059c46751b65da0d3e84e56cfa3da670cf986baca16ce04524b6d30"
+        "sha256": "d91f455096c303c716b0ee1c61551fac581d7f1551ff85da635aaac9d686f81f"
       },
       {
         "path": "daemon/pilot/agents/postconditions/system_state.py",
@@ -92,7 +92,7 @@
       },
       {
         "path": "daemon/pilot/agents/postconditions/triggers_schedules.py",
-        "sha256": "c4df8b88dcd0ddf8ce0bae2b4dfd09ea744869288aa9a7940ea1232b261678b6"
+        "sha256": "96a735742c5f110cd79ee4ab8f5f93a28571432fbf6955c0319fe821fac50fef"
       }
     ],
     "plugin_manifests": [
@@ -2006,12 +2006,6 @@
       },
       "providers": [
         {
-          "id": "builtin:pilot.agents.monitor_agent.MonitorAgent",
-          "name": "MonitorAgent",
-          "role": "monitor_agent",
-          "source": "builtin"
-        },
-        {
           "id": "builtin:pilot.agents.system_agent.SystemAgent",
           "name": "SystemAgent",
           "role": "system_agent",
@@ -2046,12 +2040,6 @@
         "note": "Availability can still depend on host tools, permissions, hardware, and configured integrations."
       },
       "providers": [
-        {
-          "id": "builtin:pilot.agents.monitor_agent.MonitorAgent",
-          "name": "MonitorAgent",
-          "role": "monitor_agent",
-          "source": "builtin"
-        },
         {
           "id": "builtin:pilot.agents.system_agent.SystemAgent",
           "name": "SystemAgent",
@@ -2088,12 +2076,6 @@
       },
       "providers": [
         {
-          "id": "builtin:pilot.agents.monitor_agent.MonitorAgent",
-          "name": "MonitorAgent",
-          "role": "monitor_agent",
-          "source": "builtin"
-        },
-        {
           "id": "builtin:pilot.agents.system_agent.SystemAgent",
           "name": "SystemAgent",
           "role": "system_agent",
@@ -2128,12 +2110,6 @@
         "note": "Availability can still depend on host tools, permissions, hardware, and configured integrations."
       },
       "providers": [
-        {
-          "id": "builtin:pilot.agents.monitor_agent.MonitorAgent",
-          "name": "MonitorAgent",
-          "role": "monitor_agent",
-          "source": "builtin"
-        },
         {
           "id": "builtin:pilot.agents.domain_agents.NetworkAgent",
           "name": "NetworkAgent",
@@ -2175,12 +2151,6 @@
         "note": "Availability can still depend on host tools, permissions, hardware, and configured integrations."
       },
       "providers": [
-        {
-          "id": "builtin:pilot.agents.monitor_agent.MonitorAgent",
-          "name": "MonitorAgent",
-          "role": "monitor_agent",
-          "source": "builtin"
-        },
         {
           "id": "builtin:pilot.agents.system_agent.SystemAgent",
           "name": "SystemAgent",
@@ -5486,12 +5456,6 @@
           "id": "builtin:pilot.agents.domain_agents.IntegrationAgent",
           "name": "IntegrationAgent",
           "role": "integration_agent",
-          "source": "builtin"
-        },
-        {
-          "id": "builtin:pilot.agents.rss_agent.RssAgent",
-          "name": "RssAgent",
-          "role": "rss_agent",
           "source": "builtin"
         },
         {
