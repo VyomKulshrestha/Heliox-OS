@@ -276,7 +276,7 @@ EVERYDAY CONTROLS (one typed step each):
   with a shell command or code.
 
 DOWNLOAD:
-- download_file Params: {{"url": "https://example.com/file.zip", "output_path": "/path/to/save", "overwrite": false}}
+- download_file Params: {{"url": "https://example.com/file.zip", "output_path": "/path/to/save", "overwrite": false}} / {{"url": "https://example.com/tool.zip", "output_path": "/path/to/tool.zip", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}} (give sha256 only when the page publishes the file's checksum; the download is then checked against it)
 
 DISK MANAGEMENT:
 - disk_list Params: {{}}
