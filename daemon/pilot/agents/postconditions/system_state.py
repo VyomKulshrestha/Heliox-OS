@@ -144,3 +144,96 @@ def _shown(values: list) -> str:
     """Numbers or bytes for a sentence: the value alone when there is one."""
     text = str(values[0]) if len(values) == 1 else "[" + ", ".join(str(item) for item in values[:16]) + "]"
     return text if len(text) <= 120 else text[:117] + "..."
+
+
+# What `systemctl is-enabled` prints after a successful enable or disable, and why other states fail the action.
+_STARTS_AT_BOOT = {"enabled"}
+_KEPT_FROM_BOOT = {"disabled", "masked", "masked-runtime"}
+_SERVICE_STATE_MEANING = {
+    "enabled-runtime": "enabled only until the next reboot",
+    "linked": "linked from outside the unit search path, not enabled",
+    "linked-runtime": "linked only until the next reboot",
+    "alias": "an alias of another unit, whose own state decides",
+    "static": "static: it has no [Install] section, so enabling or disabling it changes nothing; another unit pulls it in",
+    "indirect": "indirect: another unit enables it",
+    "generated": "generated at boot by a generator, so enable and disable do not apply",
+    "transient": "transient: it exists only for this boot",
+    "bad": "a unit file systemd cannot read",
+    "not-found": "not found",
+}
+
+
+async def _service_boot_state(result: ActionResult, wanted: set[str], expectation: str) -> Outcome:
+    from pilot.actions import ServiceParams
+    from pilot.system.systemctl import is_enabled
+
+    if CURRENT_PLATFORM != Platform.LINUX:
+        # The service actions drive systemctl only. On Windows and macOS systemctl does not exist, the handler
+        # raises, and the action fails before this check runs; a Windows check would read the service's start type
+        # (Get-Service), a macOS one launchctl print-disabled, once handlers for those platforms exist.
+        return unobserved("Services are managed through systemd here, which only Linux has")
+    params: ServiceParams = result.action.parameters  # type: ignore[assignment]
+    if not params.name:
+        raise ValueError("Service action has no unit name to observe")
+    state = await is_enabled(params.name, user_scope=params.user_scope)
+    if state in wanted:
+        return verified(f"systemctl is-enabled says {params.name} is {state}")
+    meaning = _SERVICE_STATE_MEANING.get(state, state)
+    return mismatch(f"Expected {params.name} {expectation}; systemctl is-enabled says it is {meaning}")
+
+
+@register(ActionType.SERVICE_ENABLE, method="service_enabled_postcondition", timeout=20.0)
+async def service_enabled(result: ActionResult) -> Outcome:
+    """The unit starts at boot: `systemctl is-enabled` prints enabled."""
+    return await _service_boot_state(result, _STARTS_AT_BOOT, "to start at boot (enabled)")
+
+
+@register(ActionType.SERVICE_DISABLE, method="service_disabled_postcondition", timeout=20.0)
+async def service_disabled(result: ActionResult) -> Outcome:
+    """The unit will not start at boot: `systemctl is-enabled` prints disabled or masked."""
+    return await _service_boot_state(result, _KEPT_FROM_BOOT, "not to start at boot (disabled or masked)")
+
+
+@register(ActionType.DISK_MOUNT, method="mount_presence_postcondition", timeout=20.0)
+async def disk_mounted(result: ActionResult) -> Outcome:
+    """The requested device is mounted at the requested path, read from the mount table (findmnt, mount)."""
+    from pilot.actions import DiskManageParams
+    from pilot.system.disks import device_matches, mounted_source
+
+    if CURRENT_PLATFORM == Platform.WINDOWS:
+        # The handler refuses on Windows (drive letters are assigned, not mounted at a path here).
+        return unobserved("Heliox does not mount disks at a path on Windows")
+    params: DiskManageParams = result.action.parameters  # type: ignore[assignment]
+    if not params.device or not params.mount_point:
+        raise ValueError("Disk mount has no device or mount point to observe")
+    source = await mounted_source(params.mount_point)
+    if source is None:
+        return mismatch(f"Expected {params.device} mounted at {params.mount_point}; nothing is mounted there")
+    if not await device_matches(params.device, source):
+        return mismatch(f"Expected {params.device} mounted at {params.mount_point}; {source} is mounted there")
+    return verified(f"{source} is mounted at {params.mount_point}")
+
+
+@register(ActionType.WIFI_CONNECT, method="wifi_network_postcondition", timeout=20.0)
+async def wifi_joined(result: ActionResult) -> Outcome:
+    """The requested SSID is among the networks joined now (WLAN API, NetworkManager, networksetup or ipconfig)."""
+    from pilot.actions import WifiParams
+    from pilot.system.network import connected_ssids
+
+    params: WifiParams = result.action.parameters  # type: ignore[assignment]
+    if not params.ssid:
+        raise ValueError("Wi-Fi connect has no network name to observe")
+    # Joining finishes after the command returns (netsh only starts it): read up to WIFI_READINGS times.
+    reading = await connected_ssids(params.interface)
+    for _ in range(WIFI_READINGS - 1):
+        if reading.ssids is None or params.ssid in reading.ssids:
+            break
+        await _pause()
+        reading = await connected_ssids(params.interface)
+    if reading.ssids is None:
+        return unobserved(f"Could not read which network is joined: {reading.reason}")
+    if params.ssid in reading.ssids:
+        return verified(f"Joined to {params.ssid}")
+    found = ", ".join(reading.ssids) if reading.ssids else "no network"
+    seconds = WIFI_READINGS * READING_INTERVAL_SECONDS
+    return mismatch(f"Expected to be joined to {params.ssid}; after {seconds:g} s the Wi-Fi is on {found}")

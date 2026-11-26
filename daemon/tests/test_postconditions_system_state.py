@@ -457,3 +457,326 @@ async def test_registry_write_reads_back_dword_and_string_on_windows_ci() -> Non
         ) as parent:
             if winreg.QueryInfoKey(parent)[0] == 0:
                 winreg.DeleteKey(winreg.HKEY_CURRENT_USER, r"Software\HelioxVerifierTest")
+
+
+# ── service_enable and service_disable ──────────────────────────────────────────────────────────────────────────
+
+
+def _service(name: str = "backup.timer", user_scope: bool = False):
+    from pilot.actions import ServiceParams
+
+    return ServiceParams(name=name, user_scope=user_scope)
+
+
+@pytest.mark.parametrize(
+    ("action_type", "printed", "code", "outcome"),
+    [
+        (ActionType.SERVICE_ENABLE, "enabled\n", 0, "verified"),
+        (ActionType.SERVICE_ENABLE, "disabled\n", 1, "mismatch"),
+        (ActionType.SERVICE_ENABLE, "static\n", 0, "mismatch"),
+        (ActionType.SERVICE_ENABLE, "enabled-runtime\n", 0, "mismatch"),
+        (ActionType.SERVICE_ENABLE, "masked\n", 1, "mismatch"),
+        (ActionType.SERVICE_DISABLE, "disabled\n", 1, "verified"),
+        (ActionType.SERVICE_DISABLE, "masked\n", 1, "verified"),
+        (ActionType.SERVICE_DISABLE, "masked-runtime\n", 1, "verified"),
+        (ActionType.SERVICE_DISABLE, "enabled\n", 0, "mismatch"),
+        (ActionType.SERVICE_DISABLE, "static\n", 0, "mismatch"),
+        (ActionType.SERVICE_DISABLE, "indirect\n", 0, "mismatch"),
+    ],
+)
+async def test_service_boot_state_from_systemctl_is_enabled(
+    monkeypatch: pytest.MonkeyPatch, action_type, printed, code, outcome
+) -> None:
+    from pilot.system import platform_detect
+
+    run = AsyncMock(return_value=(code, printed, ""))
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(platform_detect, "run_command", run)
+
+    verification = await _verify(action_type, _service())
+
+    if outcome == "verified":
+        _assert_verified(verification)
+    else:
+        detail = _assert_mismatch(verification)
+        if printed.strip() == "static":
+            assert "no [Install] section" in detail
+    assert run.await_args.args[0] == ["systemctl", "is-enabled", "--", "backup.timer"]
+    assert "pkexec" not in run.await_args.args[0]
+
+
+async def test_user_scope_service_is_read_with_user_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import platform_detect
+
+    run = AsyncMock(return_value=(0, "enabled\n", ""))
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(platform_detect, "run_command", run)
+
+    _assert_verified(await _verify(ActionType.SERVICE_ENABLE, _service("sync.service", user_scope=True)))
+    assert run.await_args.args[0] == ["systemctl", "--user", "is-enabled", "--", "sync.service"]
+    assert run.await_args.kwargs["timeout"] == 15
+
+
+async def test_systemctl_without_a_state_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import platform_detect
+
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(
+        platform_detect, "run_command", AsyncMock(return_value=(1, "", "System has not been booted with systemd"))
+    )
+
+    verification = await _verify(ActionType.SERVICE_DISABLE, _service())
+
+    assert verification.passed is False and "Verification error" in verification.details[0]
+
+
+@pytest.mark.parametrize("platform", [Platform.WINDOWS, Platform.MACOS])
+@pytest.mark.parametrize("action_type", [ActionType.SERVICE_ENABLE, ActionType.SERVICE_DISABLE])
+async def test_services_off_linux_are_reported(monkeypatch: pytest.MonkeyPatch, platform, action_type) -> None:
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", platform)
+
+    _assert_reported(await _verify(action_type, _service()))
+
+
+async def test_failed_enable_never_reaches_the_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import systemctl
+
+    monkeypatch.setattr(
+        systemctl, "_run_systemctl", AsyncMock(return_value=(1, "", "Unit file backup.timer does not exist."))
+    )
+    observer = AsyncMock()
+    monkeypatch.setattr(systemctl, "is_enabled", observer)
+
+    with pytest.raises(RuntimeError, match="Failed to enable"):
+        await systemctl.service_enable("backup.timer")
+    _assert_failed(await _verify(ActionType.SERVICE_ENABLE, _service(), success=False))
+    observer.assert_not_awaited()
+
+
+# ── disk_mount ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+def _mount(device: str = "/dev/sdb1", mount_point: str = "/mnt/controlled"):
+    from pilot.actions import DiskManageParams
+
+    return DiskManageParams(device=device, mount_point=mount_point)
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome"),
+    [((0, "/dev/sdb1\n", ""), "verified"), ((1, "", ""), "mismatch"), ((0, "/dev/sdc2\n", ""), "mismatch")],
+)
+async def test_linux_mount_read_from_findmnt(monkeypatch: pytest.MonkeyPatch, answer, outcome) -> None:
+    from pilot.system import disks
+
+    run = AsyncMock(return_value=answer)
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(disks, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(disks, "run_command", run)
+
+    verification = await _verify(ActionType.DISK_MOUNT, _mount())
+
+    if outcome == "verified":
+        _assert_verified(verification)
+    else:
+        detail = _assert_mismatch(verification)
+        assert ("nothing is mounted there" in detail) if answer[0] == 1 else ("/dev/sdc2 is mounted there" in detail)
+    assert run.await_args_list[0].args[0] == [
+        "findmnt",
+        "--noheadings",
+        "--first-only",
+        "--output",
+        "SOURCE",
+        "--mountpoint",
+        "/mnt/controlled",
+    ]
+
+
+async def test_linux_mount_by_uuid_is_resolved_by_findmnt(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import disks
+
+    run = AsyncMock(side_effect=[(0, "/dev/sdb1\n", ""), (0, "/dev/sdb1\n", "")])
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(disks, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(disks, "run_command", run)
+
+    _assert_verified(await _verify(ActionType.DISK_MOUNT, _mount(device="UUID=1234-ABCD")))
+    assert run.await_args_list[1].args[0][-2:] == ["--source", "UUID=1234-ABCD"]
+
+
+async def test_findmnt_failure_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import disks
+
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(disks, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(disks, "run_command", AsyncMock(return_value=(-1, "", "Command not found: findmnt")))
+
+    verification = await _verify(ActionType.DISK_MOUNT, _mount())
+
+    assert verification.passed is False and "Verification error" in verification.details[0]
+
+
+MAC_MOUNT = (
+    "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n"
+    "/dev/disk4s1 on /Volumes/Backup Drive (apfs, local, nodev, nosuid, journaled, noowners)\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("device", "mount_point", "outcome"),
+    [
+        ("/dev/disk4s1", "/Volumes/Backup Drive", "verified"),
+        ("/dev/disk5s1", "/Volumes/Backup Drive", "mismatch"),
+        ("/dev/disk4s1", "/Volumes/Other", "mismatch"),
+    ],
+)
+async def test_macos_mount_read_from_mount_table(monkeypatch: pytest.MonkeyPatch, device, mount_point, outcome) -> None:
+    from pilot.system import disks
+
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.MACOS)
+    monkeypatch.setattr(disks, "CURRENT_PLATFORM", Platform.MACOS)
+    monkeypatch.setattr(disks, "run_command", AsyncMock(return_value=(0, MAC_MOUNT, "")))
+
+    verification = await _verify(ActionType.DISK_MOUNT, _mount(device, mount_point))
+
+    if outcome == "verified":
+        _assert_verified(verification)
+    else:
+        _assert_mismatch(verification)
+
+
+async def test_mount_on_windows_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(system_state, "CURRENT_PLATFORM", Platform.WINDOWS)
+
+    _assert_reported(await _verify(ActionType.DISK_MOUNT, _mount("E:", "C:/mnt")))
+
+
+async def test_failed_mount_is_a_failed_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.agents.executor import Executor
+    from pilot.system import platform_detect
+
+    monkeypatch.setattr(platform_detect, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(platform_detect, "run_command", AsyncMock(return_value=(32, "", "mount: wrong fs type")))
+    action = Action(action_type=ActionType.DISK_MOUNT, target="x", parameters=_mount())
+
+    with pytest.raises(RuntimeError, match="Mount failed"):
+        await Executor._exec_disk_mount(MagicMock(), action)
+    _assert_failed(await _verify(ActionType.DISK_MOUNT, _mount(), success=False))
+
+
+# ── wifi_connect ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+def _wifi(ssid: str = "Cafe", interface: str | None = None):
+    from pilot.actions import WifiParams
+
+    return WifiParams(ssid=ssid, password="never-shown-pass", interface=interface)
+
+
+def test_nmcli_terse_parsing_unescapes_names() -> None:
+    from pilot.system.network import parse_nmcli_active_ssids
+
+    text = "no:Neighbour\nyes:Home\\:5G\nyes:Back\\\\slash\nno:\nyes:\n"
+    assert parse_nmcli_active_ssids(text) == ["Home:5G", "Back\\slash"]
+
+
+async def test_linux_wifi_read_from_networkmanager(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    run = AsyncMock(side_effect=[(0, "no:Cafe\nyes:Home\n", ""), (0, "yes:Cafe\nno:Home\n", "")])
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(network, "run_command", run)
+
+    _assert_verified(await _verify(ActionType.WIFI_CONNECT, _wifi(interface="wlan0")))
+    args = run.await_args.args[0]
+    assert args == ["nmcli", "-t", "-f", "ACTIVE,SSID", "device", "wifi", "list", "ifname", "wlan0", "--rescan", "no"]
+    assert run.await_args.kwargs["env"]["LC_ALL"] == "C"
+
+
+async def test_linux_other_network_is_a_mismatch(monkeypatch: pytest.MonkeyPatch, _no_waiting) -> None:
+    from pilot.system import network
+
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(network, "run_command", AsyncMock(return_value=(0, "no:Cafe\nyes:Home\n", "")))
+
+    detail = _assert_mismatch(await _verify(ActionType.WIFI_CONNECT, _wifi()))
+
+    assert "Expected to be joined to Cafe" in detail and "on Home" in detail
+    assert "never-shown-pass" not in detail
+    assert _no_waiting.await_count == system_state.WIFI_READINGS - 1
+
+
+async def test_windows_wifi_read_from_wlan_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    readings = iter([network.WifiReading([]), network.WifiReading(["Cafe"])])
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(network, "_windows_connected_ssids", lambda: next(readings))
+
+    _assert_verified(await _verify(ActionType.WIFI_CONNECT, _wifi()))
+
+
+async def test_windows_without_location_access_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    withheld = network.WifiReading(None, "Windows withholds the network name from apps without location access")
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(network, "_windows_connected_ssids", lambda: withheld)
+
+    _assert_reported(await _verify(ActionType.WIFI_CONNECT, _wifi()))
+    assert "location access" in await _detail(ActionType.WIFI_CONNECT, _wifi())
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the WLAN API exists only on Windows")
+def test_windows_wlan_api_read_runs_without_elevation() -> None:
+    from pilot.system.network import WifiReading, _windows_connected_ssids
+
+    # A read only: a runner without Wi-Fi hardware answers that the WLAN service is absent.
+    assert isinstance(_windows_connected_ssids(), WifiReading)
+
+
+@pytest.mark.parametrize(
+    ("answers", "outcome"),
+    [
+        ([(0, "Current Wi-Fi Network: Cafe\n", "")], "verified"),
+        ([(0, "Current AirPort Network: Cafe\n", "")], "verified"),
+        (
+            [
+                (0, "You are not associated with an AirPort network.\n", ""),
+                (0, "<dictionary> {\n  SSID : Cafe\n}\n", ""),
+            ],
+            "verified",
+        ),
+        (
+            [
+                (0, "You are not associated with an AirPort network.\n", ""),
+                (0, "<dictionary> {\n  SSID : <redacted>\n}\n", ""),
+            ],
+            "reported",
+        ),
+        ([(0, "Current Wi-Fi Network: Home\n", "")] * 10, "mismatch"),
+    ],
+)
+async def test_macos_wifi_read(monkeypatch: pytest.MonkeyPatch, answers, outcome) -> None:
+    from pilot.system import network
+
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.MACOS)
+    monkeypatch.setattr(network, "run_command", AsyncMock(side_effect=answers))
+
+    verification = await _verify(ActionType.WIFI_CONNECT, _wifi())
+
+    {"verified": _assert_verified, "mismatch": _assert_mismatch, "reported": _assert_reported}[outcome](verification)
+
+
+async def test_failed_wifi_connect_never_reaches_the_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system import network
+
+    monkeypatch.setattr(network, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(network, "run_command", AsyncMock(return_value=(10, "", "No network with SSID 'Cafe' found.")))
+    observer = AsyncMock()
+    monkeypatch.setattr(network, "connected_ssids", observer)
+
+    with pytest.raises(RuntimeError, match="WiFi connect failed"):
+        await network.wifi_connect("Cafe")
+    _assert_failed(await _verify(ActionType.WIFI_CONNECT, _wifi(), success=False))
+    observer.assert_not_awaited()

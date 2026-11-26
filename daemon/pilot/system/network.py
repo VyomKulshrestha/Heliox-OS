@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import NamedTuple
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
@@ -86,6 +87,176 @@ async def wifi_disconnect(interface: str | None = None) -> str:
     if code != 0:
         raise RuntimeError(f"WiFi disconnect failed: {err.strip()}")
     return "Disconnected from WiFi"
+
+
+# ── Which network is joined now: read-only, for the wifi_connect post-condition ──
+
+WLAN_INTERFACE_STATE_CONNECTED = 1
+WLAN_INTF_OPCODE_CURRENT_CONNECTION = 7
+WLAN_INTERFACE_INFO_SIZE = 532  # GUID (16) + WCHAR[256] description (512) + state (4)
+WLAN_SSID_OFFSET = 520  # in WLAN_CONNECTION_ATTRIBUTES: state, mode, WCHAR[256] profile name, then DOT11_SSID
+ERROR_ACCESS_DENIED = 5
+
+
+class WifiReading(NamedTuple):
+    """The networks the Wi-Fi interfaces are joined to now. ``ssids`` is None when the platform withheld the
+    answer, with ``reason`` saying why."""
+
+    ssids: list[str] | None
+    reason: str = ""
+
+
+def parse_nmcli_active_ssids(text: str) -> list[str]:
+    """SSIDs marked active in ``nmcli -t -f ACTIVE,SSID dev wifi list`` (terse: "yes:Name", with ":" and "\\"
+    inside the name escaped by a backslash)."""
+    found: list[str] = []
+    for line in text.splitlines():
+        fields: list[str] = []
+        current: list[str] = []
+        escaped = False
+        for char in line:
+            if escaped:
+                current.append(char)
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == ":" and not fields:
+                fields.append("".join(current))
+                current = []
+            else:
+                current.append(char)
+        fields.append("".join(current))
+        if len(fields) == 2 and fields[0] == "yes" and fields[1]:
+            found.append(fields[1])
+    return found
+
+
+def parse_mac_airport_network(text: str) -> str | None:
+    """The network from ``networksetup -getairportnetwork``: "Current Wi-Fi Network: Name" (older systems say
+    "AirPort"). None for "You are not associated with an AirPort network." or anything else."""
+    import re
+
+    match = re.search(r"^Current (?:Wi-Fi|AirPort) Network: (.+)$", text.strip(), re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def parse_mac_ipconfig_ssid(text: str) -> str | None:
+    """The "SSID : Name" line of ``ipconfig getsummary <interface>``; "<redacted>" when macOS hides it."""
+    import re
+
+    match = re.search(r"^\s*SSID : (.*)$", text, re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def _windows_connected_ssids() -> WifiReading:
+    """Ask the native WLAN API (wlanapi.dll) which interfaces are connected and to which SSID. No netsh text, so
+    nothing depends on the language Windows speaks. Windows 11 24H2 and later withhold the SSID from apps that do
+    not have location access; that comes back as access denied, reported as such."""
+    import ctypes
+    from ctypes import wintypes
+
+    wlan = ctypes.WinDLL("wlanapi")
+    wlan.WlanOpenHandle.argtypes = [
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.HANDLE),
+    ]
+    wlan.WlanEnumInterfaces.argtypes = [wintypes.HANDLE, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    wlan.WlanQueryInterface.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p,
+    ]
+    wlan.WlanFreeMemory.argtypes = [ctypes.c_void_p]
+    wlan.WlanCloseHandle.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+
+    handle = wintypes.HANDLE()
+    version = wintypes.DWORD()
+    code = wlan.WlanOpenHandle(2, None, ctypes.byref(version), ctypes.byref(handle))
+    if code != 0:
+        # No WLAN service (a desktop without Wi-Fi hardware, or the service stopped).
+        return WifiReading(None, f"the Windows WLAN service did not answer (error {code})")
+    interfaces = ctypes.c_void_p()
+    try:
+        code = wlan.WlanEnumInterfaces(handle, None, ctypes.byref(interfaces))
+        if code != 0:
+            raise OSError(code, "WlanEnumInterfaces failed")
+        try:
+            count = ctypes.c_uint32.from_address(interfaces.value).value
+            ssids: list[str] = []
+            for index in range(count):
+                base = interfaces.value + 8 + index * WLAN_INTERFACE_INFO_SIZE
+                state = ctypes.c_uint32.from_address(base + 16 + 512).value
+                if state != WLAN_INTERFACE_STATE_CONNECTED:
+                    continue
+                size = wintypes.DWORD()
+                data = ctypes.c_void_p()
+                code = wlan.WlanQueryInterface(
+                    handle,
+                    base,
+                    WLAN_INTF_OPCODE_CURRENT_CONNECTION,
+                    None,
+                    ctypes.byref(size),
+                    ctypes.byref(data),
+                    None,
+                )
+                if code == ERROR_ACCESS_DENIED:
+                    return WifiReading(None, "Windows withholds the network name from apps without location access")
+                if code != 0:
+                    raise OSError(code, "WlanQueryInterface failed")
+                try:
+                    raw = ctypes.string_at(data, size.value)
+                finally:
+                    wlan.WlanFreeMemory(data)
+                length = min(int.from_bytes(raw[WLAN_SSID_OFFSET : WLAN_SSID_OFFSET + 4], "little"), 32)
+                start = WLAN_SSID_OFFSET + 4
+                ssids.append(raw[start : start + length].decode("utf-8", errors="replace"))
+            return WifiReading(ssids)
+        finally:
+            wlan.WlanFreeMemory(interfaces)
+    finally:
+        wlan.WlanCloseHandle(handle, None)
+
+
+async def connected_ssids(interface: str | None = None) -> WifiReading:
+    """The SSIDs joined now, read through a different path than the one that joined: the WLAN API on Windows,
+    NetworkManager's device list on Linux, networksetup (then ipconfig) on macOS. Raises when the read fails."""
+    import asyncio
+
+    if CURRENT_PLATFORM == Platform.WINDOWS:
+        return await asyncio.to_thread(_windows_connected_ssids)
+
+    if CURRENT_PLATFORM == Platform.MACOS:
+        iface = interface or "en0"
+        code, out, err = await run_command(["networksetup", "-getairportnetwork", iface], timeout=10)
+        if code != 0:
+            raise RuntimeError(f"Wi-Fi read failed: {err.strip() or out.strip()}")
+        name = parse_mac_airport_network(out)
+        if name is not None:
+            return WifiReading([name])
+        # macOS 15 answers "not associated" here even when joined; ipconfig still knows, unless it redacts the name.
+        code, out, err = await run_command(["ipconfig", "getsummary", iface], timeout=10)
+        if code != 0:
+            raise RuntimeError(f"Wi-Fi read failed: {err.strip() or out.strip()}")
+        ssid = parse_mac_ipconfig_ssid(out)
+        if ssid == "<redacted>":
+            return WifiReading(None, "macOS hides the network name from apps without Location Services access")
+        return WifiReading([ssid] if ssid else [])
+
+    # --rescan no: read what NetworkManager knows now, never start a scan. LC_ALL=C keeps "yes" untranslated.
+    args = ["nmcli", "-t", "-f", "ACTIVE,SSID", "device", "wifi", "list"]
+    if interface:
+        args.extend(["ifname", interface])
+    args.extend(["--rescan", "no"])
+    code, out, err = await run_command(args, timeout=10, env={**os.environ, "LC_ALL": "C"})
+    if code != 0:
+        raise RuntimeError(f"Wi-Fi read failed: {err.strip() or out.strip()}")
+    return WifiReading(parse_nmcli_active_ssids(out))
 
 
 def wlan_profile_xml(ssid: str, password: str) -> str:

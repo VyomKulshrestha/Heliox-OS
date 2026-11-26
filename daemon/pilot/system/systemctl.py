@@ -80,3 +80,18 @@ async def service_status(name: str, user_scope: bool = False) -> str:
 async def is_active(name: str, user_scope: bool = False) -> bool:
     code, out, _ = await _run_systemctl("is-active", name, user_scope=user_scope)
     return out.strip() == "active"
+
+
+async def is_enabled(name: str, user_scope: bool = False) -> str:
+    """The unit's boot state as ``systemctl is-enabled`` names it: enabled, enabled-runtime, linked, alias, static,
+    indirect, generated, transient, disabled, masked, masked-runtime, bad or not-found. These words are systemd's
+    own and are not translated. A read: no pkexec, no password prompt, at most 15 seconds. Raises when systemctl
+    gives no state (not installed, or not running systemd)."""
+    from pilot.system.platform_detect import run_command
+
+    args = ["systemctl", *(["--user"] if user_scope else []), "is-enabled", "--", name]
+    code, out, err = await run_command(args, timeout=15)
+    state = out.strip().splitlines()[0].strip() if out.strip() else ""
+    if not state:
+        raise RuntimeError(f"systemctl gave no enabled state for {name}: {err.strip() or 'exit ' + str(code)}")
+    return state
