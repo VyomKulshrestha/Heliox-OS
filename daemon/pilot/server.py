@@ -2111,6 +2111,9 @@ class PilotServer:
 
         self._trigger_engine = get_engine()
         self._trigger_engine.set_fire_callback(self._dispatch_reactive_trigger)
+        # Triggers are kept in DATA_DIR/triggers.json; loading them runs nothing. The engine is started
+        # again after ready (_after_ready), when guarded execution can take a fired trigger.
+        self._trigger_engine.attach_store(DATA_DIR / "triggers.json")
 
         # ── Autonomous Healing Engine (passive system-health monitoring +
         # tiered auto-remediation, see pilot.agents.autonomous_healing) ──
@@ -12472,6 +12475,13 @@ class PilotServer:
         else:
             late.mark("online_learning", "ready")
         await late.run()
+        try:
+            from pilot.system.triggers import resume_triggers
+
+            if await resume_triggers(DATA_DIR / "triggers.json"):
+                logger.info("Stored triggers resumed after ready")
+        except Exception:
+            logger.warning("Stored triggers could not be resumed", exc_info=True)
         self._startup_timings().mark("all_started")
         while True:
             await asyncio.sleep(snapshot_every)

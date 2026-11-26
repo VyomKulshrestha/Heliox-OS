@@ -29,6 +29,7 @@ _HANDLERS = {
     ActionType.TRIGGER_START: Executor._exec_trigger_start,
     ActionType.TRIGGER_STOP: Executor._exec_trigger_stop,
     ActionType.SCHEDULE_CREATE: Executor._exec_schedule_create,
+    ActionType.SCHEDULE_DELETE: Executor._exec_schedule_delete,
 }
 
 
@@ -73,7 +74,9 @@ def test_verifiers_are_registered() -> None:
 
 @pytest.fixture
 async def engine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """A fresh engine keeping its triggers in a store under tmp_path, in place of the module's engine."""
     fresh = triggers.TriggerEngine()
+    fresh.attach_store(tmp_path / "store" / "triggers.json")
     monkeypatch.setattr(triggers, "_engine", fresh)
     yield fresh
     await fresh.stop()
@@ -88,12 +91,25 @@ def _watch(tmp_path: Path, name: str = "watch-downloads", command: str = "notify
     )
 
 
+def _stored(engine: triggers.TriggerEngine) -> dict:
+    return json.loads(engine.store_path.read_text(encoding="utf-8"))
+
+
+def _rewrite_store(engine: triggers.TriggerEngine, change) -> None:
+    data = _stored(engine)
+    change(data)
+    engine.store_path.write_text(json.dumps(data), encoding="utf-8")
+
+
 @pytest.mark.asyncio
-async def test_created_trigger_verifies(engine, tmp_path: Path) -> None:
+async def test_created_trigger_verifies_from_the_store(engine, tmp_path: Path) -> None:
     result = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
 
     assert result.success is True
     assert engine.is_running() is True
+    stored = _stored(engine)
+    assert stored["version"] == 1 and stored["engine_running"] is True
+    assert [entry["name"] for entry in stored["triggers"]] == ["watch-downloads"]
     _assert_verified(await _verify(result))
 
 
@@ -116,24 +132,49 @@ async def test_created_trigger_whose_loop_died_is_a_mismatch(engine, tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_created_trigger_missing_from_the_engine_is_a_mismatch(engine, tmp_path: Path) -> None:
+async def test_created_trigger_missing_from_the_store_is_a_mismatch(engine, tmp_path: Path) -> None:
+    result = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+    _rewrite_store(engine, lambda data: data.update(triggers=[]))
+
+    _assert_mismatch(await _verify(result), "not in the trigger store")
+
+
+@pytest.mark.asyncio
+async def test_created_trigger_the_engine_no_longer_holds_is_a_mismatch(engine, tmp_path: Path) -> None:
     result = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
     engine._triggers.clear()
 
-    _assert_mismatch(await _verify(result), "not in the trigger engine")
+    _assert_mismatch(await _verify(result), "does not hold it")
 
 
 @pytest.mark.asyncio
-async def test_created_trigger_with_a_different_command_is_a_mismatch(engine, tmp_path: Path) -> None:
+async def test_created_trigger_stored_with_a_different_command_is_a_mismatch(engine, tmp_path: Path) -> None:
     result = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
-    created = json.loads(result.output)["id"]
-    engine._triggers[created].action_command = "something else"
+    _rewrite_store(engine, lambda data: data["triggers"][0].update(action_command="something else"))
 
-    _assert_mismatch(await _verify(result), "action_command")
+    verification = await _verify(result)
+
+    _assert_mismatch(verification, "action_command")
+    assert "something else" not in verification.details[0]
 
 
 @pytest.mark.asyncio
-async def test_invalid_trigger_is_a_failed_action(engine) -> None:
+async def test_without_a_store_the_trigger_is_reported_not_observed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    memory_only = triggers.TriggerEngine()
+    monkeypatch.setattr(triggers, "_engine", memory_only)
+    try:
+        result = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+        verification = await _verify(result)
+    finally:
+        await memory_only.stop()
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == []
+    assert "REPORTED" in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_invalid_trigger_is_a_failed_action_and_is_not_stored(engine) -> None:
     result = await _run(
         ActionType.TRIGGER_CREATE,
         TriggerParams(name="x", trigger_type="not_a_type", action_command="notify"),
@@ -142,16 +183,19 @@ async def test_invalid_trigger_is_a_failed_action(engine) -> None:
     verification = await _verify(result)
     assert result.success is False
     assert "FAILED" in verification.details[0]
+    assert not engine.store_path.exists() or _stored(engine)["triggers"] == []
 
 
 @pytest.mark.asyncio
-async def test_retried_create_reuses_the_same_trigger(engine, tmp_path: Path) -> None:
+async def test_retried_create_keeps_the_identical_trigger_and_says_so(engine, tmp_path: Path) -> None:
     first = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
     await engine.stop()
     second = await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
 
     assert json.loads(first.output)["id"] == json.loads(second.output)["id"]
-    assert len(engine.list_triggers()) == 1
+    assert "note" not in json.loads(first.output)
+    assert "already existed and was kept" in json.loads(second.output)["note"]
+    assert len(_stored(engine)["triggers"]) == 1
     _assert_verified(await _verify(second))
 
 
@@ -162,6 +206,7 @@ async def test_deleted_trigger_verifies(engine, tmp_path: Path) -> None:
     result = await _run(ActionType.TRIGGER_DELETE, TriggerParams(name="watch-downloads"))
 
     assert result.success is True
+    assert _stored(engine)["triggers"] == []
     _assert_verified(await _verify(result))
 
 
@@ -173,31 +218,54 @@ async def test_delete_leaving_a_trigger_of_that_name_is_a_mismatch(engine, tmp_p
     result = await _run(ActionType.TRIGGER_DELETE, TriggerParams(name="watch-downloads"))
 
     assert result.success is True
-    _assert_mismatch(await _verify(result), "still in the trigger engine")
+    _assert_mismatch(await _verify(result), "still in the trigger store")
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason="trigger_delete raises when nothing matched in the groundwork series (verify1); passes once stacked on it",
-)
-async def test_delete_by_a_wrong_name_is_not_a_success(engine, tmp_path: Path) -> None:
+async def test_delete_by_a_wrong_name_fails_and_keeps_the_real_one(engine, tmp_path: Path) -> None:
     await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
 
     result = await _run(ActionType.TRIGGER_DELETE, TriggerParams(name="no-such-trigger"))
     verification = await _verify(result)
 
     assert result.success is False
+    assert "nothing was deleted" in (result.error or "")
     assert verification.passed is False
-    assert len(engine.list_triggers()) == 1
+    assert len(_stored(engine)["triggers"]) == 1
 
 
 @pytest.mark.asyncio
-async def test_engine_start_and_stop_verify(engine) -> None:
+async def test_delete_precheck_counts_only_this_runs_verified_deletion(engine, tmp_path: Path) -> None:
+    from pilot.agents.postconditions import _run_deletions
+    from pilot.intelligence.experience import experience_scope
+
+    _run_deletions.clear()
+    action = Action(action_type=ActionType.TRIGGER_DELETE, parameters=TriggerParams(name="watch-downloads"))
+    checker = Verifier(MagicMock())
+    await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+    with experience_scope(task_id="task-one"):
+        assert (await checker.check_already_satisfied(action))[0] is False  # present: the delete runs
+        deleted = await _run(ActionType.TRIGGER_DELETE, TriggerParams(name="watch-downloads"))
+        _assert_verified(await _verify(deleted))
+        # The same run plans the delete again: already done, not a failure.
+        assert (await checker.check_already_satisfied(action))[0] is True
+    with experience_scope(task_id="task-two"):
+        # Another run asking to delete a name that matches nothing: the delete runs and fails.
+        assert (await checker.check_already_satisfied(action))[0] is False
+        assert (await _run(ActionType.TRIGGER_DELETE, TriggerParams(name="watch-downloads"))).success is False
+    # No task id at all: the safer answer, the delete runs and fails.
+    assert (await checker.check_already_satisfied(action))[0] is False
+    _run_deletions.clear()
+
+
+@pytest.mark.asyncio
+async def test_engine_start_and_stop_verify_and_are_stored(engine) -> None:
     started = await _run(ActionType.TRIGGER_START, TriggerParams())
+    assert _stored(engine)["engine_running"] is True
     _assert_verified(await _verify(started))
 
     stopped = await _run(ActionType.TRIGGER_STOP, TriggerParams())
+    assert _stored(engine)["engine_running"] is False
     _assert_verified(await _verify(stopped))
 
 
@@ -218,6 +286,14 @@ async def test_engine_stop_then_started_again_is_a_mismatch(engine) -> None:
 
 
 @pytest.mark.asyncio
+async def test_engine_stop_not_kept_in_the_store_is_a_mismatch(engine) -> None:
+    stopped = await _run(ActionType.TRIGGER_STOP, TriggerParams())
+    _rewrite_store(engine, lambda data: data.update(engine_running=True))
+
+    _assert_mismatch(await _verify(stopped), "restart would start it again")
+
+
+@pytest.mark.asyncio
 async def test_start_restarts_a_loop_that_ended(engine) -> None:
     await engine.start()
     engine._task.cancel()
@@ -227,6 +303,167 @@ async def test_start_restarts_a_loop_that_ended(engine) -> None:
 
     assert engine.is_running() is True
     _assert_verified(await _verify(started))
+
+
+# ── The trigger store across a restart ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_created_trigger_is_there_and_enabled_after_a_restart(engine, tmp_path: Path) -> None:
+    await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+    await engine.stop()
+
+    restarted = triggers.TriggerEngine()
+    fired = AsyncMock()
+    restarted.set_fire_callback(fired)
+    restarted.attach_store(engine.store_path)
+
+    [entry] = restarted.list_triggers()
+    assert (entry["name"], entry["enabled"], entry["disabled_reason"]) == ("watch-downloads", True, "")
+    assert restarted.wanted_running is True
+    assert restarted.is_running() is False  # loading starts nothing
+    fired.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resume_starts_the_engine_only_when_it_was_left_running(
+    monkeypatch: pytest.MonkeyPatch, engine, tmp_path: Path
+) -> None:
+    await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+    await engine.stop()
+    path = engine.store_path
+
+    resumed = triggers.TriggerEngine()
+    monkeypatch.setattr(triggers, "_engine", resumed)
+    try:
+        assert await triggers.resume_triggers(path) is True
+        assert resumed.is_running() is True
+        await _run(ActionType.TRIGGER_STOP, TriggerParams())
+    finally:
+        await resumed.stop()
+
+    left_stopped = triggers.TriggerEngine()
+    monkeypatch.setattr(triggers, "_engine", left_stopped)
+    assert await triggers.resume_triggers(path) is False
+    assert left_stopped.is_running() is False
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_trigger_is_gone_after_a_restart(engine, tmp_path: Path) -> None:
+    await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path))
+    await _run(ActionType.TRIGGER_CREATE, _watch(tmp_path, name="keep-me", command="notify kept"))
+    await _run(ActionType.TRIGGER_DELETE, TriggerParams(name="watch-downloads"))
+
+    restarted = triggers.TriggerEngine()
+    restarted.attach_store(engine.store_path)
+
+    assert [entry["name"] for entry in restarted.list_triggers()] == ["keep-me"]
+
+
+def _entry(tmp_path: Path, **changes) -> dict:
+    entry = {
+        "id": "abc12345",
+        "name": "watch",
+        "trigger_type": "file_created",
+        "condition": {"path": str(tmp_path / "missing")},
+        "action_command": "notify me",
+        "enabled": True,
+        "fire_count": 0,
+        "max_fires": 0,
+        "cooldown_seconds": 60,
+        "last_fired": 0,
+        "created_at": "",
+        "disabled_reason": "",
+    }
+    entry.update(changes)
+    return entry
+
+
+def test_a_damaged_entry_is_skipped_and_the_rest_load(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    path = tmp_path / "triggers.json"
+    entries = [
+        _entry(tmp_path, id="good0001", name="first"),
+        "not an entry",
+        _entry(tmp_path, id="bad00001", trigger_type="no_such_type"),
+        _entry(tmp_path, id="bad00002", max_fires="many"),
+        {"name": "no id"},
+        _entry(tmp_path, id="good0002", name="second"),
+    ]
+    path.write_text(json.dumps({"version": 1, "engine_running": True, "triggers": entries}), encoding="utf-8")
+
+    engine = triggers.TriggerEngine()
+    with caplog.at_level("WARNING", logger="pilot.system.triggers"):
+        engine.attach_store(path)
+
+    assert sorted(entry["name"] for entry in engine.list_triggers()) == ["first", "second"]
+    assert sum("Skipped damaged trigger entry" in record.getMessage() for record in caplog.records) == 4
+
+
+def test_a_damaged_store_file_is_moved_aside_not_overwritten(tmp_path: Path) -> None:
+    path = tmp_path / "triggers.json"
+    path.write_text("{ not json", encoding="utf-8")
+
+    engine = triggers.TriggerEngine()
+    engine.attach_store(path)
+    engine.create_trigger("fresh", "file_created", {"path": str(tmp_path / "x")}, "notify fresh")
+
+    aside = list(tmp_path.glob("triggers.json.damaged-*"))
+    assert len(aside) == 1 and aside[0].read_text(encoding="utf-8") == "{ not json"
+    assert [entry["name"] for entry in _stored(engine)["triggers"]] == ["fresh"]
+
+
+def test_a_store_from_a_newer_version_is_read_but_never_overwritten(tmp_path: Path) -> None:
+    path = tmp_path / "triggers.json"
+    original = json.dumps({"version": 2, "engine_running": True, "triggers": [_entry(tmp_path)]})
+    path.write_text(original, encoding="utf-8")
+
+    engine = triggers.TriggerEngine()
+    engine.attach_store(path)
+    engine.create_trigger("fresh", "file_created", {"path": str(tmp_path / "x")}, "notify fresh")
+
+    assert path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.asyncio
+async def test_a_stored_trigger_refused_by_todays_rules_loads_disabled_and_never_fires(tmp_path: Path) -> None:
+    path = tmp_path / "triggers.json"
+    refused = _entry(
+        tmp_path,
+        id="refused1",
+        trigger_type="time_interval",
+        condition={},
+        cooldown_seconds=0,
+        action_command="   ",
+    )
+    sneaky = _entry(
+        tmp_path,
+        id="refused2",
+        trigger_type="custom_condition",
+        condition={"expression": "__import__('os').system('echo hacked')"},
+        cooldown_seconds=0,
+    )
+    path.write_text(json.dumps({"version": 1, "engine_running": True, "triggers": [sneaky]}), encoding="utf-8")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["triggers"].append(refused)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    engine = triggers.TriggerEngine()
+    fired = AsyncMock()
+    engine.set_fire_callback(fired)
+    engine.attach_store(path)
+
+    loaded = {entry["id"]: entry for entry in engine.list_triggers()}
+    assert set(loaded) == {"refused1", "refused2"}
+    for entry in loaded.values():
+        assert entry["enabled"] is False
+        assert "Refused by the trigger rules" in entry["disabled_reason"]
+    await engine.start()
+    try:
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    finally:
+        await engine.stop()
+    fired.assert_not_called()
 
 
 # ── schedule_create, mirroring the schedule_delete tests ─────────────
@@ -437,3 +674,108 @@ async def test_linux_delete_keeps_the_task_whose_name_only_starts_the_same(monke
     await scheduler.schedule_delete("backup")
 
     assert installed == ["0 9 * * * b # pilot-task:backup-old\n"]
+
+
+# ── schedule_delete: a name that matches nothing fails, on every platform ──
+
+_NOT_DELETED = "No scheduled task is called 'controlled-task', so nothing was deleted. List them first."
+
+
+def _windows_delete_runner(exists: bool, calls: list[list[str]]):
+    async def run(args, **_kwargs):
+        calls.append(list(args))
+        if args[:2] == ["schtasks", "/query"]:
+            return (0, "TaskName: controlled-task", "") if exists else (1, "", "ERROR: The system cannot find the file")
+        return 0, "SUCCESS", ""
+
+    return run
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exists", [True, False])
+async def test_windows_delete_fails_for_a_name_that_matches_nothing(monkeypatch: pytest.MonkeyPatch, exists: bool):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(scheduler, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(scheduler, "run_command", _windows_delete_runner(exists, calls))
+
+    result = await _run(ActionType.SCHEDULE_DELETE, ScheduleParams(name="controlled-task"))
+
+    deleted = ["schtasks", "/delete", "/tn", "controlled-task", "/f"] in calls
+    assert (result.success, deleted) == (exists, exists)
+    if not exists:
+        assert result.error == _NOT_DELETED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exists", [True, False])
+async def test_macos_delete_fails_for_a_name_that_matches_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, exists: bool
+) -> None:
+    plist = tmp_path / "com.pilot.controlled-task.plist"
+    if exists:
+        plist.write_bytes(plistlib.dumps({"Label": "com.pilot.controlled-task"}))
+    calls: list[list[str]] = []
+
+    async def run(args, **_kwargs):
+        calls.append(list(args))
+        return (113, "", "Could not find service") if args[:2] == ["launchctl", "list"] else (0, "", "")
+
+    monkeypatch.setattr(scheduler, "CURRENT_PLATFORM", Platform.MACOS)
+    monkeypatch.setattr(scheduler.os.path, "expanduser", lambda path: str(plist))
+    monkeypatch.setattr(scheduler, "run_command", run)
+
+    result = await _run(ActionType.SCHEDULE_DELETE, ScheduleParams(name="controlled-task"))
+
+    assert result.success is exists
+    assert plist.exists() is False
+    assert (["launchctl", "unload", str(plist)] in calls) is exists
+    if not exists:
+        assert result.error == _NOT_DELETED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "crontab",
+    [
+        (1, "", "no crontab for user"),
+        (0, "0 9 * * * true # pilot-task:controlled-task-old\n", ""),
+    ],
+)
+async def test_linux_delete_fails_for_a_name_that_matches_nothing(monkeypatch: pytest.MonkeyPatch, crontab) -> None:
+    calls: list[list[str]] = []
+
+    async def run(args, **_kwargs):
+        calls.append(list(args))
+        return crontab
+
+    monkeypatch.setattr(scheduler, "CURRENT_PLATFORM", Platform.LINUX)
+    monkeypatch.setattr(scheduler, "run_command", run)
+
+    result = await _run(ActionType.SCHEDULE_DELETE, ScheduleParams(name="controlled-task"))
+
+    assert result.success is False
+    assert result.error == _NOT_DELETED
+    assert all(call == ["crontab", "-l"] for call in calls)  # nothing was installed
+
+
+@pytest.mark.asyncio
+async def test_schedule_delete_precheck_counts_only_this_runs_verified_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pilot.agents.postconditions import _run_deletions
+    from pilot.intelligence.experience import experience_scope
+
+    _run_deletions.clear()
+    monkeypatch.setattr(scheduler, "schedule_exists", AsyncMock(return_value=False))
+    action = Action(action_type=ActionType.SCHEDULE_DELETE, parameters=ScheduleParams(name="controlled-task"))
+    checker = Verifier(MagicMock())
+
+    with experience_scope(task_id="task-one"):
+        # An absent task that this run never deleted is not "already satisfied": the delete runs and fails.
+        assert (await checker.check_already_satisfied(action))[0] is False
+        done = ActionResult(action=action, success=True, output="Deleted scheduled task: controlled-task")
+        _assert_verified(await _verify(done))
+        assert (await checker.check_already_satisfied(action))[0] is True
+    with experience_scope(task_id="task-two"):
+        assert (await checker.check_already_satisfied(action))[0] is False
+    _run_deletions.clear()

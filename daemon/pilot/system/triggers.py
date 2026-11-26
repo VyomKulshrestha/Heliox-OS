@@ -150,6 +150,7 @@ class Trigger:
     cooldown_seconds: int = 60
     last_fired: float = 0
     created_at: str = ""
+    disabled_reason: str = ""  # why a stored trigger was loaded disabled; empty for a trigger that may fire
 
     def can_fire(self) -> bool:
         if not self.enabled:
@@ -159,11 +160,75 @@ class Trigger:
         return not time.time() - self.last_fired < self.cooldown_seconds
 
 
+STORE_VERSION = 1
+
+
+def validate_trigger(
+    name: str,
+    trigger_type: str,
+    condition: Any,
+    action_command: str,
+    max_fires: int,
+    cooldown_seconds: int,
+) -> TriggerType:
+    """The rules every trigger must pass, at creation and again when it is loaded from the store.
+
+    Raises ValueError with the reason. The command is natural language that only ever reaches the
+    guarded autonomous pipeline (planning, permission checks, approval) when the trigger fires.
+    """
+    if not str(name).strip():
+        raise ValueError("Trigger name is required")
+    if not str(action_command).strip():
+        raise ValueError("Trigger action command is required")
+    if not isinstance(condition, dict):
+        raise ValueError("Trigger condition must be a mapping")
+    if max_fires < 0:
+        raise ValueError("Trigger max_fires cannot be negative")
+    if cooldown_seconds < 0:
+        raise ValueError("Trigger cooldown_seconds cannot be negative")
+    resolved_type = TriggerType(trigger_type)
+    if resolved_type == TriggerType.CUSTOM_CONDITION:
+        expression = str(condition.get("expression") or "").strip()
+        if not expression:
+            raise ValueError("Custom trigger expression is required")
+        _parse_custom_expression(expression)
+    return resolved_type
+
+
+def _entry_for_store(trigger: Trigger) -> dict[str, Any]:
+    entry = asdict(trigger)
+    entry["trigger_type"] = trigger.trigger_type.value
+    return entry
+
+
+def read_trigger_store(path: Path) -> dict[str, Any] | None:
+    """The trigger store as it is on disk, read afresh: None when there is no file.
+
+    Raises ValueError when the file is not a trigger store this version can read.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    data = json.loads(text)
+    if not isinstance(data, dict) or data.get("version") != STORE_VERSION or not isinstance(data.get("triggers"), list):
+        raise ValueError("The trigger store is not a version 1 trigger store")
+    return data
+
+
 class TriggerEngine:
-    """Manages and evaluates reactive triggers in the background."""
+    """Manages and evaluates reactive triggers in the background.
+
+    With a store attached (``attach_store``, done by the daemon with ``DATA_DIR/triggers.json``) every
+    trigger is kept on disk as well, so it survives a restart, and so is whether the person wants the
+    engine running. Without one (tests, scripts) triggers live only in memory.
+    """
 
     def __init__(self) -> None:
         self._triggers: dict[str, Trigger] = {}
+        self._store_path: Path | None = None
+        self._store_writable = True
+        self._wanted_running = False
         self._running = False
         self._task: asyncio.Task | None = None
         self._fire_callback: Callable[[Trigger], Coroutine[Any, Any, None]] | None = None
@@ -194,23 +259,10 @@ class TriggerEngine:
         max_fires: int = 0,
         cooldown_seconds: int = 60,
     ) -> Trigger:
-        """Create a new trigger."""
+        """Create a new trigger (and keep it in the store, when one is attached)."""
         name = name.strip()
         action_command = action_command.strip()
-        if not name:
-            raise ValueError("Trigger name is required")
-        if not action_command:
-            raise ValueError("Trigger action command is required")
-        if max_fires < 0:
-            raise ValueError("Trigger max_fires cannot be negative")
-        if cooldown_seconds < 0:
-            raise ValueError("Trigger cooldown_seconds cannot be negative")
-        resolved_type = TriggerType(trigger_type)
-        if resolved_type == TriggerType.CUSTOM_CONDITION:
-            expression = str(condition.get("expression") or "").strip()
-            if not expression:
-                raise ValueError("Custom trigger expression is required")
-            _parse_custom_expression(expression)
+        resolved_type = validate_trigger(name, trigger_type, condition, action_command, max_fires, cooldown_seconds)
         trigger = Trigger(
             id=str(uuid.uuid4())[:8],
             name=name,
@@ -222,19 +274,160 @@ class TriggerEngine:
             created_at=datetime.now().isoformat(),
         )
         self._triggers[trigger.id] = trigger
+        try:
+            self._save()
+        except OSError as error:
+            del self._triggers[trigger.id]
+            raise RuntimeError(f"The trigger could not be saved, so it was not created: {error}") from error
         logger.info("Created trigger: %s (%s)", name, trigger.id)
         return trigger
 
     def delete_trigger(self, trigger_id: str) -> bool:
-        if trigger_id in self._triggers:
-            del self._triggers[trigger_id]
-            return True
-        # Try by name
-        for tid, t in list(self._triggers.items()):
-            if t.name == trigger_id:
-                del self._triggers[tid]
-                return True
-        return False
+        found = self._triggers.get(trigger_id)
+        if found is None:
+            # Try by name
+            found = next((t for t in self._triggers.values() if t.name == trigger_id), None)
+        if found is None:
+            return False
+        del self._triggers[found.id]
+        try:
+            self._save()
+        except OSError as error:
+            self._triggers[found.id] = found
+            raise RuntimeError(f"The trigger store could not be saved, so the trigger was kept: {error}") from error
+        return True
+
+    # ── Store ────────────────────────────────────────────────────────
+
+    @property
+    def store_path(self) -> Path | None:
+        return self._store_path
+
+    @property
+    def wanted_running(self) -> bool:
+        """Whether the person last asked for the engine to run (create or start) rather than stop."""
+        return self._wanted_running
+
+    def attach_store(self, path: Path) -> None:
+        """Keep triggers in ``path`` from now on, loading the ones already there.
+
+        Loading never starts the engine and never runs a command. A damaged entry is skipped and
+        logged; an entry that fails today's trigger rules is loaded disabled with the reason; an
+        unreadable file is moved aside (``*.damaged-<time>``) so the next save cannot destroy it; a
+        store written by a newer version is read but never overwritten.
+        """
+        self._store_path = Path(path)
+        self._store_writable = True
+        self._triggers = {}  # the store is the record from now on
+        self._wanted_running = False
+        try:
+            text = self._store_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return
+        except OSError:
+            logger.warning("The trigger store could not be read; triggers start empty", exc_info=True)
+            self._store_writable = False
+            return
+        try:
+            data = json.loads(text)
+            if not isinstance(data, dict) or not isinstance(data.get("triggers"), list):
+                raise ValueError("not a trigger store")
+        except ValueError:
+            aside = self._store_path.with_name(f"{self._store_path.name}.damaged-{int(time.time() * 1000)}")
+            logger.warning("The trigger store is damaged; it was moved to %s and triggers start empty", aside.name)
+            try:
+                os.replace(self._store_path, aside)
+            except OSError:
+                self._store_writable = False
+            return
+        version = data.get("version")
+        if version != STORE_VERSION:
+            logger.warning("The trigger store has version %r; it is loaded but will not be overwritten", version)
+            self._store_writable = False
+        self._wanted_running = data.get("engine_running") is True
+        for index, entry in enumerate(data["triggers"]):
+            trigger = self._trigger_from_store(entry)
+            if trigger is None:
+                logger.warning("Skipped damaged trigger entry #%d in the trigger store", index)
+                continue
+            self._triggers[trigger.id] = trigger
+        logger.info("Loaded %d trigger(s) from the trigger store", len(self._triggers))
+
+    @staticmethod
+    def _trigger_from_store(entry: Any) -> Trigger | None:
+        if not isinstance(entry, dict):
+            return None
+        try:
+            trigger_id = entry["id"]
+            name = entry["name"]
+            command = entry["action_command"]
+            condition = entry.get("condition", {})
+            if not all(isinstance(value, str) and value for value in (trigger_id, name, command)):
+                return None
+            if not isinstance(condition, dict):
+                return None
+            numbers = {key: entry.get(key, default) for key, default in (("fire_count", 0), ("max_fires", 0))}
+            numbers["cooldown_seconds"] = entry.get("cooldown_seconds", 60)
+            if not all(isinstance(value, int) and not isinstance(value, bool) for value in numbers.values()):
+                return None
+            last_fired = entry.get("last_fired", 0)
+            if not isinstance(last_fired, (int, float)) or isinstance(last_fired, bool):
+                return None
+            try:
+                resolved_type = TriggerType(entry.get("trigger_type"))
+            except ValueError:
+                return None
+            reason = str(entry.get("disabled_reason") or "")
+            try:
+                validate_trigger(
+                    name, resolved_type.value, condition, command, numbers["max_fires"], numbers["cooldown_seconds"]
+                )
+            except ValueError as error:
+                reason = f"Refused by the trigger rules when loaded: {error}"
+            return Trigger(
+                id=trigger_id,
+                name=name,
+                trigger_type=resolved_type,
+                condition=condition,
+                action_command=command,
+                enabled=entry.get("enabled") is True and not reason,
+                fire_count=numbers["fire_count"],
+                max_fires=numbers["max_fires"],
+                cooldown_seconds=numbers["cooldown_seconds"],
+                last_fired=float(last_fired),
+                created_at=str(entry.get("created_at") or ""),
+                disabled_reason=reason,
+            )
+        except (KeyError, TypeError):
+            return None
+
+    def _save(self) -> None:
+        """Write the whole store atomically (a temporary file, then a rename). No store: nothing to do."""
+        if self._store_path is None or not self._store_writable:
+            return
+        payload = {
+            "version": STORE_VERSION,
+            "engine_running": self._wanted_running,
+            "triggers": [_entry_for_store(trigger) for trigger in self._triggers.values()],
+        }
+        self._store_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._store_path.with_name(f".{self._store_path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+        try:
+            tmp.write_text(json.dumps(payload, indent=1, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, self._store_path)
+        finally:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+
+    def set_wanted_running(self, wanted: bool) -> None:
+        """Record the person's choice to run or stop the engine, so a restart honours it."""
+        previous = self._wanted_running
+        self._wanted_running = wanted
+        try:
+            self._save()
+        except OSError as error:
+            self._wanted_running = previous
+            raise RuntimeError(f"The trigger store could not be saved: {error}") from error
 
     def list_triggers(self) -> list[dict]:
         return [asdict(t) for t in self._triggers.values()]
@@ -310,6 +503,10 @@ class TriggerEngine:
                         if fired:
                             trigger.fire_count += 1
                             trigger.last_fired = time.time()
+                            try:
+                                self._save()  # keeps max_fires and the cooldown across a restart
+                            except OSError:
+                                logger.warning("The trigger store could not record a fire of %s", trigger.id)
                             logger.info(
                                 "Trigger fired: %s (%s) — fire #%d",
                                 trigger.name,
@@ -501,9 +698,8 @@ async def trigger_create(
     one instead of adding a twin that would fire the same command twice; this keeps
     a retry after a failed verification from doubling the trigger.
     """
-    trigger = _engine.find_matching(
-        name, trigger_type, condition, action_command, max_fires, cooldown_seconds
-    ) or _engine.create_trigger(
+    existing = _engine.find_matching(name, trigger_type, condition, action_command, max_fires, cooldown_seconds)
+    trigger = existing or _engine.create_trigger(
         name,
         trigger_type,
         condition,
@@ -512,11 +708,16 @@ async def trigger_create(
         cooldown_seconds,
     )
 
-    # Auto-start engine if not running (or if its loop has ended)
+    # Auto-start engine if not running (or if its loop has ended), and remember that it should run.
+    if not _engine.wanted_running:
+        _engine.set_wanted_running(True)
     if not _engine.is_running():
         await _engine.start()
 
-    return json.dumps(asdict(trigger), indent=2)
+    answer = _entry_for_store(trigger)
+    if existing is not None:
+        answer["note"] = "An identical trigger already existed and was kept; no new trigger was made."
+    return json.dumps(answer, indent=2)
 
 
 async def trigger_list() -> str:
@@ -535,15 +736,31 @@ async def trigger_delete(trigger_id: str) -> str:
 
 
 async def trigger_start_engine() -> str:
-    """Start the trigger evaluation engine."""
+    """Start the trigger evaluation engine, and keep it running after a restart."""
+    _engine.set_wanted_running(True)
     await _engine.start()
     return f"Trigger engine started with {len(_engine._triggers)} triggers"
 
 
 async def trigger_stop_engine() -> str:
-    """Stop the trigger evaluation engine."""
+    """Stop the trigger evaluation engine, and keep it stopped after a restart."""
+    _engine.set_wanted_running(False)
     await _engine.stop()
     return "Trigger engine stopped"
+
+
+async def resume_triggers(store_path: Path) -> bool:
+    """At daemon start: load the stored triggers and start the engine if the person left it running.
+
+    Returns whether the engine was started. Nothing runs at load; a command runs only when its
+    trigger fires, and then through the fire callback (the guarded autonomous pipeline).
+    """
+    if _engine.store_path is None:
+        await asyncio.to_thread(_engine.attach_store, store_path)
+    if _engine.wanted_running and any(trigger.enabled for trigger in _engine._triggers.values()):
+        await _engine.start()
+        return True
+    return False
 
 
 def get_engine() -> TriggerEngine:

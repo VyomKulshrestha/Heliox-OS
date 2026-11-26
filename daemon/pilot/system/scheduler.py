@@ -280,8 +280,16 @@ async def schedule_exists(target: str) -> bool:
 
 
 async def schedule_delete(name: str = "", task_id: str | None = None) -> str:
-    """Delete a scheduled task."""
+    """Delete a scheduled task.
+
+    A name that matches no task is a failure on every platform, not a success: the person may
+    have misnamed it, and the real task would go on running while Heliox said it was gone.
+    """
     target = task_id or name
+    if not target:
+        raise ValueError("Name the scheduled task to delete")
+    if not await schedule_exists(target):
+        raise LookupError(f"No scheduled task is called {target!r}, so nothing was deleted. List them first.")
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
         code, out, err = await run_command(["schtasks", "/delete", "/tn", target, "/f"])
@@ -298,9 +306,9 @@ async def schedule_delete(name: str = "", task_id: str | None = None) -> str:
         return f"Deleted scheduled task: {target}"
 
     else:  # Linux
-        code, existing, _ = await run_command(["crontab", "-l"])
+        code, existing, err = await run_command(["crontab", "-l"])
         if code != 0:
-            return "No crontab configured"
+            raise RuntimeError(f"Crontab read failed: {err.strip()}")
 
         lines = [l for l in existing.strip().split("\n") if _crontab_entry(l, target) is None]
         new_crontab = "\n".join(lines) + "\n"

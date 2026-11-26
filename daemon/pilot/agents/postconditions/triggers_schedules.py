@@ -1,14 +1,21 @@
 """Post-conditions for reactive triggers and scheduled tasks.
 
-Triggers live only in the daemon: the trigger engine's table is the one place a
-trigger exists and the only thing its evaluation loop reads, so the checks read that
-table afresh through ``get_engine()`` (never the handler's returned text) and judge
-"running" from the loop's asyncio task, not from the flag the start and stop calls set.
+Triggers are kept in the trigger store on disk (``DATA_DIR/triggers.json``, written by
+the engine) and held in the engine's table, which its evaluation loop reads. The checks
+read the store file afresh from disk, a different path than the in-memory table the
+handler changed, and also confirm the engine holds the same trigger; "running" is judged
+from the stored wish to run and from the loop's asyncio task, not from a flag. Where no
+store is attached (a script, a test without one) the triggers exist only in memory and the
+outcome is unobserved.
 
 Scheduled tasks are read back from the platform's scheduler: Windows through the Task
 Scheduler service's COM interface, macOS from the plist file and launchd, Linux from the
 installed crontab (``pilot.system.scheduler.observe_schedule``). No check runs a
 trigger's command or a scheduled command.
+
+Deletes: "delete X" where nothing is called X fails in the handler. The pre-check of a
+delete counts an absent target as already done only when this same run deleted and
+verified it before (``_run_deletions``); otherwise the delete runs and fails.
 """
 
 from __future__ import annotations
@@ -17,12 +24,20 @@ import json
 from typing import Any
 
 from pilot.actions import ActionResult, ActionType, ScheduleParams, TriggerParams
-from pilot.agents.postconditions import Outcome, mismatch, register, verified
+from pilot.agents.postconditions import (
+    Outcome,
+    _run_deletions,
+    is_precheck,
+    mismatch,
+    register,
+    unobserved,
+    verified,
+)
 
 
-# No pre-check: a task name that matches nothing must reach the handler and fail there, not be skipped as
-# "already satisfied" because nothing by that name exists.
-@register(ActionType.SCHEDULE_DELETE, method="schedule_absence_postcondition")
+# The pre-check skips only a repeat of a delete this run already made and verified; a task name that
+# matches nothing otherwise reaches the handler and fails there.
+@register(ActionType.SCHEDULE_DELETE, method="schedule_absence_postcondition", precheck=True)
 async def schedule_absent(result: ActionResult) -> Outcome:
     """The task is gone, asked of the platform's scheduler (schtasks, launchctl, crontab) afresh."""
     from pilot.system.scheduler import schedule_exists
@@ -31,8 +46,14 @@ async def schedule_absent(result: ActionResult) -> Outcome:
     target = params.task_id or params.name
     if not target:
         raise ValueError("Schedule delete has no task identifier to observe")
-    if await schedule_exists(target):
+    present = await schedule_exists(target)
+    if is_precheck(result):
+        if not present and _run_deletions.deleted_earlier_in_this_run(ActionType.SCHEDULE_DELETE, target):
+            return verified(f"Scheduled task {target} was deleted and verified earlier in this run")
+        return mismatch(f"Scheduled task {target} was not deleted earlier in this run; the delete runs")
+    if present:
         return mismatch(f"Scheduled task still exists: {target}")
+    _run_deletions.note_verified_deletion(ActionType.SCHEDULE_DELETE, target)
     return verified(f"Scheduled task is absent: {target}")
 
 
@@ -84,23 +105,38 @@ def _created_id(result: ActionResult) -> str:
     return value if isinstance(value, str) else ""
 
 
+_NO_STORE = "Triggers are kept only in memory here (no trigger store attached), so this cannot be read back"
+
+
+def _store(engine: Any) -> dict[str, Any] | None:
+    """The trigger store read from disk; None when the engine has no store. A damaged file raises (fails closed)."""
+    from pilot.system.triggers import read_trigger_store
+
+    if engine.store_path is None:
+        return None
+    return read_trigger_store(engine.store_path) or {"version": 1, "engine_running": False, "triggers": []}
+
+
 @register(ActionType.TRIGGER_CREATE, method="trigger_present_postcondition")
 async def trigger_present(result: ActionResult) -> Outcome:
-    """The engine's table holds the trigger with the requested settings, and the engine's loop is running."""
+    """The stored trigger has the requested settings, the engine holds the same one, and the engine runs."""
     from pilot.system.triggers import get_engine
 
     params: TriggerParams = result.action.parameters  # type: ignore[assignment]
     engine = get_engine()
+    store = _store(engine)
+    if store is None:
+        return unobserved(_NO_STORE)
     name = params.name.strip()
     created = _created_id(result)
-    entries = engine.list_triggers()
+    entries = [entry for entry in store["triggers"] if isinstance(entry, dict)]
     if created:
         candidates = [entry for entry in entries if entry.get("id") == created]
     else:
         candidates = [entry for entry in entries if entry.get("name") == name]
     label = f"{name or created} ({created})" if created and name else (name or created)
     if not candidates:
-        return mismatch(f"Trigger {label} is not in the trigger engine after it was created")
+        return mismatch(f"Trigger {label} is not in the trigger store after it was created")
     expected = {
         "name": name,
         "trigger_type": params.trigger_type,
@@ -112,42 +148,77 @@ async def trigger_present(result: ActionResult) -> Outcome:
     if not matching:
         entry = candidates[0]
         differing = sorted(key for key, value in expected.items() if entry.get(key) != value)
-        return mismatch(f"Trigger {label} exists but its {', '.join(differing)} differ from the request")
-    if not engine.is_running():
+        return mismatch(f"Trigger {label} is stored but its {', '.join(differing)} differ from the request")
+    stored = matching[0]
+    held = engine.get_trigger(stored.get("id", ""))
+    if held is None or held.action_command != stored["action_command"] or held.condition != stored["condition"]:
+        return mismatch(f"Trigger {label} is stored but the trigger engine does not hold it")
+    if store.get("engine_running") is not True or not engine.is_running():
         return mismatch(f"Trigger {label} exists but the trigger engine is not running, so it will never fire")
-    return verified(f"Trigger {label} is in the running trigger engine with the requested condition and command")
+    return verified(f"Trigger {label} is stored and held by the running trigger engine as requested")
 
 
-@register(ActionType.TRIGGER_DELETE, method="trigger_absence_postcondition")
+@register(ActionType.TRIGGER_DELETE, method="trigger_absence_postcondition", precheck=True)
 async def trigger_absent(result: ActionResult) -> Outcome:
-    """No trigger with the given id or name is left in the engine's table."""
+    """No trigger with the given id or name is left in the trigger store or in the engine."""
     from pilot.system.triggers import get_engine
 
     params: TriggerParams = result.action.parameters  # type: ignore[assignment]
     target = (params.trigger_id or params.name).strip()
     if not target:
         raise ValueError("Trigger delete has no id or name to observe")
-    left = [entry for entry in get_engine().list_triggers() if target in (entry.get("id"), entry.get("name"))]
-    if left:
-        return mismatch(f"{len(left)} trigger(s) with id or name {target} are still in the trigger engine")
-    return verified(f"No trigger with id or name {target} is left in the trigger engine")
+    engine = get_engine()
+    precheck = is_precheck(result)
+    store = _store(engine)
+    if store is None:
+        if precheck:
+            return mismatch("The trigger store is not attached; the delete runs")
+        return unobserved(_NO_STORE)
+    stored = [
+        entry
+        for entry in store["triggers"]
+        if isinstance(entry, dict) and target in (entry.get("id"), entry.get("name"))
+    ]
+    held = [entry for entry in engine.list_triggers() if target in (entry.get("id"), entry.get("name"))]
+    if precheck:
+        if not stored and not held and _run_deletions.deleted_earlier_in_this_run(ActionType.TRIGGER_DELETE, target):
+            return verified(f"Trigger {target} was deleted and verified earlier in this run")
+        return mismatch(f"Trigger {target} was not deleted earlier in this run; the delete runs")
+    if stored:
+        return mismatch(f"{len(stored)} trigger(s) with id or name {target} are still in the trigger store")
+    if held:
+        return mismatch(f"{len(held)} trigger(s) with id or name {target} are still held by the trigger engine")
+    _run_deletions.note_verified_deletion(ActionType.TRIGGER_DELETE, target)
+    return verified(f"No trigger with id or name {target} is left in the trigger store or the engine")
 
 
 @register(ActionType.TRIGGER_START, method="trigger_engine_running_postcondition", precheck=True)
 async def trigger_engine_running(result: ActionResult) -> Outcome:
-    """The engine's evaluation loop is alive."""
+    """The store says the engine should run, and its evaluation loop is alive."""
     from pilot.system.triggers import get_engine
 
-    if get_engine().is_running():
-        return verified("The trigger engine's evaluation loop is running")
-    return mismatch("The trigger engine's evaluation loop is not running after the start")
+    engine = get_engine()
+    store = _store(engine)
+    if store is None:
+        return unobserved(_NO_STORE)
+    if store.get("engine_running") is not True:
+        return mismatch("The trigger store does not record the engine as running, so a restart would leave it off")
+    if not engine.is_running():
+        return mismatch("The trigger engine's evaluation loop is not running after the start")
+    return verified("The trigger engine's evaluation loop is running, and the store keeps it running after a restart")
 
 
 @register(ActionType.TRIGGER_STOP, method="trigger_engine_stopped_postcondition", precheck=True)
 async def trigger_engine_stopped(result: ActionResult) -> Outcome:
-    """The engine's evaluation loop has ended, so no trigger fires."""
+    """The store says the engine should stay stopped, and its evaluation loop has ended."""
     from pilot.system.triggers import get_engine
 
-    if get_engine().is_running():
+    engine = get_engine()
+    store = _store(engine)
+    if store is None:
+        return unobserved(_NO_STORE)
+    if store.get("engine_running") is not False:
+        return mismatch("The trigger store still records the engine as running, so a restart would start it again")
+    if engine.is_running():
         return mismatch("The trigger engine's evaluation loop is still running after the stop")
-    return verified("The trigger engine's evaluation loop is stopped")
+    return verified("The trigger engine's evaluation loop is stopped, and the store keeps it stopped")
