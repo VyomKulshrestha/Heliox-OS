@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import re
 import time
@@ -249,13 +250,79 @@ async def copy_matches_source(result: ActionResult) -> Outcome:
 # ── download_file ────────────────────────────────────────────────────
 
 
-@register(ActionType.DOWNLOAD_FILE, method="download_file_exists_postcondition")
+def _looks_like_html(head: bytes) -> bool:
+    text = head.lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    if text.startswith((b"<!doctype html", b"<html")):
+        return True
+    return text.startswith((b"<!--", b"<?xml")) and b"<html" in text[:1024]
+
+
+def _expects_other_than_html(params: DownloadParams) -> bool:
+    from urllib.parse import urlsplit
+
+    for name in (params.output_path, urlsplit(params.url).path):
+        suffix = Path(name).suffix.lower().lstrip(".")
+        if suffix:
+            return suffix in _NOT_HTML_SUFFIXES
+    return False
+
+
+def _download_facts(output: str) -> dict | None:
+    match = _DOWNLOAD_FACTS.search(output or "")
+    if not match:
+        return None
+    try:
+        facts = json.loads(match["json"])
+    except ValueError:
+        return None
+    return facts if isinstance(facts, dict) else None
+
+
+@register(ActionType.DOWNLOAD_FILE, method="download_file_exists_postcondition", timeout=120.0)
 async def downloaded_file_present(result: ActionResult) -> Outcome:
-    """The downloaded file exists at the output path."""
+    """The file on disk is what the server sent: its Content-Length (or the bytes received), its hash.
+
+    A declared ``sha256`` must match. A file that is an HTML page where a PDF, an archive or another non-HTML
+    file was asked for (a sign-in or error page served with status 200) is a mismatch. With no length from the
+    server (a chunked answer), the file is compared with the bytes received, which httpx only returns when the
+    chunked body ended properly. A download made by the system's own tool records nothing: not verified.
+    """
     params: DownloadParams = result.action.parameters  # type: ignore[assignment]
     if not params.output_path:
         raise ValueError("Download has no output path to observe")
-    if Path(params.output_path).exists():
-        size = Path(params.output_path).stat().st_size
-        return verified(f"File downloaded: {params.output_path} ({size:,} bytes)")
-    return mismatch(f"Downloaded file not found: {params.output_path}")
+    p = Path(params.output_path)
+    if not p.is_file():
+        return mismatch(f"Downloaded file not found: {params.output_path}")
+    size = p.stat().st_size
+    with p.open("rb") as handle:
+        head = handle.read(1024)
+    if _looks_like_html(head) and _expects_other_than_html(params):
+        return mismatch(f"{params.output_path} is an HTML page ({size:,} bytes), not the file that was asked for")
+    found_sha: str | None = None
+    if params.sha256:
+        found_sha = await asyncio.to_thread(_sha256, p)
+        if found_sha != params.sha256.strip().lower():
+            return mismatch(
+                f"Downloaded file's sha256 is {_short(found_sha)}, the plan declared {_short(params.sha256.strip().lower())}"
+            )
+    facts = _download_facts(result.output)
+    if facts is None:
+        if found_sha:
+            return verified(f"File downloaded with the declared sha256 ({size:,} bytes)")
+        return unobserved(f"File downloaded ({size:,} bytes); no length or hash was recorded to compare it with")
+    length = str(facts.get("content_length") or "")
+    encoding = str(facts.get("content_encoding") or "identity").lower()
+    if length.isdigit() and encoding == "identity":
+        expected, source = int(length), "the server's Content-Length"
+    elif isinstance(facts.get("bytes"), int):
+        expected, source = facts["bytes"], "the bytes received"
+    else:
+        return unobserved(f"File downloaded ({size:,} bytes); no length was recorded to compare it with")
+    if size != expected:
+        return mismatch(f"Downloaded file has {size:,} bytes; {source} is {expected:,} bytes")
+    recorded = facts.get("sha256")
+    if isinstance(recorded, str) and len(recorded) == 64:
+        found_sha = found_sha or await asyncio.to_thread(_sha256, p)
+        if found_sha != recorded:
+            return mismatch(f"Downloaded file differs from the bytes received (sha256 {_short(found_sha)})")
+    return verified(f"File downloaded: {params.output_path} ({size:,} bytes, matching {source})")

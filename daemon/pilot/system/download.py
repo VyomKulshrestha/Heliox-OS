@@ -5,14 +5,37 @@ Cross-platform using httpx (preferred) or OS-native tools.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from pilot.config import PilotConfig
 from pilot.system.http_client import create_httpx_client
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
 
 logger = logging.getLogger("pilot.system.download")
+
+
+def _facts(resp: Any, data: bytes) -> str:
+    """What the server said about the body and what was received, for the post-condition check.
+
+    The final address is kept without its query, which can hold a signed token.
+    """
+    headers = resp.headers
+    final = urlsplit(str(resp.url))
+    return json.dumps(
+        {
+            "content_length": headers.get("content-length"),
+            "content_encoding": headers.get("content-encoding") or "identity",
+            "content_type": headers.get("content-type", ""),
+            "final_url": urlunsplit((final.scheme, final.netloc, final.path, "", "")),
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    )
 
 
 async def download_file(url: str, output_path: str, overwrite: bool = False) -> str:
@@ -29,9 +52,10 @@ async def download_file(url: str, output_path: str, overwrite: bool = False) -> 
         async with create_httpx_client(PilotConfig.load(), follow_redirects=True, timeout=120) as client:
             resp = await client.get(url)
             resp.raise_for_status()
-            out_path.write_bytes(resp.content)
-            size = len(resp.content)
-            return f"Downloaded {url} -> {output_path} ({size:,} bytes)"
+            data = resp.content
+            out_path.write_bytes(data)
+            size = len(data)
+            return f"Downloaded {url} -> {output_path} ({size:,} bytes)\n[DOWNLOAD] {_facts(resp, data)}"
     except Exception as e:
         logger.warning("httpx download failed, falling back to OS tools: %s", e)
 

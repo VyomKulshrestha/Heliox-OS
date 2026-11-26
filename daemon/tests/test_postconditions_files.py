@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pilot.actions import Action, ActionPlan, ActionResult, ActionType, FileParams
+from pilot.actions import Action, ActionPlan, ActionResult, ActionType, DownloadParams, FileParams
 from pilot.agents.executor import Executor
 from pilot.agents.postconditions import files
 from pilot.agents.verifier import Verifier
@@ -47,6 +47,8 @@ async def test_substituted_content_is_verified_not_flagged(tmp_path) -> None:
     """The plan says {OUTPUT}; the executor wrote the earlier step's text. That write is correct."""
     target = tmp_path / "summary.txt"
     action = _write_action(target, "Summary:\n{OUTPUT}")
+    # Only the handler's substitution runs, on a stand-in without any system manager: it reaches nothing but
+    # filesystem.file_write into tmp_path (no snapshot, no gate, no audit; Executor.execute is never called).
     executor = SimpleNamespace(
         _OUTPUT_PLACEHOLDERS=Executor._OUTPUT_PLACEHOLDERS,
         _PLACEHOLDER_REGEX=Executor._PLACEHOLDER_REGEX,
@@ -242,3 +244,157 @@ async def test_a_copied_file_with_different_bytes_is_a_mismatch(tmp_path) -> Non
 
     assert verification.passed is False
     assert verification.independently_observed_actions == [0]
+
+
+# ── download_file ────────────────────────────────────────────────────
+
+
+class _ClientContext:
+    def __init__(self, client: object) -> None:
+        self._client = client
+
+    async def __aenter__(self) -> object:
+        return self._client
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+class _Download:
+    def __init__(self, body: bytes, headers: dict[str, str], url: str = "https://files.example/report.pdf") -> None:
+        self.content = body
+        self.headers = headers
+        self.url = url
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, response: _Download) -> None:
+    from pilot.system import download
+
+    class _Client:
+        async def get(self, _url: str) -> _Download:
+            return response
+
+    async def _no_system_tool(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the download must not fall back to the system's own tool in a test")
+
+    monkeypatch.setattr(download.PilotConfig, "load", lambda: object())
+    monkeypatch.setattr(download, "create_httpx_client", lambda *_a, **_k: _ClientContext(_Client()))
+    monkeypatch.setattr(download, "run_powershell", _no_system_tool)
+    monkeypatch.setattr(download, "run_command", _no_system_tool)
+
+
+def _download_action(path, url: str = "https://files.example/report.pdf", sha256: str | None = None) -> Action:
+    return Action(
+        action_type=ActionType.DOWNLOAD_FILE,
+        target=url,
+        parameters=DownloadParams(url=url, output_path=str(path), sha256=sha256),
+    )
+
+
+async def _download(monkeypatch, tmp_path, body: bytes, headers: dict[str, str], name: str = "report.pdf"):
+    from pilot.system.download import download_file
+
+    _serve(monkeypatch, _Download(body, headers, f"https://files.example/{name}?sig=secret"))
+    action = _download_action(tmp_path / name, f"https://files.example/{name}")
+    output = await download_file(action.parameters.url, action.parameters.output_path)
+    return action, output
+
+
+@pytest.mark.asyncio
+async def test_a_download_matching_its_content_length_verifies(monkeypatch, tmp_path) -> None:
+    body = b"%PDF-1.7 " + b"x" * 100
+    action, output = await _download(monkeypatch, tmp_path, body, {"content-length": str(len(body))})
+
+    verification = await _verify(action, output)
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0]
+    assert "sig=secret" not in output
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_download_is_a_mismatch(monkeypatch, tmp_path) -> None:
+    body = b"%PDF-1.7 " + b"x" * 100
+    action, output = await _download(monkeypatch, tmp_path, body, {"content-length": str(len(body))})
+    path = tmp_path / "report.pdf"
+    path.write_bytes(path.read_bytes()[:50])
+
+    verification = await _verify(action, output)
+
+    assert verification.passed is False
+    assert "Content-Length is 109 bytes" in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_a_chunked_download_without_length_is_compared_with_the_bytes_received(monkeypatch, tmp_path) -> None:
+    action, output = await _download(monkeypatch, tmp_path, b"PK\x03\x04 archive", {"transfer-encoding": "chunked"})
+
+    verification = await _verify(action, output)
+    assert verification.independently_observed_actions == [0]
+
+    (tmp_path / "report.pdf").write_bytes(b"PK\x03\x04 archivX")
+    verification = await _verify(action, output)
+    assert verification.passed is False
+    assert "differs from the bytes received" in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_a_compressed_download_is_not_held_to_the_compressed_length(monkeypatch, tmp_path) -> None:
+    body = b"%PDF " + b"y" * 1000  # httpx hands over the decoded body; the header counts the gzip bytes
+    action, output = await _download(monkeypatch, tmp_path, body, {"content-length": "37", "content-encoding": "gzip"})
+
+    verification = await _verify(action, output)
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0]
+
+
+@pytest.mark.asyncio
+async def test_an_html_error_page_saved_as_a_pdf_is_a_mismatch(monkeypatch, tmp_path) -> None:
+    page = b"\n<!DOCTYPE html><html><body>Please sign in</body></html>"
+    action, output = await _download(monkeypatch, tmp_path, page, {"content-length": str(len(page))})
+
+    verification = await _verify(action, output)
+
+    assert verification.passed is False
+    assert "is an HTML page" in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_an_html_page_that_was_asked_for_verifies(monkeypatch, tmp_path) -> None:
+    page = b"<!doctype html><html><body>Docs</body></html>"
+    action, output = await _download(monkeypatch, tmp_path, page, {"content-length": str(len(page))}, "docs.html")
+
+    verification = await _verify(action, output)
+
+    assert verification.independently_observed_actions == [0]
+
+
+@pytest.mark.asyncio
+async def test_a_declared_hash_is_compared(tmp_path) -> None:
+    import hashlib
+
+    path = tmp_path / "tool.zip"
+    path.write_bytes(b"PK zip body")
+    good = hashlib.sha256(b"PK zip body").hexdigest()
+
+    # Downloaded by the system's tool (nothing recorded): the declared hash is what can be checked.
+    verified = await _verify(_download_action(path, sha256=good.upper()), "Downloaded x -> y (11 bytes)")
+    wrong = await _verify(_download_action(path, sha256="0" * 64), "Downloaded x -> y (11 bytes)")
+    nothing = await _verify(_download_action(path), "Downloaded x -> y (11 bytes)")
+
+    assert verified.independently_observed_actions == [0]
+    assert wrong.passed is False and "declared" in wrong.details[0]
+    assert nothing.passed is True and nothing.independently_observed_actions == []
+
+
+@pytest.mark.asyncio
+async def test_a_missing_download_is_a_mismatch_and_a_failed_one_never_reaches_the_check(tmp_path) -> None:
+    missing = await _verify(_download_action(tmp_path / "gone.pdf"), "Downloaded")
+    failed = await _verify(_download_action(tmp_path / "gone.pdf"), success=False, error="HTTP 404")
+
+    assert missing.passed is False and "not found" in missing.details[0]
+    assert failed.passed is False and "FAILED" in failed.details[0]

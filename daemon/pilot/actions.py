@@ -659,6 +659,8 @@ class DownloadParams(BaseModel):
     url: str = ""
     output_path: str = ""
     overwrite: bool = False
+    # Optional: the file's published sha256; the post-condition check compares the downloaded file with it.
+    sha256: str | None = None
 
 
 class RegistryParams(BaseModel):
