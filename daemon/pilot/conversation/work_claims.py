@@ -141,7 +141,9 @@ def backed(sentence: str, kind: str, state: dict[str, Any] | None) -> bool:
     "queued", "approval_waiting", "last_result"). With no task at all, nothing is backed."""
     state = state if isinstance(state, dict) else {}
     if kind == "done":
-        tasks = [str(state.get("last_result") or "")]
+        # The last finished task, and what Heliox said about work outside a talk reply (a trigger's fire, a late
+        # check, a review's remark): all of it was done and told.
+        tasks = [str(state.get("last_result") or ""), *(str(item) for item in state.get("said") or [])]
     else:
         tasks = [str(state.get("running") or ""), *(str(item) for item in state.get("queued") or [])]
         waiting = state.get("approval_waiting")

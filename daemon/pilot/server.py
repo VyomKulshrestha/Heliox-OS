@@ -5998,10 +5998,18 @@ class PilotServer:
             privacy_class=PrivacyClass.SENSITIVE,
         )
 
+    def _note_work_said(self, sentence: str) -> None:
+        """Keep the last few things Heliox said about work outside a talk reply (a trigger fired, a late check, a
+        review's remark): the talk model's claim check counts them as done (pilot.conversation.work_claims), so a
+        reply that repeats one is not taken back."""
+        if sentence.strip():
+            self.__dict__.setdefault("_recent_work_said", deque(maxlen=5)).append(sentence.strip()[:240])
+
     async def _tell_late_check(self, sentence: str, report: Any, speak: bool) -> None:
         """A late check found that a step which sent something or cannot be undone did not turn out as asked: shown
         and said, as a watcher that fired is. A notice of a late check that held (packages left behind) is shown
         only."""
+        self._note_work_said(sentence)
         await self._broadcast_notification(
             "verification_late",
             {
@@ -12908,6 +12916,7 @@ class PilotServer:
 
         get_engine().set_pending(trigger.id, pending, outcome=sentence)
         logger.info("Trigger %s: %s", trigger.id, sentence)
+        self._note_work_said(sentence)
         if say:
             await self._deliver_watch(
                 {"id": f"trigger:{key}", "text": sentence, "kind": "trigger", "trigger_id": trigger.id}
@@ -13142,6 +13151,7 @@ class PilotServer:
             with contextlib.suppress(Exception):
                 await ws.send(_notification("companion_plan_review", payload))
             if review.reviewed and review.decision in {"WARN", "REVISE", "STOP"}:
+                self._note_work_said(str(review.reason or ""))
                 await self._broadcast_notification(
                     "companion_plan_intervention",
                     {**payload, "decision": "REMARK", "original_decision": review.decision},

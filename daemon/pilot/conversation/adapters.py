@@ -223,6 +223,9 @@ def _task_state(server: Any, layer: Any) -> dict[str, Any]:
             state["queued"].append(str(params.get("input") or "")[:120])
     if layer is not None and layer.last_result:
         state["last_result"] = layer.last_result[:240]
+    said = list(getattr(server, "__dict__", {}).get("_recent_work_said") or ())
+    if said:
+        state["said"] = said  # a trigger's fire, a late check, a review's remark: told, so done
     return state
 
 
