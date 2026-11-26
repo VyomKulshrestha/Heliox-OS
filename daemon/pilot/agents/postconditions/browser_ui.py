@@ -66,6 +66,13 @@ def _origin_and_path(url: str) -> tuple[str, str, str]:
     return parts.scheme, parts.netloc, parts.path.rstrip("/") or "/"
 
 
+def _record(result: ActionResult) -> dict[str, Any] | None:
+    """What the handler recorded before acting: in ``observation`` (the executor moves it there), else the output."""
+    from pilot.system.browser import parse_page_before
+
+    return parse_page_before("\n".join(part for part in (result.output, result.observation) if part))
+
+
 def _target_selector(result: ActionResult) -> str | None:
     """The selector the handler acted on, rebuilt from the plan's parameters (not from its output)."""
     from pilot.system.browser import click_text_selector
@@ -118,7 +125,7 @@ async def click_was_followed_by_an_effect(result: ActionResult) -> Outcome:
     from pilot.system import browser
     from pilot.system.dom_diff import snapshot_dom
 
-    before = browser.parse_page_before(result.output)
+    before = _record(result)
     if before is None:
         return unobserved("The page was not recorded before the click, so what followed it cannot be judged")
     page = browser.current_tab()
@@ -128,6 +135,12 @@ async def click_was_followed_by_an_effect(result: ActionResult) -> Outcome:
     now = await browser.read_page_state(page)
     if now is None:
         return unobserved("The page could not be read after the click; it may still be loading")
+
+    tabs_before = before.get("n")
+    tabs_now = browser.open_tabs() or []
+    if isinstance(tabs_before, int) and len(tabs_now) > tabs_before:
+        # The handler works in a tab its click opened, so the tab read here is that new one.
+        return verified(f"The click opened a new tab at {_host(now.get('href'))}")
 
     new_document = before.get("o") is not None and now.get("origin") != before.get("o")
     new_address = bool(before.get("u")) and browser.url_fingerprint(str(now.get("href"))) != before.get("u")
@@ -167,7 +180,7 @@ async def new_tab_is_open(result: ActionResult) -> Outcome:
     """One more tab is open and the newest shows the requested site (or is blank when none was asked)."""
     from pilot.system import browser
 
-    before = browser.parse_page_before(result.output) or {}
+    before = _record(result) or {}
     tabs = browser.open_tabs()
     if tabs is None:
         return unobserved("The browser is no longer open, so the new tab could not be read")
@@ -232,7 +245,7 @@ async def tab_is_closed(result: ActionResult) -> Outcome:
     """The browser reports one tab fewer than before the close."""
     from pilot.system import browser
 
-    before = browser.parse_page_before(result.output)
+    before = _record(result)
     tabs = browser.open_tabs()
     if tabs is None:
         return unobserved("The browser is no longer open, so its tabs could not be counted")
@@ -251,9 +264,7 @@ async def tab_is_closed(result: ActionResult) -> Outcome:
 @register(ActionType.BROWSER_CLOSE, method="conditional_browser_exited_postcondition", timeout=20.0)
 async def browser_processes_exited(result: ActionResult) -> Outcome:
     """Every process of the browser Heliox started has exited, read from the operating system's process table."""
-    from pilot.system.browser import parse_page_before
-
-    before = parse_page_before(result.output)
+    before = _record(result)
     processes = (before or {}).get("pids")
     if not processes:
         if str(result.output or "").startswith("No browser was open"):
@@ -290,7 +301,7 @@ def _still_running(psutil: Any, pid: int, started: float) -> bool:
 async def _history_moved(result: ActionResult, *, key: str, word: str) -> Outcome:
     from pilot.system import browser
 
-    before = browser.parse_page_before(result.output)
+    before = _record(result)
     if before is None or before.get("cur") is None or before.get(key) is None:
         return unobserved("The tab's place in its history was not recorded before (this browser does not report it)")
     page = browser.current_tab()
@@ -327,7 +338,7 @@ async def page_was_reloaded(result: ActionResult) -> Outcome:
     """A new document was loaded at the same history entry: the document's load time changed."""
     from pilot.system import browser
 
-    before = browser.parse_page_before(result.output)
+    before = _record(result)
     if before is None or before.get("o") is None:
         return unobserved("The page's load time was not recorded before the refresh")
     page = browser.current_tab()
@@ -398,7 +409,7 @@ async def page_scrolled(result: ActionResult) -> Outcome:
     from pilot.system import browser
 
     direction = str(getattr(result.action.parameters, "direction", "down") or "down")
-    before = browser.parse_page_before(result.output)
+    before = _record(result)
     if before is None or before.get("y") is None or before.get("max_y") is None:
         return unobserved("The scroll position was not recorded before the scroll")
     page = browser.current_tab()

@@ -753,3 +753,84 @@ async def test_unknown_scroll_direction_fails_instead_of_doing_nothing(monkeypat
     with pytest.raises(ValueError, match="Unknown scroll direction 'sideways'"):
         await browser.browser_scroll("sideways")
     assert page.actions == []
+
+
+# ── Tabs a click opens, and machine lines kept from people ───────────
+
+
+@pytest.mark.asyncio
+async def test_a_tab_the_click_opened_becomes_the_tab_in_use_and_is_its_consequence(monkeypatch) -> None:
+    first = _Page(elements={"#help": _button()})
+    context = _open(monkeypatch, first)
+    browser._active_page = first  # an earlier explicit switch: before this, a pop-up was no longer followed
+
+    def open_popup(page: _Page) -> None:
+        popup = _Page(href=DONE)
+        popup.context_pages = context.pages
+        context.pages.append(popup)
+
+    first.effect = open_popup
+    output = await browser.browser_click("#help")
+
+    assert output.notice == "The click opened a new tab; Heliox is now working in it"
+    assert await browser._get_page() is context.pages[1]
+    outcome = await _check(_action(ActionType.BROWSER_CLICK, selector="#help"), str(output))
+    assert outcome == browser_ui.verified("The click opened a new tab at shop.example")
+
+
+@pytest.mark.asyncio
+async def test_a_tab_a_page_opens_on_its_own_does_not_take_over(monkeypatch) -> None:
+    first = _Page()
+    context = _open(monkeypatch, first)
+    assert await browser._get_page() is first
+
+    advert = _Page(href=DONE)  # opened by the page's timer, while nothing was clicked
+    advert.context_pages = context.pages
+    context.pages.append(advert)
+
+    assert await browser._get_page() is first
+    output = await browser.browser_click("#anything")
+    assert getattr(output, "notice", None) is None
+    assert first.actions == ["click:#anything"] and advert.actions == []
+
+
+@pytest.mark.asyncio
+async def test_no_machine_line_reaches_the_reply_and_the_check_still_reads_it(monkeypatch) -> None:
+    from pilot.actions import split_machine_lines
+    from pilot.agents.verifier import Verifier
+    from pilot.response_contract import success_message
+
+    first, second = _Page(elements={"#pay": _button()}), _Page()
+    # The click navigates; the scroll moves the page down 500 px.
+    first.effect = lambda page: page.state.update(href=DONE, origin=2000.0, y=page.state["y"] + 500)
+    _open(monkeypatch, first, second)
+    browser._active_page = first
+    steps = [
+        (_action(ActionType.BROWSER_CLICK, selector="#pay"), await browser.browser_click("#pay")),
+        (_action(ActionType.BROWSER_SCROLL, direction="down"), await browser.browser_scroll("down")),
+        (_action(ActionType.BROWSER_SWITCH_TAB, tab_index=1), await browser.browser_switch_tab(1)),
+    ]
+    assert browser.PAGE_BEFORE_MARKER in steps[0][1] and "[DOM_DIFF]" in steps[0][1]
+
+    results = []
+    for action, output in steps:  # what the executor does with a handler's output
+        words, machine = split_machine_lines(action.action_type, output)
+        results.append(ActionResult(action=action, success=True, output=words, observation=machine))
+    plan = ActionPlan(actions=[action for action, _ in steps], explanation="Pay, scroll, switch.")
+    verification = await Verifier(MagicMock()).verify(plan, results)
+    reply = success_message(plan, results, verification, dry_run=False)
+
+    for text in [reply, *(result.output for result in results), *(str(result.model_dump()) for result in results)]:
+        assert "[PAGE_BEFORE]" not in text and "[DOM_DIFF]" not in text and "change_score" not in text
+    assert verification.details[0] == "Action 0 (browser_click): VERIFIED"  # the check read the record
+    assert "Clicked: #pay" in reply
+
+
+def test_machine_lines_are_split_only_for_browser_handlers_and_keep_a_notice() -> None:
+    from pilot.actions import OutputWithNotice, split_machine_lines
+
+    text = "line one\n[DOM_DIFF] {}\n[PAGE_BEFORE] {}"
+    assert split_machine_lines(ActionType.FILE_READ, text) == (text, None)
+    words, machine = split_machine_lines(ActionType.BROWSER_CLICK, OutputWithNotice(text, "A new tab opened"))
+    assert (str(words), words.notice, machine) == ("line one", "A new tab opened", "[DOM_DIFF] {}\n[PAGE_BEFORE] {}")
+    assert split_machine_lines(ActionType.BROWSER_CLICK, "Clicked: #a") == ("Clicked: #a", None)

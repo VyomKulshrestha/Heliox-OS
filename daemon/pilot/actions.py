@@ -1239,18 +1239,60 @@ class ActionResult(BaseModel):
     snapshot_id: str | None = None
     executed: bool = True
     skip_reason: str | None = None
+    # A success with a part the person must see, such as recipients the mail server refused. The reply and the
+    # task receipt carry it in full; the output itself is kept in the receipt only as a hash.
+    notice: str | None = None
+    # Lines a browser handler adds for its own post-condition check ([PAGE_BEFORE], [DOM_DIFF]): hashes and numbers
+    # for the verifier. They are taken out of ``output`` (split_machine_lines), so they are never shown, spoken,
+    # narrated or sent to a model, and they are left out of every serialised copy of the result.
+    observation: str | None = Field(default=None, exclude=True)
+    # The outcome of this result's declared ``expect`` probe, kept so a second verification of the same
+    # result (the retry merge in server.py verifies merged results again) never runs the probe twice.
+    _expect_outcome: Any = PrivateAttr(default=None)
 
     @field_serializer("output", "error")
     def _without_secret_urls(self, value: str | None) -> str | None:
         return redact_text(value)
 
-    # A success with a part the person must see, such as recipients the mail server refused. The reply and the
-    # task receipt carry it in full; the output itself is kept in the receipt only as a hash.
-    notice: str | None = None
 
-    # The outcome of this result's declared ``expect`` probe, kept so a second verification of the same
-    # result (the retry merge in server.py verifies merged results again) never runs the probe twice.
-    _expect_outcome: Any = PrivateAttr(default=None)
+# The browser handlers that end their output with machine lines for their check, and the lines' prefixes. Only
+# these actions are split, so a file or page that happens to contain such a line is never cut.
+MACHINE_LINE_ACTIONS = frozenset(
+    {
+        ActionType.BROWSER_CLICK,
+        ActionType.BROWSER_CLICK_TEXT,
+        ActionType.BROWSER_TYPE,
+        ActionType.BROWSER_SELECT,
+        ActionType.BROWSER_FILL_FORM,
+        ActionType.BROWSER_SCROLL,
+        ActionType.BROWSER_BACK,
+        ActionType.BROWSER_FORWARD,
+        ActionType.BROWSER_REFRESH,
+        ActionType.BROWSER_NEW_TAB,
+        ActionType.BROWSER_CLOSE_TAB,
+        ActionType.BROWSER_CLOSE,
+    }
+)
+MACHINE_LINE_PREFIXES = ("[PAGE_BEFORE]", "[DOM_DIFF]")
+
+
+def split_machine_lines(action_type: ActionType, output: Any) -> tuple[Any, str | None]:
+    """Separate a browser handler's words from its machine lines: (words, machine lines or None).
+
+    The single point where handler output becomes the text a person sees or hears, or a model reads. Output with
+    no machine lines (and every other action's output) is returned unchanged, notice and all.
+    """
+    if action_type not in MACHINE_LINE_ACTIONS or not isinstance(output, str):
+        return output, None
+    lines = output.splitlines()
+    machine = [line for line in lines if line.startswith(MACHINE_LINE_PREFIXES)]
+    if not machine:
+        return output, None
+    words = "\n".join(line for line in lines if not line.startswith(MACHINE_LINE_PREFIXES))
+    notice = getattr(output, "notice", None)
+    if notice is not None:
+        words = OutputWithNotice(words, notice, nothing_done=bool(getattr(output, "nothing_done", False)))
+    return words, "\n".join(machine)
 
 
 class OutputWithNotice(str):

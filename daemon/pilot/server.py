@@ -7662,7 +7662,7 @@ class PilotServer:
         """Run a one-step command that is a system call (quick.runs_beside_a_task) at once, outside the running task:
         the executor's own handler for that action, without waiting for the desktop the task holds. Returns what to
         say."""
-        from pilot.actions import ActionType
+        from pilot.actions import ActionType, split_machine_lines
         from pilot.conversation.quick import player_request, quick_acknowledgement, quick_result_sentence
 
         action = quick.plan.actions[0]
@@ -7679,7 +7679,8 @@ class PilotServer:
         if handler is None:
             return ""
         try:
-            result, status = str(await handler(action)), "success"
+            words, _machine = split_machine_lines(action.action_type, await handler(action))
+            result, status = str(words), "success"
         except Exception as error:
             logger.warning("A one-step command beside the task failed: %s", error)
             result, status = str(error), "error"

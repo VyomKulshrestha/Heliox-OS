@@ -64,6 +64,7 @@ from pilot.actions import (
     WifiParams,
     WindowParams,
     WorkspaceParams,
+    split_machine_lines,
 )
 from pilot.agents.sandbox import SimulationSandbox
 from pilot.intelligence.experience import (
@@ -1581,6 +1582,8 @@ class Executor:
 
         try:
             output = await handler(action)
+            # Machine lines a browser handler added for its check never reach the reply, speech or a model.
+            output, observation = split_machine_lines(action.action_type, output)
             notice = getattr(output, "notice", None)
             return ActionResult(
                 action=action,
@@ -1589,6 +1592,7 @@ class Executor:
                 snapshot_id=snapshot_id,
                 notice=notice,
                 skip_reason="already_absent" if getattr(output, "nothing_done", False) else None,
+                observation=observation,
             )
         except Exception as e:
             logger.exception("Action execution failed: %s", action.action_type)
