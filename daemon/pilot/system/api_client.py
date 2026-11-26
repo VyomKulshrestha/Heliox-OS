@@ -163,6 +163,11 @@ class HttpStatusError(RuntimeError):
         excerpt = " ".join((body or "").split())[:300]
         reason = f" {reason}" if reason else ""
         message = f"{method} to {scheme}://{host} failed with HTTP {status}{reason}"
+        # What was found, said so a repair round does not ask the same thing again: a page that is not there, or a
+        # refusal, gives the same answer to the same request.
+        hint = _STATUS_HINTS.get(status, "")
+        if hint:
+            message += f" ({hint})"
         super().__init__(f"{message}: {excerpt}" if excerpt else message)
         self.status = status
         self.excerpt = excerpt
@@ -189,6 +194,33 @@ def _connection_refused(error: HttpStatusError, service_name: str, what: str) ->
         f"removed, revoked or has expired. Replace it in {connections.WHERE[service_name]}."
         + (f" The service answered: {error.excerpt}" if error.excerpt else ""),
     )
+
+
+def _page_found(soup: Any, size: int) -> str:
+    """What a page that a selector missed does hold, in a sentence a planner can choose another selector from: its
+    title and the most used element ids and classes. Never the page's text."""
+    from collections import Counter
+
+    title = " ".join((soup.title.get_text() if soup.title else "").split())[:80]
+    ids = [str(tag.get("id")) for tag in soup.find_all(id=True)][:200]
+    classes = Counter(name for tag in soup.find_all(class_=True) for name in (tag.get("class") or []))
+    named = [f"#{name}" for name in ids[:5]] + [f".{name}" for name, _count in classes.most_common(8)]
+    parts = [f"The page loaded ({size:,} characters"]
+    parts.append(f", title {title!r})" if title else ")")
+    sentence = "".join(parts) + "."
+    if named:
+        sentence += f" It has elements such as {', '.join(named)}."
+    else:
+        sentence += " It has no element ids or classes; its content may be drawn by a script, so try the whole text."
+    return sentence
+
+
+_STATUS_HINTS = {
+    404: "the server has nothing at this address; the same request will get the same answer",
+    410: "the server says this address is gone for good; the same request will get the same answer",
+    401: "the server wants a sign-in this request did not carry; sending it again unchanged will be refused again",
+    403: "the server refused this request; sending it again unchanged will be refused again",
+}
 
 
 async def api_request(
@@ -586,7 +618,10 @@ async def scrape_url(
             elements = soup.select(selector)
             if not elements:
                 host = urlsplit(url).hostname or "the page"
-                raise LookupError(f"No element matches the selector {selector!r} on {host}")
+                raise LookupError(
+                    f"No element matches the selector {selector!r} on {host}. {_page_found(soup, len(html))} "
+                    "Asking for the same selector again will find nothing again."
+                )
             shown = elements[:SCRAPE_ELEMENT_LIMIT]
             if extract == "text":
                 joined = "\n".join(el.get_text(strip=True) for el in shown)

@@ -16,6 +16,11 @@ from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 logger = logging.getLogger("pilot.system.screen")
 
 
+# Said when no reader answers. The daemon treats it as final (server._is_terminal_execution_failure): another plan
+# cannot read a desktop monitor or a Mac without the brightness tool, so no repair round runs.
+BRIGHTNESS_UNREADABLE = "This display's brightness cannot be read"
+
+
 async def brightness_get() -> str:
     """Get current screen brightness."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
@@ -24,9 +29,7 @@ async def brightness_get() -> str:
         )
         if code == 0 and out.strip():
             return f"Brightness: {out.strip()}%"
-        raise RuntimeError(
-            "Could not read the brightness: this display does not report it to Windows (WMI). " + err.strip()[:160]
-        )
+        raise RuntimeError(f"{BRIGHTNESS_UNREADABLE} (it does not report it to Windows)")
 
     elif CURRENT_PLATFORM == Platform.MACOS:
         code, out, err = await run_command(["brightness", "-l"])
@@ -35,7 +38,7 @@ async def brightness_get() -> str:
                 ["osascript", "-e", 'tell application "System Preferences" to get brightness']
             )
         if code != 0 or not out.strip():
-            raise RuntimeError(f"Could not read the brightness: {err.strip()[:160] or 'no reader answered'}")
+            raise RuntimeError(f"{BRIGHTNESS_UNREADABLE} (the brightness tool is not installed)")
         return f"Brightness: {out.strip()}"
 
     else:  # Linux
@@ -52,7 +55,7 @@ async def brightness_get() -> str:
         # Fallback
         code, out, err = await run_command(["xrandr", "--verbose"])
         if code != 0 or not out.strip():
-            raise RuntimeError(f"Could not read the brightness: {err.strip()[:160] or 'no reader answered'}")
+            raise RuntimeError(f"{BRIGHTNESS_UNREADABLE} (neither brightnessctl nor xrandr answered)")
         return f"Brightness info:\n{out.strip()}"
 
 

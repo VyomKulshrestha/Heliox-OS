@@ -40,8 +40,12 @@ async def test_open_url_fails_when_the_opener_fails(monkeypatch: pytest.MonkeyPa
     async def failing_opener(args, **_kwargs):
         return 3, "", "no method available for opening 'https://example.com'"
 
+    async def failing_launcher(args, **_kwargs):
+        return 3, "no method available for opening 'https://example.com'"
+
     monkeypatch.setattr(platform_detect, "CURRENT_PLATFORM", platform)
     monkeypatch.setattr(platform_detect, "run_command", failing_opener)
+    monkeypatch.setattr(platform_detect, "launch_and_settle", failing_launcher)
 
     result = await _run(ActionType.OPEN_URL, "_exec_open_url", OpenUrlParams(url="https://example.com"))
 
@@ -66,17 +70,22 @@ async def test_open_url_on_windows_fails_when_the_shell_refuses(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_open_url_succeeds_when_the_opener_does(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def opener(args, **_kwargs):
-        return 0, "", ""
+@pytest.mark.parametrize("exit_code", [0, None])  # None: xdg-open still running, waiting for the browser it started
+async def test_open_url_succeeds_when_the_opener_does(monkeypatch: pytest.MonkeyPatch, exit_code: int | None) -> None:
+    launched: list[list[str]] = []
+
+    async def launcher(args, **_kwargs):
+        launched.append(args)
+        return exit_code, ""
 
     monkeypatch.setattr(platform_detect, "CURRENT_PLATFORM", Platform.LINUX)
-    monkeypatch.setattr(platform_detect, "run_command", opener)
+    monkeypatch.setattr(platform_detect, "launch_and_settle", launcher)
 
     result = await _run(ActionType.OPEN_URL, "_exec_open_url", OpenUrlParams(url="example.com"))
 
     assert result.success is True
     assert result.output == "Opened https://example.com in default browser"
+    assert launched == [["xdg-open", "https://example.com"]]
 
 
 # ── skill_run ───────────────────────────────────────────────────────
@@ -251,7 +260,7 @@ async def test_brightness_read_that_nothing_answers_fails(monkeypatch: pytest.Mo
     monkeypatch.setattr(screen, "run_command", nothing)
     monkeypatch.setattr(screen, "run_powershell", nothing)
 
-    with pytest.raises(RuntimeError, match="Could not read the brightness"):
+    with pytest.raises(RuntimeError, match="This display's brightness cannot be read"):
         await screen.brightness_get()
 
 

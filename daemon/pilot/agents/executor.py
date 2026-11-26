@@ -1931,7 +1931,7 @@ class Executor:
             url = "https://" + url
 
         from pilot.system.command_line import open_with_system
-        from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
+        from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, launch_and_settle, run_command
 
         if CURRENT_PLATFORM == Platform.WINDOWS:
             # The address goes to the system's handler for it (ShellExecute), never through cmd: "cmd /c start"
@@ -1940,7 +1940,10 @@ class Executor:
         elif CURRENT_PLATFORM == Platform.MACOS:
             code, _, err = await run_command(["open", url])
         else:
-            code, _, err = await run_command(["xdg-open", url])
+            # xdg-open may stay until the browser it started exits (a window manager without a desktop session):
+            # a launcher still running after a moment has opened the page, and a repair round must not open it again.
+            settled, err = await launch_and_settle(["xdg-open", url])
+            code = 0 if settled is None else settled
 
         if code != 0:
             raise RuntimeError(f"The browser did not open {url}: {err.strip() or f'exit code {code}'}")

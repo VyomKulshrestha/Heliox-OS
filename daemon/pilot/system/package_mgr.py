@@ -131,6 +131,7 @@ async def package_update() -> str:
 
     There is no separate upgrade action, so this refreshes the package lists and upgrades on every platform:
     winget (or Chocolatey) on Windows, Homebrew on macOS, apt, dnf or pacman on Linux."""
+    available: list[str] | None = None
     if CURRENT_PLATFORM == Platform.WINDOWS:
         mgr = await _detect_win_pkg_manager()
         if mgr == "winget":
@@ -138,8 +139,13 @@ async def package_update() -> str:
         else:
             args = ["choco", "upgrade", "all", "-y"]
         code, out, err = await run_command(args, timeout=UPGRADE_TIMEOUT_SECONDS)
-        if mgr == "winget" and code in WINGET_NOTHING_TO_UPGRADE:
-            code = 0
+        if mgr == "winget":
+            # winget lists what it will upgrade before it starts. It exits with an error when any one package fails
+            # (an app that is running, a pinned package, an installer whose hash changed) even though the others were
+            # upgraded: with that list in hand, the check afterwards says what is left instead of calling it failed.
+            available = parse_winget_upgrade_table(out)
+            if code in WINGET_NOTHING_TO_UPGRADE or available:
+                code = 0
     elif CURRENT_PLATFORM == Platform.MACOS:
         mgr = "brew"
         code, out, err = await run_command(["brew", "update"], timeout=300)
@@ -158,7 +164,32 @@ async def package_update() -> str:
 
     if code != 0:
         raise RuntimeError(f"Package update failed ({mgr}, exit {code}): {(err.strip() or out.strip())[-500:]}")
-    return f"Installed packages brought up to date with {mgr}"
+    done = f"Installed packages brought up to date with {mgr}"
+    if available:
+        import json
+
+        return f"{done}\n{UPGRADE_FACTS} {json.dumps({'available': available})}"
+    return done
+
+
+# The line package_update adds when it knows what was available before it upgraded; the check afterwards reads it to
+# tell "some were left" from "nothing was upgraded" (pilot.agents.postconditions.system_state).
+UPGRADE_FACTS = "[UPGRADE]"
+
+
+def upgrade_facts(output: str | None) -> list[str] | None:
+    """The packages package_update saw available before it upgraded, from its output; None when it did not say."""
+    import json
+
+    for line in str(output or "").splitlines():
+        if line.startswith(UPGRADE_FACTS + " "):
+            try:
+                data = json.loads(line[len(UPGRADE_FACTS) + 1 :])
+            except ValueError:
+                return None
+            names = data.get("available") if isinstance(data, dict) else None
+            return [str(name) for name in names] if isinstance(names, list) else None
+    return None
 
 
 async def pending_upgrades() -> list[str] | None:

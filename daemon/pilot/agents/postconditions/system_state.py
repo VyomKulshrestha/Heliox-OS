@@ -258,8 +258,13 @@ async def wifi_joined(result: ActionResult) -> Outcome:
 
 @register(ActionType.PACKAGE_UPDATE, method="packages_current_postcondition", timeout=200.0)
 async def packages_up_to_date(result: ActionResult) -> Outcome:
-    """Nothing is left to upgrade, asked of the package manager afresh (winget, choco, brew, apt, dnf, pacman)."""
-    from pilot.system.package_mgr import pending_upgrades
+    """What is left to upgrade, asked of the package manager afresh (winget, choco, brew, apt, dnf, pacman).
+
+    An upgrade of everything almost always leaves a few behind on Windows (an app that is running, a pinned package,
+    an installer whose hash changed). Those are named in a notice and the step is done. It is a mismatch only when
+    nothing was upgraded although the upgrade's own list showed upgrades were available; a tool that failed already
+    failed the step."""
+    from pilot.system.package_mgr import pending_upgrades, upgrade_facts
 
     pending = await pending_upgrades()
     if pending is None:
@@ -267,7 +272,14 @@ async def packages_up_to_date(result: ActionResult) -> Outcome:
     if not pending:
         return verified("The package manager lists no upgrades left to install")
     shown = ", ".join(pending[:5]) + (f" and {len(pending) - 5} more" if len(pending) > 5 else "")
-    return mismatch(f"Expected every installed package to be up to date; {len(pending)} still have upgrades: {shown}")
+    available = upgrade_facts(result.output)
+    if available and not [name for name in available if name not in pending]:
+        return mismatch(
+            f"Nothing was upgraded: all {len(available)} upgrades the package manager listed before are still "
+            f"listed ({shown})"
+        )
+    left = f"{len(pending)} package{'s were' if len(pending) != 1 else ' was'} not upgraded: {shown}"
+    return verified(f"The upgrade ran; {left}", notice=left)
 
 
 @register(ActionType.WIFI_DISCONNECT, method="wifi_disconnected_postcondition", timeout=20.0)

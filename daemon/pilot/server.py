@@ -724,6 +724,11 @@ def _is_terminal_execution_failure(results: list[Any]) -> bool:
         "request_human_help": ("could not hand the desktop over",),
         # The reply quotes the notification's text; showing it again would fail the same way.
         "notify": ("could not show a desktop notification",),
+        # A desktop monitor, or a Mac without the brightness tool: no plan can read it another way.
+        "brightness_get": ("this display's brightness cannot be read",),
+        # The launcher refused or failed at once. Another plan would try the same opener, and one that opened a page
+        # and still exited with an error must not open it twice.
+        "open_url": ("the browser did not open",),
     }
     for result in failed:
         action_type = getattr(result.action.action_type, "value", str(result.action.action_type))

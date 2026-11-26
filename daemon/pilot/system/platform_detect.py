@@ -105,6 +105,46 @@ async def run_command(
         return (-1, "", f"Command error: {e}")
 
 
+LAUNCH_SETTLE_SECONDS = 3.0
+
+
+def _settle_launch(args: list[str], settle: float) -> tuple[int | None, str]:
+    import subprocess
+    import threading
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            start_new_session=sys.platform != "win32",
+        )
+    except FileNotFoundError:
+        return 127, f"Command not found: {args[0]}"
+    except OSError as error:
+        return 126, str(error)
+    try:
+        _out, err = proc.communicate(timeout=settle)
+    except subprocess.TimeoutExpired:
+        # Still running: it started, and some launchers stay until the program they started exits. Its output is
+        # drained and its exit collected by a thread of its own, so it never blocks or lingers as a zombie.
+        threading.Thread(target=proc.communicate, name="launcher-reaper", daemon=True).start()
+        return None, ""
+    return proc.returncode, (err or b"").decode("utf-8", errors="replace")
+
+
+async def launch_and_settle(args: list[str], *, settle: float = LAUNCH_SETTLE_SECONDS) -> tuple[int | None, str]:
+    """Start a launcher (xdg-open) and wait at most ``settle`` seconds: (its exit code, its error text) when it ended
+    by then, (None, "") when it is still running. A launcher still running has started what it launches; on some
+    Linux desktops xdg-open waits until the browser it started is closed, so waiting for it would hold the reply and
+    then call a working launch a failure."""
+    from pilot.system.system_guard import check_command
+
+    check_command(args)
+    return await asyncio.to_thread(_settle_launch, list(args), settle)
+
+
 async def run_powershell(
     script: str,
     *,

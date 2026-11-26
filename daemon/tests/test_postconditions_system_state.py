@@ -896,20 +896,26 @@ async def test_winget_with_nothing_to_upgrade_is_not_a_failure(monkeypatch: pyte
     assert "winget" in await package_update()
 
 
+def _assert_left(verification) -> None:
+    """The upgrade ran and left packages behind: done, with a notice naming them, never a mismatch."""
+    _assert_verified(verification)
+    assert "not upgraded" in verification.notices[0]
+
+
 @pytest.mark.parametrize(
     ("platform", "manager", "answers", "outcome"),
     [
         (Platform.LINUX, "dnf", [(0, "", "")], "verified"),
-        (Platform.LINUX, "dnf", [(100, "kernel.x86_64  6.6.9-200.fc39  updates\n", "")], "mismatch"),
+        (Platform.LINUX, "dnf", [(100, "kernel.x86_64  6.6.9-200.fc39  updates\n", "")], "left"),
         (Platform.LINUX, "apt-get", [(0, "Conf libc6 (2.39)\n", "")], "verified"),
         (
             Platform.LINUX,
             "apt-get",
             [(0, "Inst libc6 [2.38] (2.39 Ubuntu:24.04/noble-updates [amd64])\n", "")],
-            "mismatch",
+            "left",
         ),
         (Platform.LINUX, "pacman", [(1, "", "")], "verified"),
-        (Platform.LINUX, "pacman", [(0, "linux 6.6.1-1 -> 6.6.2-1\n", "")], "mismatch"),
+        (Platform.LINUX, "pacman", [(0, "linux 6.6.1-1 -> 6.6.2-1\n", "")], "left"),
         (Platform.LINUX, "zypper", [], "reported"),
         (Platform.MACOS, "brew", [(0, '{"formulae": [], "casks": []}', "")], "verified"),
         (
@@ -922,7 +928,7 @@ async def test_winget_with_nothing_to_upgrade_is_not_a_failure(monkeypatch: pyte
             Platform.MACOS,
             "brew",
             [(0, '{"formulae": [{"name": "git", "pinned": false}], "casks": []}', "")],
-            "mismatch",
+            "left",
         ),
         (
             Platform.WINDOWS,
@@ -930,9 +936,9 @@ async def test_winget_with_nothing_to_upgrade_is_not_a_failure(monkeypatch: pyte
             [(0x8A15002B, "No installed package found matching input criteria.\n", "")],
             "verified",
         ),
-        (Platform.WINDOWS, "winget", [(0, WINGET_TABLE, "")], "mismatch"),
+        (Platform.WINDOWS, "winget", [(0, WINGET_TABLE, "")], "left"),
         (Platform.WINDOWS, "choco", [(0, "", "")], "verified"),
-        (Platform.WINDOWS, "choco", [(0, "git|2.42.0|2.43.0|false\n", "")], "mismatch"),
+        (Platform.WINDOWS, "choco", [(0, "git|2.42.0|2.43.0|false\n", "")], "left"),
     ],
 )
 async def test_package_update_verified_from_pending_upgrades(
@@ -945,9 +951,56 @@ async def test_package_update_verified_from_pending_upgrades(
 
     verification = await _verify(ActionType.PACKAGE_UPDATE, PackageParams())
 
-    {"verified": _assert_verified, "mismatch": _assert_mismatch, "reported": _assert_reported}[outcome](verification)
+    {"verified": _assert_verified, "left": _assert_left, "reported": _assert_reported}[outcome](verification)
     for call in run.await_args_list:
         assert call.kwargs.get("root", False) is False  # the read never asks for a password
+
+
+async def test_winget_that_upgraded_some_and_failed_others_is_done_not_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pilot.system.package_mgr import package_update, upgrade_facts
+
+    # winget lists the upgrades, then exits with an error because one installer failed.
+    run = AsyncMock(return_value=(0x8A150011, WINGET_TABLE + "Installer hash does not match.\n", ""))
+    _package_platform(monkeypatch, Platform.WINDOWS, "winget", run)
+
+    output = await package_update()
+
+    assert "brought up to date with winget" in output
+    assert upgrade_facts(output) == ["Microsoft Edge", "7-Zip 23.01 (x64)"]
+
+    # No table at all: winget itself failed.
+    _package_platform(monkeypatch, Platform.WINDOWS, "winget", AsyncMock(return_value=(1, "", "winget broke")))
+    with pytest.raises(RuntimeError, match="Package update failed"):
+        await package_update()
+
+
+@pytest.mark.parametrize(
+    ("left_after", "outcome"),
+    [
+        (WINGET_TABLE, "mismatch"),  # both upgrades still listed: nothing was upgraded
+        (WINGET_TABLE_DE, "left"),  # 7-Zip was upgraded, Edge (running) was not
+    ],
+)
+async def test_package_update_is_a_mismatch_only_when_nothing_was_upgraded(
+    monkeypatch: pytest.MonkeyPatch, left_after: str, outcome: str
+) -> None:
+    import json
+
+    from pilot.actions import PackageParams
+    from pilot.system.package_mgr import UPGRADE_FACTS
+
+    _package_platform(monkeypatch, Platform.WINDOWS, "winget", AsyncMock(return_value=(0, left_after, "")))
+    said = f"Installed packages brought up to date with winget\n{UPGRADE_FACTS} " + json.dumps(
+        {"available": ["Microsoft Edge", "7-Zip 23.01 (x64)"]}
+    )
+
+    verification = await _verify(ActionType.PACKAGE_UPDATE, PackageParams(), output=said)
+
+    if outcome == "mismatch":
+        assert "Nothing was upgraded" in _assert_mismatch(verification)
+    else:
+        _assert_left(verification)
+        assert verification.notices[0] == "1 package was not upgraded: Microsoft Edge"
 
 
 async def test_dnf_check_update_error_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
