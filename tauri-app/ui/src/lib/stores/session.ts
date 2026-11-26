@@ -41,6 +41,8 @@ export interface PlanAction {
   setting?: string;
   /** What the step does on this computer, when its type and target undersell it ("Upgrade every installed package"). */
   effect?: string;
+  /** For a command, script or tool step: the read-only check Heliox will make afterwards, or why it makes none. */
+  check?: string;
 }
 
 export interface UndoSupport {

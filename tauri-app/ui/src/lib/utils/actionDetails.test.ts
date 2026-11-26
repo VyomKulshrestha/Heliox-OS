@@ -82,6 +82,24 @@ describe("describeAction", () => {
     expect(describeAction(action("screenshot", {}))).toEqual([]);
   });
 
+  it("ends with the check the daemon will make afterwards, when it sent one", () => {
+    const details = describeAction({
+      ...action("ssh_command", { host: "prod-1", command: "touch /srv/ready" }),
+      check: "Runs `test -f /srv/ready` on prod-1 and expects it to succeed.",
+    });
+
+    expect(details.map((detail) => detail.label)).toEqual(["Host", "Command", "Checks after"]);
+    expect(details[2]).toEqual({
+      label: "Checks after",
+      value: "Runs `test -f /srv/ready` on prod-1 and expects it to succeed.",
+      code: false,
+    });
+    expect(describeAction(action("ssh_command", { host: "prod-1", command: "uptime" })).map((d) => d.label)).toEqual([
+      "Host",
+      "Command",
+    ]);
+  });
+
   it("caps very long content", () => {
     const [, content] = describeAction(action("file_write", { path: "C:/a.txt", content: "x".repeat(5000) }));
 

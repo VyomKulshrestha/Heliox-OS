@@ -737,6 +737,21 @@ def _approval_effect(action: Any) -> str:
     return ""
 
 
+def _declared_check_line(action: Any) -> dict[str, str]:
+    """``{"check": ...}`` for the approval card: the declared check a step will get, or why it gets none.
+
+    Empty for steps outside the sixteen arbitrary-effect types (see pilot.agents.postconditions.declared).
+    """
+    try:
+        from pilot.agents.postconditions.declared import describe_check
+
+        line = describe_check(action)
+    except Exception:  # noqa: BLE001 - the card still opens without the line
+        logger.warning("Could not describe the declared check of %s", getattr(action, "action_type", "?"))
+        return {}
+    return {"check": line} if line else {}
+
+
 def _postcondition_failure_requires_reconciliation(results: list[Any], verification: Any) -> bool:
     """Stop before repeating a destructive action whose effect is uncertain, or one the person must reconcile."""
     from pilot.actions import RECONCILE_NOT_RETRY_ACTIONS
@@ -750,6 +765,10 @@ def _postcondition_failure_requires_reconciliation(results: list[Any], verificat
             or result.action.is_irreversible
             or result.action.action_type in RECONCILE_NOT_RETRY_ACTIONS
         ):
+            return True
+        if result.success and result.action.expect is not None:
+            # A declared check found something else after an arbitrary command or script ran. Running it again is
+            # not a repair anyone approved, so the run stops and the person sees what was expected and found.
             return True
     return False
 
@@ -6579,6 +6598,7 @@ class PilotServer:
             effect = _approval_effect(a)
             if effect:
                 payload["effect"] = effect  # what the step does on this computer, shown in the dialog
+            payload.update(_declared_check_line(a))
             return payload
 
         approval_request = {
@@ -12161,6 +12181,7 @@ class PilotServer:
                             "index": index,
                             "irreversible": plan.actions[index].is_irreversible,
                             "undo": self._undo_badge(plan.actions[index]),
+                            **_declared_check_line(plan.actions[index]),
                         }
                         for index in sorted(required)
                     ],

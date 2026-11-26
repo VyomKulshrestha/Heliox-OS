@@ -160,5 +160,7 @@ export function describeAction(action: PlanAction): ActionDetail[] {
     );
     if (Object.keys(substance).length > 0) add("Parameters", substance, true);
   }
+  // Written by the daemon from the step's declared check (pilot/agents/postconditions/declared.py).
+  add("Checks after", action.check);
   return details;
 }

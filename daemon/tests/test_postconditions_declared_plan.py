@@ -7,7 +7,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pilot.actions import Action, ActionType, Expectation, SshCommandParams
+from pilot.actions import (
+    Action,
+    ActionResult,
+    ActionType,
+    Expectation,
+    FileParams,
+    ShellCommandParams,
+    SshCommandParams,
+)
 
 
 def ssh(command: str, host: str = "prod-1") -> Action:
@@ -105,3 +113,29 @@ def test_planner_prompt_teaches_the_field() -> None:
     assert '"expect"' in text
     assert '"command": "test -f /srv/app/ready"' in text
     assert 'Leave "expect" out when there is nothing definite to read back' in text
+
+
+def test_server_adds_the_check_line_to_the_approval_payload() -> None:
+    from pilot.server import _declared_check_line
+
+    touch = checked(ssh("touch /tmp/x"), ssh("test -f /tmp/x"))
+    write = Action(action_type=ActionType.FILE_WRITE, target="/tmp/x", parameters=FileParams(path="/tmp/x"))
+    assert _declared_check_line(touch) == {"check": "Runs `test -f /tmp/x` on prod-1 and expects it to succeed."}
+    assert _declared_check_line(ssh("touch /tmp/x")) == {
+        "check": "None declared: Heliox will report what the step said, without checking it."
+    }
+    assert _declared_check_line(write) == {}
+
+
+def test_a_declared_mismatch_stops_before_the_retry() -> None:
+    from pilot.server import _postcondition_failure_requires_reconciliation
+
+    step = Action(action_type=ActionType.SHELL_COMMAND, parameters=ShellCommandParams(command="make", args=["install"]))
+    probe = Action(action_type=ActionType.FILE_READ, target="/srv/version", parameters=FileParams(path="/srv/version"))
+    action = step.model_copy(update={"expect": Expectation(probe=probe, kind="equals", value="2")})
+    verification = MagicMock(failed_actions=[0])
+
+    assert not action.is_irreversible
+    assert _postcondition_failure_requires_reconciliation([ActionResult(action=action, success=True)], verification)
+    # Without a declared check the step keeps today's path: a retry.
+    assert not _postcondition_failure_requires_reconciliation([ActionResult(action=step, success=True)], verification)
