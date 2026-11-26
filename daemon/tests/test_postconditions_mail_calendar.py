@@ -496,7 +496,8 @@ async def test_fetched_mail_reports_its_message_id_for_a_later_reply(imap_mock) 
         "fetch", ActionPlan(actions=[Action(action_type=ActionType.EMAIL_FETCH, parameters=params)])
     )
 
-    assert all("message_id" in message for message in json.loads(result.output))
+    messages = json.loads(result.output)["messages"]
+    assert messages and all("message_id" in message for message in messages)
 
 
 # ── calendar_create_event and calendar_delete_event ────────────────────────

@@ -703,7 +703,7 @@ async def test_email_fetch_says_how_many_it_left_out_and_which_bodies_it_cut(mon
 
     result = await agent._fetch_emails(action, params)
 
-    emails = json.loads(result.output)
+    emails = json.loads(result.output)["messages"]
     assert len(emails) == 2 and all("2,500 characters" in e["body_cut"] for e in emails)
     assert "Only the newest 3 of 4 unread messages were fetched." in result.notice
     assert "1 message(s) could not be fetched" in result.notice

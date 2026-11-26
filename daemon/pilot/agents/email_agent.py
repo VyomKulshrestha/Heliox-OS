@@ -308,7 +308,6 @@ class EmailAgent(BaseAgent):
         except imaplib.IMAP4.error as exc:
             return ActionResult(action=action, success=False, error=f"IMAP error: {exc}")
 
-        output = json.dumps(emails, ensure_ascii=False, indent=2)
         logger.info("Fetched %d unread email(s) from %s", len(emails), params.mailbox)
         notes = []
         if unseen_total > len(uid_list):
@@ -318,6 +317,18 @@ class EmailAgent(BaseAgent):
         cut_bodies = sum(1 for entry in emails if "body_cut" in entry)
         if cut_bodies:
             notes.append(f"{cut_bodies} message body(ies) were cut at {_MAX_BODY_CHARS:,} characters.")
+        # An object, so the next step sees what was left out as well as the messages.
+        output = json.dumps(
+            {
+                "messages": emails,
+                "unread_total": unseen_total,
+                "fetched": len(emails),
+                "left_out": {"older_unread": unseen_total - len(uid_list), "could_not_fetch": unreadable},
+                "notes": notes,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
         return ActionResult(action=action, success=True, output=output, notice=" ".join(notes) or None)
 
     # ── LLM: summarise emails ─────────────────────────────────────────────────
@@ -332,12 +343,12 @@ class EmailAgent(BaseAgent):
             )
 
         try:
-            emails: list[dict[str, str]] = json.loads(params.emails_json)
-        except json.JSONDecodeError as exc:
+            emails, notes = _fetched_messages(params.emails_json)
+        except ValueError as exc:
             return ActionResult(action=action, success=False, error=f"Invalid emails_json: {exc}")
 
         if not emails:
-            return ActionResult(action=action, success=True, output="No emails to summarise.")
+            return ActionResult(action=action, success=True, output=_with_notes("No emails to summarise.", notes))
 
         if self._model is None:
             # Fallback: plain-text list when no LLM is available
@@ -345,7 +356,7 @@ class EmailAgent(BaseAgent):
                 f"{i + 1}. From: {e.get('from', '')} | Subject: {e.get('subject', '')} | Date: {e.get('date', '')}"
                 for i, e in enumerate(emails)
             ]
-            return ActionResult(action=action, success=True, output="\n".join(lines))
+            return ActionResult(action=action, success=True, output=_with_notes("\n".join(lines), notes))
 
         # Build a compact prompt
         email_block = "\n\n".join(
@@ -366,7 +377,7 @@ class EmailAgent(BaseAgent):
         except Exception as exc:  # noqa: BLE001
             return ActionResult(action=action, success=False, error=f"LLM summarisation failed: {exc}")
 
-        return ActionResult(action=action, success=True, output=summary)
+        return ActionResult(action=action, success=True, output=_with_notes(summary, notes))
 
     # ── SMTP: send / reply ────────────────────────────────────────────────────
 
@@ -615,6 +626,27 @@ def _original_message(params: EmailParams) -> dict[str, str]:
             pass
 
 
+def _fetched_messages(emails_json: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """The messages and notes of an email_fetch output: the object it writes, or a bare list of messages.
+
+    Raises ValueError when the text is not JSON of either shape.
+    """
+    try:
+        data = json.loads(emails_json)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ValueError(str(exc)) from exc
+    if isinstance(data, dict) and isinstance(data.get("messages"), list):
+        return [m for m in data["messages"] if isinstance(m, dict)], [str(n) for n in data.get("notes") or []]
+    if isinstance(data, list):
+        return [m for m in data if isinstance(m, dict)], []
+    raise ValueError("expected the output of email_fetch: an object with messages, or a list of messages")
+
+
+def _with_notes(text: str, notes: list[str]) -> str:
+    """``text`` followed by what the fetch left out, so a summary never reads as covering all mail when it did not."""
+    return text if not notes else text + "\n\n" + "\n".join(f"Note: {note}" for note in notes)
+
+
 def _extract_body(msg: email_lib.message.Message) -> str:
     """Extract plain-text body from a (possibly multipart) email message."""
     if msg.is_multipart():
@@ -652,8 +684,8 @@ _MEETING_LINK_PATTERNS: list[str] = [
 def _parse_ics_from_emails(emails_json: str) -> list[dict[str, Any]]:
     """Extract VEVENT records from ICS blocks embedded in email bodies."""
     try:
-        emails: list[dict[str, str]] = json.loads(emails_json)
-    except (json.JSONDecodeError, TypeError):
+        emails, _notes = _fetched_messages(emails_json)
+    except ValueError:
         return []
 
     events: list[dict[str, Any]] = []

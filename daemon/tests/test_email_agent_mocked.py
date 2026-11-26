@@ -38,7 +38,9 @@ async def test_fetch_emails_mocked(email_agent, imap_mock):
     result = results[0]
     assert result.success is True
 
-    emails = json.loads(result.output)
+    fetched = json.loads(result.output)
+    assert fetched["unread_total"] == 2 and fetched["left_out"] == {"older_unread": 0, "could_not_fetch": 0}
+    emails = fetched["messages"]
     assert len(emails) == 2
     # The results are reversed (newest first) by email_agent.py: uid_list = uid_list[-params.max_emails :][::-1]
     # UIDs: b"2", b"1"

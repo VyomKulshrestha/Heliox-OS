@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from pilot.actions import Action, ActionType, EmailParams
@@ -82,3 +84,39 @@ async def test_email_fetch_marks_mail_read_when_asked(monkeypatch: pytest.Monkey
     await _fetch(monkeypatch, mailbox, mark_as_read=True)
 
     assert mailbox.seen == {b"1", b"2"}
+
+
+@pytest.mark.asyncio
+async def test_email_fetch_output_says_what_was_left_out_and_its_readers_take_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pilot.actions import CalendarParams
+    from pilot.agents import email_agent
+
+    mailbox = _Mailbox({str(n).encode(): _message(f"m{n}") for n in range(1, 6)})
+    result = await _fetch(monkeypatch, mailbox, max_emails=2)
+
+    fetched = json.loads(result.output)
+    assert fetched["unread_total"] == 5 and fetched["fetched"] == 2
+    assert fetched["left_out"] == {"older_unread": 3, "could_not_fetch": 0}
+    assert [m["subject"] for m in fetched["messages"]] == ["m5", "m4"]
+    assert "Only the newest 2 of 5 unread messages were fetched." in fetched["notes"]
+
+    agent = object.__new__(email_agent.EmailAgent)
+    agent._model = None
+    summary_params = EmailParams(emails_json=result.output)
+    summary = await agent._summarize_emails(
+        Action(action_type=ActionType.EMAIL_SUMMARIZE, parameters=summary_params), summary_params
+    )
+    assert summary.success and "Subject: m5" in summary.output and "Note: Only the newest 2 of 5" in summary.output
+
+    old_list = json.dumps(fetched["messages"])
+    again = EmailParams(emails_json=old_list)
+    assert (
+        await agent._summarize_emails(Action(action_type=ActionType.EMAIL_SUMMARIZE, parameters=again), again)
+    ).success
+    calendar = CalendarParams(emails_json=result.output)
+    events = await agent._fetch_calendar_events(
+        Action(action_type=ActionType.CALENDAR_FETCH, parameters=calendar), calendar
+    )
+    assert events.success
