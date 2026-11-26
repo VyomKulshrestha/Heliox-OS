@@ -138,6 +138,109 @@ class TriggerType(StrEnum):
     CUSTOM_CONDITION = "custom_condition"
 
 
+# The condition keys each trigger type reads, with what they mean. The planner's prompt lists the trigger types from
+# this table (pilot.agents.planner), so it names only what the engine evaluates; tests/test_trigger_types_prompt.py
+# checks that every key the engine reads is here. None: the engine accepts the type but never fires it.
+CONDITION_KEYS: dict[TriggerType, dict[str, str] | None] = {
+    TriggerType.FILE_CREATED: {
+        "path": "the folder to watch",
+        "pattern": "which new files count, like *.txt (default *)",
+    },
+    TriggerType.FILE_MODIFIED: {"path": "the file, or a folder", "pattern": "for a folder, which files (default *)"},
+    TriggerType.FILE_DELETED: {"path": "the file, or a folder", "pattern": "for a folder, which files (default *)"},
+    TriggerType.CPU_THRESHOLD: {"threshold": "percent; fires when use rises above it (default 90)"},
+    TriggerType.MEMORY_THRESHOLD: {"threshold": "percent; fires when use rises above it (default 90)"},
+    TriggerType.DISK_THRESHOLD: {
+        "threshold": "percent used; fires when use rises above it (default 95)",
+        "path": "the drive or folder (default /)",
+    },
+    TriggerType.BATTERY_LOW: {"threshold": "percent; fires when the charge falls below it, unplugged (default 20)"},
+    TriggerType.PROCESS_STARTED: {"name": "part of the program's process name"},
+    TriggerType.PROCESS_STOPPED: {"name": "part of the program's process name"},
+    TriggerType.TIME_INTERVAL: {},  # fires every cooldown_seconds
+    TriggerType.CUSTOM_CONDITION: {
+        "expression": "a comparison of battery_percent, cpu_percent, disk_percent, hour, memory_percent, on_battery "
+        "or timestamp, like cpu_percent > 80 and on_battery",
+        "path": "the drive disk_percent is measured on (default /)",
+    },
+    TriggerType.CRON_SCHEDULE: None,
+    TriggerType.NETWORK_CHANGE: None,
+}
+
+# Names a model writes for a trigger type, mapped to the type the engine knows (pilot.agents.planner applies them).
+TRIGGER_TYPE_ALIASES: dict[str, TriggerType] = {
+    "file_change": TriggerType.FILE_MODIFIED,
+    "file_changed": TriggerType.FILE_MODIFIED,
+    "file_changes": TriggerType.FILE_MODIFIED,
+    "file_modify": TriggerType.FILE_MODIFIED,
+    "file_modification": TriggerType.FILE_MODIFIED,
+    "file_modifications": TriggerType.FILE_MODIFIED,
+    "file_update": TriggerType.FILE_MODIFIED,
+    "file_updated": TriggerType.FILE_MODIFIED,
+    "file_write": TriggerType.FILE_MODIFIED,
+    "file_written": TriggerType.FILE_MODIFIED,
+    "file_watch": TriggerType.FILE_MODIFIED,
+    "file_watcher": TriggerType.FILE_MODIFIED,
+    "file_create": TriggerType.FILE_CREATED,
+    "file_new": TriggerType.FILE_CREATED,
+    "file_added": TriggerType.FILE_CREATED,
+    "new_file": TriggerType.FILE_CREATED,
+    "file_delete": TriggerType.FILE_DELETED,
+    "file_removed": TriggerType.FILE_DELETED,
+    "file_remove": TriggerType.FILE_DELETED,
+    "cpu": TriggerType.CPU_THRESHOLD,
+    "cpu_high": TriggerType.CPU_THRESHOLD,
+    "cpu_usage": TriggerType.CPU_THRESHOLD,
+    "memory": TriggerType.MEMORY_THRESHOLD,
+    "memory_high": TriggerType.MEMORY_THRESHOLD,
+    "memory_usage": TriggerType.MEMORY_THRESHOLD,
+    "ram_threshold": TriggerType.MEMORY_THRESHOLD,
+    "disk": TriggerType.DISK_THRESHOLD,
+    "disk_full": TriggerType.DISK_THRESHOLD,
+    "disk_usage": TriggerType.DISK_THRESHOLD,
+    "battery": TriggerType.BATTERY_LOW,
+    "low_battery": TriggerType.BATTERY_LOW,
+    "battery_threshold": TriggerType.BATTERY_LOW,
+    "process_start": TriggerType.PROCESS_STARTED,
+    "process_running": TriggerType.PROCESS_STARTED,
+    "app_started": TriggerType.PROCESS_STARTED,
+    "process_stop": TriggerType.PROCESS_STOPPED,
+    "process_exit": TriggerType.PROCESS_STOPPED,
+    "process_exited": TriggerType.PROCESS_STOPPED,
+    "app_stopped": TriggerType.PROCESS_STOPPED,
+    "interval": TriggerType.TIME_INTERVAL,
+    "timer": TriggerType.TIME_INTERVAL,
+    "time": TriggerType.TIME_INTERVAL,
+    "custom": TriggerType.CUSTOM_CONDITION,
+    "condition": TriggerType.CUSTOM_CONDITION,
+    "expression": TriggerType.CUSTOM_CONDITION,
+}
+
+
+def resolve_trigger_type(raw: str) -> str:
+    """The engine's name for a trigger type a model wrote ("file_change" -> "file_modified"); the input unchanged
+    when it is neither a type nor a known alias, so the engine's own check refuses it with its usual reason."""
+    clean = str(raw or "").strip().casefold().replace("-", "_").replace(" ", "_")
+    if clean in TriggerType._value2member_map_:
+        return clean
+    alias = TRIGGER_TYPE_ALIASES.get(clean)
+    return alias.value if alias is not None else str(raw or "")
+
+
+def trigger_types_for_prompt() -> str:
+    """One line per trigger type the engine fires, with its condition keys: the planner prompt's list."""
+    lines = []
+    for trigger_type, keys in CONDITION_KEYS.items():
+        if keys is None:
+            continue
+        if not keys:
+            lines.append(f"  {trigger_type.value}: condition {{}}; fires every cooldown_seconds")
+            continue
+        described = "; ".join(f'"{key}": {meaning}' for key, meaning in keys.items())
+        lines.append(f"  {trigger_type.value}: condition keys {described}")
+    return "\n".join(lines)
+
+
 @dataclass
 class Trigger:
     id: str
