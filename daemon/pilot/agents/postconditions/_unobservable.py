@@ -14,4 +14,9 @@ UNOBSERVABLE_POSTCONDITION: dict[ActionType, str] = {
         "A sleeping computer runs nothing, so it cannot look at its own sleep: on Linux and macOS the command returns "
         "before the computer sleeps, on Windows after it wakes. The result says sleep was requested."
     ),
+    ActionType.OPEN_URL: (
+        "The page opens in the person's default browser, which is not Heliox's: no program can ask it which pages "
+        "it shows. A launcher that fails (ShellExecute, open, xdg-open) fails the action; beyond that nothing can "
+        "be read."
+    ),
 }
