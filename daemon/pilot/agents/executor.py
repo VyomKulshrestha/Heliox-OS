@@ -135,6 +135,10 @@ def _code_execution_error(output: str) -> str | None:
     return None
 
 
+# How many log events log_analyze lists in its timeline (the newest ones).
+LOG_TIMELINE_LIMIT = 15
+
+
 class Executor:
     """Executes validated action plans against the system."""
 
@@ -3245,7 +3249,7 @@ class Executor:
         elif any(a["severity"] == "medium" for a in anomalies) or len(anomalies) > 0:
             severity = "medium"
 
-        summary = "Log analysis completed. "
+        summary = f"Log analysis completed over {len(events)} events. "
         if anomalies:
             summary += f"Detected {len(anomalies)} anomalies, including: " + ", ".join(
                 a["summary"] for a in anomalies[:2]
@@ -3253,15 +3257,22 @@ class Executor:
         else:
             summary += f"Analyzed {len(events)} events. No anomalies detected."
 
+        # The newest events, oldest of them first: what happened last is what a person asking about a log needs.
         timeline = []
-        for ev in events[:15]:
+        for ev in events[-LOG_TIMELINE_LIMIT:]:
             timeline.append(f"[{ev['timestamp']}] {ev['process']}: {ev['message']}")
+        if len(events) > LOG_TIMELINE_LIMIT:
+            timeline_note = f"The timeline shows the newest {LOG_TIMELINE_LIMIT} of {len(events)} events."
+        else:
+            timeline_note = f"The timeline shows all {len(events)} events."
 
         result_report = {
             "severity": severity,
             "summary": summary,
+            "events_total": len(events),
             "indicators": anomalies,
             "timeline": timeline,
+            "timeline_note": timeline_note,
             "recommended_actions": [
                 "Investigate anomalous client IP addresses"
                 if "login_spike" in [a["anomaly_type"] for a in anomalies]

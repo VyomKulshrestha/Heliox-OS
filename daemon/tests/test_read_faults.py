@@ -294,3 +294,31 @@ async def test_system_info_says_which_sections_it_could_not_read(monkeypatch: py
     text = await sysinfo.system_info(["memory", "disk"])
     assert "Total: 16 GB" in text and "=== Disk ===\n  Not read:" in text
     assert text.notice == "Not read: disk (the system command failed)."
+
+
+# ── log_analyze ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_log_analyze_timeline_shows_the_newest_events_and_says_how_many(tmp_path, monkeypatch) -> None:
+    import pilot.tools.forensics as forensics
+    from pilot.actions import LogAnalyzeParams
+    from pilot.agents.executor import Executor
+
+    log = tmp_path / "app.log"
+    log.write_bytes(b"x\n")
+    events = [{"timestamp": f"t{i:02}", "process": "app", "message": f"event {i}"} for i in range(40)]
+    monkeypatch.setattr(forensics, "parse_syslog_file", lambda **_kwargs: events)
+    monkeypatch.setattr(forensics, "extract_auth_events", lambda _events: [])
+    monkeypatch.setattr(forensics, "detect_spikes", lambda _events: [])
+    monkeypatch.setattr(forensics, "correlate_sessions", lambda _events: [])
+    executor = object.__new__(Executor)
+    executor._model = None
+    action = Action(action_type=ActionType.LOG_ANALYZE, parameters=LogAnalyzeParams(log_path=str(log)))
+
+    report = json.loads(await executor._exec_log_analyze(action))
+
+    assert report["timeline"][0].startswith("[t25]") and report["timeline"][-1].startswith("[t39]")
+    assert report["events_total"] == 40
+    assert report["timeline_note"] == "The timeline shows the newest 15 of 40 events."
+    assert "over 40 events" in report["summary"]
