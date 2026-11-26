@@ -17373,9 +17373,9 @@ def handle_tool(tool_name, params):
             turn = await conversation.take(command_text) if not self._interactive_request_active else None
             said = " ".join(turn.spoken) if turn is not None else ""
             if turn is None or not turn.done:
-                from pilot.conversation.layer import SECRET_NOT_USED
+                from pilot.conversation.layer import secret_not_used
 
-                said = SECRET_NOT_USED
+                said = secret_not_used(secret.text if secret is not None else command_text, typed=False)
                 await self._speak_voice_response(
                     said, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-secret:{uuid.uuid4()}"
                 )

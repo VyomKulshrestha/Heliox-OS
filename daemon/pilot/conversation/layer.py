@@ -153,6 +153,49 @@ _SOUNDS_KEPT = re.compile(r"\b(?:noted|saved|stored|kept|remembered|got it|i'?ll
 SECRET_NOT_USED = (
     "I don't use a PIN, password or code said aloud, so I left it out. Type it in yourself where it's needed."
 )
+# The services whose secret has its own place in Settings (pilot.system.connections.WHERE), by the words that name
+# them in a request. Checked in order.
+_SERVICE_WORDS = (
+    ("slack", re.compile(r"\bslack\b", re.IGNORECASE)),
+    ("discord", re.compile(r"\bdiscord\b", re.IGNORECASE)),
+    ("github", re.compile(r"\bgit ?hub\b|\bgh_|\bpull request", re.IGNORECASE)),
+    ("mail", re.compile(r"\b(?:e-?mail|mail|smtp|imap|inbox|gmail|outlook)\b", re.IGNORECASE)),
+)
+_LEFT_OUT_KIND = re.compile(r"\[left out: (?:a sentence holding )?(?:an? )?(?P<kind>[^\]]+)\]")
+
+
+def secret_not_used(words: str, *, typed: bool) -> str:
+    """What Heliox says when a request held a secret and nothing was done (the secret never goes to a model, and a
+    request whose point was the secret cannot be done without it). Worded for how it arrived: typed or said aloud.
+    When the request names a service with a place for its secret in Settings (mail, Slack, Discord, GitHub), it says
+    where; for anything else, that Heliox does not take secrets inside a request. ``words`` is the request with the
+    secret already left out; nothing of the secret is in the sentence."""
+    from pilot.system.connections import TITLE, WHERE
+
+    service = next((name for name, pattern in _SERVICE_WORDS if pattern.search(words or "")), "")
+    found = _LEFT_OUT_KIND.search(words or "")
+    kind = found.group("kind") if found else "secret"
+    kind = {"code": "code", "something private": "secret"}.get(kind, kind)
+    if not typed:
+        if service:
+            place = WHERE[service].replace(" > ", ", ")
+            return (
+                f"I don't use a PIN, password or code said aloud, so I left it out. Connect {TITLE[service]} once "
+                f"in {place}, then ask again without it."
+            )
+        return SECRET_NOT_USED
+    if service:
+        return (
+            f"I left out the {kind} you typed and did nothing: Heliox never puts a secret into a request. Connect "
+            f"{TITLE[service]} once in {WHERE[service]}, then ask again without it."
+        )
+    return (
+        f"I left out the {kind} you typed and did nothing: Heliox doesn't take passwords, keys or tokens inside a "
+        "request, because the request is read by the language model that plans it. Ask again without it, or do this "
+        "step yourself."
+    )
+
+
 # Said when the talk model's whole reply claimed work that does not exist (work_claims) and the words were not a
 # request: the truth instead, in a few words.
 NOTHING_RUNNING_SAID = "Nothing is running for that right now."
@@ -874,11 +917,13 @@ class ConversationLayer:
         """Handle one addressed utterance that no control or local handler took. None: the layer is off."""
         result = await self._take(text, source=source, sink=sink)
         if result is not None and result.withheld and not result.done:
-            # Asked to do something with a secret said aloud: nothing is handed over (the planner would get the
-            # words, and may run in the cloud). One fixed sentence says so.
+            # Asked to do something with a secret, said aloud or typed: nothing is handed over (the planner would get
+            # the words, and may run in the cloud, and a request whose point was the secret cannot be done without
+            # it). One sentence says so, worded for how it arrived and saying what to do instead.
             logger.info("A request holding a secret was not handed over")
             result.intent, result.quick, result.context = None, None, None
-            await self._say_one(result, SECRET_NOT_USED, self._clock())
+            sentence = secret_not_used(result.planner_input or text, typed=result.source == "typed")
+            await self._say_one(result, sentence, self._clock())
             result.done = True
         return result
 

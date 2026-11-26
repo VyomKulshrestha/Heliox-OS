@@ -169,6 +169,16 @@ def _card_number(run: str) -> bool:
     return 13 <= len(digits) <= 19 and _luhn(digits)
 
 
+# A web address's host and port ("http://127.0.0.1:8797/hook"), with no user name or password before an "@": its
+# digits are an address, never a secret's value. In the live run of 26 November a typed request naming a bearer token
+# had "127.0.0.1" and "8797" taken out as keys too.
+_URL_HOST = re.compile(r"\bhttps?://(?P<host>[^\s/@?#]+)(?=[/\s?#]|$)", re.IGNORECASE)
+
+
+def _in_address(text: str, span: tuple[int, int]) -> bool:
+    return any(match.start("host") <= span[0] and span[1] <= match.end("host") for match in _URL_HOST.finditer(text))
+
+
 def _values(text: str, named: bool) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
     for match in re.finditer(r"\S+", text):
@@ -177,7 +187,7 @@ def _values(text: str, named: bool) -> list[tuple[int, int]]:
             spans.append((match.start(), match.end()))
     for match in _DIGIT_RUN.finditer(text):
         digits = re.sub(r"\D", "", match.group(0))
-        if (named and len(digits) >= 3) or _card_number(match.group(0)):
+        if ((named and len(digits) >= 3) or _card_number(match.group(0))) and not _in_address(text, match.span()):
             spans.append(match.span())
     if named:
         spans += [match.span() for match in _NUMBER_WORDS.finditer(text)]
