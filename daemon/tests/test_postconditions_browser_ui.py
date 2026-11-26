@@ -337,7 +337,8 @@ async def test_click_with_no_visible_consequence_is_not_verified_and_not_a_misma
     outcome = await _check(action, output)
 
     assert (label, observed, passed) == (
-        "Action 0 (browser_click): REPORTED — no independent postcondition",
+        "Action 0 (browser_click): REPORTED — no independent postcondition "
+        "(The click landed on the element; no change was observed after it)",
         False,
         True,
     )
@@ -667,7 +668,12 @@ async def test_refresh_is_verified_by_a_new_document_and_a_mismatch_without_one(
             "MISMATCH — The element is outside the visible part of the page, so the pointer is not over it",
             True,
         ),
-        (_button(), "REPORTED — no independent postcondition", False),
+        (
+            _button(),
+            "REPORTED — no independent postcondition (The element is visible but not under the pointer now; "
+            "the pointer may have moved since)",
+            False,
+        ),
     ],
 )
 async def test_hover_reads_the_pointer_state(monkeypatch, state, label, observed) -> None:
