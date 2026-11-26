@@ -310,6 +310,128 @@ MEDIA_PATTERNS = (
 VOLUME_LEVEL = re.compile(r"^set (?:the )?volume to (\d{1,3})(?: percent| %)?$")
 
 
+# ── the net from the action catalog (pilot.conversation.catalog_words) ──
+# Reasons the net gives, which the layer reads (a read goes to the quick road only on its subject's words).
+READ_REASON = "names something Heliox can read"
+CATALOG_IMPERATIVE_REASON = "imperative from the action catalog"
+_URL_IN_TEXT = re.compile(r"\bhttps?://\S+|\bwww\.[\w-]+\.\S+", re.IGNORECASE)
+_PATH_IN_TEXT = re.compile(
+    r"\b[a-z]:\\|\\\\[\w.$-]+\\|(?<![\w.])~?/(?:[\w.-]+/)+[\w.-]*|"
+    r"\b[\w-]+\.(?:txt|md|log|csv|tsv|json|ya?ml|toml|ini|cfg|conf|py|js|ts|html?|css|xml|pdf|docx?|xlsx?|pptx?|png|"
+    r"jpe?g|gif|zip|tar|gz|bin|exe|sh|ps1|bat|sql|db)\b",
+    re.IGNORECASE,
+)
+# Questions and remarks that stay talk even when they name something an action reads or does: whether to, what Heliox
+# thinks, how something works, what a word means, what happened in the past.
+_STAYS_TALK = re.compile(
+    r"^(?:should|shall) (?:i|we)\b|^(?:do|would|did|will) you (?:think|like|know|prefer|recommend|use|remember|mind|"
+    r"believe|agree)\b|^what do you (?:think|reckon|recommend|suggest|make|know)\b|^what would you\b|"
+    r"^which (?:is|one is|would be|one would be|of them is) (?:better|best|faster|safer)\b|"
+    r"^is it (?:worth|safe|a good idea|ok|okay|bad|normal|possible|true|wise|smart)\b|^why\b|"
+    r"^how (?:do|does|did|can|could|should|would|is it|are) \w+|^(?:can|could|may|might) (?:i|we)\b|"
+    r"^do i (?:need|have to|want)\b|^what(?:'s| s| is) the (?:best|difference|point|deal|purpose|use)\b|"
+    r"^what does\b|^if\b|^when (?:should|do|did|would|will|was|is)\b|^who\b|"
+    r"^tell me (?:about|how|why|a |an |more|what you|something|if you)"
+)
+# "What is git?", "what's a checksum?": a word asked about, not this computer's state.
+_DEFINITION = re.compile(r"^what(?:'s| s| is| are) (?:a |an )?(?P<rest>.+)$")
+_NOT_A_DEFINITION = re.compile(r"^(?:the|my|on|in|this|that|your|our|using|taking|left|running|open|currently)\b")
+_HERE_AND_NOW = re.compile(
+    r"\b(?:my|mine|this (?:computer|machine|pc|laptop|mac)|right now|currently|at the moment|now|left|free|"
+    r"remaining|available|in use|used|level|running|installed|connected|today|tomorrow|open|do i have|have i got)\b|"
+    r"^how (?:much|many|full|big|large)\b"
+)
+# Asking for words that are a reading: "tell me the volume level", "give me the git status", "I'd like to know ...".
+_ASKS_FOR_A_READING = re.compile(
+    r"^(?:tell me|give me|let me know|i(?: want| need| would like|'d like) to (?:know|see|check)|i wonder|"
+    r"i (?:want|need) (?:the|my)\b|know (?:how|what|which|if|whether)\b)"
+)
+_SUBJECT_FILLER = frozenset({"the", "my", "a", "an", "please", "now", "right", "current", "currently", "and", "your"})
+# What a reading is called after its subject: "clipboard contents", "battery level", "git status please".
+_READING_WORDS = frozenset(
+    {"contents", "content", "level", "status", "usage", "info", "information", "reading", "value", "percentage"}
+)
+
+
+def _anchored(text: str, words: str) -> bool:
+    """Something an action works on: a subject of any action, a path, a file name or a web address."""
+    from pilot.conversation import catalog_words
+
+    return bool(catalog_words.names_anything(words) or _URL_IN_TEXT.search(text) or _PATH_IN_TEXT.search(text))
+
+
+def _matched_subject(words: str) -> str:
+    from pilot.conversation import catalog_words
+
+    found = catalog_words.STRONG.search(words) or catalog_words.WEAK.search(words)
+    return found.group(0) if found else ""
+
+
+def catalog_net(text: str, normalized: str, body: str, *, conversation_open: bool = False) -> Route | None:
+    """A turn the rules left as talk that names what an action reads or asks for what an action does, as the route
+    it should have had; None when it is talk after all. Pure and cheap: a few compiled patterns, no model."""
+    from pilot.conversation import catalog_words
+
+    if not body or _STAYS_TALK.match(normalized) or _STAYS_TALK.match(body):
+        return None
+    words = body.split()
+    verb = words[0]
+    if verb in catalog_words.VERBS and verb not in ACTION_VERBS and len(words) > 1:
+        target = " ".join(words[1:])
+        if not [word for word in words[1:] if word not in _EMPTY_TARGET]:
+            # "post it", "hash that": what "it" is lives in the conversation, or Heliox asks.
+            kind = TurnKind.CONVERSATION if conversation_open else TurnKind.UNCLEAR
+            return Route(kind, "the target is only a pronoun", verb=verb, target=target)
+        if verb in catalog_words.ANCHORED_VERBS and not _anchored(text, target):
+            return None
+        if conversation_open and _DEICTIC.search(" ".join(words[1:4])) and len(words) <= 6:
+            return Route(TurnKind.CONVERSATION, "refers back to the conversation", verb=verb, target=target)
+        return Route(TurnKind.ACTION, CATALOG_IMPERATIVE_REASON, verb=verb, target=target)
+    strong = bool(catalog_words.STRONG.search(normalized))
+    weak = bool(catalog_words.WEAK.search(normalized))
+    located = bool(_URL_IN_TEXT.search(text) or _PATH_IN_TEXT.search(text))
+    asks = bool(
+        _QUESTION_START.match(normalized)
+        or text.strip().endswith("?")
+        or _ASKS_FOR_A_READING.match(body)
+        or _ASKS_FOR_A_READING.match(normalized)
+    )
+    if asks and (strong or weak or located):
+        definition = _DEFINITION.match(normalized)
+        if definition and not located and not _NOT_A_DEFINITION.match(definition.group("rest")):
+            if not _HERE_AND_NOW.search(definition.group("rest")):
+                return None  # "what is git", "what's a checksum": the word, not this computer
+        if strong or located or _HERE_AND_NOW.search(normalized):
+            return Route(TurnKind.ACTION, READ_REASON, verb="check", target=_matched_subject(normalized) or body)
+        return None
+    rest = " ".join(word for word in normalized.split() if word not in _SUBJECT_FILLER)
+    if rest and len(rest.split()) <= 3:
+        reading = " ".join(word for word in rest.split() if word not in _READING_WORDS)
+        if catalog_words.STRONG.fullmatch(rest) or (reading and catalog_words.STRONG.fullmatch(reading)):
+            return Route(TurnKind.ACTION, READ_REASON, verb="check", target=rest)  # "disk space?", "my battery"
+        if catalog_words.WEAK.fullmatch(rest) or catalog_words.ANCHOR.fullmatch(rest):
+            return Route(TurnKind.UNCLEAR, "names something Heliox could act on, and asks nothing")
+    return None
+
+
+def asks_for_work(text: str, decided: Route) -> bool:
+    """Whether words routed as talk still ask for something to be done: the router read a verb in them (a pronoun or
+    a sentence referring back, for the talk model to resolve), or they start with a verb Heliox acts on. Used when
+    the talk model's reply claimed work that does not exist (pilot.conversation.work_claims): such words go to the
+    planner; a question about something that is not running does not."""
+    if decided.verb:
+        return True
+    normalized = normalize(text)
+    if _STAYS_TALK.match(normalized):
+        return False
+    words = _strip_prefix(normalized).split()
+    if not words:
+        return False
+    from pilot.conversation import catalog_words
+
+    return words[0] in ACTION_VERBS or words[0] in catalog_words.VERBS
+
+
 def _strip_prefix(normalized: str) -> str:
     match = _REQUEST_PREFIX.match(normalized)
     return normalized[match.end() :] if match else normalized
@@ -363,7 +485,8 @@ def route(text: str, *, conversation_open: bool = False) -> Route:
     if VOLUME_LEVEL.match(body):
         return Route(TurnKind.ACTION, "a volume level", verb="set", target=body[4:])
     if _TALK_VERBS.match(body):
-        return Route(TurnKind.CONVERSATION, "asks for words")
+        reading = catalog_net(text, normalized, body) if _ASKS_FOR_A_READING.match(body) else None
+        return reading or Route(TurnKind.CONVERSATION, "asks for words")
     if _LOOKUP_QUESTION.match(normalized):
         return Route(TurnKind.ACTION, "a question only the computer can answer", verb="check", target=body)
 
@@ -399,6 +522,11 @@ def route(text: str, *, conversation_open: bool = False) -> Route:
             return Route(TurnKind.CONVERSATION, "refers back to the conversation", verb=verb, target=target)
         return Route(TurnKind.ACTION, "imperative", verb=verb, target=target)
 
+    # The rules found no request. The action catalog's own words have the last say before talk (catalog_net): a
+    # question about something a read action answers, or a verb that maps to an action, is a request after all.
+    netted = catalog_net(text, normalized, body, conversation_open=conversation_open)
+    if netted is not None:
+        return netted
     if _SOCIAL.match(normalized) or _QUESTION_START.match(normalized) or text.strip().endswith("?"):
         return Route(TurnKind.CONVERSATION, "question or remark")
     if len(words) <= 1:

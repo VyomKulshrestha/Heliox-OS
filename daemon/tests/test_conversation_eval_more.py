@@ -33,8 +33,10 @@ def test_the_recorded_run_replays_identically_over_each_providers_stream_format(
     results = asyncio.run(run_conversations(CONVERSATIONS, model, extra_checks=False))
     summary = summarise(results)
     assert summary["handover"]["precision"] == 1.0 and summary["handover"]["recall"] == 1.0
-    # The recorded Haiku run's only failure: two honest "I can't..." answers in a row.
-    assert [f["check"] for f in summary["failures"]] == ["fresh_opening"]
+    # The recorded Haiku run's only failure was two honest "I can't..." answers in a row; the second was to "What did
+    # my last commit change?", which git's log answers, so it now goes to the planner (router.catalog_net) and the
+    # recorded reply is not used.
+    assert [f["check"] for f in summary["failures"]] == []
     assert len(budget.records) == len(model.calls) and all(r[-1] == "reported" for r in budget.records)
 
 
