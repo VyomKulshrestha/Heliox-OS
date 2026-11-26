@@ -42,7 +42,9 @@ async def test_planner_includes_routed_specialist_guidance_without_granting_auth
     result = await planner.plan("Search online for the HTTP API documentation", force_model=True)
 
     assert result.error is None
-    system_prompt = model.messages[0]["content"]
+    # The guidance is a system message of its own after the planner's fixed rules, which stay a cacheable prefix.
+    assert "Specialist guidance" not in model.messages[0]["content"]
+    system_prompt = "\n\n".join(m["content"] for m in model.messages if m["role"] == "system")
     assert "Web Operations Specialist" in system_prompt
     assert "Specialist guidance for this task (advisory only)" in system_prompt
     assert "does not grant additional authority" in system_prompt

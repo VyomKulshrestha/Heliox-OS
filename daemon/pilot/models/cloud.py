@@ -366,6 +366,53 @@ def claude_supports_effort(model: str) -> bool:
     return not model.lower().startswith(CLAUDE_NO_EFFORT_PREFIXES)
 
 
+# A system message carrying this key (value True) ends the stable prefix of a request: the planner's rules and action
+# catalog, the same bytes for every plan of a session. Providers with explicit prompt caching get a cache breakpoint
+# there (Anthropic, and Anthropic and Gemini models through OpenRouter); the key itself never reaches a provider.
+CACHE_PREFIX = "cache_prefix"
+# OpenRouter model families that cache only at an explicit cache_control breakpoint in a content part (OpenRouter's
+# prompt caching page, read 27 November 2026). OpenAI, DeepSeek and the others there cache a repeated prefix by
+# themselves and get the plain message.
+OPENROUTER_BREAKPOINT_PREFIXES = ("anthropic/", "google/")
+EPHEMERAL = {"type": "ephemeral"}
+
+
+def provider_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The messages without Heliox's own marker keys, for a provider that takes chat messages as they are."""
+    return [{k: v for k, v in m.items() if k != CACHE_PREFIX} for m in messages]
+
+
+def anthropic_system(messages: list[dict[str, Any]], system: str = "") -> str | list[dict[str, Any]]:
+    """The Messages API ``system`` field: one text as before, or, when a system message marks the end of the stable
+    prefix, one text block per system message with a cache breakpoint on the marked one. A prefix shorter than the
+    model's minimum is simply not cached (no error, no write charge)."""
+    marked = [m for m in messages if m.get("role") == "system" and m.get(CACHE_PREFIX)]
+    if not marked:
+        return joined_system(messages, system)
+    blocks: list[dict[str, Any]] = []
+    for m in messages:
+        if m.get("role") != "system" or not str(m.get("content") or "").strip():
+            continue
+        block: dict[str, Any] = {"type": "text", "text": str(m["content"])}
+        if m.get(CACHE_PREFIX):
+            block["cache_control"] = dict(EPHEMERAL)
+        blocks.append(block)
+    return blocks
+
+
+def openrouter_messages(model: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chat messages for OpenRouter: a marked system message becomes a text part with a cache breakpoint for the model
+    families that need one; for every other model the marker is only dropped."""
+    explicit = model.lower().startswith(OPENROUTER_BREAKPOINT_PREFIXES)
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        clean = {k: v for k, v in m.items() if k != CACHE_PREFIX}
+        if explicit and m.get(CACHE_PREFIX) and isinstance(m.get("content"), str):
+            clean["content"] = [{"type": "text", "text": m["content"], "cache_control": dict(EPHEMERAL)}]
+        out.append(clean)
+    return out
+
+
 def joined_system(messages: list[dict[str, Any]], system: str = "") -> str:
     """Every system message of a chat, in order, for a provider that takes one system text (Anthropic, Gemini).
 
@@ -620,7 +667,7 @@ class CloudClient:
         endpoint = PROVIDER_ENDPOINTS.get(provider, PROVIDER_ENDPOINTS["openai"])
         messages = []
         if isinstance(prompt, list):
-            messages = prompt
+            messages = openrouter_messages(model, prompt) if provider == "openrouter" else provider_messages(prompt)
         else:
             if system:
                 messages.append({"role": "system", "content": system})
@@ -704,9 +751,9 @@ class CloudClient:
             "anthropic-version": "2023-06-01",
         }
         messages = []
-        system_content = system
+        system_content: str | list[dict[str, Any]] = system
         if isinstance(prompt, list):
-            system_content = joined_system(prompt, system)
+            system_content = anthropic_system(prompt, system)
             for msg in prompt:
                 if msg["role"] != "system":
                     messages.append({"role": msg["role"], "content": msg["content"]})

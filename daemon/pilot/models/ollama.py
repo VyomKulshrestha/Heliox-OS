@@ -194,6 +194,11 @@ class OllamaClient:
         temperature: float = 0.1,
         stream_callback: callable | None = None,
     ) -> str:
+        from pilot.models.cloud import provider_messages
+
+        # Heliox's own marker keys stay here. (Ollama's runner can reuse the part of the last prompt that matches the
+        # start of this one, which the planner's fixed first message makes long; not measured on this machine.)
+        messages = provider_messages(messages)
         payload: dict = {
             "model": model,
             "messages": messages,
