@@ -200,9 +200,18 @@ async def test_live_sees_the_wezterm_line_as_a_terminal_line_and_catches_a_risky
     assert shell_observation(SimpleNamespace(config=server.config), "Notepad", "x") is None
 
 
-def test_no_path_of_this_computer_in_the_reader():
+@pytest.fixture
+def profile_name(monkeypatch) -> str:
+    """An invented account for this test: the reader must hold no account's name or profile folder."""
+    name = "quill-avery"
+    monkeypatch.setenv("USERNAME", name)
+    monkeypatch.setenv("USER", name)
+    return name
+
+
+def test_no_path_of_this_computer_in_the_reader(profile_name: str):
     source = Path(T.__file__).read_text(encoding="utf-8")
-    assert "marcu" not in source and "C:\\\\Users" not in source
+    assert profile_name not in source and "C:\\\\Users" not in source and "/home/" not in source
 
 
 @pytest.mark.asyncio

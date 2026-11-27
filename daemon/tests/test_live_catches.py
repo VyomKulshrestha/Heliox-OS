@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import date
 
@@ -51,10 +52,23 @@ def test_the_shipped_packs_pass_every_check():
         assert len(admitted) == len(report.rules) >= 5
 
 
-def test_the_corpus_is_ordinary_text_from_this_project_only():
+@pytest.fixture
+def profile_name(monkeypatch) -> str:
+    """An invented account for this test: the corpus must hold no account's name or profile folder."""
+    name = "quill-avery"
+    monkeypatch.setenv("USERNAME", name)
+    monkeypatch.setenv("USER", name)
+    return name
+
+
+def test_the_corpus_is_ordinary_text_from_this_project_only(profile_name: str):
     assert len(CORPUS["prose"]) >= 1500 and len(CORPUS["code"]) >= 1000 and len(CORPUS["terminal"]) >= 100
     text = catches.CORPUS.read_text(encoding="utf-8").casefold()
-    assert "@gmail" not in text and "marcu" not in text and "://" not in text
+    assert "@gmail" not in text and profile_name not in text and "://" not in text
+    # No profile folder of any account: only the placeholders the corpus uses on purpose.
+    assert not re.search(
+        r"[a-z]:\\{1,2}users\\{1,2}(?!me\b|sam\b|user\b|public\b)\w|/home/(?!me\b|sam\b|user\b)\w", text
+    )
 
 
 def test_a_good_rule_is_admitted_and_fills_its_message_from_the_match():
