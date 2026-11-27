@@ -45,6 +45,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -112,12 +113,24 @@ def processes() -> list[tuple[int, str, str, int]]:
     return found
 
 
+# The window's processes. /proc/<pid>/comm keeps 15 characters, so the web view's two helpers appear there as
+# "WebKitWebProces" and "WebKitNetworkPr": before 27 November this listing compared the full names and never saw them,
+# and "processes changed: none" said nothing about the web process.
+WINDOW_PROCESSES = ("heliox-os", "WebKitWebProcess", "WebKitNetworkProcess", "WebKitWebDriver", "tauri-driver")
+
+
+def window_process(name: str) -> str | None:
+    """The full name of one of WINDOW_PROCESSES whose /proc comm is ``name``, else None."""
+    return next((full for full in WINDOW_PROCESSES if name == full[:15]), None)
+
+
 def listing() -> dict[str, list[int]]:
     """The processes by name, as app_launch_check.aftermath compares them before and after a dropped connection."""
     found: dict[str, list[int]] = {}
     for pid, name, _, _ in processes():
-        if name in ("heliox-os", "WebKitWebProcess", "WebKitNetworkProcess", "WebKitWebDriver"):
-            found.setdefault(name.casefold(), []).append(pid)
+        full = window_process(name)
+        if full is not None and full != "tauri-driver":
+            found.setdefault(full.casefold(), []).append(pid)
     return {name: sorted(pids) for name, pids in found.items()}
 
 
@@ -276,8 +289,151 @@ SETUP_BUTTON = (
 )
 
 
+def uptime() -> float:
+    """Seconds since the system started, the clock /proc gives process start times in."""
+    try:
+        return float(Path("/proc/uptime").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return 0.0
+
+
+def stat(pid: int) -> tuple[int, float] | None:
+    """(parent pid, start time in seconds since the system started) of a process, from /proc/<pid>/stat."""
+    try:
+        rest = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return int(rest[1]), int(rest[19]) / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+Snapshot = dict[str, set[tuple[int, float]]]  # full process name -> {(pid, start time)}
+
+
+def window_snapshot() -> Snapshot:
+    """The window's processes now, each with its start time, so a new process with an old pid is still new."""
+    found: Snapshot = {}
+    for pid, name, _, _ in processes():
+        full = window_process(name)
+        started = stat(pid) if full else None
+        if full and started:
+            found.setdefault(full, set()).add((pid, started[1]))
+    return found
+
+
+class SessionWatch:
+    """While a window's session is open: the window's processes once a second, each change with the second it was
+    seen, counted from the session's start. The check's own calls can wait 30 s in the driver; this does not."""
+
+    LIMIT = 40
+
+    def __init__(self) -> None:
+        self.opened = uptime()
+        self.at_open = window_snapshot()
+        self.changes: list[str] = []
+        self.stopping = threading.Event()
+        self.thread = threading.Thread(target=self.watch, daemon=True)
+        self.thread.start()
+
+    def since(self) -> str:
+        return f"+{uptime() - self.opened:.0f} s"
+
+    def watch(self) -> None:
+        before = self.at_open
+        while not self.stopping.wait(1):
+            try:
+                now = window_snapshot()
+                for name in sorted(set(before) | set(now)):
+                    ended = sorted(pid for pid, _ in before.get(name, set()) - now.get(name, set()))
+                    started = sorted(pid for pid, _ in now.get(name, set()) - before.get(name, set()))
+                    if (ended or started) and len(self.changes) < self.LIMIT:
+                        self.changes.append(f"{self.since()} {name}: ended {ended or '-'}, started {started or '-'}")
+                before = now
+            except Exception as error:  # a diagnostic: never the reason the check stops
+                if len(self.changes) < self.LIMIT:
+                    self.changes.append(f"{self.since()} the watch could not read /proc: {error}")
+
+    def stop(self) -> None:
+        self.stopping.set()
+        self.thread.join(timeout=5)
+
+
+def tail(path: Path, lines: int, width: int = 220) -> list[str]:
+    """The last ``lines`` lines of a text file, each cut to ``width`` characters; nothing when it cannot be read."""
+    try:
+        text = path.read_bytes()[-200_000:].decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    return [line[:width] for line in text.splitlines() if line.strip()][-lines:]
+
+
+def kernel_log() -> list[str]:
+    """Kills, out-of-memory kills, segfaults and traps in the kernel's log, when the container may read it."""
+    try:
+        done = subprocess.run(["dmesg"], capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return [f"not readable: {type(error).__name__}: {error}"]
+    if done.returncode != 0:
+        return [f"not readable: {done.stderr.strip()[:200] or f'exit {done.returncode}'}"]
+    wanted = re.compile(r"Killed process|Out of memory|oom|segfault|traps:|general protection|WebKit|heliox", re.I)
+    found = [line[:220] for line in done.stdout.splitlines() if wanted.search(line)]
+    return found[-8:] or ["nothing about kills, memory or crashes"]
+
+
+def memory() -> str:
+    """Available, total and free swap memory, from /proc/meminfo."""
+    try:
+        values = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines() if ":" in line)
+    except OSError as error:
+        return f"not readable: {error}"
+    return ", ".join(f"{name} {values.get(name, '?').strip()}" for name in ("MemAvailable", "MemTotal", "SwapFree"))
+
+
+def x_windows() -> list[str]:
+    """The top-level windows on the virtual display (xwininfo, from x11-utils), the app's own named first."""
+    try:
+        done = subprocess.run(
+            ["xwininfo", "-root", "-children", "-display", ":99"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return [f"not listed: {type(error).__name__}: {error}"]
+    rows = [line.strip()[:160] for line in done.stdout.splitlines() if line.strip().startswith("0x")]
+    named = [row for row in rows if '"' in row and "(has no name)" not in row]
+    return (named or rows)[:10] or [f"none listed (exit {done.returncode})"]
+
+
+def process_tree(opened: float) -> list[str]:
+    """The window's processes and everything the app started, with parent and start time from the session's start
+    (negative: before it). Command lines are cut, and only the program and its first argument are kept."""
+    everything = processes()
+    window = {pid for pid, name, _, _ in everything if window_process(name)}
+    apps = {pid for pid, name, _, _ in everything if name == "heliox-os"}
+    rows = []
+    for pid, name, command, _ in everything:
+        started = stat(pid)
+        if not started or not (pid in window or started[0] in apps):
+            continue
+        program = " ".join(command.split()[:2])[:120]
+        rows.append(f"{pid} (parent {started[0]}) {name} started {started[1] - opened:+.0f} s: {program}")
+    return rows[:25]
+
+
+def lost_for_good(error: BaseException) -> bool:
+    """A session the driver no longer knows: every later call gets the same answer, so waiting longer is pointless."""
+    return "invalid session id" in str(error)
+
+
 class Window:
-    """The app's own window through tauri-driver and WebKitWebDriver, for as long as the ``with`` lasts."""
+    """The app's own window through tauri-driver and WebKitWebDriver, for as long as the ``with`` lasts.
+
+    When a call to the session fails for good, ``lost`` prints, once, what the app, its web process and the drivers
+    were doing (SessionWatch, process_tree and the logs). ``may_open_again`` says whether only the driver's side was
+    lost (the app's main process and every web process the session opened with still running); only then may a
+    caller ``reopen`` the window, once, before anything was pressed, and its CHECK line says so (``reopen_note``).
+    A web process that ended is what a person would see as the window going blank, so it is never retried."""
 
     def __init__(self, person: Person, binary: str, tools: str) -> None:
         from app_launch_check import Driver
@@ -285,36 +441,154 @@ class Window:
         self.person, self.binary, self.tools = person, binary, tools
         self.driver = Driver("http://127.0.0.1:4444")
         self.driver_process: subprocess.Popen | None = None
+        self.watch: SessionWatch | None = None
+        self.reported = False
+        self.reopened = ""
+        self.first_error = ""
 
     def __enter__(self):
         self.driver_process = self.person.start([f"{self.tools}/tauri-driver", "--port", "4444"], "driver.log")
         time.sleep(3)
         self.driver.start(self.binary, timeout=120)
+        self.watch = SessionWatch()
+        print(
+            "DIAG the window's session opened: "
+            + "; ".join(
+                f"{name} {sorted(pid for pid, _ in found)}" for name, found in sorted(self.watch.at_open.items())
+            ),
+            flush=True,
+        )
         return self.driver
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, kind=None, error=None, trace=None) -> None:
+        if error is not None and not self.reported:
+            self.lost(error)
         self.driver.end()
         if self.driver_process is not None:
             end([self.driver_process.pid])
+        if self.watch is not None:
+            self.watch.stop()
+
+    def failed_call(self, error: BaseException) -> None:
+        """Note the first failed call to the session, with the second it came."""
+        if not self.first_error:
+            when = self.watch.since() if self.watch else "?"
+            self.first_error = f"{when}: {type(error).__name__}: {str(error)[:200]}"
+            print(f"DIAG the first failed call to the window's session, {self.first_error}", flush=True)
+
+    def lost(self, error: BaseException) -> None:
+        """What was alive and what the logs said when the session was lost, printed once per session."""
+        if self.reported:
+            return
+        self.reported = True
+        self.failed_call(error)
+        opened = self.watch.opened if self.watch else uptime()
+        print(
+            f"DIAG session lost ({type(error).__name__}: {str(error)[:200]}); what follows is from that moment",
+            flush=True,
+        )
+        if self.watch is not None:
+            print(f"DIAG process changes since the session opened: {self.watch.changes or 'none'}", flush=True)
+        _, why = self.may_open_again()
+        print(f"DIAG the app against the session's start: {why}", flush=True)
+        for row in process_tree(opened):
+            print(f"DIAG process: {row}", flush=True)
+        print(f"DIAG windows on the display: {x_windows()}", flush=True)
+        state = "running" if self.driver_process and self.driver_process.poll() is None else "ended"
+        exit_code = self.driver_process.poll() if self.driver_process else None
+        print(f"DIAG tauri-driver: {state} (exit {exit_code})", flush=True)
+        # The app's own output goes to the driver's log: WebKitWebDriver starts it with its own standard error.
+        for line in tail(OUT / "driver.log", 15):
+            print(f"DIAG driver.log (with the app's output): {line}", flush=True)
+        for line in tail(self.person.home / ".local/state/heliox-os/pilot.log", 8):
+            print(f"DIAG daemon log: {line}", flush=True)
+        print(f"DIAG kernel log: {kernel_log()}", flush=True)
+        print(f"DIAG memory: {memory()}", flush=True)
+
+    def may_open_again(self) -> tuple[bool, str]:
+        """Whether only the driver's side was lost: the app's main process and every web process the session opened
+        with still running, the same processes (pid and start time). The reason, either way."""
+        if self.watch is None:
+            return False, "no session was opened"
+        then, now = self.watch.at_open, window_snapshot()
+        main_then, main_now = then.get("heliox-os", set()), now.get("heliox-os", set())
+        web_then, web_now = then.get("WebKitWebProcess", set()), now.get("WebKitWebProcess", set())
+        if not main_now:
+            return False, "the app's main process is gone"
+        if main_now != main_then:
+            return (
+                False,
+                f"the app's main process is not the one the session opened with ({main_then} then, {main_now} now)",
+            )
+        if web_then - web_now:
+            return False, (
+                f"the app's main process is the same, but its web process {sorted(web_then - web_now)} ended "
+                f"(web processes now: {sorted(pid for pid, _ in web_now)}): a person would see the window go blank"
+            )
+        if self.reopened:
+            return False, "the app's main process and web process are the same; the window was already opened again"
+        return True, "the app's main process and web process are the same ones the session opened with"
+
+    def reopen(self, why: str) -> None:
+        """Open the window again, once: end the session, the app and the drivers, then start them as before."""
+        print(f"DIAG the window's session was lost and {why}: opening the window once more", flush=True)
+        self.__exit__()
+        first = OUT / "driver.log"  # the next session's driver writes a new one
+        if first.exists():
+            first.replace(OUT / "driver-first-session.log")
+        end(app_pids())
+        end([pid for pid, name, _, _ in processes() if window_process(name) in ("tauri-driver", "WebKitWebDriver")])
+        time.sleep(2)
+        self.reported, self.first_error, self.reopened = False, "", why
+        RETRIES.append("the window opened again after its session was lost")
+        self.__enter__()
+
+    def reopen_note(self) -> str:
+        if not self.reopened:
+            return ""
+        return "; the window was opened a second time: its first session was lost while " + self.reopened
 
     def setup_screen_ready(self) -> str:
-        """Wait (3 min at most) for the setup button, which is enabled once the probe has answered."""
-        from app_launch_check import wait_until
-
-        def ready():
-            return self.driver.run(SETUP_BUTTON) == "ready" or None
-
-        if wait_until(ready, 180, every=2) is True:
-            return "ready"
+        """Wait (3 min at most) for the setup button, which is enabled once the probe has answered. A session the
+        driver no longer knows ends the wait at once, with the report of what was alive."""
+        deadline = time.monotonic() + 180
+        last = "not read"
+        while time.monotonic() < deadline:
+            try:
+                state = self.driver.run(SETUP_BUTTON)
+            except Exception as error:
+                self.failed_call(error)
+                last = f"unreadable: {type(error).__name__}: {error}"
+                if lost_for_good(error):
+                    self.lost(error)
+                    return last
+            else:
+                if state == "ready":
+                    return "ready"
+                last = str(state)
+            time.sleep(2)
         try:
             return str(self.driver.run(SETUP_BUTTON))
         except Exception as error:
+            self.lost(error)
             return f"unreadable: {type(error).__name__}: {error}"
+
+    def ready_or_reopened(self) -> str:
+        """setup_screen_ready, and when the session was lost with only the driver's side gone, the window opened
+        once more and the wait repeated."""
+        state = self.setup_screen_ready()
+        if state != "ready" and self.reported:
+            again, why = self.may_open_again()
+            if again:
+                self.reopen(why)
+                state = self.setup_screen_ready()
+        return state
 
     def read(self, script: str) -> str:
         try:
             return str(self.driver.run(script))
         except Exception as error:
+            self.lost(error)
             return f"unreadable: {type(error).__name__}: {error}"
 
 
@@ -325,16 +599,36 @@ TOTAL = "const t = document.querySelector('.total'); return t ? t.textContent.tr
 def offers_private_python(person: Person, binary: str, tools: str) -> None:
     """The setup screen on a system whose Python Heliox cannot use: what it offers, without pressing anything."""
     window = Window(person, binary, tools)
+
+    def offer() -> tuple[str, str, str]:
+        state = window.setup_screen_ready()
+        # Through the shared retry: a dropped driver connection here failed the 22.04 line once (f6a1f8e).
+        sentence = str(
+            once_more(window.driver, "reading the Python sentence", lambda: window.driver.run(PYTHON_SENTENCE))
+        )
+        total = str(once_more(window.driver, "reading the download total", lambda: window.driver.run(TOTAL)))
+        return state, sentence, total
+
     try:
         with window:
-            state = window.setup_screen_ready()
-            # Through the shared retry: a dropped driver connection here failed the 22.04 line once (f6a1f8e).
-            sentence = str(
-                once_more(window.driver, "reading the Python sentence", lambda: window.driver.run(PYTHON_SENTENCE))
-            )
-            total = str(once_more(window.driver, "reading the download total", lambda: window.driver.run(TOTAL)))
+            try:
+                state, sentence, total = offer()
+                first = window.first_error if window.reported else ""
+            except Exception as error:  # nothing is pressed on this screen, so opening it again changes nothing
+                window.lost(error)
+                first = f"{type(error).__name__}: {error}"
+            again, why = window.may_open_again() if first else (False, "")
+            if first and not again:
+                raise RuntimeError(f"{first}; the window was not opened again: {why}")
+            if again:
+                window.reopen(why)
+                state, sentence, total = offer()
     except Exception as error:
-        check("setup-offers-private-python", False, f"no window to read: {type(error).__name__}: {error}")
+        check(
+            "setup-offers-private-python",
+            False,
+            f"no window to read: {type(error).__name__}: {error}{window.reopen_note()}",
+        )
         return
     setup = person.home / ENVIRONMENT
     fetched = [name for name in PROGRAM_PARTS if name != "setup" and (setup / name).exists()]
@@ -355,9 +649,13 @@ def first_run_through_the_window(person: Person, binary: str, tools: str, log: D
     window = Window(person, binary, tools)
     try:
         with window as driver:
-            state = window.setup_screen_ready()
+            state = window.ready_or_reopened()  # opened again only before anything is pressed
             if state != "ready":
-                return check("first-run-setup", False, f"the setup button never became ready ({state!r})")
+                return check(
+                    "first-run-setup",
+                    False,
+                    f"the setup button never became ready ({state!r}){window.reopen_note()}",
+                )
             chosen = window.read(
                 "return [...document.querySelectorAll('.groups > li > label')].map(l =>"
                 " (l.querySelector('input').checked ? '[x] ' : '[ ] ')"
@@ -392,14 +690,16 @@ def first_run_through_the_window(person: Person, binary: str, tools: str, log: D
             # The screen can give way to the main window once it is ready: no title then, with the environment there
             # and the daemon running, is the same answer.
             finished = title == "Heliox is ready" or (title == "" and bool(daemon_pids()))
-            done = check("first-run-setup", finished and environment.exists(), detail)
+            done = check("first-run-setup", finished and environment.exists(), detail + window.reopen_note())
             if done:
                 daemon_checks(person, log)
                 if while_open is not None:  # more checks while the app that ran the setup is open
                     while_open()
             return done
     except Exception as error:
-        return check("first-run-setup", False, f"no window to drive: {type(error).__name__}: {error}")
+        return check(
+            "first-run-setup", False, f"no window to drive: {type(error).__name__}: {error}{window.reopen_note()}"
+        )
 
 
 def daemon_checks(person: Person, log: DaemonLog) -> None:

@@ -6,7 +6,8 @@
 #
 # Run as root inside a fresh ubuntu:24.04 container (the linux-package workflow starts one), never anywhere else. An
 # AppImage declares no dependencies, so only the test's own tools are installed: a virtual display, a session bus,
-# Python for the check, WebKitWebDriver, and the certificate store every desktop has. Neither curl nor wget is
+# Python for the check, WebKitWebDriver, the certificate store every desktop has, and xwininfo (x11-utils), which
+# lists the display's windows when the driver's session is lost. Neither curl nor wget is
 # installed, so first-run setup downloads uv with Python (first-run.sh, fetch). The container has no FUSE, so the AppImage runs extracted
 # (APPIMAGE_EXTRACT_AND_RUN=1), which its runtime supports and which still sets APPIMAGE. Each result is a CHECK
 # line named appimage/<check>; the exit code is the number of failed checks.
@@ -44,7 +45,7 @@ apt_install() { # apt_install <log> <seconds> <apt-get install arguments...>
     timeout "$limit" apt-get install -y -q "$@" > "$log" 2>&1
 }
 if ! apt_install /tmp/harness.log 600 --no-install-recommends xvfb dbus-x11 webkit2gtk-driver python3 \
-    ca-certificates; then
+    ca-certificates x11-utils; then
     echo "CHECK appimage/test-tools: FAIL - $(tail -5 /tmp/harness.log | tr '\n' ' ')"
     exit 1
 fi
