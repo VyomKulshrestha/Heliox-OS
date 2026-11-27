@@ -529,7 +529,8 @@ def given_values(request: str) -> tuple[str, ...]:
 
 
 def _carries(value: str, actions: Sequence[Action]) -> bool:
-    flat = " ".join(" ".join(_step_text(action).split()) for action in actions)
+    # The step text is JSON: a quote inside a value is written \" there, and the request has it bare.
+    flat = " ".join(" ".join(_step_text(action).replace('\\"', '"').split()) for action in actions)
     wanted = " ".join(unicodedata.normalize("NFC", value).replace("/", "\\").casefold().split())
     if value.isdigit():
         return re.search(rf"(?<![\d.]){value}(?![\d.])", flat) is not None
