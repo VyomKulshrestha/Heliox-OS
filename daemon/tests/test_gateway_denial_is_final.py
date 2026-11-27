@@ -252,17 +252,18 @@ def test_the_autonomous_loop_stops_at_a_denial() -> None:
     ],
 )
 def test_a_step_to_a_local_address_asks_and_the_card_says_where(url: str, where: str) -> None:
-    from pilot.agents.planner import local_address
+    from pilot.agents.planner import decide_local_flags, local_address
     from pilot.server import _approval_effect
 
     assert local_address(url) == where
     params = Planner._normalize_params(ActionType.API_REQUEST, {"method": "GET", "url": url}, url)
-    assert bool(params.get("allow_private_network")) is bool(where)
+    assert params.get("allow_private_network") is False  # off until the person's request is read
     action = Action(
         action_type=ActionType.API_REQUEST,
         target=url,
         parameters=Planner._parse_parameters(ActionType.API_REQUEST, params),
     )
+    decide_local_flags([action], f"Make an HTTP GET request to {url}")  # the person typed the address
     assert action.requires_confirmation is bool(where)
     if where:
         assert f"an address on {where}" in _approval_effect(action)

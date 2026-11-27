@@ -42,7 +42,12 @@ from pilot.models.budget_tracker import (
     current_agent_id,
     current_task_id,
 )
-from pilot.security.gateway import GATEWAY_DENIED, InvocationSource, mark_critic_already_reviewed
+from pilot.security.gateway import (
+    GATEWAY_DENIED,
+    InvocationSource,
+    denied_by_policy,
+    mark_critic_already_reviewed,
+)
 
 
 class TaskPriority(IntEnum):
@@ -717,7 +722,8 @@ class AgentOrchestrator:
                         self._circuit_breaker.record_failure()
                 if on_action_complete:
                     await on_action_complete(result)
-            if agent_failed:
+            if agent_failed or denied_by_policy(results):
+                # A specialist that raised, or a step Heliox's own rules refused: the later steps do not run.
                 for idx, action in enumerate(plan.actions):
                     if all_results[idx] is None:
                         all_results[idx] = ActionResult(
@@ -727,6 +733,8 @@ class AgentOrchestrator:
                             executed=False,
                             skip_reason="dependency_failed",
                         )
+                if cancel_event:
+                    cancel_event.set()
                 break
 
         # Fill any gaps with error results

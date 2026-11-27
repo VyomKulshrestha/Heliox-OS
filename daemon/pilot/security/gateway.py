@@ -86,6 +86,8 @@ class InvocationSource(StrEnum):
     NEURAL = "neural"
     MCP = "mcp"
     SELF_HEALING = "self_healing"
+    # A trigger's stored steps, fixed and approved when the person made the trigger (pilot.system.triggers).
+    TRIGGER_STEPS = "trigger_steps"
     # Per-specialist-agent sources — see SECURITY.md's Agent Gateway section
     # for why these were added: previously only web_agent/autonomous/voice/
     # gesture/self_healing were ever explicitly declared, so ~20 other
@@ -212,6 +214,20 @@ DEFAULT_SOURCE_PROFILES: dict[str, SourceProfile] = {
         allow_root=True,
     ),
     "autonomous": SourceProfile(
+        max_tier={
+            ActionFamily.SHELL.value: int(PermissionTier.SYSTEM_MODIFY),
+            ActionFamily.BROWSING.value: int(PermissionTier.SYSTEM_MODIFY),
+            ActionFamily.SYSTEM_CONTROL.value: int(PermissionTier.USER_WRITE),
+            ActionFamily.OTHER.value: int(PermissionTier.SYSTEM_MODIFY),
+        },
+        # A background job plans from text Heliox read: it never takes a picture of the screen. A screenshot runs in
+        # the background only as a trigger's stored step the person made ("trigger_steps").
+        deny_action_types=["browser_execute_js", "power_shutdown", "power_restart", "registry_write", "screenshot"],
+        allow_root=False,
+    ),
+    # The same ceilings for a trigger's stored steps, which the person approved when they made the trigger; a
+    # screenshot among them runs.
+    "trigger_steps": SourceProfile(
         max_tier={
             ActionFamily.SHELL.value: int(PermissionTier.SYSTEM_MODIFY),
             ActionFamily.BROWSING.value: int(PermissionTier.SYSTEM_MODIFY),
@@ -585,7 +601,11 @@ SPECIALIST_ACTION_CEILINGS: dict[str, dict[str, int]] = {
 
 
 def ceiling_reason(
-    action: Any, source: InvocationSource, profile: SourceProfile, override: TaskScopeOverride | None = None
+    action: Any,
+    source: InvocationSource,
+    profile: SourceProfile,
+    override: TaskScopeOverride | None = None,
+    allowances: dict[str, int] | None = None,
 ) -> str:
     """Why ``profile`` (the floor of ``source``, already narrowed by ``override`` when there is one) refuses ``action``;
     "" when it does not. A step is allowed when its family ceiling allows it, or when it is on its specialist's list
@@ -597,7 +617,9 @@ def ceiling_reason(
     ceiling = profile.max_tier.get(family.value, int(PermissionTier.READ_ONLY))
     if action.action_type.value in profile.deny_action_types:
         return f"{action.action_type.value} is denied for source '{source.value}' by gateway policy."
-    listed = SPECIALIST_ACTION_CEILINGS.get(source.value, {}).get(action.action_type.value)
+    listed = (SPECIALIST_ACTION_CEILINGS.get(source.value, {}) if allowances is None else allowances).get(
+        action.action_type.value
+    )
     if listed is not None and tier > ceiling and tier <= listed:
         narrowed = override is not None and override.max_tier and family.value in override.max_tier
         if not narrowed or tier <= int(override.max_tier[family.value]):  # type: ignore[union-attr, index]
@@ -647,6 +669,14 @@ class AgentGateway:
         # gets the read-only default; it never inherits the interactive profile's full access.
         return profiles.get(key) or DEFAULT_SOURCE_PROFILES.get(key) or SourceProfile()
 
+    def _allowances_for(self, source: InvocationSource) -> dict[str, int]:
+        """The built-in per-action allowances of ``source`` (SPECIALIST_ACTION_CEILINGS), only while the person has
+        saved no profile of their own for it: a saved profile is their decision and is never widened."""
+        saved = self._config.gateway.source_profiles.get(source.value)
+        if saved is not None and saved != DEFAULT_SOURCE_PROFILES.get(source.value):
+            return {}
+        return SPECIALIST_ACTION_CEILINGS.get(source.value, {})
+
     async def authorize(
         self,
         plan: ActionPlan,
@@ -671,7 +701,7 @@ class AgentGateway:
         for index, action in enumerate(plan.actions):
             family = action_family(action.action_type)
             tier = int(action.permission_tier)
-            action_reason = ceiling_reason(action, source, profile, scope_override)
+            action_reason = ceiling_reason(action, source, profile, scope_override, self._allowances_for(source))
 
             if action_reason:
                 reasons.append(action_reason)
@@ -733,10 +763,42 @@ class AgentGateway:
         found = []
         for index, (action, source) in enumerate(zip(actions, sources, strict=True)):
             profile = resolve_effective_profile(self._profile_for(source), scope_override)
-            reason = ceiling_reason(action, source, profile, scope_override)
+            reason = ceiling_reason(action, source, profile, scope_override, self._allowances_for(source))
             if reason:
                 found.append((index, reason))
         return found
+
+    async def record_preview_denials(
+        self,
+        plan_id: str,
+        actions: list[Any],
+        sources: list[InvocationSource],
+        refusals: list[tuple[int, str]],
+        scope_override: TaskScopeOverride | None = None,
+    ) -> None:
+        """Each step refused before its approval card, in the audit store, marked as the preview's decision."""
+        for index, reason in refusals:
+            action, source = actions[index], sources[index]
+            profile = resolve_effective_profile(self._profile_for(source), scope_override)
+            await self._record_decision(
+                plan_id=plan_id,
+                action_index=index,
+                action_type=action.action_type.value,
+                action_family=action_family(action.action_type).value,
+                target=action.target,
+                source=source,
+                permission_tier=PermissionTier(int(action.permission_tier)).name,
+                override_applied=scope_override is not None,
+                override_restricted=scope_override is not None and profile != self._profile_for(source),
+                decision="denied",
+                denial_reason=reason,
+                policy_snapshot={
+                    "stage": "preview_before_approval",
+                    "max_tier": profile.max_tier,
+                    "deny_action_types": profile.deny_action_types,
+                    "allow_root": profile.allow_root,
+                },
+            )
 
     async def _record_decision(
         self,

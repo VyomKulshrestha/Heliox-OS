@@ -203,13 +203,13 @@ FORENSICS & LOG ANALYSIS:
 - log_analyze — Parse and analyze system/service logs for anomalies, session correlation, failed logins, and resource spikes. Params: {{"log_path": "auth", "log_type": "auth", "query": "failed", "time_window": "24h", "llm_contextual": true}}
 
 API INTEGRATION, MESSAGING & WEBHOOKS (OpenClaw-style Hub):
-- api_request — Params: {{"method": "GET", "url": "https://api.example.com", "headers": {{}}, "body": null, "allow_private_network": false}}. Set allow_private_network=true only when the user explicitly requests a localhost/LAN endpoint; it requires approval.
+- api_request — Params: {{"method": "GET", "url": "https://api.example.com", "headers": {{}}, "body": null}}
 - api_github — Params: {{"endpoint": "/user/repos", "method": "GET", "body": null}}
 - api_send_email — Params: {{"to": "user@example.com", "subject": "Hi", "message": "Hello"}}
 - api_webhook, api_slack, api_discord — Params: {{"url": "...", "body": {{"text": "Hello"}}}} / {{"message": "Hello"}} / {{"message": "Hello"}}
 - api_github, api_send_email, api_slack and api_discord use the connections the user set in Settings (mail account, GitHub token, Slack and Discord webhooks). Never put a token, password or webhook_url in their params; if a service is not connected, the step says where to connect it.
 - api_whatsapp — Params: {{"phone": "+1234567890", "message": "Your agent update."}}
-- api_scrape — Web scraping without browser. Params: {{"url": "https://...", "selector": "h1", "extract": "text", "allow_private_network": false}}. Private-network scraping requires explicit user intent and approval.
+- api_scrape — Web scraping without browser. Params: {{"url": "https://...", "selector": "h1", "extract": "text"}}
 
 # === STANDARD SYSTEM CONTROLS ===
 
@@ -795,6 +795,33 @@ def _note_trigger_question(request: str) -> None:
     matches = engine.resolve(request)
     if len(matches) >= 2:
         engine.offer([trigger.id for trigger in matches])
+
+
+def asked_for_local_address(url: str, request: str) -> bool:
+    """Whether a step to ``url`` may reach this computer or the person's own network: its host is written as such an
+    address (``local_address``) and that same host is in the person's own request. Text from a page, a mail or a
+    file that puts a local address into a plan does not make it so."""
+    from urllib.parse import urlsplit
+
+    if not local_address(url):
+        return False
+    try:
+        host = (urlsplit(url.strip()).hostname or "").rstrip(".").lower()
+    except ValueError:
+        return False
+    return bool(host) and host in str(request or "").lower()
+
+
+def decide_local_flags(actions: list[Any], request: str) -> None:
+    """Set ``allow_private_network`` on each request and scrape step, and on each such stored step of a trigger, from
+    the person's words: on only when ``asked_for_local_address``, off in every other case, whatever the model wrote
+    (the network layer then refuses a local address)."""
+    for action in actions:
+        if action.action_type in {ActionType.API_REQUEST, ActionType.API_SCRAPE}:
+            params = action.parameters
+            params.allow_private_network = asked_for_local_address(str(getattr(params, "url", "") or ""), request)
+        elif action.action_type == ActionType.TRIGGER_CREATE:
+            decide_local_flags(list(getattr(action.parameters, "steps", None) or []), request)
 
 
 def local_address(url: str) -> str:
@@ -1771,6 +1798,13 @@ class Planner:
             return ActionPlan(error=f"Planning failed: {e}", raw_input=user_input)
 
     def _parse_response(self, raw: str, user_input: str) -> ActionPlan:
+        """Parse LLM JSON output into a validated ActionPlan; the local-address flag of each request and scrape step
+        (and of a trigger's stored steps) is then set from ``user_input``, the person's own words."""
+        plan = self._parse_model_answer(raw, user_input)
+        decide_local_flags(plan.actions, user_input)
+        return plan
+
+    def _parse_model_answer(self, raw: str, user_input: str) -> ActionPlan:
         """Parse LLM JSON output into a validated ActionPlan."""
         clean_raw = raw.strip()
         if clean_raw.startswith("```json"):
@@ -2315,10 +2349,10 @@ class Planner:
     def _normalize_params(action_type: ActionType, params: dict, target: str) -> dict:
         """Fill in missing parameters by inferring from target/context."""
         p = dict(params)
-        if action_type in {ActionType.API_REQUEST, ActionType.API_SCRAPE} and local_address(str(p.get("url") or "")):
-            # An address on this computer or the person's own network is never reached without their approval: the
-            # step says so (allow_private_network makes it SYSTEM_MODIFY, so it asks), whatever the model wrote.
-            p["allow_private_network"] = True
+        if action_type in {ActionType.API_REQUEST, ActionType.API_SCRAPE}:
+            # Never the model's to set: decided from the person's own request once the plan is read
+            # (decide_local_flags), so it starts off.
+            p["allow_private_network"] = False
 
         if action_type == ActionType.OPEN_URL:
             if "url" not in p or not p["url"]:

@@ -638,6 +638,8 @@ TRIGGER_RETELL_SECONDS = 3600.0
 # The reply is the failure sentence of the kind gateway_denied (pilot.failure_sentences); this is its fallback, for a
 # refusal with no step to name.
 GATEWAY_REFUSED_SENTENCE = "I didn't do that: my safety rules don't allow it from here. Asking again won't change it."
+# A spoken request whose steps a typed one may run after its approval card (a voice cannot approve).
+GATEWAY_SPOKEN_SENTENCE = "I can't do that from a spoken request; type it and I'll ask you first."
 
 
 def request_fault_answer(what: str, error: BaseException) -> dict[str, Any]:
@@ -856,17 +858,8 @@ def _approval_effect(action: Any) -> str:
         host = urlsplit(str(getattr(params, "url", "") or "")).hostname or "the address in this step"
         if names:
             return f"Sends a credential to {host} (the {', '.join(names)} header)."
-    if getattr(action, "action_type", None) in {ActionType.API_REQUEST, ActionType.API_SCRAPE} and getattr(
-        params, "allow_private_network", False
-    ):
-        from urllib.parse import urlsplit
-
-        from pilot.agents.planner import local_address
-
-        url = str(getattr(params, "url", "") or "")
-        host = urlsplit(url).hostname or "this address"
-        where = local_address(url) or "this computer or your own network"
-        return f"Reaches {host}, an address on {where}. Approve it only if you asked for it."
+    if getattr(action, "action_type", None) in {ActionType.API_REQUEST, ActionType.API_SCRAPE}:
+        return _local_address_line(action)
     if getattr(action, "action_type", None) == ActionType.TRIGGER_CREATE and getattr(params, "steps", None):
         from pilot.result_sentences import hidden_commands, steps_job
 
@@ -876,8 +869,42 @@ def _approval_effect(action: Any) -> str:
         commands = hidden_commands(steps)
         if commands:
             line += f" That runs this command on this computer: {'; '.join(commands)}."
+        # Each stored step that reaches an address on this computer or the person's network is named.
+        for step in params.steps:
+            reach = _local_address_line(step, each_fire=True)
+            if reach:
+                line += f" {reach}"
         return line
     return ""
+
+
+def _local_address_line(action: Any, *, each_fire: bool = False) -> str:
+    """The card's line for a request or scrape step that may reach this computer or the person's own network (its
+    allow_private_network flag, set only by pilot.agents.planner.decide_local_flags): the literal address and where
+    it is. "" for any other step."""
+    from urllib.parse import urlsplit
+
+    from pilot.actions import ActionType
+    from pilot.agents.planner import local_address
+
+    params = getattr(action, "parameters", None)
+    if getattr(action, "action_type", None) not in {ActionType.API_REQUEST, ActionType.API_SCRAPE} or not getattr(
+        params, "allow_private_network", False
+    ):
+        return ""
+    url = str(getattr(params, "url", "") or "")
+    host = urlsplit(url).hostname or url
+    where = local_address(url)
+    lead = "Each fire reaches" if each_fire else "Reaches"
+    if not where:
+        return f"{lead} {host} without the check that keeps steps away from local addresses."
+    return f"{lead} {host}, an address on {where}. Approve it only if you asked for it."
+
+
+def _effect_field(action: Any) -> dict[str, str]:
+    """``{"effect": ...}`` for a card's step: what it does on this computer (``_approval_effect``), or nothing."""
+    effect = _approval_effect(action)
+    return {"effect": effect} if effect else {}
 
 
 def _declared_check_line(action: Any) -> dict[str, str]:
@@ -4039,6 +4066,34 @@ class PilotServer:
             self._cancel_event = None
             self._active_experience_context = ExperienceContext()
 
+    def _typing_would_allow(self, plan: Any, invocation_source: Any) -> bool:
+        """A spoken request whose steps a typed request may run (after its card)."""
+        from pilot.security.gateway import InvocationSource
+
+        if invocation_source != InvocationSource.VOICE:
+            return False
+        return not self._gateway_refusals(plan, InvocationSource.INTERACTIVE, None, dry_run=False)
+
+    async def _close_refused_plan(
+        self, plan: Any, plan_id: str, invocation_source: Any, scope_override: Any, refusals: list[tuple[int, str]]
+    ) -> None:
+        """A plan refused before its card: each refusal goes into the gateway's audit, marked as the preview's, and
+        the plan's checkpoint is closed as denied, so it is never resumed."""
+        gateway = getattr(self, "_agent_gateway", None)
+        if gateway is not None:
+            sources = (
+                self._orchestrator.invocation_sources(plan)
+                if self._orchestrator is not None
+                else [invocation_source] * len(plan.actions)
+            )
+            await gateway.record_preview_denials(plan_id, list(plan.actions), sources, refusals, scope_override)
+        if self._checkpoint_store:
+            try:
+                await self._checkpoint_store.mark_approval(plan_id, "denied")
+                await self._checkpoint_store.mark_status(plan_id, "denied_by_policy")
+            except Exception:
+                logger.warning("Could not close the checkpoint of refused plan %s", plan_id, exc_info=True)
+
     def _gateway_refusals(
         self, plan: Any, invocation_source: Any, scope_override: Any, *, dry_run: bool
     ) -> list[tuple[int, str]]:
@@ -5173,17 +5228,22 @@ class PilotServer:
                     for index, reason in refusals
                 ]
                 logger.info("Plan %s refused by the gateway before any approval: %s", plan_id, refusals[0][1])
-                # One sentence for a refusal, from one place: the failure sentence of the kind gateway_denied, the
-                # same words a refusal at run time gets.
+                await self._close_refused_plan(plan, plan_id, invocation_source, scope_override, refusals)
+                # One sentence for a refusal, from one place: a spoken request that typing would allow says so;
+                # otherwise the failure sentence of the kind gateway_denied, the words a refusal at run time gets.
                 from pilot.response_contract import failure_reply as refusal_reply
 
                 refused_reply = refusal_reply(refused, None)
-                message = refused_reply.shown.strip() or GATEWAY_REFUSED_SENTENCE
+                if self._typing_would_allow(plan, invocation_source):
+                    message = spoken_refusal = GATEWAY_SPOKEN_SENTENCE
+                else:
+                    message = refused_reply.shown.strip() or GATEWAY_REFUSED_SENTENCE
+                    spoken_refusal = refused_reply.spoken.strip() or GATEWAY_REFUSED_SENTENCE
                 await _emit_task_complete(GATEWAY_DENIED, message)
                 return {
                     "status": "error",
                     "message": message,
-                    "spoken": refused_reply.spoken.strip() or GATEWAY_REFUSED_SENTENCE,
+                    "spoken": spoken_refusal,
                     "explanation": plan.explanation,
                     "results": [result.model_dump(mode="json") for result in refused],
                     "denied_kind": GATEWAY_DENIED,
@@ -12952,7 +13012,7 @@ class PilotServer:
                     self._executor.execute(
                         plan,
                         plan_id=fire_key,
-                        invocation_source=InvocationSource.AUTONOMOUS,
+                        invocation_source=InvocationSource.TRIGGER_STEPS,
                         user_confirmed=approved,
                         critic_already_reviewed=approved,
                     ),
@@ -13179,6 +13239,7 @@ class PilotServer:
                             "irreversible": plan.actions[index].is_irreversible,
                             "undo": self._undo_badge(plan.actions[index]),
                             **_declared_check_line(plan.actions[index]),
+                            **_effect_field(plan.actions[index]),
                         }
                         for index in sorted(required)
                     ],
