@@ -230,6 +230,13 @@ def kokoro_module_restored():
     # folder: every voice counts as installed unless a test gives its manager its own check.
     installed = local_tts_worker.voice_installed
     local_tts_worker.voice_installed = lambda _engine, _voice: True
+    # The power state is this computer's, not the test's: psutil answers as a desktop (no battery) unless a test
+    # gives its own. Work made ahead waits while on battery, so with a test's instant fake sleep a laptop running
+    # on battery turned make_ahead into a loop that never ended (test_voice_takeover_hums.py held a run for 50 min).
+    import psutil
+
+    real_battery = getattr(psutil, "sensors_battery", None)
+    psutil.sensors_battery = lambda: None
     local_tts_worker._configured, local_tts_worker._handover = None, None
     # The voice's store, set on the module's manager by configure_local_voice, and the fixed sentences being made
     # ahead: a later test that warms the voice (PilotServer._prewarm_voice) would otherwise start making them in its
@@ -244,6 +251,8 @@ def kokoro_module_restored():
             started[1].cancel()
     local_tts_worker._configured, local_tts_worker._handover, local_tts_worker._manager = voices
     local_tts_worker.voice_installed = installed
+    if real_battery is not None:
+        psutil.sensors_battery = real_battery
     local_tts_worker._manager.head_cache, local_tts_worker._making_ahead = store, making
 
 
