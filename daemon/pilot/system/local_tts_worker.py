@@ -477,6 +477,8 @@ def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
         except Exception as exc:
             payload = b""
             response = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+            if NO_AUDIO in str(exc):
+                response["no_audio"] = True  # this text came out silent in this voice: the worker itself is fine
         _send(response, payload)
     if lease is not None:
         lease.release()
@@ -510,6 +512,21 @@ class LocalTTSUnavailable(RuntimeError):
 
     already_logged = True
     unspoken: str = ""
+
+
+# What Kokoro and Pocket TTS say when a text comes out with no sound (pocket_tts.generate_here, kokoro_tts).
+NO_AUDIO = "produced no audio"
+
+
+class LocalTTSNoAudio(LocalTTSUnavailable):
+    """This voice made no sound for this text. The worker answered and the engine works: the piece failed, not the
+    engine. On 27 November Pocket's michael made "Hmm." with no sound above the stream's level, and that one hum, made
+    ahead, marked the whole engine unavailable for about 92 s, so three replies came in the system voice."""
+
+    def __init__(self, engine: str, voice: str, reason: str = "") -> None:
+        super().__init__(f"{engine} {voice}: {reason or NO_AUDIO}")
+        self.engine = engine
+        self.voice = voice
 
 
 # Which voice spoke a reply, and by which branch of the rule (data for the bench and the speech result; nothing is
@@ -1061,6 +1078,11 @@ HUM_SHAPE = 1  # the version of shape_hum, recorded beside a hum kept in the sto
 # 0.008 (about -64 dBFS), where its sentences peaked at 0.49 to 0.71 and alba's at 0.74 to 0.77. Played, it would be
 # half a second of nothing before the answer.
 HUM_MIN_PEAK = 0.03
+# A new voice says this before it speaks a reply (LocalTTSWorkerManager.prove_voice), waiting for its worker at most
+# PROVE_WAIT_POLLS times PROVE_POLL_SECONDS.
+PROOF_TEXT = "Okay."
+PROVE_POLL_SECONDS = 0.5
+PROVE_WAIT_POLLS = 120
 
 
 def audible(audio: Any) -> bool:
@@ -1595,6 +1617,17 @@ class LocalTTSWorkerManager:
         self.keep_loaded_seconds = keep_loaded_seconds
         self.device = device
         self.on_status: StatusCallback | None = None
+        # The voices that made sound this session, and the last one per engine: a voice that fails falls back to it.
+        self.spoke_voices: set[tuple[str, str]] = set()
+        self.good_voice: dict[str, str] = {}
+        # Voices put aside by name (engine, voice) -> why, said once: they made no sound in a test, or their files are
+        # not on the computer. The engine and its other voices go on.
+        self.put_aside: dict[tuple[str, str], str] = {}
+        self.proving: set[tuple[str, str]] = set()  # voices whose test sentence is still to be made
+        # A voice of another engine that was refused before it took over -> the engine and voice that went on.
+        self.refused_to: dict[tuple[str, str], tuple[str, str]] = {}
+        # Whether a voice's files are on the computer (voice_installed); tests give their own.
+        self.voice_installed: Callable[[str, str], bool] | None = None
         self.process: Any = None
         self.engine: str | None = None
         self.process_device: str | None = None
@@ -2135,7 +2168,10 @@ class LocalTTSWorkerManager:
         except json.JSONDecodeError:
             raise await self._fail(process, engine, "invalid response") from None
         if response.get("status") != "ok":
-            raise await self._fail(process, engine, str(response.get("error") or "unknown synthesis failure"))
+            error = str(response.get("error") or "unknown synthesis failure")
+            if response.get("no_audio") or NO_AUDIO in error:
+                raise LocalTTSNoAudio(engine, str(request.get("voice") or ""), error)
+            raise await self._fail(process, engine, error)
         if not self.loaded or self._failed_until is not None:
             if self._failed_until is not None:
                 logger.info("Local voice %s recovered", engine)
@@ -2210,11 +2246,12 @@ class LocalTTSWorkerManager:
             answer = await self._request(process, engine, request, timeout=LOAD_TIMEOUT_SECONDS, rank=rank) or {}
         piece = _piece_from_answer(text, answer) if samples else None
         if piece is None and (not output_file.is_file() or output_file.stat().st_size == 0):
-            raise await self._fail(process, engine, "the worker produced no audio")
+            raise LocalTTSNoAudio(engine, voice, "the worker produced no audio")
         done = time.monotonic()
         # This request's own start on the pipe: the manager's last start may already be the next request's.
         started = float(answer.get("_started") or self._request_started_at)
         self.synth_log.append((kind, len(text.split()), requested, started, done))
+        self.voice_spoke(engine, voice)
         took = dict(answer.get("took") or {})
         worker_at = answer.get("at") if isinstance(answer.get("at"), dict) else {}
         stamps = answer.get("_stamps") or {}
@@ -2324,8 +2361,11 @@ class LocalTTSWorkerManager:
         except asyncio.CancelledError:
             piece.stop()  # cut before the first sound: the worker stops it before its next chunk
             raise
+        if piece.received == 0 and piece.complete and not piece.cut and (not piece.error or NO_AUDIO in piece.error):
+            raise LocalTTSNoAudio(engine, voice, piece.error)  # a stream with no sound at all: the text, not the voice
         if piece.received == 0 and piece.error:
             raise await self._fail(process, engine, piece.error)
+        self.voice_spoke(engine, voice)
         if self._failed_until is not None:
             logger.info("Local voice %s recovered", engine)
             self._failed_until = None
@@ -2393,6 +2433,8 @@ class LocalTTSWorkerManager:
                 try:
                     await self._speak_sentences(engine, sentences, voice, folder, play, speech=speech)
                     progress.finished = True
+                except LocalTTSNoAudio:
+                    raise  # the voice made no sound for a sentence: the caller says it with the last voice that worked
                 except LocalTTSUnavailable:
                     self._set_reply_voice("system")  # stopped partway (a fault): the system voice says the rest
                     raise
@@ -2823,6 +2865,12 @@ class LocalTTSWorkerManager:
                         kind="ahead",
                         start_voice=False,
                     )
+                except LocalTTSNoAudio:
+                    # No sound for this piece in this voice (Pocket's michael and "Hmm."): noted, not kept, not made
+                    # again; the voice goes on making the rest.
+                    getattr(store, "mark_silent", lambda *_: None)(text, signature)
+                    logger.info("%r came out with no sound in %s %s: it is not kept", text, engine, voice)
+                    continue
                 except LocalTTSUnavailable:
                     return made
                 if keeps_short_tail(text) and not audible(piece):
@@ -2899,6 +2947,113 @@ class LocalTTSWorkerManager:
         if kept is not None:
             speech_notices.shift_timing(path, kept[0], kept[1])
 
+    # Voices, by name ---------------------------------------------------------
+
+    def voice_spoke(self, engine: str, voice: str) -> None:
+        """``voice`` made sound: it works, and it is the one to fall back to on this engine."""
+        if engine and voice:
+            self.spoke_voices.add((engine, voice))
+            self.good_voice[engine] = voice
+            self.put_aside.pop((engine, voice), None)
+            self.proving.discard((engine, voice))
+
+    def fallback_voice(self, engine: str, voice: str) -> str:
+        """The voice to speak with instead of ``voice`` on ``engine``: the last one that made sound this session, else
+        the most recent one kept in the store whose files are here; "" when there is none (the system voice then)."""
+        last = self.good_voice.get(engine, "")
+        if last and last != voice and (engine, last) not in self.put_aside:
+            return last
+        store = self.head_cache
+        installed = self.voice_installed or voice_installed
+        if store is not None:
+            for signature in getattr(store, "_voices", lambda: [])():
+                try:
+                    _version, kept_engine, kept_voice = json.loads(signature)[:3]
+                except (ValueError, TypeError):
+                    continue
+                if kept_engine == engine and kept_voice != voice and (engine, kept_voice) not in self.put_aside:
+                    with contextlib.suppress(Exception):
+                        if installed(engine, kept_voice):
+                            return str(kept_voice)
+        from pilot.system.voice_default import default_voice
+
+        usual = default_voice(engine)
+        if usual and usual != voice and (engine, usual) not in self.put_aside:
+            with contextlib.suppress(Exception):
+                if installed(engine, usual):
+                    return usual
+        return ""
+
+    async def put_voice_aside(self, engine: str, voice: str, reason: str, download_bytes: int = 0) -> None:
+        """Put ``voice`` aside by name, and say so once: replies go on in the voice that worked."""
+        said = self.record_aside(engine, voice, reason, download_bytes)
+        if said is not None:
+            await self._notify("voice_put_aside", said)
+
+    def record_aside(self, engine: str, voice: str, reason: str, download_bytes: int = 0) -> dict[str, Any] | None:
+        """Put ``voice`` aside now; what to tell the window ("voice_put_aside"), or None when it already was."""
+        if (engine, voice) in self.put_aside:
+            return None
+        self.put_aside[(engine, voice)] = reason
+        self.proving.discard((engine, voice))
+        speaking = self.fallback_voice(engine, voice) or self.refused_to.get((engine, voice), ("", ""))[1]
+        instead = (
+            f"Heliox keeps speaking with {speaking}" if speaking else "Heliox speaks with the system voice for now"
+        )
+        if reason == "missing":
+            size = "about half a megabyte" if download_bytes < 1_000_000 else f"about {round(download_bytes / 1e6)} MB"
+            message = f"The voice {voice} is not on this computer yet; it needs a download of {size}. {instead}."
+        else:
+            message = f"The voice {voice} made no sound, so {instead}."
+        logger.warning("Voice %s %s put aside (%s); %s", engine, voice, reason, instead.lower())
+        speech_trace.emit("voice put aside", engine=engine, voice=voice, reason=reason, speaking=speaking,
+                          at=time.monotonic())  # fmt: skip
+        return {"engine": engine, "voice": voice, "reason": reason, "speaking": speaking,
+                "download_bytes": int(download_bytes), "message": message}  # fmt: skip
+
+    async def prove_voice(self, engine: str, voice: str, *, polls: int = PROVE_WAIT_POLLS) -> bool:
+        """Before ``voice`` speaks a reply: its files are here and a short test sentence comes out with sound. Waits
+        for this manager's worker of ``engine`` to be loaded (at most ``polls`` waits); never starts a worker. A voice
+        whose files are missing, or that makes no sound, is put aside; True when it may speak."""
+        key = (engine, voice)
+        if key in self.spoke_voices:
+            return True
+        installed = self.voice_installed or voice_installed
+        try:
+            here = bool(installed(engine, voice))
+        except Exception:
+            here = True  # cannot tell: the engine's own load says
+        if not here:
+            await self.put_voice_aside(engine, voice, "missing", voice_download_bytes(engine, voice))
+            return False
+        self.proving.add(key)
+        try:
+            for _ in range(max(1, polls)):
+                if self.running and self.loaded and self.engine == engine:
+                    break
+                if self._failed_until is not None:
+                    return False
+                await self._sleep(PROVE_POLL_SECONDS)
+            else:
+                return False  # not loaded in time: the voice is tried on its first reply, as before
+            with tempfile.TemporaryDirectory(prefix="heliox-tts-proof-", ignore_cleanup_errors=True) as temp_dir:
+                folder = Path(temp_dir)
+                try:
+                    piece = await self._make(engine, PROOF_TEXT, voice, folder / "proof.wav", folder,
+                                             rank=PIPE_AHEAD, kind="ahead", start_voice=False)  # fmt: skip
+                except LocalTTSNoAudio:
+                    await self.put_voice_aside(engine, voice, "no sound")
+                    return False
+                except LocalTTSUnavailable:
+                    return False
+            if not audible(piece):
+                await self.put_voice_aside(engine, voice, "no sound")
+                return False
+            self.voice_spoke(engine, voice)
+            return True
+        finally:
+            self.proving.discard(key)
+
     async def _notify(self, status: str, data: dict[str, Any]) -> None:
         callback = self.on_status
         if callback is None:
@@ -2910,6 +3065,27 @@ class LocalTTSWorkerManager:
 
 
 _manager = LocalTTSWorkerManager()
+
+
+def voice_installed(engine: str, voice: str) -> bool:
+    """Whether ``voice``'s own file is on the computer: Kokoro's voice file, or Pocket's voice embedding (read from
+    the Hugging Face cache; nothing is fetched)."""
+    if engine == "kokoro_tts":
+        from pilot.system import kokoro_tts
+
+        return kokoro_tts.voice_on_disk(voice)
+    if engine == "pocket_tts":
+        from pilot.system.voice_default import pocket_voice_on_disk
+
+        return pocket_voice_on_disk(voice)
+    return True
+
+
+def voice_download_bytes(engine: str, voice: str) -> int:
+    """About what fetching ``voice``'s own file downloads (speech_models.json)."""
+    from pilot.system.voice_fetch import download_bytes
+
+    return download_bytes(engine, model_on_disk=True, voice=voice)
 
 
 def manager() -> LocalTTSWorkerManager:
@@ -2963,6 +3139,7 @@ class Handover:
     on_status: StatusCallback | None = None
     hums: asyncio.Task[int] | None = None  # the standby making its hums before it takes over
     hums_since: float = 0.0  # when it started on them (the standby's clock)
+    proof: asyncio.Task[bool] | None = None  # the standby saying its test sentence (prove_voice) before anything else
 
 
 # The standby waits at most this long for its hums before it takes over anyway (a warm card makes it wait; a reply in
@@ -3041,6 +3218,9 @@ def _begin_switch(
         return "standby"
     old = _manager
     if old.running and old.engine == engine and old.process_device == old.device:
+        if (engine, voice) not in old.spoke_voices:
+            old.proving.add((engine, voice))  # the voice that worked speaks until this one has said its test sentence
+            _spawn_task(old.prove_voice(engine, voice))
         _make_ready_soon(old, engine, voice)  # its hums first, behind any reply: the next reply has one
         return "same"  # another voice of the same engine: the worker makes any of its voices
     if not old.running or old.failing:
@@ -3049,6 +3229,9 @@ def _begin_switch(
         if not any(entry[0] == "load_ended" for entry in old.reload_log):
             return "later"  # no local voice has spoken this session: it loads at the first sign of use, as at start
         old._start_prewarm(engine, voice)
+        if (engine, voice) not in old.spoke_voices and old.good_voice.get(engine):
+            old.proving.add((engine, voice))  # the voice of this engine that worked speaks until this one is proved
+            _spawn_task(old.prove_voice(engine, voice))
         _make_ready_soon(old, engine, voice)
         return "load"
     reason = _two_voices_fit(old, engine) if from_voice else "the voice speaking now is not known"
@@ -3131,8 +3314,21 @@ def finish_handover_if_due() -> bool:
     if current is None:
         return False
     old = _manager
+    key = (current.engine, current.voice)
+    if key in current.standby.put_aside:
+        # The new voice is missing or made no sound in its test: it never takes over. The voice that worked goes on,
+        # and replies asking for the new one get it (voice_for_reply); the person was told (put_voice_aside).
+        _handover = None
+        reason = current.standby.put_aside[key]
+        old.refused_to[key] = (current.from_engine, current.from_voice)
+        said = old.record_aside(current.engine, current.voice, reason, voice_download_bytes(*key))
+        handover_log.append(("refused", current.from_engine, current.engine))
+        _spawn_task(current.standby.shutdown())
+        if said is not None:
+            _spawn_task(old._notify("voice_put_aside", said))
+        return False
     old_alive = old.running and old.engine == current.from_engine and not old.failing
-    ready = current.standby.loaded and current.standby.running and _hums_done(current)
+    ready = current.standby.loaded and current.standby.running and _proved(current) and _hums_done(current)
     if not ((ready and old.between_replies()) or not old_alive or current.standby.failing):
         return False
     _handover = None
@@ -3146,6 +3342,22 @@ def finish_handover_if_due() -> bool:
     _spawn_task(_retire(old))
     _make_ready_soon(current.standby, current.engine, current.voice)  # the rest of its fixed sentences
     return True
+
+
+def _proved(current: Handover) -> bool:
+    """The loaded standby has said its test sentence with sound (prove_voice); starts it the first time."""
+    standby = current.standby
+    if (current.engine, current.voice) in standby.spoke_voices:
+        return True
+    if current.proof is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return True
+        current.proof = loop.create_task(standby.prove_voice(current.engine, current.voice, polls=1))
+        current.proof.add_done_callback(lambda done: done.cancelled() or done.exception())
+        return False
+    return current.proof.done() and (current.engine, current.voice) in standby.spoke_voices
 
 
 def _hums_done(current: Handover) -> bool:
@@ -3199,9 +3411,29 @@ def voice_for_reply(engine: str, voice: str) -> tuple[str, str]:
     own. Never the system voice by itself: that is the caller's when neither can speak."""
     finish_handover_if_due()
     current = _handover
-    if current is None or (current.engine, current.voice) != (engine, voice):
-        return engine, voice
-    return current.from_engine, current.from_voice or voice
+    if current is not None and (current.engine, current.voice) == (engine, voice):
+        return current.from_engine, current.from_voice or voice
+    key = (engine, voice)
+    spoke = getattr(_manager, "spoke_voices", set())
+    aside = getattr(_manager, "put_aside", {})
+    proving = getattr(_manager, "proving", set())
+    refused = getattr(_manager, "refused_to", {})
+    if key in aside and refused.get(key, ("", ""))[1]:
+        return refused[key]  # refused before it took over: the engine and voice that went on
+    if engine in LOCAL_ENGINES and key not in spoke and key not in aside and hasattr(_manager, "fallback_voice"):
+        # A voice whose own file is not here (a setting from another computer, or one picked before its download)
+        # never speaks while another voice of this engine can: it is put aside and the person is told once.
+        instead = _manager.fallback_voice(engine, voice)
+        installed = _manager.voice_installed or voice_installed
+        if instead and not installed(engine, voice):
+            said = _manager.record_aside(engine, voice, "missing", voice_download_bytes(engine, voice))
+            if said is not None:
+                _spawn_task(_manager._notify("voice_put_aside", said))
+    if key in aside or key in proving:
+        instead = _manager.fallback_voice(engine, voice)
+        if instead:
+            return engine, instead
+    return engine, voice
 
 
 async def shutdown_standby() -> None:

@@ -280,7 +280,8 @@
       "files": [],
       "voice_file": {
         "repo": "kyutai/pocket-tts-without-voice-cloning",
-        "path": "languages/english_2026-10/embeddings/{voice}.safetensors"
+        "path": "languages/english/embeddings/{voice}.safetensors",
+        "revision": "4e1e0a3e611c51c0b4ed8174fc10f32a54644303"
       },
       "voice_terms_note": "Every built-in Pocket voice by name, with its source and terms (kyutai/tts-voices README; kyutai-labs/pocket-tts 4.0.1). use: allowed (CC0 or CC BY: any use), never (non-commercial), unknown (terms not established). Only allowed voices can be set, picked by a rule or brought by a face. listened: a person heard it and approved it; checked: read back by a recogniser and measured (loudness, clipping, pitch), not yet heard by a person. Allowed voices that are listened to or checked are offered in Settings. bytes: its embedding's size. A voice a person already speaks with keeps working.",
       "voice_terms": {

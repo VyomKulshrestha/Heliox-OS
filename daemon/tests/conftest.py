@@ -226,6 +226,10 @@ def kokoro_module_restored():
     # A change of voice is told from the voice configured last, and may leave a standby loading (_begin_switch): each
     # test starts as a daemon does, with neither.
     voices = (local_tts_worker._configured, local_tts_worker._handover, local_tts_worker._manager)
+    # Whether a voice's file is on the computer reads the Hugging Face cache, which under tests is an empty session
+    # folder: every voice counts as installed unless a test gives its manager its own check.
+    installed = local_tts_worker.voice_installed
+    local_tts_worker.voice_installed = lambda _engine, _voice: True
     local_tts_worker._configured, local_tts_worker._handover = None, None
     # The voice's store, set on the module's manager by configure_local_voice, and the fixed sentences being made
     # ahead: a later test that warms the voice (PilotServer._prewarm_voice) would otherwise start making them in its
@@ -239,6 +243,7 @@ def kokoro_module_restored():
         with contextlib.suppress(RuntimeError):  # its loop has closed: it can no longer run, only be dropped
             started[1].cancel()
     local_tts_worker._configured, local_tts_worker._handover, local_tts_worker._manager = voices
+    local_tts_worker.voice_installed = installed
     local_tts_worker._manager.head_cache, local_tts_worker._making_ahead = store, making
 
 

@@ -406,6 +406,12 @@
       warmingEars = "";
       return;
     }
+    if (status === "voice_put_aside") {
+      // A chosen voice that is not on the computer or made no sound in its test: the voice that worked goes on, and
+      // the bar says so once.
+      showDeviceNotice(String(payload.message ?? ""), 12000);
+      return;
+    }
     if (status === "hearing_not_ready") {
       // A sentence came before Heliox could hear: it was not taken, and the person is asked to say it again. Not
       // while the microphone has a fault: the fault message stays, since saying it again would not help.

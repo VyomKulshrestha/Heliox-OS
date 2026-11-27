@@ -206,7 +206,7 @@ def test_the_files_fetched_come_from_the_manifest():
     kokoro = voice_fetch.files_for("kokoro_tts", "am_michael", model_on_disk=True)
     assert [(f.repo, f.path) for f in kokoro] == [("hexgrad/Kokoro-82M", "voices/am_michael.pt")]
     pocket = voice_fetch.files_for("pocket_tts", "alba", model_on_disk=False)
-    assert [f.path for f in pocket] == ["languages/english_2026-10/embeddings/alba.safetensors"]
+    assert [f.path for f in pocket] == ["languages/english/embeddings/alba.safetensors"]
     assert voice_fetch.download_bytes("pocket_tts", model_on_disk=True) == 6_244_152
     asked: list[dict] = []
     voice_fetch.fetch(kokoro, download=lambda **given: asked.append(given))
@@ -343,5 +343,5 @@ async def test_michael_s_file_is_fetched_with_the_same_question_and_its_own_size
     server._between_replies = lambda: True
     await server._handle_face_voice({**MAN, "apply": "download"}, None)
     await server._face_voice_fetch_task
-    assert [f.path for f in fetched[0]] == ["languages/english_2026-10/embeddings/michael.safetensors"]
+    assert [f.path for f in fetched[0]] == ["languages/english/embeddings/michael.safetensors"]
     assert (config.voice.tts_engine, config.voice.tts_voice) == ("pocket_tts", "michael")

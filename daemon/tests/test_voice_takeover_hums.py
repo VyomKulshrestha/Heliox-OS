@@ -203,9 +203,11 @@ async def test_the_standby_takes_over_only_once_its_hums_are_made(monkeypatch):
     assert ltw._begin_switch("pocket_tts", "alba", "af_heart", make_standby=lambda: standby.manager) == "standby"
     assert ltw.finish_handover_if_due() is False  # not loaded yet
     standby.manager.process = SimpleNamespace(poll=lambda: None)
-    assert ltw.finish_handover_if_due() is False  # loaded: it starts on its hums first
+    assert ltw.finish_handover_if_due() is False  # loaded: it says its test sentence first
+    await ltw.handover().proof
+    assert ltw.finish_handover_if_due() is False  # then it starts on its hums
     await ltw.handover().hums
-    assert old.events == [] and standby.made() == ["made alba Mm.", "made alba Hmm."]
+    assert old.events == [] and standby.made() == ["made alba Okay.", "made alba Mm.", "made alba Hmm."]
     assert ltw.finish_handover_if_due() is True and ltw.manager() is standby.manager
     assert after == [("pocket_tts", "alba")]  # then the rest of its fixed sentences
     events = {event: data for event, data in seen}

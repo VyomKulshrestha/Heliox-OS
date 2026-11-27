@@ -88,6 +88,7 @@ def test_the_switch_waits_for_the_new_voice_and_for_the_reply_to_end(machine):
     _quiet(machine)
     assert ltw.finish_handover_if_due() is False  # quiet, but the new voice is still loading
     standby.loaded = True
+    standby.voice_spoke("pocket_tts", "alba")  # it said its test sentence with sound (prove_voice)
     machine.old._busy = 1  # a reply is being spoken
     assert ltw.voice_for_reply("pocket_tts", "alba") == ("kokoro_tts", "af_heart")
     machine.old._busy = 0
@@ -105,6 +106,7 @@ async def test_the_old_voice_is_released_after_the_switch(machine):
     ltw._begin_switch("pocket_tts", "alba", "af_heart", make_standby=machine.make)
     standby = machine.standbys[0]
     standby.process, standby.engine, standby.loaded = Running(), "pocket_tts", True
+    standby.voice_spoke("pocket_tts", "alba")  # it said its test sentence with sound (prove_voice)
     _quiet(machine)
     shut: list[str] = []
 

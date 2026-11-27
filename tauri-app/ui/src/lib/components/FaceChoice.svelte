@@ -73,6 +73,12 @@
   }
 
   const ready = (method: string, params: unknown) => {
+    if (method === "voice_status") {
+      // The face's voice was put aside (not on the computer, or no sound in its test): said here, where it was chosen.
+      const status = params as { status?: string; message?: string };
+      if (status.status === "voice_put_aside" && chosen !== OFF) note = status.message ?? "";
+      return;
+    }
     if (method !== "face_voice_ready") return;
     const done = params as { status?: string; voice?: string; say?: string; message?: string };
     if (done.status === "ok") {

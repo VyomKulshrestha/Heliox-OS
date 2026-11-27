@@ -1701,6 +1701,23 @@ async def _run_local_tts_worker(
     await manager().speak(engine, text, voice, output_file, play=_play_local_tts_file, wait_for_load=wait_for_load)
 
 
+async def _run_local_voice(engine: str, text: str, voice: str, output_file: str | None) -> None:
+    """Speak with a local voice. A voice that makes no sound for a sentence (LocalTTSNoAudio) is put aside by name,
+    said once in the window, and the sentence is said with the last voice of this engine that made sound; only when
+    there is none does the caller fall back to the system voice. The engine is never marked failed for it."""
+    from pilot.system.local_tts_worker import LocalTTSNoAudio, manager
+
+    try:
+        await _run_local_tts_worker(engine, text, voice, output_file)
+    except LocalTTSNoAudio as error:
+        worker = manager()
+        await worker.put_voice_aside(engine, voice, "no sound")
+        instead = worker.fallback_voice(engine, voice)
+        if not instead:
+            raise
+        await _run_local_tts_worker(engine, getattr(error, "unspoken", "") or text, instead, output_file)
+
+
 # ── Text-to-Speech ───────────────────────────────────────────────────
 
 
@@ -1830,7 +1847,7 @@ async def _speak_impl(
     local_unavailable = ""  # why the local voice did not speak it, when it did not
     if tts_engine == "kokoro_tts":
         try:
-            await _run_local_tts_worker("kokoro_tts", spoken_text, tts_voice, output_file)
+            await _run_local_voice("kokoro_tts", spoken_text, tts_voice, output_file)
             if output_file:
                 return f"Speech saved to {output_file}"
             return f"Spoken: {text[:80]}..."
@@ -1850,7 +1867,7 @@ async def _speak_impl(
             # Pocket TTS has no SAPI-style integer rate/volume knob to carry
             # the cognitive-load rate modulation above onto -- out of scope
             # for this pass, see SECURITY.md.
-            await _run_local_tts_worker("pocket_tts", spoken_text, tts_voice, output_file)
+            await _run_local_voice("pocket_tts", spoken_text, tts_voice, output_file)
             if output_file:
                 return f"Speech saved to {output_file}"
             return f"Spoken: {text[:80]}..."

@@ -149,7 +149,7 @@ def test_a_model_counts_as_on_disk_only_once_its_weights_are_there(tmp_path):
     assert not voice_default.pocket_voice_on_disk("alba", cache)
     _put(
         cache,
-        "models--kyutai--pocket-tts-without-voice-cloning/snapshots/d/languages/english/embeddings/alba.safetensors",
+        "models--kyutai--pocket-tts-without-voice-cloning/snapshots/4e1e0a3e611c51c0b4ed8174fc10f32a54644303/languages/english/embeddings/alba.safetensors",
     )
     assert voice_default.pocket_voice_on_disk("alba", cache) and not voice_default.pocket_voice_on_disk("", cache)
 

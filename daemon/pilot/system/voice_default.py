@@ -194,12 +194,20 @@ def voice_models_on_disk(cache: Path | None = None) -> frozenset[str]:
 
 
 def pocket_voice_on_disk(voice: str, cache: Path | None = None) -> bool:
-    """A Pocket TTS voice is in the Hugging Face cache, so speaking with it fetches nothing: its embedding beside the
-    model without voice cloning (languages/<language>/embeddings/<voice>.safetensors)."""
+    """A Pocket TTS voice is in the Hugging Face cache where Pocket itself reads it, so speaking with it fetches
+    nothing: speech_models.json's "voice_file" (the path and revision pocket-tts names its voice embeddings by;
+    tests/test_face_voice_download.py checks it against the installed package)."""
     cache = hf_cache_dir() if cache is None else cache
-    snapshots = cache / "models--kyutai--pocket-tts-without-voice-cloning" / "snapshots"
+    spec = VOICES.get("pocket_tts", {}).get("voice_file") or {}
+    repo = str(spec.get("repo") or "kyutai/pocket-tts-without-voice-cloning")
+    relative = str(spec.get("path") or "languages/english/embeddings/{voice}.safetensors").format(voice=voice)
+    snapshots = cache / ("models--" + repo.replace("/", "--")) / "snapshots"
+    revision = spec.get("revision")
     try:
-        return bool(voice) and snapshots.is_dir() and any(snapshots.rglob(f"{voice}.safetensors"))
+        if not voice or not snapshots.is_dir():
+            return False
+        folders = [snapshots / str(revision)] if revision else list(snapshots.iterdir())
+        return any((folder / relative).is_file() for folder in folders)
     except OSError:
         return False
 
