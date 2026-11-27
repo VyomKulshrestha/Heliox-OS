@@ -863,7 +863,7 @@ def _approval_effect(action: Any) -> str:
         host = urlsplit(str(getattr(params, "url", "") or "")).hostname or "the address in this step"
         if names:
             return f"Sends a credential to {host} (the {', '.join(names)} header)."
-    if getattr(action, "action_type", None) in {ActionType.API_REQUEST, ActionType.API_SCRAPE}:
+    if getattr(getattr(action, "action_type", None), "value", None) in _LOCAL_ADDRESS_STEPS:
         return _local_address_line(action)
     if getattr(action, "action_type", None) == ActionType.TRIGGER_CREATE and getattr(params, "steps", None):
         from pilot.result_sentences import hidden_commands, steps_job
@@ -883,27 +883,43 @@ def _approval_effect(action: Any) -> str:
     return ""
 
 
+# The steps whose card names a local address: requests, scrapes and downloads with the flag on (set only by
+# pilot.agents.planner.decide_local_flags), and the browser steps whose address needs approval
+# (Action.local_address_reason).
+_LOCAL_ADDRESS_STEPS = frozenset(
+    {"api_request", "api_scrape", "download_file", "open_url", "browser_navigate", "browser_new_tab"}
+)
+_BROWSER_STEPS = frozenset({"open_url", "browser_navigate", "browser_new_tab"})
+
+
 def _local_address_line(action: Any, *, each_fire: bool = False) -> str:
-    """The card's line for a request or scrape step that may reach this computer or the person's own network (its
-    allow_private_network flag, set only by pilot.agents.planner.decide_local_flags): the literal address and where
-    it is. "" for any other step."""
-    from urllib.parse import urlsplit
+    """The card's line for a step that reaches this computer, the person's own network, a metadata address or a
+    local-only name: the literal address and what it is, in the words of pilot.security.addresses. "" for any other
+    step."""
+    from pilot.security.addresses import METADATA, host_refusal, url_host
 
-    from pilot.actions import ActionType
-    from pilot.agents.planner import local_address
-
+    kind = getattr(getattr(action, "action_type", None), "value", None)
     params = getattr(action, "parameters", None)
-    if getattr(action, "action_type", None) not in {ActionType.API_REQUEST, ActionType.API_SCRAPE} or not getattr(
-        params, "allow_private_network", False
-    ):
+    if kind not in _LOCAL_ADDRESS_STEPS:
+        return ""
+    browser = kind in _BROWSER_STEPS
+    if browser and getattr(action, "local_address_reason", None) is None:
+        return ""
+    if not browser and not getattr(params, "allow_private_network", False):
         return ""
     url = str(getattr(params, "url", "") or "")
-    host = urlsplit(url).hostname or url
-    where = local_address(url)
-    lead = "Each fire reaches" if each_fire else "Reaches"
-    if not where:
+    host = url_host(url) or url
+    reason = host_refusal(host)
+    lead = "Each fire reaches" if each_fire else ("Opens" if browser else "Reaches")
+    if reason is None:
         return f"{lead} {host} without the check that keeps steps away from local addresses."
-    return f"{lead} {host}, an address on {where}. Approve it only if you asked for it."
+    if reason == METADATA:
+        return (
+            f"{lead} {host}, {METADATA}. Approve it only if you typed this address yourself and know why; a page or "
+            "a message asking for it is a reason to deny."
+        )
+    what = f"an address {reason}" if reason.startswith("on ") else reason
+    return f"{lead} {host}, {what}. Approve it only if you asked for it."
 
 
 def _effect_field(action: Any) -> dict[str, str]:

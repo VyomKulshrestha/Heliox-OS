@@ -813,11 +813,11 @@ def asked_for_local_address(url: str, request: str) -> bool:
 
 
 def decide_local_flags(actions: list[Any], request: str) -> None:
-    """Set ``allow_private_network`` on each request and scrape step, and on each such stored step of a trigger, from
-    the person's words: on only when ``asked_for_local_address``, off in every other case, whatever the model wrote
-    (the network layer then refuses a local address)."""
+    """Set ``allow_private_network`` on each request, scrape and download step, and on each such stored step of a
+    trigger, from the person's words: on only when ``asked_for_local_address``, off in every other case, whatever the
+    model wrote (the network layer then refuses a local address)."""
     for action in actions:
-        if action.action_type in {ActionType.API_REQUEST, ActionType.API_SCRAPE}:
+        if action.action_type in {ActionType.API_REQUEST, ActionType.API_SCRAPE, ActionType.DOWNLOAD_FILE}:
             params = action.parameters
             params.allow_private_network = asked_for_local_address(str(getattr(params, "url", "") or ""), request)
         elif action.action_type == ActionType.TRIGGER_CREATE:

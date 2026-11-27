@@ -46,6 +46,9 @@ class FailureKind(StrEnum):
     REDIRECT_LOOP = "redirect_loop"
     CERTIFICATE = "certificate"
     GATEWAY_DENIED = "gateway_denied"  # Heliox's own rules refused the step before it was sent
+    # The network layer refused an address on this computer, the local network or a metadata service that the person
+    # did not name themselves (pilot.system.outbound).
+    LOCAL_ADDRESS_REFUSED = "local_address_refused"
     NO_ELEMENT = "no_element"  # a page loaded, and nothing on it matches the selector asked for
     # Git's common endings.
     PUSH_BEHIND = "push_behind"  # the remote has commits the local branch lacks
@@ -72,6 +75,7 @@ FINAL_KINDS = frozenset(
         FailureKind.CERTIFICATE,
         FailureKind.NO_ELEMENT,
         FailureKind.GATEWAY_DENIED,
+        FailureKind.LOCAL_ADDRESS_REFUSED,
         FailureKind.PUSH_BEHIND,
         FailureKind.PUSH_PROTECTED,
         FailureKind.NOTHING_TO_COMMIT,
@@ -98,6 +102,12 @@ EARLY_WORDS: tuple[tuple[FailureKind, re.Pattern[str]], ...] = (
     ),
     (FailureKind.REDIRECT_LOOP, re.compile(r"exceeded \d+ redirects|too many redirects|redirect loop", re.I)),
     (FailureKind.GATEWAY_DENIED, re.compile(r"^\s*gateway denied\b", re.I)),
+    (
+        FailureKind.LOCAL_ADDRESS_REFUSED,
+        re.compile(
+            r"^I don't fetch from addresses on this computer or your own network|did not approve, so I did not follow it"
+        ),
+    ),
     (FailureKind.NO_ELEMENT, re.compile(r"\bno element matches the selector\b", re.I)),
     (FailureKind.NOT_CONNECTED, re.compile(r"\bis not connected\. connect it in\b", re.I)),
     (FailureKind.PUSH_PROTECTED, re.compile(r"protected branch|GH006|pre-receive hook declined", re.I)),
@@ -498,6 +508,7 @@ def _web_and_git_sentences(action: object, thing: str, error: str) -> dict[Failu
         FailureKind.REDIRECT_LOOP: f"{thing} kept sending me to another address without reaching a page, so I stopped.",
         FailureKind.CERTIFICATE: f"I didn't open {thing}: its security certificate could not be checked, so the "
         "connection could not be trusted.",
+        FailureKind.LOCAL_ADDRESS_REFUSED: _local_refusal(thing, error),
         FailureKind.GATEWAY_DENIED: f"I didn't {verb_for_gateway} {thing}: my safety rules don't allow that "
         f"from here, so {'nothing was sent' if sends else 'nothing ran'}. Asking again won't change it.",
         FailureKind.NO_ELEMENT: f"Nothing on {thing} matches {selector or 'what was asked for'}. The page loaded; "
@@ -512,6 +523,22 @@ def _web_and_git_sentences(action: object, thing: str, error: str) -> dict[Failu
         FailureKind.MERGE_CONFLICT: f"I couldn't finish that in {repo}: there is a merge conflict to resolve first.",
         FailureKind.GIT_SIGN_IN: f"I couldn't reach {remote}: it refused the sign-in. Check your Git credentials.",
     }
+
+
+def _local_refusal(thing: str, error: str) -> str:
+    """The sentence for a request the network layer refused: the address, what it is, and how the person can ask
+    for it. A redirect that left an approved local address keeps the network layer's own sentence."""
+    text = str(error or "").strip()
+    if "so I did not follow it" in text:
+        return text if text.endswith(".") else text + "."
+    found = re.search(r"\. (\S+?)(?: \(([^)]*)\))? is (.+?)\.$", text)
+    host = found.group(1) if found else (thing if thing and thing != "it" else "that address")
+    what = found.group(3) if found else "on this computer or your own network"
+    what = f"an address {what}" if what.startswith("on ") else what
+    return (
+        f"I didn't fetch {host}: it's {what}, and I fetch from those only when you ask for that address yourself. "
+        "Type the address in your request if you meant it."
+    )
 
 
 def is_final(action: object, error: str, request: str = "", *, platform: str | None = None) -> bool:
