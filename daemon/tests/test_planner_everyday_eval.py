@@ -121,8 +121,10 @@ def test_a_wrong_path_is_caught_on_either_system(home, sep):
     assert _check("a05_rename_post", [wrong_file], home=home).rules["params"] is False
 
 
-def test_an_append_must_keep_the_old_text_and_read_before_writing():
+def test_an_append_is_one_step_and_the_older_read_then_write_still_passes():
     path = WIN_HOME + "\\Desktop\\launch\\checklist.txt"
+    assert _check("a01_append_ship_it", [_step("file_write", path=path, content="ship it", append=True)]).passed
+
     read = _step("file_read", path=path)
     keep = _step("file_write", path=path, content="{PREV_OUTPUT}\nship it", use_previous_output=True)
     assert _check("a01_append_ship_it", [read, keep]).passed
@@ -199,7 +201,8 @@ def _prompt() -> str:
 
 def test_prompt_teaches_typed_text_edits_and_the_smallest_plan():
     prompt = _prompt()
-    assert 'file_write {"path": P,\n  "content": "{PREV_OUTPUT}\\nnew line"}' in prompt
+    assert '"content": "new line", "append": true}' in prompt
+    assert "adding a line to a file is that one step, with no\n  file_read before it" in prompt
     assert '"content": "new line\\n{PREV_OUTPUT}"' in prompt
     assert "the file_read must come directly before its file_write" in prompt
     assert "SMALLEST CORRECT PLAN" in prompt
@@ -213,7 +216,7 @@ def test_prompt_teaches_typed_text_edits_and_the_smallest_plan():
     assert "\u2014" not in new_rules
 
 
-def test_a_one_step_append_is_expanded_into_a_read_and_a_write_that_keep_the_file():
+def test_a_one_step_append_becomes_the_append_mode_and_a_prepend_a_read_and_a_write():
     path = "C:\\Users\\me\\todo.txt"
     raw = [
         {
@@ -223,15 +226,22 @@ def test_a_one_step_append_is_expanded_into_a_read_and_a_write_that_keep_the_fil
         }
     ]
     expanded = _expand_text_edits(raw)
-    assert [a["action_type"] for a in expanded] == ["file_read", "file_write"]
-    assert expanded[1]["parameters"]["content"] == "{PREV_OUTPUT}\nbuy milk"
-    assert expanded[1]["use_previous_output"] is True
+    assert [a["action_type"] for a in expanded] == ["file_write"]
+    assert expanded[0]["parameters"] == {"path": path, "content": "buy milk", "append": True}
+    named = _expand_text_edits([{"action_type": "file_append", "parameters": {"path": path, "content": "x"}}])
+    assert named == [
+        {"action_type": "file_write", "target": path, "parameters": {"path": path, "content": "x", "append": True}}
+    ]
 
     top = _expand_text_edits([{"action_type": "file_prepend", "parameters": {"path": path, "content": "first"}}])
     assert top[1]["parameters"]["content"] == "first\n{PREV_OUTPUT}"
 
     already_read = [{"action_type": "file_read", "parameters": {"path": path}}] + raw
     assert [a["action_type"] for a in _expand_text_edits(already_read)] == ["file_read", "file_write"]
+    top_read = [{"action_type": "file_read", "parameters": {"path": path}}] + [
+        {"action_type": "file_prepend", "parameters": {"path": path, "content": "first"}}
+    ]
+    assert [a["action_type"] for a in _expand_text_edits(top_read)] == ["file_read", "file_write"]
 
     plain = [{"action_type": "file_write", "parameters": {"path": path, "content": "whole new text"}}]
     assert _expand_text_edits(plain) == plain
@@ -254,8 +264,9 @@ def test_parsed_plan_with_append_mode_never_replaces_the_file_with_the_new_line(
     )
     plan = planner._parse_response(raw, "Add 'buy milk' to my todo file")
     assert plan.error is None
-    assert [a.action_type for a in plan.actions] == [ActionType.FILE_READ, ActionType.FILE_WRITE]
-    assert plan.actions[1].parameters.content == "{PREV_OUTPUT}\nbuy milk"
+    assert [a.action_type for a in plan.actions] == [ActionType.FILE_WRITE]
+    assert plan.actions[0].parameters.append is True
+    assert plan.actions[0].parameters.content == "buy milk"
 
 
 def _file(kind: ActionType, path: str, content: str | None = None, use_previous_output: bool = False) -> Action:

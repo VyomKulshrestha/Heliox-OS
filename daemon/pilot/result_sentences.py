@@ -168,6 +168,11 @@ def _file_read(step: Step) -> Said:
 
 def _file_write(step: Step) -> Said:
     path = step.param("path") or step.target
+    if getattr(step.p, "append", False):
+        lines = re.search(r"Appended (\d+) lines?", step.out)
+        count = int(lines.group(1)) if lines else 1
+        what = "a line" if count == 1 else f"{count} lines"
+        return _said(f"Added {what} to {_at(path)}.")
     found = re.search(r"Written (\d+) bytes", step.out)
     size = int(found.group(1)) if found else len((getattr(step.p, "content", "") or "").encode())
     return _said(f"Wrote {size_words(size)} to {_at(path)}.")
@@ -909,6 +914,9 @@ def _step_job(record: Any) -> str:
         return "tell you"
     path = str(getattr(params, "path", "") or "")
     what = name_of(path) if path else name_of(str(action.target or ""))
+    if action.action_type is ActionType.FILE_WRITE and getattr(params, "append", False):
+        added = " ".join(str(getattr(params, "content", "") or "").split())
+        return f"add {_quoted(added)} to {what}" if added else f"add a line to {what}"
     verb = action.action_type.value.replace("_", " ")
     if action.action_type is ActionType.FILE_WRITE:
         verb = "write"

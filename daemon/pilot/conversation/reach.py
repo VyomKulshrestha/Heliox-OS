@@ -38,6 +38,7 @@ DATA_HANDLERS = frozenset(
         "_undo_request",
         "_routine_request",
         "_shortcut_request",
+        "_trigger_pick_request",  # keeps the triggers just offered, and names one
         "_memory_talk_request",
         "_local_answer:ActivityTimeline",
         "_local_answer:TaskReceipts",

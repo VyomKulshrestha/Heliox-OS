@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from pilot.actions import ActionResult, ActionType, DownloadParams, FileParams
-from pilot.agents.postconditions import Outcome, mismatch, register, unobserved, verified
+from pilot.agents.postconditions import Outcome, is_precheck, mismatch, register, unobserved, verified
 from pilot.agents.unconfirmed import Kind
 
 CHUNK_BYTES = 1024 * 1024
@@ -28,6 +28,10 @@ _clock = time.monotonic
 
 _WRITTEN = re.compile(r"\(sha256 (?P<sha>[0-9a-f]{64}), (?P<size>\d+) bytes on disk\)")
 _DOWNLOAD_FACTS = re.compile(r"^\[DOWNLOAD\] (?P<json>\{.*\})$", re.MULTILINE)
+_APPENDED = re.compile(
+    r"\(appended sha256 (?P<sha>[0-9a-f]{64}), (?P<size>\d+) bytes;"
+    r" file sha256 (?P<file_sha>[0-9a-f]{64}), (?P<file_size>\d+) bytes\)"
+)
 
 # A body that is an HTML page is wrong when the file asked for is plainly something else.
 _NOT_HTML_SUFFIXES = frozenset(
@@ -133,6 +137,8 @@ async def file_has_content(result: ActionResult) -> Outcome:
     params: FileParams = result.action.parameters  # type: ignore[assignment]
     if not params.path:
         raise ValueError("File write has no path to observe")
+    if params.append:
+        return await _appended(result, params)
     p = Path(params.path)
     if not p.is_file():
         return mismatch(f"File does not exist after write: {params.path}")
@@ -155,6 +161,37 @@ async def file_has_content(result: ActionResult) -> Outcome:
             return verified("File exists with expected content")
         return mismatch(f"File content mismatch (expected {len(expected)} bytes, got {len(data)})")
     return unobserved("File exists; no content was given or recorded to compare it with", kind=Kind.COULD_NOT_LOOK)
+
+
+def _tail(path: Path, size: int) -> bytes:
+    with path.open("rb") as handle:
+        handle.seek(max(0, path.stat().st_size - size))
+        return handle.read()
+
+
+async def _appended(result: ActionResult, params: FileParams) -> Outcome:
+    """An append: the file, read again, ends with the bytes the handler added. A file that changed afterwards is said
+    as it is: still ending with the added lines (verified, with what changed), or no longer (a mismatch)."""
+    if is_precheck(result):
+        # An append always adds: a file that already ends with the line is no reason to skip it.
+        return mismatch("An append adds its lines whatever the file holds; it runs")
+    p = Path(params.path)
+    if not p.is_file():
+        return mismatch(f"File does not exist after the line was added: {params.path}")
+    recorded = _APPENDED.search(result.output or "")
+    if recorded is None:
+        return unobserved("The file is there; the append recorded nothing to compare it with", kind=Kind.COULD_NOT_LOOK)
+    size, file_size = int(recorded["size"]), int(recorded["file_size"])
+    tail = await asyncio.to_thread(_tail, p, size)
+    if hashlib.sha256(tail).hexdigest() != recorded["sha"]:
+        return mismatch(f"{p.name} no longer ends with the lines that were added: it changed after they were added")
+    now = p.stat().st_size
+    if now == file_size and await asyncio.to_thread(_sha256, p) == recorded["file_sha"]:
+        return verified(f"{p.name} ends with the {size:,} bytes that were added, and the rest is as it was")
+    return verified(
+        f"{p.name} ends with the {size:,} bytes that were added; it also changed elsewhere since"
+        f" ({now:,} bytes now, {file_size:,} just after the lines were added)"
+    )
 
 
 # ── file_copy ────────────────────────────────────────────────────────

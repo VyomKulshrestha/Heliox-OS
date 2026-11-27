@@ -485,6 +485,10 @@ class FileParams(BaseModel):
     # file_read only: the first or the last N lines instead of the whole file ("show the last lines of this log").
     head_lines: int | None = Field(default=None, ge=1, le=100_000)
     tail_lines: int | None = Field(default=None, ge=1, le=100_000)
+    # file_write only: add ``content`` as new lines at the end of the file (made when missing) instead of replacing
+    # the file. Exactly one line break separates the earlier text from the new; the file's line endings and encoding
+    # are kept (pilot.system.filesystem.file_append).
+    append: bool = False
 
     @model_validator(mode="after")
     def _one_line_limit(self) -> FileParams:

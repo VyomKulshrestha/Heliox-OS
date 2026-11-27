@@ -229,6 +229,8 @@ def kept_copy_required(action: Any) -> bool:
 
 def kept_copy_failed_sentence(action: Any) -> str:
     """What the person reads for a step stopped because the journal could not keep the earlier file."""
+    if action.action_type == ActionType.FILE_WRITE and getattr(action.parameters, "append", False):
+        return "I could not keep a copy of the earlier file, so I did not add the line to it."
     verb = "overwrite" if action.action_type == ActionType.FILE_WRITE else "replace"
     return f"I could not keep a copy of the earlier file, so I did not {verb} it."
 

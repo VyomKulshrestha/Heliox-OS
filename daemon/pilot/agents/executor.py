@@ -1705,6 +1705,10 @@ class Executor:
         if action.use_previous_output and not content:
             content = best_output
 
+        if params.append:
+            from pilot.system.filesystem import file_append
+
+            return await file_append(params.path, content)
         return await file_write(params.path, content)
 
     async def _exec_file_delete(self, action: Action) -> str:

@@ -685,6 +685,8 @@ LONG_CASES: list[tuple[ActionType, object, str, str]] = [
     (ActionType.CLIPBOARD_READ, ClipboardParams(), "", '{"token": "abc", "items": [1, 2, 3]}'),
     (ActionType.CLIPBOARD_READ, ClipboardParams(), "", "(clipboard is empty)"),
     (ActionType.FILE_DELETE, FileParams(path=NOTE), NOTE, f"There was no file at {NOTE}, so nothing was deleted"),
+    (ActionType.FILE_WRITE, FileParams(path=NOTE, content="Also renew the parking permit.", append=True), NOTE,
+     f"Appended 1 line to {NOTE} (appended sha256 {SHA}, 32 bytes; file sha256 {SHA}, 72 bytes)"),
 ]  # fmt: skip
 
 
@@ -1029,3 +1031,10 @@ def test_every_ending_speaks_plainly(source: str, sentence: str) -> None:
     assert not INTERNAL_WORDS.search(sentence), source
     # Where Heliox acted or stopped, it says so in the first person, never as "Heliox" or "it".
     assert not re.search(r"\bHeliox (?:stopped|could not|did not|failed|ran)\b", sentence), source
+
+
+def test_an_append_is_said_as_the_line_it_added() -> None:
+    """One step now, not a read and a write: "Added a line to note.txt in notes.", nothing about a check."""
+    append = _result(ActionType.FILE_WRITE, *LONG_CASES[-1][1:])
+    said = success_reply(ActionPlan(actions=[append.action]), [append], VerificationResult(passed=True), dry_run=False)
+    assert said.shown == said.spoken == "Added a line to note.txt in notes."

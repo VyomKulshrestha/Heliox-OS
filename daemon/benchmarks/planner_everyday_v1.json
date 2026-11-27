@@ -34,9 +34,9 @@
    "allow_ask": true,
    "allow_lookup": true,
    "steps": [
-    {"type": "file_read", "params": {"path": {"contains": "todo"}}},
-    {"type": "file_write", "label": "file_write keeping the old text", "params": {"path": {"contains": "todo"}, "content": {"contains": "buy milk", "has_placeholder": true}}}
-   ]
+    {"type": "file_write", "label": "file_write adding the line at the end", "params": {"path": {"contains": "todo"}, "content": {"contains": "buy milk", "has_placeholder": false}, "append": {"regex": "^true$"}}}
+   ],
+   "alternatives": [[{"type": "file_read", "params": {"path": {"contains": "todo"}}}, {"type": "file_write", "label": "file_write keeping the old text", "params": {"path": {"contains": "todo"}, "content": {"contains": "buy milk", "has_placeholder": true}}}]]
   },
   {
    "id": "g04_volume_30",
@@ -270,9 +270,9 @@
    "request": "Add a line that says ship it to checklist.txt in the launch folder on my Desktop",
    "max_steps": 2,
    "steps": [
-    {"type": "file_read", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}}},
-    {"type": "file_write", "label": "file_write keeping the old text", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}, "content": {"contains": "ship it", "has_placeholder": true, "regex": "\\}\\}?\\s*ship it\\s*$"}}}
-   ]
+    {"type": "file_write", "label": "file_write adding the line at the end", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}, "content": {"contains": "ship it", "has_placeholder": false}, "append": {"regex": "^true$"}}}
+   ],
+   "alternatives": [[{"type": "file_read", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}}}, {"type": "file_write", "label": "file_write keeping the old text", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}, "content": {"contains": "ship it", "has_placeholder": true, "regex": "\\}\\}?\\s*ship it\\s*$"}}}]]
   },
   {
    "id": "a02_prepend_call_venue",
@@ -422,9 +422,9 @@
    "max_steps": 3,
    "steps": [
     {"type": "file_copy", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}, "destination": {"path": "{home}/Documents/checklist.txt"}}},
-    {"type": "file_read", "params": {"path": {"path": "{home}/Documents/checklist.txt"}}},
-    {"type": "file_write", "label": "file_write keeping the old text", "params": {"path": {"path": "{home}/Documents/checklist.txt"}, "content": {"contains": "print badges", "has_placeholder": true}}}
-   ]
+    {"type": "file_write", "label": "file_write adding the line at the end", "params": {"path": {"path": "{home}/Documents/checklist.txt"}, "content": {"contains": "print badges", "has_placeholder": false}, "append": {"regex": "^true$"}}}
+   ],
+   "alternatives": [[{"type": "file_copy", "params": {"path": {"path": "{home}/Desktop/launch/checklist.txt"}, "destination": {"path": "{home}/Documents/checklist.txt"}}}, {"type": "file_read", "params": {"path": {"path": "{home}/Documents/checklist.txt"}}}, {"type": "file_write", "label": "file_write keeping the old text", "params": {"path": {"path": "{home}/Documents/checklist.txt"}, "content": {"contains": "print badges", "has_placeholder": true}}}]]
   },
   {
    "id": "a19_rename_and_volume",

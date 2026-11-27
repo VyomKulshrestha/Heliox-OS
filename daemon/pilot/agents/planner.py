@@ -13,6 +13,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any
@@ -171,8 +172,9 @@ REACTIVE TRIGGERS:
 - trigger_create — Params: {{"name": "alert", "trigger_type": "cpu_threshold", "condition": {{"threshold": 90}},
   "action_command": "Tell me the CPU is above 90 percent"}} / {{"name": "notes-watch", "trigger_type":
   "file_modified", "condition": {{"path": "C:\\\\path\\\\notes.txt"}}, "action_command": "Append the line 'seen a
-  change' to C:\\\\path\\\\log.txt", "steps": [{{"action_type": "file_append", "target":
-  "C:\\\\path\\\\log.txt", "parameters": {{"path": "C:\\\\path\\\\log.txt", "content": "seen a change"}}}}]}}.
+  change' to C:\\\\path\\\\log.txt", "steps": [{{"action_type": "file_write", "target":
+  "C:\\\\path\\\\log.txt", "parameters": {{"path": "C:\\\\path\\\\log.txt", "content": "seen a change",
+  "append": true}}}}]}}.
   "action_command" says in plain words what happens each time the trigger fires: never a shell line. "steps" are the
   exact steps each fire runs, written like a plan's own steps (at most 5; never a trigger or schedule step); the
   person approves them with this request, and a fire runs them and nothing else. Give "steps" whenever the job is
@@ -215,14 +217,16 @@ FILE OPERATIONS:
 - file_read — Params: {{"path": "C:\\\\path\\\\file.txt"}} / {{"path": "C:\\\\path\\\\app.log", "tail_lines": 20}} /
   {{"path": "C:\\\\path\\\\notes.txt", "head_lines": 10}}. "tail_lines" returns only the last N lines and
   "head_lines" only the first N, so "show the last lines of this log" is one file_read, never code or a shell.
-- file_write — Params: {{"path": "C:\\\\path\\\\file.txt", "content": "exact content"}}. It replaces the
-  whole file, so one file_write makes a new file or replaces all of a file's text.
-- EDITING A FILE THAT EXISTS: file_write alone would erase the old text, so never write only the new
-  text to it. To add a line at the end: file_read {{"path": P}}, then file_write {{"path": P,
-  "content": "{{PREV_OUTPUT}}\\nnew line"}} with "use_previous_output": true. To add a line at the
-  top: "content": "new line\\n{{PREV_OUTPUT}}". Heliox puts the text the file_read returned where
-  {{PREV_OUTPUT}} stands, so the file_read must come directly before its file_write. That is two
-  typed steps and the write can be undone; do not use code_execute to join the text. Only when the change needs
+- file_write — Params: {{"path": "C:\\\\path\\\\file.txt", "content": "exact content"}} / {{"path":
+  "C:\\\\path\\\\notes.txt", "content": "new line", "append": true}}. Without "append" it replaces the whole
+  file, so one file_write makes a new file or replaces all of a file's text. With "append": true it adds the content
+  as new lines at the end and makes the file when it is missing: adding a line to a file is that one step, with no
+  file_read before it.
+- EDITING A FILE THAT EXISTS: file_write without "append" would erase the old text, so never write only the new
+  text to it. To add a line at the top: file_read {{"path": P}}, then file_write {{"path": P,
+  "content": "new line\\n{{PREV_OUTPUT}}"}} with "use_previous_output": true. Heliox puts the text the
+  file_read returned where {{PREV_OUTPUT}} stands, so the file_read must come directly before its file_write.
+  Both are typed steps and can be undone; do not use code_execute to join the text. Only when the change needs
   logic (remove or change a line, sort, find and replace) put a code_execute between them that
   prints the new text from PREV_OUTPUT and touches no file, and let the file_write save it.
 - Rename a file or folder with file_move to the new name in the same folder.
@@ -650,13 +654,65 @@ def _embedded_plan_object(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _expand_text_edits(raw_actions: list[Any]) -> list[Any]:
-    """Turn an append or prepend the model wrote as one step into file_read then file_write.
+_READ_THEN_ADD = re.compile(r"^\{\{?PREV_OUTPUT\}\}?(?:\r?\n|\\n)+(?P<text>.*)$", re.DOTALL)
 
-    The catalog has no append mode: FileParams drops a "mode" key, so ``file_write`` with
-    ``"mode": "append"`` would replace the whole file with the new line. The safe typed form reads
-    the file and writes it back with the new text added around ``{PREV_OUTPUT}``.
+
+def _uses_previous(raw: Any) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    if raw.get("use_previous_output") is True:
+        return True
+    params = raw.get("parameters") if isinstance(raw.get("parameters"), dict) else {}
+    return any(isinstance(value, str) and "PREV_OUTPUT" in value for value in params.values())
+
+
+def _folded_append(previous: Any, raw: Any, following: Any) -> dict[str, Any] | None:
+    """A file_read of P directly followed by a file_write of P whose content is ``{PREV_OUTPUT}``, a line break and new
+    text (the two-step append the prompt taught until 27 November) as one append step, or None. Only when the read
+    is the whole file and no later step uses its output: the read then served the write alone."""
+    if not (isinstance(previous, dict) and isinstance(raw, dict)) or _uses_previous(following):
+        return None
+    try:
+        read, write = Planner._canonical_action_keys(previous), Planner._canonical_action_keys(raw)
+    except ValueError:
+        return None
+    if str(read.get("action_type", "")).lower() != "file_read" or str(write.get("action_type", "")).lower() != (
+        "file_write"
+    ):
+        return None
+    read_params = dict(read.get("parameters") or {})
+    params = dict(write.get("parameters") or {})
+    path = str(params.get("path") or write.get("target") or "")
+    if not path or path != str(read_params.get("path") or read.get("target") or ""):
+        return None
+    if read_params.get("head_lines") or read_params.get("tail_lines") or params.get("append") is True:
+        return None
+    found = _READ_THEN_ADD.match(str(params.get("content") or ""))
+    if found is None or "PREV_OUTPUT" in found["text"] or not found["text"].strip():
+        return None
+    text = found["text"].replace("\\n", "\n")
+    return {"action_type": "file_write", "target": path, "parameters": {"path": path, "content": text, "append": True}}
+
+
+def _expand_text_edits(raw_actions: list[Any]) -> list[Any]:
+    """Appends as one ``file_write`` with ``"append": true``; prepends as file_read then file_write.
+
+    An append the model wrote as its own step (file_append, or file_write with "mode": "append") becomes the append
+    mode, which makes a missing file and adds exactly one line break. A file_read followed by a file_write of the same
+    file around ``{PREV_OUTPUT}`` that only adds text at the end (the older two-step form, which every model still
+    writes now and then) is folded into the same one step: it needs the file to exist, its read is reported as
+    changed by the write, and it left a blank line before the new one. A prepend keeps the read and the write.
     """
+    folded: list[Any] = []
+    for index, raw in enumerate(raw_actions):
+        following = raw_actions[index + 1] if index + 1 < len(raw_actions) else None
+        one = _folded_append(folded[-1] if folded else None, raw, following)
+        if one is not None:
+            folded[-1] = one
+            logger.info("Plan: folded a file_read then file_write of %s into one append step", one["target"])
+            continue
+        folded.append(raw)
+    raw_actions = folded
     expanded: list[Any] = []
     for raw in raw_actions:
         if not isinstance(raw, dict):
@@ -681,7 +737,10 @@ def _expand_text_edits(raw_actions: list[Any]) -> list[Any]:
         path = str(params.get("path") or action.get("target") or "")
         text = str(params.get("content") or params.get("text") or "")
         if not path or _PLACEHOLDER_MARK in text:
-            expanded.append(raw)
+            if append and not prepend and path and kind != "file_write":
+                expanded.append({**action, "action_type": "file_write", "parameters": {**params, "append": True}})
+            else:
+                expanded.append(raw)
             continue
         previous = expanded[-1] if expanded else None
         already_read = (
@@ -689,9 +748,20 @@ def _expand_text_edits(raw_actions: list[Any]) -> list[Any]:
             and str(previous.get("action_type", "")).lower() == "file_read"
             and str((previous.get("parameters") or {}).get("path") or previous.get("target") or "") == path
         )
+        if append and not prepend:
+            # A read the model wrote before it stays: nothing says it was not asked for (a fold above takes the read
+            # whose output only fed the write).
+            expanded.append(
+                {
+                    "action_type": "file_write",
+                    "target": path,
+                    "parameters": {"path": path, "content": text, "append": True},
+                }
+            )
+            continue
         if not already_read:
             expanded.append({"action_type": "file_read", "target": path, "parameters": {"path": path}})
-        content = f"{text}\n{_PLACEHOLDER_MARK}" if prepend else f"{_PLACEHOLDER_MARK}\n{text}"
+        content = f"{text}\n{_PLACEHOLDER_MARK}"
         expanded.append(
             {
                 "action_type": "file_write",
@@ -700,13 +770,36 @@ def _expand_text_edits(raw_actions: list[Any]) -> list[Any]:
                 "use_previous_output": True,
             }
         )
-        logger.info("Plan: expanded a one-step %s of %s into file_read then file_write", kind, path)
+        logger.info("Plan: expanded a one-step prepend (%s) of %s into file_read then file_write", kind, path)
     return expanded
+
+
+def _trigger_ids_to_delete(request: str) -> list[str] | None:
+    from pilot.system.triggers import ids_to_delete
+
+    return ids_to_delete(request)
+
+
+_DELETE_WORDS = re.compile(r"\b(delete|remove|stop|cancel|drop|get rid of)\b", re.IGNORECASE)
+_TRIGGER_WORDS = re.compile(r"\b(triggers?|watch(?:ing|er|ers)?)\b", re.IGNORECASE)
+
+
+def _note_trigger_question(request: str) -> None:
+    """The model answered a request to delete a trigger with a question and no step ("Which one should I delete?"):
+    the triggers the request matches are remembered as offered, so "delete both of them" next is read in code."""
+    if not (_DELETE_WORDS.search(request) and _TRIGGER_WORDS.search(request)):
+        return
+    from pilot.system.triggers import get_engine
+
+    engine = get_engine()
+    matches = engine.resolve(request)
+    if len(matches) >= 2:
+        engine.offer([trigger.id for trigger in matches])
 
 
 def _trigger_steps(raw_steps: list[Any]) -> list[Action]:
     """A trigger's fixed steps, read the way a plan's own steps are: the same names, aliases and fixes (an append
-    becomes a read then a write, so a fire never replaces the file with one line). Raises ValueError for a step that
+    becomes one append step, so a fire never replaces the file with one line and works on a file not made yet). Raises ValueError for a step that
     is not an action, so the plan is made again instead of storing a trigger whose fire cannot run."""
     steps: list[Action] = []
     for raw in _expand_text_edits(list(raw_steps)):
@@ -1339,6 +1432,22 @@ class Planner:
         failed when this call is a repair round (``error_context`` says what went wrong); the repair is then held to
         that plan's own targets (pilot.agents.request_match.check_repair).
         """
+        picked_ids = None if error_context else _trigger_ids_to_delete(user_input)
+        if picked_ids:
+            # A pick from the triggers Heliox just offered, written out by id (pilot.system.triggers.pick_request):
+            # the plan is those deletes, made in code.
+            return ActionPlan(
+                actions=[
+                    Action(
+                        action_type=ActionType.TRIGGER_DELETE,
+                        target=trigger_id,
+                        parameters=TriggerParams(trigger_id=trigger_id),
+                    )
+                    for trigger_id in picked_ids
+                ],
+                explanation="Delete the triggers you picked.",
+                raw_input=user_input,
+            )
         try:
             # Conversation uses the configured model for the actual wording,
             # while this narrow classifier guarantees that a greeting or thanks
@@ -1513,6 +1622,8 @@ class Planner:
                 last_raw_response = raw_response
 
                 result = self._parse_response(raw_response, user_input)
+                if result.error is None and not result.actions:
+                    _note_trigger_question(user_input)
 
                 if (
                     result.error is None

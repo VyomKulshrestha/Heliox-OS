@@ -7,6 +7,7 @@ Cross-platform with Windows-aware path handling.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import hashlib
 import logging
 import os
@@ -80,6 +81,71 @@ async def file_write(path: str, content: str) -> str:
     await asyncio.to_thread(p.write_bytes, data)
     return (
         f"Written {len(content)} bytes to {path} (sha256 {hashlib.sha256(data).hexdigest()}, {len(data)} bytes on disk)"
+    )
+
+
+_BOMS = (
+    (codecs.BOM_UTF8, "utf-8"),
+    (codecs.BOM_UTF16_LE, "utf-16-le"),
+    (codecs.BOM_UTF16_BE, "utf-16-be"),
+)
+
+
+def appended_bytes(existing: bytes, text: str, *, name: str = "the file") -> bytes:
+    """The bytes an append of ``text`` adds after ``existing``: the text as whole lines in the file's own encoding
+    (UTF-8, or UTF-16 after its byte-order mark) and line endings (the platform's for a file without any), with
+    exactly one line break between the earlier text and the new, and one after it. Raises ValueError."""
+    encoding, body = "utf-8", existing
+    written_as = ""
+    for bom, codec in _BOMS:
+        if existing.startswith(bom):
+            encoding, body = codec, existing[len(bom) :]
+            break
+    try:
+        earlier = body.decode(encoding)
+    except UnicodeDecodeError:
+        if not text.isascii():
+            raise ValueError(f"{name} is not UTF-8 text, so a line with other characters was not added to it") from None
+        earlier = body.decode("latin-1")  # 8-bit text: plain ASCII lines are the same bytes in it
+        written_as = "ascii"
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    if not lines.strip():
+        raise ValueError(f"There was no text to add to {name}")
+    ending = "\r\n" if "\r\n" in earlier else "\n" if "\n" in earlier else os.linesep
+    added = lines.replace("\n", ending) + ending
+    if earlier and not earlier.endswith(("\n", "\r")):
+        added = ending + added
+    return added.encode(written_as or encoding)
+
+
+async def file_append(path: str, content: str) -> str:
+    """Add ``content`` as new lines at the end of a file, making the file (and its folders) when it is missing.
+
+    The result records the sha256 and length of the added bytes and of the whole file just after, so the
+    post-condition check can read the file again and see that it ends with them.
+    """
+    p = Path(path)
+    if p.is_dir():
+        raise IsADirectoryError(f"{path} is a folder, so no line was added to it")
+
+    def _append() -> tuple[bool, bytes, bytes]:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        created = not p.exists()
+        existing = b"" if created else p.read_bytes()
+        added = appended_bytes(existing, content, name=p.name)
+        with p.open("ab") as handle:
+            handle.write(added)
+        return created, existing, added
+
+    created, existing, added = await asyncio.to_thread(_append)
+    whole = existing + added
+    count = len([line for line in content.strip("\r\n").splitlines()]) or 1
+    lines = "1 line" if count == 1 else f"{count} lines"
+    return (
+        f"Appended {lines} to {path}"
+        f" (appended sha256 {hashlib.sha256(added).hexdigest()}, {len(added)} bytes;"
+        f" file sha256 {hashlib.sha256(whole).hexdigest()}, {len(whole)} bytes)"
+        + ("; the file was new" if created else "")
     )
 
 

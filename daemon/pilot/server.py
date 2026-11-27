@@ -8535,7 +8535,16 @@ class PilotServer:
             if envelope is not None:
                 request = str(envelope["receipt"]["request"])
                 return request, f'Again: "{request}"'
-        return None
+        from pilot.system.triggers import pick_request
+
+        # "Delete both of them" after Heliox asked which trigger: the triggers it listed, by id, decided in code.
+        return pick_request(text)
+
+    async def _trigger_pick_request(self, text: str) -> str | None:
+        """ "Neither" (or "keep them") after Heliox asked which trigger to delete: nothing is deleted."""
+        from pilot.system.triggers import kept_sentence
+
+        return kept_sentence(text)
 
     async def _routine_request(self, text: str) -> str | None:
         """ "Do that every day at 9": propose a routine made from the last task. Creating it needs a click."""
@@ -8616,6 +8625,7 @@ class PilotServer:
             self._undo_request,
             self._routine_request,
             self._shortcut_request,
+            self._trigger_pick_request,
             self._memory_talk_request,
         )
 

@@ -303,6 +303,91 @@ def named_in(request: str) -> Named:
     )
 
 
+# What a reply that picks from a list Heliox just offered may hold besides the pick: "delete both of them", "yes, the
+# first one", "just the second". A word outside these means the reply is about something else ("delete all my notes").
+_PICK_WORDS = frozenset(
+    [
+        "delete",
+        "remove",
+        "drop",
+        "stop",
+        "cancel",
+        "get",
+        "rid",
+        "of",
+        "both",
+        "all",
+        "every",
+        "each",
+        "them",
+        "they",
+        "those",
+        "these",
+        "the",
+        "one",
+        "ones",
+        "of",
+        "and",
+        "just",
+        "only",
+        "please",
+        "yes",
+        "ok",
+        "okay",
+        "sure",
+        "keep",
+        "neither",
+        "none",
+        "no",
+        "nor",
+        "either",
+        "first",
+        "second",
+        "third",
+        "fourth",
+        "fifth",
+        "last",
+        "two",
+        "three",
+        "trigger",
+        "triggers",
+        "watcher",
+        "watchers",
+        "too",
+        "as",
+        "well",
+    ]
+)
+_ORDINALS = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4}
+
+
+def picked_from(request: str, count: int) -> list[int] | None:
+    """Which of ``count`` things Heliox just listed (in the order it listed them) a short reply picks: their indexes,
+    [] for "neither" or "none", None when the reply is not a pick (it names something, or says more than a pick).
+    "Both" picks two only when two were offered; "all of them" every one; "the first", "the second", "the last" one."""
+    words = re.findall(r"[a-z]+", unicodedata.normalize("NFKC", str(request or "")).casefold())
+    if not words or count <= 0 or any(word not in _PICK_WORDS for word in words):
+        return None
+    named = named_in(request)
+    if named.absolute or named.relative or named.names or named.quoted:
+        return None
+    present = set(words)
+    if present & {"neither", "none", "nor"} or (
+        present <= {"no", "keep", "both", "them", "all", "of", "ok", "okay"} and present & {"no", "keep"}
+    ):
+        return []
+    if "both" in present:
+        return [0, 1] if count == 2 else None
+    if present & {"all", "every", "each"}:
+        return list(range(count))
+    picked = {_ORDINALS[word] for word in present if word in _ORDINALS}
+    if "last" in present:
+        picked.add(count - 1)
+    if not picked or any(index >= count for index in picked):
+        return None
+    return sorted(picked)
+
+
 def resolved(named: Named, earlier: Sequence[str]) -> Named:
     """``named`` with the targets "it", "that one" or "again" point at, for a request that names none itself: every
     target named in ``earlier`` (the conversation just before the request and the last request with its reply)."""

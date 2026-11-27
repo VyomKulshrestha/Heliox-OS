@@ -492,6 +492,9 @@ def read_trigger_store(path: Path) -> dict[str, Any] | None:
     return data
 
 
+OFFER_SECONDS = 600.0  # a pick ("both of them") refers to a list Heliox gave at most this long ago
+
+
 class TriggerEngine:
     """Manages and evaluates reactive triggers in the background.
 
@@ -510,6 +513,24 @@ class TriggerEngine:
         self._fire_callback: Callable[[Trigger], Coroutine[Any, Any, None]] | None = None
         self._callback_tasks: set[asyncio.Task[None]] = set()
         self._file_cache: dict[str, dict[str, float]] = {}  # path -> {file: mtime}
+        # The triggers the last "which one?" listed, in that order, and when (time.monotonic): the next reply may pick
+        # from them ("both of them", "the first one"). Kept in memory only: a reply after a restart is not a pick.
+        self._offer: list[str] = []
+        self._offer_at = 0.0
+
+    def offer(self, trigger_ids: list[str]) -> None:
+        """Remember the triggers a question just listed, so "both of them" in the next reply means these."""
+        self._offer = [trigger_id for trigger_id in trigger_ids if trigger_id in self._triggers]
+        self._offer_at = time.monotonic()
+
+    def offered(self, max_age: float = OFFER_SECONDS) -> list[Trigger]:
+        """The triggers last offered that still exist, in the order they were listed; [] once too old."""
+        if not self._offer or time.monotonic() - self._offer_at > max_age:
+            return []
+        return [self._triggers[trigger_id] for trigger_id in self._offer if trigger_id in self._triggers]
+
+    def clear_offer(self) -> None:
+        self._offer = []
 
     def set_fire_callback(self, callback: Callable[[Trigger], Coroutine[Any, Any, None]] | None) -> None:
         """Set callback that runs when a trigger fires."""
@@ -1125,6 +1146,54 @@ def deleted_id(output: str) -> str:
     return found.group(1) if found else ""
 
 
+def picked_triggers(request: str) -> list[Trigger] | None:
+    """The triggers a reply picks from the ones Heliox just offered ("delete both of them", "the second one",
+    "all of them"): [] for "neither", None when nothing was offered or the reply is not a pick. Resolved in code
+    (pilot.agents.request_match.picked_from), never from a model's reading of the conversation."""
+    from pilot.agents.request_match import picked_from
+
+    offered = _engine.offered()
+    if not offered:
+        return None
+    picked = picked_from(request, len(offered))
+    return None if picked is None else [offered[index] for index in picked]
+
+
+_DELETE_BY_IDS = re.compile(r"^Delete the triggers? with the ids? (?P<ids>[\w-]+(?: and [\w-]+)*)\.?$")
+
+
+def pick_request(request: str) -> tuple[str, str] | None:
+    """A reply that picks triggers to delete, written out as the request it means (by id, so nothing is guessed),
+    with the note shown in the chat. None for anything else, and for "neither" (``kept_sentence`` answers that)."""
+    picked = picked_triggers(request)
+    if not picked:
+        return None
+    ids = " and ".join(trigger.id for trigger in picked)
+    noun = "trigger" if len(picked) == 1 else "triggers"
+    names = " and ".join(describe_trigger(trigger) for trigger in picked)
+    return f"Delete the {noun} with the id{'s' if len(picked) > 1 else ''} {ids}.", f"Deleting {names}"
+
+
+def ids_to_delete(request: str) -> list[str] | None:
+    """The ids of a request ``pick_request`` wrote, or None for any other request."""
+    found = _DELETE_BY_IDS.match(str(request or "").strip())
+    return found["ids"].split(" and ") if found else None
+
+
+def kept_sentence(request: str) -> str | None:
+    """The answer to "neither" (or "none", "keep them") after Heliox asked which trigger to delete."""
+    picked = picked_triggers(request)
+    if picked is None or picked:
+        return None
+    offered = _engine.offered()
+    _engine.clear_offer()
+    if len(offered) == 1:
+        return f"Okay, I've kept the trigger {describe_trigger(offered[0])}."
+    if len(offered) == 2:
+        return "Okay, I've kept both triggers; nothing was deleted."
+    return f"Okay, I've kept all {len(offered)} triggers; nothing was deleted."
+
+
 class TriggerNotFound(LookupError):
     """No trigger, or more than one, matches what the person said: nothing was deleted, and another plan would not
     know better (the sentence lists the triggers there are)."""
@@ -1140,13 +1209,16 @@ async def trigger_delete(description: str) -> str:
         found = matches[0]
         if not _engine.delete_trigger(found.id):
             raise TriggerNotFound(f"The trigger {describe_trigger(found)} was already gone, so nothing was deleted.")
+        _engine.clear_offer()
         return json.dumps(deleted_record(found), indent=2, ensure_ascii=False)
     if matches:
+        _engine.offer([trigger.id for trigger in matches])  # the next reply may pick from these
         listed = ", ".join(describe_trigger(trigger) for trigger in matches)
         raise TriggerNotFound(
             f'{len(matches)} triggers match "{wanted}": {listed}. Nothing was deleted; say which one to delete.'
         )
     there = [describe_trigger(trigger) for trigger in _engine._triggers.values()]
+    _engine.offer(list(_engine._triggers))  # listed below: "delete both of them" next means these
     known = f" The triggers there are: {', '.join(there)}." if there else " There are no triggers."
     raise TriggerNotFound(f'No trigger matches "{wanted}", so nothing was deleted.{known}')
 

@@ -35,7 +35,8 @@ def test_a_plan_without_the_default_keys_parses_to_the_same_actions() -> None:
 
 def test_a_write_of_the_previous_output_uses_it_without_the_flag() -> None:
     """One of two replayed appends (claude-haiku-5-5, 27 November) left "use_previous_output" out of a file_write whose
-    content is {PREV_OUTPUT} plus the new line; it is the same step either way."""
+    content holds {PREV_OUTPUT}; it is the same step either way. An append is one step now and that pair is folded
+    into it (tests/test_file_append.py); a prepend keeps the read and the write, as here."""
     path = f"{W}\\notes\\note.txt"
     plan = Planner.__new__(Planner)._parse_response(
         json.dumps(
@@ -46,7 +47,7 @@ def test_a_write_of_the_previous_output_uses_it_without_the_flag() -> None:
                     {
                         "action_type": "file_write",
                         "target": path,
-                        "parameters": {"path": path, "content": "{PREV_OUTPUT}\nAlso renew the permit."},
+                        "parameters": {"path": path, "content": "Also renew the permit.\n{PREV_OUTPUT}"},
                     },
                 ],
             }

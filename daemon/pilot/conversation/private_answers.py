@@ -32,6 +32,7 @@ KINDS: dict[str, str] = {
     "_undo_request": "an undo",
     "_routine_request": "a routine",
     "_shortcut_request": "a voice shortcut",
+    "_trigger_pick_request": "triggers kept",
     "_memory_talk_request": "something remembered",
     "_local_answer:ActivityTimeline": "the activity timeline",
     "_local_answer:TaskReceipts": "a past task",
