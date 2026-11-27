@@ -589,9 +589,15 @@ Each turn the model gets, in this order, dropping from the end when the block pa
    shares a word of four letters or more with what was just said, whatever its date; otherwise, when the words speak
    of a time, a reminder in the next 24 hours or a to-do whose words name a time in the next 36 hours. A to-do's time
    is read as people say it ("by 9 tomorrow morning", "four this afternoon", "half past eight tonight", "noon"), and
-   a to-do with a time and no day is given as "by 9:00 in the morning, day not said (never give it a day; ask which
-   day if it matters)", and a day it never carried that the person never said is taken out of the reply
-   (`due.without_invented_day`). Timers, reminders that have gone off and done to-dos are never given. A to-do
+   a to-do with a time and no day is given as "by 9:00 in the morning, day not said, so how long is left is not
+   known". How long is left is counted in code and given in words when the day is known ("due tomorrow at 9:00 in
+   the morning (about eleven hours from now)"); a small model left to count it got it wrong. A reply sentence that
+   gives the to-do a day it never carried and the person never said, or states a duration the line does not hold,
+   goes whole, never with words cut out of it (`due.invented_day`, `due.invented_duration`); with the day not known,
+   "Which day is it due?" is asked in its place. Today's own name where it only says when now is ("it's Friday now")
+   is not such a day. The line goes again with a reply in the same thread ("it'll be fine", "yes") that names
+   nothing of it, so the next turn still knows the day is not known. Timers, reminders that have gone off and done
+   to-dos are never given. A to-do
    added by voice keeps all of what was said about when ("by nine on Friday morning"); at
    most two of each, in one line of at most 300 characters. A model on this computer gets each item in its words; a cloud model gets only
    the words the person has just said themselves and the time ("a to-do about "report", due tomorrow at 9:00 in the morning"), or
@@ -605,6 +611,14 @@ Each turn the model gets, in this order, dropping from the end when the block pa
 plus the last six turns of this conversation as real message turns. The turns live in memory only, are cleared by
 the existing "new conversation" call and lapse after ten quiet minutes. Speech that was not addressed to Heliox
 never reaches this layer, so it is never stored as conversation or sent to a model.
+
+A spoken sentence with the marks of words taken out of it is never said (`reply_rules.hole`): a time missing after
+"now" ("and it's now, so"), a space before a comma or a full stop, two spaces inside a sentence, a sentence that ends
+on a word that needs another ("the", "your", "and"). The speech path drops such a sentence and logs it; when nothing
+is left, "Which day is it due?" or "Right." is said as for any reply whose sentences were all held back. The spoken
+contract checks the same marks (`ear_faults`). Every filter that takes something out of a reply either replaces it
+with words that keep the sentence whole or drops the sentence; word cuts for previews stop before such a word.
+Checked against the 2,518 replies recorded in the two live runs and the spoken runs: it fires on none of them.
 
 ### Sharing the floor with Heliox Live
 

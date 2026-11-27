@@ -2768,7 +2768,7 @@ class LocalTTSWorkerManager:
         pieces: Sequence[str],
         *,
         quiet: Callable[[], bool] = lambda: True,
-        battery: Callable[[], bool] = on_battery,
+        battery: Callable[[], bool] | None = None,  # None: on_battery, read when called (so tests can pin it)
         rest_factor: float = MAKE_AHEAD_REST_FACTOR,
         poll_seconds: float = 1.0,
         idle_seconds: float | None = None,
@@ -2805,7 +2805,7 @@ class LocalTTSWorkerManager:
                     and self._busy == 0
                     and self._clock() - self._last_activity >= idle
                     and quiet()
-                    and not battery()
+                    and not (battery or on_battery)()
                     and not await self.too_warm_now()
                 ):
                     if self.head_cache is not store or self._failed_until is not None or until():

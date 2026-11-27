@@ -164,6 +164,9 @@ class Worker:
 
 def manager_with(tmp_path, monkeypatch) -> tuple[LocalTTSWorkerManager, Worker]:
     monkeypatch.setattr(local_tts_worker, "trim_silence", lambda path, lead, tail: None)
+    # Plugged in, whatever this computer is now: on battery the made-ahead wait never ends, and with an instant
+    # fake sleep it spins a core and fills memory.
+    monkeypatch.setattr(local_tts_worker, "on_battery", lambda: False)
     monkeypatch.setattr(local_tts_worker, "MAKE_AHEAD_IDLE_SECONDS", 0.0)  # the quiet stretch: tests_make_ahead_bound
     worker = Worker()
     manager = LocalTTSWorkerManager(spawn=lambda engine, device, gpu_lease=False: worker)

@@ -209,13 +209,35 @@ def _when(moment: datetime, now: datetime, *, day_known: bool = True) -> str:
     from pilot.conversation.context import clock_words
 
     if not day_known:
-        # Never a day the to-do does not carry, and the model is told what to do about it.
-        return f"by {clock_words(moment)}, day not said (never give it a day; ask which day if it matters)"
+        # Never a day the to-do does not carry, nor how long is left, and the model is told what to do about it.
+        return (
+            f"by {clock_words(moment)}, day not said, so how long is left is not known (never give it a day or a "
+            "number of hours; ask which day if it matters)"
+        )
     days = (moment.date() - now.date()).days
     day = "today" if days == 0 else "tomorrow" if days == 1 else moment.strftime("%A %d %B")
+    left = time_left(moment, now)
     if moment.hour == 23 and moment.minute == 59:
-        return day
-    return f"{day} at {clock_words(moment)}"
+        return f"{day} ({left})" if left else day
+    return f"{day} at {clock_words(moment)}" + (f" ({left})" if left else "")
+
+
+def time_left(moment: datetime, now: datetime) -> str:
+    """How long until ``moment``, counted here and said in words ("about eleven hours from now", "about forty
+    minutes from now", "already past"), for up to two days ahead; "" beyond that. A small model left to count it
+    said "about two hours" for a deadline whose day it did not know."""
+    from pilot.live.spoken import cardinal_words
+
+    minutes = round((moment - now).total_seconds() / 60)
+    if minutes < 0:
+        return "already past"
+    if minutes > 48 * 60:
+        return ""
+    if minutes < 60:
+        rounded = max(5, 5 * round(minutes / 5))
+        return f"about {cardinal_words(rounded)} minutes from now"
+    hours = round(minutes / 60)
+    return f"about {cardinal_words(hours)} hour{'s' if hours != 1 else ''} from now"
 
 
 _TIMER_TEXT = re.compile(r"^your .+ timer is done$", re.IGNORECASE)
@@ -239,20 +261,57 @@ _DAY_PHRASE = re.compile(
 )
 
 
-def without_invented_day(sentence: str, given: str) -> str:
-    """A reply sentence without a day the to-do never carried and the person never said ("Your report is due at nine
-    tomorrow morning" -> "Your report is due at nine"), for a turn whose grounds hold a to-do with a time and no day.
-    A day the person said ("I'll watch it tonight") stays."""
+# A day put to the deadline: "due tomorrow", "by Friday", "the deadline is on Monday". A day word that only says when
+# now is ("it's Friday morning", "it's late tonight") is not one.
+_FOR_THE_DEADLINE = re.compile(r"\b(?:due|by|deadline|on|until|before)\b[^,.;!?]{0,25}$", re.IGNORECASE)
+# The question asked in place of a sentence that gave the to-do a day or a duration it does not have.
+WHICH_DAY = "Which day is it due?"
+_DURATION = re.compile(
+    r"\b(?:about |around |roughly |only |just |nearly |almost |over |under |less than |more than )?"
+    r"(?:\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty"
+    r"|a couple of|a few|half an?|several)\s+(?:hours?|minutes?|mins?|days?)\b",
+    re.IGNORECASE,
+)
+
+
+def invented_day(sentence: str, given: str, today: str = "") -> bool:
+    """Whether a reply sentence gives the to-do a day it never carried and the person never said ("Your report is due
+    at nine tomorrow morning"), for a turn whose grounds hold a to-do with a time and no day. A day the person said
+    stays allowed; so does today's own name or "this morning" where it only says when now is ("it's Friday now"):
+    taking those words out left "and it's now, so", and the hole was spoken."""
     said = given.casefold()
-
-    def keep(match: re.Match[str]) -> str:
+    for match in _DAY_PHRASE.finditer(sentence):
         words = match.group(0).strip().casefold()
-        core = re.sub(r"^(?:on|by|for|this|next)\s+", "", words).removesuffix("'s")
-        core = re.sub(r"\s+(?:morning|afternoon|evening|night)$", "", core)
-        return match.group(0) if core in said else ""
+        core = re.sub(r"^(?:on|by|for|next)\s+", "", words).removesuffix("'s")
+        if not core.startswith("this "):
+            # "tomorrow morning" is "tomorrow"; "this morning" stays whole: "in the morning" said by the person does
+            # not make "due at nine this morning" theirs.
+            core = re.sub(r"\s+(?:morning|afternoon|evening|night)$", "", core)
+        if re.search(rf"\b{re.escape(core)}\b", said):
+            continue
+        about_now = core in (today.casefold(), "today", "this") or words.startswith("this ")
+        if about_now and not _FOR_THE_DEADLINE.search(sentence[: match.start()]):
+            continue
+        return True
+    return False
 
-    out = _DAY_PHRASE.sub(keep, sentence)
-    return re.sub(r"\s+([,.!?])", r"\1", " ".join(out.split()))
+
+def invented_duration(sentence: str, grounds: str, given: str) -> bool:
+    """Whether a reply sentence states how long is left ("leaves you about two hours") that neither the grounds, which
+    count it in code, nor the person's words contain."""
+    known = f"{grounds} {given}".casefold()
+    for match in _DURATION.finditer(sentence):
+        span = re.sub(r"^(?:about|around|roughly|only|just|nearly|almost|over|under|less than|more than)\s+", "",
+                      match.group(0).casefold())  # fmt: skip
+        if span not in known:
+            return True
+    return False
+
+
+def without_invented_day(sentence: str, given: str, today: str = "") -> str:
+    """The sentence as it may be said on a turn whose grounds hold a to-do with no day: unchanged, or "" when it gives
+    the to-do a day (a question is asked instead by the caller). Words are never cut out of it."""
+    return "" if invented_day(sentence, given, today) else sentence
 
 
 def _never_sent(text: str) -> bool:

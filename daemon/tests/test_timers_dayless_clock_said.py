@@ -105,7 +105,8 @@ async def test_a_dayless_to_do_gets_no_invented_day_in_a_reply_to_a_follow_up(tm
     await _say(server, DECISION, "follow_up")
     assert "day not said" in sent[-1]
     assert heard and not any("tomorrow" in line.casefold() for line in heard), heard
-    assert any("due at nine" in line for line in heard), heard
+    # The sentence that gave it a day goes whole, and the question about the day is asked in its place.
+    assert "Which day is it due?" in heard, heard
 
 
 # ── the time in front of the model, around noon and midnight ──

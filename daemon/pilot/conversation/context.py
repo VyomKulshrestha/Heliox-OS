@@ -52,6 +52,9 @@ class ConversationMemory:
         # Secrets said in this conversation (pilot.conversation.withheld): held here only to take them out of anything
         # added later. Never in a turn, never sent, gone with clear().
         self._withheld: set[str] = set()
+        # The to-do and reminder line given on an earlier turn of this conversation (pilot.conversation.due): it
+        # holds for the turns after it that name nothing of it ("it'll be fine"). Gone with clear().
+        self.last_due = ""
 
     def kept_form(self, text: str) -> str:
         """``text`` as this conversation may keep it and a model may read it: every secret taken out."""
@@ -79,6 +82,7 @@ class ConversationMemory:
 
     def clear(self) -> None:
         self._turns.clear()
+        self.last_due = ""
         self._withheld.clear()
 
     def snapshot(self) -> tuple[Turn, ...]:
@@ -160,6 +164,16 @@ def _safe(call: Callable[[], Any], default: Any) -> Any:
     except Exception:
         return default
     return default if value is None else value
+
+
+def _holds_the_thread(text: str) -> bool:
+    """A reply that goes on with what was being talked about rather than opening a subject: the person holding to
+    their decision ("it'll be fine", "do it anyway"), or a few words ("yes", "why?", "not really")."""
+    from pilot.conversation import debate as dbt
+    from pilot.conversation.router import normalize
+
+    words = normalize(text)
+    return bool(words) and (dbt.insists(words) or dbt.go_ahead(words) or len(words.split()) <= 3)
 
 
 def clock_words(moment: Any) -> str:
@@ -299,6 +313,13 @@ def assemble(
     sections += describe_task(task) if isinstance(task, dict) else []
     personal = bool(_safe(sources.personal, True))
     due = str(_safe(lambda: sources.things_due(text), "") or "") if personal else ""
+    if personal and not due and memory.open and memory.last_due and _holds_the_thread(text):
+        # What was due on an earlier turn still holds for a reply in the same thread ("it'll be fine", "yes"): turn
+        # two of the spoken bench lost "the day is not known" and counted from a guessed day. A new subject ("what's
+        # the capital of Australia?") gets only what bears on it.
+        due = memory.last_due
+    elif due:
+        memory.last_due = due
     if due and not never_sent(due):
         sections.append(memory.kept_form(due))  # grounds for a disagreement: before the screen and the profile
     if screen is _UNSET:

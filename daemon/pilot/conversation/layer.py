@@ -30,6 +30,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from pilot import reply_rules
 from pilot.conversation import debate as dbt
 from pilot.conversation import provisional as prov
 from pilot.conversation import trace, work_claims
@@ -47,7 +48,7 @@ from pilot.conversation.context import (
     ConversationMemory,
     build_messages,
 )
-from pilot.conversation.due import without_invented_day
+from pilot.conversation.due import WHICH_DAY, invented_day, invented_duration
 from pilot.conversation.fast_model import FastModel, FastModelUnavailable, stream_with_retry
 from pilot.conversation.handover import (
     HandoverIntent,
@@ -1170,9 +1171,13 @@ class ConversationLayer:
         typed = result.source == "typed"
         sink = result._sink or self._sink
         # The grounds hold a to-do with a time and no day: a day it never carried, and the person never said, is not
-        # said (due.without_invented_day). What the person said in this conversation counts as said.
+        # said (due.invented_day: the sentence goes whole). What the person said in this conversation counts as said.
         sent_context = str(messages[-1].get("content", "")) if messages else ""
         no_day_item = "day not said" in sent_context
+        # A to-do or reminder line went with the request: a duration the reply states must be the one counted in code.
+        due_grounds = "On their to-do list and reminders" in sent_context
+        today_name = _safe_call(lambda: self.sources.now().strftime("%A"), "")
+        asked_which_day = False  # WHICH_DAY said in place of a sentence, once per reply
         said_before = " ".join([text, *(t.text for t in self.memory.recent() if t.role == "user")])
         # A question asking for a plain fact: a hedge at the end of a short answer is not said (style.without_hedge_tail).
         asked_a_fact = decided.kind is TurnKind.CONVERSATION and (
@@ -1386,8 +1391,24 @@ class ConversationLayer:
                 # Spoken text is cleaned for the ear; typed text keeps its markdown for the chat view.
                 clean = drop_action_claims(sentence) if typed else clean_for_speech(sentence, first=first)
                 clean = _without_embedded_offer(clean)  # "Do you have a backup, or should I look ...?"
-                if not typed and no_day_item:
-                    clean = without_invented_day(clean, said_before)  # "due by 9, day not said" stays dayless
+                if (
+                    not typed
+                    and due_grounds
+                    and (
+                        (no_day_item and invented_day(clean, said_before, today_name))
+                        or invented_duration(clean, "" if no_day_item else sent_context, said_before)
+                    )
+                ):
+                    # A day or a "how long is left" the grounds do not hold (due.invented_day, invented_duration):
+                    # the whole sentence goes, never words out of it. With the day not known, the question about the
+                    # day is asked in its place, once.
+                    logger.info("Dropped a sentence with a day or a duration the grounds do not hold: %r", clean)
+                    # With the day not known, the question about the day is asked in its place, once, unless the
+                    # reply already asked it.
+                    if not no_day_item or asked_which_day or "which day" in " ".join(said).casefold():
+                        dropped = True
+                        continue
+                    clean, asked_which_day = WHICH_DAY, True
                 if not typed and asked_a_fact and len(said) < 2 and continues and hedge_only(clean, text):
                     continue  # the sentence's hedge, cut off at its comma: not said
                 if not typed and asked_a_fact and len(said) < 2:
@@ -1440,6 +1461,11 @@ class ConversationLayer:
                 if not typed and not self._allowed_in_reply(
                     clean, statement=statement, said=said, repeat_asked=repeat_asked, heard=text
                 ):
+                    dropped = True
+                    continue
+                if not typed and reply_rules.hole(clean):
+                    # The marks of words taken out ("and it's now, so"): whatever left them, the sentence is not said.
+                    logger.warning("Dropped a sentence with a hole (%s): %r", reply_rules.hole(clean), clean)
                     dropped = True
                     continue
                 words_so_far = sum(len(part.split()) for part in said)
@@ -1710,7 +1736,8 @@ class ConversationLayer:
             await self._say_one(result, LOST_MID_REPLY, started)
         if not failure and not said and dropped and not typed:
             # Every sentence was held back (an offer the rules did not allow now): a sign it was heard, not silence.
-            await self._say_one(result, HEARD_YOU, started)
+            # With a to-do whose day is not known in the grounds, the question about the day says more.
+            await self._say_one(result, WHICH_DAY if no_day_item else HEARD_YOU, started)
         result.done = True
         result.timings["done_ms"] = (self._clock() - started) * 1000
         return result

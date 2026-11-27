@@ -62,13 +62,13 @@ NO_DAY = {"text": "finish the quarterly report by 9", "done": False}
 @pytest.mark.parametrize(
     ("reply", "given", "said"),
     [
-        (  # the spoken run, all six replies
+        (  # the seventh spoken run, all six replies: the sentence goes whole, never words out of it
             "Your report is due at nine tomorrow morning, so that's tight.",
             "I'm going to watch a series tonight and do the report in the morning.",
-            "Your report is due at nine, so that's tight.",
+            "",
         ),
-        ("The report is due tomorrow at nine.", "I'll do the report after dinner.", "The report is due at nine."),
-        ("It's due Friday at nine.", "I'll start later.", "It's due at nine."),
+        ("The report is due tomorrow at nine.", "I'll do the report after dinner.", ""),
+        ("It's due Friday at nine.", "I'll start later.", ""),
         (  # a day the person said stays
             "Watching tonight leaves only the morning before nine.",
             "I'm going to watch a series tonight.",
@@ -82,7 +82,8 @@ def test_a_day_the_to_do_never_carried_is_not_said(reply, given, said):
 
 def test_the_grounds_line_says_what_to_do_about_the_missing_day():
     line = due_line("I'll do the report later", todos=[NO_DAY], reminders=[], now=NOW, local=False)
-    assert "by 9:00 in the morning, day not said (never give it a day; ask which day if it matters)" in line
+    assert "by 9:00 in the morning, day not said, so how long is left is not known" in line
+    assert "never give it a day or a number of hours; ask which day if it matters" in line
 
 
 class Replies:
@@ -108,7 +109,7 @@ async def _said(reply: str, words: str, sources: ContextSources | None = None) -
     return said
 
 
-async def test_the_layer_takes_the_invented_day_out_when_the_grounds_hold_a_dayless_to_do():
+async def test_the_layer_asks_which_day_instead_of_an_invented_one():
     line = due_line("I'll do the report in the morning", todos=[NO_DAY], reminders=[], now=NOW, local=False)
     sources = ContextSources(things_due=lambda _text: line, now=lambda: NOW)
     said = await _said(
@@ -116,7 +117,7 @@ async def test_the_layer_takes_the_invented_day_out_when_the_grounds_hold_a_dayl
         "I'm going to watch a series tonight and do the report in the morning.",
         sources,
     )
-    assert said == ["Your report is due at nine, so that's tight."]
+    assert said == ["Which day is it due?"]
 
 
 # ── 3. no hedge at the end of a plain fact ──

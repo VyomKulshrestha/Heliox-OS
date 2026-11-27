@@ -139,7 +139,14 @@ def words_cut(text: str, count: int) -> str:
     words = str(text or "").split()
     if len(words) <= count:
         return " ".join(words)
-    return " ".join(words[:count]).rstrip(",;:-") + "..."
+    kept = " ".join(words[:count]).rstrip(",;:-")
+    # Never cut right after a word that needs another ("...afternoon because the..." is said "because the.").
+    while True:
+        cut = _DANGLING_END.sub("", kept).rstrip(",;:-")
+        if cut == kept or not cut:
+            break
+        kept = cut
+    return kept + "..."
 
 
 def _path_name(found: re.Match[str]) -> str:
@@ -172,6 +179,13 @@ def _paren(found: re.Match[str]) -> str:
     return f", {inside}," if inside else ""
 
 
+_DANGLING_END = re.compile(
+    r"\s+(?:the|a|an|its|your|my|their|our|and|but|or|than|because|that|which|who|when|if|to|of|in|on|at|by|for"
+    r"|with|from|as|is|are|was|were)$",
+    re.IGNORECASE,
+)
+
+
 def _sentences_within(text: str, limit: int) -> str:
     """Whole sentences up to ``limit`` characters; a first sentence longer than that is cut at a word."""
     if len(text) <= limit:
@@ -186,7 +200,14 @@ def _sentences_within(text: str, limit: int) -> str:
         return kept
     head = text[: limit + 1]
     head = head[: head.rfind(" ")] if " " in head else head[:limit]
-    return head.rstrip(" ,;:-'\"") + "."
+    head = head.rstrip(" ,;:-'\"")
+    # Cut at a word, the sentence must not end on one that needs another after it ("...because the."): those go too.
+    while True:
+        cut = _DANGLING_END.sub("", head).rstrip(" ,;:-'\"")
+        if cut == head or not cut:
+            break
+        head = cut
+    return head + "."
 
 
 def for_ear(text: str, *, limit: int = SPOKEN_LIMIT) -> str:
@@ -229,6 +250,34 @@ def for_screen(text: str, *, limit: int = SHOWN_LIMIT) -> str:
     return out
 
 
+# The marks a filter leaves when it takes words out of a sentence and keeps the rest: "and it's now, so" (a time
+# taken out), a space before a comma, a doubled space, a sentence that ends on a word that needs another after it.
+_HOLES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("a time missing after now", re.compile(r"\b(?:it'?s|is|was) now\s*[,.;]", re.IGNORECASE)),
+    # Not an ellipsis (" ...work"): a space left where a word was taken out before a comma or a full stop.
+    ("a space before a mark", re.compile(r"\s[,;:!?]|\s\.(?!\.)")),
+    # Two spaces inside a sentence (two after a full stop are a typing habit, and indented lines are never spoken).
+    ("a doubled space", re.compile(r"[^\s.!?:] {2,}\S")),
+    (
+        "a dangling word",
+        # A word that needs another after it ("the", "and", "your"), right before the end. Prepositions, "is",
+        # "so" and the like end good sentences ("a folder you can write to.", "Blue shirt it is.", "I think so."),
+        # so they are not here.
+        re.compile(
+            r"(?<![\w'-])(?:the|an|its|your|my|their|our|and|but|or|than)\s*[.!?]\s*$",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def hole(text: str) -> str:
+    """What marks ``text`` as a sentence with words taken out of it ("a time missing after now"), or "". A sentence
+    that has one is never said: the speech path drops it (pilot.conversation.layer)."""
+    spoken = str(text or "")
+    return next((name for name, pattern in _HOLES if pattern.search(spoken)), "")
+
+
 def ear_faults(text: str) -> list[str]:
     """What a spoken reply breaks, or []: the contract test fails on any of these."""
     faults = []
@@ -247,6 +296,8 @@ def ear_faults(text: str) -> list[str]:
         faults.append("too long")
     if spoken.strip() and spoken.strip()[-1] not in ".!?":
         faults.append("does not end a sentence")
+    if hole(spoken):
+        faults.append(f"hole: {hole(spoken)}")
     return faults
 
 

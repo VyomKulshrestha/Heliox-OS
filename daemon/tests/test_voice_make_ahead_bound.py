@@ -77,6 +77,9 @@ class Run:
 
 async def ready_manager(tmp_path, monkeypatch) -> tuple[LocalTTSWorkerManager, Run]:
     monkeypatch.setattr(local_tts_worker, "trim_silence", lambda path, lead, tail: None)
+    # Plugged in, whatever this computer is now: on battery the made-ahead wait never ends, and with an instant
+    # fake sleep it spins a core and fills memory.
+    monkeypatch.setattr(local_tts_worker, "on_battery", lambda: False)
     run = Run()
     worker = TimedWorker(run.log)
     manager = LocalTTSWorkerManager(spawn=lambda engine, device, gpu_lease=False: worker)
