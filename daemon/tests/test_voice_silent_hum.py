@@ -77,7 +77,8 @@ async def test_a_silent_hum_is_not_kept_and_not_made_again():
     assert count == 1 and kept == {"Mm."} and silent == {"Hmm."}
     await manager.make_ahead("pocket_tts", "michael", list(ACKNOWLEDGEMENTS), idle_seconds=0.0,
                              quiet=lambda: True, battery=lambda: False, rest_factor=0.0)  # fmt: skip
-    assert made == ["Mm.", "Hmm."]  # the second run made nothing: "Mm." is kept and "Hmm." is known silent
+    # "Hmm." was made twice (Pocket makes each piece anew) before it was believed silent; the second run made nothing.
+    assert made == ["Mm.", "Hmm.", "Hmm."]
 
 
 def test_the_face_hums_with_the_hum_it_has_or_not_at_all():

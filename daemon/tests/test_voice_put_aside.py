@@ -129,6 +129,38 @@ async def test_a_hum_with_no_sound_is_noted_and_the_rest_are_still_made():
     assert manager.failing is False and manager.put_aside == {}  # one silent hum is not a broken voice
 
 
+@pytest.mark.asyncio
+async def test_a_hum_silent_once_is_made_again_and_kept_when_it_has_sound():
+    """Pocket does not make the same audio twice: michael's "Hmm." was silent in the live run and loud when made again."""
+    manager = LocalTTSWorkerManager(spawn=lambda *_: None, clock=lambda: 100.0)
+    manager.process, manager.engine, manager.loaded = SimpleNamespace(poll=lambda: None), "pocket_tts", True
+    kept: set[str] = set()
+    manager.head_cache = SimpleNamespace(
+        has=lambda text, sig: text in kept,
+        add_fixed=lambda text, sig, piece: kept.add(text) or True,
+        is_silent=lambda text, sig: False,
+        mark_silent=lambda text, sig: pytest.fail("believed silent after one try"),
+    )
+    tries: list[str] = []
+
+    async def make(engine, text, voice_name, path, folder, **_given):
+        tries.append(text)
+        if len(tries) == 1:
+            raise LocalTTSNoAudio(engine, voice_name)
+        return Piece(text, audio=LOUD, rate=24000)
+
+    async def never_warm():
+        return False
+
+    async def no_wait(_seconds):
+        return None
+
+    manager._make, manager.too_warm_now, manager._sleep = make, never_warm, no_wait
+    made = await manager.make_ahead("pocket_tts", "michael", ["Hmm."], idle_seconds=0.0, quiet=lambda: True,
+                                    battery=lambda: False, rest_factor=0.0)  # fmt: skip
+    assert made == 1 and kept == {"Hmm."} and tries == ["Hmm.", "Hmm."]
+
+
 # ── A reply in a voice that makes no sound ──
 
 

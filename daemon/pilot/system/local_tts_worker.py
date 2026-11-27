@@ -1081,6 +1081,8 @@ HUM_MIN_PEAK = 0.03
 # A new voice says this before it speaks a reply (LocalTTSWorkerManager.prove_voice), waiting for its worker at most
 # PROVE_WAIT_POLLS times PROVE_POLL_SECONDS.
 PROOF_TEXT = "Okay."
+# How many times a fixed piece is made before a silent result is believed (Pocket does not make the same audio twice).
+SILENT_ATTEMPTS = 2
 PROVE_POLL_SECONDS = 0.5
 PROVE_WAIT_POLLS = 120
 
@@ -2854,31 +2856,34 @@ class LocalTTSWorkerManager:
                         return made
                     await self._sleep(poll_seconds)
                 started = self._clock()
-                try:
-                    piece = await self._make(
-                        engine,
-                        text,
-                        voice,
-                        folder / f"fixed-{index}.wav",
-                        folder,
-                        rank=PIPE_AHEAD,
-                        kind="ahead",
-                        start_voice=False,
-                    )
-                except LocalTTSNoAudio:
-                    # No sound for this piece in this voice (Pocket's michael and "Hmm."): noted, not kept, not made
-                    # again; the voice goes on making the rest.
+                piece = None
+                for _attempt in range(SILENT_ATTEMPTS):
+                    try:
+                        made_piece = await self._make(
+                            engine,
+                            text,
+                            voice,
+                            folder / f"fixed-{index}.wav",
+                            folder,
+                            rank=PIPE_AHEAD,
+                            kind="ahead",
+                            start_voice=False,
+                        )
+                    except LocalTTSNoAudio:
+                        continue  # no sound this time: Pocket makes each piece anew, so it is made once more
+                    except LocalTTSUnavailable:
+                        return made
+                    if not keeps_short_tail(text) or audible(made_piece):
+                        piece = made_piece
+                        break
+                    if made_piece.path is not None:
+                        with contextlib.suppress(OSError):
+                            made_piece.path.unlink()
+                if piece is None:
+                    # No sound in SILENT_ATTEMPTS tries (Pocket's michael and "Hmm."): noted, not kept, not made again;
+                    # the voice goes on making the rest, and it hums with the hum it has.
                     getattr(store, "mark_silent", lambda *_: None)(text, signature)
                     logger.info("%r came out with no sound in %s %s: it is not kept", text, engine, voice)
-                    continue
-                except LocalTTSUnavailable:
-                    return made
-                if keeps_short_tail(text) and not audible(piece):
-                    getattr(store, "mark_silent", lambda *_: None)(text, signature)
-                    logger.info("The hum %r came out silent in %s %s: it is not kept", text, engine, voice)
-                    if piece.path is not None:
-                        with contextlib.suppress(OSError):
-                            piece.path.unlink()
                     continue
                 if not store.add_fixed(text, signature, piece):
                     return made  # full
