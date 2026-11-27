@@ -126,6 +126,7 @@ def test_what_is_final() -> None:
         FailureKind.CERTIFICATE,
         FailureKind.NO_ELEMENT,
         FailureKind.GATEWAY_DENIED,
+        FailureKind.LOCAL_ADDRESS_REFUSED,
         FailureKind.PUSH_BEHIND,
         FailureKind.PUSH_PROTECTED,
         FailureKind.NOTHING_TO_COMMIT,

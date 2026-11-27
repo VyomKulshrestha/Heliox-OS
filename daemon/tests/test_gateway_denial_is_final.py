@@ -278,19 +278,22 @@ ABOVE_FAMILY = {
     ("desktop_agent", "gnome_setting_write", "SYSTEM_MODIFY"),
     ("desktop_agent", "window_close", "DESTRUCTIVE"),
     ("vision_agent", "screenshot", "USER_WRITE"),
+    ("network_agent", "download_file", "SYSTEM_MODIFY"),
 }
 
 
 def _above_family(action: Action, source: InvocationSource) -> bool:
-    """Whether the source's family ceiling alone (no specialist list) refuses the step."""
-    from pilot.security.gateway import action_family
+    """Whether the source's family ceiling alone (no specialist list) refuses the step: the gateway's own family, which
+    is browsing for a step that reaches a local address."""
+    from pilot.security.gateway import ActionFamily, action_family, reaches_local_address
 
     profile = DEFAULT_SOURCE_PROFILES[source.value]
-    ceiling = profile.max_tier.get(action_family(action.action_type).value, int(PermissionTier.READ_ONLY))
+    family = ActionFamily.BROWSING if reaches_local_address(action) else action_family(action.action_type)
+    ceiling = profile.max_tier.get(family.value, int(PermissionTier.READ_ONLY))
     return int(action.permission_tier) > ceiling
 
 
-def test_what_each_agent_may_run_above_its_family_ceiling_is_exactly_the_six_steps() -> None:
+def test_what_each_agent_may_run_above_its_family_ceiling_is_exactly_the_listed_steps() -> None:
     from pilot.security.gateway import SPECIALIST_ACTION_CEILINGS
 
     found = set()

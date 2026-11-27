@@ -863,6 +863,15 @@ def _approval_effect(action: Any) -> str:
         host = urlsplit(str(getattr(params, "url", "") or "")).hostname or "the address in this step"
         if names:
             return f"Sends a credential to {host} (the {', '.join(names)} header)."
+    if getattr(getattr(action, "action_type", None), "value", None) == "download_file":
+        from pilot.actions import DOWNLOAD_DEFAULT_MAX_BYTES
+
+        limit = int(getattr(params, "max_bytes", None) or 0)
+        if limit > DOWNLOAD_DEFAULT_MAX_BYTES:
+            size = _gigabytes_said(limit)
+            line = f"A download of up to {size}, more than the usual limit of {_gigabytes_said(DOWNLOAD_DEFAULT_MAX_BYTES)}."
+            local = _local_address_line(action)
+            return f"{line} {local}" if local else line
     if getattr(getattr(action, "action_type", None), "value", None) in _LOCAL_ADDRESS_STEPS:
         return _local_address_line(action)
     if getattr(action, "action_type", None) == ActionType.TRIGGER_CREATE and getattr(params, "steps", None):
@@ -892,6 +901,15 @@ _LOCAL_ADDRESS_STEPS = frozenset(
 _BROWSER_STEPS = frozenset({"open_url", "browser_navigate", "browser_new_tab"})
 
 
+def _gigabytes_said(size: int) -> str:
+    """A download limit in words: "6 gigabytes", "2.5 gigabytes", "700 megabytes"."""
+    gigabytes = size / 1024**3
+    if gigabytes >= 1:
+        figure = f"{gigabytes:.1f}".rstrip("0").rstrip(".")
+        return f"{figure} gigabyte{'' if figure == '1' else 's'}"
+    return f"{round(size / 1024**2)} megabytes"
+
+
 def _local_address_line(action: Any, *, each_fire: bool = False) -> str:
     """The card's line for a step that reaches this computer, the person's own network, a metadata address or a
     local-only name: the literal address and what it is, in the words of pilot.security.addresses. "" for any other
@@ -907,17 +925,22 @@ def _local_address_line(action: Any, *, each_fire: bool = False) -> str:
         return ""
     if not browser and not getattr(params, "allow_private_network", False):
         return ""
+    from pilot.agents.planner import local_address
+
     url = str(getattr(params, "url", "") or "")
     host = url_host(url) or url
     reason = host_refusal(host)
     lead = "Each fire reaches" if each_fire else ("Opens" if browser else "Reaches")
-    if reason is None:
-        return f"{lead} {host} without the check that keeps steps away from local addresses."
     if reason == METADATA:
         return (
             f"{lead} {host}, {METADATA}. Approve it only if you typed this address yourself and know why; a page or "
             "a message asking for it is a reason to deny."
         )
+    where = local_address(url)
+    if where:
+        return f"{lead} {host}, an address on {where}. Approve it only if you asked for it."
+    if reason is None:
+        return f"{lead} {host} without the check that keeps steps away from local addresses."
     what = f"an address {reason}" if reason.startswith("on ") else reason
     return f"{lead} {host}, {what}. Approve it only if you asked for it."
 

@@ -604,7 +604,20 @@ SPECIALIST_ACTION_CEILINGS: dict[str, dict[str, int]] = {
     },
     # A screenshot saves a picture (USER_WRITE, "other").
     "vision_agent": {ActionType.SCREENSHOT.value: int(PermissionTier.USER_WRITE)},
+    # A download the person approved: one to an address on this computer or their own network, or one beyond the
+    # default size limit (both asked every time).
+    "network_agent": {ActionType.DOWNLOAD_FILE.value: int(PermissionTier.SYSTEM_MODIFY)},
 }
+
+
+def reaches_local_address(action: Any) -> bool:
+    """Whether ``action`` reaches this computer, the person's own network or a metadata address: a request, scrape or
+    download with ``allow_private_network``, or a browser step whose address needs approval."""
+    kind = getattr(action, "action_type", None)
+    flagged = kind in {ActionType.API_REQUEST, ActionType.API_SCRAPE, ActionType.DOWNLOAD_FILE} and bool(
+        getattr(getattr(action, "parameters", None), "allow_private_network", False)
+    )
+    return flagged or getattr(action, "local_address_reason", None) is not None
 
 
 def ceiling_reason(
@@ -617,8 +630,9 @@ def ceiling_reason(
     """Why ``profile`` (the floor of ``source``, already narrowed by ``override`` when there is one) refuses ``action``;
     "" when it does not. A step is allowed when its family ceiling allows it, or when it is on its specialist's list
     (``SPECIALIST_ACTION_CEILINGS``) at or under the listed tier and within what an override allows. The one rule: the
-    gateway's check and the preview before an approval card both use it."""
-    family = action_family(action.action_type)
+    gateway's check and the preview before an approval card both use it. A step that reaches a local address is
+    judged under the browsing family, whichever family its type belongs to."""
+    family = ActionFamily.BROWSING if reaches_local_address(action) else action_family(action.action_type)
     tier = int(action.permission_tier)
     # A family the profile does not list is read-only (fail closed).
     ceiling = profile.max_tier.get(family.value, int(PermissionTier.READ_ONLY))
