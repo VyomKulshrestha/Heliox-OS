@@ -65,7 +65,10 @@ async def test_the_404_get_from_the_run_comes_back_as_a_failed_step_with_its_sen
     assert "HTTP 404" in (result.error or "")
     hint = "the server has nothing at this address; the same request will get the same answer"
     assert hint in (result.error or "")
-    assert hint in partial_failure_message([result], None)  # what the reply is built from
+    # What the reply is built from: the sentence for a page that is not there and the status, never the page itself.
+    reply = partial_failure_message([result], None)
+    assert reply.startswith("example.com has no page at that address.")
+    assert "HTTP 404 Not Found" in reply and "<html>" not in reply
 
 
 async def test_an_agent_that_raises_fails_its_steps_plainly_and_later_steps_do_not_run() -> None:
