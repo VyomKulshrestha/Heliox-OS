@@ -330,6 +330,7 @@ class SessionWatch:
         self.opened = uptime()
         self.at_open = window_snapshot()
         self.changes: list[str] = []
+        self.ended: set[tuple[str, int]] = set()  # (name, pid) of every watched process that ended
         self.stopping = threading.Event()
         self.thread = threading.Thread(target=self.watch, daemon=True)
         self.thread.start()
@@ -345,6 +346,7 @@ class SessionWatch:
                 for name in sorted(set(before) | set(now)):
                     ended = sorted(pid for pid, _ in before.get(name, set()) - now.get(name, set()))
                     started = sorted(pid for pid, _ in now.get(name, set()) - before.get(name, set()))
+                    self.ended.update((name, pid) for pid in ended)
                     if (ended or started) and len(self.changes) < self.LIMIT:
                         self.changes.append(f"{self.since()} {name}: ended {ended or '-'}, started {started or '-'}")
                 before = now
@@ -484,7 +486,8 @@ class Window:
         self.failed_call(error)
         opened = self.watch.opened if self.watch else uptime()
         print(
-            f"DIAG session lost ({type(error).__name__}: {str(error)[:200]}); what follows is from that moment",
+            f"DIAG a call to the window failed for good ({type(error).__name__}: {str(error)[:200]}); "
+            "what follows is from that moment",
             flush=True,
         )
         if self.watch is not None:
@@ -520,9 +523,14 @@ class Window:
                 False,
                 f"the app's main process is not the one the session opened with ({main_then} then, {main_now} now)",
             )
-        if web_then - web_now:
+        # Every web process that ended during the session counts, also one started after the session opened.
+        web_ended = sorted(
+            {pid for pid, _ in web_then - web_now}
+            | {pid for name, pid in self.watch.ended if name == "WebKitWebProcess"}
+        )
+        if web_ended:
             return False, (
-                f"the app's main process is the same, but its web process {sorted(web_then - web_now)} ended "
+                f"the app's main process is the same, but its web process {web_ended} ended "
                 f"(web processes now: {sorted(pid for pid, _ in web_now)}): a person would see the window go blank"
             )
         if self.reopened:
