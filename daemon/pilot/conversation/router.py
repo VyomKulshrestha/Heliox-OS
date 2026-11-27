@@ -333,6 +333,8 @@ _STAYS_TALK = re.compile(
     r"^what does\b|^if\b|^when (?:should|do|did|would|will|was|is)\b|^who\b|"
     r"^tell me (?:about|how|why|a |an |more|what you|something|if you)"
 )
+# The talk forms that ask about this computer when they name a reading plainly (a read subject, a path, an address).
+_OVERRIDABLE_TALK = re.compile(r"^(?:who\b|what does\b|tell me about\b|(?:can|could) i (?:get|find|see)\b)")
 # "What is git?", "what's a checksum?": a word asked about, not this computer's state.
 _DEFINITION = re.compile(r"^what(?:'s| s| is| are) (?:a |an )?(?P<rest>.+)$")
 _NOT_A_DEFINITION = re.compile(r"^(?:the|my|on|in|this|that|your|our|using|taking|left|running|open|currently)\b")
@@ -372,8 +374,24 @@ def catalog_net(text: str, normalized: str, body: str, *, conversation_open: boo
     it should have had; None when it is talk after all. Pure and cheap: a few compiled patterns, no model."""
     from pilot.conversation import catalog_words
 
-    if not body or _STAYS_TALK.match(normalized) or _STAYS_TALK.match(body):
+    if not body:
         return None
+    if _STAYS_TALK.match(normalized) or _STAYS_TALK.match(body):
+        # "Who made the last commit?", "what does the file C:\\a.txt say?", "tell me about process 880": a talk form
+        # around something only this computer can answer stays a reading.
+        located_here = bool(_URL_IN_TEXT.search(text) or _PATH_IN_TEXT.search(text))
+        # A read subject counts only with a sign of here and now ("in my repo", "on this computer"), a number (a
+        # process id), or as what "can I get" asks for: "who invented the clipboard?" stays talk.
+        plainly = located_here or bool(
+            catalog_words.STRONG.search(normalized)
+            and (
+                _HERE_AND_NOW.search(normalized)
+                or re.search(r"\b\d+\b", normalized)
+                or re.match(r"(?:can|could) i ", normalized)
+            )
+        )
+        if not (plainly and (_OVERRIDABLE_TALK.match(normalized) or _OVERRIDABLE_TALK.match(body))):
+            return None
     words = body.split()
     verb = words[0]
     if verb in catalog_words.VERBS and verb not in ACTION_VERBS and len(words) > 1:
@@ -398,7 +416,9 @@ def catalog_net(text: str, normalized: str, body: str, *, conversation_open: boo
     )
     if asks and (strong or weak or located):
         definition = _DEFINITION.match(normalized)
-        if definition and not located and not _NOT_A_DEFINITION.match(definition.group("rest")):
+        # "what is process 880 doing" names a reading plainly; "what's a checksum" asks what a word means.
+        plain_reading = strong and not re.match(r"^what(?:'s| s| is| are) (?:a|an) ", normalized)
+        if definition and not located and not plain_reading and not _NOT_A_DEFINITION.match(definition.group("rest")):
             if not _HERE_AND_NOW.search(definition.group("rest")):
                 return None  # "what is git", "what's a checksum": the word, not this computer
         if strong or located or _HERE_AND_NOW.search(normalized):

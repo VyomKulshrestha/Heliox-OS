@@ -48,13 +48,22 @@ NAMED: dict[ActionType, Words] = {
     A.FILE_DELETE: Words(verbs=("delete", "remove", "erase")),
     A.FILE_MOVE: Words(verbs=("move", "rename")),
     A.FILE_COPY: Words(verbs=("copy", "duplicate")),
-    A.FILE_LIST: Words(topics=("files",), verbs=("list",), asked="What files are in my downloads folder right now?"),
+    A.FILE_LIST: Words(
+        subjects=("what(?:'s| s| is) in (?:my|the|this) (?:\\w+ )?folder",),
+        topics=("files",),
+        verbs=("list",),
+        asked="What files are in my downloads folder right now?",
+    ),
     A.FILE_SEARCH: Words(verbs=("find", "search", "locate")),
     A.DIRECTORY_SUMMARY: Words(
         topics=("folder summary",), verbs=("summarize", "summarise"), asked="Give me a folder summary of my downloads"
     ),
     A.DIRECTORY_SIZE: Words(
-        subjects=("folder size", "size of (?:the|my|this) folder"),
+        subjects=(
+            "folder size",
+            "size of (?:the|my|this) (?:\\w+ )?folder",
+            "how big is (?:my|the|this) (?:\\w+ )?folder",
+        ),
         topics=("size",),
         asked="What is the folder size of my downloads?",
     ),
@@ -89,14 +98,23 @@ NAMED: dict[ActionType, Words] = {
     A.PACKAGE_INSTALL: Words(verbs=("install",)),
     A.PACKAGE_REMOVE: Words(verbs=("uninstall",)),
     A.PACKAGE_UPDATE: Words(verbs=("update", "upgrade")),
-    A.PACKAGE_SEARCH: Words(topics=("packages?",), asked="Is there a package for ffmpeg on my computer?"),
+    A.PACKAGE_SEARCH: Words(
+        subjects=("package manager", "packages? (?:called|named)"),
+        topics=("packages?",),
+        asked="Is there a package for ffmpeg on my computer?",
+    ),
     A.SERVICE_START: Words(topics=("service",), verbs=("start",)),
     A.SERVICE_STOP: Words(topics=("service",), verbs=("stop",)),
     A.SERVICE_RESTART: Words(topics=("service",), verbs=("restart",)),
     A.SERVICE_ENABLE: Words(topics=("service",), verbs=("enable",)),
     A.SERVICE_DISABLE: Words(topics=("service",), verbs=("disable",)),
     A.SERVICE_STATUS: Words(
-        subjects=("service status",), topics=("services?",), asked="What's the service status of nginx right now?"
+        subjects=(
+            "service status",
+            "the [\\w ]{1,30} service (?:is )?(?:up|down|running|stopped|started|in|status|state)",
+        ),
+        topics=("services?",),
+        asked="What's the service status of nginx right now?",
     ),
     A.GNOME_SETTING_WRITE: Words(verbs=("set", "turn", "switch")),
     A.SHELL_COMMAND: Words(verbs=("run", "execute")),
@@ -112,20 +130,45 @@ NAMED: dict[ActionType, Words] = {
             "running (?:programs|processes|apps|applications)",
             "what s running",
             "what is running",
+            "(?:processes|programs|apps|applications) (?:are )?using",
+            "using the most (?:cpu|memory|ram)",
         ),
         topics=("processes", "programs"),
         asked="What programs are running right now?",
     ),
-    A.PROCESS_INFO: Words(topics=("process",), asked="Is the process chrome using a lot of my memory right now?"),
+    A.PROCESS_INFO: Words(
+        subjects=("process (?:with )?pid \\w+", "pid \\w+", "process \\w+ doing"),
+        topics=("process",),
+        asked="Is the process chrome using a lot of my memory right now?",
+    ),
     A.PROCESS_KILL: Words(verbs=("kill", "terminate")),
-    A.CLIPBOARD_READ: Words(subjects=("clipboard",), asked="What is on my clipboard? Just read it, don't change it."),
+    A.CLIPBOARD_READ: Words(
+        subjects=("clipboard", "(?:did )?i just cop(?:y|ied)"),
+        asked="What is on my clipboard? Just read it, don't change it.",
+    ),
     A.CLIPBOARD_WRITE: Words(subjects=("clipboard",), verbs=("copy",)),
     A.SYSTEM_INFO: Words(
-        subjects=("system info(?:rmation)?", "os version", "windows version", "macos version", "uptime"),
+        subjects=(
+            "system info(?:rmation)?",
+            "os version",
+            "windows version",
+            "macos version",
+            "uptime",
+            "operating system",
+            "(?:computer|pc|laptop|machine|system) been (?:up|on|running)",
+        ),
         topics=("specs",),
         asked="What's my system information?",
     ),
-    A.SYSTEM_HEALTH_REVIEW: Words(subjects=("system health", "health check"), asked="How is my system health?"),
+    A.SYSTEM_HEALTH_REVIEW: Words(
+        subjects=(
+            "system health",
+            "health check",
+            "(?:computer|pc|laptop|machine|system) (?:is )?healthy",
+            "wrong with (?:my|the|this) (?:computer|pc|laptop|machine|system)",
+        ),
+        asked="How is my system health?",
+    ),
     A.DISK_USAGE: Words(
         subjects=(
             "disk space",
@@ -144,16 +187,26 @@ NAMED: dict[ActionType, Words] = {
         asked="How much memory is in use right now?",
     ),
     A.CPU_USAGE: Words(
-        subjects=("cpu usage", "cpu load", "cpu use", "processor usage"),
+        subjects=(
+            "cpu usage",
+            "cpu load",
+            "cpu use",
+            "processor usage",
+            "how busy is (?:the|my) (?:cpu|processor)",
+            "(?:cpu|processor) (?:is )?maxed(?: out)?",
+        ),
         topics=("cpu", "processor"),
         asked="What's the CPU usage?",
     ),
     A.NETWORK_INFO: Words(
-        subjects=("ip address", "network info(?:rmation)?", "internet connection"),
+        subjects=("ip address", "network info(?:rmation)?", "internet connection", "network am i on"),
         topics=("network", "internet", "ip"),
         asked="What's my IP address?",
     ),
-    A.BATTERY_INFO: Words(subjects=("battery", "charge level"), asked="How much battery do I have left?"),
+    A.BATTERY_INFO: Words(
+        subjects=("battery", "charge level", "charge (?:is )?left", "(?:laptop|computer|pc|machine) (?:is )?charging"),
+        asked="How much battery do I have left?",
+    ),
     # power and schedules
     A.POWER_SHUTDOWN: Words(verbs=("shut", "shutdown")),
     A.POWER_RESTART: Words(verbs=("restart", "reboot")),
@@ -162,11 +215,13 @@ NAMED: dict[ActionType, Words] = {
     A.POWER_LOGOUT: Words(verbs=("logout",)),
     A.SCHEDULE_CREATE: Words(verbs=("schedule",)),
     A.SCHEDULE_LIST: Words(
-        subjects=("scheduled tasks", "scheduled jobs"), topics=("schedule",), asked="What scheduled tasks do I have?"
+        subjects=("scheduled tasks", "scheduled jobs", "tasks are scheduled", "scheduled to run"),
+        topics=("schedule",),
+        asked="What scheduled tasks do I have?",
     ),
     A.SCHEDULE_DELETE: Words(verbs=("delete", "remove", "unschedule")),
     A.ENV_GET: Words(
-        subjects=("environment variables?", "path variable", "env var(?:iable)?s?"),
+        subjects=("environment variables?", "path variable", "env var(?:iable)?s?", "my path"),
         asked="What is my PATH variable right now?",
     ),
     A.ENV_SET: Words(verbs=("set",)),
@@ -174,20 +229,32 @@ NAMED: dict[ActionType, Words] = {
         subjects=("environment variables",), asked="Which environment variables are set on this computer?"
     ),
     # windows, sound, display
-    A.WINDOW_LIST: Words(subjects=("open windows", "windows (?:are |that are )?open"), asked="What windows are open?"),
+    A.WINDOW_LIST: Words(
+        subjects=("open windows", "windows (?:are |that are |do i have )?open"), asked="What windows are open?"
+    ),
     A.WINDOW_FOCUS: Words(verbs=("focus", "switch")),
     A.WINDOW_CLOSE: Words(verbs=("close",)),
     A.WINDOW_MINIMIZE: Words(verbs=("minimize", "minimise")),
     A.WINDOW_MAXIMIZE: Words(verbs=("maximize", "maximise")),
     A.VOLUME_GET: Words(
-        subjects=("volume level", "sound level"),
+        subjects=(
+            "volume level",
+            "sound level",
+            "how loud is (?:my|the) (?:sound|volume|audio|speakers?|computer|laptop|music)",
+            "the volume at",
+        ),
         topics=("volume",),
         asked="What is the volume level? Just tell me, don't change it.",
     ),
     A.VOLUME_SET: Words(verbs=("set", "turn")),
     A.VOLUME_MUTE: Words(verbs=("mute", "unmute")),
     A.BRIGHTNESS_GET: Words(
-        subjects=("brightness",), asked="What is the display brightness? Just tell me, don't change it."
+        subjects=(
+            "brightness",
+            "how bright is (?:my|the|this) (?:screen|display|monitor|laptop|computer)",
+            "(?:screen|display) (?:is )?dimmed",
+        ),
+        asked="What is the display brightness? Just tell me, don't change it.",
     ),
     A.BRIGHTNESS_SET: Words(verbs=("dim", "brighten")),
     A.SCREENSHOT: Words(verbs=("screenshot",)),
@@ -208,8 +275,24 @@ NAMED: dict[ActionType, Words] = {
     ),
     A.DISK_MOUNT: Words(verbs=("mount",)),
     A.DISK_UNMOUNT: Words(verbs=("unmount", "eject")),
-    A.USER_LIST: Words(subjects=("user accounts",), asked="Which user accounts are on this computer?"),
-    A.USER_INFO: Words(subjects=("my user account",), asked="What groups is my user account in?"),
+    A.USER_LIST: Words(
+        subjects=(
+            "user accounts",
+            "users are on (?:this|my) (?:pc|computer|laptop|machine|mac)",
+            "accounts? on (?:this|my) (?:pc|computer|laptop|machine|mac)",
+        ),
+        asked="Which user accounts are on this computer?",
+    ),
+    A.USER_INFO: Words(
+        subjects=(
+            "my user account",
+            "am i (?:an )?admin(?:istrator)?",
+            "account am i using",
+            "logged in as",
+            "user am i",
+        ),
+        asked="What groups is my user account in?",
+    ),
     A.DOWNLOAD_FILE: Words(verbs=("download",)),
     A.REGISTRY_READ: Words(
         subjects=("registry (?:key|value)s?",),
@@ -229,7 +312,10 @@ NAMED: dict[ActionType, Words] = {
     A.MOUSE_MOVE: Words(verbs=("move",)),
     A.MOUSE_DRAG: Words(verbs=("drag",)),
     A.MOUSE_SCROLL: Words(verbs=("scroll",)),
-    A.MOUSE_POSITION: Words(subjects=("mouse position", "cursor position"), asked="What's the mouse position?"),
+    A.MOUSE_POSITION: Words(
+        subjects=("mouse position", "cursor position", "mouse pointer", "where(?:'s| s| is) (?:my|the) mouse"),
+        asked="What's the mouse position?",
+    ),
     A.KEYBOARD_TYPE: Words(verbs=("type",)),
     A.KEYBOARD_PRESS: Words(verbs=("press",)),
     A.KEYBOARD_HOTKEY: Words(verbs=("press",)),
@@ -253,17 +339,23 @@ NAMED: dict[ActionType, Words] = {
     A.BROWSER_FILL_FORM: Words(verbs=("fill",)),
     A.BROWSER_NEW_TAB: Words(topics=("new tab",), verbs=("open",)),
     A.BROWSER_CLOSE_TAB: Words(verbs=("close",)),
-    A.BROWSER_LIST_TABS: Words(subjects=("open tabs", "browser tabs"), asked="Which browser tabs are open?"),
+    A.BROWSER_LIST_TABS: Words(
+        subjects=("open tabs", "browser tabs", "tabs (?:do i have )?open"), asked="Which browser tabs are open?"
+    ),
     A.BROWSER_SWITCH_TAB: Words(verbs=("switch",)),
     A.BROWSER_BACK: Words(verbs=("go",)),
     A.BROWSER_FORWARD: Words(verbs=("go",)),
     A.BROWSER_REFRESH: Words(verbs=("refresh", "reload")),
     A.BROWSER_CLOSE: Words(verbs=("close",)),
-    A.BROWSER_PAGE_INFO: Words(subjects=("page title",), asked="What's the page title of https://example.com?"),
+    A.BROWSER_PAGE_INFO: Words(
+        subjects=("page title", "page am i on"), asked="What's the page title of https://example.com?"
+    ),
     # triggers
     A.TRIGGER_CREATE: Words(subjects=("trigger", "watcher"), verbs=("watch", "monitor")),
     A.TRIGGER_LIST: Words(
-        subjects=("my triggers", "my watchers"), topics=("triggers",), asked="What triggers do I have?"
+        subjects=("my triggers", "my watchers", "(?:triggers|watchers) (?:are )?(?:active|running|set up)"),
+        topics=("triggers",),
+        asked="What triggers do I have?",
     ),
     A.TRIGGER_DELETE: Words(verbs=("delete", "remove")),
     A.TRIGGER_START: Words(verbs=("start", "resume")),
