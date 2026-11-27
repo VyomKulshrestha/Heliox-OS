@@ -1009,6 +1009,25 @@ def _every_ending() -> dict[str, str]:
     endings.update({f"late {key.value}": value for key, value in LATE_MISMATCH_SENTENCES.items()})
     for outcome in ("ran", "timeout", "fault", "waits", "unreadable", "unavailable", "job_done", "job_failed"):
         endings[f"trigger {outcome}"] = trigger_fire_sentence(trigger, outcome, seconds=60)
+    # Round twelve: what no action reads, a repair refused in code, and the replies to a pick from a list.
+    from pilot.agents.read_catalog import CANNOT_READ
+    from pilot.agents.request_match import Mismatch, repair_refusal
+
+    endings.update({f"cannot read {what}": sentence for what, sentence in CANNOT_READ})
+    for rule, step in (
+        ("repair_escalation", "run a shell command instead of the git push that failed"),
+        ("repair_escalation", "run the file copy again with 'overwrite' turned on"),
+        ("repair_new_kind", "start a delete, which you did not ask for"),
+        ("value_dropped", "leave out '.price-table td.amount', which you asked for"),
+    ):
+        endings[f"repair refused, {rule}: {step}"] = repair_refusal(Mismatch(rule, "", step=step))
+    endings["pick kept, one"] = 'Okay, I\'ve kept the trigger "notes" (file modified: notes.txt).'
+    endings.update(
+        {
+            "pick kept, two": "Okay, I've kept both triggers; nothing was deleted.",
+            "pick kept, three": "Okay, I've kept all 3 triggers; nothing was deleted.",
+        }
+    )
     return endings
 
 

@@ -378,3 +378,440 @@ async def test_10_a_typed_secret_never_reaches_the_planner_or_the_reply() -> Non
     assert all("ghp_" not in seen for seen in planner.inputs)
     assert "ghp_" not in json.dumps(response, default=str)
     assert "said aloud" not in response["message"] and response["message"].strip()
+
+
+# ── The second live run (27 November), R1 to R9: the request through the router, the planner and the handlers ──
+#
+# The planner here is the real one, with a scripted model answering in place of a provider, so the plan checks of
+# round twelve (a value kept in its step, a repair that may not escalate, a pick decided in code) run as they do in
+# the daemon. The handlers are fakes that answer in each handler's own shape.
+
+W2 = "C:\\w"
+_PROCESSES = (
+    "PID=  4321  CPU= 12.5%  MEM=  3.1%  STATUS=running       chrome.exe\n"
+    "PID=   812  CPU=  0.4%  MEM=  0.9%  STATUS=running       explorer.exe\n"
+    "PID=  9001  CPU=  1.1%  MEM=  1.2%  STATUS=sleeping      Code.exe"
+)
+
+
+class _ScriptedModel:
+    """Answers each planner call with the next plan; the last one again when they run out."""
+
+    def __init__(self, *answers: dict) -> None:
+        self.answers = [json.dumps(answer) for answer in answers]
+        self.sent: list[list[dict]] = []
+
+    async def generate(self, messages, **_kwargs) -> str:
+        self.sent.append([dict(m) for m in messages])
+        return self.answers[min(len(self.sent), len(self.answers)) - 1]
+
+
+class _Handlers:
+    """Each step answers with the output given for its type, or fails with the next error queued for it."""
+
+    def __init__(self, outputs: dict | None = None, errors: dict | None = None) -> None:
+        self.outputs = outputs or {}
+        self.errors = {kind: list(queue) for kind, queue in (errors or {}).items()}
+        self.ran: list[Action] = []
+
+    async def execute(self, plan, **kwargs):
+        results = []
+        for action in plan.actions:
+            self.ran.append(action)
+            queue = self.errors.get(action.action_type) or []
+            error = queue.pop(0) if queue else None
+            output = "" if error else self.outputs.get(action.action_type, "done")
+            results.append(ActionResult(action=action, success=error is None, output=output, error=error))
+        return results
+
+
+class _Checks:
+    """The check after the run: a failed step fails, and so does the first run of a type in ``mismatch``."""
+
+    def __init__(self, mismatch: tuple = ()) -> None:
+        self.mismatch, self.rounds = set(mismatch), 0
+
+    async def verify(self, plan, results):
+        from pilot.actions import VerificationResult
+
+        failed, details = [], []
+        for index, result in enumerate(results):
+            bad = not result.success or (result.action.action_type in self.mismatch and self.rounds == 0)
+            reason = result.error if not result.success else "the copy's content differs from the source"
+            details.append(
+                f"Action {index} ({result.action.action_type.value}): " + (f"FAILED - {reason}" if bad else "VERIFIED")
+            )
+            if bad:
+                failed.append(index)
+        self.rounds += 1
+        return VerificationResult(
+            passed=not failed,
+            failed_actions=failed,
+            details=details,
+            independently_observed_actions=[i for i in range(len(results)) if i not in failed],
+        )
+
+
+def _step(kind: str, target: str, **params) -> dict:
+    return {"action_type": kind, "target": target, "parameters": params}
+
+
+async def _drive(request: str, *answers: dict, handlers: _Handlers, confirm: bool = False, mismatch: tuple = ()):
+    """The request through _handle_execute with the real planner on a scripted model: (response, model, cards)."""
+    from pilot.agents.planner import Planner
+    from tests.test_reply_never_empty import _approvals, _server, _ws
+
+    class _NoMemory:
+        async def get_context(self, *_a, **_k) -> str:
+            return ""
+
+        async def get_history(self, *_a, **_k) -> list:
+            return []
+
+    model = _ScriptedModel(*answers)
+    server = _server(Planner(model, _NoMemory()), handlers, confirm=confirm)  # type: ignore[arg-type]
+    server._verifier = _Checks(mismatch)
+    ws = _ws(server, confirmation=True if confirm else None)
+    response = await server._handle_execute({"input": request}, ws)
+    return response, model, _approvals(ws)
+
+
+def _first_sentence(text: str) -> str:
+    import re
+
+    return re.split(r"(?<=[.!?])\s", str(text or "").strip(), maxsplit=1)[0]
+
+
+@pytest.mark.asyncio
+async def test_r1_what_is_running_is_a_process_list_said_by_its_programs() -> None:
+    from pilot.conversation.router import TurnKind, route
+
+    request = "What programs are running right now?"
+    assert route(request).kind is not TurnKind.CONVERSATION
+    handlers = _Handlers({ActionType.PROCESS_LIST: _PROCESSES})
+    response, model, _cards = await _drive(
+        request, {"actions": [_step("process_list", "processes")]}, handlers=handlers
+    )
+    assert [a.action_type for a in handlers.ran] == [ActionType.PROCESS_LIST]
+    assert "process_list" in json.dumps(model.sent[0])  # the prompt's reading section names it
+    assert response["spoken"] == "3 programs are running; the biggest are Chrome, Code and Explorer."
+    assert "Operating System" not in response["message"]
+
+
+@pytest.mark.asyncio
+async def test_r2_a_temperature_no_action_reads_is_said_honestly_and_nothing_runs() -> None:
+    sentence = "I can't read the processor's temperature on this computer."
+    handlers = _Handlers()
+    response, model, _cards = await _drive(
+        "What is the CPU temperature?", {"actions": [], "explanation": sentence}, handlers=handlers
+    )
+    assert handlers.ran == []
+    assert sentence in json.dumps(model.sent[0])  # the prompt holds the honest sentence for what nothing reads
+    assert response["message"] == sentence and response["spoken"] == sentence
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("request_words", "kind", "output", "spoken"),
+    [
+        (
+            "What is the volume level? Just tell me, don't change it.",
+            "volume_get",
+            "Volume is at 40.",
+            "Volume is at 40.",
+        ),
+        ("How bright is the screen?", "brightness_get", "Brightness: 70%", "Brightness is at seventy percent."),
+    ],
+)
+async def test_r3_volume_and_brightness_are_read_not_answered_by_talk(request_words, kind, output, spoken) -> None:
+    from pilot.conversation.router import TurnKind, route
+
+    assert route(request_words).kind is not TurnKind.CONVERSATION
+    handlers = _Handlers({ActionType(kind): output})
+    response, _model, _cards = await _drive(request_words, {"actions": [_step(kind, kind)]}, handlers=handlers)
+    assert [a.action_type.value for a in handlers.ran] == [kind]
+    assert response["spoken"] == spoken
+
+
+@pytest.mark.asyncio
+async def test_r5_a_plan_that_drops_the_selector_is_planned_again_and_the_selector_is_used() -> None:
+    request = "Scrape https://example.com and extract the text of the elements matching '.price-table td.amount'"
+    dropped = {"actions": [_step("api_scrape", "https://example.com", url="https://example.com", selector="body")]}
+    kept = {
+        "actions": [
+            _step("api_scrape", "https://example.com", url="https://example.com", selector=".price-table td.amount")
+        ]
+    }
+    handlers = _Handlers({ActionType.API_SCRAPE: json.dumps({"matches": ["$12.00", "$15.00"], "count": 2})})
+    response, model, _cards = await _drive(request, dropped, kept, handlers=handlers)
+    assert len(model.sent) == 2  # the first plan was refused in code and planned again once
+    assert [a.parameters.selector for a in handlers.ran] == [".price-table td.amount"]
+    assert response["status"] == "success"
+    assert "body" not in response["spoken"]
+
+
+@pytest.mark.asyncio
+async def test_r6_an_append_planned_as_a_read_and_a_write_runs_as_one_step_and_is_checked() -> None:
+    note = W2 + "\\notes\\note.txt"
+    pair = {
+        "actions": [
+            _step("file_read", note, path=note),
+            {**_step("file_write", note, path=note, content="{PREV_OUTPUT}\n## Done"), "use_previous_output": True},
+        ]
+    }
+    appended = f"Appended 1 line to {note} (appended sha256 {'ab' * 32}, 8 bytes; file sha256 {'cd' * 32}, 40 bytes)"
+    handlers = _Handlers({ActionType.FILE_WRITE: appended})
+    response, _model, _cards = await _drive(f"Append the line '## Done' to {note}", pair, handlers=handlers)
+    assert [(a.action_type, a.parameters.append, a.parameters.content) for a in handlers.ran] == [
+        (ActionType.FILE_WRITE, True, "## Done")
+    ]
+    assert response["spoken"] == "Added a line to note.txt in notes."
+    assert "could not be checked" not in response["message"]
+
+
+@pytest.mark.asyncio
+async def test_r6_both_of_them_after_the_which_question_deletes_the_two_listed(tmp_path, monkeypatch) -> None:
+    from pilot.system import triggers
+
+    engine = triggers.TriggerEngine()
+    engine.attach_store(tmp_path / "triggers.json")
+    monkeypatch.setattr(triggers, "_engine", engine)
+    watched = str(tmp_path / "watched.txt")
+    made = [
+        engine.create_trigger("watched-txt-log", "file_modified", {"path": watched}, "add a line to fired.log"),
+        engine.create_trigger("watched-txt-change", "file_modified", {"path": watched}, "tell me"),
+    ]
+    with pytest.raises(triggers.TriggerNotFound):
+        await triggers.trigger_delete("nonexistent-trigger-42")  # the run's name that matched nothing
+
+    class _TriggerHandlers(_Handlers):
+        async def execute(self, plan, **kwargs):
+            results = []
+            for action in plan.actions:
+                self.ran.append(action)
+                output = await triggers.trigger_delete(action.parameters.trigger_id)
+                results.append(ActionResult(action=action, success=True, output=output))
+            return results
+
+    handlers = _TriggerHandlers()
+    response, model, _cards = await _drive("Delete both of them", {"actions": []}, handlers=handlers)
+    assert model.sent == []  # decided in code: no model is asked which ones
+    assert [a.parameters.trigger_id for a in handlers.ran] == [t.id for t in made]
+    assert engine.list_triggers() == []
+    assert response["spoken"] == "I've removed 2 triggers; both watched watched.txt."
+
+
+def test_r7_a_tail_a_scraped_title_and_a_delete_of_something_gone_are_said_as_what_they_are() -> None:
+    from pilot.result_sentences import step_said
+
+    log = W2 + "\\logs\\app.log"
+    tail = Action(action_type=ActionType.FILE_READ, target=log, parameters=FileParams(path=log, tail_lines=5))
+    lines = "\n".join(f"line {n}" for n in range(196, 201))
+    said = step_said(ActionResult(action=tail, success=True, output=lines), request="show the last 5 lines of app.log")
+    assert said.spoken.startswith("The last 5 lines of app.log")
+    assert "has 5 lines" not in said.spoken
+    title = Action(
+        action_type=ActionType.API_SCRAPE,
+        target="https://example.com",
+        parameters=ApiRequestParams(url="https://example.com", selector="title"),
+    )
+    said = step_said(ActionResult(action=title, success=True, output="Example Domain"))
+    assert "Example Domain" in said.spoken and "Found 1 match" not in said.spoken
+    gone = W2 + "\\archive\\gone.txt"
+    delete = Action(action_type=ActionType.FILE_DELETE, target=gone, parameters=FileParams(path=gone))
+    absent = ActionResult(
+        action=delete,
+        success=True,
+        output=f"There was no file at {gone}, so nothing was deleted",
+        skip_reason="already_absent",
+        executed=False,
+    )
+    said = step_said(absent)
+    assert said.spoken == "There was no gone.txt in archive, so nothing was deleted."
+    assert W2 not in said.shown
+
+
+def test_r9_one_mismatched_copy_reported_by_several_paths_is_counted_once() -> None:
+    from pilot.security.outcome_evidence import Outcome, OutcomeEvidence
+
+    copy = Action(
+        action_type=ActionType.FILE_COPY,
+        target=W2 + "\\big\\a.bin",
+        parameters=FileParams(path=W2 + "\\a.bin", destination=W2 + "\\big\\a.bin"),
+    )
+    evidence = OutcomeEvidence(clock=lambda: 1_000_000.0)
+    for _ in range(3):  # the check, a late check and a repair's re-run of the same step in one task
+        evidence.record(copy, Outcome.MISMATCH, task="t1")
+    reason = evidence.assess(copy, task="t2").reason.casefold()
+    assert "three" not in reason and "six" not in reason
+
+
+# ── Item c of round twelve: what happens after a failure, for each kind the rules treat apart ──
+#
+# Final failures end the run with no repair round; a repair may not switch to a shell command; a repair of a missing
+# file the planner guessed may try the right one. No case shows two approval cards or runs a shell step.
+
+_SHELL_REPAIR = {
+    "explanation": "Work around it.",
+    "actions": [_step("shell_command", "cmd", command="cmd", args=["/c", "echo"])],
+}
+_PUSH = _step("git_push", W2 + "\\repo", repo_path=W2 + "\\repo", remote="origin", branch="main")
+_AFTER_A_FAILURE = [
+    (
+        "a rejected push",
+        f"Push the main branch of the git repository at {W2}\\repo to origin",
+        _PUSH,
+        {ActionType.GIT_PUSH: ["! [rejected]        main -> main (fetch first)\nerror: failed to push some refs"]},
+        True,
+        (),
+        1,
+        "I couldn't push main: origin has commits you don't have yet.",
+    ),
+    (
+        "a 404",
+        "Fetch https://example.com/missing and tell me the title",
+        _step("api_request", "https://example.com/missing", url="https://example.com/missing", method="GET"),
+        {ActionType.API_REQUEST: ["GET to https://example.com failed with HTTP 404 Not Found: <!doctype html><p>x"]},
+        False,
+        (),
+        1,
+        "Example.com has no page at that address.",
+    ),
+    (
+        "a 503",
+        "Fetch https://example.com/status and tell me what it says",
+        _step("api_request", "https://example.com/status", url="https://example.com/status", method="GET"),
+        {ActionType.API_REQUEST: ["GET to https://example.com failed with HTTP 503 Service Unavailable: busy"] * 4},
+        False,
+        (),
+        2,
+        "Example.com is overloaded or having trouble right now.",
+    ),
+    (
+        "a copy whose check found a mismatch",
+        f"Copy {W2}\\a.txt to {W2}\\b.txt",
+        _step("file_copy", W2 + "\\a.txt", path=W2 + "\\a.txt", destination=W2 + "\\b.txt"),
+        {},
+        False,
+        (ActionType.FILE_COPY,),
+        2,
+        "That didn't work for b.txt: the check afterwards found something else.",
+    ),
+    (
+        "a write into a read-only folder",
+        f"Write hello to {W2}\\readonly\\x.txt",
+        _step("file_write", W2 + "\\readonly\\x.txt", path=W2 + "\\readonly\\x.txt", content="hello"),
+        {ActionType.FILE_WRITE: [f"[Errno 13] Permission denied: '{W2}\\readonly\\x.txt' (read-only file system)"]},
+        False,
+        (),
+        1,
+        "I couldn't write x.txt in readonly: that place is read-only.",
+    ),
+    (
+        "a scrape whose selector matches nothing",
+        "Scrape https://example.com and extract the text of the elements matching '.price-table td.amount'",
+        _step("api_scrape", "https://example.com", url="https://example.com", selector=".price-table td.amount"),
+        {ActionType.API_SCRAPE: ["No element matches the selector '.price-table td.amount' on https://example.com"]},
+        False,
+        (),
+        1,
+        "Nothing on example.com matches .price-table td.amount.",
+    ),
+    (
+        "a missing source the request named",
+        f"Copy {W2}\\notes.txt to {W2}\\backup\\notes.txt",
+        _step("file_copy", W2 + "\\notes.txt", path=W2 + "\\notes.txt", destination=W2 + "\\backup\\notes.txt"),
+        {ActionType.FILE_COPY: [f"[Errno 2] No such file or directory: '{W2}\\notes.txt'"]},
+        False,
+        (),
+        1,
+        "I couldn't find notes.txt in w.",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", _AFTER_A_FAILURE, ids=[case[0] for case in _AFTER_A_FAILURE])
+async def test_what_the_person_sees_after_each_kind_of_failure(case) -> None:
+    _label, request, first, errors, confirm, mismatch, model_calls, lead = case
+    handlers = _Handlers(errors=errors)
+    response, model, cards = await _drive(
+        request, {"actions": [first]}, _SHELL_REPAIR, handlers=handlers, confirm=confirm, mismatch=mismatch
+    )
+    assert response["status"] == "partial_failure"
+    assert len(model.sent) == model_calls  # a final failure asks the model nothing more
+    assert [a.action_type for a in handlers.ran] == [ActionType(first["action_type"])]  # never the shell repair
+    assert cards <= 1
+    assert _first_sentence(response["spoken"]) == lead
+    assert ear_faults(response["spoken"]) == [] and "<" not in response["message"]
+    if model_calls > 1:  # the repair round was planned and refused in code
+        assert "I did not try again: the retry would run a shell command" in response["spoken"]
+
+
+@pytest.mark.asyncio
+async def test_a_missing_source_the_planner_guessed_may_be_repaired_with_the_right_file() -> None:
+    guessed = _step("file_copy", W2 + "\\notes.txt", path=W2 + "\\notes.txt", destination=W2 + "\\backup\\notes.txt")
+    right = _step("file_copy", W2 + "\\notes.md", path=W2 + "\\notes.md", destination=W2 + "\\backup\\notes.md")
+    handlers = _Handlers(errors={ActionType.FILE_COPY: [f"[Errno 2] No such file or directory: '{W2}\\notes.txt'"]})
+    response, model, cards = await _drive(
+        f"Copy my notes file in {W2} to {W2}\\backup", {"actions": [guessed]}, {"actions": [right]}, handlers=handlers
+    )
+    assert len(model.sent) == 2 and cards == 0
+    assert [a.parameters.path for a in handlers.ran] == [W2 + "\\notes.txt", W2 + "\\notes.md"]
+    assert response["status"] == "success" and response["spoken"] == "Copied notes.md into backup."
+
+
+# ── Item d of round twelve: a read question answered in the first sentence, from each system's own output ──
+
+_WHOAMI = "USER INFORMATION\n----------------\n\nUser Name    SID\n============ =============\ndesk-1\\me    S-1-5-21-1-2-3-1001"
+_NET_USER = (
+    "User accounts for \\\\DESK-1\n\n-------------------------------------------------------------------------------\n"
+    "Administrator            DefaultAccount           Guest\nme                       WDAGUtilityAccount\n"
+    "The command completed successfully."
+)
+_LSBLK = "NAME   SIZE TYPE MOUNTPOINT FSTYPE\nsda    477G disk\n├─sda1 512M part /boot/efi vfat\nsdb   28.9G disk"
+_GET_DISK = (
+    "Number Friendly Name   Serial Number HealthStatus OperationalStatus Total Size Partition Style\n"
+    "------ -------------   ------------- ------------ ----------------- ---------- ---------------\n"
+    "0      NVMe SSD 1TB    0000_0001.    Healthy      Online             953.87 GB GPT"
+)
+
+
+@pytest.mark.parametrize(
+    ("kind", "params", "output", "request_words", "spoken"),
+    [
+        ("user_info", {}, "uid=1000(me) gid=1000(me) groups=1000(me),27(sudo)", "which user am I", "You're logged in as me."),
+        ("user_info", {}, _WHOAMI, "which user am I", "You're logged in as me."),
+        ("user_list", {}, "me\nguest", "which accounts", "This computer has 2 user accounts: me and guest."),
+        ("user_list", {}, _NET_USER, "which accounts", "This computer has 5 user accounts: Administrator, DefaultAccount, Guest and 2 more."),
+        ("disk_list", {}, _LSBLK, "which drives", "This computer has 2 disks."),
+        ("disk_list", {}, _GET_DISK, "which drives", "This computer has 1 disk."),
+        ("env_get", {"name": "PATH"}, "PATH=/usr/local/bin:/usr/bin:/bin", "what is in my PATH", "PATH holds 3 folders; the list is on screen."),
+        ("network_info", {}, "=== Network ===\n  Wi-Fi (UP):\n    IPv4: 192.168.1.5\n  Ethernet (DOWN):", "what is my IP address", "Wi-Fi is up, with the address 192.168.1.5."),
+        ("system_info", {"categories": ["os"]}, "=== Operating System ===\n  system: Windows\n  release: 11", "what operating system am I running", "This computer runs Windows 11."),
+    ],
+)  # fmt: skip
+def test_d_a_read_question_is_answered_in_its_first_sentence(kind, params, output, request_words, spoken) -> None:
+    from pilot.actions import VerificationResult
+    from pilot.response_contract import success_reply
+
+    action = Action.model_validate({"action_type": kind, "target": kind, "parameters": params})
+    result = ActionResult(action=action, success=True, output=output)
+    said = success_reply(
+        ActionPlan(actions=[action], raw_input=request_words), [result], VerificationResult(passed=True), dry_run=False
+    )
+    assert _first_sentence(said.spoken) == spoken
+    assert screen_faults(said.shown) == []
+
+
+def test_b_a_quoted_value_with_a_double_quote_in_it_is_found_in_its_step() -> None:
+    from pilot.agents.request_match import check_plan
+
+    note = "C:/w/note.txt"
+    append = Action(
+        action_type=ActionType.FILE_WRITE,
+        target=note,
+        parameters=FileParams(path=note, content='see a/b "now"', append=True),
+    )
+    assert check_plan("Append the line 'see a/b \"now\"' to C:/w/note.txt", [append]) is None
+    assert check_plan("Append the line 'see a/b \"later\"' to C:/w/note.txt", [append]).rule == "value_dropped"
