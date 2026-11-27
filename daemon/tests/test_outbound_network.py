@@ -17,7 +17,9 @@ from pilot.actions import (
     Action,
     ActionType,
     ApiRequestParams,
+    BrowserParams,
     DownloadParams,
+    OpenUrlParams,
     PermissionTier,
 )
 from pilot.security import addresses
@@ -542,6 +544,45 @@ def test_download_file_of_a_public_address_needs_no_approval() -> None:
     )
     assert action.permission_tier == PermissionTier.USER_WRITE
     assert action.requires_confirmation is False
+
+
+@pytest.mark.parametrize(
+    ("action_type", "params"),
+    [
+        (ActionType.OPEN_URL, OpenUrlParams(url="http://192.168.1.1")),
+        (ActionType.OPEN_URL, OpenUrlParams(url="localhost:3000")),
+        (ActionType.OPEN_URL, OpenUrlParams(url="http://169.254.169.254/latest/meta-data/")),
+        (ActionType.OPEN_URL, OpenUrlParams(url="http://0x7f.1/")),
+        (ActionType.OPEN_URL, OpenUrlParams(url="http://example.com\\@127.0.0.1/")),
+        (ActionType.OPEN_URL, OpenUrlParams(url="http://127.0.0.1\\@example.com/")),
+        (ActionType.OPEN_URL, OpenUrlParams(url="https://nas.local/")),
+        (ActionType.BROWSER_NEW_TAB, BrowserParams(url="http://[::ffff:10.0.0.1]/")),
+        (ActionType.BROWSER_NAVIGATE, BrowserParams(url="http://metadata.google.internal/")),
+    ],
+)
+def test_a_browser_step_to_a_local_address_is_asked_once_with_the_reason(action_type, params) -> None:
+    action = Action(action_type=action_type, parameters=params)
+    reason = action.local_address_reason
+    assert reason
+    assert action.permission_tier == PermissionTier.SYSTEM_MODIFY
+    assert action.requires_confirmation is True and action.is_irreversible is True
+
+
+@pytest.mark.parametrize(
+    ("action_type", "params", "tier"),
+    [
+        (ActionType.OPEN_URL, OpenUrlParams(url="https://github.com"), PermissionTier.USER_WRITE),
+        (ActionType.OPEN_URL, OpenUrlParams(url="youtube.com/watch?v=1"), PermissionTier.USER_WRITE),
+        (ActionType.BROWSER_NEW_TAB, BrowserParams(url="https://example.com"), PermissionTier.USER_WRITE),
+        (ActionType.BROWSER_NEW_TAB, BrowserParams(), PermissionTier.USER_WRITE),
+        (ActionType.BROWSER_NAVIGATE, BrowserParams(url="file:///tmp/page.html"), PermissionTier.SYSTEM_MODIFY),
+    ],
+)
+def test_a_browser_step_to_a_public_address_keeps_its_tier(action_type, params, tier) -> None:
+    action = Action(action_type=action_type, parameters=params)
+    assert action.local_address_reason is None
+    assert action.permission_tier == tier
+    assert action.is_irreversible is False
 
 
 async def test_the_executor_passes_the_download_approval_on(monkeypatch) -> None:

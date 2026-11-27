@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_validator, model_validator
 
+from pilot.security.addresses import browser_target_refusal
 from pilot.security.secret_urls import mask_if_secret, mask_secret, mask_url, redact_headers, redact_text
 
 
@@ -1106,6 +1107,17 @@ class Action(BaseModel):
         return redact_text(value) or ""
 
     @property
+    def local_address_reason(self) -> str | None:
+        """Why the address this step hands to a browser (open_url, browser_navigate, browser_new_tab) needs the
+        person's approval: it is on this computer or the local network, a metadata address or a local-only name
+        (pilot.security.addresses). None for any other step or address. The browser makes its own requests, so the
+        address is judged as written, for every source of the step."""
+        if self.action_type not in {ActionType.OPEN_URL, ActionType.BROWSER_NAVIGATE, ActionType.BROWSER_NEW_TAB}:
+            return None
+        url = str(getattr(self.parameters, "url", "") or "")
+        return browser_target_refusal(url) if url.strip() else None
+
+    @property
     def permission_tier(self) -> PermissionTier:
         # These actions are ALWAYS safe ΓÇö never require confirmation
         #
@@ -1143,6 +1155,8 @@ class Action(BaseModel):
         if self.action_type == ActionType.DOWNLOAD_FILE and bool(
             getattr(self.parameters, "allow_private_network", False)
         ):
+            return PermissionTier.SYSTEM_MODIFY
+        if self.local_address_reason is not None:
             return PermissionTier.SYSTEM_MODIFY
         if self.action_type in ALWAYS_SAFE:
             return PermissionTier.USER_WRITE
@@ -1209,6 +1223,8 @@ class Action(BaseModel):
         if self.action_type in {ActionType.API_REQUEST, ActionType.API_SCRAPE, ActionType.DOWNLOAD_FILE} and bool(
             getattr(self.parameters, "allow_private_network", False)
         ):
+            return True
+        if self.local_address_reason is not None:
             return True
         if self.action_type in {ActionType.API_REQUEST, ActionType.API_GITHUB}:
             method = str(getattr(self.parameters, "method", "GET")).upper()
