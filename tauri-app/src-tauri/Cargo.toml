@@ -34,3 +34,12 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# The window's web view, to reload its page when the web process ends (src/webview_recovery.rs). The same versions
+# Tauri's wry already uses, so nothing new is built.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
+gtk = "0.18"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.38"

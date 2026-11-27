@@ -13,6 +13,7 @@ mod setup;
 mod supervisor;
 mod tray;
 mod uninstall;
+mod webview_recovery;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -519,7 +520,13 @@ fn main() {
         // Only without an environment (a daemon run from a checkout): refused at once when nothing listens.
         port_answers(Duration::from_millis(150))
     });
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // macOS: Tauri reloads a page whose content process ended by itself; this hook keeps that and adds the limit
+    // (webview_recovery). Linux and Windows are watched from setup, once the window exists.
+    #[cfg(target_os = "macos")]
+    let builder =
+        builder.on_web_content_process_terminate(webview_recovery::on_content_process_terminate);
+    builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         // Every navigation of a window goes through navigation::allow: only the app's own pages load.
@@ -540,6 +547,9 @@ fn main() {
             // Show the window when the user starts the app, rather than hiding it
             window.show().unwrap();
             window.set_focus().unwrap();
+            // A web process that ends under the page reloads it instead of leaving the window blank.
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            webview_recovery::watch(&window);
             if let Some(first) = first_copy {
                 let handle = app.handle().clone();
                 let listening = first.listen(move || {

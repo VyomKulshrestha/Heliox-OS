@@ -1668,6 +1668,7 @@ dependencies = [
  "dirs",
  "enigo",
  "futures-util",
+ "gtk",
  "libc",
  "opener",
  "pdf-extract",
@@ -1681,6 +1682,8 @@ dependencies = [
  "tauri-plugin-notification",
  "tokio",
  "tokio-tungstenite",
+ "webkit2gtk",
+ "webview2-com",
  "zip",
 ]
 

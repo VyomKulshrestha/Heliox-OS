@@ -86,6 +86,12 @@ fn new_secret() -> String {
 }
 
 impl FirstCopy {
+    /// Let go of the lock before this copy restarts itself, so the new copy is the first one and does not hand over
+    /// to this one while it is ending (webview_recovery::restart).
+    pub(crate) fn release(&self) {
+        let _ = self._lock.unlock();
+    }
+
     /// Listen for second launches and call `bring_forward` for each one that sends the secret.
     pub(crate) fn listen(&self, bring_forward: impl Fn() + Send + 'static) -> std::io::Result<()> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
