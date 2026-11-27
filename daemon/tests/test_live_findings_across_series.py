@@ -1008,3 +1008,15 @@ async def test_r13_a_refused_retry_is_said_after_the_failure() -> None:
     first, _, rest = response["spoken"].partition(". ")
     assert first == "That didn't work for b.txt: the check afterwards found something else"
     assert "I did not try again" in rest
+
+
+@pytest.mark.parametrize(("reason", "speaking"), [("no sound", "alba"), ("no sound", ""), ("missing", "alba")])
+def test_r13_a_voice_put_aside_is_told_in_the_first_person_and_passes_every_check(reason, speaking) -> None:
+    from pilot.conversation import work_claims
+    from pilot.reply_rules import hole
+    from pilot.system.local_tts_worker import aside_sentence
+
+    sentence = aside_sentence("michael", reason, speaking, 7_000_000)
+    assert "Heliox" not in sentence and "I'll" in sentence
+    assert hole(sentence) == "" and ear_faults(sentence) == [] and screen_faults(sentence) == []
+    assert work_claims.unbacked(sentence, {"known": True, "queued": []}) == ""

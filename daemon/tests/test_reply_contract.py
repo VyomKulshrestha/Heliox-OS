@@ -1032,6 +1032,17 @@ def _every_ending() -> dict[str, str]:
             "pick kept, three": "Okay, I've kept all 3 triggers; nothing was deleted.",
         }
     )
+    # Round thirteen: a voice put aside (no sound, or its file missing), and a step Heliox's own rules refused.
+    from pilot.actions import ApiRequestParams
+    from pilot.failure_sentences import failure_sentence
+    from pilot.system.local_tts_worker import aside_sentence
+
+    endings["voice no sound"] = aside_sentence("michael", "no sound", "alba")
+    endings["voice no sound, system voice"] = aside_sentence("michael", "no sound", "")
+    endings["voice missing"] = aside_sentence("michael", "missing", "alba", 7_000_000)
+    local = "http://127.0.0.1:8797/busy"
+    get = Action(action_type=ActionType.API_REQUEST, target=local, parameters=ApiRequestParams(url=local))
+    endings["gateway denied"] = failure_sentence(get, "Gateway denied: api_request exceeds the source's ceiling")[1]
     return endings
 
 
