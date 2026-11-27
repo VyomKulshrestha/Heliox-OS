@@ -437,7 +437,10 @@ class Window:
     were doing (SessionWatch, process_tree and the logs). ``may_open_again`` says whether only the driver's side was
     lost (the app's main process and every web process the session opened with still running); only then may a
     caller ``reopen`` the window, once, before anything was pressed, and its CHECK line says so (``reopen_note``).
-    A web process that ended is what a person would see as the window going blank, so it is never retried."""
+    A web process that ended takes the driver's session with it (WebKit: "session deleted because of page crash or
+    hang"). The window is opened again for it only when the check ended it on purpose or the app said it reloaded
+    its page (webview_recovery.rs), and an unplanned one is named UNPLANNED; a web process that ended with no reload
+    is a window left blank for the person, and fails."""
 
     def __init__(self, person: Person, binary: str, tools: str) -> None:
         from app_launch_check import Driver
@@ -535,9 +538,23 @@ class Window:
             - self.planned
         )
         if web_ended:
-            return False, (
-                f"the app's main process is the same, but its web process {web_ended} ended "
-                f"(web processes now: {sorted(pid for pid, _ in web_now)}): a person would see the window go blank"
+            # The app reloads its page when the web process ends (webview_recovery.rs) and says so on stderr, which
+            # is the driver's log. Recovered: the window was not lost for the person, only the driver's session
+            # (WebKit ends it with the web process: "session deleted because of page crash or hang"). Not recovered:
+            # the window stayed blank, and that fails.
+            said = "\n".join(tail(OUT / "driver.log", 400, width=400))
+            reloads, loaded = said.count("reloading the page"), said.count("page loaded again")
+            if self.reopened or reloads < len(web_ended) or loaded < len(web_ended):
+                return False, (
+                    f"the app's main process is the same, but its web process {web_ended} ended without the check "
+                    f"ending it (web processes now: {sorted(pid for pid, _ in web_now)}); the app said it reloaded "
+                    f"{reloads} and loaded again {loaded} times"
+                    + ("; the window was already opened again" if self.reopened else ": the window stayed blank")
+                )
+            return True, (
+                f"UNPLANNED: the app's web process {web_ended} ended without the check ending it, and the app "
+                f"reloaded its page ({reloads} reload lines, {loaded} loaded-again lines; web processes now: "
+                f"{sorted(pid for pid, _ in web_now)})"
             )
         same = (
             f"the app's main process is the one the session opened with, and no web process ended but {sorted(self.planned)}, "
