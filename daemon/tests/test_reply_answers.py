@@ -229,12 +229,12 @@ SYSTEM = (
         (_result(ActionType.PROCESS_LIST, ProcessParams(), PROCESSES), "what programs are running",
          "4 programs are running; the biggest are Chrome, Code and Teams."),
         (_result(ActionType.PROCESS_LIST, ProcessParams(name="chrome"), PROCESSES), "is chrome running",
-         "Chrome is running, as 5 processes."),
+         "Chrome is running, as 5 processes, using fifteen percent of memory."),
         (_result(ActionType.SYSTEM_INFO, SystemInfoParams(), SYSTEM), "how much memory is in use",
          "11.9 of 15.7 gigabytes of memory are in use."),
         (_result(ActionType.SYSTEM_INFO, SystemInfoParams(), SYSTEM), "what programs are running",
-         "The system information does not include which programs are running. Windows 11, the processor is at 7 "
-         "percent, and 11.9 of 15.7 gigabytes of memory are in use."),
+         "The system information does not include which programs are running. This computer runs Windows 11, the "
+         "processor is at 7 percent, and 11.9 of 15.7 gigabytes of memory are in use."),
         (_result(ActionType.SYSTEM_INFO, SystemInfoParams(), SYSTEM), "what is the CPU temperature",
          "The system information does not include the temperature. The processor is at 7 percent."),
         (_result(ActionType.FILE_LIST, FileParams(path=W),

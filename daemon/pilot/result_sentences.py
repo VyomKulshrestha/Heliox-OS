@@ -426,7 +426,9 @@ def _facts(text: str) -> list[tuple[str, str, str]]:
     cores = re.search(r"^\s*(?:Logical cores|Cores): (\d+)", text, re.MULTILINE)
     if system:
         named = f"{system.group(1).strip()} {release.group(1).strip() if release else ''}".strip()
-        facts.append(("os", f"System: {named}" + (f", {cores.group(1)} cores" if cores else ""), named))
+        facts.append(
+            ("os", f"System: {named}" + (f", {cores.group(1)} cores" if cores else ""), f"this computer runs {named}")
+        )
     cpu = re.search(r"Average usage: ([\d.]+)%", text)
     if cpu:
         value = round(float(cpu.group(1)))
@@ -478,7 +480,7 @@ _SUBJECTS = {
 # Asked about what system information does not hold: said plainly before the facts it does hold.
 _NOT_IN_SYSTEM_INFO = {
     r"\btemperature|\bhow hot\b|\bthermal": "the temperature",
-    r"\b(?:programs?|apps?|processes|running)\b": "which programs are running",
+    r"\b(?:programs?|apps?|processes)\b|\bwhat(?:'s| is| s) running\b": "which programs are running",
     r"\bfans?\b": "the fan speed",
 }
 
@@ -517,7 +519,22 @@ def _network_info(step: Step) -> Said:
     ]
     if not up:
         return _answer(step, "Network")
-    return Said(shown=for_screen(step.out), spoken=f"{plural(len(up), 'network connection')} up: {_names(up)}.")
+    spoken = f"{plural(len(up), 'network connection')} up: {_names(up)}."
+    address = _ipv4_of(step.out, up[0])
+    if address:
+        spoken = (
+            f"{up[0]} is up, with the address {address}."
+            if len(up) == 1
+            else f"{spoken[:-1]}; {up[0]} has the address {address}."
+        )
+    return Said(shown=for_screen(step.out), spoken=spoken)
+
+
+def _ipv4_of(text: str, adapter: str) -> str:
+    """The first IPv4 address listed under ``adapter`` in network_info's output, or ""."""
+    block = re.search(rf"^\s{{2}}{re.escape(adapter)} \(UP\):\n((?:\s{{4,}}.*\n?)*)", text, re.MULTILINE)
+    found = re.search(r"IPv4:\s*(\d{1,3}(?:\.\d{1,3}){3})", block.group(1)) if block else None
+    return found.group(1) if found else ""
 
 
 def _volume(step: Step) -> Said:
@@ -568,9 +585,12 @@ def _process_list(step: Step) -> Said:
         f"- {name}: {memory[name]:.1f}% of memory" for name in sorted(memory, key=memory.get, reverse=True)[:20]
     )
     if asked:
+        wanted = _program_name(asked).casefold()
+        share = sum(memory[name] for name in memory if wanted in name.casefold()) or sum(memory.values())
         spoken = f"{_program_name(asked)} is running" + (
-            f", as {plural(processes, 'process', 'processes')}." if processes > 1 else "."
+            f", as {plural(processes, 'process', 'processes')}," if processes > 1 else ","
         )
+        spoken += f" using {share:.0f}% of memory." if share >= 1 else f" using {share:.1f}% of memory."
         return Said(shown=f"{spoken}\n{shown}", spoken=spoken)
     # A list cut short counts processes (its total); a whole list counts programs by name.
     count, words = (processes, ("process", "processes")) if cut else (len(memory), ("program", "programs"))
@@ -601,6 +621,13 @@ def _env_get(step: Step) -> Said:
         return _said(f"{name} is not set.")
     value = step.out.split("=", 1)[1] if "=" in step.out else step.out
     secret = re.search(r"key|token|secret|pass|auth|cred", name, re.I)
+    folders = [part for part in value.split(";" if ";" in value else ":") if part] if _folder_list(value) else []
+    if not secret and len(folders) > 1:  # PATH and its kind: said by how many folders (paths are for the eye)
+        listed = "\n".join(folders)
+        return Said(
+            shown=f"{name} holds {plural(len(folders), 'folder')}:\n{for_screen(listed)}",
+            spoken=f"{name} holds {plural(len(folders), 'folder')}; the list is on screen.",
+        )
     if re.search(r"[\\/]", value) and not secret:
         return Said(shown=for_screen(step.out), spoken=f"{name} is set to a path ending in {name_of(value)}.")
     if secret or len(value) > 60 or not value:
@@ -648,6 +675,51 @@ def _workspace_name(line: str) -> str:
 def _tool_name(line: str) -> str:
     found = re.match(r"^\s*(?:[\w.-]+:\s*)?([\w.-]+)\s+-\s", line)
     return found.group(1) if found else ""
+
+
+def _disk_list(step: Step) -> Said:
+    """How many disks: lsblk's rows of TYPE disk, or Get-Disk's numbered rows; never a header, a partition or a
+    separator line."""
+    lines = [line for line in step.out.splitlines() if line.strip()]
+    header = lines[0].split() if lines else []
+    if "TYPE" in header:
+        column = header.index("TYPE")
+        disks = [line for line in lines[1:] if len(line.split()) > column and line.split()[column] == "disk"]
+    else:
+        disks = [line for line in lines if re.match(r"^\s*\d+\s+\S", line)]
+    if not disks:
+        return _answer(step, "Disks")
+    return Said(shown=for_screen(step.out), spoken=f"This computer has {plural(len(disks), 'disk')}.")
+
+
+def _user_info(step: Step) -> Said:
+    """The account logged in: id's "uid=1000(me)", or the name under whoami's "User Name" table."""
+    found = re.search(r"uid=\d+\(([^)]+)\)", step.out)
+    name = found.group(1) if found else ""
+    if not name:
+        table = re.search(r"^User Name\s+SID\s*\n=+\s+=+\s*\n(\S+)", step.out, re.MULTILINE)
+        name = table.group(1).rsplit("\\", 1)[-1] if table else ""
+    if not name:
+        return _answer(step, "Your account")
+    return Said(shown=for_screen(step.out), spoken=f"You're logged in as {name}.")
+
+
+def _user_list(step: Step) -> Said:
+    """The accounts on this computer: one per line (Linux, macOS), or the names between net user's dashed line and its
+    closing "The command completed" line (Windows)."""
+    lines = [line.strip() for line in step.out.splitlines() if line.strip()]
+    dashes = next((i for i, line in enumerate(lines) if re.fullmatch(r"-{5,}", line)), None)
+    if dashes is not None:
+        names = [
+            name for line in lines[dashes + 1 :] if not line.lower().startswith("the command") for name in line.split()
+        ]
+    else:
+        names = [line.split()[0] for line in lines]
+    if not names:
+        return _said("This computer has no user accounts listed.")
+    return Said(
+        shown=for_screen(step.out), spoken=f"This computer has {plural(len(names), 'user account')}: {_names(names)}."
+    )
 
 
 def _first_word(line: str) -> str:
@@ -1321,13 +1393,13 @@ SENTENCES: dict[ActionType, Callable[[Step], Said]] = {
     ActionType.WIFI_LIST: _count_lines("{n} in range", "Wi-Fi network is", "Wi-Fi networks are", names=_before_columns),
     ActionType.WIFI_CONNECT: _fixed(lambda s: f"Connected to {s.param('ssid') or 'the network'}."),
     ActionType.WIFI_DISCONNECT: _fixed("Disconnected from Wi-Fi."),
-    ActionType.DISK_LIST: _count_lines("This computer has {n}", "disk"),
+    ActionType.DISK_LIST: lambda s: _disk_list(s),
     ActionType.DISK_MOUNT: _fixed(
         lambda s: f"Mounted {name_of(s.param('device'))} at {name_of(s.param('mount_point'))}."
     ),
     ActionType.DISK_UNMOUNT: _fixed(lambda s: f"Unmounted {name_of(s.param('mount_point', 'device')) or 'the disk'}."),
-    ActionType.USER_LIST: _count_lines("This computer has {n}", "user account", names=_first_word),
-    ActionType.USER_INFO: lambda s: _answer(s, "Your account"),
+    ActionType.USER_LIST: lambda s: _user_list(s),
+    ActionType.USER_INFO: lambda s: _user_info(s),
     ActionType.REGISTRY_READ: lambda s: _answer(s, s.param("value_name") or "That registry value"),
     ActionType.REGISTRY_WRITE: _fixed(lambda s: f"Set {s.param('value_name') or 'the value'} in the registry."),
     ActionType.LOG_ANALYZE: _log_analyze,
@@ -1509,8 +1581,16 @@ def private_kind(text: str, *, content: bool = True) -> str:
         return found.kind
     token = (text or "").strip()
     # A single token (a clipboard holding only a password) is judged by its shape; a sentence Heliox wrote is not.
-    single = content and token and " " not in token and looks_secret(token)
+    single = content and token and " " not in token and not _folder_list(token) and looks_secret(token)
     return "a password or a code" if single else ""
+
+
+def _folder_list(token: str) -> bool:
+    """Whether a single token is a list of folders, as PATH holds them ("/usr/bin:/bin", "C:\\Windows;C:\\Tools"),
+    with or without its "NAME=" in front."""
+    value = token.split("=", 1)[1] if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token) else token
+    parts = [part for part in value.split(";" if ";" in value else ":") if part]
+    return bool(parts) and all(re.match(r"^(?:[A-Za-z]:)?[\\/]|^~[\\/]|^%[A-Za-z_]+%", part) for part in parts)
 
 
 def _masked(text: str) -> str:
