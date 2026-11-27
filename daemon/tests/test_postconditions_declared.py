@@ -620,7 +620,7 @@ def test_a_missing_local_tool_is_not_verified(local_runner: AsyncMock) -> None:
 
 def test_http_probe_reads_status_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
     from pilot.config import PilotConfig
-    from pilot.system import api_client, http_client
+    from pilot.system import outbound
 
     class _Response:
         def __init__(self, status: int, text: str) -> None:
@@ -629,19 +629,12 @@ def test_http_probe_reads_status_and_body(monkeypatch: pytest.MonkeyPatch) -> No
     calls: list[tuple[str, str]] = []
     answers = iter([_Response(200, '{"name": "a"}'), _Response(404, "")])
 
-    async def fake_request(_client, method, url, **_kwargs):
+    async def fake_fetch(method, url, **kwargs):
+        assert kwargs["allow_private_network"] is False
         calls.append((method, url))
         return next(answers)
 
-    class _Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_exc):
-            return False
-
-    monkeypatch.setattr(api_client, "_request_with_validated_redirects", fake_request)
-    monkeypatch.setattr(http_client, "create_httpx_client", lambda *a, **k: _Client())
+    monkeypatch.setattr(outbound, "fetch", fake_fetch)
     monkeypatch.setattr(declared, "_router", None)  # restored after the test; Verifier(router) binds its own
     router = MagicMock()
     router.get_config.return_value = PilotConfig()

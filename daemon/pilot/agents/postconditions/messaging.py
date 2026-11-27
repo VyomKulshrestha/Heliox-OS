@@ -64,20 +64,17 @@ async def _http_get(url: str, *, headers: dict[str, str] | None = None, params: 
     """
     import httpx
 
-    from pilot.config import PilotConfig
-    from pilot.system import api_client
+    from pilot.system import outbound
 
     try:
-        async with api_client.create_httpx_client(
-            PilotConfig.load(), timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=False, verify=True
-        ) as client:
-            response = await api_client._request_with_validated_redirects(
-                client,
-                "GET",
-                url,
-                allow_private_network=False,
-                request_kwargs={"headers": dict(headers or {}), "params": params},
-            )
+        response = await outbound.fetch(
+            "GET",
+            url,
+            allow_private_network=False,
+            headers=dict(headers or {}),
+            params=params,
+            timeout=HTTP_TIMEOUT_SECONDS,
+        )
     except (httpx.TransportError, OSError, ValueError) as exc:
         raise _Unreachable(type(exc).__name__) from None
     try:

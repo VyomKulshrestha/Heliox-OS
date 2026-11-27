@@ -2443,7 +2443,9 @@ class Executor:
         from pilot.system.download import download_file
 
         params: DownloadParams = action.parameters  # type: ignore[assignment]
-        return await download_file(params.url, params.output_path, params.overwrite)
+        return await download_file(
+            params.url, params.output_path, params.overwrite, allow_private_network=params.allow_private_network
+        )
 
     # ======================================================================
     # REGISTRY (WINDOWS)

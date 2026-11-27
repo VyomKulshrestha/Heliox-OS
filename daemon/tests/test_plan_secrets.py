@@ -428,7 +428,9 @@ async def test_a_secret_too_large_to_keep_is_named_in_the_failure_after_a_restar
         sent.append("sent")
         return "{}"
 
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError))
+    from pilot.system import outbound
+
+    monkeypatch.setattr(outbound, "create_httpx_client", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError))
     with pytest.raises(ValueError) as header_failure:
         await api_client.api_request("GET", request.url, headers=request.headers)
     monkeypatch.setattr(api_client, "api_request", _no_send)

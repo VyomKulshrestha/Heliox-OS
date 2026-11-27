@@ -209,20 +209,13 @@ async def test_the_http_call_gets_the_real_header_and_a_masked_one_is_never_sent
         def json(self) -> object:
             return {}
 
-    class _Client:
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *_a: object) -> None:
-            return None
-
-    async def _send(client: Any, method: str, url: str, *, allow_private_network: bool, request_kwargs: Any):
-        sent.append(dict(request_kwargs.get("headers") or {}))
+    async def _fetch(method: str, url: str, *, headers: Any = None, **_kwargs: Any):
+        sent.append(dict(headers or {}))
         return _Response()
 
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_a, **_k: _Client())
-    monkeypatch.setattr(api_client, "_request_with_validated_redirects", _send)
+    from pilot.system import outbound
+
+    monkeypatch.setattr(outbound, "fetch", _fetch)
 
     params = _action().parameters
     await api_client.api_request("GET", params.url, headers=params.headers)

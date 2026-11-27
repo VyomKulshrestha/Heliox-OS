@@ -7,8 +7,6 @@ from datetime import date
 from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree
 
-import httpx
-
 from pilot.actions import ActionPlan, ActionResult, ActionType
 from pilot.agents.background import BackgroundTask
 from pilot.agents.base_agent import AgentCapability, AgentRole, BaseAgent
@@ -183,9 +181,13 @@ class RssAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _fetch_feed(self, url: str) -> list[str]:
-        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT, follow_redirects=True) as client:
-            resp = await client.get(url, headers={"User-Agent": "HeliOS-RSSAgent/1.0"})
-            resp.raise_for_status()
+        # Through the checked outbound path: a feed address on this computer or the local network is refused.
+        from pilot.system import outbound
+
+        resp = await outbound.fetch(
+            "GET", url, headers={"User-Agent": "HeliOS-RSSAgent/1.0"}, timeout=_FETCH_TIMEOUT, config=self._config
+        )
+        resp.raise_for_status()
         return self._parse_feed(resp.text, url)
 
     @staticmethod

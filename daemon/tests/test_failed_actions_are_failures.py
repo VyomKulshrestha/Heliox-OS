@@ -29,6 +29,7 @@ from pilot.agents.executor import Executor
 from pilot.agents.verifier import Verifier
 from pilot.system import api_client, platform_detect
 from pilot.system.platform_detect import Platform
+from tests import fake_outbound
 
 SECRET_PATH = "/services/T000/B000/secret-token-in-path"
 
@@ -90,15 +91,11 @@ def http(monkeypatch: pytest.MonkeyPatch):
 
     state = {"status": 200, "text": "ok", "requests": []}
 
-    def factory(*_args: object, **_kwargs: object) -> _ClientContext:
-        return _ClientContext(_Client(state["status"], state["text"], state["requests"]))
+    class _Live:
+        async def request(self, method: str, url: str, **kwargs: object) -> _Response:
+            return await _Client(state["status"], state["text"], state["requests"]).request(method, url, **kwargs)
 
-    async def no_dns(_url: str, *, allow_private_network: bool) -> None:
-        return None
-
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", factory)
-    monkeypatch.setattr(api_client, "_validate_outbound_url", no_dns)
+    fake_outbound.install(monkeypatch, _Live())
     return state
 
 

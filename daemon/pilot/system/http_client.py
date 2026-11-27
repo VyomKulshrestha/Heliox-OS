@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import urllib.request
 from collections.abc import Generator
 from typing import Any
 
@@ -36,6 +37,20 @@ def _scoped_proxy_env(config: PilotConfig) -> Generator[None, None, None]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def proxy_for(config: object, scheme: str, host: str) -> str | None:
+    """The proxy a request to ``scheme://host`` goes through: the configured proxy, else HTTP_PROXY, HTTPS_PROXY and
+    ALL_PROXY, unless NO_PROXY names the host. None when it goes direct."""
+    proxies = dict(urllib.request.getproxies_environment())
+    configured = getattr(config, "proxy", None)
+    for key, field in (("http", "http"), ("https", "https"), ("no", "no_proxy")):
+        value = getattr(configured, field, None)
+        if value is not None:
+            proxies[key] = value
+    if not proxies or urllib.request.proxy_bypass_environment(host, proxies):
+        return None
+    return proxies.get(scheme.lower()) or proxies.get("all") or None
 
 
 def create_httpx_client(config: PilotConfig, **kwargs: Any) -> httpx.AsyncClient:

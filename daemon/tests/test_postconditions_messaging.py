@@ -16,22 +16,12 @@ from pilot.actions import Action, ActionPlan, ActionResult, ActionType, ApiReque
 from pilot.agents.postconditions import messaging
 from pilot.agents.verifier import POSTCONDITION_VERIFIERS, Verifier
 from pilot.system import api_client
+from tests import fake_outbound
 
 SECRET = "s3cr3t-webhook-token-value"
 SLACK_HOOK = f"https://hooks.slack.com/services/T000/B000/{SECRET}"
 DISCORD_HOOK = f"https://discord.com/api/webhooks/123456/{SECRET}"
 SENT_AT = 1_790_000_000.0
-
-
-class _ClientContext:
-    def __init__(self, client: object) -> None:
-        self._client = client
-
-    async def __aenter__(self) -> object:
-        return self._client
-
-    async def __aexit__(self, *_args: object) -> None:
-        return None
 
 
 class _Response:
@@ -62,12 +52,7 @@ class _Network:
 
 
 def _install_network(monkeypatch: pytest.MonkeyPatch, network: _Network) -> None:
-    async def _public(*_args: object, **_kwargs: object) -> None:
-        return None
-
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_a, **_k: _ClientContext(network))
-    monkeypatch.setattr(api_client, "_validate_outbound_url", _public)
+    fake_outbound.install(monkeypatch, network)
 
 
 @pytest.fixture(autouse=True)
@@ -383,13 +368,7 @@ async def test_discord_offline_is_reported_and_the_error_never_quotes_the_url(mo
             raise httpx.ConnectError(f"cannot connect to {url}")
 
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", DISCORD_HOOK)
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_a, **_k: _ClientContext(_Offline()))
-
-    async def _public(*_args: object, **_kwargs: object) -> None:
-        return None
-
-    monkeypatch.setattr(api_client, "_validate_outbound_url", _public)
+    fake_outbound.install(monkeypatch, _Offline())
     caplog.set_level(logging.DEBUG)
 
     outcome = await messaging.discord_message_in_channel(

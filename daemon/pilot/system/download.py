@@ -1,7 +1,4 @@
-"""Download files from URLs.
-
-Cross-platform using httpx (preferred) or OS-native tools.
-"""
+"""Download files from URLs, through the checked outbound path."""
 
 from __future__ import annotations
 
@@ -12,9 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from pilot.config import PilotConfig
-from pilot.system.http_client import create_httpx_client
-from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
+from pilot.system import outbound
 
 logger = logging.getLogger("pilot.system.download")
 
@@ -38,43 +33,27 @@ def _facts(resp: Any, data: bytes) -> str:
     )
 
 
-async def download_file(url: str, output_path: str, overwrite: bool = False) -> str:
-    """Download a file from a URL to a local path."""
+async def download_file(
+    url: str, output_path: str, overwrite: bool = False, *, allow_private_network: bool = False
+) -> str:
+    """Download a file from a URL to a local path, through the checked outbound path (pilot.system.outbound).
+
+    An address on this computer or the local network is refused unless the step carries ``allow_private_network``,
+    which makes it need the person's approval. A refused or failed download writes nothing and is never handed to
+    another download program.
+    """
     out_path = Path(output_path)
 
     if out_path.exists() and not overwrite:
         raise FileExistsError(f"File already exists: {output_path}. Set overwrite=true.")
 
+    resp = await outbound.fetch("GET", url, allow_private_network=allow_private_network, timeout=120)
+    if resp.status_code >= 400:
+        from pilot.system.api_client import HttpStatusError
+
+        raise HttpStatusError("GET", str(resp.url), resp.status_code, getattr(resp, "reason_phrase", ""))
+    data = resp.content
     out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Try httpx first (in our deps)
-    try:
-        async with create_httpx_client(PilotConfig.load(), follow_redirects=True, timeout=120) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.content
-            out_path.write_bytes(data)
-            size = len(data)
-            return f"Downloaded {url} -> {output_path} ({size:,} bytes)\n[DOWNLOAD] {_facts(resp, data)}"
-    except Exception as e:
-        logger.warning("httpx download failed, falling back to OS tools: %s", e)
-
-    # Fallback to OS tools
-    if CURRENT_PLATFORM == Platform.WINDOWS:
-        # The address and the file are data ($HelioxArgs), never part of the command text.
-        code, out, err = await run_powershell(
-            "Invoke-WebRequest -Uri $HelioxArgs['url'] -OutFile $HelioxArgs['out'] -UseBasicParsing",
-            values={"url": url, "out": output_path},
-        )
-    elif CURRENT_PLATFORM == Platform.MACOS:
-        code, out, err = await run_command(["curl", "-fSL", "-o", output_path, url])
-    else:
-        code, out, err = await run_command(["wget", "-O", output_path, url])
-        if code != 0:
-            code, out, err = await run_command(["curl", "-fSL", "-o", output_path, url])
-
-    if code != 0:
-        raise RuntimeError(f"Download failed: {err.strip()}")
-
-    size = out_path.stat().st_size if out_path.exists() else 0
-    return f"Downloaded {url} -> {output_path} ({size:,} bytes)"
+    out_path.write_bytes(data)
+    size = len(data)
+    return f"Downloaded {url} -> {output_path} ({size:,} bytes)\n[DOWNLOAD] {_facts(resp, data)}"

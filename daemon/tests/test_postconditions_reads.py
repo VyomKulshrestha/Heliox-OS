@@ -635,26 +635,15 @@ async def test_content_search_says_when_it_stopped_and_what_it_skipped(tmp_path:
 @pytest.mark.asyncio
 async def test_api_scrape_says_its_cut_and_a_selector_that_matches_nothing_fails(monkeypatch) -> None:
     from pilot.system import api_client
-
-    class _Context:
-        def __init__(self, html: str) -> None:
-            self.html = html
-
-        async def __aenter__(self):
-            html = self.html
-
-            class _Client:
-                async def request(self, _method: str, url: str, **_kwargs: object):
-                    return SimpleNamespace(url=url, status_code=200, headers={}, text=html, is_redirect=False)
-
-            return _Client()
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
+    from tests import fake_outbound
 
     html = "<html><body><p>" + "word " * 3000 + "</p>" + "<a href='/x'>x</a>" * 120 + "</body></html>"
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_a, **_k: _Context(html))
+
+    class _Client:
+        async def request(self, _method: str, url: str, **_kwargs: object):
+            return SimpleNamespace(url=url, status_code=200, headers={}, text=html, is_redirect=False)
+
+    fake_outbound.install(monkeypatch, _Client())
     pytest.importorskip("bs4")
 
     text = await api_client.scrape_url("https://8.8.8.8/page")

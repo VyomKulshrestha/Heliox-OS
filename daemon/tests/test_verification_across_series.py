@@ -42,6 +42,7 @@ from pilot.agents.postconditions._unobservable import UNOBSERVABLE_POSTCONDITION
 from pilot.agents.verifier import POSTCONDITION_VERIFIERS, Verifier
 from pilot.response_contract import success_message
 from pilot.server import _postcondition_failure_requires_reconciliation
+from tests import fake_outbound
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SECRET = "s3cr3tDiscordTokenAbC7"
@@ -199,17 +200,6 @@ class _Network:
         return _Response(url, status, body)
 
 
-class _ClientContext:
-    def __init__(self, client: object) -> None:
-        self._client = client
-
-    async def __aenter__(self) -> object:
-        return self._client
-
-    async def __aexit__(self, *_args: object) -> None:
-        return None
-
-
 class _Vault:
     available = True
 
@@ -231,9 +221,6 @@ async def test_a_verified_send_keeps_its_webhook_secret_out_of_the_receipt(
     from pilot.system import api_client
     from pilot.workflows.task_receipts import TaskReceipts
 
-    async def _public(*_args: object, **_kwargs: object) -> None:
-        return None
-
     async def _no_pause(_seconds: float) -> None:
         return None
 
@@ -242,9 +229,7 @@ async def test_a_verified_send_keeps_its_webhook_secret_out_of_the_receipt(
         (200, {"id": "987654321", "content": "Deploy finished"}),
     )
     monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_a, **_k: _ClientContext(network))
-    monkeypatch.setattr(api_client, "_validate_outbound_url", _public)
+    fake_outbound.install(monkeypatch, network)
     monkeypatch.setattr(messaging, "_pause", _no_pause)
 
     action = Action(
@@ -561,16 +546,11 @@ def _kept_plan() -> ActionPlan:
 def _network(monkeypatch: pytest.MonkeyPatch, *answers: tuple[int, object]) -> _Network:
     from pilot.system import api_client
 
-    async def _public(*_args: object, **_kwargs: object) -> None:
-        return None
-
     async def _no_pause(_seconds: float) -> None:
         return None
 
     network = _Network(*answers)
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_a, **_k: _ClientContext(network))
-    monkeypatch.setattr(api_client, "_validate_outbound_url", _public)
+    fake_outbound.install(monkeypatch, network)
     monkeypatch.setattr(messaging, "_pause", _no_pause)
     return network
 

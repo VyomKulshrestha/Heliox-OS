@@ -573,8 +573,7 @@ async def _read_browser(probe: Action) -> Reading:
 
 async def _read_http(probe: Action) -> Reading:
     from pilot.config import PilotConfig
-    from pilot.system.api_client import _request_with_validated_redirects
-    from pilot.system.http_client import create_httpx_client
+    from pilot.system import outbound
 
     p = probe.parameters
     method = str(getattr(p, "method", "GET")).upper()
@@ -600,14 +599,15 @@ async def _read_http(probe: Action) -> Reading:
         url = str(p.url)
         private = bool(getattr(p, "allow_private_network", False))
     config = _config() or PilotConfig.load()
-    async with create_httpx_client(config, timeout=REMOTE_PROBE_SECONDS - 5, follow_redirects=False, verify=True) as c:
-        response = await _request_with_validated_redirects(
-            c,
-            method,
-            url,
-            allow_private_network=private,
-            request_kwargs={"params": dict(getattr(p, "params", None) or {}), "headers": headers},
-        )
+    response = await outbound.fetch(
+        method,
+        url,
+        allow_private_network=private,
+        headers=headers,
+        params=dict(getattr(p, "params", None) or {}),
+        timeout=REMOTE_PROBE_SECONDS - 5,
+        config=config,
+    )
     status = int(response.status_code)
     body = "" if method == "HEAD" else response.text[:OUTPUT_LIMIT]
     if 200 <= status < 300:

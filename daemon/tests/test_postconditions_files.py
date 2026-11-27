@@ -249,41 +249,22 @@ async def test_a_copied_file_with_different_bytes_is_a_mismatch(tmp_path) -> Non
 # ── download_file ────────────────────────────────────────────────────
 
 
-class _ClientContext:
-    def __init__(self, client: object) -> None:
-        self._client = client
-
-    async def __aenter__(self) -> object:
-        return self._client
-
-    async def __aexit__(self, *_args: object) -> None:
-        return None
-
-
 class _Download:
     def __init__(self, body: bytes, headers: dict[str, str], url: str = "https://files.example/report.pdf") -> None:
         self.content = body
         self.headers = headers
         self.url = url
-
-    def raise_for_status(self) -> None:
-        return None
+        self.status_code = 200
 
 
 def _serve(monkeypatch: pytest.MonkeyPatch, response: _Download) -> None:
-    from pilot.system import download
+    from tests import fake_outbound
 
     class _Client:
-        async def get(self, _url: str) -> _Download:
+        async def request(self, _method: str, _url: str, **_kwargs: object) -> _Download:
             return response
 
-    async def _no_system_tool(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("the download must not fall back to the system's own tool in a test")
-
-    monkeypatch.setattr(download.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(download, "create_httpx_client", lambda *_a, **_k: _ClientContext(_Client()))
-    monkeypatch.setattr(download, "run_powershell", _no_system_tool)
-    monkeypatch.setattr(download, "run_command", _no_system_tool)
+    fake_outbound.install(monkeypatch, _Client())
 
 
 def _download_action(path, url: str = "https://files.example/report.pdf", sha256: str | None = None) -> Action:

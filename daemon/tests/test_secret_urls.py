@@ -110,17 +110,6 @@ def test_a_url_without_a_secret_is_shown_whole() -> None:
 # ── the running step, and a restored plan ────────────────────────────
 
 
-class _ClientContext:
-    def __init__(self, client: object) -> None:
-        self._client = client
-
-    async def __aenter__(self) -> object:
-        return self._client
-
-    async def __aexit__(self, *_args: object) -> None:
-        return None
-
-
 class _Response:
     def __init__(self, url: str) -> None:
         self.url = url
@@ -133,7 +122,7 @@ class _Response:
 
 
 def _network(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    from pilot.system import api_client
+    from tests import fake_outbound
 
     sent: list[str] = []
 
@@ -142,15 +131,8 @@ def _network(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             sent.append(url)
             return _Response(url)
 
-    original = api_client._validate_outbound_url
-
-    async def _no_dns(url: str, *, allow_private_network: bool) -> None:
-        secret_urls.refuse_masked(url)  # the masked check runs; the name lookup does not
-
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_a, **_k: _ClientContext(_Client()))
-    monkeypatch.setattr(api_client, "_validate_outbound_url", _no_dns)
-    assert original is not None
+    # The masked check runs in pilot.system.outbound; the name lookup goes to a fake resolver.
+    fake_outbound.install(monkeypatch, _Client())
     return sent
 
 

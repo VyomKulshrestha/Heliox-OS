@@ -8,145 +8,27 @@ from __future__ import annotations
 
 import asyncio
 import email.utils
-import ipaddress
 import json
 import logging
 import smtplib
-import socket
 import ssl
 import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pilot.actions import SUPPORTED_HTTP_METHODS, OutputWithNotice
-from pilot.config import PilotConfig
 from pilot.security.secret_urls import mask_if_secret, refuse_masked
-from pilot.system.http_client import create_httpx_client
+from pilot.system import outbound
 from pilot.system.mail_readback import message_id_note, new_message_id
 
 logger = logging.getLogger("pilot.system.api_client")
-# The real client factory; a test that replaced it with a fake reaches no server (system_guard.check_http).
-_REAL_CLIENT_FACTORY = create_httpx_client
-
-_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
-_SENSITIVE_REDIRECT_HEADERS = frozenset({"authorization", "cookie", "proxy-authorization"})
-_BODY_HEADERS = frozenset({"content-length", "content-type", "transfer-encoding"})
-_MAX_REDIRECTS = 5
 
 
 def _origin(url: str) -> tuple[str, str, int | None]:
     parsed = urlsplit(url)
     return parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port
-
-
-def _is_public_address(address: str) -> bool:
-    try:
-        return ipaddress.ip_address(address).is_global
-    except ValueError:
-        return False
-
-
-async def _validate_outbound_url(url: str, *, allow_private_network: bool) -> None:
-    # A plan restored from storage holds masked addresses (pilot.security.secret_urls): never send to one.
-    refuse_masked(url)
-    parsed = urlsplit(url)
-    if parsed.scheme.lower() not in {"http", "https"}:
-        raise ValueError("Outbound URLs must use http:// or https://")
-    if not parsed.hostname:
-        raise ValueError("Outbound URL must include a hostname")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("Credentials must be supplied as request authentication, not embedded in the URL")
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise ValueError("Outbound URL contains an invalid port") from exc
-
-    if allow_private_network:
-        return
-
-    hostname = parsed.hostname.rstrip(".").lower()
-    if hostname == "localhost" or hostname.endswith(".localhost"):
-        raise ValueError("Private-network URL blocked; explicit approval is required")
-
-    try:
-        literal_address = ipaddress.ip_address(hostname)
-    except ValueError:
-        literal_address = None
-    if literal_address is not None:
-        if not literal_address.is_global:
-            raise ValueError("Private-network URL blocked; explicit approval is required")
-        return
-
-    try:
-        resolved = await asyncio.to_thread(
-            socket.getaddrinfo,
-            hostname,
-            port or (443 if parsed.scheme.lower() == "https" else 80),
-            type=socket.SOCK_STREAM,
-        )
-    except socket.gaierror as exc:
-        raise ValueError(f"Could not resolve outbound hostname {hostname!r}") from exc
-
-    addresses = {entry[4][0] for entry in resolved}
-    if not addresses or any(not _is_public_address(address) for address in addresses):
-        raise ValueError("Private-network URL blocked; explicit approval is required")
-
-
-def _redirect_method(method: str, status_code: int) -> str:
-    if status_code == 303 and method != "HEAD":
-        return "GET"
-    if status_code in {301, 302} and method == "POST":
-        return "GET"
-    return method
-
-
-async def _request_with_validated_redirects(
-    client: Any,
-    method: str,
-    url: str,
-    *,
-    allow_private_network: bool,
-    request_kwargs: dict[str, Any] | None = None,
-) -> Any:
-    current_method = method
-    current_url = url
-    kwargs = dict(request_kwargs or {})
-    if "headers" in kwargs:
-        kwargs["headers"] = dict(kwargs["headers"])
-
-    for redirect_count in range(_MAX_REDIRECTS + 1):
-        await _validate_outbound_url(current_url, allow_private_network=allow_private_network)
-        response = await client.request(current_method, current_url, **kwargs)
-        location = response.headers.get("location")
-        if response.status_code not in _REDIRECT_STATUSES or not location:
-            return response
-        if redirect_count == _MAX_REDIRECTS:
-            raise ValueError(f"Outbound request exceeded {_MAX_REDIRECTS} redirects")
-
-        next_url = urljoin(str(response.url), location)
-        if _origin(next_url) != _origin(current_url):
-            kwargs.pop("auth", None)
-            headers = kwargs.get("headers")
-            if headers:
-                kwargs["headers"] = {
-                    key: value for key, value in headers.items() if key.lower() not in _SENSITIVE_REDIRECT_HEADERS
-                }
-
-        next_method = _redirect_method(current_method, response.status_code)
-        if next_method != current_method:
-            kwargs.pop("content", None)
-            kwargs.pop("json", None)
-            headers = kwargs.get("headers")
-            if headers:
-                kwargs["headers"] = {key: value for key, value in headers.items() if key.lower() not in _BODY_HEADERS}
-
-        kwargs.pop("params", None)
-        current_method = next_method
-        current_url = next_url
-
-    raise AssertionError("redirect loop must return or raise")
 
 
 # ── Generic REST API ─────────────────────────────────────────────────
@@ -250,52 +132,41 @@ async def api_request(
     for name, value in (headers or {}).items():
         # A resumed plan whose header secret could not be restored holds its masked form: never send that.
         refuse_masked(str(value), what=f"{name} header")
-    refuse_masked(url)
-    from pilot.system.system_guard import check_http
+    json_body = body if isinstance(body, dict) and body else None
+    content = body if body and not isinstance(body, dict) else None
+    sent_headers = dict(headers or {})
+    if content is not None:
+        sent_headers["Content-Type"] = "application/json"
+    resp = await outbound.fetch(
+        method,
+        url,
+        allow_private_network=allow_private_network,
+        headers=sent_headers or None,
+        params=params,
+        json=json_body,
+        content=content,
+        auth=auth,
+        timeout=timeout,
+    )
+    if resp.status_code >= 400:
+        raise HttpStatusError(method, str(resp.url), resp.status_code, getattr(resp, "reason_phrase", ""), resp.text)
 
-    check_http(method, _origin(url)[1], real_client=create_httpx_client is _REAL_CLIENT_FACTORY)
-    async with create_httpx_client(PilotConfig.load(), timeout=timeout, follow_redirects=False, verify=True) as client:
-        kwargs: dict[str, Any] = {"params": params}
-        if headers:
-            kwargs["headers"] = headers
-        if auth:
-            kwargs["auth"] = auth
-        if body:
-            if isinstance(body, dict):
-                kwargs["json"] = body
-            else:
-                kwargs["content"] = body
-                kwargs.setdefault("headers", {})["Content-Type"] = "application/json"
+    result = {
+        "status": resp.status_code,
+        "url": mask_if_secret(str(resp.url)),
+        "headers": dict(resp.headers),
+    }
 
-        resp = await _request_with_validated_redirects(
-            client,
-            method,
-            url,
-            allow_private_network=allow_private_network,
-            request_kwargs=kwargs,
-        )
+    # Parse response body
+    try:
+        result["body"] = resp.json()
+    except (json.JSONDecodeError, ValueError):
+        text = resp.text
+        if len(text) > 5000:
+            text = text[:5000] + f"... ({len(resp.text):,} chars total)"
+        result["body"] = text
 
-        if resp.status_code >= 400:
-            raise HttpStatusError(
-                method, str(resp.url), resp.status_code, getattr(resp, "reason_phrase", ""), resp.text
-            )
-
-        result = {
-            "status": resp.status_code,
-            "url": mask_if_secret(str(resp.url)),
-            "headers": dict(resp.headers),
-        }
-
-        # Parse response body
-        try:
-            result["body"] = resp.json()
-        except (json.JSONDecodeError, ValueError):
-            text = resp.text
-            if len(text) > 5000:
-                text = text[:5000] + f"... ({len(resp.text):,} chars total)"
-            result["body"] = text
-
-        return json.dumps(result, indent=2, ensure_ascii=False)
+    return json.dumps(result, indent=2, ensure_ascii=False)
 
 
 # ── GitHub API ───────────────────────────────────────────────────────
@@ -591,22 +462,16 @@ async def scrape_url(
     selector: CSS selector to target specific elements (requires BeautifulSoup)
     extract: 'text', 'html', 'links', 'tables'
     """
-    async with create_httpx_client(
-        PilotConfig.load(),
-        timeout=30,
-        follow_redirects=False,
-        verify=True,
+    resp = await outbound.fetch(
+        "GET",
+        url,
+        allow_private_network=allow_private_network,
         headers={"User-Agent": "Mozilla/5.0 (compatible; Pilot/0.3)"},
-    ) as client:
-        resp = await _request_with_validated_redirects(
-            client,
-            "GET",
-            url,
-            allow_private_network=allow_private_network,
-        )
-        if resp.status_code >= 400:
-            raise HttpStatusError("GET", str(resp.url), resp.status_code, getattr(resp, "reason_phrase", ""))
-        html = resp.text
+        timeout=30,
+    )
+    if resp.status_code >= 400:
+        raise HttpStatusError("GET", str(resp.url), resp.status_code, getattr(resp, "reason_phrase", ""))
+    html = resp.text
 
     from urllib.parse import urlsplit
 

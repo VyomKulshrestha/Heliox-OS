@@ -1,24 +1,19 @@
 from __future__ import annotations
 
-import socket
+import ssl
 from unittest.mock import AsyncMock
 
 import pytest
 
 from pilot.actions import Action, ActionType, ApiRequestParams
 from pilot.agents.executor import Executor
-from pilot.system import api_client
+from pilot.system import api_client, outbound
+from tests import fake_outbound
 
 
-class _ClientContext:
-    def __init__(self, client: object) -> None:
-        self._client = client
-
-    async def __aenter__(self) -> object:
-        return self._client
-
-    async def __aexit__(self, *_args: object) -> None:
-        return None
+def _assert_verifies(context: object) -> None:
+    assert isinstance(context, ssl.SSLContext)
+    assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname is True
 
 
 class _Response:
@@ -47,18 +42,13 @@ async def test_api_request_never_retries_without_tls_verification(monkeypatch: p
         async def request(self, *_args: object, **_kwargs: object) -> None:
             raise RuntimeError("CERTIFICATE_VERIFY_FAILED")
 
-    def _client_factory(*_args: object, **kwargs: object) -> _ClientContext:
-        calls.append(kwargs)
-        return _ClientContext(_FailingClient())
-
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", _client_factory)
+    fake_outbound.install(monkeypatch, _FailingClient(), client_kwargs=calls)
 
     with pytest.raises(RuntimeError, match="CERTIFICATE_VERIFY_FAILED"):
         await api_client.api_request("GET", "https://8.8.8.8")
 
     assert len(calls) == 1
-    assert calls[0]["verify"] is True
+    _assert_verifies(calls[0]["verify"])
 
 
 @pytest.mark.asyncio
@@ -66,7 +56,7 @@ async def test_api_request_rejects_unsupported_method_before_network(monkeypatch
     def _unexpected_client(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("network client must not be constructed")
 
-    monkeypatch.setattr(api_client, "create_httpx_client", _unexpected_client)
+    monkeypatch.setattr(outbound, "create_httpx_client", _unexpected_client)
 
     with pytest.raises(ValueError, match="Unsupported HTTP method"):
         await api_client.api_request("CONNECT", "https://example.com")
@@ -80,16 +70,11 @@ async def test_scrape_url_keeps_tls_verification_enabled(monkeypatch: pytest.Mon
         async def request(self, _method: str, url: str, **_kwargs: object) -> object:
             return _Response(url=url, text="<html><body>secure</body></html>")
 
-    def _client_factory(*_args: object, **kwargs: object) -> _ClientContext:
-        calls.append(kwargs)
-        return _ClientContext(_ScrapeClient())
-
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", _client_factory)
+    fake_outbound.install(monkeypatch, _ScrapeClient(), client_kwargs=calls)
 
     assert await api_client.scrape_url("https://8.8.8.8") == "secure"
     assert len(calls) == 1
-    assert calls[0]["verify"] is True
+    _assert_verifies(calls[0]["verify"])
 
 
 @pytest.mark.asyncio
@@ -111,10 +96,9 @@ async def test_api_request_blocks_private_network_by_default(monkeypatch: pytest
             requests.append(request_url)
             return _Response(url=request_url)
 
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_args, **_kwargs: _ClientContext(_Client()))
+    fake_outbound.install(monkeypatch, _Client())
 
-    with pytest.raises(ValueError, match="Private-network URL blocked"):
+    with pytest.raises(outbound.OutboundRefused, match="I don't fetch from addresses on this computer"):
         await api_client.api_request("GET", url)
 
     assert requests == []
@@ -129,16 +113,10 @@ async def test_api_request_blocks_hostname_resolving_to_private_address(monkeypa
             requests.append(request_url)
             return _Response(url=request_url)
 
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_args, **_kwargs: _ClientContext(_Client()))
-    monkeypatch.setattr(
-        api_client.socket,
-        "getaddrinfo",
-        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 80))],
-    )
+    fake_outbound.install(monkeypatch, _Client(), answers={"metadata.example": ["169.254.169.254"]})
 
-    with pytest.raises(ValueError, match="Private-network URL blocked"):
-        await api_client.api_request("GET", "http://metadata.internal/latest")
+    with pytest.raises(outbound.OutboundRefused, match="cloud metadata address"):
+        await api_client.api_request("GET", "http://metadata.example/latest")
 
     assert requests == []
 
@@ -149,8 +127,7 @@ async def test_api_request_allows_approved_private_network(monkeypatch: pytest.M
         async def request(self, _method: str, url: str, **_kwargs: object) -> object:
             return _Response(url=url, text="private response")
 
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_args, **_kwargs: _ClientContext(_Client()))
+    fake_outbound.install(monkeypatch, _Client())
 
     result = await api_client.api_request(
         "GET",
@@ -174,10 +151,9 @@ async def test_redirect_to_private_network_is_blocked_before_following(monkeypat
                 headers={"location": "http://127.0.0.1/admin"},
             )
 
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_args, **_kwargs: _ClientContext(_Client()))
+    fake_outbound.install(monkeypatch, _Client())
 
-    with pytest.raises(ValueError, match="Private-network URL blocked"):
+    with pytest.raises(outbound.OutboundRefused):
         await api_client.api_request("GET", "https://8.8.8.8/start")
 
     assert requests == ["https://8.8.8.8/start"]
@@ -194,8 +170,7 @@ async def test_cross_origin_redirect_strips_credentials(monkeypatch: pytest.Monk
                 return _Response(url=url, status_code=302, headers={"location": "https://1.1.1.1/next"})
             return _Response(url=url)
 
-    monkeypatch.setattr(api_client.PilotConfig, "load", lambda: object())
-    monkeypatch.setattr(api_client, "create_httpx_client", lambda *_args, **_kwargs: _ClientContext(_Client()))
+    fake_outbound.install(monkeypatch, _Client())
 
     await api_client.api_request(
         "GET",

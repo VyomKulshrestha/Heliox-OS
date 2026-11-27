@@ -685,6 +685,9 @@ class DownloadParams(BaseModel):
     url: str = ""
     output_path: str = ""
     overwrite: bool = False
+    # As for api_request: true lets the download reach an address on this computer or the local network, and the step
+    # then needs the person's approval (Action.permission_tier, pilot.system.outbound).
+    allow_private_network: bool = False
     # Optional: the file's published sha256; the post-condition check compares the downloaded file with it.
     sha256: str | None = None
 
@@ -1137,6 +1140,10 @@ class Action(BaseModel):
             ActionType.DOWNLOAD_FILE,
             ActionType.WASM_CALL,
         }
+        if self.action_type == ActionType.DOWNLOAD_FILE and bool(
+            getattr(self.parameters, "allow_private_network", False)
+        ):
+            return PermissionTier.SYSTEM_MODIFY
         if self.action_type in ALWAYS_SAFE:
             return PermissionTier.USER_WRITE
         if self.action_type == ActionType.TRIGGER_CREATE:
@@ -1199,7 +1206,7 @@ class Action(BaseModel):
             return True
         if self.dangerous_flags:
             return True
-        if self.action_type in {ActionType.API_REQUEST, ActionType.API_SCRAPE} and bool(
+        if self.action_type in {ActionType.API_REQUEST, ActionType.API_SCRAPE, ActionType.DOWNLOAD_FILE} and bool(
             getattr(self.parameters, "allow_private_network", False)
         ):
             return True

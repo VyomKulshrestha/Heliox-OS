@@ -58,27 +58,6 @@ def _assert_data(recorder: Recorder, *expected_values: str) -> None:
         assert value in passed, value
 
 
-# ── 1. download fallback on Windows ──
-
-
-def test_download_fallback_passes_the_address_and_file_as_data(monkeypatch, tmp_path):
-    from pilot.system import download
-
-    recorder = Recorder()
-    _install(monkeypatch, download, recorder, Platform.WINDOWS)
-
-    class Failing:
-        def __init__(self, *args, **kwargs):
-            raise RuntimeError("no httpx here")
-
-    monkeypatch.setattr(download, "create_httpx_client", Failing, raising=False)
-    url = "https://example.com/a?b=" + HOSTILE
-    out = str(tmp_path / ("file " + HOSTILE.replace("\n", " ").replace("|", "").replace('"', "") + ".bin"))
-    asyncio.run(download.download_file(url, out))
-    _assert_data(recorder, out)
-    assert any(url in values.values() or values.get("url", "").endswith(HOSTILE) for _s, values in recorder.powershell)
-
-
 # ── 2 and 3. registry read and write ──
 
 

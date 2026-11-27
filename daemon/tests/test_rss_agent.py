@@ -137,13 +137,15 @@ async def test_poll_feeds_stores_digest():
     mock_response.text = RSS_XML
     mock_response.raise_for_status = MagicMock()
 
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
+    fetch = AsyncMock(return_value=mock_response)
 
-    with patch("pilot.agents.rss_agent.httpx.AsyncClient", return_value=mock_client):
+    with patch("pilot.system.outbound.fetch", fetch):
         result = await agent._poll_feeds()
+
+    # The feed goes through the checked outbound path, which refuses local addresses (no allow_private_network).
+    fetch.assert_awaited_once()
+    assert fetch.await_args.args == ("GET", "https://example.com/feed.xml")
+    assert "allow_private_network" not in fetch.await_args.kwargs
 
     assert result["triggered"] is True
     assert "Summarized news today." in result["digest"]
