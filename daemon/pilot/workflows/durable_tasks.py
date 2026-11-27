@@ -321,6 +321,15 @@ class DurableTaskStore:
         async with pool.write() as db:
             await db.execute("PRAGMA foreign_keys = ON")
             await db.executescript(_SCHEMA_SQL)
+            cursor = await db.execute("PRAGMA table_info(durable_tasks)")
+            columns = {row[1] for row in await cursor.fetchall()}
+            await cursor.close()
+            # The gateway source of the request and the override it ran under (pilot.security.source_scope); a task
+            # stored without them has '' and resumes under the narrowest source that could have made it.
+            if "source" not in columns:
+                await db.execute("ALTER TABLE durable_tasks ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+            if "scope_json" not in columns:
+                await db.execute("ALTER TABLE durable_tasks ADD COLUMN scope_json TEXT NOT NULL DEFAULT ''")
             await db.commit()
         self._pool = pool
 
@@ -336,7 +345,11 @@ class DurableTaskStore:
         user_input: str,
         user_id: str = "local",
         task_id: str | None = None,
+        source: str = "",
+        scope_override: dict[str, Any] | None = None,
     ) -> CreatedTask:
+        """``source`` is the gateway source the request came from and ``scope_override`` the override it runs under
+        (``TaskScopeOverride`` as JSON); a resume applies both again (``scope``)."""
         task_id = task_id or str(uuid.uuid4())
         resume_token = secrets.token_urlsafe(32)
         token_hash = self._hash_token(resume_token)
@@ -350,9 +363,9 @@ class DurableTaskStore:
                     """
                     INSERT INTO durable_tasks (
                         task_id, session_id, user_id, user_input, status,
-                        resume_token_hash, created_at, updated_at
+                        resume_token_hash, created_at, updated_at, source, scope_json
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -363,6 +376,8 @@ class DurableTaskStore:
                         token_hash,
                         now,
                         now,
+                        source,
+                        json.dumps(scope_override) if scope_override else "",
                     ),
                 )
                 await db.execute(
@@ -399,6 +414,24 @@ class DurableTaskStore:
             row = await cursor.fetchone()
             await cursor.close()
         return self._task_from_row(row) if row is not None else None
+
+    async def scope(self, task_id: str) -> tuple[str, dict[str, Any] | None] | None:
+        """The gateway source and override a task was accepted under; ("", None) for a task stored without them,
+        None for no such task."""
+        pool = self._require_pool()
+        async with pool.read() as db:
+            cursor = await db.execute("SELECT source, scope_json FROM durable_tasks WHERE task_id = ?", (task_id,))
+            row = await cursor.fetchone()
+            await cursor.close()
+        if row is None:
+            return None
+        try:
+            override = json.loads(row[1]) if row[1] else None
+        except ValueError:
+            return "", None  # unreadable: resumed as a task stored without them, under the narrowest source
+        if row[1] and not isinstance(override, dict):
+            return "", None
+        return str(row[0] or ""), override
 
     async def interruption(self, task_id: str) -> TaskInterruption | None:
         """How the task came to be interrupted (its latest transition into "interrupted"), or None."""

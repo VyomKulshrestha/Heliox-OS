@@ -728,7 +728,7 @@ class VoiceGestureWorkflowEngine:
             return True
 
         sub_plan_id = f"{workflow.workflow_id}:{step.index}"
-        await self._checkpoint_store.start_plan(sub_plan_id, step.description, plan)
+        await self._checkpoint_store.start_plan(sub_plan_id, step.description, plan, **self._stored_scope(workflow))
 
         results = await self._executor.execute(
             plan,
@@ -773,6 +773,15 @@ class VoiceGestureWorkflowEngine:
         await self._notify(workflow.workflow_id)
         return True
 
+    @staticmethod
+    def _stored_scope(workflow: VoiceGestureWorkflow) -> dict[str, Any]:
+        """What a step's checkpoint keeps so a resume runs it under the workflow's source and override again."""
+        override = workflow.scope_override
+        return {
+            "source": workflow.invocation_source,
+            "scope_override": override.model_dump(mode="json") if override is not None else None,
+        }
+
     async def _run_adaptive_step(self, workflow: VoiceGestureWorkflow, step: WorkflowStepRecord) -> bool:
         """Run a durable voice step through the shared adaptive app loop."""
         from pilot.actions import VerificationResult
@@ -780,7 +789,7 @@ class VoiceGestureWorkflowEngine:
         sub_plan_id = f"{workflow.workflow_id}:{step.index}"
 
         async def record_round(plan_id, plan, results, verification: VerificationResult, task_complete: bool) -> None:
-            await self._checkpoint_store.start_plan(plan_id, step.description, plan)
+            await self._checkpoint_store.start_plan(plan_id, step.description, plan, **self._stored_scope(workflow))
             for result in results:
                 await self._checkpoint_store.record_result(plan_id, result)
             await self._checkpoint_store.mark_status(plan_id, "complete" if verification.passed else "failed")

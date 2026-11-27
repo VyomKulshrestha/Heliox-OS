@@ -461,6 +461,15 @@ class AutonomousExecutor:
             logger.debug("Could not list the folders named in the goal", exc_info=True)
             return ""
 
+    def job_scope(self, job: AutonomousJob, invocation_source: InvocationSource) -> TaskScopeOverride:
+        """The gateway scope every plan of ``job`` runs under: ``invocation_source``'s profile (autonomous for a
+        background job, voice or gesture for a workflow), narrowed by where the job came from and by its own override
+        (``pilot.security.source_scope.job_scope``). The orchestrator applies it to whichever specialist carries a step;
+        the executor applies it on top of ``invocation_source``."""
+        from pilot.security.source_scope import config_of, job_scope
+
+        return job_scope(config_of(self._executor), invocation_source, job.source, job.scope_override)
+
     def _dry_run_now(self) -> bool:
         config = getattr(self._executor, "_config", None)
         return bool(getattr(getattr(config, "security", None), "dry_run", False))
@@ -1255,6 +1264,8 @@ class AutonomousExecutor:
                     step.error = failure
                     break
                 on_call_start, on_call_complete = self._tool_call_reporter(job, step, round_index)
+                # The job's own source bounds every path below, read again each round so a saved profile change holds.
+                scope = self.job_scope(job, invocation_source)
                 with agent_initiated():
                     if job.dry_run:
                         # Simulate through the executor: the orchestrator's specialists would read
@@ -1265,7 +1276,7 @@ class AutonomousExecutor:
                             on_action_complete=on_call_complete,
                             plan_id=plan_id,
                             invocation_source=invocation_source,
-                            scope_override=job.scope_override,
+                            scope_override=scope,
                             user_confirmed=user_confirmed,
                             dry_run=True,
                         )
@@ -1276,8 +1287,9 @@ class AutonomousExecutor:
                             on_action_start=on_call_start,
                             on_action_complete=on_call_complete,
                             plan_id=plan_id,
-                            scope_override=job.scope_override,
+                            scope_override=scope,
                             user_confirmed=user_confirmed,
+                            source=invocation_source,
                         )
                     else:
                         results = await self._executor.execute(
@@ -1286,7 +1298,7 @@ class AutonomousExecutor:
                             on_action_complete=on_call_complete,
                             plan_id=plan_id,
                             invocation_source=invocation_source,
-                            scope_override=job.scope_override,
+                            scope_override=scope,
                             user_confirmed=user_confirmed,
                         )
                 target_window = planned_target

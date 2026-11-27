@@ -114,7 +114,8 @@ class InvocationSource(StrEnum):
     PLUGIN_RUNTIME_AGENT = "plugin_runtime_agent"
     NETWORK_AGENT = "network_agent"
     GIT_AGENT = "git_agent"
-    UNKNOWN = "unknown"  # fail-open bucket for call sites not yet tagged
+    # A plan that reached the gateway without saying where it came from: every step is refused (``profile_for``).
+    UNKNOWN = "unknown"
 
 
 class ActionFamily(StrEnum):
@@ -521,10 +522,16 @@ DEFAULT_SOURCE_PROFILES: dict[str, SourceProfile] = {
     ),
 }
 
-# Untagged call sites (the ~20 sub-agent paths not explicitly wired in this
-# pass — see the plan's Context section) fail OPEN to "interactive" to
-# preserve today's behavior, rather than fail closed and break them.
-DEFAULT_UNKNOWN_SOURCE_PROFILE = "interactive"
+
+def profile_for(config: PilotConfig | None, source: InvocationSource) -> SourceProfile:
+    """The floor ``source`` runs under: its saved profile, else its built-in one, else read-only.
+
+    A source with neither never inherits the interactive profile's full access. ``UNKNOWN`` (a caller that did not say
+    where a plan came from) gets a profile that refuses every action type: each entry names its own source."""
+    if source == InvocationSource.UNKNOWN:
+        return SourceProfile(deny_action_types=sorted(action.value for action in ActionType))
+    profiles = config.gateway.source_profiles if config is not None else {}
+    return profiles.get(source.value) or DEFAULT_SOURCE_PROFILES.get(source.value) or SourceProfile()
 
 
 class TaskScopeOverride(BaseModel):
@@ -663,11 +670,7 @@ class AgentGateway:
         self._audit_store = audit_store
 
     def _profile_for(self, source: InvocationSource) -> SourceProfile:
-        profiles = self._config.gateway.source_profiles
-        key = source.value if source != InvocationSource.UNKNOWN else DEFAULT_UNKNOWN_SOURCE_PROFILE
-        # A source with no saved profile gets its built-in one, and a source with neither
-        # gets the read-only default; it never inherits the interactive profile's full access.
-        return profiles.get(key) or DEFAULT_SOURCE_PROFILES.get(key) or SourceProfile()
+        return profile_for(self._config, source)
 
     def _allowances_for(self, source: InvocationSource) -> dict[str, int]:
         """The built-in per-action allowances of ``source`` (SPECIALIST_ACTION_CEILINGS), only while the person has

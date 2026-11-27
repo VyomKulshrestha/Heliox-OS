@@ -83,13 +83,11 @@ class TestExecutorGatewayIntegration:
         assert "Gateway denied" in results[0].error
 
     @pytest.mark.asyncio
-    async def test_default_invocation_source_is_interactive(self, tmp_path, gateway):
-        # Callers that haven't been updated to pass invocation_source (the
-        # ~20 untagged sub-agent call sites) get the unrestricted floor by
-        # default — verifies the fail-open behavior described in gateway.py.
+    async def test_a_plan_that_names_no_source_is_refused(self, tmp_path, gateway):
+        # Every caller names where its plan came from; a plan without a source is refused before any step.
         ex = _executor(tmp_path, gateway=gateway)
-        results = await ex.execute(_plan(ActionType.BROWSER_EXECUTE_JS))
-        assert not any("Gateway denied" in (r.error or "") for r in results)
+        results = await ex.execute(_plan(ActionType.SYSTEM_INFO))
+        assert results and all("Gateway denied" in (r.error or "") for r in results)
 
 
 class TestRiskGateOutage:

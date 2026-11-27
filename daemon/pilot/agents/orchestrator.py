@@ -371,6 +371,9 @@ class AgentOrchestrator:
         scope_override: TaskScopeOverride | None = None,
         critic_already_reviewed: bool = False,
         user_confirmed: bool = False,
+        source: InvocationSource | None = None,
+        action_index_offset: int = 0,
+        initial_last_output: str = "",
     ) -> list[ActionResult]:
         """Execute a plan by routing actions to specialist agents.
 
@@ -384,13 +387,23 @@ class AgentOrchestrator:
         calls and record_usage attribute their tokens to this task. The task
         is cleaned up in a finally block regardless of how execution ends.
 
-        scope_override: an optional gateway narrowing constraint (see
-        pilot.security.gateway) applied uniformly across every specialist
-        this plan gets routed to — e.g. a voice-originated plan should never
-        exceed voice's ceiling, regardless of which agent (or that agent's
-        own hardcoded invocation_source) ends up handling a given action.
-        None (the default) preserves today's behavior for existing callers.
+        source: where the plan came from. Its gateway profile, narrowed by
+        ``scope_override``, narrows every specialist this plan is routed to:
+        a voice request never exceeds voice's ceiling and a background job
+        never exceeds the autonomous one, whichever agent carries a step.
+        Every caller names it; a plan with none runs as
+        ``InvocationSource.UNKNOWN``, whose profile refuses every step.
+
+        action_index_offset: the index of ``plan``'s first step in the plan
+        it continues (a resumed plan), so each step keeps its durable key;
+        initial_last_output: the last output of the steps that ran before.
         """
+        if source is None:
+            logger.error("A plan reached the orchestrator without its source; the gateway refuses every step of it")
+            source = InvocationSource.UNKNOWN
+        from pilot.security.source_scope import config_of, source_scope
+
+        scope_override = source_scope(config_of(self._agent_gateway), source, scope_override)
         task_id = plan_id or str(uuid.uuid4())
         ctx_token = current_task_id.set(task_id)
         if self._budget_tracker:
@@ -408,6 +421,8 @@ class AgentOrchestrator:
                     cancel_event=cancel_event,
                     scope_override=scope_override,
                     user_confirmed=user_confirmed,
+                    action_index_offset=action_index_offset,
+                    initial_last_output=initial_last_output,
                 )
         finally:
             if self._budget_tracker:
@@ -423,6 +438,8 @@ class AgentOrchestrator:
         *,
         independence_attested: bool,
         cancel_event: asyncio.Event | None = None,
+        source: InvocationSource | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[dict[str, Any]]:
         """Run only explicitly independent plans with bounded fan-out.
 
@@ -449,6 +466,8 @@ class AgentOrchestrator:
                     plan,
                     cancel_event=shared_cancel,
                     plan_id=f"parallel-{uuid.uuid4()}",
+                    source=source,
+                    scope_override=scope_override,
                 )
                 return {
                     "index": index,
@@ -477,6 +496,8 @@ class AgentOrchestrator:
         cancel_event: asyncio.Event | None,
         scope_override: TaskScopeOverride | None = None,
         user_confirmed: bool = False,
+        action_index_offset: int = 0,
+        initial_last_output: str = "",
     ) -> list[ActionResult]:
         """Inner execution loop — extracted so the task lifecycle wrapper
         in execute_plan() stays small and the try/finally is obvious."""
@@ -494,8 +515,8 @@ class AgentOrchestrator:
             )
         # Process actions in order, grouping consecutive same-agent actions
         action_order = self._build_execution_order(plan, routing, task_id=task_id)
-        prior_last_output = ""
-        prior_largest_output = ""
+        prior_last_output = initial_last_output
+        prior_largest_output = initial_last_output
 
         for batch in action_order:
             # â”€â”€ Cancellation check â”€â”€
@@ -630,7 +651,7 @@ class AgentOrchestrator:
                     with experience_scope(
                         task_id=get_experience_context().task_id or task_id,
                         plan_id=task_id,
-                        action_index_offset=indices[0],
+                        action_index_offset=action_index_offset + indices[0],
                     ):
                         results = await agent.handle_task(
                             user_input,

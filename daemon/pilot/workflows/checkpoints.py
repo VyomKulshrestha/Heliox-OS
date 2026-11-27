@@ -38,15 +38,26 @@ class PlanCheckpoint:
     status: str
     updated_at: str
     approval: str = "unknown"
+    # The gateway source the plan was made under and the override it ran under (``TaskScopeOverride`` as JSON). A
+    # resume, a later approval or a repair applies both again (pilot.security.source_scope.stored_plan_scope). ""
+    # means the plan was stored without them: it resumes under the narrowest source that could have made it.
+    source: str = ""
+    scope_override: dict[str, Any] | None = None
 
     @property
     def is_complete(self) -> bool:
         return self.completed_count >= len(self.plan.actions)
 
 
+# A plan one of whose steps the gateway refused under the source it was made under (the skip reason of such a step
+# is the same word, pilot.security.gateway). It is never resumed: asking again gets the same answer.
+GATEWAY_DENIED_STATUS = "gateway_denied"
+
 # Statuses after which a plan never runs again, so its kept secrets are removed (pilot.security.plan_secrets).
 # "failed" and "interrupted" stay resumable.
-FINISHED_STATUSES = frozenset({"complete", "cancelled", "superseded", "blocked_by_companion", "quick_declined"})
+FINISHED_STATUSES = frozenset(
+    {"complete", "cancelled", "superseded", "blocked_by_companion", "quick_declined", GATEWAY_DENIED_STATUS}
+)
 
 
 class WorkflowCheckpointStore:
@@ -120,6 +131,10 @@ class WorkflowCheckpointStore:
                     await db.execute(
                         "ALTER TABLE workflow_checkpoints ADD COLUMN approval TEXT NOT NULL DEFAULT 'unknown'"
                     )
+                if "source" not in columns:
+                    await db.execute("ALTER TABLE workflow_checkpoints ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+                if "scope_json" not in columns:
+                    await db.execute("ALTER TABLE workflow_checkpoints ADD COLUMN scope_json TEXT NOT NULL DEFAULT ''")
                 await db.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_workflow_checkpoints_status
@@ -129,7 +144,16 @@ class WorkflowCheckpointStore:
                 await db.commit()
             self._initialized = True
 
-    async def start_plan(self, plan_id: str, user_input: str, plan: ActionPlan) -> PlanCheckpoint:
+    async def start_plan(
+        self,
+        plan_id: str,
+        user_input: str,
+        plan: ActionPlan,
+        *,
+        source: str = "",
+        scope_override: dict[str, Any] | None = None,
+    ) -> PlanCheckpoint:
+        """``source``: the gateway source the plan is made under; ``scope_override``: the override it runs under."""
         checkpoint = PlanCheckpoint(
             plan_id=plan_id,
             user_input=user_input,
@@ -141,6 +165,8 @@ class WorkflowCheckpointStore:
             status="running",
             updated_at=self._now(),
             approval="pending",
+            source=source,
+            scope_override=scope_override or None,
         )
         await self._upsert(checkpoint)
         return checkpoint
@@ -215,7 +241,9 @@ class WorkflowCheckpointStore:
                     snapshot_ids_json,
                     status,
                     updated_at,
-                    approval
+                    approval,
+                    source,
+                    scope_json
                 FROM workflow_checkpoints
                 WHERE plan_id = ?
                 """,
@@ -250,9 +278,11 @@ class WorkflowCheckpointStore:
                     snapshot_ids_json,
                     status,
                     updated_at,
-                    approval
+                    approval,
+                    source,
+                    scope_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(plan_id) DO UPDATE SET
                     user_input = excluded.user_input,
                     plan_json = excluded.plan_json,
@@ -262,7 +292,9 @@ class WorkflowCheckpointStore:
                     snapshot_ids_json = excluded.snapshot_ids_json,
                     status = excluded.status,
                     updated_at = excluded.updated_at,
-                    approval = excluded.approval
+                    approval = excluded.approval,
+                    source = excluded.source,
+                    scope_json = excluded.scope_json
                 """,
                 self._to_row(checkpoint),
             )
@@ -281,11 +313,22 @@ class WorkflowCheckpointStore:
             checkpoint.status,
             checkpoint.updated_at,
             checkpoint.approval,
+            checkpoint.source,
+            json.dumps(checkpoint.scope_override) if checkpoint.scope_override else "",
         )
 
     @staticmethod
     def _from_row(row: tuple[Any, ...]) -> PlanCheckpoint:
         results_raw = json.loads(row[3])
+        source, scope_override = str(row[10] or ""), None
+        if row[11]:
+            try:
+                scope_override = json.loads(row[11])
+            except ValueError:
+                scope_override = None
+            if not isinstance(scope_override, dict):
+                # Unreadable: resumed as a plan stored without its source, under the narrowest one.
+                source, scope_override = "", None
         return PlanCheckpoint(
             plan_id=row[0],
             user_input=row[1],
@@ -297,6 +340,8 @@ class WorkflowCheckpointStore:
             status=row[7],
             updated_at=row[8],
             approval=row[9],
+            source=source,
+            scope_override=scope_override,
         )
 
     @staticmethod

@@ -640,6 +640,11 @@ TRIGGER_RETELL_SECONDS = 3600.0
 GATEWAY_REFUSED_SENTENCE = "I didn't do that: my safety rules don't allow it from here. Asking again won't change it."
 # A spoken request whose steps a typed one may run after its approval card (a voice cannot approve).
 GATEWAY_SPOKEN_SENTENCE = "I can't do that from a spoken request; type it and I'll ask you first."
+# A stored plan one of whose steps the gateway refuses under the source it was made under: it is not resumed.
+RESUME_REFUSED_SENTENCE = (
+    "I didn't continue that: my safety rules don't allow one of its steps from where it was asked, and asking again "
+    "won't change it."
+)
 
 
 def request_fault_answer(what: str, error: BaseException) -> dict[str, Any]:
@@ -3421,27 +3426,33 @@ class PilotServer:
             reason=reason,
         )
 
-    def _execution_scope_for_source(self, source_name: str) -> tuple[Any, Any | None]:
-        """Resolve an interaction source to its enforced gateway ceiling."""
-        from pilot.security.gateway import DEFAULT_SOURCE_PROFILES, InvocationSource, TaskScopeOverride
+    def _execution_scope_for_source(self, source_name: str) -> tuple[Any, Any]:
+        """A request's gateway source by the name it arrived with (typed, ``voice``, ``mcp``) and its profile as the
+        override that narrows whichever specialist runs a step. Any other name is ``UNKNOWN``, refused outright."""
+        from pilot.security.source_scope import interaction_source, source_scope
 
-        source_key = source_name.strip().lower()
-        invocation_source = {
-            "voice": InvocationSource.VOICE,
-            "mcp": InvocationSource.MCP,
-        }.get(source_key, InvocationSource.INTERACTIVE)
-        if invocation_source not in {InvocationSource.VOICE, InvocationSource.MCP}:
-            return invocation_source, None
-        profile_name = invocation_source.value
-        profile = self.config.gateway.source_profiles.get(
-            profile_name,
-            DEFAULT_SOURCE_PROFILES[profile_name],
-        )
-        return invocation_source, TaskScopeOverride(
-            max_tier=profile.max_tier,
-            deny_action_types=profile.deny_action_types,
-            allow_root=profile.allow_root,
-        )
+        invocation_source = interaction_source(source_name)
+        return invocation_source, source_scope(self.config, invocation_source)
+
+    def _request_scope(self, params: dict[str, Any], source_name: str) -> tuple[Any, Any]:
+        """The gateway source and scope a request's plans run under: its own source, or for a durable task picked up
+        again (``_stored_scope``, set only by ``resume_task``: a JSON client cannot send a tuple) the source and
+        override the task was accepted under."""
+        stored = params.get("_stored_scope")
+        if isinstance(stored, tuple) and len(stored) == 2:
+            from pilot.security.gateway import TaskScopeOverride
+            from pilot.security.source_scope import stored_plan_scope
+
+            source, override = stored
+            return stored_plan_scope(
+                self.config, source, TaskScopeOverride.model_validate(override) if override else None
+            )
+        return self._execution_scope_for_source(source_name)
+
+    def _stored_request_scope(self, params: dict[str, Any], source_name: str) -> dict[str, Any]:
+        """What a checkpoint or a durable task keeps of a request's gateway source and scope (``_request_scope``)."""
+        source, scope = self._request_scope(params, source_name)
+        return {"source": source.value, "scope_override": scope.model_dump(mode="json")}
 
     async def _execute_tracked(self, plan: ActionPlan, **kwargs: Any) -> list[Any]:
         """Wraps self._executor.execute() in a real asyncio.Task, tracked in
@@ -3701,6 +3712,7 @@ class PilotServer:
                 session_id=session_id,
                 user_id=user_id,
                 user_input=user_input,
+                **self._stored_request_scope(params, source),
             )
             task_id = created.task.task_id
             queued_params = {
@@ -3967,6 +3979,7 @@ class PilotServer:
                     session_id=str(params.get("session_id") or "default"),
                     user_id=str(params.get("user_id") or "local"),
                     user_input=str(params.get("input") or ""),
+                    **self._stored_request_scope(params, source_name),
                 )
                 requested_task_id = created.task.task_id
                 resume_token = created.resume_token
@@ -4456,6 +4469,7 @@ class PilotServer:
                     "_companion_auto_revision_count": auto_revision_count,
                     "session_id": chat_session_id,
                     "source": interaction_source,
+                    "_stored_scope": params.get("_stored_scope"),
                 },
                 ws,
                 # Gnomon reviews against the person's original words; see REVIEWED_AGAINST_ORIGINAL.
@@ -4521,6 +4535,7 @@ class PilotServer:
                     "_companion_auto_revision_count": auto_revision_count + 1,
                     "session_id": chat_session_id,
                     "source": interaction_source,
+                    "_stored_scope": params.get("_stored_scope"),
                 },
                 ws,
                 # The companion's feedback is Heliox's, not the person's: the review inputs stay as they were.
@@ -4895,7 +4910,9 @@ class PilotServer:
             self._active_plan_id = plan_id
             await _record_planned_experience(plan, plan_id, attempt)
             if self._checkpoint_store:
-                await self._checkpoint_store.start_plan(plan_id, request_text, plan)
+                await self._checkpoint_store.start_plan(
+                    plan_id, request_text, plan, **self._stored_request_scope(params, interaction_source)
+                )
 
             if emit:
                 await emit.phase_complete(
@@ -4944,7 +4961,7 @@ class PilotServer:
             plan_has_tier3 = any(a.permission_tier == PermissionTier.DESTRUCTIVE for a in plan.actions)
             plan_has_irreversible = any(getattr(a, "is_irreversible", False) for a in plan.actions)
             plan_has_blockable_authority = plan_has_tier4 or plan_has_tier3 or plan_has_irreversible
-            invocation_source, scope_override = self._execution_scope_for_source(interaction_source)
+            invocation_source, scope_override = self._request_scope(params, interaction_source)
             # Off the event loop: the world model may walk folders to size a copy.
             risk_assessment = await asyncio.to_thread(
                 assess_plan_risk, plan, self.config, source=invocation_source.value
@@ -5435,7 +5452,9 @@ class PilotServer:
                     if self._checkpoint_store and (
                         self._durable_tasks is None or await self._durable_tasks.get_approval(plan_id) is None
                     ):
-                        await self._checkpoint_store.start_plan(plan_id, request_text, plan)
+                        await self._checkpoint_store.start_plan(
+                            plan_id, request_text, plan, **self._stored_request_scope(params, interaction_source)
+                        )
             elif not dry_run:
                 if emit:
                     skip_phase = await emit.phase_start("confirmation", "confirmation_skipped")
@@ -5544,6 +5563,7 @@ class PilotServer:
                             critic_already_reviewed=True,
                             user_confirmed=needs_confirm and approved_decision in {"approved", "partially_approved"},
                             scope_override=scope_override,
+                            source=invocation_source,
                         )
                     )
                 else:
@@ -6944,6 +6964,8 @@ class PilotServer:
                                 # A task being restarted is a request already under way, not a new chat message: it
                                 # is planned as before and never goes through the conversation layer.
                                 "source": "resume",
+                                # Planned and run under the source and override it was accepted under.
+                                "_stored_scope": await self._durable_task_scope(task),
                             },
                             ws,
                         )
@@ -6981,12 +7003,20 @@ class PilotServer:
         dry run, or saved before approvals were recorded) runs only after the person approves what is left, every
         remaining action shown. Until 13 November 2026 any client could resume any checkpoint for real with no
         approval, a denied plan included.
+
+        The plan runs under the gateway source and override it was made under (the checkpoint keeps them; a durable
+        task's own record when the checkpoint has none; the narrowest source that could have made it when neither
+        has), through the orchestrator as it first ran, and the gateway checks what is left under them before any
+        approval card or step. A plan the gateway refused (``GATEWAY_DENIED_STATUS``) is never resumed.
         """
+        from pilot.workflows.checkpoints import GATEWAY_DENIED_STATUS
+
         plan_id = str(params.get("plan_id", "")).strip()
         if not plan_id:
             return {"status": "error", "message": "resume_plan requires plan_id"}
         if not self._checkpoint_store:
             return {"status": "error", "message": "Workflow checkpoint store is not initialized"}
+        durable = None
         if self._durable_tasks is not None:
             durable = await self._durable_tasks.get_by_plan_id(plan_id)
             if durable is not None and authorized_task_id != durable.task_id:
@@ -7005,6 +7035,14 @@ class PilotServer:
                 "message": "You turned this plan down, so it is not resumed.",
                 "plan_id": plan_id,
             }
+        if checkpoint.status == GATEWAY_DENIED_STATUS:
+            return {
+                "status": "error",
+                "message": RESUME_REFUSED_SENTENCE,
+                "plan_id": plan_id,
+                "denied_kind": GATEWAY_DENIED_STATUS,
+            }
+        plan_source, plan_scope = await self._checkpoint_scope(checkpoint, durable)
         needs_approval = not authorized_task_id and checkpoint.approval != "approved"
 
         approved_plan = checkpoint.plan
@@ -7076,6 +7114,32 @@ class PilotServer:
             raw_input=approved_plan.raw_input,
         )
 
+        from pilot.security.source_scope import refusals
+
+        refused = refusals(getattr(self, "_agent_gateway", None), list(remaining_plan.actions), plan_source, plan_scope)
+        if refused:
+            # Refused under the source it was made under whatever the person answers: no card, nothing runs.
+            from pilot.actions import ActionResult
+
+            await self._checkpoint_store.mark_status(plan_id, GATEWAY_DENIED_STATUS)
+            logger.info("Resume of plan %s refused by the gateway: %s", plan_id, refused[0][1])
+            return {
+                "status": "error",
+                "message": RESUME_REFUSED_SENTENCE,
+                "plan_id": plan_id,
+                "denied_kind": GATEWAY_DENIED_STATUS,
+                "results": [
+                    ActionResult(
+                        action=remaining_plan.actions[index],
+                        success=False,
+                        error=f"Gateway denied: {reason}",
+                        executed=False,
+                        skip_reason=GATEWAY_DENIED_STATUS,
+                    ).model_dump()
+                    for index, reason in refused
+                ],
+            }
+
         if needs_approval:
             confirmed, approved_now, required_now = await self._wait_for_confirmation(
                 plan_id,
@@ -7123,8 +7187,28 @@ class PilotServer:
         }
         if authorized_task_id:
             execute_kwargs["action_index_offset"] = completed_count
+        orchestrator = getattr(self, "_orchestrator", None)
         try:
-            results = await self._execute_tracked(remaining_plan, **execute_kwargs)
+            if orchestrator is not None:
+                # As the request first ran: each step by its specialist, each specialist narrowed by the plan's source.
+                results = await self._await_execution_tracked(
+                    orchestrator.execute_plan(
+                        remaining_plan.raw_input or checkpoint.user_input,
+                        remaining_plan,
+                        on_action_start=_on_action_start,
+                        on_action_complete=_on_action_complete,
+                        cancel_event=cancel_event,
+                        plan_id=plan_id,
+                        scope_override=plan_scope,
+                        source=plan_source,
+                        action_index_offset=execute_kwargs.get("action_index_offset", 0),
+                        initial_last_output=checkpoint.last_output,
+                    )
+                )
+            else:
+                results = await self._execute_tracked(
+                    remaining_plan, **execute_kwargs, invocation_source=plan_source, scope_override=plan_scope
+                )
         except asyncio.CancelledError:
             # ── Mid-flight cancellation (Part 3): cancel_event is already
             # set by _handle_abort before it cancels the tracked task, so
@@ -7151,7 +7235,11 @@ class PilotServer:
 
         failed = any(not result.success for result in results)
         final_status = "failed" if failed else "complete"
-        await self._checkpoint_store.mark_status(plan_id, final_status)
+        policy_denied = any(
+            not result.success and getattr(result, "skip_reason", None) == GATEWAY_DENIED_STATUS for result in results
+        )
+        # A step the gateway refused keeps the plan refused: it is never resumed again.
+        await self._checkpoint_store.mark_status(plan_id, GATEWAY_DENIED_STATUS if policy_denied else final_status)
 
         verification_payload: dict[str, Any] = {}
         verification = None
@@ -7198,6 +7286,28 @@ class PilotServer:
             "results": [result.model_dump() for result in combined_results],
             "verification": verification_payload,
         }
+
+    async def _durable_task_scope(self, task: Any) -> tuple[str, dict[str, Any] | None]:
+        """The gateway source and override a durable task was accepted under: ("", None) for one stored without them,
+        which then runs under the narrowest source that could have made it, except a task an MCP client made
+        (user_id "mcp-local"), which is MCP's."""
+        reader = getattr(self._durable_tasks, "scope", None)
+        stored = await reader(task.task_id) if reader is not None else None
+        source, override = stored or ("", None)
+        if not source and getattr(task, "user_id", "") == "mcp-local":
+            source = "mcp"
+        return source, override
+
+    async def _checkpoint_scope(self, checkpoint: Any, durable: Any) -> tuple[Any, Any]:
+        """The gateway source and scope a checkpointed plan runs under again (``source_scope.stored_plan_scope``):
+        the checkpoint's own, else its durable task's, else the narrowest source that could have made it."""
+        from pilot.security.gateway import TaskScopeOverride
+        from pilot.security.source_scope import stored_plan_scope
+
+        source, override = checkpoint.source, checkpoint.scope_override
+        if not source and durable is not None:
+            source, override = await self._durable_task_scope(durable)
+        return stored_plan_scope(self.config, source, TaskScopeOverride.model_validate(override) if override else None)
 
     async def _record_permission_escalations(
         self,
@@ -15585,6 +15695,7 @@ def handle_tool(tool_name, params):
             return {"error": f"No installed plugin provides {tool_name}"}
 
         from pilot.actions import Action, ActionPlan, ActionType, WasmCallParams
+        from pilot.security.gateway import InvocationSource
 
         plan = ActionPlan(
             actions=[
@@ -15608,7 +15719,9 @@ def handle_tool(tool_name, params):
         )
         if not confirmed or required - approved:
             return {"status": "cancelled", "error": "Not run: the plugin's tool was not approved."}
-        results = await self._executor.execute(plan, plan_id=plan_id, user_confirmed=True)
+        results = await self._executor.execute(
+            plan, plan_id=plan_id, user_confirmed=True, invocation_source=InvocationSource.INTERACTIVE
+        )
         outcome = results[0] if results else None
         if outcome is None or not outcome.success:
             return {"error": (outcome.error if outcome is not None else "") or "The plugin's tool did not run."}
@@ -20161,13 +20274,16 @@ def handle_tool(tool_name, params):
 
         try:
             from pilot.actions import ActionPlan
+            from pilot.security.gateway import InvocationSource
 
             target = str(Path(str(path)).resolve())  # resolution_refusal checked all three are text
             plan = ActionPlan(
                 actions=[git_resolution_action(target, str(full_block), str(resolved_code))],
                 explanation=f"Resolve a git conflict in {Path(target).name}",
             )
-            results = await self._executor.execute(plan, plan_id=f"git-resolution-{uuid.uuid4().hex[:8]}")
+            results = await self._executor.execute(
+                plan, plan_id=f"git-resolution-{uuid.uuid4().hex[:8]}", invocation_source=InvocationSource.INTERACTIVE
+            )
             success = all(r.success for r in results)
             error = next((r.error for r in results if not r.success), None)
             return {

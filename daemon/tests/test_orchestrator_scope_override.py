@@ -1,6 +1,5 @@
-"""Tests that AgentOrchestrator.execute_plan threads scope_override through
-to the specialist agent's handle_task() unchanged, and that omitting it
-(existing callers) preserves today's behavior (None)."""
+"""AgentOrchestrator.execute_plan narrows every specialist by the plan's source: its profile, narrowed by the
+caller's scope_override, reaches each specialist's handle_task(); a plan that names no source is refused."""
 
 from __future__ import annotations
 
@@ -13,7 +12,7 @@ from pilot.agents.base_agent import AgentRole, BaseAgent
 from pilot.agents.orchestrator import AgentOrchestrator
 from pilot.config import PilotConfig
 from pilot.intelligence.experience import get_experience_context
-from pilot.security.gateway import AgentGateway, InvocationSource, TaskScopeOverride
+from pilot.security.gateway import DEFAULT_SOURCE_PROFILES, AgentGateway, InvocationSource, TaskScopeOverride
 from pilot.security.permissions import PermissionChecker
 
 
@@ -53,15 +52,18 @@ async def test_scope_override_forwarded_to_specialist(orchestrator):
     orchestrator._agents[AgentRole.SYSTEM] = agent
 
     override = TaskScopeOverride(max_tier={"shell": 0})
-    await orchestrator.execute_plan("test", plan, scope_override=override)
+    await orchestrator.execute_plan("test", plan, scope_override=override, source=InvocationSource.VOICE)
 
     agent.handle_task.assert_awaited_once()
     _, kwargs = agent.handle_task.call_args
-    assert kwargs["scope_override"] is override
+    forwarded = kwargs["scope_override"]
+    voice = DEFAULT_SOURCE_PROFILES["voice"]
+    assert forwarded.max_tier == {**voice.max_tier, "shell": 0}  # the voice profile, narrowed by the override
+    assert forwarded.allow_root is False
 
 
 @pytest.mark.asyncio
-async def test_scope_override_defaults_to_none(orchestrator):
+async def test_a_plan_that_names_no_source_reaches_specialists_with_every_action_denied(orchestrator):
     plan = _make_plan()
     agent = _stub_agent()
     agent.handle_task.return_value = [ActionResult(action=plan.actions[0], success=True, output="ok")]
@@ -70,9 +72,8 @@ async def test_scope_override_defaults_to_none(orchestrator):
 
     await orchestrator.execute_plan("test", plan)
 
-    agent.handle_task.assert_awaited_once()
     _, kwargs = agent.handle_task.call_args
-    assert kwargs["scope_override"] is None
+    assert set(kwargs["scope_override"].deny_action_types) == {action.value for action in ActionType}
 
 
 @pytest.mark.asyncio
@@ -97,6 +98,7 @@ async def test_scope_override_blocks_direct_protocol_specialist_before_dispatch(
         "delete event",
         plan,
         scope_override=TaskScopeOverride(max_tier={"other": 2}),
+        source=InvocationSource.INTERACTIVE,
     )
 
     assert results[0].success is False

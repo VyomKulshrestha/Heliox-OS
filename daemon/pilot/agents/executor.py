@@ -654,7 +654,7 @@ class Executor:
         initial_last_output: str = "",
         initial_largest_output: str | None = None,
         orchestrator: Any = None,
-        invocation_source: InvocationSource = InvocationSource.INTERACTIVE,
+        invocation_source: InvocationSource | None = None,
         scope_override: TaskScopeOverride | None = None,
         critic_already_reviewed: bool = False,
         user_confirmed: bool = False,
@@ -667,7 +667,13 @@ class Executor:
 
         ``dry_run`` simulates the plan for this call only; the global
         ``security.dry_run`` setting forces simulation for every call.
+
+        ``invocation_source`` is where the plan came from; every caller names it. A plan that arrives without one runs
+        as ``InvocationSource.UNKNOWN``, whose gateway profile refuses every step.
         """
+        if invocation_source is None:
+            logger.error("A plan reached the executor without its source; the gateway refuses every step of it")
+            invocation_source = InvocationSource.UNKNOWN
 
         kwargs = {
             "on_action_start": on_action_start,
@@ -732,7 +738,7 @@ class Executor:
         initial_last_output: str = "",
         initial_largest_output: str | None = None,
         orchestrator: Any = None,
-        invocation_source: InvocationSource = InvocationSource.INTERACTIVE,
+        invocation_source: InvocationSource = InvocationSource.UNKNOWN,
         scope_override: TaskScopeOverride | None = None,
         critic_already_reviewed: bool = False,
         user_confirmed: bool = False,
@@ -925,7 +931,7 @@ class Executor:
         initial_last_output: str = "",
         initial_largest_output: str | None = None,
         orchestrator: Any = None,
-        invocation_source: InvocationSource = InvocationSource.INTERACTIVE,
+        invocation_source: InvocationSource = InvocationSource.UNKNOWN,
         scope_override: TaskScopeOverride | None = None,
         critic_already_reviewed: bool = False,
         user_confirmed: bool = False,

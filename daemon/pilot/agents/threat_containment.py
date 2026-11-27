@@ -440,10 +440,14 @@ class ThreatContainmentBridge:
             )
 
         try:
+            from pilot.security.gateway import InvocationSource
+
+            # A remedy Heliox proposed itself, run after the person approved it: the self-healing profile bounds it.
             results = await self._orchestrator.execute_plan(
                 user_input=f"threat_containment:{report.incident_type}",
                 plan=plan,
                 plan_id=plan_id,
+                source=InvocationSource.SELF_HEALING,
             )
         except Exception as exc:
             logger.exception("[ThreatContainment] Orchestrator execution failed: %s", exc)

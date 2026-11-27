@@ -7,6 +7,7 @@ import pytest
 
 from pilot.actions import Action, ActionPlan, ActionResult, ActionType, NotifyParams, VerificationResult
 from pilot.config import PilotConfig
+from pilot.security.gateway import InvocationSource
 from pilot.server import PilotServer
 from pilot.workflows.checkpoints import WorkflowCheckpointStore
 
@@ -81,9 +82,14 @@ async def test_resume_plan_skips_completed_actions_and_verifies_full_plan(tmp_pa
         cancel_event,
         plan_id,
         initial_last_output,
+        invocation_source,
+        scope_override,
     ):
         assert plan_id == "plan-1"
         assert initial_last_output == "first output"
+        # Stored without its source: resumed under the narrowest source that could have made it.
+        assert invocation_source == InvocationSource.MCP
+        assert scope_override.max_tier["shell"] == 0
         assert [action.target for action in remaining_plan.actions] == ["two"]
         result = ActionResult(action=remaining_plan.actions[0], success=True, output="second output")
         await on_action_start(remaining_plan.actions[0])

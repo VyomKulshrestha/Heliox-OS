@@ -181,11 +181,10 @@ class TestAgentGatewayAuthorize:
         assert decision.allowed is True
 
     @pytest.mark.asyncio
-    async def test_unknown_source_falls_back_to_interactive_profile(self, gateway):
-        # Fail-open by design (see gateway.py's DEFAULT_UNKNOWN_SOURCE_PROFILE) —
-        # untagged call sites must not suddenly break.
-        decision = await gateway.authorize(_plan(ActionType.BROWSER_EXECUTE_JS), InvocationSource.UNKNOWN)
-        assert decision.allowed is True
+    async def test_a_plan_from_an_unknown_source_is_refused_whatever_it_holds(self, gateway):
+        # Every entry names its own source; a plan that reaches the gateway without one runs nothing.
+        decision = await gateway.authorize(_plan(ActionType.SYSTEM_INFO), InvocationSource.UNKNOWN)
+        assert decision.allowed is False
 
     @pytest.mark.asyncio
     async def test_neural_source_only_allows_compiled_low_risk_actions(self, gateway):
