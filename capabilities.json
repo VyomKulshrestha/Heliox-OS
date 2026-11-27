@@ -19,7 +19,7 @@
   "sources": {
     "action_registry": {
       "path": "daemon/pilot/actions.py",
-      "sha256": "b74f200d9f40c3bb8110955f55ceb932707ce4f64422ddaf255918d5e081e8ca"
+      "sha256": "6a298c213193fbca6904d8aede936bb97e8c3bb952e3f6d783495bcee6f17724"
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
@@ -92,7 +92,7 @@
       },
       {
         "path": "daemon/pilot/agents/postconditions/triggers_schedules.py",
-        "sha256": "96a735742c5f110cd79ee4ab8f5f93a28571432fbf6955c0319fe821fac50fef"
+        "sha256": "d4dd2ef5836e9d36bb0b4fd6c59c9074df629bd4bf7d27abf3ffd8550ae8815a"
       }
     ],
     "plugin_manifests": [
