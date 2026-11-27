@@ -5,7 +5,8 @@
 Runs as root inside the throwaway container after appimage_check.sh, with the standard library only, and with
 deb_install_check.py's person, window and daemon-log helpers. Each check is one CHECK line named appimage/<check>:
 
-- ``app-starts``, ``first-run-setup``, ``page-reaches-daemon``, ``daemon-answers-with-token``: as for the .deb, with
+- ``app-starts``, ``window-comes-back-after-its-web-process-ends``, ``first-run-setup``, ``page-reaches-daemon``,
+  ``daemon-answers-with-token``: as for the .deb, with
   the AppImage as the app;
 - ``removal-names-the-appimage-file``: the removal screen's plan (heliox_files_plan, the command the screen calls)
   names the AppImage file, by its path, as the person's to delete;

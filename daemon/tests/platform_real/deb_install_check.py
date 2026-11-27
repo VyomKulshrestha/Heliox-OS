@@ -17,6 +17,8 @@ every wait is bounded. Both modes:
 
 "full":
 
+- ``window-comes-back-after-its-web-process-ends``: with the setup screen up, the check ends the app's web process
+  as a crash would; the app reloads its page (webview_recovery.rs) and the setup screen is back (web_process_comes_back);
 - ``first-run-setup``: "Set up Heliox" is pressed with the choices the screen made, and the screen reaches "Heliox
   is ready": the environment is created and the app starts the daemon it installed;
 - ``page-reaches-daemon``: a ui client signs in to that daemon with its token and stays connected (the app's page;
@@ -447,6 +449,7 @@ class Window:
         self.reported = False
         self.reopened = ""
         self.first_error = ""
+        self.planned: set[int] = set()  # web processes the check itself ended (web_process_comes_back)
 
     def __enter__(self):
         self.driver_process = self.person.start([f"{self.tools}/tauri-driver", "--port", "4444"], "driver.log")
@@ -525,17 +528,26 @@ class Window:
             )
         # Every web process that ended during the session counts, also one started after the session opened.
         web_ended = sorted(
-            {pid for pid, _ in web_then - web_now}
-            | {pid for name, pid in self.watch.ended if name == "WebKitWebProcess"}
+            (
+                {pid for pid, _ in web_then - web_now}
+                | {pid for name, pid in self.watch.ended if name == "WebKitWebProcess"}
+            )
+            - self.planned
         )
         if web_ended:
             return False, (
                 f"the app's main process is the same, but its web process {web_ended} ended "
                 f"(web processes now: {sorted(pid for pid, _ in web_now)}): a person would see the window go blank"
             )
+        same = (
+            f"the app's main process is the one the session opened with, and no web process ended but {sorted(self.planned)}, "
+            "which the check ended on purpose"
+            if self.planned
+            else "the app's main process and web process are the same ones the session opened with"
+        )
         if self.reopened:
-            return False, "the app's main process and web process are the same; the window was already opened again"
-        return True, "the app's main process and web process are the same ones the session opened with"
+            return False, f"{same}; the window was already opened again"
+        return True, same
 
     def reopen(self, why: str) -> None:
         """Open the window again, once: end the session, the app and the drivers, then start them as before."""
@@ -670,6 +682,100 @@ def offers_private_python(person: Person, binary: str, tools: str) -> None:
     )
 
 
+def window_colours(title: str = "Heliox-OS") -> tuple[int, str]:
+    """How many different colours the app's window shows (xwd, from x11-apps): a blank window shows one or two, the
+    setup screen with its text and buttons many. The count and how it was taken."""
+    import struct
+
+    rows = [row for row in x_windows() if f'"{title}"' in row]
+    if not rows:
+        return 0, "no window named Heliox-OS on the display"
+    window_id = rows[0].split()[0]
+    try:
+        done = subprocess.run(
+            ["xwd", "-silent", "-display", ":99", "-id", window_id], capture_output=True, timeout=20, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return 0, f"no picture: {type(error).__name__}: {error}"
+    data = done.stdout
+    if done.returncode != 0 or len(data) < 100:
+        return 0, f"no picture (xwd exit {done.returncode}: {done.stderr.decode(errors='replace')[:160]})"
+    # The XWD header: 25 big-endian 32-bit fields, then the window name, then ncolours colour entries of 12 bytes.
+    fields = struct.unpack(">25I", data[:100])
+    header, height, bits, per_line, ncolours = fields[0], fields[5], fields[11], fields[12], fields[19]
+    pixels = data[header + 12 * ncolours : header + 12 * ncolours + per_line * height]
+    step = max(bits // 8, 1)
+    seen = {pixels[index : index + step] for index in range(0, len(pixels) - step + 1, step * 7)}
+    return len(seen), f"window {window_id}, {fields[4]}x{height}, {bits} bits a pixel"
+
+
+def web_process_comes_back(window: Window) -> None:
+    """End the app's web process on purpose while the setup screen shows, as a crash would, and check the app's own
+    recovery (webview_recovery.rs): the same main process, a new web process, the app's reload line and its "page
+    loaded again" line, and the setup screen back: read through the same session when WebKit kept it, otherwise
+    (WebKit ends a driver session with its web process) seen as a window with content, not a blank one. The web
+    process ended here is the check's own: may_open_again does not count it as an unplanned one."""
+    before = window_snapshot()
+    main, web = before.get("heliox-os", set()), before.get("WebKitWebProcess", set())
+    if not main or not web:
+        check("window-comes-back-after-its-web-process-ends", False, f"not run: app {main}, web process {web}")
+        return
+    colours_before, _ = window_colours()
+    log = OUT / "driver.log"
+    start = log.stat().st_size if log.exists() else 0
+    for pid, _ in web:
+        window.planned.add(pid)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError as error:
+            print(f"DIAG could not end web process {pid}: {error}", flush=True)
+    print(f"DIAG ended the window's web process {sorted(window.planned)} on purpose", flush=True)
+    new_web: set[tuple[int, float]] = set()
+    said = ""
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        time.sleep(1)
+        now = window_snapshot()
+        new_web = now.get("WebKitWebProcess", set()) - web
+        try:
+            with log.open("rb") as handle:
+                handle.seek(start)
+                said = handle.read(100_000).decode("utf-8", errors="replace")
+        except OSError:
+            said = ""
+        if new_web and "page loaded again" in said:
+            break
+    same_main = window_snapshot().get("heliox-os", set()) == main
+    reload_lines = [line.strip()[:200] for line in said.splitlines() if "[Heliox OS]" in line]
+    state = ""
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            state = str(window.driver.run(SETUP_BUTTON))
+            if state == "ready":
+                break
+            time.sleep(2)
+        page = f"the setup screen read through the same session: {state!r}"
+        back = state == "ready"
+    except Exception as error:
+        if lost_for_good(error):
+            window.lost(error)  # the full report, with the check's own end of the web process named
+        else:
+            window.dropped(error)
+        colours, how = window_colours()
+        page = (
+            f"the driver's session ended with the old web process ({type(error).__name__}); the window shows "
+            f"{colours} colours ({colours_before} before; {how})"
+        )
+        back = colours >= 16
+    check(
+        "window-comes-back-after-its-web-process-ends",
+        same_main and bool(new_web) and "reloading the page" in said and "page loaded again" in said and back,
+        f"main process the same: {same_main}; new web process: {sorted(pid for pid, _ in new_web) or 'none'}; "
+        f"the app said: {reload_lines or 'nothing'}; {page}",
+    )
+
+
 def first_run_through_the_window(person: Person, binary: str, tools: str, log: DaemonLog, while_open=None) -> bool:
     window = Window(person, binary, tools)
     try:
@@ -681,6 +787,19 @@ def first_run_through_the_window(person: Person, binary: str, tools: str, log: D
                     False,
                     f"the setup button never became ready ({state!r}){window.reopen_note()}",
                 )
+            web_process_comes_back(window)
+            if window.reported:  # WebKit ended the driver's session with the web process the check ended
+                again, why = window.may_open_again()
+                if not again:
+                    return check("first-run-setup", False, f"not run: the window was not opened again: {why}")
+                window.reopen(why)
+                state = window.setup_screen_ready()
+                if state != "ready":
+                    return check(
+                        "first-run-setup",
+                        False,
+                        f"the setup button never became ready ({state!r}){window.reopen_note()}",
+                    )
             chosen = window.read(
                 "return [...document.querySelectorAll('.groups > li > label')].map(l =>"
                 " (l.querySelector('input').checked ? '[x] ' : '[ ] ')"
