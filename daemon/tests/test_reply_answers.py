@@ -153,10 +153,13 @@ def test_the_reply_leads_with_the_asked_plans_failure_not_a_repair_step() -> Non
         error="Process exited with code 1",
     )
     said = failure_reply([shell, push], None, asked=([push], None))
-    assert (
-        said.shown
-        == said.spoken
-        == ("I couldn't push main: origin has commits you don't have yet. Pull first, then push again.")
+    # The asked plan's failure leads; the repair step that ran and failed is one clause after it.
+    assert said.spoken == (
+        "I couldn't push main: origin has commits you don't have yet. Pull first, then push again. I tried again, "
+        "and that failed too: the shell command step failed. The details are on screen."
+    )
+    assert said.shown.splitlines()[0] == (
+        "I couldn't push main: origin has commits you don't have yet. Pull first, then push again."
     )
 
 
@@ -199,7 +202,7 @@ async def test_a_rejected_push_is_not_repaired_and_asks_once() -> None:
 # ── a read answers the question asked ─────────────────────────────────────────────────────────────────────────────
 
 LOG = W + r"\logs\app.log"
-TAIL = "\n".join(f"2026-11-26 23:03:1{i} INFO worker tick 19{i}" for i in range(5, 10))
+TAIL = "\n".join(f"2026-11-26 23:03:1{i} INFO job step 19{i}" for i in range(5, 10))
 PROCESSES = "\n".join(
     [
         "PID=  4321  CPU= 12.5%  MEM=  9.1%  STATUS=running       chrome.exe",
@@ -210,10 +213,10 @@ PROCESSES = "\n".join(
     ]
 )
 SYSTEM = (
-    "=== Operating System ===\n  system: Windows\n  release: 11\n=== CPU ===\n  Logical cores: 24\n  Average usage: 6.9%\n"
-    "=== Memory ===\n  Total: 15.7 GB\n  Used:  11.9 GB (75.5%)\n  Free:  3.8 GB\n=== Disk ===\n"
-    "  C:\\ (C:\\) - 952.6 GB total, 824.5 GB used (86.6%), fstype=NTFS\n=== Network ===\n  Wi-Fi (UP):\n"
-    "    IPv4: 10.0.0.2\n  Loopback Pseudo-Interface 1 (UP):\n    IPv4: 127.0.0.1"
+    "=== Operating System ===\n  system: Windows\n  release: 11\n=== CPU ===\n  Logical cores: 8\n  Average usage: 12.0%\n"
+    "=== Memory ===\n  Total: 32.0 GB\n  Used:  12.0 GB (37.5%)\n  Free:  20.0 GB\n=== Disk ===\n"
+    "  C:\\ (C:\\) - 1024.0 GB total, 896.0 GB used (87.5%), fstype=NTFS\n=== Network ===\n  Wi-Fi (UP):\n"
+    "    IPv4: 203.0.113.7\n  Loopback Pseudo-Interface 1 (UP):\n    IPv4: 127.0.0.1"
 )
 
 
@@ -221,7 +224,7 @@ SYSTEM = (
     ("result", "request_words", "spoken"),
     [
         (_result(ActionType.FILE_READ, FileParams(path=LOG, tail_lines=5), TAIL, LOG), "show the last 5 lines of app.log",
-         "The last 5 lines of app.log; the newest is: the twenty-sixth of November 23:03:19 INFO worker tick 199."),
+         "The last 5 lines of app.log; the newest is: the twenty-sixth of November 23:03:19 INFO job step 199."),
         (_result(ActionType.FILE_READ, FileParams(path=W + r"\notes.txt", head_lines=2), "first\nsecond", W),
          "first two lines", "The first 2 lines of notes.txt; the first is: first."),
         (_result(ActionType.API_SCRAPE, ApiRequestParams(url="https://example.com", selector="title"), "Example Domain"),
@@ -231,12 +234,12 @@ SYSTEM = (
         (_result(ActionType.PROCESS_LIST, ProcessParams(name="chrome"), PROCESSES), "is chrome running",
          "Chrome is running, as 5 processes, using fifteen percent of memory."),
         (_result(ActionType.SYSTEM_INFO, SystemInfoParams(), SYSTEM), "how much memory is in use",
-         "11.9 of 15.7 gigabytes of memory are in use."),
+         "12.0 of 32.0 gigabytes of memory are in use."),
         (_result(ActionType.SYSTEM_INFO, SystemInfoParams(), SYSTEM), "what programs are running",
          "The system information does not include which programs are running. This computer runs Windows 11, the "
-         "processor is at 7 percent, and 11.9 of 15.7 gigabytes of memory are in use."),
+         "processor is at 12 percent, and 12.0 of 32.0 gigabytes of memory are in use."),
         (_result(ActionType.SYSTEM_INFO, SystemInfoParams(), SYSTEM), "what is the CPU temperature",
-         "The system information does not include the temperature. The processor is at 7 percent."),
+         "The system information does not include the temperature. The processor is at 12 percent."),
         (_result(ActionType.FILE_LIST, FileParams(path=W),
                  "[f] a.txt  (1 bytes)\n[f] b.txt  (2 bytes)\n[d] old  (0 bytes)\nNewest: b.txt, a.txt"),
          "what is in work", "Work has 2 files and 1 folder; the newest are b.txt and a.txt."),
@@ -263,10 +266,11 @@ def test_a_read_answers_the_question_asked(result: ActionResult, request_words: 
 def test_system_information_is_shown_as_a_summary_not_a_cut_dump() -> None:
     said = step_said(_result(ActionType.SYSTEM_INFO, SystemInfoParams(), SYSTEM))
     assert said.shown.splitlines() == [
-        "System: Windows 11, 24 cores",
-        "Processor: 6.9% in use",
-        "Memory: 11.9 of 15.7 GB in use (75.5%)",
-        "Drive C: 128 GB free of 952.6 GB",
+        "This computer runs Windows 11, the processor is at 12 percent, and 12.0 of 32.0 gigabytes of memory are in use.",
+        "System: Windows 11, 8 cores",
+        "Processor: 12.0% in use",
+        "Memory: 12.0 of 32.0 GB in use (37.5%)",
+        "Drive C: 128 GB free of 1024.0 GB",
         "Network: Wi-Fi connected",
     ]
 
@@ -275,17 +279,17 @@ def test_search_lines_are_shown_relative_to_the_folder_searched() -> None:
     found = json.dumps(
         {
             "matches": [
-                {"file": W + r"\workspace\plan.md", "line": 2, "content": "The quarterly budget review"},
-                {"file": W + r"\workspace\sub\notes.txt", "line": 1, "content": "Draft the quarterly budget"},
+                {"file": W + r"\workspace\plan.md", "line": 2, "content": "The annual report review"},
+                {"file": W + r"\workspace\sub\notes.txt", "line": 1, "content": "Draft the annual report"},
             ],
             "count": 2,
         }
     )
-    params = FileIntelParams(directory=W + r"\workspace", search_text="quarterly budget")
+    params = FileIntelParams(directory=W + r"\workspace", search_text="annual report")
     said = step_said(_result(ActionType.FILE_SEARCH_CONTENT, params, found))
     assert said.shown.splitlines()[1:] == [
-        "- plan.md:2 The quarterly budget review",
-        "- sub\\notes.txt:1 Draft the quarterly budget",
+        "- plan.md:2 The annual report review",
+        "- sub\\notes.txt:1 Draft the annual report",
     ]
 
 
@@ -294,12 +298,10 @@ def test_two_triggers_on_one_file_are_told_apart_and_removed_together() -> None:
         return {"id": name[:8], "name": name, "trigger_type": "file_modified",
                 "condition": {"path": W + r"\trigger\watched.txt"}, "action_command": job}  # fmt: skip
 
-    both = json.dumps(
-        [entry("watched-txt-log", "echo watched.txt changed >> fired.log"), entry("watched-txt-tell", "")]
-    )
+    both = json.dumps([entry("notes-log", "echo file changed >> fired.log"), entry("watched-txt-tell", "")])
     listed = step_said(_result(ActionType.TRIGGER_LIST, TriggerParams(), both))
     assert listed.spoken == (
-        'You have 2 triggers: one will add "watched.txt changed" to fired.log when watched.txt changes; one will tell '
+        'You have 2 triggers: one will add "file changed" to fired.log when watched.txt changes; one will tell '
         "you when watched.txt changes."
     )
     removed = [

@@ -23,7 +23,8 @@ def test_success_message_reports_verified_execution_not_just_plan_intent():
     result = ActionResult(action=_action(), success=True, output="Windows")
     verification = VerificationResult(passed=True, details=["Action 0: VERIFIED"])
 
-    assert success_message(plan, [result], verification, dry_run=False) == "Windows"
+    # The answer sentence that is said comes first; it is built from the reading, not the plan's intent.
+    assert success_message(plan, [result], verification, dry_run=False) == "System information: Windows"
 
 
 def test_reported_browser_effect_is_not_called_independently_verified():

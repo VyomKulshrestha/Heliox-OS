@@ -123,7 +123,10 @@ async def test_failed_after_the_repair_rounds_gave_up() -> None:
 
     assert response["status"] == "partial_failure"
     assert executor.runs == 1 + server.MAX_RETRIES  # an unknown failure is left to the repair rounds
-    assert response["spoken"] == "I couldn't write note.txt in notes. The details are on screen."
+    # The repair rounds ran and failed the same way: said in one clause after the failure.
+    assert response["spoken"] == (
+        "I couldn't write note.txt in notes. The details are on screen. I tried again, and it failed the same way."
+    )
     assert "Process exited with code 125" in response["message"]
     _assert_said(response)
 

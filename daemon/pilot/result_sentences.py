@@ -110,7 +110,9 @@ def _answer(step: Step, lead: str, *, empty: str = "", last_line: bool = False) 
     if looks_like_json(text):
         return Said(shown=for_screen(text, limit=SHOWN_LIMIT), spoken=f"{lead} holds data; it's on screen.")
     if len(flat) <= SHORT_ANSWER and len(lines) <= 2:
-        return Said(shown=for_screen(text, limit=SHOWN_LIMIT), spoken=f"{lead}: {flat}")
+        # An answer that already names what it is ("Battery: 73%") is not named twice.
+        said = flat if flat.casefold().startswith(lead.casefold()) else f"{lead}: {flat}"
+        return Said(shown=for_screen(text, limit=SHOWN_LIMIT), spoken=said)
     if last_line and lines:
         spoken = f"{lead} has {plural(len(lines), 'line')}; the newest is: {words_cut(lines[-1], 16)}"
     else:
@@ -410,12 +412,38 @@ def _state(lead: str) -> Callable[[Step], Said]:
 
         if "No battery detected" in step.out:
             return _said("This computer has no battery.")
+        total = _total_asked(step)
+        if total:
+            return _said(total)
         sentence = speakable_state(step.out)
         if sentence:
             return Said(shown=sentence, spoken=sentence)
         return _answer(step, lead)
 
     return build
+
+
+# How much there is, as against how much is used or left: "how much RAM does it have", "how big is my disk".
+_TOTAL_ASKED = re.compile(
+    r"\bhow (?:much|many) (?:ram|memory)\b.*\b(?:have|has|got|installed)\b|\b(?:total|installed) (?:ram|memory)\b|"
+    r"\bhow (?:big|large) is\b|\b(?:size|capacity) of\b|\bhow much (?:storage|space) does\b.*\bhave\b",
+    re.IGNORECASE,
+)
+
+
+def _total_asked(step: Step) -> str:
+    """The total first, then how much is used or free, when the question asks how much there is; "" otherwise."""
+    if not _TOTAL_ASKED.search(step.request):
+        return ""
+    memory = re.search(r"Total:\s*([\d.]+) GB\s+Used:\s*([\d.]+) GB", step.out)
+    if memory and step.type is ActionType.MEMORY_USAGE:
+        return f"This computer has {memory.group(1)} gigabytes of memory; {memory.group(2)} are in use."
+    disk = re.search(r"^\s*(\S+?)\s.*?([\d.]+) GB total, ([\d.]+) GB used", step.out, re.MULTILINE)
+    if disk and step.type is ActionType.DISK_USAGE:
+        device, total, used = disk.groups()
+        label = f"Drive {device[0].upper()}" if re.match(r"[A-Za-z]:", device) else "The disk"
+        return f"{label} holds {total} gigabytes; {max(0.0, float(total) - float(used)):.0f} are free."
+    return ""
 
 
 def _facts(text: str) -> list[tuple[str, str, str]]:
@@ -465,6 +493,26 @@ def _facts(text: str) -> list[tuple[str, str, str]]:
     battery = re.search(r"Charge:\s*(\d+)%", text)
     if battery:
         facts.append(("battery", f"Battery: {battery.group(1)}%", f"the battery is at {battery.group(1)} percent"))
+    up_for = re.search(r"Up for:\s*(\d+) day\(s\),\s*(\d+) hour\(s\),\s*(\d+) minute\(s\)", text)
+    if up_for:
+        days, hours, minutes = (int(part) for part in up_for.groups())
+        parts = [plural(n, unit) for n, unit in ((days, "day"), (hours, "hour"), (minutes, "minute")) if n]
+        said = (", ".join(parts[:-1]) + f" and {parts[-1]}" if len(parts) > 1 else parts[0]) if parts else "a minute"
+        facts.append(("uptime", f"Up for: {said}", f"this computer has been up for {said}"))
+    clock = re.search(r"Current Local Time:\s*(\w+), (\w+ \d{1,2}), \d{4} (\d{1,2}):(\d{2}):\d{2} ([AP]M)", text)
+    if clock:
+        day, date, hour, minute, half = clock.groups()
+        zone = re.search(r"Timezone:\s*(.+)", text)
+        facts.append(
+            (
+                "time",
+                f"Time: {int(hour)}:{minute} {half}, {day} {date}" + (f" ({zone.group(1).strip()})" if zone else ""),
+                f"it's {int(hour)}:{minute} {half} on {day}",
+            )
+        )
+    host = re.search(r"^\s*hostname:\s*(\S+)", text, re.MULTILINE)
+    if host:
+        facts.append(("host", f"Name: {host.group(1)}", f"this computer is called {host.group(1)}"))
     return facts
 
 
@@ -476,6 +524,9 @@ _SUBJECTS = {
     "network": r"\b(?:network|wi-?fi|internet|ip|connected|connection)\b",
     "battery": r"\bbattery\b",
     "os": r"\b(?:windows|macos|linux|version|operating system|os)\b",
+    "uptime": r"\bhow long\b.*\b(?:up|on|running|been)\b|\buptime\b|\blast (?:boot|restart)|\bbooted\b",
+    "time": r"\bwhat time\b|\bthe time\b|\btime zone\b|\btimezone\b",
+    "host": r"\b(?:hostname|host name|computer'?s name|name of (?:this|my) computer|called)\b",
 }
 # Asked about what system information does not hold: said plainly before the facts it does hold.
 _NOT_IN_SYSTEM_INFO = {
@@ -485,10 +536,21 @@ _NOT_IN_SYSTEM_INFO = {
 }
 
 
+def _section_facts(text: str) -> list[tuple[str, str, str]]:
+    """Sections this reader does not know by name: each section's first value, as "Section: value"."""
+    facts = []
+    for section, body in re.findall(r"^=== (.+?) ===\n((?:(?!===).*\n?)*)", text, re.MULTILINE):
+        value = next((line.strip() for line in body.splitlines() if line.strip()), "")
+        if value:
+            value = value.split(":", 1)[1].strip() if ":" in value else value
+            facts.append((section.casefold(), f"{section}: {value}", f"{section.lower()}: {value}"))
+    return facts
+
+
 def _system_info(step: Step) -> Said:
     """The two or three facts that matter, the ones the question was about first; a readable summary on screen (the
     full output stays in the details). Asked for something the reading does not hold, it says so first."""
-    facts = _facts(step.out)
+    facts = _facts(step.out) or _section_facts(step.out)
     if not facts:
         return _answer(step, "System information")
     asked = step.request.casefold()
@@ -511,23 +573,29 @@ def _health_review(step: Step) -> Said:
     return Said(shown=for_screen(step.out), spoken=words_cut(first, 24) or "The health review is on screen.")
 
 
+_VIRTUAL_ADAPTER = re.compile(r"^(?:lo\d*|Loopback\b.*|vEthernet\b.*|docker\d*|br-\w+|veth\w*|virbr\d*)$", re.I)
+
+
 def _network_info(step: Step) -> Said:
+    """The connections a person uses (not the loopback or a virtual machine's switch) and their IPv4 addresses; the
+    first one's address said, every one shown."""
     up = [
         name
         for name in re.findall(r"^\s{2}(\S.*?) \(UP\):", step.out, re.MULTILINE)
-        if not re.match(r"^(?:lo\d*|Loopback\b.*)$", name)  # this computer's own loopback is always up
+        if not _VIRTUAL_ADAPTER.match(name)
     ]
     if not up:
-        return _answer(step, "Network")
-    spoken = f"{plural(len(up), 'network connection')} up: {_names(up)}."
-    address = _ipv4_of(step.out, up[0])
-    if address:
-        spoken = (
-            f"{up[0]} is up, with the address {address}."
-            if len(up) == 1
-            else f"{spoken[:-1]}; {up[0]} has the address {address}."
-        )
-    return Said(shown=for_screen(step.out), spoken=spoken)
+        return _said("No network connection is up.")
+    addresses = {name: _ipv4_of(step.out, name) for name in up}
+    first = up[0]
+    if addresses[first]:
+        spoken = f"Your IP address is {addresses[first]}, on {first}."
+    else:
+        spoken = f"{plural(len(up), 'network connection')} {'is' if len(up) == 1 else 'are'} up: {_names(up)}."
+    if len(up) > 1 and addresses[first]:
+        spoken += f" {plural(len(up) - 1, 'other connection')} {'is' if len(up) == 2 else 'are'} up too."
+    shown = "\n".join(f"{name}: {addresses[name] or 'no IPv4 address'}" for name in up)
+    return Said(shown=f"{spoken}\n{shown}", spoken=spoken)
 
 
 def _ipv4_of(text: str, adapter: str) -> str:
@@ -568,7 +636,9 @@ def _process_list(step: Step) -> Said:
     """How many programs are running and the biggest few by memory, by their names ("84 programs are running; the
     biggest are Chrome, Code and Teams"). Several processes of one program count as one."""
     rows = re.findall(
-        r"PID=\s*\d+\s+CPU=\s*([\d.]+)%\s+MEM=\s*([\d.]+)%(?:\s+STATUS=\S*)?\s+(\S.*)$", step.out, re.MULTILINE
+        r"PID=\s*\d+[ \t]+CPU=\s*([\d.]+)%[ \t]+MEM=\s*([\d.]+)%(?:[ \t]+STATUS=\S*)?[ \t]+(?!STATUS=)(\S.*)$",
+        step.out,
+        re.MULTILINE,
     )
     asked = step.param("name")
     if not rows:
@@ -592,6 +662,23 @@ def _process_list(step: Step) -> Said:
         )
         spoken += f" using {share:.0f}% of memory." if share >= 1 else f" using {share:.1f}% of memory."
         return Said(shown=f"{spoken}\n{shown}", spoken=spoken)
+    asked_about = step.request.casefold()
+    if biggest and re.search(r"\b(?:memory|ram)\b", asked_about):
+        # "What is using the most memory?": the biggest by name and share first.
+        then = f"; then {_names(biggest[1:])}" if len(biggest) > 1 else ""
+        spoken = f"{biggest[0]} uses the most memory, {memory[biggest[0]]:.1f}%{then}."
+        return Said(shown=f"{spoken}\n{shown}", spoken=spoken)
+    if re.search(r"\b(?:cpu|processor)\b", asked_about):
+        load: dict[str, float] = {}
+        for cpu, _mem, raw in rows:
+            name = _program_name(raw)
+            if name and not re.match(r"^(?:system idle process|idle)$", name, re.IGNORECASE):
+                load[name] = load.get(name, 0.0) + float(cpu)
+        busiest = sorted(load, key=load.get, reverse=True)[:3]
+        if busiest:
+            then = f"; then {_names(busiest[1:])}" if len(busiest) > 1 else ""
+            spoken = f"{busiest[0]} is using the most processor time, {load[busiest[0]]:.1f}%{then}."
+            return Said(shown=f"{spoken}\n{shown}", spoken=spoken)
     # A list cut short counts processes (its total); a whole list counts programs by name.
     count, words = (processes, ("process", "processes")) if cut else (len(memory), ("program", "programs"))
     spoken = f"{plural(count, *words)} {'is' if count == 1 else 'are'} running"
@@ -700,8 +787,8 @@ def _user_info(step: Step) -> Said:
         table = re.search(r"^User Name\s+SID\s*\n=+\s+=+\s*\n(\S+)", step.out, re.MULTILINE)
         name = table.group(1).rsplit("\\", 1)[-1] if table else ""
     if not name:
-        return _answer(step, "Your account")
-    return Said(shown=for_screen(step.out), spoken=f"You're logged in as {name}.")
+        return _said("I couldn't tell which account is logged in; the details are on screen.")
+    return _said(f"You're logged in as {name}.")
 
 
 def _user_list(step: Step) -> Said:
@@ -1153,14 +1240,28 @@ def _trigger_list(step: Step) -> Said:
     return Said(shown=for_screen("\n".join([spoken, *lines])), spoken=spoken)
 
 
+def _third_person(job: str) -> str:
+    """ "add a line to fired.log" -> "adds a line to fired.log", "tell you" -> "tells you"."""
+    first, _space, rest = job.partition(" ")
+    if not first:
+        return "did its job"
+    verb = first + ("es" if first.endswith(("s", "sh", "ch", "x")) else "s")
+    return f"{verb} {rest}".strip()
+
+
 def _trigger_delete(step: Step) -> Said:
     # The handler answers with the removed entry (pilot.system.triggers.deleted_record): say what it watched.
     removed = step.data if isinstance(step.data, dict) and step.data.get("deleted") is True else None
     if removed is not None:
         if removed.get("trigger_type") == "time_interval":
             return _said("I've removed the trigger that ran on an interval.")
-        watched, _when, _job_words = _trigger_parts(removed)
-        return _said(f"I've stopped watching {removed.get('watched') or watched}.")
+        watched, _when, job = _trigger_parts(removed)
+        watched = removed.get("watched") or watched
+        others = int(removed.get("others_watching") or 0)
+        if not others:
+            return _said(f"I've stopped watching {watched}.")
+        still = "The other one still watches" if others == 1 else f"{others} others still watch"
+        return _said(f"I've removed the trigger that {_third_person(job)}. {still} {watched}.")
     # An older answer names only the id; what the trigger watched is the step's target when the planner named it.
     target = step.target
     if target and re.search(r"\.\w{1,6}$|[\\/]", target):
@@ -1515,13 +1616,25 @@ def step_said(result: ActionResult, *, limit: int = SPOKEN_LIMIT, request: str =
         if step.type is ActionType.FILE_DELETE:
             said = _file_delete(step)
             return Said(shown=said.shown, spoken=for_ear(said.spoken, limit=limit))
+        if step.type is ActionType.TRIGGER_START:
+            return Said(shown="Your triggers were already on.", spoken="Your triggers were already on.")
         # Not run because its state was already there: the handler's sentence says what was found, a path in it
-        # named like every other sentence names one (its name and folder).
-        found = _names_in(step.out)
+        # named like every other sentence names one (its name and folder), without the "Already satisfied:" label,
+        # ending as a sentence ends.
+        found = re.sub(r"^\s*already satisfied:\s*", "", _names_in(step.out), flags=re.IGNORECASE).strip()
+        if found and found[-1] not in ".!?":
+            found += "."
+        if result.skip_reason == "already_satisfied" and found:
+            # The check's own words describe the state it found; the person hears that nothing needed doing.
+            article = re.match(r"(?:The|A|An|It|Its|This)\b", found)
+            found = f"Nothing needed doing: {found[:1].lower() + found[1:] if article else found}"
+        found = found[:1].upper() + found[1:]
         return Said(shown=for_screen(found), spoken=for_ear(found, limit=limit) or "It was already done.")
     build = SENTENCES.get(step.type)
     said = build(step) if build is not None else _plain("Done.")(step)
     said = _kept_private(step, said)
+    if step.type in READ_ONLY_ACTIONS:
+        said = _answer_first(said)
     shown = for_screen(said.shown) or for_screen(said.spoken)
     if looks_like_json(shown):
         shown = said.spoken
@@ -1682,6 +1795,41 @@ def _names_in(text: str) -> str:
     return _PATH.sub(named, undoubled(text))
 
 
+# What a reader prints for itself: section headers ("=== Network ==="), a table rule ("====== ======"), process rows
+# ("PID=  376"), Windows line ends, or JSON. None of it is shown as the reply; the detail view and the receipt keep it.
+_MACHINE = re.compile(r"^=== .+ ===$|^=+(?:\s+=+)+$|^PID=\s*\d|\r|^\s*[\[{]\s*$", re.MULTILINE)
+
+
+def machine_output(text: str) -> bool:
+    return bool(_MACHINE.search(text or "")) or looks_like_json(text or "")
+
+
+def _answer_first(said: Said) -> Said:
+    """A read's shown reply: its answer sentence on the first line, the same one that is said; after it, the body only
+    when a person reads it as it is (a file's text, a page's text, a list of lines), never a reader's own printout."""
+    sentence = said.spoken.strip()
+    if not sentence:
+        return said
+    lines = said.shown.split("\n", 1)
+    if for_ear(lines[0]) == for_ear(sentence):
+        body = lines[1] if len(lines) > 1 else ""
+        first = lines[0]
+    else:
+        body, first = said.shown, sentence
+    if body and (
+        machine_output(body)
+        or for_ear(body) == for_ear(sentence)
+        or " ".join(body.split()).casefold() in " ".join(first.split()).casefold()
+    ):
+        body = ""
+    return Said(shown=f"{first}\n{body}" if body.strip() else first, spoken=said.spoken)
+
+
+def _skipped(result: ActionResult) -> bool:
+    """A step not run because its outcome already held (a trigger engine already running, a file already gone)."""
+    return result.skip_reason in {"already_satisfied", "already_absent"}
+
+
 def plan_said(results: Sequence[ActionResult], request: str = "") -> Said:
     """One or two sentences about a plan's outcome: the step the person asked for (the one with the widest reach that
     changed something, else the last read), and how many steps it took when more than one changed something. When
@@ -1690,6 +1838,11 @@ def plan_said(results: Sequence[ActionResult], request: str = "") -> Said:
     done = [result for result in results if result.success]
     if not done:
         return Said(shown="Nothing was done.", spoken="Nothing was done.")
+    ran = [result for result in done if not _skipped(result)]
+    if ran and len(ran) < len(done):
+        # What already held (the engine was already running) is not what the person asked for: the reply is about
+        # the steps that ran, and their count leaves the skipped ones out.
+        done = ran
     if len(done) == 1:
         return step_said(done[0], request=request)
     types = {result.action.action_type for result in done}

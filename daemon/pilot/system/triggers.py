@@ -1129,6 +1129,16 @@ def deleted_record(trigger: Trigger) -> dict[str, Any]:
     record = _entry_for_store(trigger)
     path = trigger.condition.get("path")
     record["watched"] = Path(str(path)).name if path else ""
+    # How many triggers still watch the same thing after this one went: the reply says the others remain.
+    record["others_watching"] = (
+        sum(
+            1
+            for other in _engine.list_triggers()
+            if other.get("id") != trigger.id and path and (other.get("condition") or {}).get("path") == path
+        )
+        if path
+        else 0
+    )
     record["deleted"] = True
     record["text"] = f"Deleted the trigger {describe_trigger(trigger)} (id {trigger.id})."
     return record

@@ -76,9 +76,9 @@ from pilot.task_reply import with_reply
 W = r"C:\Users\me\work"
 NOTE = W + r"\notes\note.txt"
 REPO = W + r"\repo"
-SHA = "0f6f55ea7126b114675ac5bbcb10682c8c735aaf45b29c84ec6b82bad5cefd9d"
+SHA = "9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c"
 LONG_TEXT = (
-    "Dear team, the quarterly budget review moved to Thursday afternoon because the finance office needs another day "
+    "Dear team, the annual report review moved to Thursday afternoon because the finance office needs another day "
     "to reconcile the travel claims. Please bring your updated forecasts, the list of open purchase orders and any "
     "questions about the new approval limits. Thank you all for the quick turnaround last month."
 )
@@ -98,11 +98,11 @@ STAGED = REPO + r"\README.md"
 RUN_STAGE = _git({"success": True, "output": f"Staged: [{STAGED!r}]", "staged_files": [STAGED]})
 RUN_TRIGGER = json.dumps(
     {
-        "id": "cb220aa1",
-        "name": "watched_txt_seen_a_change",
+        "id": "t0a1b2c3",
+        "name": "watch_inbox_file",
         "trigger_type": "file_modified",
         "condition": {"path": W + r"\trigger\watched.txt"},
-        "action_command": "echo seen a change >> fired.log",
+        "action_command": "echo file touched >> fired.log",
     },
     indent=2,
 )
@@ -118,9 +118,9 @@ RUN_HTTP = json.dumps(
 
 # action type: (parameters, target, the handler's output)
 CASES: dict[ActionType, tuple[object, str, str]] = {
-    ActionType.FILE_READ: (FileParams(path=NOTE), NOTE, "Buy milk and call the plumber on Friday."),
+    ActionType.FILE_READ: (FileParams(path=NOTE), NOTE, "Water the ferns and call Sam on Fridays."),
     ActionType.FILE_WRITE: (
-        FileParams(path=NOTE, content="Buy milk and call the plumber on Friday."),
+        FileParams(path=NOTE, content="Water the ferns and call Sam on Fridays."),
         NOTE,
         f"Written 40 bytes to {NOTE} (sha256 {SHA}, 40 bytes on disk)",
     ),
@@ -164,13 +164,13 @@ CASES: dict[ActionType, tuple[object, str, str]] = {
         "PDF: 3 pages\n\nQuarterly budget summary for the travel team.",
     ),
     ActionType.FILE_SEARCH_CONTENT: (
-        FileIntelParams(directory=W + r"\workspace", search_text="quarterly budget"),
+        FileIntelParams(directory=W + r"\workspace", search_text="annual report"),
         W + r"\workspace",
         json.dumps(
             {
                 "matches": [
-                    {"file": W + r"\workspace\budget.txt", "line": 3, "text": "the quarterly budget is due"},
-                    {"file": W + r"\workspace\plan.md", "line": 9, "text": "see the quarterly budget"},
+                    {"file": W + r"\workspace\budget.txt", "line": 3, "text": "the annual report is due"},
+                    {"file": W + r"\workspace\plan.md", "line": 9, "text": "see the annual report"},
                 ],
                 "count": 2,
             },
@@ -207,10 +207,10 @@ CASES: dict[ActionType, tuple[object, str, str]] = {
         _git(
             {
                 "success": True,
-                "output": "diff --git a/README.md b/README.md\nindex 8c819b6..5c1a35b 100644\n--- a/README.md\n"
-                "+++ b/README.md\n@@ -1 +1,3 @@\n # live10 repo\n+\n+A line added for the diff.",
-                "diff": "diff --git a/README.md b/README.md\nindex 8c819b6..5c1a35b 100644\n--- a/README.md\n"
-                "+++ b/README.md\n@@ -1 +1,3 @@\n # live10 repo\n+\n+A line added for the diff.",
+                "output": "diff --git a/README.md b/README.md\nindex 1111111..2222222 100644\n--- a/README.md\n"
+                "+++ b/README.md\n@@ -1 +1,3 @@\n # demo repo\n+\n+A line added for the diff.",
+                "diff": "diff --git a/README.md b/README.md\nindex 1111111..2222222 100644\n--- a/README.md\n"
+                "+++ b/README.md\n@@ -1 +1,3 @@\n # demo repo\n+\n+A line added for the diff.",
             }
         ),
     ),
@@ -220,18 +220,18 @@ CASES: dict[ActionType, tuple[object, str, str]] = {
         _git(
             {
                 "success": True,
-                "output": "54b39d5 Update readme (2 hours ago)\n566476e First commit (3 days ago)",
+                "output": "1a2b3c4 Fix the intro (2 hours ago)\n9e8d7c6 First commit (3 days ago)",
                 "commits": [
                     {
-                        "hash": "54b39d589ce79ecc74dc5b2dc74ef1d915e61a63",
-                        "short": "54b39d5",
+                        "hash": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+                        "short": "1a2b3c4",
                         "author": "Ann",
                         "when": "2 hours ago",
-                        "message": "Update readme",
+                        "message": "Fix the intro",
                     },
                     {
-                        "hash": "566476e6045135011acaea57a9c113f200096ec1",
-                        "short": "566476e",
+                        "hash": "9e8d7c6b5a493827160f1e2d3c4b5a6978695a4b",
+                        "short": "9e8d7c6",
                         "author": "Ann",
                         "when": "3 days ago",
                         "message": "First commit",
@@ -241,23 +241,23 @@ CASES: dict[ActionType, tuple[object, str, str]] = {
         ),
     ),  # fmt: skip
     ActionType.GIT_BRANCH: (
-        GitParams(repo_path=REPO, name="feature-notes", create=True),
+        GitParams(repo_path=REPO, name="topic-branch", create=True),
         REPO,
-        _git({"success": True, "output": "Switched to a new branch 'feature-notes'", "branch": "feature-notes"}),
+        _git({"success": True, "output": "Switched to a new branch 'topic-branch'", "branch": "topic-branch"}),
     ),
     ActionType.GIT_STAGE: (GitParams(repo_path=REPO, files=[STAGED]), STAGED, RUN_STAGE),
     ActionType.GIT_COMMIT: (
-        GitParams(repo_path=REPO, message="Update readme"),
+        GitParams(repo_path=REPO, message="Fix the intro"),
         REPO,
         _git(
             {
                 "success": True,
-                "output": "Committed as 54b39d5: Update readme",
-                "commit_message": "Update readme",
+                "output": "Committed as 1a2b3c4: Fix the intro",
+                "commit_message": "Fix the intro",
                 "files_committed": 2,
-                "commit_hash": "54b39d5",
-                "commit_sha": "54b39d589ce79ecc74dc5b2dc74ef1d915e61a63",
-                "head_before": "566476e6045135011acaea57a9c113f200096ec1",
+                "commit_hash": "1a2b3c4",
+                "commit_sha": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+                "head_before": "9e8d7c6b5a493827160f1e2d3c4b5a6978695a4b",
                 "branch": "main",
             }
         ),
@@ -268,10 +268,10 @@ CASES: dict[ActionType, tuple[object, str, str]] = {
         _git(
             {
                 "success": True,
-                "output": f"To {W}\\remote.git\n   566476e..54b39d5  main -> main",
+                "output": f"To {W}\\remote.git\n   9e8d7c6..1a2b3c4  main -> main",
                 "remote": "origin",
                 "branch": "main",
-                "pushed_sha": "54b39d589ce79ecc74dc5b2dc74ef1d915e61a63",
+                "pushed_sha": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
                 "remote_ref": "refs/heads/main",
             }
         ),
@@ -386,7 +386,7 @@ CASES: dict[ActionType, tuple[object, str, str]] = {
         SystemInfoParams(categories=["all"]),
         "system",
         "=== Operating System ===\n  release: 11\n=== CPU ===\n  Average usage: 16.3%\n"
-        "=== Memory ===\n  Total: 15.7 GB\n  Used:  10.7 GB (68.0%)\n=== Battery ===\n  Charge: 80%",
+        "=== Memory ===\n  Total: 16.0 GB\n  Used:  10.7 GB (68.0%)\n=== Battery ===\n  Charge: 80%",
     ),
     ActionType.SYSTEM_HEALTH_REVIEW: (
         SystemInfoParams(),
@@ -401,7 +401,7 @@ CASES: dict[ActionType, tuple[object, str, str]] = {
     ActionType.MEMORY_USAGE: (
         SystemInfoParams(),
         "memory",
-        "=== Memory ===\n  Total: 15.7 GB\n  Used:  10.7 GB (68.0%)\n  Free:  5.0 GB\n  Swap Total: 2.0 GB\n"
+        "=== Memory ===\n  Total: 16.0 GB\n  Used:  10.7 GB (68.0%)\n  Free:  5.0 GB\n  Swap Total: 2.0 GB\n"
         "  Swap Used:  0.1 GB (5.0%)",
     ),
     ActionType.CPU_USAGE: (SystemInfoParams(), "cpu", "=== CPU ===\n  Cores: 8\n  Average usage: 16.3%"),
@@ -580,12 +580,12 @@ CASES: dict[ActionType, tuple[object, str, str]] = {
         "snapshot 7c1e2f9a\n[e1] heading Example Domain\n[e2] link More information",
     ),
     ActionType.TRIGGER_CREATE: (
-        TriggerParams(name="watched_txt_seen_a_change", trigger_type="file_modified"),
+        TriggerParams(name="watch_inbox_file", trigger_type="file_modified"),
         "watched.txt",
         RUN_TRIGGER,
     ),
     ActionType.TRIGGER_LIST: (TriggerParams(), "", f"[\n{RUN_TRIGGER}\n]"),
-    ActionType.TRIGGER_DELETE: (TriggerParams(trigger_id="cb220aa1"), "cb220aa1", "Deleted trigger: cb220aa1"),
+    ActionType.TRIGGER_DELETE: (TriggerParams(trigger_id="t0a1b2c3"), "t0a1b2c3", "Deleted trigger: t0a1b2c3"),
     ActionType.TRIGGER_START: (TriggerParams(), "", "Trigger engine started with 2 triggers"),
     ActionType.TRIGGER_STOP: (TriggerParams(), "", "Trigger engine stopped"),
     ActionType.CALENDAR_PARSE: (
@@ -685,7 +685,7 @@ LONG_CASES: list[tuple[ActionType, object, str, str]] = [
     (ActionType.CLIPBOARD_READ, ClipboardParams(), "", '{"token": "abc", "items": [1, 2, 3]}'),
     (ActionType.CLIPBOARD_READ, ClipboardParams(), "", "(clipboard is empty)"),
     (ActionType.FILE_DELETE, FileParams(path=NOTE), NOTE, f"There was no file at {NOTE}, so nothing was deleted"),
-    (ActionType.FILE_WRITE, FileParams(path=NOTE, content="Also renew the parking permit.", append=True), NOTE,
+    (ActionType.FILE_WRITE, FileParams(path=NOTE, content="Also renew the library card.", append=True), NOTE,
      f"Appended 1 line to {NOTE} (appended sha256 {SHA}, 32 bytes; file sha256 {SHA}, 72 bytes)"),
 ]  # fmt: skip
 
@@ -750,9 +750,9 @@ def test_a_plan_of_several_steps_is_one_or_two_sentences_about_its_outcome() -> 
     copies = [
         _result(
             ActionType.FILE_COPY,
-            FileParams(path=W + r"\big\big300.bin", destination=W + rf"\big\late_{c}.bin"),
+            FileParams(path=W + r"\big\source.bin", destination=W + rf"\big\late_{c}.bin"),
             "",
-            f"Copied {W}\\big\\big300.bin -> {W}\\big\\late_{c}.bin",
+            f"Copied {W}\\big\\source.bin -> {W}\\big\\late_{c}.bin",
         )
         for c in "abc"
     ]
@@ -780,13 +780,13 @@ def test_a_plan_of_several_steps_is_one_or_two_sentences_about_its_outcome() -> 
         (ActionType.GIT_STAGE, "Staged README.md in repo.", "Staged README.md in repo."),
         (
             ActionType.GIT_COMMIT,
-            'Committed 2 files to repo on main: "Update readme".',
-            'Committed 2 files to repo on main: "Update readme".',
+            'Committed 2 files to repo on main: "Fix the intro".',
+            'Committed 2 files to repo on main: "Fix the intro".',
         ),
         (
             ActionType.GIT_BRANCH,
-            "Switched repo to the new branch feature-notes.",
-            "Switched repo to the new branch feature-notes.",
+            "Switched repo to the new branch topic-branch.",
+            "Switched repo to the new branch topic-branch.",
         ),
         (ActionType.GIT_PUSH, "Pushed main of repo to origin.", "Pushed main of repo to origin."),
         (ActionType.FILE_WRITE, "Wrote 40 bytes to note.txt in notes.", "Wrote 40 bytes to note.txt in notes."),
@@ -797,8 +797,8 @@ def test_a_plan_of_several_steps_is_one_or_two_sentences_about_its_outcome() -> 
         ),
         (
             ActionType.TRIGGER_CREATE,
-            'I\'ll watch watched.txt and add "seen a change" to fired.log when it changes.',
-            'I\'ll watch watched.txt and add "seen a change" to fired.log when it changes.',
+            'I\'ll watch watched.txt and add "file touched" to fired.log when it changes.',
+            'I\'ll watch watched.txt and add "file touched" to fired.log when it changes.',
         ),
         (
             ActionType.TRIGGER_LIST,
@@ -817,7 +817,7 @@ def test_a_plan_of_several_steps_is_one_or_two_sentences_about_its_outcome() -> 
         ),
         (
             ActionType.FILE_HASH,
-            f"The SHA-256 of note.txt in notes is {SHA}.",
+            "I worked out the SHA-256 of note.txt; it's on screen.",
             "I worked out the SHA-256 of note.txt; it's on screen.",
         ),
     ],
@@ -830,8 +830,9 @@ def test_the_runs_actions_have_these_sentences(kind: ActionType, shown: str, spo
 
 def test_a_long_answer_is_said_as_its_length_and_beginning() -> None:
     said = step_said(_result(ActionType.CLIPBOARD_READ, ClipboardParams(), "", LONG_TEXT))
-    assert said.spoken.startswith("Your clipboard is 313 characters long, starting: Dear team, the quarterly budget")
-    assert said.shown == LONG_TEXT
+    assert said.spoken.startswith("Your clipboard is 310 characters long, starting: Dear team, the annual report")
+    # The shown reply starts with the sentence that is said; the text itself follows it.
+    assert said.shown.splitlines()[1] == LONG_TEXT
     log = step_said(_result(*LONG_CASES[0]))
     assert log.spoken.startswith(
         "App.log has 8 lines; the newest is: the twenty-sixth of November 18:47:07 worker 7 saved n7.txt."
@@ -844,7 +845,7 @@ def test_a_long_answer_is_said_as_its_length_and_beginning() -> None:
         (f"Written 40 bytes to {NOTE} (sha256 {SHA}, 40 bytes on disk)", "Written 40 bytes to note.txt, 40 bytes on disk."),
         ("{\"success\": true}", ""),
         ("Opened https://www.example.com/a/b?c=1 in default browser", "Opened example.com in default browser."),
-        ("Committed as 54b39d5: Update readme", "Committed as: Update readme."),
+        ("Committed as 1a2b3c4: Fix the intro", "Committed as: Fix the intro."),
         ("Battery 68% and/or more", "Battery sixty-eight percent and or more."),
         ("x" * 150 + " " + "y" * 100, "X" + "x" * 149 + "."),
         ("First sentence here. " + "x " * 120, "First sentence here."),
@@ -910,8 +911,11 @@ def test_read_the_note_tell_me_what_it_says_then_delete_it() -> None:
 
     said = success_reply(asked, [read, delete], verified, dry_run=False)
 
-    assert said.spoken == "Note.txt: Buy milk and call the plumber on Friday. Deleted note.txt in notes."
-    assert said.shown.splitlines() == ["Buy milk and call the plumber on Friday.", "Deleted note.txt in notes."]
+    assert said.spoken == "Note.txt: Water the ferns and call Sam on Fridays. Deleted note.txt in notes."
+    assert said.shown.splitlines() == [
+        "note.txt: Water the ferns and call Sam on Fridays.",
+        "Deleted note.txt in notes.",
+    ]
 
     # Not asked for: only the change is said.
     plain = ActionPlan(actions=[read.action, delete.action], raw_input="Back up note.txt then delete it")
@@ -933,11 +937,11 @@ def test_trigger_sentences() -> None:
         "You have 2 triggers: one watches watched.txt for changes; one watches the processor when it goes above 85 "
         "percent."
     )
-    deleted = step_said(_result(ActionType.TRIGGER_DELETE, TriggerParams(trigger_id="cb220aa1"), "watched.txt",
-                                "Deleted trigger: cb220aa1"))  # fmt: skip
+    deleted = step_said(_result(ActionType.TRIGGER_DELETE, TriggerParams(trigger_id="t0a1b2c3"), "watched.txt",
+                                "Deleted trigger: t0a1b2c3"))  # fmt: skip
     assert deleted.spoken == "I've stopped watching watched.txt."
     for text in (said.spoken, deleted.spoken):
-        assert "cb220aa1" not in text and "cpu high alert" not in text
+        assert "t0a1b2c3" not in text and "cpu high alert" not in text
 
 
 # ── a failure is its sentence first, then one plain count for a plan of several steps ────────────────────────────

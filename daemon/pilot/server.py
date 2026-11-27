@@ -4759,6 +4759,9 @@ class PilotServer:
                     break
                 if any(_step_key(action) in final_failed_steps for action in plan.actions):
                     logger.info("The repair plan repeats a step that failed for good; ending with its failure")
+                    from pilot.agents.request_match import REFUSED_REPAIR
+
+                    _repair_refused = f"{REFUSED_REPAIR}: the retry would repeat a step that cannot work."
                     plan = last_executed_plan
                     break
 

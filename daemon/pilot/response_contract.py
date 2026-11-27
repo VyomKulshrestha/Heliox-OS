@@ -290,11 +290,15 @@ def failure_reply(
     failed afterwards (a command planned to work around it) is never what the person hears first."""
     from pilot.reply_rules import for_ear
 
+    retry = ""
     if asked is not None:
         asked_results, asked_check = asked
         if any(not result.success for result in asked_results) or (asked_check and asked_check.failed_actions):
+            retry = repair_clause(asked_results, results)
             results, verification = asked_results, asked_check
     shown, spoken = failure_parts(results, verification)
+    if retry:
+        shown, spoken = f"{shown}\n{retry}", for_ear(f"{spoken} {retry}") or spoken
     prose = " ".join(str(follow_up or "").split())
     if prose:
         shown = f"{shown}\n{prose}"
@@ -302,6 +306,33 @@ def failure_reply(
     if question:
         spoken = for_ear(f"{spoken} {question}") or spoken
     return Said(shown=shown, spoken=spoken)
+
+
+def repair_clause(asked: Sequence[ActionResult], final: Sequence[ActionResult]) -> str:
+    """What happened to the retry, in one clause, when a repair round ran after the plan the person asked for failed:
+    refused before it ran ("I did not try again: I could not keep a copy of the earlier file, so I did not replace
+    it.") or tried and failed too. "" when no repair step ran."""
+    from pilot.agents.request_match import REFUSED_REPAIR
+    from pilot.failure_sentences import failure_sentence
+    from pilot.reply_rules import for_ear
+
+    seen = {id(result) for result in asked}
+    later = [result for result in final if id(result) not in seen and not result.success]
+    if not later:
+        return ""
+    first = later[0]
+    error = " ".join(str(first.error or "").split())
+    earlier = next((" ".join(str(r.error or "").split()) for r in asked if not r.success and r.error), "")
+    if first.executed and not first.skip_reason and error and error == earlier:
+        return "I tried again, and it failed the same way."
+    # Heliox's own sentences start with "I " and are said as they are; a system's error gets its plain sentence.
+    reason = error if error.startswith("I ") else failure_sentence(first.action, error)[1] if error else ""
+    reason = reason.rstrip(".") + "." if reason else ""
+    if not first.executed or first.skip_reason:
+        return for_ear(f"{REFUSED_REPAIR}: {reason[:1].lower() + reason[1:] if reason[:2] != 'I ' else reason}")
+    return for_ear(
+        f"I tried again, and that failed too: {reason[:1].lower() + reason[1:] if reason[:2] != 'I ' else reason}"
+    )
 
 
 def _clean(value: object) -> str:
