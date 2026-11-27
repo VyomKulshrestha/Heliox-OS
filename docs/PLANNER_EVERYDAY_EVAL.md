@@ -60,6 +60,10 @@ The model settings live in memory only; keys come from the key vault; usage is r
 stops if the budget refuses a call. The LLM response cache is bypassed. A request that fails because
 the provider timed out is retried twice after 35 seconds.
 
+A run made by a tool or an agent passes `--scratch-root <folder>`: its Heliox folders are laid out under
+that folder and kept, its spend goes into that folder's own budget store, and the person's store is
+not opened. Only the model key is read from this computer's credential store, read only.
+
 The planner sees what the daemon would give it: the system prompt, specialist hints, the skills
 block and the listing of folders the request names (`request_folders`). It sees no memory, chat
 history, screen text, plugins or MCP tools, so results describe a fresh request.

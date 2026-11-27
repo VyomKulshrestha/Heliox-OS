@@ -14,6 +14,11 @@ Nothing is executed: the script only calls ``Planner.plan`` and reads the plans 
 The model settings live only in memory; config.toml is not changed. API keys come from Heliox's
 key vault. Usage is recorded in Heliox's budget tracker, so the monthly cap applies and refuses
 calls once it is reached. The LLM response cache is bypassed, so every run asks the model afresh.
+
+With ``--scratch-root DIR`` every Heliox folder of the run is laid out under DIR and kept, and the
+spend goes into DIR's own budget store (DIR/.local/share/heliox-os/pilot.db) instead of the
+person's: a run made by a tool or an agent leaves the person's store untouched. Only the model key
+is read from this computer's credential store, read only.
 """
 
 from __future__ import annotations
@@ -34,9 +39,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pilot.real_folders import use_scratch_folders  # noqa: E402
 
+
+def _scratch_root_argument(argv: list[str]) -> Path | None:
+    """--scratch-root DIR (or --scratch-root=DIR), read before pilot.config is imported: the folders are fixed then."""
+    for index, word in enumerate(argv):
+        if word == "--scratch-root" and index + 1 < len(argv):
+            return Path(argv[index + 1])
+        if word.startswith("--scratch-root="):
+            return Path(word.split("=", 1)[1])
+    return None
+
+
 # Every Heliox folder in a temporary root (settings, data, caches): the planner runs on defaults plus the
-# provider and model given below; the key comes from the keyring, the spend goes to real_budget_tracker.
-use_scratch_folders()
+# provider and model given below; the key comes from the keyring. The spend goes to real_budget_tracker, or, with
+# --scratch-root, to that root's own budget store.
+SCRATCH_ROOT = _scratch_root_argument(sys.argv[1:])
+use_scratch_folders(SCRATCH_ROOT)
 
 from benchmarks.planner_everyday import RULES, check_plan, load_cases, plan_steps, summarise  # noqa: E402
 
@@ -114,7 +132,16 @@ async def build_planner(provider: str, model: str, *, record_usage: bool = True)
     router = ModelRouter(config, KeyVault(config))
     router._cache = _NoCache()
     exits = contextlib.AsyncExitStack()
-    if record_usage:
+    if record_usage and SCRATCH_ROOT is not None:
+        # A run in a kept scratch root: its spend stays in that root's own store, where the cap still applies.
+        from pilot.config import DB_FILE
+        from pilot.models.budget_tracker import BudgetTracker
+
+        tracker = BudgetTracker(config.model, str(DB_FILE))
+        await tracker.initialize()
+        exits.push_async_callback(tracker.close)
+        router.set_budget_tracker(tracker)
+    elif record_usage:
         # The one write to the person's folders, the spend: a block closed by close() below.
         tracker = await exits.enter_async_context(real_budget_tracker(config.model, "the planner eval"))
         router.set_budget_tracker(tracker)
@@ -233,6 +260,11 @@ async def main() -> int:
         help="time limit per model call (default: the daemon's own, 35 s); raise it to measure a slow model's plans",
     )
     parser.add_argument("--no-budget-record", action="store_true", help="do not record usage in Heliox's budget")
+    parser.add_argument(
+        "--scratch-root",
+        default="",
+        help="lay the run's folders out under this folder and keep its spend in that folder's own budget store",
+    )
     args = parser.parse_args()
 
     cases = load_cases(args.cases)
