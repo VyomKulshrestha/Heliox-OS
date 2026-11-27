@@ -1027,14 +1027,18 @@ class _NetworkLayer(_Handlers):
     anything would be sent; nothing is sent here."""
 
     async def execute(self, plan, **kwargs):
-        from pilot.system.api_client import _validate_outbound_url
+        from pilot.security import addresses
+        from pilot.system.outbound import OutboundRefused, _host, parse
 
         results = []
         for action in plan.actions:
             self.ran.append(action)
             params = action.parameters
             try:
-                await _validate_outbound_url(params.url, allow_private_network=params.allow_private_network)
+                host = _host(parse(params.url))
+                reason = None if params.allow_private_network else addresses.host_refusal(host)
+                if reason:
+                    raise OutboundRefused(host, reason)
             except Exception as error:
                 results.append(ActionResult(action=action, success=False, error=str(error)))
             else:
@@ -1061,7 +1065,167 @@ async def test_r13_a_local_address_only_in_text_heliox_read_is_refused_at_the_ne
     answer = {"actions": [_step("api_request", hidden, url=hidden, method="GET", allow_private_network=True)]}
     handlers = _NetworkLayer()
     response, _model, cards = await _drive("Open the reset link from the page you just read", answer, handlers=handlers)
-    assert [a.parameters.allow_private_network for a in handlers.ran] == [False]  # off: the person never named it
+    # Off: the person never named it. Refused by the network layer once: a final failure, no repair round.
+    assert [a.parameters.allow_private_network for a in handlers.ran] == [False]
     assert cards == 0
     assert response["status"] != "success"
-    assert response["spoken"].strip() and ear_faults(response["spoken"]) == []
+    assert response["spoken"] == (
+        "I didn't fetch 127.0.0.1: it's an address on this computer, and I fetch from those only when you ask for "
+        "that address yourself. Type the address in your request if you meant it."
+    )
+    assert ear_faults(response["spoken"]) == [] and screen_faults(response["message"]) == []
+
+
+# ── sec13net: every request through outbound.fetch; the round-twelve HTTP sentences still hold ──────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "lead"),
+    [
+        (404, "example.com has no page at that address."),
+        (503, "example.com is overloaded or having trouble right now."),
+    ],
+)
+async def test_net_a_404_and_a_503_through_outbound_are_said_as_before(monkeypatch, status, lead) -> None:
+    import httpx
+
+    from pilot.failure_sentences import failure_sentence, is_final
+    from pilot.system import api_client
+    from tests import fake_outbound
+
+    fake_outbound.install(monkeypatch, handler=lambda _r: httpx.Response(status, text="<html><p>gone</p></html>"))
+    url = "https://example.com/missing"
+    with pytest.raises(api_client.HttpStatusError) as raised:
+        await api_client.api_request("GET", url)
+    get = Action(action_type=ActionType.API_REQUEST, target=url, parameters=ApiRequestParams(url=url))
+    shown, _spoken = failure_sentence(get, str(raised.value))
+    assert shown.startswith(lead) and "<html>" not in shown
+    assert is_final(get, str(raised.value)) is (status == 404)
+
+
+@pytest.mark.asyncio
+async def test_net_a_restored_authorization_header_reaches_its_host_and_never_the_next(monkeypatch) -> None:
+    import httpx
+
+    from pilot.system import api_client
+    from tests import fake_outbound
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if len(seen) == 1:
+            return httpx.Response(302, headers={"location": "https://other.example/next"})
+        return httpx.Response(200, json={"ok": True})
+
+    fake_outbound.install(monkeypatch, handler=handler)
+    await api_client.api_request("POST", "https://hooks.example/send", headers={"Authorization": "Bearer restored"})
+    assert seen[0].headers["authorization"] == "Bearer restored"
+    assert "authorization" not in seen[1].headers  # the redirect to another host carries no credential
+
+
+@pytest.mark.asyncio
+async def test_net_a_masked_header_is_refused_before_anything_is_sent(monkeypatch) -> None:
+    import httpx
+
+    from pilot.security.secret_urls import mask_header_value
+    from pilot.system import api_client
+    from tests import fake_outbound
+
+    sent: list[str] = []
+    fake_outbound.install(monkeypatch, handler=lambda r: sent.append(str(r.url)) or httpx.Response(200))
+    with pytest.raises(ValueError, match="nothing was sent"):
+        await api_client.api_request(
+            "POST", "https://hooks.example/send", headers={"Authorization": mask_header_value("Bearer x")}
+        )
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_net_a_redirect_to_this_computer_is_not_followed(monkeypatch) -> None:
+    import httpx
+
+    from pilot.failure_sentences import FailureKind, classify
+    from pilot.system import api_client, outbound
+    from tests import fake_outbound
+
+    fake_outbound.install(
+        monkeypatch, handler=lambda _r: httpx.Response(302, headers={"location": "http://127.0.0.1/admin"})
+    )
+    with pytest.raises(outbound.OutboundRefused) as raised:
+        await api_client.api_request("GET", "https://public.example/start")
+    assert classify(str(raised.value)) is FailureKind.LOCAL_ADDRESS_REFUSED
+
+
+async def _drive_open(source: str):
+    from unittest.mock import MagicMock
+
+    from pilot.actions import BrowserParams
+    from pilot.security.gateway import AgentGateway
+    from tests.test_reply_never_empty import _approvals, _Executor, _Planner, _server, _ws
+
+    url = "http://192.168.1.1"
+    step = Action(action_type=ActionType.OPEN_URL, target=url, parameters=BrowserParams(url=url))
+    executor = _Executor()
+    server = _server(_Planner(ActionPlan(actions=[step], explanation="Open it.")), executor, confirm=True)
+    server._agent_gateway = AgentGateway(server.config, MagicMock())
+    ws = _ws(server, confirmation=True)
+    params = {"input": f"Open {url}", **({"source": source} if source else {})}
+    response = await server._handle_execute(params, ws)
+    return response, executor.runs, _approvals(ws), ws
+
+
+@pytest.mark.asyncio
+async def test_net_spoken_open_of_a_local_address_is_refused_with_the_spoken_sentence_and_no_card() -> None:
+    from pilot.server import GATEWAY_SPOKEN_SENTENCE
+
+    response, runs, cards, _ws = await _drive_open("voice")
+    assert (runs, cards) == (0, 0)
+    assert response["spoken"] == GATEWAY_SPOKEN_SENTENCE
+
+
+@pytest.mark.asyncio
+async def test_net_typed_open_of_a_local_address_asks_once_and_the_card_says_why() -> None:
+    response, runs, cards, ws = await _drive_open("")
+    assert (runs, cards) == (1, 1)
+    card = next(json.loads(sent) for sent in ws.sent if json.loads(sent).get("method") == "confirm_required")
+    assert "192.168.1.1, an address on your own network" in json.dumps(card)
+
+
+def test_net_the_local_refusal_passes_every_check() -> None:
+    from pilot.conversation import work_claims
+    from pilot.failure_sentences import failure_sentence
+    from pilot.reply_rules import hole
+    from pilot.system.outbound import OutboundRefused
+
+    url = "http://169.254.169.254/latest/meta-data"
+    get = Action(action_type=ActionType.API_REQUEST, target=url, parameters=ApiRequestParams(url=url))
+    from pilot.security.addresses import METADATA
+
+    shown, spoken = failure_sentence(get, str(OutboundRefused("169.254.169.254", METADATA)))
+    assert spoken.startswith("I didn't fetch 169.254.169.254: it's a cloud metadata address")
+    assert hole(spoken) == "" and ear_faults(spoken) == [] and screen_faults(shown) == []
+    assert work_claims.unbacked(spoken, {"known": True, "queued": []}) == ""
+
+
+def test_sec_a_screenshot_runs_on_a_request_and_as_a_stored_step_but_never_in_a_background_job() -> None:
+    from unittest.mock import MagicMock
+
+    from pilot.actions import ScreenshotParams
+    from pilot.config import PilotConfig
+    from pilot.security.gateway import AgentGateway, InvocationSource
+    from pilot.security.source_scope import job_scope, source_scope
+
+    config = PilotConfig()
+    gateway = AgentGateway(config, MagicMock())
+    shot = Action(action_type=ActionType.SCREENSHOT, target="screen", parameters=ScreenshotParams())
+    vision = InvocationSource.VISION_AGENT
+    typed = source_scope(config, InvocationSource.INTERACTIVE)
+    spoken = source_scope(config, InvocationSource.VOICE)
+    job = job_scope(config, InvocationSource.AUTONOMOUS, "trigger", None)  # the scope a background job runs under
+    assert gateway.preview_denials([shot], [vision], typed) == []
+    assert gateway.preview_denials([shot], [vision], spoken) == []
+    assert gateway.preview_denials([shot], [vision], job)  # the vision agent, carrying a job's step
+    assert gateway.preview_denials([shot], [InvocationSource.AUTONOMOUS], job)  # the executor path of a job
+    assert gateway.preview_denials([shot], [InvocationSource.TRIGGER_STEPS]) == []  # a trigger's approved step

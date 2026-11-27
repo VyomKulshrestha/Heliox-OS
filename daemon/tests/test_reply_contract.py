@@ -1043,9 +1043,19 @@ def _every_ending() -> dict[str, str]:
     local = "http://127.0.0.1:8797/busy"
     get = Action(action_type=ActionType.API_REQUEST, target=local, parameters=ApiRequestParams(url=local))
     endings["gateway denied"] = failure_sentence(get, "Gateway denied: api_request exceeds the source's ceiling")[1]
-    from pilot.server import GATEWAY_REFUSED_SENTENCE, GATEWAY_SPOKEN_SENTENCE
+    from pilot.server import GATEWAY_REFUSED_SENTENCE, GATEWAY_SPOKEN_SENTENCE, RESUME_REFUSED_SENTENCE
+    from pilot.system.outbound import OutboundRefused
 
     endings["gateway refused, no step"] = GATEWAY_REFUSED_SENTENCE
+    endings["resume refused"] = RESUME_REFUSED_SENTENCE
+    read = Action(action_type=ActionType.FILE_READ, target="C:/w/a.txt", parameters=FileParams(path="C:/w/a.txt"))
+    endings["no source"] = failure_sentence(read, "Gateway denied: file_read is denied for source 'unknown'.")[1]
+    endings["local address refused"] = failure_sentence(get, str(OutboundRefused("127.0.0.1", "on this computer")))[1]
+    endings["redirect left an approved address"] = failure_sentence(
+        get,
+        "The address you approved on this computer or your own network sent me on to other.example, which you did "
+        "not approve, so I did not follow it.",
+    )[1]
     endings["gateway spoken, typing would allow"] = GATEWAY_SPOKEN_SENTENCE
     return endings
 
