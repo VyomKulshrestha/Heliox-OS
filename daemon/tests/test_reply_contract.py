@@ -1043,6 +1043,10 @@ def _every_ending() -> dict[str, str]:
     local = "http://127.0.0.1:8797/busy"
     get = Action(action_type=ActionType.API_REQUEST, target=local, parameters=ApiRequestParams(url=local))
     endings["gateway denied"] = failure_sentence(get, "Gateway denied: api_request exceeds the source's ceiling")[1]
+    from pilot.server import GATEWAY_REFUSED_SENTENCE, GATEWAY_SPOKEN_SENTENCE
+
+    endings["gateway refused, no step"] = GATEWAY_REFUSED_SENTENCE
+    endings["gateway spoken, typing would allow"] = GATEWAY_SPOKEN_SENTENCE
     return endings
 
 

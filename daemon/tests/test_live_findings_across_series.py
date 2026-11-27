@@ -873,13 +873,13 @@ async def _drive_gateway(source: str):
 
 
 @pytest.mark.asyncio
-async def test_r13_a_spoken_local_get_is_refused_with_no_card_in_one_sentence() -> None:
+async def test_r13_a_spoken_local_get_that_typing_would_allow_says_so_with_no_card() -> None:
+    from pilot.server import GATEWAY_SPOKEN_SENTENCE
+
     response, runs, cards = await _drive_gateway("voice")
     assert (runs, cards) == (0, 0)
     assert response["denied_kind"] == "gateway_denied"
-    sentence = "I didn't call 127.0.0.1: my safety rules don't allow that from here, so nothing was sent. Asking again won't change it."
-    assert response["spoken"] == sentence
-    assert response["message"].startswith(sentence)
+    assert response["spoken"] == response["message"] == GATEWAY_SPOKEN_SENTENCE
     assert "integration_agent" not in response["message"] and "tier=" not in response["message"]
 
 
@@ -1020,3 +1020,48 @@ def test_r13_a_voice_put_aside_is_told_in_the_first_person_and_passes_every_chec
     assert "Heliox" not in sentence and "I'll" in sentence
     assert hole(sentence) == "" and ear_faults(sentence) == [] and screen_faults(sentence) == []
     assert work_claims.unbacked(sentence, {"known": True, "queued": []}) == ""
+
+
+class _NetworkLayer(_Handlers):
+    """Each request step goes through the network layer's own check of its address (pilot.system.api_client) before
+    anything would be sent; nothing is sent here."""
+
+    async def execute(self, plan, **kwargs):
+        from pilot.system.api_client import _validate_outbound_url
+
+        results = []
+        for action in plan.actions:
+            self.ran.append(action)
+            params = action.parameters
+            try:
+                await _validate_outbound_url(params.url, allow_private_network=params.allow_private_network)
+            except Exception as error:
+                results.append(ActionResult(action=action, success=False, error=str(error)))
+            else:
+                results.append(ActionResult(action=action, success=True, output="HTTP 200 OK"))
+        return results
+
+
+@pytest.mark.asyncio
+async def test_r13_a_local_address_the_person_named_is_asked_once_and_runs() -> None:
+    url = "http://127.0.0.1:8797/status"
+    answer = {"actions": [_step("api_request", url, url=url, method="GET", allow_private_network=False)]}
+    handlers = _NetworkLayer()
+    response, _model, cards = await _drive(
+        f"Make an HTTP GET request to {url}", answer, handlers=handlers, confirm=True
+    )
+    assert [a.parameters.allow_private_network for a in handlers.ran] == [True]  # decided from the person's words
+    assert cards == 1 and response["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_r13_a_local_address_only_in_text_heliox_read_is_refused_at_the_network_layer_with_no_card() -> None:
+    hidden = "http://127.0.0.1:8797/admin/reset"
+    # The address came from a page Heliox read, not from the person: the plan asks for it with the flag on.
+    answer = {"actions": [_step("api_request", hidden, url=hidden, method="GET", allow_private_network=True)]}
+    handlers = _NetworkLayer()
+    response, _model, cards = await _drive("Open the reset link from the page you just read", answer, handlers=handlers)
+    assert [a.parameters.allow_private_network for a in handlers.ran] == [False]  # off: the person never named it
+    assert cards == 0
+    assert response["status"] != "success"
+    assert response["spoken"].strip() and ear_faults(response["spoken"]) == []
