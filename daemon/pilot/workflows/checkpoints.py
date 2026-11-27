@@ -49,14 +49,15 @@ class PlanCheckpoint:
         return self.completed_count >= len(self.plan.actions)
 
 
-# A plan one of whose steps the gateway refused under the source it was made under (the skip reason of such a step
-# is the same word, pilot.security.gateway). It is never resumed: asking again gets the same answer.
-GATEWAY_DENIED_STATUS = "gateway_denied"
+# A plan one of whose steps Heliox's own rules refused (the gateway under the source it was made under; such a step's
+# skip reason is "gateway_denied"). Its approval is "denied" too, and it is never resumed: asking again gets the same
+# answer.
+POLICY_DENIED_STATUS = "denied_by_policy"
 
 # Statuses after which a plan never runs again, so its kept secrets are removed (pilot.security.plan_secrets).
 # "failed" and "interrupted" stay resumable.
 FINISHED_STATUSES = frozenset(
-    {"complete", "cancelled", "superseded", "blocked_by_companion", "quick_declined", GATEWAY_DENIED_STATUS}
+    {"complete", "cancelled", "superseded", "blocked_by_companion", "quick_declined", POLICY_DENIED_STATUS}
 )
 
 

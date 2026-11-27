@@ -7007,9 +7007,12 @@ class PilotServer:
         The plan runs under the gateway source and override it was made under (the checkpoint keeps them; a durable
         task's own record when the checkpoint has none; the narrowest source that could have made it when neither
         has), through the orchestrator as it first ran, and the gateway checks what is left under them before any
-        approval card or step. A plan the gateway refused (``GATEWAY_DENIED_STATUS``) is never resumed.
+        approval card or step. A plan Heliox's own rules refused (approval "denied", status
+        ``POLICY_DENIED_STATUS``) is never resumed.
         """
-        from pilot.workflows.checkpoints import GATEWAY_DENIED_STATUS
+        from pilot.workflows.checkpoints import POLICY_DENIED_STATUS
+
+        gateway_denied = "gateway_denied"  # the skip reason of a step the gateway refused
 
         plan_id = str(params.get("plan_id", "")).strip()
         if not plan_id:
@@ -7029,18 +7032,18 @@ class PilotServer:
         checkpoint = await self._checkpoint_store.get(plan_id)
         if checkpoint is None:
             return {"status": "error", "message": f"No checkpoint found for plan_id: {plan_id}"}
+        if checkpoint.status == POLICY_DENIED_STATUS:
+            return {
+                "status": "error",
+                "message": RESUME_REFUSED_SENTENCE,
+                "plan_id": plan_id,
+                "denied_kind": gateway_denied,
+            }
         if checkpoint.approval == "denied":
             return {
                 "status": "error",
                 "message": "You turned this plan down, so it is not resumed.",
                 "plan_id": plan_id,
-            }
-        if checkpoint.status == GATEWAY_DENIED_STATUS:
-            return {
-                "status": "error",
-                "message": RESUME_REFUSED_SENTENCE,
-                "plan_id": plan_id,
-                "denied_kind": GATEWAY_DENIED_STATUS,
             }
         plan_source, plan_scope = await self._checkpoint_scope(checkpoint, durable)
         needs_approval = not authorized_task_id and checkpoint.approval != "approved"
@@ -7121,20 +7124,21 @@ class PilotServer:
             # Refused under the source it was made under whatever the person answers: no card, nothing runs.
             from pilot.actions import ActionResult
 
-            await self._checkpoint_store.mark_status(plan_id, GATEWAY_DENIED_STATUS)
+            await self._checkpoint_store.mark_approval(plan_id, "denied")
+            await self._checkpoint_store.mark_status(plan_id, POLICY_DENIED_STATUS)
             logger.info("Resume of plan %s refused by the gateway: %s", plan_id, refused[0][1])
             return {
                 "status": "error",
                 "message": RESUME_REFUSED_SENTENCE,
                 "plan_id": plan_id,
-                "denied_kind": GATEWAY_DENIED_STATUS,
+                "denied_kind": gateway_denied,
                 "results": [
                     ActionResult(
                         action=remaining_plan.actions[index],
                         success=False,
                         error=f"Gateway denied: {reason}",
                         executed=False,
-                        skip_reason=GATEWAY_DENIED_STATUS,
+                        skip_reason=gateway_denied,
                     ).model_dump()
                     for index, reason in refused
                 ],
@@ -7236,10 +7240,12 @@ class PilotServer:
         failed = any(not result.success for result in results)
         final_status = "failed" if failed else "complete"
         policy_denied = any(
-            not result.success and getattr(result, "skip_reason", None) == GATEWAY_DENIED_STATUS for result in results
+            not result.success and getattr(result, "skip_reason", None) == gateway_denied for result in results
         )
         # A step the gateway refused keeps the plan refused: it is never resumed again.
-        await self._checkpoint_store.mark_status(plan_id, GATEWAY_DENIED_STATUS if policy_denied else final_status)
+        if policy_denied:
+            await self._checkpoint_store.mark_approval(plan_id, "denied")
+        await self._checkpoint_store.mark_status(plan_id, POLICY_DENIED_STATUS if policy_denied else final_status)
 
         verification_payload: dict[str, Any] = {}
         verification = None

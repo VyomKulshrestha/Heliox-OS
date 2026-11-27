@@ -25,7 +25,9 @@ from pilot.security import gateway as gateway_module
 from pilot.security import source_scope
 from pilot.security.gateway import DEFAULT_SOURCE_PROFILES, AgentGateway, InvocationSource, TaskScopeOverride
 from pilot.security.permissions import PermissionChecker
-from pilot.workflows.checkpoints import GATEWAY_DENIED_STATUS, WorkflowCheckpointStore
+from pilot.workflows.checkpoints import POLICY_DENIED_STATUS, WorkflowCheckpointStore
+
+GATEWAY_DENIED = "gateway_denied"
 
 # Refused by every source's profile except the typed one (deny lists or the system-control ceiling), allowed for the
 # system agent, which carries it on the orchestrator path. Each test checks that before relying on it.
@@ -435,9 +437,9 @@ async def test_a_resumed_plan_runs_under_the_source_it_was_made_under(tmp_path, 
     again = await server._handle_resume_plan({"plan_id": "plan-1"}, _ws())
 
     assert executor.ran == [] and person.shown == []  # refused before any card or step
-    assert resumed["status"] == "error" and resumed["denied_kind"] == GATEWAY_DENIED_STATUS
-    assert (await checkpoints.get("plan-1")).status == GATEWAY_DENIED_STATUS
-    assert again["status"] == "error" and again["denied_kind"] == GATEWAY_DENIED_STATUS
+    assert resumed["status"] == "error" and resumed["denied_kind"] == GATEWAY_DENIED
+    assert (await checkpoints.get("plan-1")).status == POLICY_DENIED_STATUS
+    assert again["status"] == "error" and again["denied_kind"] == GATEWAY_DENIED
 
 
 @pytest.mark.asyncio
@@ -471,7 +473,7 @@ async def test_a_resumed_plan_keeps_the_override_it_was_made_under(tmp_path):
 
     resumed = await server._handle_resume_plan({"plan_id": "plan-1"}, _ws())
 
-    assert executor.ran == [] and resumed["denied_kind"] == GATEWAY_DENIED_STATUS
+    assert executor.ran == [] and resumed["denied_kind"] == GATEWAY_DENIED
 
 
 @pytest.mark.asyncio
@@ -512,7 +514,7 @@ async def test_a_durable_task_approved_later_resumes_under_its_recorded_source(t
 
         response = await server._handle_resume_task({"resume_token": created.resume_token}, _ws())
 
-        assert executor.ran == [] and response["denied_kind"] == GATEWAY_DENIED_STATUS
+        assert executor.ran == [] and response["denied_kind"] == GATEWAY_DENIED
         assert await durable.scope(task.task_id) == ("mcp", None)
     finally:
         await durable.close()
@@ -532,8 +534,8 @@ async def test_a_policy_refusal_while_running_keeps_the_plan_refused(tmp_path, o
     again = await server._handle_resume_plan({"plan_id": "plan-1"}, _ws())
 
     assert executor.ran == []
-    assert (await checkpoints.get("plan-1")).status == GATEWAY_DENIED_STATUS
-    assert again["denied_kind"] == GATEWAY_DENIED_STATUS
+    assert (await checkpoints.get("plan-1")).status == POLICY_DENIED_STATUS
+    assert again["denied_kind"] == GATEWAY_DENIED
 
 
 # ── Request sources by name ──
@@ -612,3 +614,18 @@ async def test_every_gateway_profile_is_consulted_by_an_entry(tmp_path, orchestr
             await specialist_orch.stop()
 
     assert set(DEFAULT_SOURCE_PROFILES) - consulted == set()
+
+
+@pytest.mark.asyncio
+async def test_a_plan_closed_as_denied_by_policy_is_never_resumed(tmp_path):
+    """The request pipeline closes a plan the gateway refused before its card with this status: resume honours it."""
+    gateway = _gateway()
+    checkpoints = WorkflowCheckpointStore(tmp_path / "checkpoints.db")
+    server, executor, person = _resume_server(checkpoints, gateway)
+    await checkpoints.start_plan("plan-1", "do it", _plan(ALLOWED), source="interactive")
+    await checkpoints.mark_approval("plan-1", "approved")
+    await checkpoints.mark_status("plan-1", POLICY_DENIED_STATUS)
+
+    resumed = await server._handle_resume_plan({"plan_id": "plan-1"}, _ws())
+
+    assert executor.ran == [] and person.shown == [] and resumed["denied_kind"] == GATEWAY_DENIED
