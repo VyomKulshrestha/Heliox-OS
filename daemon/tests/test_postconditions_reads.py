@@ -598,7 +598,7 @@ async def test_file_list_says_its_cut(tmp_path: Path) -> None:
         (tmp_path / f"f{i:03}.txt").write_bytes(b"")
     returned = await filesystem.file_list(str(tmp_path))
     assert returned.notice == "Only the first 500 of 510 entries are shown."
-    assert returned.count("\n") == 500
+    assert returned.count("\n") == 501  # 500 entries, the newest files, the cut line
 
 
 @pytest.mark.asyncio

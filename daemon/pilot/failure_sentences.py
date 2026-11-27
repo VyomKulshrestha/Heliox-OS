@@ -37,13 +37,99 @@ class FailureKind(StrEnum):
     TIMED_OUT = "timed_out"
     REFUSED = "refused"
     SIGN_IN_REFUSED = "sign_in_refused"
+    NOT_CONNECTED = "not_connected"
+    # The web: a site was reached and answered, or could not be trusted.
+    PAGE_NOT_THERE = "page_not_there"  # HTTP 404, 410
+    SITE_REFUSED = "site_refused"  # HTTP 401, 403: a sign-in or a permission
+    SITE_TROUBLE = "site_trouble"  # HTTP 429 and 5xx: overloaded or broken, try later
+    SITE_DECLINED = "site_declined"  # any other HTTP 4xx
+    REDIRECT_LOOP = "redirect_loop"
+    CERTIFICATE = "certificate"
+    NO_ELEMENT = "no_element"  # a page loaded, and nothing on it matches the selector asked for
+    # Git's common endings.
+    PUSH_BEHIND = "push_behind"  # the remote has commits the local branch lacks
+    PUSH_PROTECTED = "push_protected"
+    NOTHING_TO_COMMIT = "nothing_to_commit"
+    NOT_A_REPOSITORY = "not_a_repository"
+    NO_REMOTE = "no_remote"
+    MERGE_CONFLICT = "merge_conflict"
+    GIT_SIGN_IN = "git_sign_in"
 
 
 # Asking again cannot change these. NOT_FOUND is final only when the request itself named the missing thing (a path
 # the planner guessed may be found by another plan): see ``is_final``.
 FINAL_KINDS = frozenset(
-    {FailureKind.NO_PERMISSION, FailureKind.READ_ONLY, FailureKind.SIGN_IN_REFUSED, FailureKind.NOT_FOUND}
+    {
+        FailureKind.NO_PERMISSION,
+        FailureKind.READ_ONLY,
+        FailureKind.SIGN_IN_REFUSED,
+        FailureKind.NOT_FOUND,
+        FailureKind.NOT_CONNECTED,
+        FailureKind.PAGE_NOT_THERE,
+        FailureKind.SITE_REFUSED,
+        FailureKind.REDIRECT_LOOP,
+        FailureKind.CERTIFICATE,
+        FailureKind.NO_ELEMENT,
+        FailureKind.PUSH_BEHIND,
+        FailureKind.PUSH_PROTECTED,
+        FailureKind.NOTHING_TO_COMMIT,
+        FailureKind.NOT_A_REPOSITORY,
+        FailureKind.NO_REMOTE,
+        FailureKind.MERGE_CONFLICT,
+        FailureKind.GIT_SIGN_IN,
+    }
 )
+
+# An HTTP answer as pilot.system.api_client.HttpStatusError writes it: "GET to https://host failed with HTTP 404 Not
+# Found (hint): <body excerpt>". The status and the server's short reason are kept; the body never is.
+_HTTP = re.compile(r"failed with HTTP (?P<status>\d{3})(?P<reason>(?: [A-Za-z][A-Za-z' -]*?)?)(?=\s*\(|:|$)")
+# Checked before the system's numbers and words, in order: an HTTP status, then a certificate or redirect problem,
+# then git's endings. Each pattern is one that only that source writes.
+EARLY_WORDS: tuple[tuple[FailureKind, re.Pattern[str]], ...] = (
+    (
+        FailureKind.CERTIFICATE,
+        re.compile(
+            r"certificate verify failed|CERTIFICATE_VERIFY_FAILED|SSLCertVerificationError|self[- ]signed certificate|"
+            r"certificate has expired|hostname mismatch",
+            re.I,
+        ),
+    ),
+    (FailureKind.REDIRECT_LOOP, re.compile(r"exceeded \d+ redirects|too many redirects|redirect loop", re.I)),
+    (FailureKind.NO_ELEMENT, re.compile(r"\bno element matches the selector\b", re.I)),
+    (FailureKind.NOT_CONNECTED, re.compile(r"\bis not connected\. connect it in\b", re.I)),
+    (FailureKind.PUSH_PROTECTED, re.compile(r"protected branch|GH006|pre-receive hook declined", re.I)),
+    (
+        FailureKind.PUSH_BEHIND,
+        re.compile(
+            r"\[rejected\][^\n]*\((?:fetch first|non-fast-forward)\)|updates were rejected because the (?:remote contains|"
+            r"tip of your current branch is behind)",
+            re.I,
+        ),
+    ),
+    (
+        FailureKind.MERGE_CONFLICT,
+        re.compile(r"^CONFLICT \(|merge conflict|unmerged files|fix conflicts and then", re.I | re.M),
+    ),
+    (FailureKind.NOTHING_TO_COMMIT, re.compile(r"nothing to commit|nothing staged to commit|nothing is staged", re.I)),
+    (
+        FailureKind.NO_REMOTE,
+        re.compile(
+            r"'[^']+' does not appear to be a git repository|no configured push destination|no such remote", re.I
+        ),
+    ),
+    (FailureKind.NOT_A_REPOSITORY, re.compile(r"not a git repository", re.I)),
+    (
+        FailureKind.GIT_SIGN_IN,
+        re.compile(r"authentication failed for|could not read username|permission denied \(publickey\)", re.I),
+    ),
+)
+
+
+def http_status(error: str) -> tuple[int, str] | None:
+    """(status, the server's short reason) of an HTTP answer in an error, or None."""
+    found = _HTTP.search(str(error or ""))
+    return (int(found.group("status")), found.group("reason").strip()) if found else None
+
 
 # errno by platform. Python on Windows reports the C runtime's errno for file calls ([Errno 13] for a read-only
 # folder) and the Windows error number for others ([WinError 5]).
@@ -200,6 +286,19 @@ def platform_key(platform: str | None = None) -> str:
 def classify(error: str, *, platform: str | None = None) -> FailureKind | None:
     """The kind of a system failure from its text, or None when it is none of the common ones."""
     text = str(error or "")
+    answered = http_status(text)
+    if answered is not None:
+        status = answered[0]
+        if status in {404, 410}:
+            return FailureKind.PAGE_NOT_THERE
+        if status in {401, 403}:
+            return FailureKind.SITE_REFUSED
+        if status == 429 or status >= 500:
+            return FailureKind.SITE_TROUBLE
+        return FailureKind.SITE_DECLINED
+    for kind, pattern in EARLY_WORDS:
+        if pattern.search(text):
+            return kind
     found = _WINERROR.search(text)
     if found and int(found.group(1)) in WINERROR:
         return WINERROR[int(found.group(1))]
@@ -322,7 +421,7 @@ def failure_sentence(action: object, error: str, *, platform: str | None = None)
     where = f" in {folder}" if folder and folder != thing else ""
     if verb == "do" and kind is None:
         # No verb for this action: say which step failed, in its own words ("The system info step failed").
-        raw = for_screen(" ".join(str(error or "").split()), limit=400)
+        raw = for_screen(without_markup(" ".join(str(error or "").split())), limit=400)
         lead = f"The {action_type.replace('_', ' ') or 'last'} step failed"
         return (f"{lead}.\n{SYSTEM_SAID}{raw}" if raw else f"{lead}."), for_ear(
             f"{lead}. The details are on screen." if raw else f"{lead}."
@@ -346,13 +445,65 @@ def failure_sentence(action: object, error: str, *, platform: str | None = None)
         FailureKind.REFUSED: f"I couldn't {did}: the connection was refused. Check that the service is running.",
         FailureKind.SIGN_IN_REFUSED: f"I couldn't {did}: the sign-in was refused. Check the account in Settings.",
     }
+    sentences.update(_web_and_git_sentences(action, thing, error))
     if kind is not None:
         sentence = sentences[kind]
+        answered = http_status(error)
+        if answered is not None:
+            # What the server said, in its own short words; its page stays in the receipt.
+            status, reason = answered
+            return f"{sentence}\nThe server answered: HTTP {status}{f' {reason}' if reason else ''}", for_ear(sentence)
+        if kind is FailureKind.NO_ELEMENT:
+            held = re.split(r"(?<=\.)\s+", " ".join(str(error or "").split()), maxsplit=1)
+            return (f"{sentence}\n{held[1]}" if len(held) > 1 else sentence), for_ear(sentence)
         return sentence, for_ear(sentence)
-    raw = for_screen(" ".join(str(error or "").split()), limit=400)
+    raw = for_screen(without_markup(" ".join(str(error or "").split())), limit=400)
     lead = f"I couldn't {did}."
     shown = f"{lead}\n{SYSTEM_SAID}{raw}" if raw else lead
     return shown, for_ear(f"{lead} The details are on screen." if raw else lead)
+
+
+_MARKUP = re.compile(r"<(?:!doctype|html|head|body|\?xml)\b.*$", re.IGNORECASE | re.DOTALL)
+
+
+def without_markup(text: str) -> str:
+    """An error with a web page's HTML in it, cut where the page starts: the page stays in the receipt."""
+    cut = _MARKUP.sub("", str(text or "")).rstrip(" :")
+    return cut + (" (the page it sent is in the receipt)" if cut != str(text or "").rstrip(" :") else "")
+
+
+def _web_and_git_sentences(action: object, thing: str, error: str) -> dict[FailureKind, str]:
+    """The sentences for a site that answered or could not be trusted, a service not connected, and git's endings."""
+    params = getattr(action, "parameters", None)
+    repo = name_of(str(getattr(params, "repo_path", "") or "")) or "the repository"
+    branch = str(getattr(params, "branch", "") or "").strip()
+    remote = str(getattr(params, "remote", "") or "").strip() or "origin"
+    pushed = branch or "the branch"
+    selector = str(getattr(params, "selector", "") or "").strip()
+    service = thing if thing and thing != "it" else "That service"
+    where = re.search(r"connect it in ([^.]+)", str(error or ""), re.I)
+    return {
+        FailureKind.NOT_CONNECTED: f"{service} isn't connected yet. Connect it in "
+        f"{where.group(1).strip().replace(' > ', ', ') if where else 'Settings'}, then ask me again.",
+        FailureKind.PAGE_NOT_THERE: f"{thing} has no page at that address. Check the address and ask me again.",
+        FailureKind.SITE_REFUSED: f"{thing} refused the request: it needs a sign-in or a permission I don't have.",
+        FailureKind.SITE_TROUBLE: f"{thing} is overloaded or having trouble right now. Try again in a few minutes.",
+        FailureKind.SITE_DECLINED: f"{thing} turned the request down. The details are on screen.",
+        FailureKind.REDIRECT_LOOP: f"{thing} kept sending me to another address without reaching a page, so I stopped.",
+        FailureKind.CERTIFICATE: f"I didn't open {thing}: its security certificate could not be checked, so the "
+        "connection could not be trusted.",
+        FailureKind.NO_ELEMENT: f"Nothing on {thing} matches {selector or 'what was asked for'}. The page loaded; "
+        "what it does hold is on screen.",
+        FailureKind.PUSH_BEHIND: f"I couldn't push {pushed}: {remote} has commits you don't have yet. Pull first, "
+        "then push again.",
+        FailureKind.PUSH_PROTECTED: f"I couldn't push {pushed}: {remote} protects that branch, so it takes changes "
+        "only through a pull request.",
+        FailureKind.NOTHING_TO_COMMIT: f"There was nothing to commit in {repo}: no changes are staged.",
+        FailureKind.NOT_A_REPOSITORY: f"{repo[:1].upper() + repo[1:]} is not a git repository.",
+        FailureKind.NO_REMOTE: f"I couldn't push {pushed}: {repo} has no remote called {remote}.",
+        FailureKind.MERGE_CONFLICT: f"I couldn't finish that in {repo}: there is a merge conflict to resolve first.",
+        FailureKind.GIT_SIGN_IN: f"I couldn't reach {remote}: it refused the sign-in. Check your Git credentials.",
+    }
 
 
 def is_final(action: object, error: str, request: str = "", *, platform: str | None = None) -> bool:

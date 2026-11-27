@@ -46,7 +46,7 @@ _SYMBOLS = (
 )
 _PAREN = re.compile(r"\s*\(([^()]*)\)")
 _TIDY = (
-    (re.compile(r"\s+([,.;:!?])"), r"\1"),
+    (re.compile(r"\s+([,.;:!?])(?=\s|$)"), r"\1"),  # a space before a mark that ends a clause, not ".price-table"
     (re.compile(r"([,;:])(?:\s*[,;:])+"), r"\1"),
     (re.compile(r"[,;:]\s*([.!?])"), r"\1"),
     (re.compile(r"([.!?])(?:\s*[.,;:])+"), r"\1"),

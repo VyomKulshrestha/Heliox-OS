@@ -119,7 +119,22 @@ def test_what_is_final() -> None:
         FailureKind.READ_ONLY,
         FailureKind.SIGN_IN_REFUSED,
         FailureKind.NOT_FOUND,
+        FailureKind.NOT_CONNECTED,
+        FailureKind.PAGE_NOT_THERE,
+        FailureKind.SITE_REFUSED,
+        FailureKind.REDIRECT_LOOP,
+        FailureKind.CERTIFICATE,
+        FailureKind.NO_ELEMENT,
+        FailureKind.PUSH_BEHIND,
+        FailureKind.PUSH_PROTECTED,
+        FailureKind.NOTHING_TO_COMMIT,
+        FailureKind.NOT_A_REPOSITORY,
+        FailureKind.NO_REMOTE,
+        FailureKind.MERGE_CONFLICT,
+        FailureKind.GIT_SIGN_IN,
     } == FINAL_KINDS
+    # An overloaded or broken site, and a timeout, may answer differently later: not final.
+    assert FailureKind.SITE_TROUBLE not in FINAL_KINDS and FailureKind.TIMED_OUT not in FINAL_KINDS
     assert is_final(_write(WIN), f"[Errno 13] Permission denied: {WIN!r}")
     assert is_final(_write(NIX), f"[Errno 30] Read-only file system: {NIX!r}", platform="linux")
     assert not is_final(_write(WIN), "[WinError 32] being used by another process")

@@ -25,6 +25,7 @@ from pilot.agents.verifier import Verifier
 from pilot.config import PilotConfig, ReceiptsConfig
 from pilot.reply_rules import for_ear
 from pilot.response_contract import success_message
+from pilot.result_sentences import step_said
 from pilot.security.audit import AuditLogger
 from pilot.security.permissions import PermissionChecker
 from pilot.security.validator import ActionValidator
@@ -118,8 +119,10 @@ async def test_an_absent_target_is_said_as_found_everywhere(
 
     verification = await Verifier(MagicMock()).verify(plan, results)
     reply = success_message(plan, results, verification, dry_run=False)
-    assert sentence in reply
-    assert reply.count(sentence) == 1
+    # The handler's sentence, with each path named the way every reply names one (name and folder for a file).
+    named = step_said(result).shown
+    assert reply.startswith(named) and reply.count(named) == 1
+    assert str(tmp_path) not in reply
     assert not any(verb in reply for verb in SUCCESS_VERBS)
 
     config.narration.enabled = True

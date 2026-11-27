@@ -414,13 +414,18 @@ async def test_a_failed_send_is_reported_failed_and_not_retried_without_settings
 
 
 @pytest.mark.asyncio
-async def test_an_http_error_is_left_to_the_normal_repair_path(http: dict) -> None:
+async def test_an_overloaded_site_is_left_to_the_normal_repair_path_and_a_missing_page_is_final(http: dict) -> None:
     from pilot.server import _is_terminal_execution_failure
 
+    # 503: the site is overloaded or broken now and may answer later (pilot.failure_sentences.SITE_TROUBLE).
+    http["status"] = 503
+    result = await _run(ActionType.API_REQUEST, "_exec_api_request", ApiRequestParams(url="https://8.8.8.8/x"))
+    assert _is_terminal_execution_failure([result]) is False
+
+    # 404: the site answered that the page is not there; the same request gets the same answer (PAGE_NOT_THERE).
     http["status"] = 404
     result = await _run(ActionType.API_REQUEST, "_exec_api_request", ApiRequestParams(url="https://8.8.8.8/x"))
-
-    assert _is_terminal_execution_failure([result]) is False
+    assert _is_terminal_execution_failure([result]) is True
 
 
 # ── Row 10: notify when the desktop notification could not be shown ──

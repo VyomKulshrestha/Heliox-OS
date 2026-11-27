@@ -281,12 +281,19 @@ def failure_reply(
     verification: VerificationResult | None,
     *,
     follow_up: str = "",
+    asked: tuple[Sequence[ActionResult], VerificationResult | None] | None = None,
 ) -> Said:
     """The failure reply in both forms (``failure_parts``): the failed step's own sentence, never the system's raw
     text aloud. ``follow_up``: a repair round's answer in prose (it asks which file was meant, say), shown after the
-    failure; its first question is also said."""
+    failure; its first question is also said. ``asked``: the results and check of the first attempt of the plan the
+    person asked for. When it failed, the reply leads with its failure and counts its steps: a repair step that
+    failed afterwards (a command planned to work around it) is never what the person hears first."""
     from pilot.reply_rules import for_ear
 
+    if asked is not None:
+        asked_results, asked_check = asked
+        if any(not result.success for result in asked_results) or (asked_check and asked_check.failed_actions):
+            results, verification = asked_results, asked_check
     shown, spoken = failure_parts(results, verification)
     prose = " ".join(str(follow_up or "").split())
     if prose:

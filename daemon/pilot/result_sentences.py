@@ -51,8 +51,9 @@ class Said:
 class Step:
     """One finished step, with what the sentences need: its parameters, its output text and the output's data."""
 
-    def __init__(self, result: ActionResult) -> None:
+    def __init__(self, result: ActionResult, request: str = "") -> None:
         self.result = result
+        self.request = str(request or "")  # the person's words, for a read that answers what was asked
         self.action = result.action
         self.type = result.action.action_type
         self.p = result.action.parameters
@@ -145,11 +146,24 @@ def _has_raw(text: str) -> bool:
 
 
 def _file_read(step: Step) -> Said:
+    """A file's text is the answer. Only part of it read (its first or last lines) is said as that part: the read does
+    not count the whole file, so no sentence claims how long the file is."""
     path = step.param("path") or step.target
-    is_log = name_of(path).casefold().endswith((".log", ".out", ".err"))
-    return _answer(
-        step, name_of(path) or "The file", empty=f"{name_of(path) or 'The file'} is empty.", last_line=is_log
-    )
+    name = name_of(path) or "The file"
+    is_log = name.casefold().endswith((".log", ".out", ".err"))
+    head = getattr(step.p, "head_lines", None)
+    tail = getattr(step.p, "tail_lines", None)
+    lines = [line for line in step.out.splitlines() if line.strip()]
+    if (head or tail) and lines:
+        which = "last" if tail else "first"
+        part = f"The {which} {plural(len(lines), 'line')} of {name}"
+        pick = lines[-1] if tail else lines[0]
+        if len(lines) == 1:
+            spoken = f"{part}: {words_cut(pick, 16)}"
+        else:
+            spoken = f"{part}; the {'newest' if tail and is_log else which} is: {words_cut(pick, 16)}"
+        return Said(shown=for_screen(step.out), spoken=spoken)
+    return _answer(step, name, empty=f"{name} is empty.", last_line=is_log)
 
 
 def _file_write(step: Step) -> Said:
@@ -200,6 +214,7 @@ def _names(items: Sequence[str], most: int = 3) -> str:
 
 
 def _file_list(step: Step) -> Said:
+    """How many files and folders, and the newest few files (the listing's "Newest:" line), else the first few."""
     path = step.param("path") or step.target
     where = name_of(path) or "The folder"
     if step.out.startswith("(empty directory)"):
@@ -210,7 +225,12 @@ def _file_list(step: Step) -> Said:
         parts.append(plural(len(folders), "folder"))
     if not parts:
         return _answer(step, where)
-    listed = f": {_names(files + folders)}" if files or folders else ""
+    newest = re.search(r"^Newest: (.+)$", step.out, re.MULTILINE)
+    if newest:
+        names = [name.strip() for name in newest.group(1).split(",") if name.strip()]
+        listed = f"; the newest {'is' if len(names) == 1 else 'are'} {_names(names)}"
+    else:
+        listed = f": {_names(files + folders)}"
     return Said(shown=for_screen(step.out), spoken=f"{where} has {' and '.join(parts)}{listed}.")
 
 
@@ -278,19 +298,39 @@ def _repo(step: Step) -> str:
     return name_of(step.param("repo_path") or step.target) or "the repository"
 
 
+def _service_status(step: Step) -> Said:
+    """Whether the service is running, from what systemctl, launchctl or Windows says."""
+    name = step.param("name") or "that"
+    text = step.out.casefold()
+    if re.search(r"active \(running\)|\bstate\s*:\s*4\s+running|\bstatus\s*:\s*running|\brunning\b", text):
+        state = "running"
+    elif re.search(r"inactive|\bstopped\b|\bdead\b|\bstate\s*:\s*1\s+stopped", text):
+        state = "stopped"
+    elif re.search(r"\bfailed\b", text):
+        state = "failed"
+    else:
+        return _answer(step, f"The {name} service")
+    return Said(shown=for_screen(step.out), spoken=f"The {name} service is {state}.")
+
+
 def _git_status(step: Step) -> Said:
+    """Which branch, and what is waiting: "repo is on main; 1 file is staged and 2 are changed"."""
     branch = step.field("branch") or ""
     staged, unstaged, untracked = (len(step.field(key) or []) for key in ("staged", "unstaged", "untracked"))
     on = f"{_repo(step)} is on {branch}" if branch and branch != "unknown" else _repo(step)
-    changed = staged + unstaged + untracked
     if not isinstance(step.data, dict):
         return _answer(step, f"The status of {_repo(step)}")
-    if not changed:
+    if not staged + unstaged + untracked:
         return Said(shown=for_screen(step.field("output", "")), spoken=f"{on}, and there's nothing to commit.")
-    parts = [f"{staged:,} staged" if staged else "", f"{unstaged:,} changed" if unstaged else ""]
-    parts.append(f"{untracked:,} untracked" if untracked else "")
-    detail = ", ".join(part for part in parts if part)
-    return Said(shown=for_screen(step.field("output", "")), spoken=f"{on} with {plural(changed, 'file')}: {detail}.")
+    parts = []
+    if staged:
+        parts.append(f"{plural(staged, 'file')} {'is' if staged == 1 else 'are'} staged")
+    if unstaged:
+        parts.append(f"{plural(unstaged, 'file')} {'has' if unstaged == 1 else 'have'} changes not staged")
+    if untracked:
+        parts.append(f"{plural(untracked, 'new file')} {'is' if untracked == 1 else 'are'} not tracked yet")
+    detail = ", ".join(parts[:-1]) + (f" and {parts[-1]}" if len(parts) > 1 else parts[-1])
+    return Said(shown=for_screen(step.field("output", "")), spoken=f"{on}; {detail}.")
 
 
 def _git_diff(step: Step) -> Said:
@@ -373,17 +413,90 @@ def _state(lead: str) -> Callable[[Step], Said]:
     return build
 
 
-def _system_info(step: Step) -> Said:
-    from pilot.conversation.quick import speakable_state
+def _facts(text: str) -> list[tuple[str, str, str]]:
+    """The facts that matter in system information, as (subject, shown line, spoken words), in reading order."""
+    facts: list[tuple[str, str, str]] = []
+    system = re.search(r"^\s*system: (.+)$", text, re.MULTILINE)
+    release = re.search(r"^\s*release: (.+)$", text, re.MULTILINE)
+    cores = re.search(r"^\s*(?:Logical cores|Cores): (\d+)", text, re.MULTILINE)
+    if system:
+        named = f"{system.group(1).strip()} {release.group(1).strip() if release else ''}".strip()
+        facts.append(("os", f"System: {named}" + (f", {cores.group(1)} cores" if cores else ""), named))
+    cpu = re.search(r"Average usage: ([\d.]+)%", text)
+    if cpu:
+        value = round(float(cpu.group(1)))
+        facts.append(("cpu", f"Processor: {cpu.group(1)}% in use", f"the processor is at {value} percent"))
+    memory = re.search(r"Total:\s*([\d.]+) GB\s+Used:\s*([\d.]+) GB \(([\d.]+)%\)", text)
+    if memory:
+        total, used, share = memory.groups()
+        facts.append(
+            (
+                "memory",
+                f"Memory: {used} of {total} GB in use ({share}%)",
+                f"{used} of {total} gigabytes of memory are in use",
+            )
+        )
+    for device, total, used in re.findall(r"^\s*(\S+?)\s.*?([\d.]+) GB total, ([\d.]+) GB used", text, re.MULTILINE)[
+        :2
+    ]:
+        free = max(0.0, float(total) - float(used))
+        label = f"drive {device[0].upper()}" if re.match(r"[A-Za-z]:", device) else name_of(device) or "the disk"
+        facts.append(
+            (
+                "disk",
+                f"{label[:1].upper() + label[1:]}: {free:.0f} GB free of {total} GB",
+                f"{label} has {free:.0f} gigabytes free",
+            )
+        )
+    up = [
+        name
+        for name in re.findall(r"^\s{2}(\S.*?) \(UP\):", text, re.MULTILINE)
+        if not re.match(r"^(?:lo\d*|Loopback\b.*|vEthernet\b.*)$", name)
+    ]
+    if up:
+        facts.append(("network", f"Network: {', '.join(up[:3])} connected", f"you're connected over {_names(up, 2)}"))
+    battery = re.search(r"Charge:\s*(\d+)%", text)
+    if battery:
+        facts.append(("battery", f"Battery: {battery.group(1)}%", f"the battery is at {battery.group(1)} percent"))
+    return facts
 
-    sections = re.findall(r"^=== (.+?) ===", step.out, re.MULTILINE)
-    sentence = speakable_state(step.out)
-    if sentence and len(sections) <= 1:
-        return Said(shown=for_screen(step.out), spoken=sentence)
-    if len(sections) > 1:
-        listed = ", ".join(section.lower() for section in sections[:-1]) + f" and {sections[-1].lower()}"
-        return Said(shown=for_screen(step.out), spoken=f"Here's the system information: {listed}.")
-    return _answer(step, "System information")
+
+# The subjects a question can be about, by the words a person uses for them.
+_SUBJECTS = {
+    "cpu": r"\b(?:cpu|processor|load)\b",
+    "memory": r"\b(?:memory|ram)\b",
+    "disk": r"\b(?:disk|drive|storage|space)\b",
+    "network": r"\b(?:network|wi-?fi|internet|ip|connected|connection)\b",
+    "battery": r"\bbattery\b",
+    "os": r"\b(?:windows|macos|linux|version|operating system|os)\b",
+}
+# Asked about what system information does not hold: said plainly before the facts it does hold.
+_NOT_IN_SYSTEM_INFO = {
+    r"\btemperature|\bhow hot\b|\bthermal": "the temperature",
+    r"\b(?:programs?|apps?|processes|running)\b": "which programs are running",
+    r"\bfans?\b": "the fan speed",
+}
+
+
+def _system_info(step: Step) -> Said:
+    """The two or three facts that matter, the ones the question was about first; a readable summary on screen (the
+    full output stays in the details). Asked for something the reading does not hold, it says so first."""
+    facts = _facts(step.out)
+    if not facts:
+        return _answer(step, "System information")
+    asked = step.request.casefold()
+    first = [fact for fact in facts if re.search(_SUBJECTS.get(fact[0], r"(?!x)x"), asked)]
+    ordered = first + [fact for fact in facts if fact not in first]
+    missing = next((what for pattern, what in _NOT_IN_SYSTEM_INFO.items() if re.search(pattern, asked)), "")
+    picked = [fact[2] for fact in (first or ordered)[:3]]
+    said = ", ".join(picked[:-1]) + (f", and {picked[-1]}" if len(picked) > 1 else picked[-1])
+    said = said[:1].upper() + said[1:] + "."
+    if missing:
+        said = f"The system information does not include {missing}. {said}"
+    shown = "\n".join(fact[1] for fact in ordered)
+    if missing:
+        shown = f"The system information does not include {missing}.\n{shown}"
+    return Said(shown=shown, spoken=said)
 
 
 def _health_review(step: Step) -> Said:
@@ -423,20 +536,42 @@ def _clipboard_read(step: Step) -> Said:
     return _answer(step, "Your clipboard")
 
 
+def _program_name(raw: str) -> str:
+    name = raw.strip()
+    name = re.sub(r"\.(?:exe|app|bin)$", "", name, flags=re.IGNORECASE)
+    return name[:1].upper() + name[1:] if name else name
+
+
 def _process_list(step: Step) -> Said:
-    rows = re.findall(r"PID=\s*\d+\s+CPU=\s*([\d.]+)%.*?\s{2}(\S.*)$", step.out, re.MULTILINE)
-    name = step.param("name")
-    if not rows:
-        return _said(f"No program called {name} is running." if name else "No matching programs are running.")
-    busiest = max(rows, key=lambda row: float(row[0]))[1].strip()
-    total = re.search(r"of ([\d,]+) processes", step.out)
-    count = int(total.group(1).replace(",", "")) if total else len(rows)
-    if name:
-        return Said(shown=for_screen(step.out), spoken=f"{plural(count, 'process', 'processes')} match {name}.")
-    return Said(
-        shown=for_screen(step.out),
-        spoken=f"{plural(count, 'process', 'processes')} are running; the busiest is {busiest}.",
+    """How many programs are running and the biggest few by memory, by their names ("84 programs are running; the
+    biggest are Chrome, Code and Teams"). Several processes of one program count as one."""
+    rows = re.findall(
+        r"PID=\s*\d+\s+CPU=\s*([\d.]+)%\s+MEM=\s*([\d.]+)%(?:\s+STATUS=\S*)?\s+(\S.*)$", step.out, re.MULTILINE
     )
+    asked = step.param("name")
+    if not rows:
+        return _said(f"No program called {asked} is running." if asked else "No matching programs are running.")
+    memory: dict[str, float] = {}
+    for _cpu, mem, raw in rows:
+        name = _program_name(raw)
+        if name:
+            memory[name] = memory.get(name, 0.0) + float(mem)
+    biggest = sorted(memory, key=lambda name: memory[name], reverse=True)[:3]
+    cut = re.search(r"of ([\d,]+) processes", step.out)
+    processes = int(cut.group(1).replace(",", "")) if cut else len(rows)
+    shown = "\n".join(
+        f"- {name}: {memory[name]:.1f}% of memory" for name in sorted(memory, key=memory.get, reverse=True)[:20]
+    )
+    if asked:
+        spoken = f"{_program_name(asked)} is running" + (
+            f", as {plural(processes, 'process', 'processes')}." if processes > 1 else "."
+        )
+        return Said(shown=f"{spoken}\n{shown}", spoken=spoken)
+    # A list cut short counts processes (its total); a whole list counts programs by name.
+    count, words = (processes, ("process", "processes")) if cut else (len(memory), ("program", "programs"))
+    spoken = f"{plural(count, *words)} {'is' if count == 1 else 'are'} running"
+    spoken += f"; the biggest {'is' if len(biggest) == 1 else 'are'} {_names(biggest)}."
+    return Said(shown=f"{spoken}\n{shown}", spoken=spoken)
 
 
 def _process_kill(step: Step) -> Said:
@@ -468,28 +603,59 @@ def _env_get(step: Step) -> Said:
     return Said(shown=for_screen(step.out), spoken=f"{name} is set to {value}.")
 
 
-def _count_lines(lead: str, noun: str, many: str = "", *, empty: str = "") -> Callable[[Step], Said]:
-    """A list read: how many, said; the list shown."""
+def _count_lines(
+    lead: str, noun: str, many: str = "", *, empty: str = "", names: Callable[[str], str] | None = None
+) -> Callable[[Step], Said]:
+    """A list read, answered: how many, and the first few by name when ``names`` reads a name from a line (never for
+    lists whose lines can be private, such as window titles). ``lead`` holds "{n}" for the count ("You have {n}")."""
 
     def build(step: Step) -> Said:
         data = step.data
+        lines = [
+            line
+            for line in step.out.splitlines()
+            if line.strip() and not line.rstrip().endswith(":") and not line.startswith(("[Cut", "Newest: "))
+        ]
         if isinstance(data, list):
             count = len(data)
         elif isinstance(data, dict) and isinstance(data.get("items") or data.get("matches"), list):
             count = len(data.get("items") or data.get("matches"))
         else:
-            lines = [
-                line
-                for line in step.out.splitlines()
-                if line.strip() and not line.rstrip().endswith(":") and not line.startswith("[Cut")
-            ]
             count = len(lines)
         if not step.out or count == 0 or re.match(r"^\(?(?:no |none|empty)", step.out, re.I):
-            return _said(empty or f"{lead}: none.")
+            return _said(empty or lead.replace("{n}", "no " + (many or noun + "s")) + ".")
         shown = step.out if not isinstance(data, (list, dict)) else _listing(data)
-        return Said(shown=for_screen(shown), spoken=f"{lead}: {plural(count, noun, many)}.")
+        sentence = lead.replace("{n}", plural(count, noun, many))
+        if names is not None and not isinstance(data, (list, dict)):
+            named = [name for name in (names(line) for line in lines) if name]
+            if named:
+                sentence += f": {_names(named)}"
+        return Said(shown=for_screen(shown), spoken=sentence + ".")
 
     return build
+
+
+def _workspace_name(line: str) -> str:
+    found = re.match(r"^\s*\d+\.\s+(.+?)(?:\s+\([\d.]+\))?$", line)
+    return name_of(found.group(1)) if found else ""
+
+
+def _tool_name(line: str) -> str:
+    found = re.match(r"^\s*(?:[\w.-]+:\s*)?([\w.-]+)\s+-\s", line)
+    return found.group(1) if found else ""
+
+
+def _first_word(line: str) -> str:
+    return line.split()[0].strip(",;") if line.split() else ""
+
+
+def _before_equals(line: str) -> str:
+    return line.split("=", 1)[0].strip() if "=" in line else ""
+
+
+def _before_columns(line: str) -> str:
+    """The first column of a table printed with runs of spaces ("VLC media player  VideoLAN.VLC  3.0.21")."""
+    return re.split(r"\s{2,}|\t|\s\|\s", line.strip())[0].strip()
 
 
 def _listing(data: Any) -> str:
@@ -570,20 +736,33 @@ def _http(step: Step, who: str = "") -> Said:
     return Said(shown=for_screen(shown), spoken=sentence)
 
 
+# Selectors that name one thing a person asks for by name: "the title of example.com".
+_NAMED_PARTS = {"title": "title", "h1": "main heading", "h2": "first subheading", "head > title": "title"}
+
+
 def _scrape(step: Step) -> Said:
+    """What was asked for, as an answer: one named thing ("The title of example.com is Example Domain."), the page's
+    text as its length and beginning, or how many matches and the first."""
     host = host_of(step.param("url") or step.target)
     selector = step.param("selector")
     if step.data is not None:
         count = len(step.data) if isinstance(step.data, (list, dict)) else 0
         return Said(shown=for_screen(_listing(step.data)), spoken=f"Read {plural(count, 'item')} from {host}.")
-    lines = [line for line in step.out.splitlines() if line.strip()]
-    if selector and lines:
-        return Said(
-            shown=for_screen(step.out),
-            spoken=f"Found {plural(len(lines), 'match', 'matches')} for {selector} on {host}; the first is: "
-            f"{words_cut(lines[0], 10)}",
-        )
-    return _answer(step, f"The page on {host}")
+    lines = [line.strip() for line in step.out.splitlines() if line.strip() and not line.startswith("[Cut")]
+    if not lines:
+        return _said(f"That part of {host} is empty.")
+    part = _NAMED_PARTS.get(" ".join(str(selector or "").split()).casefold())
+    if part and len(lines) == 1 and len(lines[0]) <= SHORT_ANSWER:
+        return _said(f"The {part} of {host} is {lines[0]}.")
+    if not selector or str(selector).strip().casefold() in {"body", "html", "main", "article"}:
+        return _answer(step, f"The page on {host}")
+    if len(lines) == 1:
+        return Said(shown=for_screen(step.out), spoken=f"On {host}, {selector} reads: {words_cut(lines[0], 16)}")
+    return Said(
+        shown=for_screen(step.out),
+        spoken=f"Found {plural(len(lines), 'match', 'matches')} for {selector} on {host}; the first is: "
+        f"{words_cut(lines[0], 10)}",
+    )
 
 
 def _send(service: str) -> Callable[[Step], Said]:
@@ -609,9 +788,19 @@ def _download(step: Step) -> Said:
     return _said(f"Downloaded {name_of(destination) or 'the file'} from {host_of(step.param('url'))}{size}.")
 
 
+def _relative(path: str, folder: str) -> str:
+    """A path as it sits under the folder that was searched ("sub\\notes.txt"); its name when it is elsewhere."""
+    full, base = undoubled(path).replace("\\", "/"), undoubled(folder).replace("\\", "/").rstrip("/")
+    if base and full.casefold().startswith(base.casefold() + "/"):
+        rest = full[len(base) + 1 :]
+        return rest.replace("/", "\\") if "\\" in path else rest
+    return name_of(path)
+
+
 def _search_content(step: Step) -> Said:
     phrase = step.param("search_text") or "that"
-    where = name_of(step.param("directory", "path") or step.target) or "that folder"
+    searched = step.param("directory", "path") or step.target
+    where = name_of(searched) or "that folder"
     data = step.data if isinstance(step.data, dict) else {}
     matches = data.get("matches") if isinstance(data.get("matches"), list) else None
     if step.out.startswith("No matches") or matches == []:
@@ -630,7 +819,8 @@ def _search_content(step: Step) -> Said:
         if isinstance(match, dict):
             line = match.get("line") or match.get("line_number") or ""
             text = match.get("text") or match.get("content") or match.get("match") or ""
-            shown_lines.append(f"- {match.get('file') or match.get('path')}:{line} {text}".rstrip())
+            found_in = str(match.get("file") or match.get("path") or "")
+            shown_lines.append(f"- {_relative(found_in, searched)}:{line} {text}".rstrip())
     return Said(shown=for_screen("\n".join(shown_lines)), spoken=spoken)
 
 
@@ -855,6 +1045,14 @@ def _what_it_watches(entry: dict) -> str:
     return f"it watches {watched} {when.replace('when it changes', 'for changes')}{waiting}"
 
 
+def _what_it_does(entry: dict) -> str:
+    """ "one will add "seen" to fired.log when watched.txt changes": what a trigger does, and when."""
+    watched, when, job = _trigger_parts(entry)
+    if entry.get("trigger_type") == "time_interval":
+        return f"one will {job} on an interval"
+    return f"one will {job} {when.replace(' it ', f' {watched} ', 1) if ' it ' in when else when}"
+
+
 def _trigger_list(step: Step) -> Said:
     if not step.data or step.out.startswith("No triggers"):
         return _said("You have no triggers.")
@@ -862,7 +1060,10 @@ def _trigger_list(step: Step) -> Said:
     if len(items) == 1:
         spoken = f"You have 1 trigger: {_what_it_watches(items[0])}."
     else:
-        parts = [_what_it_watches(item).replace("it ", "one ", 1) for item in items[:3]]
+        alike = len({_trigger_parts(item)[0] for item in items}) < len(items)
+        parts = [
+            _what_it_does(item) if alike else _what_it_watches(item).replace("it ", "one ", 1) for item in items[:3]
+        ]
         more = f", and {len(items) - 3:,} more" if len(items) > 3 else ""
         spoken = f"You have {plural(len(items), 'trigger')}: {'; '.join(parts)}{more}."
     lines = []
@@ -882,7 +1083,7 @@ def _trigger_delete(step: Step) -> Said:
         return _said(f"I've stopped watching {removed.get('watched') or watched}.")
     # An older answer names only the id; what the trigger watched is the step's target when the planner named it.
     target = step.target
-    if target and re.search(r"\.\w{1,6}$|[\/]", target):
+    if target and re.search(r"\.\w{1,6}$|[\\/]", target):
         return _said(f"I've stopped watching {name_of(target)}.")
     return _said("I've removed that trigger.")
 
@@ -1028,13 +1229,13 @@ SENTENCES: dict[ActionType, Callable[[Step], Said]] = {
     ActionType.PACKAGE_UPDATE: _fixed(
         lambda s: f"Updated {plural(n, 'package')}." if (n := s.out.count("[UPGRADE]")) else "Updated your packages."
     ),
-    ActionType.PACKAGE_SEARCH: _count_lines("Packages found", "result"),
+    ActionType.PACKAGE_SEARCH: _count_lines("I found {n}", "package", names=_before_columns),
     ActionType.SERVICE_START: _fixed(lambda s: f"Started the {s.param('name')} service."),
     ActionType.SERVICE_STOP: _fixed(lambda s: f"Stopped the {s.param('name')} service."),
     ActionType.SERVICE_RESTART: _fixed(lambda s: f"Restarted the {s.param('name')} service."),
     ActionType.SERVICE_ENABLE: _fixed(lambda s: f"The {s.param('name')} service will start on its own now."),
     ActionType.SERVICE_DISABLE: _fixed(lambda s: f"The {s.param('name')} service won't start on its own now."),
-    ActionType.SERVICE_STATUS: lambda s: _answer(s, f"The {s.param('name')} service"),
+    ActionType.SERVICE_STATUS: lambda s: _service_status(s),
     ActionType.GNOME_SETTING_READ: lambda s: _answer(s, f"{s.param('key') or 'The setting'} is"),
     ActionType.GNOME_SETTING_WRITE: _fixed(lambda s: f"Set {s.param('key') or 'the setting'} to {s.param('value')}."),
     ActionType.DBUS_CALL: _tool_call(lambda s: s.param("method") or "The system service"),
@@ -1087,13 +1288,17 @@ SENTENCES: dict[ActionType, Callable[[Step], Said]] = {
     ActionType.SCHEDULE_CREATE: _fixed(
         lambda s: f"Scheduled {s.param('name') or 'the task'}{f' for {sch}' if (sch := s.param('schedule')) else ''}."
     ),
-    ActionType.SCHEDULE_LIST: _count_lines("Scheduled tasks", "task", empty="There are no scheduled tasks."),
+    ActionType.SCHEDULE_LIST: _count_lines(
+        "You have {n}", "scheduled task", empty="You have no scheduled tasks.", names=_first_word
+    ),
     ActionType.SCHEDULE_DELETE: _fixed(lambda s: f"Deleted the scheduled task {s.param('name', 'task_id')}."),
     ActionType.ENV_GET: _env_get,
     ActionType.ENV_SET: _fixed(lambda s: f"Set {s.param('name') or 'the variable'}."),
-    ActionType.ENV_LIST: _count_lines("Environment variables", "variable"),
+    ActionType.ENV_LIST: _count_lines(
+        "{n} set", "environment variable is", "environment variables are", names=_before_equals
+    ),
     # windows, sound, screen
-    ActionType.WINDOW_LIST: _count_lines("Open windows", "window"),
+    ActionType.WINDOW_LIST: _count_lines("{n} open", "window is", "windows are"),
     ActionType.WINDOW_FOCUS: _window("Switched to"),
     ActionType.WINDOW_CLOSE: _window("Closed"),
     ActionType.WINDOW_MINIMIZE: _window("Minimized"),
@@ -1105,15 +1310,15 @@ SENTENCES: dict[ActionType, Callable[[Step], Said]] = {
     ActionType.BRIGHTNESS_SET: _fixed(lambda s: f"Brightness is at {getattr(s.p, 'level', '')}%."),
     ActionType.SCREENSHOT: _screenshot,
     # network, disks, users, registry
-    ActionType.WIFI_LIST: _count_lines("Wi-Fi networks in range", "network"),
+    ActionType.WIFI_LIST: _count_lines("{n} in range", "Wi-Fi network is", "Wi-Fi networks are", names=_before_columns),
     ActionType.WIFI_CONNECT: _fixed(lambda s: f"Connected to {s.param('ssid') or 'the network'}."),
     ActionType.WIFI_DISCONNECT: _fixed("Disconnected from Wi-Fi."),
-    ActionType.DISK_LIST: _count_lines("Disks", "disk"),
+    ActionType.DISK_LIST: _count_lines("This computer has {n}", "disk"),
     ActionType.DISK_MOUNT: _fixed(
         lambda s: f"Mounted {name_of(s.param('device'))} at {name_of(s.param('mount_point'))}."
     ),
     ActionType.DISK_UNMOUNT: _fixed(lambda s: f"Unmounted {name_of(s.param('mount_point', 'device')) or 'the disk'}."),
-    ActionType.USER_LIST: _count_lines("User accounts", "account"),
+    ActionType.USER_LIST: _count_lines("This computer has {n}", "user account", names=_first_word),
     ActionType.USER_INFO: lambda s: _answer(s, "Your account"),
     ActionType.REGISTRY_READ: lambda s: _answer(s, s.param("value_name") or "That registry value"),
     ActionType.REGISTRY_WRITE: _fixed(lambda s: f"Set {s.param('value_name') or 'the value'} in the registry."),
@@ -1148,8 +1353,8 @@ SENTENCES: dict[ActionType, Callable[[Step], Said]] = {
     ActionType.BROWSER_HOVER: _fixed("Pointed at it."),
     ActionType.BROWSER_SCROLL: _plain(lambda s: f"Scrolled {s.param('direction') or 'down'}."),
     ActionType.BROWSER_EXTRACT: _browser_extract,
-    ActionType.BROWSER_EXTRACT_TABLE: _count_lines("Table rows", "row"),
-    ActionType.BROWSER_EXTRACT_LINKS: _count_lines("Links on the page", "link"),
+    ActionType.BROWSER_EXTRACT_TABLE: _count_lines("The table has {n}", "row"),
+    ActionType.BROWSER_EXTRACT_LINKS: _count_lines("The page has {n}", "link"),
     ActionType.BROWSER_EXECUTE_JS: _tool_call(lambda s: "The page script"),
     ActionType.BROWSER_SCREENSHOT: _screenshot,
     ActionType.BROWSER_FILL_FORM: _fixed(
@@ -1159,7 +1364,7 @@ SENTENCES: dict[ActionType, Callable[[Step], Said]] = {
         lambda s: f"Opened {host_of(u)} in a new tab." if (u := s.param("url")) else "Opened a new tab."
     ),
     ActionType.BROWSER_CLOSE_TAB: _fixed("Closed the tab."),
-    ActionType.BROWSER_LIST_TABS: _count_lines("Open tabs", "tab"),
+    ActionType.BROWSER_LIST_TABS: _count_lines("{n} open", "tab is", "tabs are"),
     ActionType.BROWSER_SWITCH_TAB: _fixed(lambda s: f"Switched to tab {(getattr(s.p, 'tab_index', 0) or 0) + 1}."),
     ActionType.BROWSER_BACK: _fixed("Went back a page."),
     ActionType.BROWSER_FORWARD: _fixed("Went forward a page."),
@@ -1175,12 +1380,16 @@ SENTENCES: dict[ActionType, Callable[[Step], Said]] = {
     ActionType.TRIGGER_START: _trigger_start,
     ActionType.TRIGGER_STOP: _fixed("Your triggers are paused until you turn them on again."),
     # calendar
-    ActionType.CALENDAR_PARSE: _count_lines("Events in the file", "event"),
+    ActionType.CALENDAR_PARSE: _count_lines("The file holds {n}", "event", names=_before_columns),
     ActionType.CALENDAR_SYNC: _fixed("Synced your calendar."),
     ActionType.CALENDAR_CREATE_EVENT: _calendar_create,
-    ActionType.CALENDAR_LIST_EVENTS: _count_lines("Events", "event", empty="There are no events."),
+    ActionType.CALENDAR_LIST_EVENTS: _count_lines(
+        "You have {n}", "event", empty="You have no events.", names=_before_columns
+    ),
     ActionType.CALENDAR_DELETE_EVENT: _fixed("Deleted the event."),
-    ActionType.CALENDAR_FETCH: _count_lines("Events", "event", empty="There are no events."),
+    ActionType.CALENDAR_FETCH: _count_lines(
+        "You have {n}", "event", empty="You have no events.", names=_before_columns
+    ),
     ActionType.CALENDAR_RECONCILE: lambda s: _answer(s, "Your calendar"),
     # the web, messages and mail
     ActionType.API_REQUEST: _http,
@@ -1190,18 +1399,24 @@ SENTENCES: dict[ActionType, Callable[[Step], Said]] = {
     ActionType.API_SLACK: _send("Slack"),
     ActionType.API_DISCORD: _send("Discord"),
     ActionType.API_SCRAPE: _scrape,
-    ActionType.EMAIL_FETCH: _count_lines("New emails", "email", empty="There are no new emails."),
+    ActionType.EMAIL_FETCH: _count_lines("You have {n}", "new email", empty="You have no new emails."),
     ActionType.EMAIL_SUMMARIZE: lambda s: _answer(s, "Your email"),
     ActionType.EMAIL_REPLY: _fixed("Sent your reply."),
     # workspace and tools
     ActionType.WORKSPACE_INDEX: _fixed(
         lambda s: f"Indexed {name_of(s.param('folder_path') or s.target) or 'the folder'}{_indexed_count(s)}."
     ),
-    ActionType.WORKSPACE_SEARCH: _count_lines("Workspace results", "result", empty="Nothing in the workspace matched."),
+    ActionType.WORKSPACE_SEARCH: _count_lines(
+        "{n} in the workspace",
+        "file matches",
+        "files match",
+        empty="Nothing in the workspace matched.",
+        names=_workspace_name,
+    ),
     ActionType.WASM_CALL: _tool_call(lambda s: f"The {s.param('tool') or 'tool'}"),
     ActionType.PLUGIN_CALL: _tool_call(lambda s: "The plugin"),
     ActionType.SKILL_RUN: _tool_call(lambda s: f"The skill {s.param('skill_id')}".strip()),
-    ActionType.MCP_LIST_TOOLS: _count_lines("Tools available", "tool"),
+    ActionType.MCP_LIST_TOOLS: _count_lines("{n} available", "tool is", "tools are", names=_tool_name),
     ActionType.MCP_CALL_TOOL: _tool_call(lambda s: f"The tool {s.param('mcp_tool')}".strip()),
 }
 
@@ -1211,13 +1426,19 @@ def _indexed_count(step: Step) -> str:
     return f", {found.group(1)} {found.group(0).split()[-1]}" if found else ""
 
 
-def step_said(result: ActionResult, *, limit: int = SPOKEN_LIMIT) -> Said:
+def step_said(result: ActionResult, *, limit: int = SPOKEN_LIMIT, request: str = "") -> Said:
     """One finished step's sentence, with the rules of pilot.reply_rules applied to both forms (``limit``: the most
-    characters said; the contract test asks for an uncut copy to check a cut never falls inside a word)."""
-    step = Step(result)
+    characters said; the contract test asks for an uncut copy to check a cut never falls inside a word). ``request``:
+    the person's words, so a read is said for what was asked about."""
+    step = Step(result, request)
     if result.skip_reason in {"already_absent", "already_satisfied"} and step.out:
-        # Not run because its state was already there: the handler's sentence says what was found.
-        return Said(shown=for_screen(step.out), spoken=for_ear(step.out, limit=limit) or "It was already done.")
+        if step.type is ActionType.FILE_DELETE:
+            said = _file_delete(step)
+            return Said(shown=said.shown, spoken=for_ear(said.spoken, limit=limit))
+        # Not run because its state was already there: the handler's sentence says what was found, a path in it
+        # named like every other sentence names one (its name and folder).
+        found = _names_in(step.out)
+        return Said(shown=for_screen(found), spoken=for_ear(found, limit=limit) or "It was already done.")
     build = SENTENCES.get(step.type)
     said = build(step) if build is not None else _plain("Done.")(step)
     said = _kept_private(step, said)
@@ -1317,6 +1538,22 @@ _GROUP_VERBS = {
 }
 
 
+def _deleted_triggers(results: Sequence[ActionResult]) -> str:
+    """Several triggers removed in one plan: "I've removed 2 triggers; both watched watched.txt." """
+    watched = []
+    for result in results:
+        data = parsed_json(result.output or "")
+        entry = data if isinstance(data, dict) else {}
+        what = str(entry.get("watched") or (_trigger_parts(entry)[0] if entry.get("trigger_type") else ""))
+        watched.append(what or name_of(str(result.action.target or "")))
+    known = [what for what in watched if what and what != "it"]
+    if known and len(set(known)) == 1 and len(known) == len(results):
+        return f"I've removed {plural(len(results), 'trigger')}; {'both' if len(results) == 2 else 'all'} watched {known[0]}."
+    if known:
+        return f"I've removed {plural(len(results), 'trigger')}, watching {_names(sorted(set(known)))}."
+    return f"I've removed {plural(len(results), 'trigger')}."
+
+
 def _group(results: Sequence[ActionResult]) -> str:
     action_type = results[0].action.action_type
     verb, field = _GROUP_VERBS[action_type]
@@ -1339,6 +1576,24 @@ def asks_for_an_answer(request: str) -> bool:
     return bool(_ASKS.search(str(request or "")))
 
 
+_FILE_NAME_END = re.compile(r"[.][A-Za-z0-9]{1,6}$")
+
+
+def _names_in(text: str) -> str:
+    """Each full path in a sentence as its name and folder ("note.txt in archive")."""
+    from pilot.reply_rules import _PATH
+
+    def named(found: re.Match[str]) -> str:
+        whole = found.group(0)
+        trail = re.search(r"[.:,]+$", whole)
+        path = whole[: trail.start()] if trail else whole
+        # A file by its name and folder; a folder or a mount point by its name.
+        said = _at(path) if _FILE_NAME_END.search(path) else name_of(path)
+        return said + (trail.group(0) if trail else "")
+
+    return _PATH.sub(named, undoubled(text))
+
+
 def plan_said(results: Sequence[ActionResult], request: str = "") -> Said:
     """One or two sentences about a plan's outcome: the step the person asked for (the one with the widest reach that
     changed something, else the last read), and how many steps it took when more than one changed something. When
@@ -1348,23 +1603,26 @@ def plan_said(results: Sequence[ActionResult], request: str = "") -> Said:
     if not done:
         return Said(shown="Nothing was done.", spoken="Nothing was done.")
     if len(done) == 1:
-        return step_said(done[0])
+        return step_said(done[0], request=request)
     types = {result.action.action_type for result in done}
     if len(types) == 1 and next(iter(types)) in _GROUP_VERBS:
         sentence = _group(done)
+        return Said(shown=sentence, spoken=for_ear(sentence))
+    if types == {ActionType.TRIGGER_DELETE}:
+        sentence = _deleted_triggers(done)
         return Said(shown=sentence, spoken=for_ear(sentence))
     effects = [result for result in done if result.action.action_type not in READ_ONLY_ACTIONS]
     # The step that matters most: the one with the widest reach (a push over a commit, a payment click over a
     # scroll), the last of them when several reach as far; with no effect at all, the last read.
     weightiest = max((result.action.permission_tier for result in effects), default=None)
     chosen = [result for result in effects if result.action.permission_tier == weightiest]
-    outcome = step_said(chosen[-1] if chosen else done[-1])
+    outcome = step_said(chosen[-1] if chosen else done[-1], request=request)
     if len(effects) > 1:
         tail = f" All {len(done)} steps are done."
         outcome = Said(shown=outcome.shown + tail, spoken=for_ear(outcome.spoken + tail))
     answers = [result for result in done if result.action.action_type in _CONTENT_LEADS and result not in effects]
     if effects and answers and asks_for_an_answer(request):
-        answer = step_said(answers[-1])
+        answer = step_said(answers[-1], request=request)
         return Said(
             shown=f"{answer.shown}\n{outcome.shown}",
             spoken=for_ear(f"{answer.spoken} {outcome.spoken}") or answer.spoken,

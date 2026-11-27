@@ -132,8 +132,9 @@ async def file_list(path: str, recursive: bool = False) -> str:
     if not p.is_dir():
         raise ValueError(f"Not a directory: {path}")
 
-    def _list() -> tuple[list[str], int]:
+    def _list() -> tuple[list[str], int, list[str]]:
         entries = []
+        files: list[tuple[float, str]] = []  # (modified time, name as listed): the reply names the newest few
         if recursive:
             for item in sorted(p.rglob("*")):
                 try:
@@ -141,6 +142,8 @@ async def file_list(path: str, recursive: bool = False) -> str:
                     kind = "d" if item.is_dir() else "f"
                     size = item.stat().st_size if item.is_file() else 0
                     entries.append(f"[{kind}] {rel}  ({size} bytes)")
+                    if kind == "f":
+                        files.append((item.stat().st_mtime, str(rel)))
                 except PermissionError:
                     entries.append(f"[?] {item.relative_to(p)}  (access denied)")
         else:
@@ -149,16 +152,21 @@ async def file_list(path: str, recursive: bool = False) -> str:
                     kind = "d" if item.is_dir() else "f"
                     size = item.stat().st_size if item.is_file() else 0
                     entries.append(f"[{kind}] {item.name}  ({size} bytes)")
+                    if kind == "f":
+                        files.append((item.stat().st_mtime, item.name))
                 except PermissionError:
                     entries.append(f"[?] {item.name}  (access denied)")
-        return entries[:FILE_LIST_LIMIT], len(entries)
+        newest = [name for _when, name in sorted(files, reverse=True)[:3]]
+        return entries[:FILE_LIST_LIMIT], len(entries), newest
 
-    items, total = await asyncio.to_thread(_list)
+    items, total, newest = await asyncio.to_thread(_list)
     if not items:
         return "(empty directory)"
     from pilot.system.read_limits import with_cut
 
-    return with_cut("\n".join(items), len(items), total, "entries")
+    # The newest files by modified time, on a line of their own after the entries (the reply says them).
+    listing = "\n".join(items) + (f"\nNewest: {', '.join(newest)}" if newest else "")
+    return with_cut(listing, len(items), total, "entries")
 
 
 async def file_search(path: str, pattern: str) -> str:

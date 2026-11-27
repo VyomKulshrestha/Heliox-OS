@@ -4580,6 +4580,9 @@ class PilotServer:
         final_failed_steps: set[tuple[str, str]] = set()
         last_executed_plan = None
         repair_prose = ""
+        # The first failed attempt of the plan the person asked for: the failure reply leads with its failure, never
+        # with a repair step's.
+        asked_outcome: tuple[list, Any] | None = None
         # The plan whose step failed, while a repair round re-plans it; the repair is held to its targets.
         _repair_of = None
         _last_failed_plan = None
@@ -5737,6 +5740,8 @@ class PilotServer:
 
             from pilot.system.desktop_observe import input_went_elsewhere
 
+            if asked_outcome is None:
+                asked_outcome = (list(results), verification)
             if input_went_elsewhere(results):
                 # Keys, a click or a drag may have gone to another window: doing them again could do it twice.
                 logger.warning("Desktop input may have gone to another window; stopping instead of retrying")
@@ -5849,7 +5854,7 @@ class PilotServer:
             )
         )
 
-        outcome_said = failure_reply(all_results, last_verification, follow_up=repair_prose)
+        outcome_said = failure_reply(all_results, last_verification, follow_up=repair_prose, asked=asked_outcome)
         message = outcome_said.shown
         if _repair_refused:
             # The repair round planned something other than the request: said after the failure, shown and spoken.
