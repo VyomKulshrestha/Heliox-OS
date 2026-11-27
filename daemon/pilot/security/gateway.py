@@ -445,14 +445,12 @@ DEFAULT_SOURCE_PROFILES: dict[str, SourceProfile] = {
         },
         allow_root=False,
     ),
-    # gnome_setting_write is SYSTEM_MODIFY ("other") and window_close DESTRUCTIVE (system control): the agent declares
-    # both, so a lower ceiling refused every one of them after the person approved it.
     "desktop_agent": SourceProfile(
         max_tier={
             ActionFamily.SHELL.value: int(PermissionTier.READ_ONLY),
             ActionFamily.BROWSING.value: int(PermissionTier.READ_ONLY),
-            ActionFamily.SYSTEM_CONTROL.value: int(PermissionTier.DESTRUCTIVE),
-            ActionFamily.OTHER.value: int(PermissionTier.SYSTEM_MODIFY),
+            ActionFamily.SYSTEM_CONTROL.value: int(PermissionTier.SYSTEM_MODIFY),
+            ActionFamily.OTHER.value: int(PermissionTier.USER_WRITE),
         },
         allow_root=False,
     ),
@@ -465,24 +463,17 @@ DEFAULT_SOURCE_PROFILES: dict[str, SourceProfile] = {
         },
         allow_root=False,
     ),
-    # api_request, api_scrape and api_github are "browsing": a POST, a GitHub write or an address on this computer or
-    # the person's own network is SYSTEM_MODIFY (it asks for approval). READ_ONLY here refused each of them after the
-    # person had approved it (live run, 27 November: a GET to 127.0.0.1 asked three times, then failed).
     "integration_agent": SourceProfile(
         max_tier={
             ActionFamily.SHELL.value: int(PermissionTier.READ_ONLY),
-            ActionFamily.BROWSING.value: int(PermissionTier.SYSTEM_MODIFY),
+            ActionFamily.BROWSING.value: int(PermissionTier.READ_ONLY),
             ActionFamily.SYSTEM_CONTROL.value: int(PermissionTier.READ_ONLY),
             ActionFamily.OTHER.value: int(PermissionTier.SYSTEM_MODIFY),
         },
         allow_root=False,
     ),
-    # Screen reads, and screenshot, which saves a picture (USER_WRITE, "other").
     "vision_agent": SourceProfile(
-        max_tier={
-            **{f.value: int(PermissionTier.READ_ONLY) for f in ActionFamily},
-            "other": int(PermissionTier.USER_WRITE),
-        },
+        max_tier={f.value: int(PermissionTier.READ_ONLY) for f in ActionFamily},
         allow_root=False,
     ),
     "plugin_runtime_agent": SourceProfile(
@@ -571,15 +562,46 @@ def denied_by_policy(results: Any) -> bool:
     return any(getattr(result, "skip_reason", None) in POLICY_DENIALS and not result.success for result in results)
 
 
-def ceiling_reason(action: Any, source: InvocationSource, profile: SourceProfile) -> str:
-    """Why ``profile`` (the floor of ``source``, already narrowed by any override) refuses ``action``; "" when it does
-    not. The one rule: the gateway's check and the preview before an approval card both use it."""
+# Steps a specialist declares that its family ceiling would refuse at the tier the step can have: each named, with
+# the highest tier it may run at. Fixed in code (a saved profile cannot add to it). A listed step still needs every
+# approval its tier asks for; nothing else of its family is widened. Each was checked against the catalog: the
+# interactive request asks for approval and then runs it (the system agent, whose ceiling is the interactive one,
+# declares the desktop and vision ones too; the web agent carries the API ones up to SYSTEM_MODIFY).
+SPECIALIST_ACTION_CEILINGS: dict[str, dict[str, int]] = {
+    # A POST, a GitHub write, or an address on this computer or the person's own network (allow_private_network).
+    "integration_agent": {
+        ActionType.API_REQUEST.value: int(PermissionTier.SYSTEM_MODIFY),
+        ActionType.API_SCRAPE.value: int(PermissionTier.SYSTEM_MODIFY),
+        ActionType.API_GITHUB.value: int(PermissionTier.SYSTEM_MODIFY),
+    },
+    # A desktop setting written (SYSTEM_MODIFY, "other"), and a window closed (DESTRUCTIVE: unsaved work; it asks).
+    "desktop_agent": {
+        ActionType.GNOME_SETTING_WRITE.value: int(PermissionTier.SYSTEM_MODIFY),
+        ActionType.WINDOW_CLOSE.value: int(PermissionTier.DESTRUCTIVE),
+    },
+    # A screenshot saves a picture (USER_WRITE, "other").
+    "vision_agent": {ActionType.SCREENSHOT.value: int(PermissionTier.USER_WRITE)},
+}
+
+
+def ceiling_reason(
+    action: Any, source: InvocationSource, profile: SourceProfile, override: TaskScopeOverride | None = None
+) -> str:
+    """Why ``profile`` (the floor of ``source``, already narrowed by ``override`` when there is one) refuses ``action``;
+    "" when it does not. A step is allowed when its family ceiling allows it, or when it is on its specialist's list
+    (``SPECIALIST_ACTION_CEILINGS``) at or under the listed tier and within what an override allows. The one rule: the
+    gateway's check and the preview before an approval card both use it."""
     family = action_family(action.action_type)
     tier = int(action.permission_tier)
     # A family the profile does not list is read-only (fail closed).
     ceiling = profile.max_tier.get(family.value, int(PermissionTier.READ_ONLY))
     if action.action_type.value in profile.deny_action_types:
         return f"{action.action_type.value} is denied for source '{source.value}' by gateway policy."
+    listed = SPECIALIST_ACTION_CEILINGS.get(source.value, {}).get(action.action_type.value)
+    if listed is not None and tier > ceiling and tier <= listed:
+        narrowed = override is not None and override.max_tier and family.value in override.max_tier
+        if not narrowed or tier <= int(override.max_tier[family.value]):  # type: ignore[union-attr, index]
+            ceiling = tier
     if tier > ceiling:
         return (
             f"{action.action_type.value} (tier={PermissionTier(tier).name}, family={family.value}) "
@@ -649,7 +671,7 @@ class AgentGateway:
         for index, action in enumerate(plan.actions):
             family = action_family(action.action_type)
             tier = int(action.permission_tier)
-            action_reason = ceiling_reason(action, source, profile)
+            action_reason = ceiling_reason(action, source, profile, scope_override)
 
             if action_reason:
                 reasons.append(action_reason)
@@ -711,7 +733,7 @@ class AgentGateway:
         found = []
         for index, (action, source) in enumerate(zip(actions, sources, strict=True)):
             profile = resolve_effective_profile(self._profile_for(source), scope_override)
-            reason = ceiling_reason(action, source, profile)
+            reason = ceiling_reason(action, source, profile, scope_override)
             if reason:
                 found.append((index, reason))
         return found

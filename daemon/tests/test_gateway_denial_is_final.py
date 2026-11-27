@@ -266,3 +266,81 @@ def test_a_step_to_a_local_address_asks_and_the_card_says_where(url: str, where:
     assert action.requires_confirmation is bool(where)
     if where:
         assert f"an address on {where}" in _approval_effect(action)
+
+
+# ── Exact allowances: nothing declared is dead, nothing undeclared was widened ──
+
+ABOVE_FAMILY = {
+    ("integration_agent", "api_request", "SYSTEM_MODIFY"),
+    ("integration_agent", "api_scrape", "SYSTEM_MODIFY"),
+    ("integration_agent", "api_github", "SYSTEM_MODIFY"),
+    ("desktop_agent", "gnome_setting_write", "SYSTEM_MODIFY"),
+    ("desktop_agent", "window_close", "DESTRUCTIVE"),
+    ("vision_agent", "screenshot", "USER_WRITE"),
+}
+
+
+def _above_family(action: Action, source: InvocationSource) -> bool:
+    """Whether the source's family ceiling alone (no specialist list) refuses the step."""
+    from pilot.security.gateway import action_family
+
+    profile = DEFAULT_SOURCE_PROFILES[source.value]
+    ceiling = profile.max_tier.get(action_family(action.action_type).value, int(PermissionTier.READ_ONLY))
+    return int(action.permission_tier) > ceiling
+
+
+def test_what_each_agent_may_run_above_its_family_ceiling_is_exactly_the_six_steps() -> None:
+    from pilot.security.gateway import SPECIALIST_ACTION_CEILINGS
+
+    found = set()
+    for agent in _agents().values():
+        source = agent.get_invocation_source()
+        for action_type in ActionType:
+            for action in _variants(action_type):
+                if action.permission_tier == PermissionTier.ROOT_CRITICAL:
+                    continue
+                above_family = _above_family(action, source)
+                allowed = not ceiling_reason(action, source, DEFAULT_SOURCE_PROFILES[source.value])
+                if above_family and allowed:
+                    found.add((source.value, action_type.value, action.permission_tier.name))
+    assert found == ABOVE_FAMILY
+    # Each listed step is one its agent declares, at no more than the highest tier that step can take.
+    declared = {
+        agent.get_invocation_source().value: {cap.action_type.value for cap in agent.get_capabilities()}
+        for agent in _agents().values()
+    }
+    for source, listed in SPECIALIST_ACTION_CEILINGS.items():
+        for action_name, tier in listed.items():
+            assert action_name in declared[source], (source, action_name)
+            highest = max(int(a.permission_tier) for a in _variants(ActionType(action_name)))
+            assert tier <= highest, (source, action_name)
+
+
+def test_an_override_still_narrows_a_listed_step() -> None:
+    """Spoken, the voice ceiling (browsing up to USER_WRITE) refuses the integration agent's local GET too."""
+    gateway = AgentGateway(PilotConfig(), MagicMock())
+    voice = DEFAULT_SOURCE_PROFILES["voice"]
+    override = TaskScopeOverride(max_tier=voice.max_tier, deny_action_types=voice.deny_action_types)
+    assert gateway.preview_denials([_get()], [InvocationSource.INTEGRATION_AGENT]) == []
+    assert gateway.preview_denials([_get()], [InvocationSource.INTEGRATION_AGENT], override)
+
+
+async def test_a_step_previewed_as_allowed_is_allowed_whichever_agent_carries_it() -> None:
+    """A repair round may give the step to another agent that declares it: the answer is the same."""
+    gateway = AgentGateway(PilotConfig(), MagicMock())
+    carriers: dict[ActionType, set[InvocationSource]] = {}
+    for agent in _agents().values():
+        for capability in agent.get_capabilities():
+            carriers.setdefault(capability.action_type, set()).add(agent.get_invocation_source())
+    for action_type, sources in carriers.items():
+        for action in _variants(action_type):
+            if action.permission_tier == PermissionTier.ROOT_CRITICAL:
+                continue
+            for previewed_by in sources:
+                if gateway.preview_denials([action], [previewed_by]):
+                    continue
+                for carried_by in sources:
+                    decision = await gateway.authorize(
+                        ActionPlan(actions=[action]), carried_by, critic_already_reviewed=True
+                    )
+                    assert decision.allowed, (action_type.value, previewed_by.value, carried_by.value, decision.reasons)
