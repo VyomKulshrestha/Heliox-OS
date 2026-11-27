@@ -185,7 +185,8 @@ def test_removing_one_of_two_triggers_on_a_file_says_what_remains() -> None:
     record = {**json.loads(TRIGGER), "watched": "watched.txt", "deleted": True, "others_watching": 1}
     said = step_said(_result(ActionType.TRIGGER_DELETE, TriggerParams(trigger_id="t1f2a3b4"), json.dumps(record)))
     assert said.spoken == (
-        'I\'ve removed the trigger that adds "file changed" to fired.log. The other one still watches watched.txt.'
+        'I\'ve removed the trigger that adds "file changed" to fired.log when watched.txt changes. The other one '
+        "still watches it."
     )
     alone = {**record, "others_watching": 0}
     said = step_said(_result(ActionType.TRIGGER_DELETE, TriggerParams(trigger_id="t1f2a3b4"), json.dumps(alone)))

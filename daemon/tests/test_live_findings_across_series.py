@@ -100,8 +100,8 @@ def test_3_the_battery_is_said_from_the_readers_text() -> None:
     said = _said(battery, "=== Battery ===\n  Charge: 68%\n  Status: Plugged in\n  Time remaining: N/A")
     assert said.spoken == "The battery is at 68 percent, charging."
     memory = Action(action_type=ActionType.MEMORY_USAGE, target="memory", parameters=SystemInfoParams())
-    said = _said(memory, "=== Memory ===\n  Total: 15.7 GB\n  Used:  9.9 GB (63.2%)\n  Free: 5.0 GB")
-    assert said.spoken == "9.9 of 15.7 gigabytes of memory are in use, 63 percent."
+    said = _said(memory, "=== Memory ===\n  Total: 16.0 GB\n  Used:  12.0 GB (75.0%)\n  Free: 4.0 GB")
+    assert said.spoken == "12 of 16 gigabytes of memory are in use, 75 percent."
 
 
 def test_4_an_http_404_is_a_failure_said_in_words() -> None:
@@ -773,7 +773,7 @@ _LSBLK = "NAME   SIZE TYPE MOUNTPOINT FSTYPE\nsda    477G disk\n├─sda1 512M 
 _GET_DISK = (
     "Number Friendly Name   Serial Number HealthStatus OperationalStatus Total Size Partition Style\n"
     "------ -------------   ------------- ------------ ----------------- ---------- ---------------\n"
-    "0      NVMe SSD 1TB    0000_0001.    Healthy      Online             953.87 GB GPT"
+    "0      NVMe SSD 1TB    0000_0001.    Healthy      Online             1000.00 GB GPT"
 )
 
 
@@ -839,3 +839,172 @@ def test_voice_a_real_hole_is_still_found(sentence: str) -> None:
     from pilot.reply_rules import hole
 
     assert hole(sentence)
+
+
+# ── The third live run (round thirteen): its new faults through the router, the planner and the handlers ──────
+
+_LOCAL = "http://127.0.0.1:8797/busy"
+_UPTIME = (
+    "=== System Time ===\n  Current Local Time: Tuesday, March 3, 2026 4:05:09 PM\n  Timezone: Newfoundland Standard Time\n"
+    "  Up for: 2 day(s), 3 hour(s), 0 minute(s)"
+)
+_OS = "=== Operating System ===\n  system: Windows\n  release: 11\n  hostname: studio-pc\n  machine: AMD64"
+
+
+async def _drive_gateway(source: str):
+    """A GET to this computer through the server with the real gateway: (response, executor runs, cards)."""
+    from unittest.mock import MagicMock
+
+    from pilot.security.gateway import AgentGateway
+    from tests.test_reply_never_empty import _approvals, _Executor, _Planner, _server, _ws
+
+    get = Action(
+        action_type=ActionType.API_REQUEST,
+        target=_LOCAL,
+        parameters=ApiRequestParams(method="GET", url=_LOCAL, allow_private_network=True),
+    )
+    executor = _Executor()
+    server = _server(_Planner(ActionPlan(actions=[get], explanation="GET it.")), executor, confirm=True)
+    server._agent_gateway = AgentGateway(server.config, MagicMock())
+    ws = _ws(server, confirmation=True)
+    params = {"input": f"Make an HTTP GET request to {_LOCAL}", **({"source": source} if source else {})}
+    response = await server._handle_execute(params, ws)
+    return response, executor.runs, _approvals(ws)
+
+
+@pytest.mark.asyncio
+async def test_r13_a_spoken_local_get_is_refused_with_no_card_in_one_sentence() -> None:
+    response, runs, cards = await _drive_gateway("voice")
+    assert (runs, cards) == (0, 0)
+    assert response["denied_kind"] == "gateway_denied"
+    sentence = "I didn't call 127.0.0.1: my safety rules don't allow that from here, so nothing was sent. Asking again won't change it."
+    assert response["spoken"] == sentence
+    assert response["message"].startswith(sentence)
+    assert "integration_agent" not in response["message"] and "tier=" not in response["message"]
+
+
+@pytest.mark.asyncio
+async def test_r13_the_same_get_typed_asks_once_and_runs() -> None:
+    response, runs, cards = await _drive_gateway("")
+    assert (runs, cards) == (1, 1)
+    assert response["status"] == "success"
+    assert "safety rules" not in response["spoken"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("request_words", "categories", "output", "spoken"),
+    [
+        ("How long has this computer been running?", ["time"], _UPTIME, "This computer has been up for 2 days and 3 hours."),
+        ("What is this computer's host name?", ["os"], _OS, "This computer is called studio-pc."),
+    ],
+)  # fmt: skip
+async def test_r13_uptime_and_the_host_name_are_read_and_answered(request_words, categories, output, spoken) -> None:
+    from pilot.conversation.router import TurnKind, route
+
+    assert route(request_words).kind is not TurnKind.CONVERSATION
+    handlers = _Handlers({ActionType.SYSTEM_INFO: output})
+    response, model, _cards = await _drive(
+        request_words, {"actions": [_step("system_info", "system", categories=categories)]}, handlers=handlers
+    )
+    assert "system_info" in json.dumps(model.sent[0])
+    assert response["spoken"] == spoken
+    assert response["message"].splitlines()[0] == spoken
+
+
+@pytest.mark.asyncio
+async def test_r13_the_ram_total_is_the_total() -> None:
+    memory = "=== Memory ===\n  Total: 16.0 GB\n  Used:  12.0 GB (75.0%)\n  Free:  4.0 GB"
+    handlers = _Handlers({ActionType.MEMORY_USAGE: memory})
+    response, _model, _cards = await _drive(
+        "How much RAM does this computer have?", {"actions": [_step("memory_usage", "memory")]}, handlers=handlers
+    )
+    assert response["spoken"] == "This computer has 16.0 gigabytes of memory; 12.0 are in use."
+
+
+@pytest.mark.asyncio
+async def test_r13_a_tell_me_trigger_is_a_notice_made_said_and_fired_by_the_file(tmp_path, monkeypatch) -> None:
+    from pilot.result_sentences import trigger_fire_sentence
+    from pilot.system import triggers
+
+    engine = triggers.TriggerEngine()
+    engine.attach_store(tmp_path / "triggers.json")
+    monkeypatch.setattr(triggers, "_engine", engine)
+    watched = str(tmp_path / "watched.txt")
+
+    class _MakeTriggers(_Handlers):
+        async def execute(self, plan, **kwargs):
+            results = []
+            for action in plan.actions:
+                self.ran.append(action)
+                p = action.parameters
+                output = await triggers.trigger_create(
+                    p.name, p.trigger_type, p.condition, p.action_command, notify_only=p.notify_only
+                )
+                results.append(ActionResult(action=action, success=True, output=output))
+            return results
+
+    answer = {
+        "actions": [
+            _step(
+                "trigger_create",
+                "watched_notice",
+                name="watched_notice",
+                trigger_type="file_modified",
+                condition={"path": watched},
+                action_command="Tell me when it changes",
+            )
+        ]
+    }
+    handlers = _MakeTriggers()
+    response, _model, _cards = await _drive(f"Tell me when {watched} changes", answer, handlers=handlers)
+    assert [a.parameters.notify_only for a in handlers.ran] == [True]  # made a notice whatever the model wrote
+    assert response["spoken"] == "I'll tell you when watched.txt changes."
+    [made] = engine.list_triggers()
+    assert trigger_fire_sentence(made, "notice") == "watched.txt changed."
+
+
+@pytest.mark.asyncio
+async def test_r13_deleting_one_of_two_triggers_on_a_file_says_what_remains(tmp_path, monkeypatch) -> None:
+    from pilot.system import triggers
+
+    engine = triggers.TriggerEngine()
+    engine.attach_store(tmp_path / "triggers.json")
+    monkeypatch.setattr(triggers, "_engine", engine)
+    watched = str(tmp_path / "watched.txt")
+    notice = engine.create_trigger("watched_notice", "file_modified", {"path": watched}, "tell me", notify_only=True)
+    engine.create_trigger("watched_log", "file_modified", {"path": watched}, "add a line to fired.log")
+
+    class _DeleteTriggers(_Handlers):
+        async def execute(self, plan, **kwargs):
+            results = []
+            for action in plan.actions:
+                self.ran.append(action)
+                output = await triggers.trigger_delete(action.parameters.trigger_id)
+                results.append(ActionResult(action=action, success=True, output=output))
+            return results
+
+    answer = {"actions": [_step("trigger_delete", notice.id, trigger_id=notice.id)]}
+    response, _model, _cards = await _drive(
+        f"Delete the trigger with the id {notice.id}.", answer, handlers=_DeleteTriggers()
+    )
+    assert response["spoken"] == (
+        "I've removed the trigger that tells you when watched.txt changes. The other one still watches it."
+    )
+    assert [t["name"] for t in engine.list_triggers()] == ["watched_log"]
+
+
+@pytest.mark.asyncio
+async def test_r13_a_refused_retry_is_said_after_the_failure() -> None:
+    copy = _step("file_copy", W2 + "\\a.txt", path=W2 + "\\a.txt", destination=W2 + "\\b.txt")
+    response, model, cards = await _drive(
+        f"Copy {W2}\\a.txt to {W2}\\b.txt",
+        {"actions": [copy]},
+        _SHELL_REPAIR,
+        handlers=_Handlers(),
+        mismatch=(ActionType.FILE_COPY,),
+    )
+    assert len(model.sent) == 2 and cards == 0
+    first, _, rest = response["spoken"].partition(". ")
+    assert first == "That didn't work for b.txt: the check afterwards found something else"
+    assert "I did not try again" in rest
