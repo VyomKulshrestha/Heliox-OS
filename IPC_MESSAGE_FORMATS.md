@@ -3840,6 +3840,12 @@ Fired immediately before each action is executed.
 }
 ```
 
+`parameters` holds the action's own fields. A `file_write` with `"append": true` adds `content` as new lines at
+the end of the file instead of replacing it: the file is made when missing, exactly one line break separates the
+earlier text from the new, and the file's line endings and encoding are kept. Its output reads `"Appended 1 line to
+<path> (appended sha256 ..., N bytes; file sha256 ..., M bytes)"`. `file_read` takes `head_lines` or `tail_lines`
+for the first or last lines of a file.
+
 ---
 
 ### `action_complete`
