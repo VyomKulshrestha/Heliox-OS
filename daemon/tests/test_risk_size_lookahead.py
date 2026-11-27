@@ -291,8 +291,8 @@ def test_shell_size_parsing_posix_flavour():
 @pytest.mark.parametrize(
     ("path", "label"),
     [
-        ("C:\\Users\\marcu\\Videos", "Videos"),
-        ("C:\\Users\\marcu\\Videos\\", "Videos"),
+        ("C:\\Users\\sam\\Videos", "Videos"),
+        ("C:\\Users\\sam\\Videos\\", "Videos"),
         ("/home/runner/Videos/", "Videos"),
         ("D:/mixed\\sep/photos", "photos"),
         ("C:\\", "C:"),

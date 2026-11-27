@@ -241,7 +241,7 @@ async def _follow_up(results: list[ActionResult], *, undo_enabled=lambda: True, 
 
 @pytest.mark.asyncio
 async def test_file_write_follow_up_names_the_real_file_and_has_no_generic_lines():
-    path = "C:\\Users\\marcu\\Desktop\\launch-checklist.txt"
+    path = "C:\\Users\\sam\\Desktop\\launch-checklist.txt"
     result = _done(
         ActionType.FILE_WRITE,
         path,
