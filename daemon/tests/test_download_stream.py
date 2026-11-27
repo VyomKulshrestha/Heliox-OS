@@ -3,6 +3,7 @@ when it is refused or cut. Fakes only: a fake resolver and a fake transport that
 
 from __future__ import annotations
 
+import gc
 import hashlib
 from collections import namedtuple
 
@@ -21,10 +22,18 @@ class Chunks(httpx.AsyncByteStream):
         self.pieces = pieces
         self.read = 0
 
-    async def __aiter__(self):
-        for piece in self.pieces:
-            self.read += 1
-            yield piece
+    def __aiter__(self):
+        # An iterator object, not an async generator: the fake stream leaves nothing for the collector to finalize.
+        self._next = iter(self.pieces)
+        return self
+
+    async def __anext__(self) -> bytes:
+        try:
+            piece = next(self._next)
+        except StopIteration:
+            raise StopAsyncIteration from None
+        self.read += 1
+        return piece
 
     async def aclose(self) -> None:
         return None
@@ -38,9 +47,16 @@ def _leftovers(folder) -> list[str]:
     return sorted(path.name for path in folder.iterdir())
 
 
+# A stream reader left for the garbage collector (an aiter_raw nobody closed) warns when it is finalized: here that
+# fails the test, and each test collects at its end so the warning lands inside it.
+pytestmark = pytest.mark.filterwarnings("error::RuntimeWarning", "error::pytest.PytestUnraisableExceptionWarning")
+
+
 @pytest.fixture(autouse=True)
 def _small_limit(monkeypatch):
     monkeypatch.setattr(download, "DEFAULT_MAX_BYTES", 100)
+    yield
+    gc.collect()
 
 
 async def test_a_streamed_download_is_written_whole_and_hashed(monkeypatch, tmp_path) -> None:
@@ -136,3 +152,20 @@ def test_raising_the_limit_above_the_default_needs_approval() -> None:
     assert tier(None) == PermissionTier.USER_WRITE
     assert tier(DOWNLOAD_DEFAULT_MAX_BYTES) == PermissionTier.USER_WRITE
     assert tier(6 * 1024**3) == PermissionTier.SYSTEM_MODIFY
+
+
+def test_a_raised_size_limit_is_asked_every_time_and_the_card_says_the_size() -> None:
+    from pilot.server import _approval_effect
+
+    def step(max_bytes):
+        params = DownloadParams(url="https://files.example/x", output_path="x", max_bytes=max_bytes)
+        return Action(action_type=ActionType.DOWNLOAD_FILE, parameters=params)
+
+    # Asked like a step with the local flag: no setting that skips a tier's approval skips it.
+    assert step(6 * 1024**3).is_irreversible and step(6 * 1024**3).requires_confirmation
+    assert not step(None).is_irreversible and not step(DOWNLOAD_DEFAULT_MAX_BYTES).is_irreversible
+    assert (
+        _approval_effect(step(6 * 1024**3))
+        == "A download of up to 6 gigabytes, more than the usual limit of 2 gigabytes."
+    )
+    assert _approval_effect(step(None)) == ""

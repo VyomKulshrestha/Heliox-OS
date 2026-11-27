@@ -1232,6 +1232,12 @@ class Action(BaseModel):
             getattr(self.parameters, "allow_private_network", False)
         ):
             return True
+        # A download allowed beyond the default size limit is asked every time, whatever a tier's setting says.
+        if (
+            self.action_type == ActionType.DOWNLOAD_FILE
+            and int(getattr(self.parameters, "max_bytes", None) or 0) > DOWNLOAD_DEFAULT_MAX_BYTES
+        ):
+            return True
         if self.local_address_reason is not None:
             return True
         if self.action_type in {ActionType.API_REQUEST, ActionType.API_GITHUB}:

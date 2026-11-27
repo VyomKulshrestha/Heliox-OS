@@ -19,10 +19,11 @@ lookup first.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import socket
 import ssl
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 from urllib.parse import urljoin
 
@@ -268,6 +269,46 @@ async def fetch(method: str, url: str, **options: Any) -> Any:
     """
     response, _ = await _exchange(method, url, **options)
     return response
+
+
+@contextlib.asynccontextmanager
+async def body_chunks(response: Any) -> AsyncIterator[AsyncIterator[bytes]]:
+    """The decoded body of a streamed ``response``, in chunks. httpx's ``aiter_bytes`` and ``aiter_raw`` each iterate
+    an inner async generator that closing them does not close, so a read cut short (a size limit, an error) left those
+    for the garbage collector. Here the transport's stream iterator and the decoding are each closed, in order, on every
+    exit; the response itself is closed by the ``client.stream`` block around the read."""
+    if hasattr(response, "_content"):  # a body already read in full (a response made with its content)
+
+        async def whole() -> AsyncIterator[bytes]:
+            if response.content:
+                yield response.content
+
+        chunks = whole()
+        try:
+            yield chunks
+        finally:
+            await chunks.aclose()
+        return
+    stream = response.stream.__aiter__()
+    decoder = response._get_content_decoder()  # httpx's decoder for the response's content-encoding
+
+    async def decoded() -> AsyncIterator[bytes]:
+        async for part in stream:
+            data = decoder.decode(part)
+            if data:
+                yield data
+        tail = decoder.flush()
+        if tail:
+            yield tail
+
+    chunks = decoded()
+    try:
+        yield chunks
+    finally:
+        await chunks.aclose()
+        closing = getattr(stream, "aclose", None)
+        if closing is not None:
+            await closing()
 
 
 async def fetch_streamed(method: str, url: str, consume: Consumer, **options: Any) -> Any:

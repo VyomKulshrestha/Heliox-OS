@@ -122,7 +122,7 @@ async def download_file(
         size = 0
         try:
             with handle:
-                async with contextlib.aclosing(resp.aiter_bytes()) as chunks:
+                async with outbound.body_chunks(resp) as chunks:
                     async for chunk in chunks:
                         size += len(chunk)
                         if size > limit:
