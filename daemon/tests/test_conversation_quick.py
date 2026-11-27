@@ -171,8 +171,8 @@ def test_state_readings_are_said_in_words():
     assert quick.speakable_state("=== Battery ===\n  Charge: 84%\n  Status: Discharging") == (
         "The battery is at 84 percent, discharging."
     )
-    disk = "=== Disk ===\n  C:\\ (C:\\) - 952.6 GB total, 754.8 GB used (79.2%), fstype=NTFS"
-    assert quick.speakable_state(disk) == "You have 198 gigabytes free on drive C."
+    disk = "=== Disk ===\n  C:\\ (C:\\) - 500.0 GB total, 400.0 GB used (80.0%), fstype=NTFS"
+    assert quick.speakable_state(disk) == "You have 100 gigabytes free on drive C."
     assert quick.speakable_state("Opened Notepad") == ""
 
 

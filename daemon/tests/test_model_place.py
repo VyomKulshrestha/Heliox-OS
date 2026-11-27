@@ -64,7 +64,7 @@ def resolver(monkeypatch) -> FakeResolver:
     ("http://192.168.1.20:11434", False),
     ("http://10.0.0.2:11434", False),
     ("http://172.17.0.1:11434", False),  # a container bridge
-    ("http://172.29.240.1:11434", False),  # a WSL bridge
+    ("http://172.20.0.1:11434", False),  # a WSL bridge
     ("http://[fe80::1%25eth0]:11434", False),
     ("http://[::ffff:192.168.1.20]:11434", False),
     ("http://100.101.102.103:11434", False),  # a tunnel or overlay network address
