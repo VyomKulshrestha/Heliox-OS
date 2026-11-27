@@ -335,7 +335,7 @@ async def downloaded_file_present(result: ActionResult) -> Outcome:
     A declared ``sha256`` must match. A file that is an HTML page where a PDF, an archive or another non-HTML
     file was asked for (a sign-in or error page served with status 200) is a mismatch. With no length from the
     server (a chunked answer), the file is compared with the bytes received, which httpx only returns when the
-    chunked body ended properly. A download made by the system's own tool records nothing: not verified.
+    chunked body ended properly. A download whose output records nothing is not verified.
     """
     params: DownloadParams = result.action.parameters  # type: ignore[assignment]
     if not params.output_path:

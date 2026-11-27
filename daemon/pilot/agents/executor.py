@@ -2444,7 +2444,11 @@ class Executor:
 
         params: DownloadParams = action.parameters  # type: ignore[assignment]
         return await download_file(
-            params.url, params.output_path, params.overwrite, allow_private_network=params.allow_private_network
+            params.url,
+            params.output_path,
+            params.overwrite,
+            allow_private_network=params.allow_private_network,
+            max_bytes=params.max_bytes,
         )
 
     # ======================================================================

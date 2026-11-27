@@ -249,22 +249,18 @@ async def test_a_copied_file_with_different_bytes_is_a_mismatch(tmp_path) -> Non
 # ── download_file ────────────────────────────────────────────────────
 
 
-class _Download:
-    def __init__(self, body: bytes, headers: dict[str, str], url: str = "https://files.example/report.pdf") -> None:
-        self.content = body
-        self.headers = headers
-        self.url = url
-        self.status_code = 200
+def _serve(monkeypatch: pytest.MonkeyPatch, body: bytes, headers: dict[str, str], name: str) -> None:
+    """A fake transport that streams the body: the address first redirects to a signed one, as file hosts do."""
+    import httpx
 
-
-def _serve(monkeypatch: pytest.MonkeyPatch, response: _Download) -> None:
     from tests import fake_outbound
 
-    class _Client:
-        async def request(self, _method: str, _url: str, **_kwargs: object) -> _Download:
-            return response
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not request.url.query:
+            return httpx.Response(302, headers={"location": f"/{name}?sig=secret"})
+        return httpx.Response(200, headers=headers, stream=httpx.ByteStream(body))
 
-    fake_outbound.install(monkeypatch, _Client())
+    fake_outbound.install(monkeypatch, handler=handler)
 
 
 def _download_action(path, url: str = "https://files.example/report.pdf", sha256: str | None = None) -> Action:
@@ -278,7 +274,7 @@ def _download_action(path, url: str = "https://files.example/report.pdf", sha256
 async def _download(monkeypatch, tmp_path, body: bytes, headers: dict[str, str], name: str = "report.pdf"):
     from pilot.system.download import download_file
 
-    _serve(monkeypatch, _Download(body, headers, f"https://files.example/{name}?sig=secret"))
+    _serve(monkeypatch, body, headers, name)
     action = _download_action(tmp_path / name, f"https://files.example/{name}")
     output = await download_file(action.parameters.url, action.parameters.output_path)
     return action, output
@@ -324,8 +320,11 @@ async def test_a_chunked_download_without_length_is_compared_with_the_bytes_rece
 
 @pytest.mark.asyncio
 async def test_a_compressed_download_is_not_held_to_the_compressed_length(monkeypatch, tmp_path) -> None:
-    body = b"%PDF " + b"y" * 1000  # httpx hands over the decoded body; the header counts the gzip bytes
-    action, output = await _download(monkeypatch, tmp_path, body, {"content-length": "37", "content-encoding": "gzip"})
+    import gzip
+
+    body = gzip.compress(b"%PDF " + b"y" * 1000)  # httpx hands over the decoded body; the header counts the gzip bytes
+    headers = {"content-length": str(len(body)), "content-encoding": "gzip"}
+    action, output = await _download(monkeypatch, tmp_path, body, headers)
 
     verification = await _verify(action, output)
 
@@ -362,7 +361,7 @@ async def test_a_declared_hash_is_compared(tmp_path) -> None:
     path.write_bytes(b"PK zip body")
     good = hashlib.sha256(b"PK zip body").hexdigest()
 
-    # Downloaded by the system's tool (nothing recorded): the declared hash is what can be checked.
+    # An output that records nothing: the declared hash is what can be checked.
     verified = await _verify(_download_action(path, sha256=good.upper()), "Downloaded x -> y (11 bytes)")
     wrong = await _verify(_download_action(path, sha256="0" * 64), "Downloaded x -> y (11 bytes)")
     nothing = await _verify(_download_action(path), "Downloaded x -> y (11 bytes)")

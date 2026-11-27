@@ -22,6 +22,7 @@ import asyncio
 import ipaddress
 import socket
 import ssl
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urljoin
 
@@ -37,6 +38,9 @@ from pilot.timeouts import bounded
 _REAL_CLIENT_FACTORY = create_httpx_client
 # The resolver. Each request looks each host up once, here; the suite replaces it with a fake.
 _getaddrinfo = socket.getaddrinfo
+
+# Reads a streamed response's body while its connection is open (fetch_streamed).
+Consumer = Callable[[Any], Awaitable[Any]]
 
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 MAX_REDIRECTS = 5
@@ -191,7 +195,10 @@ async def _send_once(
     request_kwargs: dict[str, Any],
     timeout: float | None,
     config: object,
-) -> Any:
+    consume: Consumer | None = None,
+) -> tuple[Any, Any]:
+    """(response, what ``consume`` made of it). With ``consume`` the body is streamed: ``consume`` reads it while the
+    connection is open, and is not called for a redirect, whose body is never read."""
     host = _host(parsed)
     proxy = proxy_for(config, parsed.scheme, host)
     client_kwargs: dict[str, Any] = {
@@ -220,12 +227,18 @@ async def _send_once(
             call["extensions"] = extensions
         try:
             async with create_httpx_client(config, **client_kwargs) as client:
-                response = await client.request(method, target, **call)
+                if consume is None:
+                    response = await client.request(method, target, **call)
+                    _restore_url(response, url)
+                    return response, None
+                async with client.stream(method, target, **call) as response:
+                    _restore_url(response, url)
+                    if response.status_code in REDIRECT_STATUSES and response.headers.get("location"):
+                        return response, None
+                    return response, await consume(response)
         except httpx.ConnectError as exc:
             last_error = exc
             continue
-        _restore_url(response, url)
-        return response
     assert last_error is not None
     raise last_error
 
@@ -247,10 +260,28 @@ def _same_place(first: httpx.URL, other: httpx.URL) -> bool:
     return first.scheme == "http" and other.scheme == "https" and first.port is None and other.port is None
 
 
-async def fetch(
+async def fetch(method: str, url: str, **options: Any) -> Any:
+    """Send one request for a plan step and follow its redirects, every hop checked. Returns the final response.
+
+    Takes the options of ``_exchange``. Raises ``OutboundRefused`` for an address on this computer or the local
+    network that was not approved.
+    """
+    response, _ = await _exchange(method, url, **options)
+    return response
+
+
+async def fetch_streamed(method: str, url: str, consume: Consumer, **options: Any) -> Any:
+    """As ``fetch``, with the final response's body streamed to ``consume`` (an async callable given the open
+    response) instead of read into memory. Returns what ``consume`` returned."""
+    _, consumed = await _exchange(method, url, consume=consume, **options)
+    return consumed
+
+
+async def _exchange(
     method: str,
     url: str,
     *,
+    consume: Consumer | None = None,
     allow_private_network: bool = False,
     headers: dict[str, str] | None = None,
     params: Any = None,
@@ -259,11 +290,7 @@ async def fetch(
     auth: Any = None,
     timeout: float | None = 30,
     config: object | None = None,
-) -> Any:
-    """Send one request for a plan step and follow its redirects, every hop checked. Returns the final response.
-
-    Raises ``OutboundRefused`` for an address on this computer or the local network that was not approved.
-    """
+) -> tuple[Any, Any]:
     method = method.upper()
     current = parse(url)
     from pilot.system.system_guard import check_http
@@ -284,12 +311,12 @@ async def fetch(
 
     for hop in range(MAX_REDIRECTS + 1):
         found = await addresses_for(current, allow_private_network=allow_private_network, timeout=timeout, known=known)
-        response = await _send_once(
-            current_method, current, current_url, found, sent_headers, request_kwargs, timeout, config
+        response, consumed = await _send_once(
+            current_method, current, current_url, found, sent_headers, request_kwargs, timeout, config, consume
         )
         location = response.headers.get("location")
         if response.status_code not in REDIRECT_STATUSES or not location:
-            return response
+            return response, consumed
         if hop == MAX_REDIRECTS:
             raise ValueError(f"Outbound request exceeded {MAX_REDIRECTS} redirects")
 

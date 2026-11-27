@@ -520,7 +520,7 @@ async def test_a_feed_on_a_local_address_is_refused(monkeypatch) -> None:
 
     fake_outbound.install(monkeypatch, handler=lambda r: httpx.Response(200, text="<rss/>"))
     agent = object.__new__(RssAgent)
-    agent._config = SimpleNamespace()
+    agent._config = SimpleNamespace(rss=SimpleNamespace(local_feeds=[]))
 
     with pytest.raises(outbound.OutboundRefused):
         await agent._fetch_feed("http://router.lan/feed.xml")
@@ -597,7 +597,7 @@ async def test_the_executor_passes_the_download_approval_on(monkeypatch) -> None
     monkeypatch.setattr(download, "download_file", fake)
 
     assert await Executor._exec_download_file(object.__new__(Executor), action) == "ok"
-    fake.assert_awaited_once_with("http://127.0.0.1/f", "out.bin", False, allow_private_network=True)
+    fake.assert_awaited_once_with("http://127.0.0.1/f", "out.bin", False, allow_private_network=True, max_bytes=None)
 
 
 def test_nat64_extraction_follows_rfc_6052_for_every_prefix_length() -> None:

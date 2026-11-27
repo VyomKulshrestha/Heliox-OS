@@ -680,6 +680,10 @@ class DiskManageParams(BaseModel):
     mount_point: str | None = None
 
 
+# The largest file download_file keeps without the person's approval (pilot.system.download says why 2 GiB).
+DOWNLOAD_DEFAULT_MAX_BYTES = 2 * 1024**3
+
+
 class DownloadParams(BaseModel):
     """Download a file from a URL."""
 
@@ -689,6 +693,9 @@ class DownloadParams(BaseModel):
     # As for api_request: true lets the download reach an address on this computer or the local network, and the step
     # then needs the person's approval (Action.permission_tier, pilot.system.outbound).
     allow_private_network: bool = False
+    # A larger size limit than DOWNLOAD_DEFAULT_MAX_BYTES, for a file the person asked for knowingly ("download this
+    # 6 GB image"); above the default the step needs the person's approval.
+    max_bytes: int | None = None
     # Optional: the file's published sha256; the post-condition check compares the downloaded file with it.
     sha256: str | None = None
 
@@ -1152,8 +1159,9 @@ class Action(BaseModel):
             ActionType.DOWNLOAD_FILE,
             ActionType.WASM_CALL,
         }
-        if self.action_type == ActionType.DOWNLOAD_FILE and bool(
-            getattr(self.parameters, "allow_private_network", False)
+        if self.action_type == ActionType.DOWNLOAD_FILE and (
+            bool(getattr(self.parameters, "allow_private_network", False))
+            or int(getattr(self.parameters, "max_bytes", None) or 0) > DOWNLOAD_DEFAULT_MAX_BYTES
         ):
             return PermissionTier.SYSTEM_MODIFY
         if self.local_address_reason is not None:

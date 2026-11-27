@@ -146,7 +146,7 @@ def test_every_allowed_place_still_exists() -> None:
 def test_the_download_action_and_the_senders_use_the_checked_module() -> None:
     for rel in ("system/download.py", "system/api_client.py", "agents/rss_agent.py"):
         text = (PILOT / rel).read_text(encoding="utf-8")
-        assert "outbound.fetch(" in text, rel
+        assert "outbound.fetch" in text, rel
     for rel in ("agents/postconditions/declared.py", "agents/postconditions/messaging.py"):
         assert "outbound.fetch(" in (PILOT / rel).read_text(encoding="utf-8"), rel
 
