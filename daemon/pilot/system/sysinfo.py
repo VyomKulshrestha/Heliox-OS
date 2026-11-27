@@ -115,7 +115,17 @@ async def _time_info() -> str:
     import datetime
 
     now = datetime.datetime.now()
-    return f"=== System Time ===\n  Current Local Time: {now.strftime('%A, %B %d, %Y %I:%M:%S %p')}\n  Timezone: {now.astimezone().tzname()}"
+    text = f"=== System Time ===\n  Current Local Time: {now.strftime('%A, %B %d, %Y %I:%M:%S %p')}\n  Timezone: {now.astimezone().tzname()}"
+    # How long the computer has been on: "how long has my computer been up?" had no reader.
+    try:
+        import psutil
+
+        seconds = max(0, int(now.timestamp() - psutil.boot_time()))
+        days, rest = divmod(seconds, 86_400)
+        text += f"\n  Up for: {days} day(s), {rest // 3600} hour(s), {rest % 3600 // 60} minute(s)"
+    except Exception:  # noqa: BLE001
+        pass
+    return text
 
 
 def _collect_cpu_info(sample_interval: float | None = SYSTEM_INFO_CPU_SAMPLE_SECONDS) -> str:
