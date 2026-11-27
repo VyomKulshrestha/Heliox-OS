@@ -254,8 +254,9 @@ def for_screen(text: str, *, limit: int = SHOWN_LIMIT) -> str:
 # taken out), a space before a comma, a doubled space, a sentence that ends on a word that needs another after it.
 _HOLES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("a time missing after now", re.compile(r"\b(?:it'?s|is|was) now\s*[,.;]", re.IGNORECASE)),
-    # Not an ellipsis (" ...work"): a space left where a word was taken out before a comma or a full stop.
-    ("a space before a mark", re.compile(r"\s[,;:!?]|\s\.(?!\.)")),
+    # Not an ellipsis (" ...work"), and not a name or a selector that starts with a dot (".env", ".price-table",
+    # "main .title"): a space left where a word was taken out before a comma or a full stop.
+    ("a space before a mark", re.compile(r"\s[,;:!?]|\s\.(?![.\w])")),
     # Two spaces inside a sentence (two after a full stop are a typing habit, and indented lines are never spoken).
     ("a doubled space", re.compile(r"[^\s.!?:] {2,}\S")),
     (

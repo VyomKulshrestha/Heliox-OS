@@ -815,3 +815,27 @@ def test_b_a_quoted_value_with_a_double_quote_in_it_is_found_in_its_step() -> No
     )
     assert check_plan("Append the line 'see a/b \"now\"' to C:/w/note.txt", [append]) is None
     assert check_plan("Append the line 'see a/b \"later\"' to C:/w/note.txt", [append]).rule == "value_dropped"
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "I couldn't find .env in work. Check the name, or tell me where it is.",
+        "Nothing on example.com matches .price-table td.amount. The page loaded; what it does hold is on screen.",
+        "On example.com, main .title reads: Example Domain.",
+        "Found 2 matches for .txt in work: note.txt and old.txt.",
+        "The last 5 lines of app.log; the newest is: done.",
+        "It's 9:40 right now.",
+    ],
+)
+def test_voice_a_name_or_selector_with_a_leading_dot_is_not_a_hole(sentence: str) -> None:
+    from pilot.reply_rules import hole
+
+    assert hole(sentence) == ""
+
+
+@pytest.mark.parametrize("sentence", ["And it's now, so a morning session may be tight.", "Your report is due ."])
+def test_voice_a_real_hole_is_still_found(sentence: str) -> None:
+    from pilot.reply_rules import hole
+
+    assert hole(sentence)
