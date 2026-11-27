@@ -1,4 +1,5 @@
-"""A plan step's requests reach only public addresses unless the person approved a local one (pilot.system.outbound).
+"""Heliox's own HTTP senders reach only public addresses unless the person approved a local one
+(pilot.system.outbound).
 
 Fakes only: a fake resolver and a fake transport (tests/fake_outbound.py). No request, name lookup, browser or
 download leaves the test.

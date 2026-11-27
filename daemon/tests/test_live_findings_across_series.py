@@ -1076,7 +1076,7 @@ async def test_r13_a_local_address_only_in_text_heliox_read_is_refused_at_the_ne
     assert ear_faults(response["spoken"]) == [] and screen_faults(response["message"]) == []
 
 
-# ── sec13net: every request through outbound.fetch; the round-twelve HTTP sentences still hold ──────────────────
+# ── sec13net: Heliox's HTTP senders through outbound.fetch; the round-twelve HTTP sentences still hold ──────────────────
 
 
 @pytest.mark.asyncio

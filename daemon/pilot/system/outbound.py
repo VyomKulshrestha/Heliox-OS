@@ -1,7 +1,7 @@
-"""The one way a plan step's request leaves this computer.
+"""The path Heliox's own HTTP senders take for a plan step's request.
 
-Every request a step makes goes through ``fetch``: api_request, api_scrape, download_file, webhook, Slack, Discord
-and GitHub sends, the checks that read a sent message or a written resource back, and feed fetches. It:
+These senders go through ``fetch``: api_request, api_scrape, download_file, webhook, Slack, Discord and GitHub
+sends, the checks that read a sent message or a written resource back, and feed fetches. ``fetch``:
 
 - accepts http and https only, with no credentials written into the address;
 - looks the host name up once and judges every address the name gives (pilot.security.addresses). The connection

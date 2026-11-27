@@ -1,4 +1,5 @@
-"""Only pilot.system.outbound opens a connection for a plan step.
+"""In daemon/pilot, an HTTP client is built and a download program started only in pilot.system.outbound or in the
+places listed here.
 
 Every module under daemon/pilot is read (not imported). A call that builds an HTTP client or opens a connection, or
 that starts a download program (curl, wget, certutil, bitsadmin, PowerShell's web cmdlets), is allowed only in the

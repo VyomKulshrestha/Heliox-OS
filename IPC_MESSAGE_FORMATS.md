@@ -3868,8 +3868,8 @@ the end of the file instead of replacing it: the file is made when missing, exac
 earlier text from the new, and the file's line endings and encoding are kept. Its output reads `"Appended 1 line to
 <path> (appended sha256 ..., N bytes; file sha256 ..., M bytes)"`. `file_read` takes `head_lines` or `tail_lines`
 for the first or last lines of a file.
-`download_file` takes `allow_private_network` (on only when the address on this computer or the person's own
-network is in the person's own request; the planner sets it in code) and `max_bytes` (a larger size limit than
+`download_file` takes `allow_private_network` (on only when the person's own words for the request name that
+whole address on this computer or their own network; the planner sets it in code) and `max_bytes` (a larger size limit than
 the default of 2 GiB). Either makes the step one that is asked every time, and the card says the address or the size
 ("A download of up to 6 gigabytes, more than the usual limit of 2 gigabytes."). `open_url`, `browser_navigate` and
 `browser_new_tab` to such an address are asked every time too, and the card names it. A request the network layer
