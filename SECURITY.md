@@ -358,8 +358,7 @@ Combined, an autonomous or web-agent-sourced plan could drive the browser (navig
 - **Tamper-evident audit trail.** `pilot.security.gateway_audit.AgentGatewayAuditStore` is a separate HMAC-SHA256 hash-chained SQLite log (same chain-of-custody design as the existing `PermissionEscalationAuditStore`, but its own database/key file) recording every gateway decision — source profile, action family, tier, whether an override was applied/whether it actually narrowed anything, allow/deny outcome, and a full policy snapshot. `verify_gateway_audit` walks the chain and detects any row that was deleted, reordered, or modified after the fact. Kept as an independent chain so a compromise of one audit key doesn't help forge the other.
 - **Dry-run/simulation extended.** `SimulationSandbox` previously modeled shell/file impacts only; it now produces meaningful risk assessments for browser (navigation targets, script previews) and system-control (mouse/keyboard, process, registry) actions too, so a dry-run plan touching these surfaces gets real impact analysis instead of a generic fallback description.
 
-**Known scope limit.** Legacy direct callers in `agents/self_heal.py`,
-`network/mesh.py`, `network/collab_executor.py`, and
+**Known scope limit.** Legacy direct callers in `network/mesh.py`, `network/collab_executor.py`, and
 `swarm/swarm_router_agent.py`, plus a few server utility paths, still omit an
 explicit `InvocationSource` and therefore inherit the interactive-equivalent
 floor. Their Tier 2+ actions remain subject to normal permission,
