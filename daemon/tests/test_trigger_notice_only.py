@@ -105,8 +105,9 @@ async def test_two_triggers_on_one_file_each_say_which_fired(engine, tmp_path: P
     from pilot.result_sentences import trigger_fire_sentence
 
     assert trigger_fire_sentence(notice, "notice") == "watched.txt changed (the trigger set to tell you)."
-    assert trigger_fire_sentence(adder, "ran").startswith(
-        'The trigger that watches watched.txt and is set to add "seen" to fired.log fired'
+    # The job it did tells it apart from the notice: "and is set to ..." is not said again.
+    assert trigger_fire_sentence(adder, "ran") == (
+        'The trigger that watches watched.txt fired, and I did what it asks: add "seen" to fired.log.'
     )
 
 

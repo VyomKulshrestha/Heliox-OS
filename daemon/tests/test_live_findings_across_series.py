@@ -328,7 +328,7 @@ async def test_5_and_8_a_trigger_made_through_the_handler_is_said_not_dumped() -
     response = await server._handle_execute({"input": f"Tell me when {WORK}\notes.txt changes"}, _ws(server))
 
     assert response["status"] == "success"
-    assert response["spoken"] == "I'll watch notes.txt and tell you when it changes."
+    assert response["spoken"] == "I'll tell you when notes.txt changes."
     assert "cb220aa1" not in response["spoken"] and "{" not in response["message"]
     _assert_said(response)
 
@@ -787,7 +787,7 @@ _GET_DISK = (
         ("disk_list", {}, _LSBLK, "which drives", "This computer has 2 disks."),
         ("disk_list", {}, _GET_DISK, "which drives", "This computer has 1 disk."),
         ("env_get", {"name": "PATH"}, "PATH=/usr/local/bin:/usr/bin:/bin", "what is in my PATH", "PATH holds 3 folders; the list is on screen."),
-        ("network_info", {}, "=== Network ===\n  Wi-Fi (UP):\n    IPv4: 192.168.1.5\n  Ethernet (DOWN):", "what is my IP address", "Wi-Fi is up, with the address 192.168.1.5."),
+        ("network_info", {}, "=== Network ===\n  Wi-Fi (UP):\n    IPv4: 192.168.1.5\n  Ethernet (DOWN):", "what is my IP address", "Your IP address is 192.168.1.5, on Wi-Fi."),
         ("system_info", {"categories": ["os"]}, "=== Operating System ===\n  system: Windows\n  release: 11", "what operating system am I running", "This computer runs Windows 11."),
     ],
 )  # fmt: skip

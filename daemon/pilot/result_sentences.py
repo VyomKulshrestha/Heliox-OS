@@ -1214,16 +1214,22 @@ def trigger_fire_sentence(trigger: Any, outcome: str, *, error: str = "", second
     entry = trigger_entry(trigger)
     named = trigger_named(entry)
     lead = named[:1].upper() + named[1:] + " fired"
-    _watched, _when, job = _trigger_parts(entry)
+    watched, _when, job = _trigger_parts(entry)
     if outcome == "notice":
         return _notice(entry)
+    # A sentence that says the job tells two triggers on one file apart by it: "and is set to ..." would say it twice.
+    plain = (
+        "The trigger that runs on an interval fired"
+        if "interval" in named
+        else f"The trigger that watches {watched} fired"
+    )
     sentences = {
-        "ran": f"{lead}, and I did what it asks: {job}.",
+        "ran": f"{plain}, and I did what it asks: {job}.",
         "failed": f"{lead}, but a step did not work. {error}".strip(),
         "timeout": f"{lead}, but its steps took longer than {plural(seconds, 'second')}, so I stopped them.",
         "fault": f"{lead}, but something went wrong inside Heliox and its steps stopped.",
         "waits": (
-            f"{lead}, but I did not do what it asks ({job}), because that needs your approval and you did not give "
+            f"{plain}, but I did not do what it asks ({job}), because that needs your approval and you did not give "
             "it when the trigger was made."
         ),
         "unreadable": f"{lead}, but I could not read its stored steps, so nothing ran.",
@@ -1246,6 +1252,8 @@ def _trigger_create(step: Step) -> Said:
         seconds = int(getattr(step.p, "cooldown_seconds", 0) or 0)
         every = f"every {plural(seconds // 60, 'minute')}" if seconds >= 60 else "on its interval"
         sentence = f"I'll {job} {every}."
+    elif job == "tell you" and not entry.get("steps"):
+        sentence = f"I'll tell you {_when_watched(watched, when)}."
     else:
         sentence = f"I'll watch {watched} and {job} {when}."
     if data.get("note"):
@@ -1254,6 +1262,11 @@ def _trigger_create(step: Step) -> Said:
         # A step that needs approval waits at a fire for the person (pilot.server._trigger_waits).
         sentence += " If a step needs your approval, I'll ask you when it fires instead of running it."
     return _said(sentence)
+
+
+def _when_watched(watched: str, when: str) -> str:
+    """ "when it changes" with the thing it watches named: "when watched.txt changes"."""
+    return when.replace(" it ", f" {watched} ", 1) if " it " in when else f"{when} ({watched})"
 
 
 def _what_it_watches(entry: dict) -> str:
@@ -1307,13 +1320,13 @@ def _trigger_delete(step: Step) -> Said:
     if removed is not None:
         if removed.get("trigger_type") == "time_interval":
             return _said("I've removed the trigger that ran on an interval.")
-        watched, _when, job = _trigger_parts(removed)
+        watched, when, job = _trigger_parts(removed)
         watched = removed.get("watched") or watched
         others = int(removed.get("others_watching") or 0)
         if not others:
             return _said(f"I've stopped watching {watched}.")
-        still = "The other one still watches" if others == 1 else f"{others} others still watch"
-        return _said(f"I've removed the trigger that {_third_person(job)}. {still} {watched}.")
+        still = "The other one still watches it" if others == 1 else f"{others} others still watch it"
+        return _said(f"I've removed the trigger that {_third_person(job)} {_when_watched(watched, when)}. {still}.")
     # An older answer names only the id; what the trigger watched is the step's target when the planner named it.
     target = step.target
     if target and re.search(r"\.\w{1,6}$|[\\/]", target):

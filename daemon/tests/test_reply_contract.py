@@ -929,7 +929,7 @@ def test_trigger_sentences() -> None:
     cpu = json.dumps({"id": "9a8b7c6d", "name": "cpu_high_alert", "trigger_type": "cpu_threshold",
                       "condition": {"threshold": 85}, "action_command": ""})  # fmt: skip
     said = step_said(_result(ActionType.TRIGGER_CREATE, TriggerParams(trigger_type="cpu_threshold"), "", cpu))
-    assert said.spoken == "I'll watch the processor and tell you when it goes above 85 percent."
+    assert said.spoken == "I'll tell you when the processor goes above 85 percent."
 
     both = f"[{RUN_TRIGGER}, {cpu}]"
     said = step_said(_result(ActionType.TRIGGER_LIST, TriggerParams(), "", both))
