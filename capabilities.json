@@ -19,7 +19,7 @@
   "sources": {
     "action_registry": {
       "path": "daemon/pilot/actions.py",
-      "sha256": "6a298c213193fbca6904d8aede936bb97e8c3bb952e3f6d783495bcee6f17724"
+      "sha256": "971fb0bf1b3adc7d999347ad13ffd357c89ce15f62c535819a94f7d786cafa09"
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
@@ -56,7 +56,7 @@
       },
       {
         "path": "daemon/pilot/agents/postconditions/declared.py",
-        "sha256": "eb609e57400effbf372e0938a25c0ffee61e766ce3152fab3028ff9ba6216278"
+        "sha256": "94a42812ef4af2ee11760e04492f90fca04a71859792cf0f9296f4c1c725cccc"
       },
       {
         "path": "daemon/pilot/agents/postconditions/desktop_input.py",
@@ -64,7 +64,7 @@
       },
       {
         "path": "daemon/pilot/agents/postconditions/files.py",
-        "sha256": "cf47762c695e2902277e7c28a7e75b6b6746be9fa888f4cec99285b00f9c66cc"
+        "sha256": "5c5e47fb9146f8fee52eb42e46baa3db4133145cbebf7908fcdce0cfeb863a0d"
       },
       {
         "path": "daemon/pilot/agents/postconditions/git_repo.py",
@@ -80,7 +80,7 @@
       },
       {
         "path": "daemon/pilot/agents/postconditions/messaging.py",
-        "sha256": "3affecbd0378d41b3ac348a7130dfc5e4bbdb09acc3d09d6550e31f9d5d4dfe7"
+        "sha256": "b5ca474bf97cb0b67ac0925382cbf1314eb9ab7c46addbe934f37b843a47b719"
       },
       {
         "path": "daemon/pilot/agents/postconditions/reads.py",
