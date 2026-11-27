@@ -142,7 +142,7 @@ describe("LocalVoices", () => {
     download_ok: true,
     download_reason: "",
     speaking: "alba",
-    say: "The voice michael is not on this computer yet; it needs a download of about 7 MB. Heliox keeps speaking with alba.",
+    say: "The voice michael is not on this computer yet; it needs a download of about 7 MB. I'll keep speaking with alba.",
   };
 
   function respondAside(item: Record<string, unknown>) {
@@ -161,7 +161,7 @@ describe("LocalVoices", () => {
     const asked = respondAside(MICHAEL_MISSING);
     render(LocalVoices);
     const row = await screen.findByTestId("voice-aside");
-    expect(row.textContent).toContain("needs a download of about 7 MB. Heliox keeps speaking with alba.");
+    expect(row.textContent).toContain("needs a download of about 7 MB. I'll keep speaking with alba.");
     expect(asked.some((entry) => entry.method === "voice_download")).toBe(false); // nothing fetched by showing it
     await fireEvent.click(screen.getByRole("button", { name: "Download michael (about 7 MB)" }));
     expect(asked.find((entry) => entry.method === "voice_download")?.params).toEqual({

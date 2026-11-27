@@ -376,10 +376,8 @@ describe("Face (Settings, Appearance)", () => {
       status: "voice_put_aside",
       voice: "michael",
       speaking: "alba",
-      message: "The voice michael made no sound, so Heliox keeps speaking with alba.",
+      message: "The voice michael made no sound, so I'll keep speaking with alba.",
     });
-    expect(
-      await screen.findByText("The voice michael made no sound, so Heliox keeps speaking with alba."),
-    ).toBeTruthy();
+    expect(await screen.findByText("The voice michael made no sound, so I'll keep speaking with alba.")).toBeTruthy();
   });
 });

@@ -168,7 +168,7 @@ async def test_a_stored_voice_that_is_not_here_is_shown_once_in_settings_with_it
         ("michael", "missing", 7_128_888, True)
     ]
     assert listed[0]["say"] == (
-        "The voice michael is not on this computer yet; it needs a download of about 7 MB. Heliox keeps speaking "
+        "The voice michael is not on this computer yet; it needs a download of about 7 MB. I'll keep speaking "
         "with alba."
     )
     assert ltw.voice_for_reply("pocket_tts", "michael") == ("pocket_tts", "alba")  # the voice that worked speaks

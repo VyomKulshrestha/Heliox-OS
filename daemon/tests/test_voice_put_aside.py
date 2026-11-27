@@ -187,7 +187,7 @@ async def test_a_reply_with_no_sound_is_said_with_the_last_voice_that_worked(mon
     assert said == [("michael", "Ten minutes."), ("alba", "Ten minutes.")]
     assert manager.put_aside == {("pocket_tts", "michael"): "no sound"}
     assert [name for name, _ in told] == ["voice_put_aside"]
-    assert told[0][1]["message"] == "The voice michael made no sound, so Heliox keeps speaking with alba."
+    assert told[0][1]["message"] == "The voice michael made no sound, so I'll keep speaking with alba."
     assert ltw.voice_for_reply("pocket_tts", "michael") == ("pocket_tts", "alba")  # the next replies too
     await voice._run_local_voice("pocket_tts", "Again.", "michael", None)
     assert [name for name, _ in told] == ["voice_put_aside"]  # said once
@@ -231,7 +231,7 @@ async def test_a_voice_whose_file_is_missing_is_put_aside_with_its_download_size
     assert manager.put_aside[("pocket_tts", "michael")] == "missing"
     assert told[0]["download_bytes"] == 7_128_888 and told[0]["speaking"] == "alba"
     assert told[0]["message"] == (
-        "The voice michael is not on this computer yet; it needs a download of about 7 MB. Heliox keeps speaking "
+        "The voice michael is not on this computer yet; it needs a download of about 7 MB. I'll keep speaking "
         "with alba."
     )
 

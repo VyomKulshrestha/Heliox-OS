@@ -17199,14 +17199,7 @@ def handle_tool(tool_name, params):
         size = local_tts_worker.voice_download_bytes(engine, voice) if reason == "missing" else 0
         ok, why = self._voice_download_check(engine) if reason == "missing" else (False, "")
         speaking = worker.fallback_voice(engine, voice)
-        instead = (
-            f"Heliox keeps speaking with {speaking}" if speaking else "Heliox speaks with the system voice for now"
-        )
-        if reason == "missing":
-            words = "about half a megabyte" if size < 1_000_000 else f"about {round(size / 1_000_000)} MB"
-            say = f"The voice {voice} is not on this computer yet; it needs a download of {words}. {instead}."
-        else:
-            say = f"The voice {voice} made no sound, so {instead}."
+        say = local_tts_worker.aside_sentence(voice, reason, speaking, size)
         fetching = getattr(self, "_voice_downloading", {})
         return {"engine": engine, "voice": voice, "reason": reason, "download_bytes": size, "download_ok": ok,
                 "download_reason": why, "speaking": speaking, "say": say,
@@ -17272,8 +17265,8 @@ def handle_tool(tool_name, params):
             await asyncio.to_thread(fetcher, files)
         except Exception as exc:
             downloading[(engine, voice)] = "failed"
-            message = f"The voice {voice} was not downloaded: {type(exc).__name__}: {str(exc)[:160]}"
-            logger.warning("%s", message)
+            logger.warning("The voice %s was not downloaded: %s: %s", voice, type(exc).__name__, str(exc)[:160])
+            message = f"I couldn't download the voice {voice}, so nothing changed. The details are in Heliox's log."
             await self._broadcast_notification("voice_status", {"status": "voice_download_failed", "engine": engine,
                                                                 "voice": voice, "message": message})  # fmt: skip
             return
@@ -17281,8 +17274,8 @@ def handle_tool(tool_name, params):
         local_tts_worker.retry_voice(engine, voice)
         await self._broadcast_notification("voice_status", {"status": "voice_downloaded", "engine": engine,
                                                             "voice": voice,
-                                                            "message": f"The voice {voice} is downloaded; Heliox "
-                                                            "switches to it once it has said a test sentence."})  # fmt: skip
+                                                            "message": f"The voice {voice} is downloaded; I'll "
+                                                            "switch to it once it has said a test sentence."})  # fmt: skip
 
     async def _voice_for_language(self) -> Any:
         """Which voice would speak the person's voice language (pilot.system.voice_by_language.plan_voice)."""

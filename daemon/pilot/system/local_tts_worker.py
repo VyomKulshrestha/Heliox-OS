@@ -3060,15 +3060,10 @@ class LocalTTSWorkerManager:
         self.put_aside[(engine, voice)] = reason
         self.proving.discard((engine, voice))
         speaking = self.fallback_voice(engine, voice) or self.refused_to.get((engine, voice), ("", ""))[1]
-        instead = (
-            f"Heliox keeps speaking with {speaking}" if speaking else "Heliox speaks with the system voice for now"
+        message = aside_sentence(voice, reason, speaking, download_bytes)
+        logger.warning(
+            "Voice %s %s put aside (%s); speaking with %s", engine, voice, reason, speaking or "the system voice"
         )
-        if reason == "missing":
-            size = "about half a megabyte" if download_bytes < 1_000_000 else f"about {round(download_bytes / 1e6)} MB"
-            message = f"The voice {voice} is not on this computer yet; it needs a download of {size}. {instead}."
-        else:
-            message = f"The voice {voice} made no sound, so {instead}."
-        logger.warning("Voice %s %s put aside (%s); %s", engine, voice, reason, instead.lower())
         speech_trace.emit("voice put aside", engine=engine, voice=voice, reason=reason, speaking=speaking,
                           at=time.monotonic())  # fmt: skip
         return {"engine": engine, "voice": voice, "reason": reason, "speaking": speaking,
@@ -3142,6 +3137,17 @@ def voice_installed(engine: str, voice: str) -> bool:
 
         return pocket_voice_on_disk(voice)
     return True
+
+
+def aside_sentence(voice: str, reason: str, speaking: str, download_bytes: int = 0) -> str:
+    """What the person is told when ``voice`` is put aside: its file is missing (with what the download takes) or it
+    made no sound, and which voice speaks instead ("" for the system voice). One sentence for the notice and for
+    Settings, Voice."""
+    instead = f"I'll keep speaking with {speaking}" if speaking else "I'll speak with the system voice for now"
+    if reason == "missing":
+        size = "about half a megabyte" if download_bytes < 1_000_000 else f"about {round(download_bytes / 1e6)} MB"
+        return f"The voice {voice} is not on this computer yet; it needs a download of {size}. {instead}."
+    return f"The voice {voice} made no sound, so {instead}."
 
 
 def voice_download_bytes(engine: str, voice: str) -> int:
