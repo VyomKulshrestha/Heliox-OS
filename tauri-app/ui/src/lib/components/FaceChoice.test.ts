@@ -367,4 +367,19 @@ describe("Face (Settings, Appearance)", () => {
     await waitFor(() => expect(mocks.sent).toEqual([{ section: "face", values: { pack: "off" } }]));
     expect(mocks.faceVoice.some((asked) => (asked as { apply: string }).apply !== "")).toBe(false);
   });
+  it("says in the face row when the face's voice was put aside, and the voice that goes on", async () => {
+    mocks.config = { face: { pack: "portrait-man" }, voice: { tts_engine: "pocket_tts", tts_voice: "michael" } };
+    mocks.plans = { "": { status: "ok", switched: false, voice: "michael", action: "same", say: "" } };
+    await settings.reloadFromDaemon();
+    render(FaceChoice);
+    mocks.handler?.("voice_status", {
+      status: "voice_put_aside",
+      voice: "michael",
+      speaking: "alba",
+      message: "The voice michael made no sound, so Heliox keeps speaking with alba.",
+    });
+    expect(
+      await screen.findByText("The voice michael made no sound, so Heliox keeps speaking with alba."),
+    ).toBeTruthy();
+  });
 });
