@@ -546,9 +546,9 @@ class RiskGate:
         for action in actions:
             self._history.record(action, Outcome.APPROVED)
 
-    def record_undone(self, action: Any) -> None:
-        """A step the person undid afterwards."""
-        self._history.record(action, Outcome.UNDONE)
+    def record_undone(self, action: Any, *, task: str | None = None) -> None:
+        """A step the person undid afterwards (``task``: the task it belonged to)."""
+        self._history.record(action, Outcome.UNDONE, task=task)
 
     @property
     def available(self) -> bool:

@@ -6074,9 +6074,13 @@ class PilotServer:
             elif kind == "undone":
                 from types import SimpleNamespace
 
+                task = str(args[1]) if len(args) > 1 else None  # the task the undone steps belonged to
                 for item in args[0]:
                     gate.record_undone(
-                        SimpleNamespace(action_type=item["type"], target=str(item.get("target") or ""), parameters=None)
+                        SimpleNamespace(
+                            action_type=item["type"], target=str(item.get("target") or ""), parameters=None
+                        ),
+                        task=task,
                     )
         except Exception:
             logger.warning("Could not record %s outcomes for the world model", kind, exc_info=True)
@@ -7915,7 +7919,7 @@ class PilotServer:
             for undone in result.get("results", []):
                 item = kinds.get(undone.get("seq"))
                 if undone.get("state") == "undone" and item is not None:
-                    self._learn_outcomes("undone", [item])
+                    self._learn_outcomes("undone", [item], task_key)
             logger.info(
                 "Undid task %s: %s undone, %s skipped, %s failed",
                 task_key,

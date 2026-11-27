@@ -218,7 +218,9 @@ def _sentence(action_type: str, outcome: Outcome, count: int, *, in_a_row: bool)
     kind = ActionType(action_type)
     noun, where = _NOUNS.get(kind, (f"{kind.value.replace('_', ' ')} steps", "here"))
     what = _COPY_MISMATCH if kind == ActionType.FILE_COPY and outcome == Outcome.MISMATCH else _WHAT_WENT_WRONG[outcome]
-    lead = f"The last {_count_words(count)}" if in_a_row else f"{_count_words(count).capitalize()} recent"
+    # A number only when it is exact (``count`` 0: some of the scope's harmful outcomes were dropped by its cap).
+    words = _count_words(count) if count else "several"
+    lead = f"The last {words}" if in_a_row else f"{words.capitalize()} recent"
     return f"{lead} {noun} {where} {what}."
 
 
@@ -227,6 +229,32 @@ class _Record:
     outcome: Outcome
     at: float
     cause: str
+    task: str = ""  # the task the step belonged to ("" when unknown)
+    step: str = ""  # the step within its task: its action and where it writes (``step_of``)
+
+
+def step_of(action: Any) -> str:
+    """The identity of a step within its task: a repair round's re-run of the same copy is the same step."""
+    action_type = ActionType(action.action_type).value
+    params = getattr(action, "parameters", None)
+    where = str(
+        getattr(params, "destination", "") or getattr(params, "path", "") or getattr(action, "target", "") or ""
+    )
+    return f"{action_type}|{_norm_path(where) if where else ''}"
+
+
+def _current_task() -> str:
+    from pilot.intelligence.experience import get_experience_context
+
+    return get_experience_context().task_id or ""
+
+
+def _direction(outcome: Outcome) -> str:
+    if outcome in HARMFUL:
+        return "harm"
+    if outcome in SUPPORTING:
+        return "support"
+    return outcome.value
 
 
 class OutcomeEvidence:
@@ -236,16 +264,36 @@ class OutcomeEvidence:
         self._clock = clock
         self._half_life = max(1.0, half_life)
         self._scopes: OrderedDict[Scope, deque[_Record]] = OrderedDict()
+        self._dropped_harm: set[Scope] = set()
         self._lock = threading.Lock()
 
-    def record(self, action: Any, outcome: Outcome | str, *, cause: str = "") -> None:
+    def record(self, action: Any, outcome: Outcome | str, *, cause: str = "", task: str | None = None) -> None:
+        """One step's outcome. Within one task a step is one piece of evidence each way, however many paths report
+        it (the check, a late check, a repair round's re-run, an approval, an undo): a newer report of the same kind
+        replaces the earlier one."""
         scope = scope_of(action)
+        new = _Record(
+            Outcome(outcome), self._clock(), cause, _current_task() if task is None else task, step_of(action)
+        )
         with self._lock:
             records = self._scopes.pop(scope, None) or deque(maxlen=MAX_RECORDS_PER_SCOPE)
-            records.append(_Record(Outcome(outcome), self._clock(), cause))
+            if new.task:
+                same = [
+                    record
+                    for record in records
+                    if record.task == new.task
+                    and record.step == new.step
+                    and _direction(record.outcome) == _direction(new.outcome)
+                ]
+                for record in same:
+                    records.remove(record)
+            if len(records) == records.maxlen and records[0].outcome in HARMFUL:
+                self._dropped_harm.add(scope)  # counts in this scope are no longer exact
+            records.append(new)
             self._scopes[scope] = records  # most recent last
             while len(self._scopes) > MAX_SCOPES:
-                self._scopes.popitem(last=False)
+                dropped, _records = self._scopes.popitem(last=False)
+                self._dropped_harm.discard(dropped)
 
     def record_many(self, outcomes: Iterable[tuple[Any, Outcome]]) -> None:
         for action, outcome in outcomes:
@@ -254,11 +302,20 @@ class OutcomeEvidence:
     def _weight(self, record: _Record, now: float) -> float:
         return math.pow(0.5, max(0.0, now - record.at) / self._half_life)
 
-    def assess(self, action: Any) -> Assessment:
+    def assess(self, action: Any, *, task: str | None = None) -> Assessment:
+        """What the evidence says about ``action``. Evidence that this very step produced in this task is left out:
+        a repair round re-running a step is not paused by the outcome it is repairing."""
         scope = scope_of(action)
         now = self._clock()
+        current = _current_task() if task is None else task
+        step = step_of(action)
         with self._lock:
-            records = list(self._scopes.get(scope, ()))
+            exact = scope not in self._dropped_harm
+            records = [
+                record
+                for record in self._scopes.get(scope, ())
+                if not (current and record.task == current and record.step == step)
+            ]
         harmful = [record for record in records if record.outcome in HARMFUL]
         supporting = [record for record in records if record.outcome in SUPPORTING]
         harm_weight = sum(self._weight(record, now) for record in harmful)
@@ -275,13 +332,13 @@ class OutcomeEvidence:
                 run += 1
             if run < MINIMUM_HARMFUL:
                 # Mixed kinds (a mismatch, then one undone): one sentence for all of them.
-                count = _count_words(len(harmful))
+                count = _count_words(len(harmful)) if exact else "several"
                 reason = (
                     f"{count.capitalize()} recent {_plain_steps(scope.action_type)} here did not turn out as asked."
                 )
             else:
                 in_a_row = all(record.outcome == latest for record in records[-run:])
-                reason = _sentence(scope.action_type, latest, run, in_a_row=in_a_row)
+                reason = _sentence(scope.action_type, latest, run if exact else 0, in_a_row=in_a_row and exact)
             return Assessment(round(score, 4), reason, "", len(harmful), len(supporting))
         harmless = [record for record in records if record.outcome == Outcome.FAILED_UNCHANGED]
         note = ""
@@ -327,4 +384,5 @@ __all__ = [
     "failure_outcome",
     "outcomes_of",
     "scope_of",
+    "step_of",
 ]

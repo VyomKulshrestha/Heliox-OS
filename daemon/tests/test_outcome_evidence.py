@@ -20,6 +20,7 @@ from pilot.actions import (
 )
 from pilot.agents.destructive_critic import HEURISTIC_RISK_THRESHOLD
 from pilot.config import PilotConfig
+from pilot.intelligence.experience import experience_scope
 from pilot.security.outcome_evidence import (
     HALF_LIFE_SECONDS,
     PAUSE_SCORE,
@@ -265,3 +266,80 @@ def test_scopes_follow_where_the_step_acts():
         parameters=BrowserParams(url="https://Example.com/page"),
     )
     assert scope_of(web).place == "example.com"
+
+
+# ── one real outcome is one piece of evidence (the second live run, 27 November) ──
+
+
+def _plan_checks(gate: RiskGate, actions: list[Action], kinds: list[str]) -> None:
+    """One plan's reply-time checks: ``verified``, ``mismatch``, ``could_not_look`` or ``still_checking`` per step."""
+    results = [ActionResult(action=action, success=True, output="Copied") for action in actions]
+    verification = VerificationResult(
+        passed="mismatch" not in kinds,
+        failed_actions=[i for i, kind in enumerate(kinds) if kind == "mismatch"],
+        independently_observed_actions=[i for i, kind in enumerate(kinds) if kind in ("verified", "mismatch")],
+        pending_actions=[i for i, kind in enumerate(kinds) if kind == "still_checking"],
+    )
+    gate.record_checked(results, verification)
+
+
+def test_the_runs_copies_into_one_folder_count_each_real_step_once(gate):
+    source = os.path.join(BIG, "big300.bin")
+    tampered = _copy(source, os.path.join(BIG, "big300_tampered.bin"))
+    with experience_scope(task_id="f8"):
+        _plan_checks(gate, [_copy(source, os.path.join(BIG, "big300_copy.bin"))], ["could_not_look"])
+    with experience_scope(task_id="f9"):
+        _plan_checks(gate, [tampered], ["mismatch"])
+        # The repair round re-runs the same copy: not paused by the mismatch it is repairing, and its own mismatch
+        # is the same step's outcome, not a second copy.
+        assert _risk(gate, tampered)[0] < HEURISTIC_RISK_THRESHOLD
+        _plan_checks(gate, [tampered], ["mismatch"])
+        assert _risk(gate, tampered)[0] < HEURISTIC_RISK_THRESHOLD
+    late = [_copy(source, os.path.join(BIG, f"late_{name}.bin")) for name in "abc"]
+    with experience_scope(task_id="f10"):
+        assert _risk(gate, late[0])[0] < HEURISTIC_RISK_THRESHOLD  # one real mismatch so far
+        _plan_checks(gate, late, ["could_not_look"] * 3)  # "not verified in full" is not harm
+    late_f = _copy(source, os.path.join(BIG, "late_tampered_f.bin"))
+    with experience_scope(task_id="f11"):
+        _plan_checks(
+            gate,
+            [_copy(source, os.path.join(BIG, "late_d.bin")), _copy(source, os.path.join(BIG, "late_e.bin")), late_f],
+            ["could_not_look", "could_not_look", "mismatch"],
+        )
+        assert _risk(gate, late_f)[0] < HEURISTIC_RISK_THRESHOLD  # its repair: not paused by itself
+        _plan_checks(gate, [late_f], ["mismatch"])
+    with experience_scope(task_id="f12"):
+        risk, reasons = _risk(gate, _copy(source, os.path.join(BIG, "slowdisk_copy.bin")))
+        _plan_checks(gate, [_copy(source, os.path.join(BIG, "slowdisk_copy.bin"))], ["still_checking"])
+
+    # Two copies into big ended with a different file (f9's and f11's), whatever their repairs did: said as two.
+    assert risk >= HEURISTIC_RISK_THRESHOLD
+    assert reasons[0] == "Two recent copies into this folder ended with a different file than the source."
+    assert gate.status(enabled=True)["historical_risk"]["outcomes"]["mismatch"] == 2
+
+
+def test_one_mismatch_reported_by_several_paths_is_one_piece_of_harm():
+    evidence = OutcomeEvidence(clock=_Clock())
+    copy = _copy("a", os.path.join(BIG, "a.txt"))
+    other = _copy("b", os.path.join(BIG, "b.txt"))
+    # The check, a late check, the repair's re-run and an undo of the same step in one task.
+    for outcome in (Outcome.MISMATCH, Outcome.MISMATCH, Outcome.MISMATCH, Outcome.UNDONE):
+        evidence.record(copy, outcome, task="t1")
+    evidence.record(copy, Outcome.APPROVED, task="t1")
+    evidence.record(copy, Outcome.APPROVED, task="t1")
+    assessment = evidence.assess(other, task="t2")
+    assert (assessment.harmful, assessment.supporting, assessment.score) == (1, 1, 0.0)
+
+
+def test_a_count_that_is_no_longer_exact_is_said_as_several():
+    evidence = OutcomeEvidence(clock=_Clock())
+    copy = _copy("a", os.path.join(BIG, "a.txt"))
+    for index in range(2):
+        evidence.record(_copy("a", os.path.join(BIG, f"old{index}.txt")), Outcome.MISMATCH, task=f"old{index}")
+    for index in range(48):
+        evidence.record(_copy("a", os.path.join(BIG, f"n{index}.txt")), Outcome.UNCHECKED, task=f"n{index}")
+    for index in range(3):  # the first two harmful records fall out of the scope's 50
+        evidence.record(_copy("a", os.path.join(BIG, f"new{index}.txt")), Outcome.MISMATCH, task=f"new{index}")
+    assessment = evidence.assess(copy, task="now")
+    assert assessment.score > 0
+    assert assessment.reason == "Several recent copies into this folder ended with a different file than the source."
