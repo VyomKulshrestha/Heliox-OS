@@ -927,7 +927,7 @@ async def test_live_correction_cancels_current_step_and_replans_in_same_request(
     original_planner = server._planner
 
     class _RecordingPlanner:
-        async def plan(self, user_input, error_context="", screen_context="", stream_callback=None):
+        async def plan(self, user_input, error_context="", screen_context="", stream_callback=None, **_kwargs):
             planned_inputs.append(user_input)
             return await original_planner.plan(user_input, error_context, screen_context, stream_callback)
 
@@ -1403,7 +1403,7 @@ async def test_proactive_companion_revises_plan_before_any_action_runs():
     original_planner = server._planner
 
     class _RecordingPlanner:
-        async def plan(self, user_input, error_context="", screen_context="", stream_callback=None):
+        async def plan(self, user_input, error_context="", screen_context="", stream_callback=None, **_kwargs):
             planned_inputs.append(user_input)
             return await original_planner.plan(user_input, error_context, screen_context, stream_callback)
 
