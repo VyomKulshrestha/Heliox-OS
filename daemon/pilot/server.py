@@ -4102,8 +4102,10 @@ class PilotServer:
             await gateway.record_preview_denials(plan_id, list(plan.actions), sources, refusals, scope_override)
         if self._checkpoint_store:
             try:
+                from pilot.workflows.checkpoints import POLICY_DENIED_STATUS
+
                 await self._checkpoint_store.mark_approval(plan_id, "denied")
-                await self._checkpoint_store.mark_status(plan_id, "denied_by_policy")
+                await self._checkpoint_store.mark_status(plan_id, POLICY_DENIED_STATUS)
             except Exception:
                 logger.warning("Could not close the checkpoint of refused plan %s", plan_id, exc_info=True)
 
@@ -7010,9 +7012,8 @@ class PilotServer:
         approval card or step. A plan Heliox's own rules refused (approval "denied", status
         ``POLICY_DENIED_STATUS``) is never resumed.
         """
+        from pilot.security.gateway import GATEWAY_DENIED as gateway_denied  # the skip reason of a refused step
         from pilot.workflows.checkpoints import POLICY_DENIED_STATUS
-
-        gateway_denied = "gateway_denied"  # the skip reason of a step the gateway refused
 
         plan_id = str(params.get("plan_id", "")).strip()
         if not plan_id:
@@ -7117,15 +7118,14 @@ class PilotServer:
             raw_input=approved_plan.raw_input,
         )
 
-        from pilot.security.source_scope import refusals
-
-        refused = refusals(getattr(self, "_agent_gateway", None), list(remaining_plan.actions), plan_source, plan_scope)
+        # The same preview as a fresh plan's (each step under the source that will carry it, narrowed by the scope
+        # the plan was made under), and the same closing: recorded in the gateway's audit, checkpoint denied_by_policy.
+        refused = self._gateway_refusals(remaining_plan, plan_source, plan_scope, dry_run=False)
         if refused:
             # Refused under the source it was made under whatever the person answers: no card, nothing runs.
             from pilot.actions import ActionResult
 
-            await self._checkpoint_store.mark_approval(plan_id, "denied")
-            await self._checkpoint_store.mark_status(plan_id, POLICY_DENIED_STATUS)
+            await self._close_refused_plan(remaining_plan, plan_id, plan_source, plan_scope, refused)
             logger.info("Resume of plan %s refused by the gateway: %s", plan_id, refused[0][1])
             return {
                 "status": "error",

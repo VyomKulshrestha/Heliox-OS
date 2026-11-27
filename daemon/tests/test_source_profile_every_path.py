@@ -593,6 +593,8 @@ async def test_every_gateway_profile_is_consulted_by_an_entry(tmp_path, orchestr
         await _run_job(_autonomous(executor, [_plan(ALLOWED)]), AutonomousJob(goal="g", source=job_source), source)
     for source in (InvocationSource.VOICE, InvocationSource.GESTURE):
         await _autonomous(executor, [_plan(ALLOWED)]).execute_goal("g", invocation_source=source)
+    # A trigger's stored steps, run as PilotServer._run_trigger_steps runs them (their own source).
+    await executor.execute(_plan(ALLOWED), invocation_source=InvocationSource.TRIGGER_STEPS)
     # Threat containment's remedies (it names the self-healing source).
     orch = orchestrator(gateway, executor)
     await orch.execute_plan("g", _plan(ALLOWED), source=InvocationSource.SELF_HEALING)
