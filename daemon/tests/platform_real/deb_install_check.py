@@ -968,6 +968,114 @@ def removal(person: Person, binary: str, package: str, log: DaemonLog, before: d
     )
 
 
+def web_view_facts(bundle: str = "") -> None:
+    """Which WebKitGTK and Mesa the app's window runs on here, and whether a crash could leave a core: one DIAG line
+    each. ``bundle`` is the AppImage's extracted folder, whose own WebKitGTK is asked for its version."""
+    wanted = ["libwebkit2gtk-4.1-0", "libegl-mesa0", "libgl1-mesa-dri", "libgles2", "libepoxy0"]
+    done = subprocess.run(
+        ["dpkg-query", "-W", "-f", "${Package} ${Version}\\n", *wanted], capture_output=True, text=True, check=False
+    )
+    print(f"DIAG system packages: {' / '.join(done.stdout.split(chr(10))[:6])}", flush=True)
+    library = "/usr/lib/x86_64-linux-gnu/libwebkit2gtk-4.1.so.0"
+    paths = ""
+    if bundle:
+        found = sorted(str(p) for p in Path(bundle).rglob("libwebkit2gtk-4.1.so*"))
+        library = found[0] if found else library
+        graphics = sorted(
+            p.name for p in Path(bundle).rglob("*.so*") if re.search(r"EGL|GLX|GLES|libGL|gbm|mesa|drm|epoxy", p.name)
+        )
+        print(f"DIAG the AppImage's own graphics libraries: {graphics[:20] or 'none'}", flush=True)
+        paths = ":".join(
+            str(p) for p in Path(bundle).rglob("*") if p.is_dir() and p.name in ("lib", "x86_64-linux-gnu")
+        )
+    asked = subprocess.run(
+        [
+            "python3",
+            "-c",
+            "import ctypes,sys; w=ctypes.CDLL(sys.argv[1]); "
+            "print('%d.%d.%d' % (w.webkit_get_major_version(), w.webkit_get_minor_version(), w.webkit_get_micro_version()))",
+            library,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env={**os.environ, "LD_LIBRARY_PATH": paths} if paths else None,
+    )
+    version = asked.stdout.strip() or asked.stderr.strip()[-200:]
+    print(f"DIAG WebKitGTK the window uses: {version} ({library})", flush=True)
+    try:
+        pattern = Path("/proc/sys/kernel/core_pattern").read_text().strip()
+    except OSError as error:
+        pattern = f"not readable: {error}"
+    render = sorted(p.name for p in Path("/dev/dri").glob("renderD*")) if Path("/dev/dri").exists() else []
+    print(
+        f"DIAG cores: {os.cpu_count()}; render devices: {render or 'none'}; core_pattern (the host's): {pattern[:120]}",
+        flush=True,
+    )
+
+
+# What a first start is measured with: the app as built, and each WebKitGTK setting that bears on the Skia resource
+# cache crash (WebKitGTK 2.50 SkiaPaintingEngine.cpp and AcceleratedBackingStore.cpp read these).
+FIRST_START_VARIANTS = (
+    ("as built", {}),
+    ("WEBKIT_SKIA_GPU_PAINTING_THREADS=0", {"WEBKIT_SKIA_GPU_PAINTING_THREADS": "0"}),
+    ("WEBKIT_SKIA_ENABLE_CPU_RENDERING=1", {"WEBKIT_SKIA_ENABLE_CPU_RENDERING": "1"}),
+    ("WEBKIT_DISABLE_DMABUF_RENDERER=1", {"WEBKIT_DISABLE_DMABUF_RENDERER": "1"}),
+)
+
+
+def first_starts(person: Person, binary: str, variants=FIRST_START_VARIANTS, starts: int = 8, seconds: float = 15):
+    """Start the app ``starts`` times per variant with no driver, as a person opens it, and count the starts in
+    which its web process ended unplanned (a web process that went away while the app's main process stayed, and
+    the app's own reload line). One DIAG line per variant; returns {variant: (crashed starts, starts)}."""
+    results = {}
+    for name, extra in variants:
+        crashed, when, reloads, lines = 0, [], 0, []
+        for index in range(starts):
+            saved = dict(person.env)
+            person.env.update(extra)
+            (OUT / "first-starts").mkdir(exist_ok=True)  # a folder of its own: the workflow prints only OUT/*.log
+            log = f"first-starts/{len(results)}-{index}.log"
+            try:
+                person.start([binary], log)
+            finally:
+                person.env.clear()
+                person.env.update(saved)
+            began = time.monotonic()
+            seen: set[tuple[int, float]] = set()
+            ended: set[tuple[int, float]] = set()
+            while time.monotonic() - began < seconds:
+                time.sleep(0.5)
+                now = window_snapshot()
+                web = now.get("WebKitWebProcess", set())
+                if now.get("heliox-os"):
+                    ended |= seen - web
+                seen |= web
+            said = (OUT / log).read_text(encoding="utf-8", errors="replace")
+            count = said.count("reloading the page")
+            reloads += count
+            if ended or count:
+                crashed += 1
+                stamp = re.search(r"\[Heliox OS\] The window's web process ended \((\w+)\)", said)
+                when.append(
+                    f"start {index + 1}: {len(ended)} ended, {count} reloads, {stamp.group(1) if stamp else '-'}"
+                )
+            if "get() != pointer()" in said and len(lines) < 1:
+                lines.append(next(line[-160:] for line in said.splitlines() if "get() != pointer()" in line))
+            end(app_pids())
+            end(daemon_pids(), wait=5)
+            time.sleep(1)
+        results[name] = (crashed, starts)
+        print(
+            f"DIAG first starts with {name}: {crashed} of {starts} had the web process end unplanned "
+            f"({reloads} reload lines){'; ' + '; '.join(when) if when else ''}"
+            f"{'; Skia assertion seen' if lines else ''}",
+            flush=True,
+        )
+    return results
+
+
 def main(binary: str, package: str, tools: str, label: str, mode: str) -> int:
     LABEL[0] = label
     OUT.mkdir(parents=True, exist_ok=True)
@@ -994,10 +1102,13 @@ def main(binary: str, package: str, tools: str, label: str, mode: str) -> int:
             f"running after 20 s: {bool(running)}; exit code {first.poll()}; last output: {output.strip()[-300:]!r}",
         )
         end(app_pids())
+        web_view_facts()
 
         if mode == "offer":
             offers_private_python(person, binary, tools)
+            first_starts(person, binary)
             return failures
+        first_starts(person, binary, FIRST_START_VARIANTS[:1])
         # First run through the window, and the daemon it started from both sides while that window is open.
         if not first_run_through_the_window(person, binary, tools, log):
             check("page-reaches-daemon", False, "not run: the setup did not finish")

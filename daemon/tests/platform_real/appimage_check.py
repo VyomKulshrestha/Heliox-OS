@@ -275,6 +275,8 @@ def main(appimage: str, tools: str) -> int:
             f"running after 20 s: {bool(running)}; exit code {first.poll()}; last output: {output[-300:]!r}",
         )
         base.end(base.app_pids())
+        base.web_view_facts(APPDIR[0])
+        base.first_starts(person, appimage)
         if base.first_run_through_the_window(person, appimage, tools, log, the_daemons_environment):
             removal(person, appimage, tools)
         else:
