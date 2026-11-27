@@ -484,9 +484,8 @@ def _web_and_git_sentences(action: object, thing: str, error: str) -> dict[Failu
     pushed = branch or "the branch"
     selector = str(getattr(params, "selector", "") or "").strip()
     kind_of = str(getattr(getattr(action, "action_type", None), "value", ""))
-    verb_for_gateway = (
-        "call" if kind_of.startswith("api_") or kind_of in {"download_file", "open_url"} else "run that on"
-    )
+    sends = kind_of.startswith("api_") or kind_of in {"download_file", "open_url"}
+    verb_for_gateway = "call" if sends else "run that on"
     service = thing if thing and thing != "it" else "That service"
     where = re.search(r"connect it in ([^.]+)", str(error or ""), re.I)
     return {
@@ -499,8 +498,8 @@ def _web_and_git_sentences(action: object, thing: str, error: str) -> dict[Failu
         FailureKind.REDIRECT_LOOP: f"{thing} kept sending me to another address without reaching a page, so I stopped.",
         FailureKind.CERTIFICATE: f"I didn't open {thing}: its security certificate could not be checked, so the "
         "connection could not be trusted.",
-        FailureKind.GATEWAY_DENIED: f"I didn't {verb_for_gateway} {thing}: Heliox's own rules don't allow that "
-        "request from here, so nothing was sent.",
+        FailureKind.GATEWAY_DENIED: f"I didn't {verb_for_gateway} {thing}: my safety rules don't allow that "
+        f"from here, so {'nothing was sent' if sends else 'nothing ran'}. Asking again won't change it.",
         FailureKind.NO_ELEMENT: f"Nothing on {thing} matches {selector or 'what was asked for'}. The page loaded; "
         "what it does hold is on screen.",
         FailureKind.PUSH_BEHIND: f"I couldn't push {pushed}: {remote} has commits you don't have yet. Pull first, "

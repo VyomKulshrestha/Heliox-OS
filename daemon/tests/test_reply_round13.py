@@ -282,6 +282,7 @@ def test_a_step_heliox_refused_is_its_own_final_failure() -> None:
     assert (
         said
         == shown
-        == ("I didn't call 127.0.0.1: Heliox's own rules don't allow that request from here, so nothing was sent.")
+        == "I didn't call 127.0.0.1: my safety rules don't allow that from here, so nothing was sent. Asking again "
+        "won't change it."
     )
     assert "reach" not in said and "integration_agent" not in shown

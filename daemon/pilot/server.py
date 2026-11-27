@@ -635,10 +635,9 @@ TRIGGER_RETELL_SECONDS = 3600.0
 
 
 # A request one of whose steps Heliox's own rules refuse whatever the person answers (pilot.security.gateway).
-# The reply code words it from the results' skip reason ``gateway_denied``; this is the fallback.
-GATEWAY_REFUSED_SENTENCE = (
-    "I didn't do that: my safety rules don't allow this step from here, and asking again won't change it."
-)
+# The reply is the failure sentence of the kind gateway_denied (pilot.failure_sentences); this is its fallback, for a
+# refusal with no step to name.
+GATEWAY_REFUSED_SENTENCE = "I didn't do that: my safety rules don't allow it from here. Asking again won't change it."
 
 
 def request_fault_answer(what: str, error: BaseException) -> dict[str, Any]:
@@ -5173,11 +5172,17 @@ class PilotServer:
                     for index, reason in refusals
                 ]
                 logger.info("Plan %s refused by the gateway before any approval: %s", plan_id, refusals[0][1])
-                message = GATEWAY_REFUSED_SENTENCE
+                # One sentence for a refusal, from one place: the failure sentence of the kind gateway_denied, the
+                # same words a refusal at run time gets.
+                from pilot.response_contract import failure_reply as refusal_reply
+
+                refused_reply = refusal_reply(refused, None)
+                message = refused_reply.shown.strip() or GATEWAY_REFUSED_SENTENCE
                 await _emit_task_complete(GATEWAY_DENIED, message)
                 return {
                     "status": "error",
                     "message": message,
+                    "spoken": refused_reply.spoken.strip() or GATEWAY_REFUSED_SENTENCE,
                     "explanation": plan.explanation,
                     "results": [result.model_dump(mode="json") for result in refused],
                     "denied_kind": GATEWAY_DENIED,
