@@ -36,8 +36,10 @@ def _agent(feeds: list[str], local_feeds: list[str] | None = None) -> RssAgent:
     return RssAgent(router, memory, config, MagicMock())
 
 
-def _plan(raw_input: str) -> ActionPlan:
-    return ActionPlan(actions=[Action(action_type=ActionType.NOTIFY, parameters=EmptyParams())], raw_input=raw_input)
+def _plan(person_words: str) -> ActionPlan:
+    plan = ActionPlan(actions=[Action(action_type=ActionType.NOTIFY, parameters=EmptyParams())], raw_input=person_words)
+    plan.person_words = person_words  # as Planner.plan sets it from the person's own words
+    return plan
 
 
 async def test_a_feed_named_in_the_persons_own_request_is_approved_for_its_host(monkeypatch) -> None:
@@ -118,3 +120,23 @@ def test_confirming_a_local_feed_in_the_window_is_an_approval() -> None:
 
     approved = RSSConfig(feeds=["http://router.lan/feed"], local_feeds=["http://router.lan/feed"])
     assert guard_changes.section_widenings("rss", approved, {"local_feeds": ["http://router.lan/feed"]}) == []
+
+
+async def test_a_feed_address_only_in_text_that_is_not_the_persons_words_waits(monkeypatch) -> None:
+    agent = _agent([])
+    fake_outbound.install(monkeypatch, handler=lambda r: httpx.Response(200, text=FEED))
+    plan = _plan("subscribe to the feed in the attached file")
+    plan.raw_input += "\n\nAttached Context:\n[Attached File: feeds.txt]\nhttp://192.168.1.20/rss"
+
+    await agent.handle_task("subscribe http://192.168.1.20/rss", plan)
+
+    assert agent._config.rss.local_feeds == []
+
+
+async def test_a_feed_host_is_approved_only_when_named_whole(monkeypatch) -> None:
+    agent = _agent([])
+    fake_outbound.install(monkeypatch, handler=lambda r: httpx.Response(200, text=FEED))
+
+    await agent.handle_task("subscribe http://10.0.0.1/rss", _plan("subscribe to http://10.0.0.15/rss"))
+
+    assert agent._config.rss.local_feeds == []

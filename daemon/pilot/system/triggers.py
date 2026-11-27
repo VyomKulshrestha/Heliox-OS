@@ -270,6 +270,10 @@ class Trigger:
     # The trigger's job is only to tell the person: a fire is the engine's own notice (shown and spoken), with no steps
     # and no planned job. action_command is then empty or the person's words, never planned.
     notify_only: bool = False
+    # The local hosts the person's own words named for this trigger's steps when it was made on this version (each a
+    # host_key, pilot.security.addresses). A stored step reaches a local address only for one of these hosts; a store
+    # from before this field has none, so every such step has the flag off.
+    local_hosts: list[str] = field(default_factory=list)
 
     def can_fire(self) -> bool:
         if not self.enabled:
@@ -392,11 +396,51 @@ def validate_steps(steps: Any) -> list[dict[str, Any]]:
     return records
 
 
+_FLAGGED_STEPS = frozenset({"api_request", "api_scrape", "download_file"})
+
+
+def named_local_hosts(records: list[dict[str, Any]]) -> list[str]:
+    """The local hosts a new trigger's steps may reach: each step whose flag the planner set from the person's own
+    words (pilot.agents.planner.decide_local_flags) and whose host is written as a local address."""
+    from pilot.agents.planner import local_address
+    from pilot.security.addresses import host_key, url_host
+
+    hosts = set()
+    for record in records:
+        params = record.get("parameters") if isinstance(record.get("parameters"), dict) else {}
+        url = str(params.get("url") or "")
+        if record.get("action_type") in _FLAGGED_STEPS and params.get("allow_private_network") and local_address(url):
+            hosts.add(host_key(url_host(url)))
+    return sorted(hosts)
+
+
+def decided_step_flags(records: list[dict[str, Any]], local_hosts: list[str]) -> list[dict[str, Any]]:
+    """The stored steps with each request, scrape and download step's ``allow_private_network`` decided again: on
+    only when its host is written as a local address and is one of ``local_hosts``, off in every other case, whatever
+    the store says."""
+    from pilot.agents.planner import local_address
+    from pilot.security.addresses import host_key, url_host
+
+    named = {host_key(host) for host in local_hosts if isinstance(host, str)}
+    decided = []
+    for record in records:
+        params = record.get("parameters") if isinstance(record.get("parameters"), dict) else None
+        if record.get("action_type") in _FLAGGED_STEPS and params is not None:
+            url = str(params.get("url") or "")
+            allowed = bool(local_address(url)) and host_key(url_host(url)) in named
+            if bool(params.get("allow_private_network")) != allowed:
+                record = {**record, "parameters": {**params, "allow_private_network": allowed}}
+        decided.append(record)
+    return decided
+
+
 def fire_actions(trigger: Trigger) -> list[Any]:
-    """The trigger's fixed steps as actions (validated again: the store is a file anyone may edit)."""
+    """The trigger's fixed steps as actions (validated again: the store is a file anyone may edit), with the
+    local-address flag decided again from the hosts recorded when the trigger was made."""
     from pilot.actions import Action
 
-    return [Action.model_validate(record) for record in validate_steps(trigger.steps)]
+    records = decided_step_flags(validate_steps(trigger.steps), list(trigger.local_hosts or []))
+    return [Action.model_validate(record) for record in records]
 
 
 def describe_steps(steps: list[dict[str, Any]]) -> str:
@@ -589,6 +633,8 @@ class TriggerEngine:
         name = name.strip()
         action_command = action_command.strip()
         records = validate_steps(steps)
+        local_hosts = named_local_hosts(records)
+        records = decided_step_flags(records, local_hosts)
         notify_only = bool(notify_only and not records)
         resolved_type = validate_trigger(
             name, trigger_type, condition, action_command, max_fires, cooldown_seconds, notify_only
@@ -605,6 +651,7 @@ class TriggerEngine:
             steps=records,
             steps_approved=bool(steps_approved and records),
             notify_only=notify_only,
+            local_hosts=local_hosts,
         )
         self._triggers[trigger.id] = trigger
         try:
@@ -768,8 +815,12 @@ class TriggerEngine:
                 return None
             reason = str(entry.get("disabled_reason") or "")
             held = entry.get("condition_held")
+            stored_hosts = entry.get("local_hosts")
+            local_hosts = (
+                [host for host in stored_hosts if isinstance(host, str)] if isinstance(stored_hosts, list) else []
+            )
             try:
-                steps = validate_steps(entry.get("steps") or [])
+                steps = decided_step_flags(validate_steps(entry.get("steps") or []), local_hosts)
             except ValueError as error:
                 steps = []
                 reason = reason or f"Its steps were refused when loaded: {error}"
@@ -805,6 +856,7 @@ class TriggerEngine:
                 pending=pending if isinstance(pending, dict) else None,
                 last_outcome=str(entry.get("last_outcome") or ""),
                 notify_only=notify_only and not steps,
+                local_hosts=local_hosts,
             )
         except (KeyError, TypeError):
             return None

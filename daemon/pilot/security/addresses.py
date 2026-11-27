@@ -1,4 +1,5 @@
-"""Which network addresses a plan step may reach without the person asking for that address.
+"""Which network addresses Heliox's own HTTP senders (pilot.system.outbound) may reach without the person asking for
+that address, and the hosts a person's words name.
 
 ``address_refusal`` judges an address a connection would go to. ``host_refusal`` judges a host as a URL writes it,
 before any name lookup: every spelling a resolver or a browser reads as an address (``127.1``, ``0x7f.1``,
@@ -280,6 +281,45 @@ def url_host(url: str, *, as_browser: bool = True) -> str:
     if host.startswith("["):
         return host[1 : host.find("]")] if "]" in host else host
     return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+_URL_IN_TEXT = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>\"']+")
+_BRACKETED = re.compile(r"\[([0-9A-Za-z:.%]+)\]")
+_TOKEN_EDGES = ".,;:!?'\"()<>{}"
+
+
+def hosts_named(text: str) -> frozenset[str]:
+    """Every host ``text`` names, each in the form ``same_host`` compares: the host of each address with a scheme, each
+    bracketed IPv6 address, and each bare word that reads as an address or a name with a port or without. Whole
+    hosts only: "10.0.0.15" names 10.0.0.15, never 10.0.0.1."""
+    words = str(text or "")
+    found: set[str] = set()
+    for match in _URL_IN_TEXT.finditer(words):
+        found.add(host_key(url_host(match.group(0))))
+    for match in _BRACKETED.finditer(words):
+        found.add(host_key(match.group(1)))
+    for raw in re.split(r"\s+", _URL_IN_TEXT.sub(" ", words)):
+        token = raw.strip(_TOKEN_EDGES)
+        if not token or "/" in token or "@" in token:
+            continue
+        if token.count(":") == 1 and token.rpartition(":")[2].isdigit():
+            token = token.rpartition(":")[0]  # host:port
+        found.add(host_key(token))
+    found.discard("")
+    return frozenset(found)
+
+
+def host_key(host: str) -> str:
+    """One spelling for a host: an address in its standard form (any spelling a resolver or browser accepts, such as
+    127.1 or 0x7f000001 for 127.0.0.1), a name normalised as ``normalize_host`` does."""
+    address = parse_address(host)
+    return str(address) if address is not None else normalize_host(host)
+
+
+def same_host(first: str, second: str) -> bool:
+    """Whether two hosts are the same host, whole: equal addresses, or equal names after normalisation."""
+    key = host_key(first)
+    return bool(key) and key == host_key(second)
 
 
 def browser_target_refusal(url: str) -> str | None:

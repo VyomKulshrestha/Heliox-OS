@@ -10,6 +10,7 @@ Enhanced with 50+ action types for full system control across Windows, Linux, an
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -797,25 +798,28 @@ def _note_trigger_question(request: str) -> None:
         engine.offer([trigger.id for trigger in matches])
 
 
-def asked_for_local_address(url: str, request: str) -> bool:
+# The person's own words for the plan being made (Planner.plan's person_words), for decide_local_flags.
+_PERSON_WORDS: contextvars.ContextVar[str] = contextvars.ContextVar("heliox_person_words", default="")
+
+
+def asked_for_local_address(url: str, person_words: str) -> bool:
     """Whether a step to ``url`` may reach this computer or the person's own network: its host is written as such an
-    address (``local_address``) and that same host is in the person's own request. Text from a page, a mail or a
-    file that puts a local address into a plan does not make it so."""
-    from urllib.parse import urlsplit
+    address (``local_address``) and ``person_words``, the person's own words for this request, name that same whole
+    host (pilot.security.addresses.hosts_named and same_host)."""
+    from pilot.security.addresses import host_key, hosts_named, url_host
 
     if not local_address(url):
         return False
-    try:
-        host = (urlsplit(url.strip()).hostname or "").rstrip(".").lower()
-    except ValueError:
-        return False
-    return bool(host) and host in str(request or "").lower()
+    host = host_key(url_host(url))
+    return bool(host) and host in hosts_named(person_words)
 
 
-def decide_local_flags(actions: list[Any], request: str) -> None:
+def decide_local_flags(actions: list[Any], person_words: str) -> None:
     """Set ``allow_private_network`` on each request, scrape and download step, and on each such stored step of a
-    trigger, from the person's words: on only when ``asked_for_local_address``, off in every other case, whatever the
-    model wrote (the network layer then refuses a local address)."""
+    trigger: on only when ``asked_for_local_address`` with the person's own words for this request, off in every other
+    case, whatever the model wrote. ``person_words`` is the request and the corrections the person typed or said;
+    never attached files, observed outputs, a reviewer's or a model's text. "" leaves every flag off."""
+    request = person_words
     for action in actions:
         if action.action_type in {ActionType.API_REQUEST, ActionType.API_SCRAPE, ActionType.DOWNLOAD_FILE}:
             params = action.parameters
@@ -1496,6 +1500,42 @@ class Planner:
         memory_query: str | None = None,
         specialist_context: str | None = None,
         repair_of: ActionPlan | None = None,
+        person_words: str | None = None,
+    ) -> ActionPlan:
+        """Generate an action plan from a natural language request (``_plan``).
+
+        ``person_words``: the person's own words for this request (the request and the corrections they typed or
+        said), apart from ``user_input``, which may also hold attached files, observed outputs or a reviewer's text.
+        The local-address flag of each step is decided from these words alone; None or "" leaves it off."""
+        token = _PERSON_WORDS.set(str(person_words or ""))
+        try:
+            made = await self._plan(
+                user_input,
+                error_context=error_context,
+                screen_context=screen_context,
+                stream_callback=stream_callback,
+                session_id=session_id,
+                force_model=force_model,
+                memory_query=memory_query,
+                specialist_context=specialist_context,
+                repair_of=repair_of,
+            )
+            made.person_words = str(person_words or "")
+            return made
+        finally:
+            _PERSON_WORDS.reset(token)
+
+    async def _plan(
+        self,
+        user_input: str,
+        error_context: str = "",
+        screen_context: str = "",
+        stream_callback: callable | None = None,
+        session_id: str = "default",
+        force_model: bool = False,
+        memory_query: str | None = None,
+        specialist_context: str | None = None,
+        repair_of: ActionPlan | None = None,
     ) -> ActionPlan:
         """Generate an action plan from a natural language request.
 
@@ -1798,10 +1838,11 @@ class Planner:
             return ActionPlan(error=f"Planning failed: {e}", raw_input=user_input)
 
     def _parse_response(self, raw: str, user_input: str) -> ActionPlan:
-        """Parse LLM JSON output into a validated ActionPlan; the local-address flag of each request and scrape step
-        (and of a trigger's stored steps) is then set from ``user_input``, the person's own words."""
+        """Parse LLM JSON output into a validated ActionPlan; the local-address flag of each request, scrape and
+        download step (and of a trigger's stored steps) is then set from the person's own words for this plan
+        (``_PERSON_WORDS``, set by ``plan``), never from ``user_input``."""
         plan = self._parse_model_answer(raw, user_input)
-        decide_local_flags(plan.actions, user_input)
+        decide_local_flags(plan.actions, _PERSON_WORDS.get())
         return plan
 
     def _parse_model_answer(self, raw: str, user_input: str) -> ActionPlan:

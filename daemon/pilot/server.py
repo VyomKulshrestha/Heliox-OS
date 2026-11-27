@@ -4632,6 +4632,7 @@ class PilotServer:
         # Only typed sources ("interactive", "text", "chat"); voice went through the layer in its own dispatch. It
         # runs after the request is recorded and the first status is sent, so an answered turn ends like the
         # planner's conversational reply: stored in the session history, the reply sent, the task completed.
+        held_words = ""  # the version of their own words the person chose when Live asked about a slip
         if not attachments and review_inputs is None and expansion is None and self._conversation_ready():
             from pilot.conversation.adapters import TYPED_SOURCES, offer_to_live, typed_turn
 
@@ -4652,6 +4653,7 @@ class PilotServer:
                         "explanation": held.say,
                     }
                 user_input = held.proceed
+                held_words = str(held.proceed)  # the version of their own words the person chose
             typed = (
                 await typed_turn(self, str(user_input), ws, _notification)
                 if interaction_source in TYPED_SOURCES
@@ -4862,6 +4864,11 @@ class PilotServer:
                         planner_kwargs["session_id"] = chat_session_id
                     if _repair_of is not None and error_context:
                         planner_kwargs["repair_of"] = _repair_of
+                    # The person's own words for the local-address flag: the request and the corrections they typed or
+                    # said, never the attached files, observed outcomes or a reviewer's text user_input may also hold.
+                    planner_kwargs["person_words"] = "\n".join(
+                        part for part in (task_request.words, *task_request.corrections, held_words) if part
+                    )
                     plan = await self._await_execution_tracked(
                         self._planner.plan(
                             user_input,

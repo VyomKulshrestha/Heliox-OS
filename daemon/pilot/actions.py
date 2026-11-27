@@ -1307,6 +1307,9 @@ class ActionPlan(BaseModel):
     explanation: str = ""
     error: str | None = None
     raw_input: str = ""
+    # The person's own words for this plan (the request and the corrections they typed or said), set by Planner.plan;
+    # never attached files, observed outputs or a model's text. Kept in memory only: a stored plan has none.
+    person_words: str = Field(default="", exclude=True)
 
     @field_validator("explanation")
     @classmethod

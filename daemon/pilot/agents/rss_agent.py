@@ -107,16 +107,17 @@ class RssAgent(BaseAgent):
             urls = [w for w in words if w.startswith("http")]
             if not urls:
                 return answer(False, "Please provide a feed URL to subscribe to.")
-            from pilot.security.addresses import host_refusal, url_host
+            from pilot.security.addresses import host_key, host_refusal, hosts_named, url_host
 
-            # The person's own request: a local feed whose address it names is approved from now on, for that host.
-            asked = str(getattr(plan, "raw_input", "") or "").lower()
+            # The person's own words for this plan (ActionPlan.person_words): a local feed whose whole host they name is
+            # approved from now on, for that host.
+            named = hosts_named(str(getattr(plan, "person_words", "") or ""))
             waiting = []
             for url in urls:
                 host = url_host(url)
                 if host_refusal(host) is None:
                     continue
-                if host and host.lower() in asked:
+                if host and host_key(host) in named:
                     if url not in self._local_feeds():
                         self._config.rss.local_feeds = [*self._local_feeds(), url]
                 else:

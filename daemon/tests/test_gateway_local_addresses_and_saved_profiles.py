@@ -2,8 +2,8 @@
 screenshots. Fakes only: nothing is fetched, no picture is taken.
 
 - A request or scrape step may reach this computer or the person's own network only when its host is written as such
-  an address and that host is in the person's own request; the flag is off in every other case, whatever the model
-  wrote, and every card that can approve such a step names the address.
+  an address and the person's own words name that whole host; the flag is off in every other case, whatever the
+  model wrote, and every card that can approve such a step names the address.
 - A step refused before its card is recorded in the gateway's audit as the preview's decision, and its plan's
   checkpoint is closed as denied.
 - The built-in per-action allowances of a specialist apply only while the person has saved no profile for it.
@@ -45,7 +45,14 @@ def _get(url: str, flag: bool = False) -> Action:
 
 
 def _parsed(request: str, actions: list[dict]) -> Any:
-    return Planner.__new__(Planner)._parse_response(json.dumps({"explanation": "x", "actions": actions}), request)
+    """A model answer parsed as Planner.plan parses it, with ``request`` as the person's own words."""
+    from pilot.agents import planner as planner_module
+
+    token = planner_module._PERSON_WORDS.set(request)
+    try:
+        return Planner.__new__(Planner)._parse_response(json.dumps({"explanation": "x", "actions": actions}), request)
+    finally:
+        planner_module._PERSON_WORDS.reset(token)
 
 
 # ── 1. The local-address flag is the code's, from the person's request ──
