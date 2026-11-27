@@ -134,4 +134,52 @@ describe("LocalVoices", () => {
     );
     expect(pocketVoiceCredit("cosette")).toContain("does not offer it");
   });
+  const MICHAEL_MISSING = {
+    engine: "pocket_tts",
+    voice: "michael",
+    reason: "missing",
+    download_bytes: 7_128_888,
+    download_ok: true,
+    download_reason: "",
+    speaking: "alba",
+    say: "The voice michael is not on this computer yet; it needs a download of about 7 MB. Heliox keeps speaking with alba.",
+  };
+
+  function respondAside(item: Record<string, unknown>) {
+    const asked: { method: string; params: unknown }[] = [];
+    daemonMocks.call.mockImplementation(async (method: string, params: unknown) => {
+      asked.push({ method, params });
+      if (method === "speech_models_list") return { status: "ok", models: [], voices_aside: [item] };
+      if (method === "voice_download") return { status: "ok", downloading: true, ...item };
+      if (method === "get_config") return { voice: voiceNow };
+      return { status: "ok" };
+    });
+    return asked;
+  }
+
+  it("offers a missing voice's download with its size, and downloads only when pressed", async () => {
+    const asked = respondAside(MICHAEL_MISSING);
+    render(LocalVoices);
+    const row = await screen.findByTestId("voice-aside");
+    expect(row.textContent).toContain("needs a download of about 7 MB. Heliox keeps speaking with alba.");
+    expect(asked.some((entry) => entry.method === "voice_download")).toBe(false); // nothing fetched by showing it
+    await fireEvent.click(screen.getByRole("button", { name: "Download michael (about 7 MB)" }));
+    expect(asked.find((entry) => entry.method === "voice_download")?.params).toEqual({
+      engine: "pocket_tts",
+      voice: "michael",
+      apply: "download",
+    });
+  });
+
+  it("without a network the download is off and says why", async () => {
+    respondAside({
+      ...MICHAEL_MISSING,
+      download_ok: false,
+      download_reason: "No connection to huggingface.co right now.",
+    });
+    render(LocalVoices);
+    const button = (await screen.findByRole("button", { name: "Download michael (about 7 MB)" })) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText("Cannot download now: No connection to huggingface.co right now.")).toBeTruthy();
+  });
 });

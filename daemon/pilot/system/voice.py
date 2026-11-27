@@ -1710,8 +1710,13 @@ async def _run_local_voice(engine: str, text: str, voice: str, output_file: str 
     try:
         await _run_local_tts_worker(engine, text, voice, output_file)
     except LocalTTSNoAudio as error:
+        from pilot.system.local_tts_worker import LocalTTSVoiceMissing, voice_download_bytes
+
         worker = manager()
-        await worker.put_voice_aside(engine, voice, "no sound")
+        if isinstance(error, LocalTTSVoiceMissing):
+            await worker.put_voice_aside(engine, voice, "missing", voice_download_bytes(engine, voice))
+        else:
+            await worker.put_voice_aside(engine, voice, "no sound")
         instead = worker.fallback_voice(engine, voice)
         if not instead:
             raise

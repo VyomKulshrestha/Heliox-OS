@@ -212,6 +212,20 @@ def _send(response: dict[str, Any], payload: bytes = b"") -> None:
     buffer.flush()
 
 
+def _voice_missing(engine: str, line: str) -> bool:
+    """A failed request whose voice's own file is not on the computer (read from the request line)."""
+    try:
+        voice = str(json.loads(line).get("voice") or "")
+    except (ValueError, TypeError, AttributeError):
+        return False
+    if not voice:
+        return False
+    try:
+        return not voice_installed(engine, voice)
+    except Exception:
+        return False
+
+
 _PROCESS_STARTED = time.perf_counter()  # this module's import: about when the worker process started
 
 
@@ -403,11 +417,41 @@ def _stream(engine: str, request: dict[str, Any], requests: _Requests) -> None:
                            "first_s": None if first_s is None else round(first_s, 4)}  # fmt: skip
     if error:
         end["error"] = error
+        if _voice_missing(engine, json.dumps({"voice": request.get("voice")})):
+            end["voice_missing"] = True  # its file is not here and fetching is off: the voice's, not the engine's
     _send(end)
+
+
+def voices_offline(engine: str, environ: Any = None, models_on_disk: Callable[[], Any] | None = None) -> bool:
+    """In the voice worker, before anything loads: once ``engine``'s model is on the computer, every Hugging Face
+    fetch is turned off for this process, so a voice file that is not here makes the request fail ("voice missing")
+    instead of the library fetching it on its own. A voice is fetched only by the button that offers it (the face
+    picker, Settings, Voice: pilot.system.voice_fetch). Before the model is here (a first run, which chose the voice and
+    its download), the engine fetches its model and default voice as before. True when it turned fetching off."""
+    environ = os.environ if environ is None else environ
+    if environ.get("HF_HUB_OFFLINE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    if models_on_disk is None:
+        from pilot.system.voice_default import voice_models_on_disk
+
+        models_on_disk = voice_models_on_disk
+    try:
+        here = engine in models_on_disk()
+    except Exception:
+        return False
+    if not here:
+        return False
+    environ["HF_HUB_OFFLINE"] = "1"
+    with contextlib.suppress(Exception):
+        from huggingface_hub import constants
+
+        constants.HF_HUB_OFFLINE = True  # read at its import: set again for a library already loaded
+    return True
 
 
 def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
     lease = None
+    voices_offline(engine)
     if device != "cpu" and cuda_hidden():
         device = "cpu"  # every card hidden: on POSIX the worker sees the empty value itself
     if gpu_lease and device != "cpu":
@@ -479,6 +523,10 @@ def _serve(engine: str, device: str = "auto", gpu_lease: bool = False) -> int:
             response = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
             if NO_AUDIO in str(exc):
                 response["no_audio"] = True  # this text came out silent in this voice: the worker itself is fine
+            elif _voice_missing(engine, line):
+                response["voice_missing"] = (
+                    True  # its file is not here and fetching is off: the voice's, not the engine's
+                )
         _send(response, payload)
     if lease is not None:
         lease.release()
@@ -527,6 +575,12 @@ class LocalTTSNoAudio(LocalTTSUnavailable):
         super().__init__(f"{engine} {voice}: {reason or NO_AUDIO}")
         self.engine = engine
         self.voice = voice
+
+
+class LocalTTSVoiceMissing(LocalTTSNoAudio):
+    """This voice's own file is not on the computer and the worker does not fetch it (voices_offline): the voice is
+    put aside with its download size, the engine goes on. Kokoro failed this way before: an offline Kokoro asked for a
+    voice not on disk raised in its worker, and the manager marked the whole engine unavailable."""
 
 
 # Which voice spoke a reply, and by which branch of the rule (data for the bench and the speech result; nothing is
@@ -2171,6 +2225,8 @@ class LocalTTSWorkerManager:
             raise await self._fail(process, engine, "invalid response") from None
         if response.get("status") != "ok":
             error = str(response.get("error") or "unknown synthesis failure")
+            if response.get("voice_missing"):
+                raise LocalTTSVoiceMissing(engine, str(request.get("voice") or ""), error)
             if response.get("no_audio") or NO_AUDIO in error:
                 raise LocalTTSNoAudio(engine, str(request.get("voice") or ""), error)
             raise await self._fail(process, engine, error)
@@ -2363,6 +2419,8 @@ class LocalTTSWorkerManager:
         except asyncio.CancelledError:
             piece.stop()  # cut before the first sound: the worker stops it before its next chunk
             raise
+        if piece.received == 0 and piece.complete and piece.end.get("voice_missing"):
+            raise LocalTTSVoiceMissing(engine, voice, piece.error)
         if piece.received == 0 and piece.complete and not piece.cut and (not piece.error or NO_AUDIO in piece.error):
             raise LocalTTSNoAudio(engine, voice, piece.error)  # a stream with no sound at all: the text, not the voice
         if piece.received == 0 and piece.error:
@@ -3439,6 +3497,22 @@ def voice_for_reply(engine: str, voice: str) -> tuple[str, str]:
         if instead:
             return engine, instead
     return engine, voice
+
+
+def retry_voice(engine: str, voice: str) -> str:
+    """``voice`` was put aside and its file is here now (the button's download): try it again, with the same proof
+    before it speaks. Returns what was done (_begin_switch's answer, or "prove")."""
+    for manager_ in {
+        id(_manager): _manager,
+        **({id(_handover.standby): _handover.standby} if _handover else {}),
+    }.values():
+        manager_.put_aside.pop((engine, voice), None)
+        manager_.refused_to.pop((engine, voice), None)
+    if _manager.running and _manager.engine == engine:
+        _manager.proving.add((engine, voice))
+        _spawn_task(_manager.prove_voice(engine, voice))
+        return "prove"
+    return _begin_switch(engine, voice, _manager.good_voice.get(str(_manager.engine or ""), ""))
 
 
 async def shutdown_standby() -> None:

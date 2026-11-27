@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **343 WebSocket RPC methods**. That is the API
+The daemon currently registers **344 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -2105,7 +2105,10 @@ first-run screen also bundles), with what is on disk.
 **Params:** `{}`
 **Result:** `{ "status": "ok", "active": id | "", "models": [{ "id", "title", "purpose", "languages", "licence",
 "source", "download_bytes", "disk_bytes", "required_for", "part_of_voice", "installed", "partial_bytes", "path" }],
-"voice": { "language", "engine", "voice", "change", "download_bytes", "say" } }`
+"voice": { "language", "engine", "voice", "change", "download_bytes", "say" }, "engine_suggestion": { "engine",
+"voice", "download_bytes", "say" } | null, "voices_aside": [{ "engine", "voice", "reason": "missing" | "no sound",
+"download_bytes", "download_ok", "download_reason", "speaking", "say", "downloading" }] }` (`voices_aside`: voices put
+aside this session, and the chosen voice when its file is not on the computer, each with what its button needs)
 
 `voice` is the voice for the person's voice language (`pilot/system/voice_by_language.py`): `say` is one sentence
 for the person about what they will hear (for German, with no Kokoro voice: the replies read with English sounds,
@@ -2142,6 +2145,20 @@ offered). Broadcasts `config_updated` when the voice changed. `update_config` wi
 **Params:** `{ "voice": string, "hint"?: "feminine" | "masculine", "apply"?: "" | "auto" | "accept" }`
 **Result:** `{ "status": "ok", "switched": boolean, "voice", "action": "none" | "same" | "offer" | "fetch" |
 "unavailable", "download_bytes", "say" }` (`say`: one sentence for the row; after a switch, what changed)
+
+#### `voice_download`
+A local voice by engine and name, with or without a face, for Settings, Voice (`pilot/server.py`,
+`pilot/system/voice_fetch.py`). `apply` `""` says whether its own file is on the computer and what its download
+takes; `"download"` is the person's button: it fetches that file into the place the engine itself reads it, then the
+voice says a test sentence (`LocalTTSWorkerManager.prove_voice`) and only then speaks, between two replies. A voice
+file is never fetched any other way: once an engine's model is on the computer its worker runs with Hugging Face
+fetching off (`local_tts_worker.voices_offline`). Without a network the download is refused with the reason.
+Broadcasts `voice_status` with `status` `"voice_downloaded"` or `"voice_download_failed"`; a voice put aside is
+announced as `voice_status` `"voice_put_aside"` (`engine`, `voice`, `reason`, `speaking`, `download_bytes`, `message`).
+
+**Params:** `{ "engine": "kokoro_tts" | "pocket_tts", "voice": string, "apply"?: "" | "download" }`
+**Result:** `{ "status": "ok", "installed": boolean, "engine", "voice", "reason", "download_bytes", "download_ok",
+"download_reason", "speaking", "say", "downloading": boolean }`
 
 #### `speech_model_download`
 Start or resume downloading one model (HTTP Range into `.part` files; SHA-256 checked before it counts) into

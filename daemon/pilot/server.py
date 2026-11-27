@@ -2724,6 +2724,7 @@ class PilotServer:
             "speech_models_list": self._handle_speech_models_list,
             "voice_for_language_apply": self._handle_voice_for_language_apply,
             "face_voice": self._handle_face_voice,
+            "voice_download": self._handle_voice_download,
             "speech_model_download": self._handle_speech_model_download,
             "speech_model_cancel": self._handle_speech_model_cancel,
             "speech_model_remove": self._handle_speech_model_remove,
@@ -17176,7 +17177,112 @@ def handle_tool(tool_name, params):
         except Exception:
             logger.debug("Could not work out the voice suggestion", exc_info=True)
             suggestion = None
-        return {**listed, "voice": (await self._voice_for_language()).as_dict(), "engine_suggestion": suggestion}
+        try:
+            aside = await self._voices_aside()
+        except Exception:
+            logger.debug("Could not work out the voices put aside", exc_info=True)
+            aside = []
+        return {
+            **listed,
+            "voice": (await self._voice_for_language()).as_dict(),
+            "engine_suggestion": suggestion,
+            "voices_aside": aside,
+        }
+
+    def _voice_offer(self, engine: str, voice: str) -> dict[str, Any]:
+        """What Settings, Voice shows for a voice that is not on the computer, or put aside: its size, whether the
+        download can start now and why not, and the sentence."""
+        from pilot.system import local_tts_worker
+
+        worker = local_tts_worker.manager()
+        reason = worker.put_aside.get((engine, voice), "missing")
+        size = local_tts_worker.voice_download_bytes(engine, voice) if reason == "missing" else 0
+        ok, why = self._voice_download_check(engine) if reason == "missing" else (False, "")
+        speaking = worker.fallback_voice(engine, voice)
+        instead = (
+            f"Heliox keeps speaking with {speaking}" if speaking else "Heliox speaks with the system voice for now"
+        )
+        if reason == "missing":
+            words = "about half a megabyte" if size < 1_000_000 else f"about {round(size / 1_000_000)} MB"
+            say = f"The voice {voice} is not on this computer yet; it needs a download of {words}. {instead}."
+        else:
+            say = f"The voice {voice} made no sound, so {instead}."
+        fetching = getattr(self, "_voice_downloading", {})
+        return {"engine": engine, "voice": voice, "reason": reason, "download_bytes": size, "download_ok": ok,
+                "download_reason": why, "speaking": speaking, "say": say,
+                "downloading": fetching.get((engine, voice)) == "downloading"}  # fmt: skip
+
+    async def _voices_aside(self) -> list[dict[str, Any]]:
+        """The voices put aside this session, and the chosen voice when its file is not here (a config copied from
+        another computer, or a voice picked before its download), for Settings, Voice: each with its button."""
+        from pilot.system import local_tts_worker
+
+        settings = self.config.voice
+        engine, voice = str(settings.tts_engine), str(settings.tts_voice)
+        worker = local_tts_worker.manager()
+        if engine in local_tts_worker.LOCAL_ENGINES and (engine, voice) not in worker.spoke_voices:
+            installed = worker.voice_installed or local_tts_worker.voice_installed
+            if not await asyncio.to_thread(installed, engine, voice):
+                worker.record_aside(engine, voice, "missing", local_tts_worker.voice_download_bytes(engine, voice))
+        keys = list(worker.put_aside)
+        return [await asyncio.to_thread(self._voice_offer, e, v) for e, v in keys]
+
+    async def _handle_voice_download(self, params: dict, ws: ServerConnection) -> dict:
+        """A voice by engine and name, with or without a face (Settings, Voice): ``apply`` "" says whether it is here
+        and what its download takes; "download" (the person pressed the button) fetches its own file into the place
+        the engine reads it, then the voice says a test sentence and only then speaks. Nothing is downloaded
+        otherwise. Broadcasts voice_status "voice_downloaded" or "voice_download_failed"."""
+        from pilot.system import local_tts_worker
+        from pilot.system.voice_by_language import TTS_VOICES, kokoro_language
+        from pilot.system.voice_default import pocket_voice_allowed
+
+        engine, voice, apply = params.get("engine", ""), params.get("voice", ""), params.get("apply", "")
+        valid = (engine == "kokoro_tts" and voice in TTS_VOICES and bool(kokoro_language(voice))) or (
+            engine == "pocket_tts" and pocket_voice_allowed(str(voice))
+        )
+        if not isinstance(voice, str) or not valid or apply not in {"", "download"}:
+            return {
+                "status": "error",
+                "message": 'voice_download takes a known engine and voice, and apply "" or "download"',
+            }
+        offer = await asyncio.to_thread(self._voice_offer, engine, voice)
+        installed = local_tts_worker.manager().voice_installed or local_tts_worker.voice_installed
+        here = await asyncio.to_thread(installed, engine, voice)
+        if apply == "":
+            return {"status": "ok", "installed": here, **offer}
+        if here:
+            local_tts_worker.retry_voice(engine, voice)
+            return {"status": "ok", "installed": True, **offer, "downloading": False}
+        if not offer["download_ok"]:
+            return {"status": "error", "message": offer["download_reason"], **offer}
+        downloading = self.__dict__.setdefault("_voice_downloading", {})
+        if downloading.get((engine, voice)) != "downloading":
+            downloading[(engine, voice)] = "downloading"
+            self._voice_download_task = asyncio.create_task(self._download_voice(engine, voice))
+        return {"status": "ok", "installed": False, **offer, "downloading": True}
+
+    async def _download_voice(self, engine: str, voice: str) -> None:
+        """Fetch ``voice``'s own file where its engine reads it, then try it again (its test sentence first)."""
+        from pilot.system import local_tts_worker, voice_default, voice_fetch
+
+        downloading = self.__dict__.setdefault("_voice_downloading", {})
+        files = voice_fetch.files_for(engine, voice, model_on_disk=engine in voice_default.voice_models_on_disk())
+        fetcher = getattr(self, "_voice_fetcher", None) or voice_fetch.fetch
+        try:
+            await asyncio.to_thread(fetcher, files)
+        except Exception as exc:
+            downloading[(engine, voice)] = "failed"
+            message = f"The voice {voice} was not downloaded: {type(exc).__name__}: {str(exc)[:160]}"
+            logger.warning("%s", message)
+            await self._broadcast_notification("voice_status", {"status": "voice_download_failed", "engine": engine,
+                                                                "voice": voice, "message": message})  # fmt: skip
+            return
+        downloading[(engine, voice)] = "done"
+        local_tts_worker.retry_voice(engine, voice)
+        await self._broadcast_notification("voice_status", {"status": "voice_downloaded", "engine": engine,
+                                                            "voice": voice,
+                                                            "message": f"The voice {voice} is downloaded; Heliox "
+                                                            "switches to it once it has said a test sentence."})  # fmt: skip
 
     async def _voice_for_language(self) -> Any:
         """Which voice would speak the person's voice language (pilot.system.voice_by_language.plan_voice)."""
