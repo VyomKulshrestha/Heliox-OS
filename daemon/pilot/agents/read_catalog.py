@@ -76,7 +76,7 @@ READS: tuple[Read, ...] = (
     Read(
         A.NETWORK_INFO,
         "{}",
-        "this computer's network adapters, their IP addresses and whether they are up",
+        "this computer's network adapters (Wi-Fi, ethernet), their IP addresses (IPv4 and IPv6) and whether each is up",
         "never a speed test; nearby Wi-Fi networks are wifi_list",
     ),
     Read(A.WIFI_LIST, "{}", "the Wi-Fi networks in range", "this computer's own addresses are network_info"),
@@ -96,7 +96,9 @@ READS: tuple[Read, ...] = (
         "programs without a window are process_list",
     ),
     Read(
-        A.USER_INFO, "{}", "the account this computer is used with now, its groups and whether it is an administrator"
+        A.USER_INFO,
+        "{}",
+        "the account this computer is used with now: its user name, its groups and whether it is an administrator",
     ),
     Read(A.USER_LIST, "{}", "every user account on this computer"),
     Read(A.SERVICE_STATUS, '{"name": "nginx"}', "whether one system service is running, stopped or disabled"),
@@ -110,9 +112,10 @@ READS: tuple[Read, ...] = (
     Read(
         A.SYSTEM_INFO,
         '{"categories": ["os"]} / {}',
-        'an overview: categories "os" (operating system and version), "time" (the clock and how long the computer '
-        'has been on), "cpu", "memory", "disk", "network", "battery", or "all"; ask only for the categories the '
-        "question needs",
+        'an overview, by category: "os" (the computer\'s name or host name, the operating system and its version, '
+        'the processor model, 64-bit or 32-bit), "time" (the clock, the time zone and how long the computer has been '
+        'on), "cpu" (cores and load), "memory" (how much RAM it has and how much is used), "disk", "network", '
+        '"battery", or "all"; ask only for the categories the question needs',
         "a single reading has its own action above (memory_usage, cpu_usage, disk_usage, network_info, battery_info); "
         "never use it for what is running (process_list) or for a temperature",
     ),

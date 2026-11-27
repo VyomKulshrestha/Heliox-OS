@@ -334,7 +334,9 @@ _STAYS_TALK = re.compile(
     r"^tell me (?:about|how|why|a |an |more|what you|something|if you)"
 )
 # The talk forms that ask about this computer when they name a reading plainly (a read subject, a path, an address).
-_OVERRIDABLE_TALK = re.compile(r"^(?:who\b|what does\b|tell me about\b|(?:can|could) i (?:get|find|see)\b)")
+_OVERRIDABLE_TALK = re.compile(
+    r"^(?:who\b|what does\b|tell me about\b|(?:can|could) i (?:get|find|see)\b|when did (?:my|this|the)\b)"
+)
 # "What is git?", "what's a checksum?": a word asked about, not this computer's state.
 _DEFINITION = re.compile(r"^what(?:'s| s| is| are) (?:a |an )?(?P<rest>.+)$")
 _NOT_A_DEFINITION = re.compile(r"^(?:the|my|on|in|this|that|your|our|using|taking|left|running|open|currently)\b")
