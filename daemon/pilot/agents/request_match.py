@@ -38,7 +38,7 @@ import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
-from pilot.actions import Action, ActionType
+from pilot.actions import READ_ONLY_ACTIONS, Action, ActionType
 
 # The kind of change each changing step makes.
 CHANGE_KIND: dict[ActionType, str] = {
@@ -417,6 +417,56 @@ class Mismatch:
     details: tuple[str, ...] = field(default_factory=tuple)
 
 
+# A quoted value that reads as code (a CSS selector, a file pattern, a column name with a dot, a regular expression):
+# the step that uses it must carry it as it is. Plain words in quotes ("files that mention 'quarterly budget'") may be
+# what a read looks for inside text, so they are held only on plans that change something (rule 4).
+# A dot counts only inside a word (".price", "td.amount", "a.txt"): a sentence's full stop is not code.
+_CODE_CHARACTERS = re.compile(r"[#\[\]*>:=$^\\/]|\.\w")
+_LINE_COUNT = re.compile(r"\b(?:last|first|top|final) (\d{1,6}) lines?\b", re.IGNORECASE)
+_BACKTICKED = re.compile(r"`([^`\n]{1,200})`")
+
+
+def given_values(request: str) -> tuple[str, ...]:
+    """The explicit values a request gives that a step must use as they are: quoted or backticked text that reads as
+    code (".price-table td.amount", "*.log"), and a line count ("the last 5 lines" gives "5")."""
+    text = unicodedata.normalize("NFC", str(request or ""))
+    quoted = [next(group for group in match.groups() if group) for match in _QUOTED.finditer(text)]
+    quoted += [match.group(1) for match in _BACKTICKED.finditer(text)]
+    values = [
+        " ".join(value.split())
+        for value in quoted
+        if _CODE_CHARACTERS.search(value.strip().rstrip(".!?:"))
+        and len(value.split()) <= 6
+        and not _URL.fullmatch(value.strip())
+    ]
+    values += [match.group(1) for match in _LINE_COUNT.finditer(text)]
+    return tuple(dict.fromkeys(value for value in values if value))
+
+
+def _carries(value: str, actions: Sequence[Action]) -> bool:
+    flat = " ".join(" ".join(_step_text(action).split()) for action in actions)
+    wanted = " ".join(unicodedata.normalize("NFC", value).replace("/", "\\").casefold().split())
+    if value.isdigit():
+        return re.search(rf"(?<![\d.]){value}(?![\d.])", flat) is not None
+    return wanted in flat
+
+
+def dropped_value(request: str, actions: Sequence[Action]) -> Mismatch | None:
+    """A value the request gives that no step uses, or None. Checked on every plan that has steps, reads too: a
+    scrape that drops the selector the person typed returns the whole page as if it were the answer."""
+    if not actions:
+        return None
+    for value in given_values(request):
+        if not _carries(value, actions):
+            return Mismatch(
+                "value_dropped",
+                f"The current request gives {value!r}, but no step uses it. Keep every value the request gives "
+                "(a selector, a pattern, a count) in its step, as it is.",
+                step=f"leave out {value!r}, which you asked for",
+            )
+    return None
+
+
 def check_plan(
     request: str,
     actions: Sequence[Action],
@@ -427,6 +477,9 @@ def check_plan(
     """The first way ``actions`` contradicts ``request``, or None. ``earlier``: the texts "it" or "that one" may
     point back to (see ``resolved``). ``done``: for a repair, the failed plan, whose steps already used some of the
     named things (a repair redoes only the failed copy of three)."""
+    dropped = dropped_value(request, actions)
+    if dropped is not None:
+        return dropped
     steps = changing_steps(actions)
     if not steps:
         return None
@@ -499,6 +552,9 @@ def check_repair(
 ) -> Mismatch | None:
     """A repair round's plan: the request's own checks, then the failed plan's scope. ``failed``: the plan whose
     step failed; ``earlier_requests``: the session's earlier requests, any order."""
+    escalated = repair_escalation(actions, failed)
+    if escalated is not None:
+        return escalated
     problem = check_plan(request, actions, earlier=earlier, done=failed)
     if problem is not None:
         return problem
@@ -533,6 +589,67 @@ def check_repair(
     return None
 
 
+# Actions that run anything: a repair may not turn to them to get around a typed step that failed.
+RUNS_ANYTHING = frozenset(
+    {
+        ActionType.SHELL_COMMAND,
+        ActionType.SHELL_SCRIPT,
+        ActionType.PTY_EXEC,
+        ActionType.CODE_EXECUTE,
+        ActionType.CODE_GENERATE_AND_RUN,
+        ActionType.SSH_COMMAND,
+        ActionType.SSH_SCRIPT,
+        ActionType.BROWSER_EXECUTE_JS,
+    }
+)
+# Switches that make a step reach further than it did: turning one on in a repair is a different change.
+WIDENING_SWITCHES = ("force", "recursive", "overwrite", "allow_private_network", "persistent")
+
+
+def _plain_type(kind: ActionType) -> str:
+    return kind.value.replace("_", " ")
+
+
+def repair_escalation(actions: Sequence[Action], failed: Sequence[Action]) -> Mismatch | None:
+    """A repair that reaches past the failed plan's own actions, or None. It may retry or adjust a step with the same
+    action, or add a read. It may not run a shell command, a script or code the failed plan did not (after a rejected
+    push the repair once planned "git pull" as a shell command), start an action of another kind that changes
+    something (a pull, a reset), or turn on a switch such as "force" that the failed step had off. Holds for every
+    action: the push is only the case that was seen."""
+    failed_kinds = {action.action_type for action in failed}
+    failed_name = next(
+        (_plain_type(action.action_type) for action in failed if action.action_type not in READ_ONLY_ACTIONS),
+        _plain_type(failed[0].action_type) if failed else "step",
+    )
+    for index, action in enumerate(actions):
+        kind = action.action_type
+        if kind in failed_kinds:
+            before = [a for a in failed if a.action_type == kind]
+            for switch in WIDENING_SWITCHES:
+                now_on = bool(getattr(action.parameters, switch, False))
+                was_on = any(bool(getattr(a.parameters, switch, False)) for a in before)
+                if now_on and not was_on:
+                    return Mismatch(
+                        "repair_escalation",
+                        f"Step {index + 1} turns on {switch!r}, which the failed step did not use.",
+                        step=f"run the {failed_name} again with {switch!r} turned on",
+                    )
+            continue
+        if kind in RUNS_ANYTHING:
+            return Mismatch(
+                "repair_escalation",
+                f"Step {index + 1} runs a {_plain_type(kind)} to get around the {failed_name} that failed.",
+                step=f"run a {_plain_type(kind)} instead of the {failed_name} that failed",
+            )
+        if kind not in READ_ONLY_ACTIONS:
+            return Mismatch(
+                "repair_new_kind",
+                f"Step {index + 1} starts a {_plain_type(kind)}, a different kind of change from the {failed_name}.",
+                step=f"start a {_plain_type(kind)}, which you did not ask for",
+            )
+    return None
+
+
 def first_refusal(mismatch: Mismatch, request: str) -> str:
     """What the person is told when the second plan for a request still does not match it."""
     return (
@@ -543,6 +660,8 @@ def first_refusal(mismatch: Mismatch, request: str) -> str:
 
 def repair_refusal(mismatch: Mismatch) -> str:
     """What the person is told when a repair round's plan reaches outside the failed step."""
+    if mismatch.rule in ("repair_escalation", "repair_new_kind", "value_dropped"):
+        return f"{REFUSED_REPAIR}: the retry would {mismatch.step}."
     return f"{REFUSED_REPAIR}: the retry would {mismatch.step}, which this request did not name."
 
 
