@@ -803,6 +803,10 @@ class MemoryConfig:
 class RSSConfig:
     enabled: bool = False
     feeds: list[str] = field(default_factory=list)
+    # Feeds on this computer or the person's own network that the person approved: named in their own typed or
+    # spoken request when it was added, or confirmed in the window (an approval, pilot.security.guard_changes).
+    # Only these are fetched with the local network allowed, and only from their own host.
+    local_feeds: list[str] = field(default_factory=list)
     poll_interval_hours: float = 24.0
     max_items_per_feed: int = 10
 
@@ -1543,6 +1547,7 @@ def _validate_config_types(raw: dict) -> None:
         "rss": {
             "enabled": bool,
             "feeds": list,
+            "local_feeds": list,
             "poll_interval_hours": (int, float),
             "max_items_per_feed": int,
         },

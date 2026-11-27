@@ -145,7 +145,7 @@ async def test_poll_feeds_stores_digest():
     # The feed goes through the checked outbound path, which refuses local addresses (no allow_private_network).
     fetch.assert_awaited_once()
     assert fetch.await_args.args == ("GET", "https://example.com/feed.xml")
-    assert "allow_private_network" not in fetch.await_args.kwargs
+    assert fetch.await_args.kwargs["allow_private_network"] is False
 
     assert result["triggered"] is True
     assert "Summarized news today." in result["digest"]

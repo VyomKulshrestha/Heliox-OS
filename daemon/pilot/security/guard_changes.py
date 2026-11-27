@@ -150,6 +150,19 @@ def section_widenings(
         if new != old and not is_local(new):
             found.append(Widening(f"{section}.{key}", says.format(host=new), what.format(host=new)))
 
+    if section == "rss" and isinstance(values.get("local_feeds"), list):
+        before = {str(url) for url in now.get("local_feeds") or []}
+        for url in values["local_feeds"]:
+            if str(url) not in before:
+                host = host_of(str(url)) or str(url)
+                found.append(
+                    Widening(
+                        "rss.local_feeds",
+                        f"Fetch the feed at {host}, which is on this computer or your own network",
+                        f"the refusal of fetches from this computer and your own network, for {host}",
+                    )
+                )
+
     if section == "security":
         turned_on(
             "unrestricted_shell",

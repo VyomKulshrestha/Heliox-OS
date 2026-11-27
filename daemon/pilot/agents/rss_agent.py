@@ -107,18 +107,40 @@ class RssAgent(BaseAgent):
             urls = [w for w in words if w.startswith("http")]
             if not urls:
                 return answer(False, "Please provide a feed URL to subscribe to.")
-            self._config.rss.feeds.extend(urls)
+            from pilot.security.addresses import host_refusal, url_host
+
+            # The person's own request: a local feed whose address it names is approved from now on, for that host.
+            asked = str(getattr(plan, "raw_input", "") or "").lower()
+            waiting = []
+            for url in urls:
+                host = url_host(url)
+                if host_refusal(host) is None:
+                    continue
+                if host and host.lower() in asked:
+                    if url not in self._local_feeds():
+                        self._config.rss.local_feeds = [*self._local_feeds(), url]
+                else:
+                    waiting.append(url)
+            self._config.rss.feeds.extend(url for url in urls if url not in self._config.rss.feeds)
             if not self._config.rss.enabled:
                 self._config.rss.enabled = True
                 self._register_background_task()
             self._config.save()
-            return answer(True, f"Subscribed to: {', '.join(urls)}")
+            text = f"Subscribed to: {', '.join(urls)}"
+            if waiting:
+                text += ". " + " ".join(self._confirmation_note(url) for url in waiting)
+            return answer(True, text)
 
         if "list" in lower or "feeds" in lower:
             feeds = self._config.rss.feeds
             if not feeds:
                 return answer(True, "No feeds subscribed yet.")
-            return answer(True, "Subscribed feeds:\n" + "\n".join(f"  - {f}" for f in feeds))
+            rows = [
+                f"  - {f}"
+                + (" (on your own network: waiting for your confirmation)" if self._needs_confirmation(f) else "")
+                for f in feeds
+            ]
+            return answer(True, "Subscribed feeds:\n" + "\n".join(rows))
 
         return answer(
             False,
@@ -148,17 +170,48 @@ class RssAgent(BaseAgent):
             self._config.rss.poll_interval_hours,
         )
 
+    def _needs_confirmation(self, url: str) -> bool:
+        """A feed on this computer or the person's own network that the person has not approved."""
+        from pilot.security.addresses import host_refusal, url_host
+
+        return url not in self._local_feeds() and host_refusal(url_host(url)) is not None
+
+    def _local_feeds(self) -> list[str]:
+        return list(getattr(self._config.rss, "local_feeds", None) or [])
+
+    def _confirmation_note(self, url: str) -> str:
+        return (
+            f"{url} is on this computer or your own network, so I don't fetch it until you confirm it: approve it in "
+            "Settings, or ask me to subscribe to it again."
+        )
+
     async def _poll_feeds(self) -> dict[str, Any]:
         items: list[str] = []
+        notes: list[str] = []
+        told = self.__dict__.setdefault("_told", set())
         for feed_url in self._config.rss.feeds:
+            if self._needs_confirmation(feed_url):
+                # Kept, never fetched and never dropped: said once per run, then left until the person decides.
+                if feed_url not in told:
+                    told.add(feed_url)
+                    notes.append(self._confirmation_note(feed_url))
+                continue
             try:
                 feed_items = await self._fetch_feed(feed_url)
                 items.extend(feed_items[: self._config.rss.max_items_per_feed])
             except Exception as exc:
+                from pilot.system.outbound import OutboundRefused
+
+                if isinstance(exc, OutboundRefused) and feed_url not in told and feed_url not in self._local_feeds():
+                    told.add(feed_url)
+                    notes.append(self._confirmation_note(feed_url))
                 logger.warning("Failed to fetch feed %s: %s", feed_url, exc)
 
         if not items:
-            return {"triggered": False, "digest": "No feed items retrieved."}
+            digest = "No feed items retrieved."
+            if notes:
+                digest += " " + " ".join(notes)
+            return {"triggered": False, "digest": digest, "needs_confirmation": notes}
 
         combined = "\n\n".join(items)
         prompt = _SUMMARIZE_PROMPT.format(items=combined)
@@ -171,7 +224,9 @@ class RssAgent(BaseAgent):
         key = f"rss_digest_{date.today().isoformat()}"
         await self._memory.set_preference(key, digest)
         logger.info("RSS digest stored under key '%s'", key)
-        return {"triggered": True, "message": "New RSS digest ready", "digest": digest}
+        if notes:
+            digest += "\n\n" + " ".join(notes)
+        return {"triggered": True, "message": "New RSS digest ready", "digest": digest, "needs_confirmation": notes}
 
     async def _on_new_digest(self, result: dict[str, Any]) -> None:
         logger.info("RSS digest broadcast: %s", result.get("message", ""))
@@ -181,11 +236,17 @@ class RssAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _fetch_feed(self, url: str) -> list[str]:
-        # Through the checked outbound path: a feed address on this computer or the local network is refused.
+        # Through the checked outbound path: a feed on this computer or the local network is refused unless approved.
         from pilot.system import outbound
 
         resp = await outbound.fetch(
-            "GET", url, headers={"User-Agent": "HeliOS-RSSAgent/1.0"}, timeout=_FETCH_TIMEOUT, config=self._config
+            "GET",
+            url,
+            headers={"User-Agent": "HeliOS-RSSAgent/1.0"},
+            timeout=_FETCH_TIMEOUT,
+            config=self._config,
+            # A feed the person approved reaches their own network, and only its own host (outbound's redirect rule).
+            allow_private_network=url in self._local_feeds(),
         )
         resp.raise_for_status()
         return self._parse_feed(resp.text, url)
