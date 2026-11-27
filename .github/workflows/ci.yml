@@ -1113,6 +1113,12 @@ jobs:
         working-directory: tauri-app/src-tauri
         run: cargo test --all-targets --no-run
 
+      # The window's reload limit and its restart dialog (webview_recovery.rs): the only place Windows runs the
+      # app's unit tests, as built with MSVC.
+      - name: The window's reload limit
+        working-directory: tauri-app/src-tauri
+        run: cargo test --all-targets webview_recovery
+
       - name: Paths, and keyring for the runner's own Python
         run: |
           python -m pip install --disable-pip-version-check --progress-bar off keyring
