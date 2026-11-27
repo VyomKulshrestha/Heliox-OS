@@ -596,8 +596,25 @@ class Window:
         try:
             return str(self.driver.run(script))
         except Exception as error:
-            self.lost(error)
+            if lost_for_good(error):
+                self.lost(error)
+            else:
+                self.dropped(error)
             return f"unreadable: {type(error).__name__}: {error}"
+
+    def dropped(self, error: BaseException) -> None:
+        """One call that failed while the session may still answer (CI on 45952357188: tauri-driver's reused
+        connection to WebKitWebDriver was reset, and the next call worked): a short line, so a later loss of the
+        session still gets the full report."""
+        self.failed_call(error)
+        _, why = self.may_open_again()
+        resets = sum("Connection reset by peer" in line for line in tail(OUT / "driver.log", 200, width=400))
+        changes = self.watch.changes if self.watch else []
+        print(
+            f"DIAG a call to the window failed ({type(error).__name__}); {why}; process changes: {changes or 'none'}; "
+            f"connection resets in tauri-driver's log: {resets}",
+            flush=True,
+        )
 
 
 PYTHON_SENTENCE = "const p = document.querySelector('.python'); return p ? p.textContent.trim() : '';"
