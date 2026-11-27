@@ -19,7 +19,7 @@
   "sources": {
     "action_registry": {
       "path": "daemon/pilot/actions.py",
-      "sha256": "2d34c2b104d2164e0becd503a84a57956a5570afb19918449c1c342f16547e26"
+      "sha256": "b74f200d9f40c3bb8110955f55ceb932707ce4f64422ddaf255918d5e081e8ca"
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
@@ -64,7 +64,7 @@
       },
       {
         "path": "daemon/pilot/agents/postconditions/files.py",
-        "sha256": "51174acd904d84f8b3109d18da5ad8bb108de3847080cb620800f3636ac82a21"
+        "sha256": "cf47762c695e2902277e7c28a7e75b6b6746be9fa888f4cec99285b00f9c66cc"
       },
       {
         "path": "daemon/pilot/agents/postconditions/git_repo.py",
