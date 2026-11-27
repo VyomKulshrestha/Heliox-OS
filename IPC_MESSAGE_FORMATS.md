@@ -124,6 +124,12 @@ paths, raw system text or JSON. `spoken` is shorter than `message` when the
 shown reply holds details for the eye ("The details are on screen."); a client
 that speaks replies speaks `spoken`, never `message`.
 
+A request one of whose steps Heliox's own rules refuse whatever the person answers (the gateway's ceiling for the
+source the step would run under) ends before any approval card with `"status": "error"`, `"denied_kind":
+"gateway_denied"`, each refused step in `results` with `"skip_reason": "gateway_denied"`, and the failure sentence of
+that kind as `message` and `spoken` ("I didn't call 127.0.0.1: my safety rules don't allow that from here, so
+nothing was sent. Asking again won't change it."). It is final: no repair round, no second card.
+
 A conversational request may validly return no actions:
 
 ```json
@@ -4044,6 +4050,11 @@ A trigger's fire arrives the same way, with `"kind": "trigger"`, `"id": "trigger
 log.txt."}`. A fire whose fixed steps the person did not approve when the trigger was made waits instead of
 running, and says so; the trigger keeps it as `pending`, and the sentence it last told as `last_outcome`, next to its
 `steps` and `steps_approved` (the `trigger_list` action's output).
+A trigger made with `"notify_only": true` (the planner sets it for "tell me when ...") runs no job when it fires:
+the notice is the sentence alone, by the file's name (`{"text": "watched.txt changed."}`). The `trigger_delete`
+action answers with the removed entry plus `deleted`, `watched` (the file's name) and `others_watching`, how many
+triggers still watch the same file ("I've removed the trigger that tells you when watched.txt changes. The other
+one still watches it.").
 
 #### `verification_late`
 Broadcast, and spoken, when a check that went on behind a reply (the reply waits about 3 s for a plan's checks)
