@@ -445,12 +445,14 @@ DEFAULT_SOURCE_PROFILES: dict[str, SourceProfile] = {
         },
         allow_root=False,
     ),
+    # gnome_setting_write is SYSTEM_MODIFY ("other") and window_close DESTRUCTIVE (system control): the agent declares
+    # both, so a lower ceiling refused every one of them after the person approved it.
     "desktop_agent": SourceProfile(
         max_tier={
             ActionFamily.SHELL.value: int(PermissionTier.READ_ONLY),
             ActionFamily.BROWSING.value: int(PermissionTier.READ_ONLY),
-            ActionFamily.SYSTEM_CONTROL.value: int(PermissionTier.SYSTEM_MODIFY),
-            ActionFamily.OTHER.value: int(PermissionTier.USER_WRITE),
+            ActionFamily.SYSTEM_CONTROL.value: int(PermissionTier.DESTRUCTIVE),
+            ActionFamily.OTHER.value: int(PermissionTier.SYSTEM_MODIFY),
         },
         allow_root=False,
     ),
@@ -463,17 +465,24 @@ DEFAULT_SOURCE_PROFILES: dict[str, SourceProfile] = {
         },
         allow_root=False,
     ),
+    # api_request, api_scrape and api_github are "browsing": a POST, a GitHub write or an address on this computer or
+    # the person's own network is SYSTEM_MODIFY (it asks for approval). READ_ONLY here refused each of them after the
+    # person had approved it (live run, 27 November: a GET to 127.0.0.1 asked three times, then failed).
     "integration_agent": SourceProfile(
         max_tier={
             ActionFamily.SHELL.value: int(PermissionTier.READ_ONLY),
-            ActionFamily.BROWSING.value: int(PermissionTier.READ_ONLY),
+            ActionFamily.BROWSING.value: int(PermissionTier.SYSTEM_MODIFY),
             ActionFamily.SYSTEM_CONTROL.value: int(PermissionTier.READ_ONLY),
             ActionFamily.OTHER.value: int(PermissionTier.SYSTEM_MODIFY),
         },
         allow_root=False,
     ),
+    # Screen reads, and screenshot, which saves a picture (USER_WRITE, "other").
     "vision_agent": SourceProfile(
-        max_tier={f.value: int(PermissionTier.READ_ONLY) for f in ActionFamily},
+        max_tier={
+            **{f.value: int(PermissionTier.READ_ONLY) for f in ActionFamily},
+            "other": int(PermissionTier.USER_WRITE),
+        },
         allow_root=False,
     ),
     "plugin_runtime_agent": SourceProfile(
@@ -550,6 +559,38 @@ def resolve_effective_profile(profile: SourceProfile, override: TaskScopeOverrid
     )
 
 
+# The skip reasons of a step Heliox's own rules refused: the gateway's ceilings, families and deny lists per source
+# (interactive, voice, autonomous, phone, MCP, each specialist), and the permission checker's tiers. Asking again,
+# with a repaired plan or another approval card, gets the same answer, so a denial is final (``denied_by_policy``).
+GATEWAY_DENIED = "gateway_denied"
+POLICY_DENIALS = frozenset({GATEWAY_DENIED, "permission_denied"})
+
+
+def denied_by_policy(results: Any) -> bool:
+    """Whether any step of ``results`` was refused by Heliox's own rules (``POLICY_DENIALS``)."""
+    return any(getattr(result, "skip_reason", None) in POLICY_DENIALS and not result.success for result in results)
+
+
+def ceiling_reason(action: Any, source: InvocationSource, profile: SourceProfile) -> str:
+    """Why ``profile`` (the floor of ``source``, already narrowed by any override) refuses ``action``; "" when it does
+    not. The one rule: the gateway's check and the preview before an approval card both use it."""
+    family = action_family(action.action_type)
+    tier = int(action.permission_tier)
+    # A family the profile does not list is read-only (fail closed).
+    ceiling = profile.max_tier.get(family.value, int(PermissionTier.READ_ONLY))
+    if action.action_type.value in profile.deny_action_types:
+        return f"{action.action_type.value} is denied for source '{source.value}' by gateway policy."
+    if tier > ceiling:
+        return (
+            f"{action.action_type.value} (tier={PermissionTier(tier).name}, family={family.value}) "
+            f"exceeds the '{source.value}' source's allowed ceiling "
+            f"({PermissionTier(ceiling).name})."
+        )
+    if action.permission_tier == PermissionTier.ROOT_CRITICAL and not profile.allow_root:
+        return f"{action.action_type.value} requires root, which is denied for source '{source.value}'."
+    return ""
+
+
 @dataclass
 class GatewayDecision:
     allowed: bool
@@ -608,22 +649,7 @@ class AgentGateway:
         for index, action in enumerate(plan.actions):
             family = action_family(action.action_type)
             tier = int(action.permission_tier)
-            # A family the profile does not list is read-only (fail closed).
-            ceiling = profile.max_tier.get(family.value, int(PermissionTier.READ_ONLY))
-
-            action_reason = ""
-            if action.action_type.value in profile.deny_action_types:
-                action_reason = f"{action.action_type.value} is denied for source '{source.value}' by gateway policy."
-            elif tier > ceiling:
-                action_reason = (
-                    f"{action.action_type.value} (tier={PermissionTier(tier).name}, family={family.value}) "
-                    f"exceeds the '{source.value}' source's allowed ceiling "
-                    f"({PermissionTier(ceiling).name})."
-                )
-            elif action.permission_tier == PermissionTier.ROOT_CRITICAL and not profile.allow_root:
-                action_reason = (
-                    f"{action.action_type.value} requires root, which is denied for source '{source.value}'."
-                )
+            action_reason = ceiling_reason(action, source, profile)
 
             if action_reason:
                 reasons.append(action_reason)
@@ -670,6 +696,25 @@ class AgentGateway:
             return GatewayDecision(allowed=False, reasons=[reason], critic_verdict=critic_verdict)
 
         return GatewayDecision(allowed=True, critic_verdict=critic_verdict)
+
+    def preview_denials(
+        self,
+        actions: list[Any],
+        sources: list[InvocationSource],
+        scope_override: TaskScopeOverride | None = None,
+    ) -> list[tuple[int, str]]:
+        """Before an approval card: (index, reason) for each step the gateway will refuse whatever the person answers,
+        each checked under the source that will run it (``sources``, one per step). Nothing is recorded; the
+        critic is not asked (its verdict is a review, not a ceiling)."""
+        if not self._config.gateway.enabled:
+            return []
+        found = []
+        for index, (action, source) in enumerate(zip(actions, sources, strict=True)):
+            profile = resolve_effective_profile(self._profile_for(source), scope_override)
+            reason = ceiling_reason(action, source, profile)
+            if reason:
+                found.append((index, reason))
+        return found
 
     async def _record_decision(
         self,

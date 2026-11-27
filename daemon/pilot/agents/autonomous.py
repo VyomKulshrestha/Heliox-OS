@@ -1339,6 +1339,10 @@ class AutonomousExecutor:
                 failure = "; ".join(errors) or verification_details or "verification failed"
                 progress.append(f"Round {round_index + 1} failed verification: {failure}")
                 step.error = failure
+                from pilot.security.gateway import denied_by_policy
+
+                if denied_by_policy(results):
+                    break  # Heliox's own rules refused a step: another round would only be refused again
                 if settle_instead_of_retrying(results, list(getattr(verification, "failed_actions", []))):
                     # The person settles it; another round could add a second event or type into another window.
                     break

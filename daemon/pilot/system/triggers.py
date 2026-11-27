@@ -267,6 +267,9 @@ class Trigger:
     # fires since. None: nothing waits.
     pending: dict[str, Any] | None = None
     last_outcome: str = ""  # the sentence the person was told about the last fire
+    # The trigger's job is only to tell the person: a fire is the engine's own notice (shown and spoken), with no steps
+    # and no planned job. action_command is then empty or the person's words, never planned.
+    notify_only: bool = False
 
     def can_fire(self) -> bool:
         if not self.enabled:
@@ -301,6 +304,7 @@ def validate_trigger(
     action_command: str,
     max_fires: int,
     cooldown_seconds: int,
+    notify_only: bool = False,
 ) -> TriggerType:
     """The rules every trigger must pass, at creation and again when it is loaded from the store.
 
@@ -309,7 +313,7 @@ def validate_trigger(
     """
     if not str(name).strip():
         raise ValueError("Trigger name is required")
-    if not str(action_command).strip():
+    if not str(action_command).strip() and not notify_only:
         raise ValueError("Trigger action command is required")
     if not isinstance(condition, dict):
         raise ValueError("Trigger condition must be a mapping")
@@ -343,6 +347,28 @@ _NOT_A_TRIGGER_STEP = frozenset(
         "schedule_delete",
     }
 )
+
+
+# A trigger's words that only ask for the person to be told ("Tell the person that notes.txt has changed", "let me
+# know", "alert me"), and no other job ("tell me and copy it to backup").
+_TELLS = re.compile(
+    r"^\s*(?:please\s+)?(?:tell|notify|alert|warn|inform|ping|remind)\b|^\s*(?:please\s+)?let\s+\w+\s+know\b",
+    re.IGNORECASE,
+)
+_OTHER_JOB = re.compile(
+    r"\b(?:append|add|write|save|copy|move|rename|delete|remove|run|execute|open|start|stop|kill|send|email|e-mail|post|"
+    r"upload|download|install|restart|shut|zip|backup|back up)\b",
+    re.IGNORECASE,
+)
+
+
+def tells_only(action_command: str) -> bool:
+    """Whether a trigger's words only ask for the person to be told: such a trigger is notice-only."""
+    text = " ".join(str(action_command or "").split())
+    if not text or not _TELLS.search(text):
+        return False
+    rest = _TELLS.sub("", text, count=1)
+    return not _OTHER_JOB.search(rest.split(" that ", 1)[0] if " that " in rest else rest)
 
 
 def validate_steps(steps: Any) -> list[dict[str, Any]]:
@@ -557,12 +583,16 @@ class TriggerEngine:
         cooldown_seconds: int = 60,
         steps: list[Any] | None = None,
         steps_approved: bool = False,
+        notify_only: bool = False,
     ) -> Trigger:
         """Create a new trigger (and keep it in the store, when one is attached)."""
         name = name.strip()
         action_command = action_command.strip()
-        resolved_type = validate_trigger(name, trigger_type, condition, action_command, max_fires, cooldown_seconds)
         records = validate_steps(steps)
+        notify_only = bool(notify_only and not records)
+        resolved_type = validate_trigger(
+            name, trigger_type, condition, action_command, max_fires, cooldown_seconds, notify_only
+        )
         trigger = Trigger(
             id=str(uuid.uuid4())[:8],
             name=name,
@@ -574,6 +604,7 @@ class TriggerEngine:
             created_at=datetime.now().isoformat(),
             steps=records,
             steps_approved=bool(steps_approved and records),
+            notify_only=notify_only,
         )
         self._triggers[trigger.id] = trigger
         try:
@@ -715,7 +746,12 @@ class TriggerEngine:
             name = entry["name"]
             command = entry["action_command"]
             condition = entry.get("condition", {})
-            if not all(isinstance(value, str) and value for value in (trigger_id, name, command)):
+            notify_only = entry.get("notify_only") is True
+            if not all(isinstance(value, str) and value for value in (trigger_id, name)) or not isinstance(
+                command, str
+            ):
+                return None
+            if not command and not notify_only:
                 return None
             if not isinstance(condition, dict):
                 return None
@@ -740,7 +776,13 @@ class TriggerEngine:
             pending = entry.get("pending")
             try:
                 validate_trigger(
-                    name, resolved_type.value, condition, command, numbers["max_fires"], numbers["cooldown_seconds"]
+                    name,
+                    resolved_type.value,
+                    condition,
+                    command,
+                    numbers["max_fires"],
+                    numbers["cooldown_seconds"],
+                    notify_only,
                 )
             except ValueError as error:
                 reason = f"Refused by the trigger rules when loaded: {error}"
@@ -762,6 +804,7 @@ class TriggerEngine:
                 steps_approved=entry.get("steps_approved") is True and bool(steps),
                 pending=pending if isinstance(pending, dict) else None,
                 last_outcome=str(entry.get("last_outcome") or ""),
+                notify_only=notify_only and not steps,
             )
         except (KeyError, TypeError):
             return None
@@ -809,6 +852,7 @@ class TriggerEngine:
         max_fires: int,
         cooldown_seconds: int,
         steps: list[Any] | None = None,
+        notify_only: bool = False,
     ) -> Trigger | None:
         """An enabled trigger that already has exactly these settings, if one exists."""
         records = validate_steps(steps)
@@ -822,6 +866,7 @@ class TriggerEngine:
                 and trigger.max_fires == max_fires
                 and trigger.cooldown_seconds == cooldown_seconds
                 and trigger.steps == records
+                and trigger.notify_only == bool(notify_only and not records)
             ):
                 return trigger
         return None
@@ -1075,8 +1120,9 @@ async def trigger_create(
     cooldown_seconds: int = 60,
     steps: list[Any] | None = None,
     steps_approved: bool = False,
+    notify_only: bool = False,
 ) -> str:
-    """Create a reactive trigger.
+    """Create a reactive trigger. ``notify_only``: its job is only to tell the person (see ``Trigger.notify_only``).
 
     ``steps``: the exact steps a fire runs, fixed now; ``steps_approved``: the person approved them in this request.
     A step that needs approval and was not approved here is not run at a fire: the fire waits for the person.
@@ -1085,7 +1131,12 @@ async def trigger_create(
     one instead of adding a twin that would fire the same command twice; this keeps
     a retry after a failed verification from doubling the trigger.
     """
-    existing = _engine.find_matching(name, trigger_type, condition, action_command, max_fires, cooldown_seconds, steps)
+    notify_only = bool(notify_only or (not steps and tells_only(action_command)))
+    if notify_only:
+        action_command = ""  # nothing to plan: the notice is the job
+    existing = _engine.find_matching(
+        name, trigger_type, condition, action_command, max_fires, cooldown_seconds, steps, notify_only
+    )
     if existing is not None and steps_approved and existing.steps and not existing.steps_approved:
         existing.steps_approved = True  # the same steps, approved this time
         _engine._save()
@@ -1098,6 +1149,7 @@ async def trigger_create(
         cooldown_seconds,
         steps,
         steps_approved,
+        notify_only,
     )
 
     # Auto-start engine if not running (or if its loop has ended), and remember that it should run.

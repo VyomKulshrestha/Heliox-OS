@@ -97,6 +97,13 @@ async def schedule_present(result: ActionResult) -> Outcome:
 # ── Triggers ─────────────────────────────────────────────────────────
 
 
+def entry_notify_only(params: TriggerParams) -> bool:
+    """Whether the store keeps this trigger as notice-only (pilot.system.triggers.trigger_create decides it)."""
+    from pilot.system.triggers import tells_only
+
+    return bool(params.notify_only or (not params.steps and tells_only(params.action_command))) and not params.steps
+
+
 def _created_id(result: ActionResult) -> str:
     try:
         record: Any = json.loads(result.output or "")
@@ -142,9 +149,10 @@ async def trigger_present(result: ActionResult) -> Outcome:
         "name": name,
         "trigger_type": params.trigger_type,
         "condition": params.condition,
-        "action_command": params.action_command.strip(),
+        "action_command": "" if entry_notify_only(params) else params.action_command.strip(),
         "enabled": True,
         "steps": validate_steps(list(params.steps)),
+        "notify_only": bool(entry_notify_only(params)),
     }
     matching = [entry for entry in candidates if all(entry.get(key) == value for key, value in expected.items())]
     if not matching:

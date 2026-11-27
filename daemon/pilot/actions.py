@@ -813,6 +813,9 @@ class TriggerParams(BaseModel):
     # trigger_create: the exact steps a fire runs, fixed now (at most 5; no trigger or schedule steps). Their
     # approval is asked for with this step (Action.permission_tier), and a fire runs these and nothing else.
     steps: list[Action] = Field(default_factory=list, max_length=5)
+    # trigger_create: the job is only to tell the person ("tell me when notes.txt changes"). A fire is Heliox's own
+    # notice, shown and spoken; nothing is planned or run. No steps and no action_command are needed.
+    notify_only: bool = False
 
 
 # ======= TIER 2: MULTIPLIER PARAMS =======

@@ -948,15 +948,20 @@ class Executor:
                 plan_id=plan_id,
             )
             if not gateway_decision.allowed:
-                return [
+                # Every step gets the answer, each named as a denial by Heliox's own rules (final: never repaired).
+                denied = [
                     ActionResult(
-                        action=plan.actions[0]
-                        if plan.actions
-                        else Action(
-                            action_type=ActionType.FILE_READ,
-                            target="",
-                            parameters=FileParams(path="/"),
-                        ),
+                        action=action,
+                        success=False,
+                        error=f"Gateway denied: {'; '.join(gateway_decision.reasons)}",
+                        executed=False,
+                        skip_reason="gateway_denied",
+                    )
+                    for action in plan.actions
+                ]
+                return denied or [
+                    ActionResult(
+                        action=Action(action_type=ActionType.FILE_READ, target="", parameters=FileParams(path="/")),
                         success=False,
                         error=f"Gateway denied: {'; '.join(gateway_decision.reasons)}",
                         executed=False,
@@ -2878,6 +2883,7 @@ class Executor:
             p.max_fires,
             p.cooldown_seconds,
             steps=list(p.steps),
+            notify_only=p.notify_only,
             # Approved: the person approved this plan, whose approval card held these steps (trigger_create takes
             # their tier). Steps that need no approval are approved by being what Heliox runs without asking.
             steps_approved=STEP_APPROVED.get()

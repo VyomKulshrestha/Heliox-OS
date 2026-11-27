@@ -169,8 +169,8 @@ BROWSER AUTOMATION (Headless, for reading/interacting):
 - browser_back, browser_forward, browser_refresh, browser_wait — Params: {{"timeout": 5000}}
 
 REACTIVE TRIGGERS:
-- trigger_create — Params: {{"name": "alert", "trigger_type": "cpu_threshold", "condition": {{"threshold": 90}},
-  "action_command": "Tell me the CPU is above 90 percent"}} / {{"name": "notes-watch", "trigger_type":
+- trigger_create — Params: {{"name": "cpu-alert", "trigger_type": "cpu_threshold", "condition": {{"threshold": 90}},
+  "notify_only": true}} / {{"name": "notes-watch", "trigger_type":
   "file_modified", "condition": {{"path": "C:\\\\path\\\\notes.txt"}}, "action_command": "Append the line 'seen a
   change' to C:\\\\path\\\\log.txt", "steps": [{{"action_type": "file_write", "target":
   "C:\\\\path\\\\log.txt", "parameters": {{"path": "C:\\\\path\\\\log.txt", "content": "seen a change",
@@ -178,8 +178,8 @@ REACTIVE TRIGGERS:
   "action_command" says in plain words what happens each time the trigger fires: never a shell line. "steps" are the
   exact steps each fire runs, written like a plan's own steps (at most 5; never a trigger or schedule step); the
   person approves them with this request, and a fire runs them and nothing else. Give "steps" whenever the job is
-  fixed (append a line, write or copy a file, a notification); leave them out only when the job is just to tell
-  the person, and then "action_command" says what to tell.
+  fixed (append a line, write or copy a file). When the job is only to tell the person ("tell me when", "let me know
+  if", "alert me when") give "notify_only": true and no "steps" and no "action_command": Heliox says it itself.
 - The trigger types Heliox watches, with the keys of their "condition":
 <<TRIGGER_TYPES>>
 - trigger_list, trigger_delete — Params: {{}} / {{"name": "alert"}}
@@ -795,6 +795,50 @@ def _note_trigger_question(request: str) -> None:
     matches = engine.resolve(request)
     if len(matches) >= 2:
         engine.offer([trigger.id for trigger in matches])
+
+
+def local_address(url: str) -> str:
+    """ "this computer" or "your own network" when ``url``'s host is written as such an address (localhost, a loopback,
+    private or link-local IP, a .local name); "" for any other address. A name that only resolves to one is found when
+    the request is sent (pilot.system.api_client refuses it without approval)."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    try:
+        host = (urlsplit(url.strip()).hostname or "").rstrip(".").lower()
+    except ValueError:
+        return ""
+    if not host:
+        return ""
+    if host == "localhost" or host.endswith(".localhost"):
+        return "this computer"
+    if host.endswith(".local"):
+        return "your own network"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return ""
+    if address.is_loopback or address.is_unspecified:
+        return "this computer"
+    if address.is_private or address.is_link_local:
+        return "your own network"
+    return ""
+
+
+def _notice_only(params: dict[str, Any]) -> dict[str, Any]:
+    """A trigger whose job is only to tell the person, as notice-only: whatever the model wrote ("Tell the person that
+    notes.txt has changed" as words to plan, or a desktop notify step), nothing is planned or run at a fire; the
+    engine's own notice is the telling (pilot.system.triggers.Trigger.notify_only)."""
+    from pilot.system.triggers import tells_only
+
+    steps = list(params.get("steps") or [])
+    kinds = {getattr(step, "action_type", None) for step in steps}
+    if params.get("notify_only") is True and not steps:
+        return {**params, "action_command": ""}
+    if (steps and kinds == {ActionType.NOTIFY}) or (not steps and tells_only(str(params.get("action_command") or ""))):
+        logger.info("Plan: a trigger that only tells the person is notice-only")
+        return {**params, "steps": [], "notify_only": True, "action_command": ""}
+    return params
 
 
 def _trigger_steps(raw_steps: list[Any]) -> list[Action]:
@@ -2271,6 +2315,10 @@ class Planner:
     def _normalize_params(action_type: ActionType, params: dict, target: str) -> dict:
         """Fill in missing parameters by inferring from target/context."""
         p = dict(params)
+        if action_type in {ActionType.API_REQUEST, ActionType.API_SCRAPE} and local_address(str(p.get("url") or "")):
+            # An address on this computer or the person's own network is never reached without their approval: the
+            # step says so (allow_private_network makes it SYSTEM_MODIFY, so it asks), whatever the model wrote.
+            p["allow_private_network"] = True
 
         if action_type == ActionType.OPEN_URL:
             if "url" not in p or not p["url"]:
@@ -2326,6 +2374,8 @@ class Planner:
             p["trigger_type"] = resolve_trigger_type(p["trigger_type"])
         if action_type == ActionType.TRIGGER_CREATE and isinstance(p.get("steps"), list):
             p["steps"] = _trigger_steps(p["steps"])
+        if action_type == ActionType.TRIGGER_CREATE:
+            p = _notice_only(p)
 
         file_types = {
             ActionType.FILE_READ,

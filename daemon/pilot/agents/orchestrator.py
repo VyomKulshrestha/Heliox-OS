@@ -42,7 +42,7 @@ from pilot.models.budget_tracker import (
     current_agent_id,
     current_task_id,
 )
-from pilot.security.gateway import mark_critic_already_reviewed
+from pilot.security.gateway import GATEWAY_DENIED, InvocationSource, mark_critic_already_reviewed
 
 
 class TaskPriority(IntEnum):
@@ -325,6 +325,19 @@ class AgentOrchestrator:
             routing.setdefault(role, []).append(i)
         return routing
 
+    def invocation_sources(self, plan: ActionPlan) -> list[InvocationSource]:
+        """The gateway source each step of ``plan`` would run under: that of the specialist the orchestrator would give
+        it to now (the system agent when none declares it). The server checks these before an approval card, so the
+        card never asks for a step the specialist's ceiling will refuse."""
+        sources: list[InvocationSource] = [InvocationSource.UNKNOWN] * len(plan.actions)
+        for provider, indices in self._build_execution_order(plan, self.analyze_plan(plan), task_id="routing-preview"):
+            agent = self._agents.get(provider) if isinstance(provider, AgentRole) else self._mesh.agent_for(provider)
+            agent = agent or self._agents.get(AgentRole.SYSTEM)
+            source = agent.get_invocation_source() if agent is not None else InvocationSource.UNKNOWN
+            for index in indices:
+                sources[index] = source
+        return sources
+
     def get_routing_summary(self, plan: ActionPlan) -> dict[str, Any]:
         """Get a human-readable routing summary for the UI."""
         routing = self.analyze_plan(plan)
@@ -558,7 +571,9 @@ class AgentOrchestrator:
                         all_results[idx] = ActionResult(
                             action=plan.actions[idx],
                             success=False,
-                            error=denial,
+                            error=f"Gateway denied: {denial}",
+                            executed=False,
+                            skip_reason=GATEWAY_DENIED,
                         )
                     if cancel_event:
                         cancel_event.set()

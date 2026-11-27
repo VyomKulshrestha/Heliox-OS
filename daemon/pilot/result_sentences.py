@@ -1150,21 +1150,73 @@ def _trigger_parts(entry: dict) -> tuple[str, str, str]:
 
 
 def trigger_named(trigger: Any) -> str:
-    """How every sentence names a trigger: by what it watches, never by its id or a made-up name."""
+    """How every sentence names a trigger: by what it watches, never by its id or a made-up name. When another trigger
+    watches the same thing, also by what it does ("the trigger that watches notes.txt and is set to tell you")."""
     entry = trigger_entry(trigger)
     if entry.get("trigger_type") == "time_interval":
         return "the trigger that runs on an interval"
-    watched, _when, _job_words = _trigger_parts(entry)
+    watched, _when, job_words = _trigger_parts(entry)
+    if _shares_its_target(entry):
+        return f"the trigger that watches {watched} and is set to {job_words}"
     return f"the trigger that watches {watched}"
+
+
+def _shares_its_target(entry: dict) -> bool:
+    """Whether another stored trigger watches the same thing, so a sentence must say which one this is."""
+    from pilot.system.triggers import get_engine
+
+    others = [
+        other
+        for other in get_engine()._triggers.values()
+        if other.id != entry.get("id")
+        and other.trigger_type.value == entry.get("trigger_type")
+        and other.condition == entry.get("condition")
+    ]
+    return bool(entry.get("id")) and bool(others)
+
+
+# What a notice-only trigger says when it fires, by its type: "notes.txt changed."
+_NOTICES = {
+    "file_modified": "{watched} changed.",
+    "file_change": "{watched} changed.",
+    "file_created": "A new file appeared in {watched}.",
+    "file_deleted": "{watched} was deleted.",
+    "cpu_threshold": "The processor went above {threshold} percent.",
+    "memory_threshold": "Memory use went above {threshold} percent.",
+    "disk_threshold": "The disk went above {threshold} percent full.",
+    "battery_low": "The battery is below {threshold} percent.",
+    "process_started": "{watched} started.",
+    "process_stopped": "{watched} stopped.",
+    "network_change": "The network changed.",
+    "custom_condition": "Your condition holds now.",
+}
+
+
+def _notice(entry: dict) -> str:
+    condition = entry.get("condition") if isinstance(entry.get("condition"), dict) else {}
+    watched, _when, _job = _trigger_parts(entry)
+    default = {"cpu_threshold": 90, "memory_threshold": 90, "disk_threshold": 95, "battery_low": 20}
+    kind = str(entry.get("trigger_type") or "")
+    threshold = condition.get("threshold", default.get(kind, ""))
+    template = _NOTICES.get(kind, "{watched} changed.")
+    sentence = template.format(watched=watched, threshold=threshold)
+    if not template.startswith("{watched}"):
+        sentence = sentence[:1].upper() + sentence[1:]  # a file's or program's own name keeps its case
+    if _shares_its_target(entry):
+        sentence = sentence[:-1] + " (the trigger set to tell you)."
+    return sentence
 
 
 def trigger_fire_sentence(trigger: Any, outcome: str, *, error: str = "", seconds: int = 0) -> str:
     """What the person is told about one fire. ``outcome``: ran, failed (``error`` is already a plain sentence),
-    timeout, fault, waits (a step needs an approval nobody gave), unreadable, unavailable, job_done, job_failed."""
+    timeout, fault, waits (a step needs an approval nobody gave), unreadable, unavailable, job_done, job_failed, notice
+    (a notice-only trigger: what happened, by the file's name)."""
     entry = trigger_entry(trigger)
     named = trigger_named(entry)
     lead = named[:1].upper() + named[1:] + " fired"
     _watched, _when, job = _trigger_parts(entry)
+    if outcome == "notice":
+        return _notice(entry)
     sentences = {
         "ran": f"{lead}, and I did what it asks: {job}.",
         "failed": f"{lead}, but a step did not work. {error}".strip(),

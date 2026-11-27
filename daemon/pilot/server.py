@@ -634,6 +634,13 @@ TRIGGER_FIRE_SECONDS = 120.0
 TRIGGER_RETELL_SECONDS = 3600.0
 
 
+# A request one of whose steps Heliox's own rules refuse whatever the person answers (pilot.security.gateway).
+# The reply code words it from the results' skip reason ``gateway_denied``; this is the fallback.
+GATEWAY_REFUSED_SENTENCE = (
+    "I didn't do that: my safety rules don't allow this step from here, and asking again won't change it."
+)
+
+
 def request_fault_answer(what: str, error: BaseException) -> dict[str, Any]:
     """The reply for a request that raised: the storage sentence for a full or read-only disk, otherwise the plain
     fault sentence. The exception and its traceback are logged here, once."""
@@ -768,6 +775,11 @@ def _is_terminal_execution_failure(results: list[Any], request: str = "") -> boo
     failed = [result for result in results if not result.success]
     if not failed:
         return False
+    from pilot.security.gateway import denied_by_policy
+
+    if denied_by_policy(failed):
+        # Heliox's own rules refused a step: a repaired plan or another approval card gets the same answer.
+        return True
 
     terminal_markers = {
         "file_read": ("file not found", "no such file", "cannot find the file"),
@@ -845,6 +857,17 @@ def _approval_effect(action: Any) -> str:
         host = urlsplit(str(getattr(params, "url", "") or "")).hostname or "the address in this step"
         if names:
             return f"Sends a credential to {host} (the {', '.join(names)} header)."
+    if getattr(action, "action_type", None) in {ActionType.API_REQUEST, ActionType.API_SCRAPE} and getattr(
+        params, "allow_private_network", False
+    ):
+        from urllib.parse import urlsplit
+
+        from pilot.agents.planner import local_address
+
+        url = str(getattr(params, "url", "") or "")
+        host = urlsplit(url).hostname or "this address"
+        where = local_address(url) or "this computer or your own network"
+        return f"Reaches {host}, an address on {where}. Approve it only if you asked for it."
     if getattr(action, "action_type", None) == ActionType.TRIGGER_CREATE and getattr(params, "steps", None):
         from pilot.result_sentences import hidden_commands, steps_job
 
@@ -4016,6 +4039,20 @@ class PilotServer:
             self._cancel_event = None
             self._active_experience_context = ExperienceContext()
 
+    def _gateway_refusals(
+        self, plan: Any, invocation_source: Any, scope_override: Any, *, dry_run: bool
+    ) -> list[tuple[int, str]]:
+        """(index, reason) for each step the gateway will refuse under the source that will run it: the specialist the
+        orchestrator gives it to, or ``invocation_source`` when there is no orchestrator. Checked before the card."""
+        gateway = getattr(self, "_agent_gateway", None)
+        if gateway is None or dry_run or not plan.actions:
+            return []
+        if self._orchestrator is not None:
+            sources = self._orchestrator.invocation_sources(plan)
+        else:
+            sources = [invocation_source] * len(plan.actions)
+        return gateway.preview_denials(list(plan.actions), sources, scope_override)
+
     async def _record_request_fault(
         self, task_id: str, interaction_id: str, exc: BaseException, answer: dict[str, Any]
     ) -> None:
@@ -5118,6 +5155,33 @@ class PilotServer:
                 }
                 await ws.send(_notification("critic_verdict", {"plan_id": plan_id, **critic_verdict_payload}))
 
+            refusals = self._gateway_refusals(plan, invocation_source, scope_override, dry_run=dry_run)
+            if refusals:
+                from pilot.actions import ActionResult
+                from pilot.security.gateway import GATEWAY_DENIED
+
+                # Heliox's own rules refuse a step whatever the person answers: no approval card, no repair round,
+                # one reply. Every card shown is one the gateway will then honour.
+                refused = [
+                    ActionResult(
+                        action=plan.actions[index],
+                        success=False,
+                        error=f"Gateway denied: {reason}",
+                        executed=False,
+                        skip_reason=GATEWAY_DENIED,
+                    )
+                    for index, reason in refusals
+                ]
+                logger.info("Plan %s refused by the gateway before any approval: %s", plan_id, refusals[0][1])
+                message = GATEWAY_REFUSED_SENTENCE
+                await _emit_task_complete(GATEWAY_DENIED, message)
+                return {
+                    "status": "error",
+                    "message": message,
+                    "explanation": plan.explanation,
+                    "results": [result.model_dump(mode="json") for result in refused],
+                    "denied_kind": GATEWAY_DENIED,
+                }
             gnomon_interrupt, gnomon_reasons = False, []
             if "gnomon" in review_results:
                 gnomon_interrupt, gnomon_reasons, gnomon_review = review_results["gnomon"]
@@ -12797,6 +12861,12 @@ class PilotServer:
         if getattr(trigger, "steps", None):
             await self._run_trigger_steps(trigger)
             return
+        from pilot.system.triggers import tells_only
+
+        if getattr(trigger, "notify_only", False) or tells_only(str(getattr(trigger, "action_command", "") or "")):
+            # The person asked to be told: the notice is the job. Nothing is planned and no job starts.
+            await self._trigger_notice(trigger)
+            return
         if not self._running or self._autonomous is None:
             logger.warning("Trigger %s fired while autonomous execution was unavailable", trigger.id)
             await self._broadcast_notification(
@@ -12823,6 +12893,20 @@ class PilotServer:
                 "job_id": job.job_id,
             },
         )
+
+    async def _trigger_notice(self, trigger: Any) -> None:
+        """A notice-only trigger fired: say it (the watcher notice, shown and spoken) with the file's name."""
+        from pilot.result_sentences import trigger_fire_sentence
+
+        fire_key = f"trigger-{trigger.id}-{getattr(trigger, 'fire_count', 0)}"
+        await self._append_experience(
+            ExperienceEventType.OUTCOME_VERIFIED,
+            idempotency_key=f"task:{fire_key}:trigger_notice",
+            source="trigger",
+            payload={"status": "told", "trigger_id": trigger.id},
+            provenance={"component": "PilotServer._trigger_notice"},
+        )
+        await self._trigger_told(trigger, trigger_fire_sentence(trigger, "notice"), key=fire_key)
 
     async def _run_trigger_steps(self, trigger: Any) -> None:
         """Run a fired trigger's fixed steps through the Executor, bounded in time, with a receipt, and say how it
