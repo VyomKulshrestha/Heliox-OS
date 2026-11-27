@@ -76,8 +76,9 @@ fi
 dpkg -L "$package" > /tmp/package-files.txt
 
 # From here on only what the test needs, never what the app needs: a virtual display and a session bus for the
-# person's desktop, Python for the check itself, and WebKitWebDriver, which tauri-driver drives.
-if ! apt_install /tmp/harness.log 600 --no-install-recommends xvfb dbus-x11 webkit2gtk-driver python3; then
+# person's desktop, Python for the check itself, WebKitWebDriver, which tauri-driver drives, and xwininfo
+# (x11-utils), which lists the display's windows when the driver's session is lost.
+if ! apt_install /tmp/harness.log 600 --no-install-recommends xvfb dbus-x11 webkit2gtk-driver python3 x11-utils; then
     check test-tools FAIL "$(tail -5 /tmp/harness.log | tr '\n' ' ')"
     exit "$failed"
 fi
